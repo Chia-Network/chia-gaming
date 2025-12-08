@@ -13,11 +13,11 @@
     for (var name in all)
       __defProp(target, name, { get: all[name], enumerable: true });
   };
-  var __copyProps = (to, from2, except, desc) => {
-    if (from2 && typeof from2 === "object" || typeof from2 === "function") {
-      for (let key of __getOwnPropNames(from2))
+  var __copyProps = (to, from, except, desc) => {
+    if (from && typeof from === "object" || typeof from === "function") {
+      for (let key of __getOwnPropNames(from))
         if (!__hasOwnProp.call(to, key) && key !== except)
-          __defProp(to, key, { get: () => from2[key], enumerable: !(desc = __getOwnPropDesc(from2, key)) || desc.enumerable });
+          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
     }
     return to;
   };
@@ -244,16 +244,16 @@
           oldElement._store && (newKey._store.validated = oldElement._store.validated);
           return newKey;
         }
-        function validateChildKeys(node2) {
-          isValidElement3(node2) ? node2._store && (node2._store.validated = 1) : "object" === typeof node2 && null !== node2 && node2.$$typeof === REACT_LAZY_TYPE2 && ("fulfilled" === node2._payload.status ? isValidElement3(node2._payload.value) && node2._payload.value._store && (node2._payload.value._store.validated = 1) : node2._store && (node2._store.validated = 1));
+        function validateChildKeys(node) {
+          isValidElement2(node) ? node._store && (node._store.validated = 1) : "object" === typeof node && null !== node && node.$$typeof === REACT_LAZY_TYPE2 && ("fulfilled" === node._payload.status ? isValidElement2(node._payload.value) && node._payload.value._store && (node._payload.value._store.validated = 1) : node._store && (node._store.validated = 1));
         }
-        function isValidElement3(object) {
+        function isValidElement2(object) {
           return "object" === typeof object && null !== object && object.$$typeof === REACT_ELEMENT_TYPE;
         }
         function escape(key) {
           var escaperLookup = { "=": "=0", ":": "=2" };
-          return "$" + key.replace(/[=:]/g, function(match2) {
-            return escaperLookup[match2];
+          return "$" + key.replace(/[=:]/g, function(match) {
+            return escaperLookup[match];
           });
         }
         function getElementKey(element, index) {
@@ -316,13 +316,13 @@
             var childKey = "" === nameSoFar ? "." + getElementKey(invokeCallback, 0) : nameSoFar;
             isArrayImpl(callback) ? (escapedPrefix = "", null != childKey && (escapedPrefix = childKey.replace(userProvidedKeyEscapeRegex, "$&/") + "/"), mapIntoArray(callback, array, escapedPrefix, "", function(c) {
               return c;
-            })) : null != callback && (isValidElement3(callback) && (null != callback.key && (invokeCallback && invokeCallback.key === callback.key || checkKeyStringCoercion(callback.key)), escapedPrefix = cloneAndReplaceKey(
+            })) : null != callback && (isValidElement2(callback) && (null != callback.key && (invokeCallback && invokeCallback.key === callback.key || checkKeyStringCoercion(callback.key)), escapedPrefix = cloneAndReplaceKey(
               callback,
               escapedPrefix + (null == callback.key || invokeCallback && invokeCallback.key === callback.key ? "" : ("" + callback.key).replace(
                 userProvidedKeyEscapeRegex,
                 "$&/"
               ) + "/") + childKey
-            ), "" !== nameSoFar && null != invokeCallback && isValidElement3(invokeCallback) && null == invokeCallback.key && invokeCallback._store && !invokeCallback._store.validated && (escapedPrefix._store.validated = 2), callback = escapedPrefix), array.push(callback));
+            ), "" !== nameSoFar && null != invokeCallback && isValidElement2(invokeCallback) && null == invokeCallback.key && invokeCallback._store && !invokeCallback._store.validated && (escapedPrefix._store.validated = 2), callback = escapedPrefix), array.push(callback));
             return 1;
           }
           invokeCallback = 0;
@@ -512,7 +512,7 @@
           enqueueSetState: function(publicInstance) {
             warnNoop(publicInstance, "setState");
           }
-        }, assign2 = Object.assign, emptyObject = {};
+        }, assign = Object.assign, emptyObject = {};
         Object.freeze(emptyObject);
         Component.prototype.isReactComponent = {};
         Component.prototype.setState = function(partialState, callback) {
@@ -540,7 +540,7 @@
         ComponentDummy.prototype = Component.prototype;
         deprecatedAPIs = PureComponent.prototype = new ComponentDummy();
         deprecatedAPIs.constructor = PureComponent;
-        assign2(deprecatedAPIs, Component.prototype);
+        assign(deprecatedAPIs, Component.prototype);
         deprecatedAPIs.isPureReactComponent = true;
         var isArrayImpl = Array.isArray, REACT_CLIENT_REFERENCE = Symbol.for("react.client.reference"), ReactSharedInternals = {
           H: null,
@@ -619,7 +619,7 @@
             }) || [];
           },
           only: function(children) {
-            if (!isValidElement3(children))
+            if (!isValidElement2(children))
               throw Error(
                 "React.Children.only expected to receive a single React element child."
               );
@@ -730,7 +730,7 @@
             throw Error(
               "The argument must be a React element, but you passed " + element + "."
             );
-          var props = assign2({}, element.props), key = element.key, owner = element._owner;
+          var props = assign({}, element.props), key = element.key, owner = element._owner;
           if (null != config) {
             var JSCompiler_inline_result;
             a: {
@@ -853,7 +853,7 @@
           });
           return elementType;
         };
-        exports.isValidElement = isValidElement3;
+        exports.isValidElement = isValidElement2;
         exports.lazy = function(ctor) {
           ctor = { _status: -1, _result: ctor };
           var lazyType = {
@@ -1222,24 +1222,24 @@
             debugTask
           );
         }
-        function validateChildKeys(node2) {
-          isValidElement3(node2) ? node2._store && (node2._store.validated = 1) : "object" === typeof node2 && null !== node2 && node2.$$typeof === REACT_LAZY_TYPE2 && ("fulfilled" === node2._payload.status ? isValidElement3(node2._payload.value) && node2._payload.value._store && (node2._payload.value._store.validated = 1) : node2._store && (node2._store.validated = 1));
+        function validateChildKeys(node) {
+          isValidElement2(node) ? node._store && (node._store.validated = 1) : "object" === typeof node && null !== node && node.$$typeof === REACT_LAZY_TYPE2 && ("fulfilled" === node._payload.status ? isValidElement2(node._payload.value) && node._payload.value._store && (node._payload.value._store.validated = 1) : node._store && (node._store.validated = 1));
         }
-        function isValidElement3(object) {
+        function isValidElement2(object) {
           return "object" === typeof object && null !== object && object.$$typeof === REACT_ELEMENT_TYPE;
         }
-        var React14 = require_react(), REACT_ELEMENT_TYPE = Symbol.for("react.transitional.element"), REACT_PORTAL_TYPE = Symbol.for("react.portal"), REACT_FRAGMENT_TYPE = Symbol.for("react.fragment"), REACT_STRICT_MODE_TYPE = Symbol.for("react.strict_mode"), REACT_PROFILER_TYPE = Symbol.for("react.profiler"), REACT_CONSUMER_TYPE = Symbol.for("react.consumer"), REACT_CONTEXT_TYPE = Symbol.for("react.context"), REACT_FORWARD_REF_TYPE = Symbol.for("react.forward_ref"), REACT_SUSPENSE_TYPE = Symbol.for("react.suspense"), REACT_SUSPENSE_LIST_TYPE = Symbol.for("react.suspense_list"), REACT_MEMO_TYPE = Symbol.for("react.memo"), REACT_LAZY_TYPE2 = Symbol.for("react.lazy"), REACT_ACTIVITY_TYPE = Symbol.for("react.activity"), REACT_CLIENT_REFERENCE = Symbol.for("react.client.reference"), ReactSharedInternals = React14.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE, hasOwnProperty = Object.prototype.hasOwnProperty, isArrayImpl = Array.isArray, createTask = console.createTask ? console.createTask : function() {
+        var React5 = require_react(), REACT_ELEMENT_TYPE = Symbol.for("react.transitional.element"), REACT_PORTAL_TYPE = Symbol.for("react.portal"), REACT_FRAGMENT_TYPE = Symbol.for("react.fragment"), REACT_STRICT_MODE_TYPE = Symbol.for("react.strict_mode"), REACT_PROFILER_TYPE = Symbol.for("react.profiler"), REACT_CONSUMER_TYPE = Symbol.for("react.consumer"), REACT_CONTEXT_TYPE = Symbol.for("react.context"), REACT_FORWARD_REF_TYPE = Symbol.for("react.forward_ref"), REACT_SUSPENSE_TYPE = Symbol.for("react.suspense"), REACT_SUSPENSE_LIST_TYPE = Symbol.for("react.suspense_list"), REACT_MEMO_TYPE = Symbol.for("react.memo"), REACT_LAZY_TYPE2 = Symbol.for("react.lazy"), REACT_ACTIVITY_TYPE = Symbol.for("react.activity"), REACT_CLIENT_REFERENCE = Symbol.for("react.client.reference"), ReactSharedInternals = React5.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE, hasOwnProperty = Object.prototype.hasOwnProperty, isArrayImpl = Array.isArray, createTask = console.createTask ? console.createTask : function() {
           return null;
         };
-        React14 = {
+        React5 = {
           react_stack_bottom_frame: function(callStackForError) {
             return callStackForError();
           }
         };
         var specialPropKeyWarningShown;
         var didWarnAboutElementRef = {};
-        var unknownOwnerDebugStack = React14.react_stack_bottom_frame.bind(
-          React14,
+        var unknownOwnerDebugStack = React5.react_stack_bottom_frame.bind(
+          React5,
           UnknownOwner
         )();
         var unknownOwnerDebugTask = createTask(getTaskName(UnknownOwner));
@@ -1283,972 +1283,273 @@
     }
   });
 
-  // node_modules/react-is/cjs/react-is.development.js
-  var require_react_is_development = __commonJS({
-    "node_modules/react-is/cjs/react-is.development.js"(exports) {
-      "use strict";
-      if (true) {
-        (function() {
-          "use strict";
-          var hasSymbol = typeof Symbol === "function" && Symbol.for;
-          var REACT_ELEMENT_TYPE = hasSymbol ? Symbol.for("react.element") : 60103;
-          var REACT_PORTAL_TYPE = hasSymbol ? Symbol.for("react.portal") : 60106;
-          var REACT_FRAGMENT_TYPE = hasSymbol ? Symbol.for("react.fragment") : 60107;
-          var REACT_STRICT_MODE_TYPE = hasSymbol ? Symbol.for("react.strict_mode") : 60108;
-          var REACT_PROFILER_TYPE = hasSymbol ? Symbol.for("react.profiler") : 60114;
-          var REACT_PROVIDER_TYPE = hasSymbol ? Symbol.for("react.provider") : 60109;
-          var REACT_CONTEXT_TYPE = hasSymbol ? Symbol.for("react.context") : 60110;
-          var REACT_ASYNC_MODE_TYPE = hasSymbol ? Symbol.for("react.async_mode") : 60111;
-          var REACT_CONCURRENT_MODE_TYPE = hasSymbol ? Symbol.for("react.concurrent_mode") : 60111;
-          var REACT_FORWARD_REF_TYPE = hasSymbol ? Symbol.for("react.forward_ref") : 60112;
-          var REACT_SUSPENSE_TYPE = hasSymbol ? Symbol.for("react.suspense") : 60113;
-          var REACT_SUSPENSE_LIST_TYPE = hasSymbol ? Symbol.for("react.suspense_list") : 60120;
-          var REACT_MEMO_TYPE = hasSymbol ? Symbol.for("react.memo") : 60115;
-          var REACT_LAZY_TYPE2 = hasSymbol ? Symbol.for("react.lazy") : 60116;
-          var REACT_BLOCK_TYPE = hasSymbol ? Symbol.for("react.block") : 60121;
-          var REACT_FUNDAMENTAL_TYPE = hasSymbol ? Symbol.for("react.fundamental") : 60117;
-          var REACT_RESPONDER_TYPE = hasSymbol ? Symbol.for("react.responder") : 60118;
-          var REACT_SCOPE_TYPE = hasSymbol ? Symbol.for("react.scope") : 60119;
-          function isValidElementType2(type) {
-            return typeof type === "string" || typeof type === "function" || // Note: its typeof might be other than 'symbol' or 'number' if it's a polyfill.
-            type === REACT_FRAGMENT_TYPE || type === REACT_CONCURRENT_MODE_TYPE || type === REACT_PROFILER_TYPE || type === REACT_STRICT_MODE_TYPE || type === REACT_SUSPENSE_TYPE || type === REACT_SUSPENSE_LIST_TYPE || typeof type === "object" && type !== null && (type.$$typeof === REACT_LAZY_TYPE2 || type.$$typeof === REACT_MEMO_TYPE || type.$$typeof === REACT_PROVIDER_TYPE || type.$$typeof === REACT_CONTEXT_TYPE || type.$$typeof === REACT_FORWARD_REF_TYPE || type.$$typeof === REACT_FUNDAMENTAL_TYPE || type.$$typeof === REACT_RESPONDER_TYPE || type.$$typeof === REACT_SCOPE_TYPE || type.$$typeof === REACT_BLOCK_TYPE);
-          }
-          function typeOf(object) {
-            if (typeof object === "object" && object !== null) {
-              var $$typeof = object.$$typeof;
-              switch ($$typeof) {
-                case REACT_ELEMENT_TYPE:
-                  var type = object.type;
-                  switch (type) {
-                    case REACT_ASYNC_MODE_TYPE:
-                    case REACT_CONCURRENT_MODE_TYPE:
-                    case REACT_FRAGMENT_TYPE:
-                    case REACT_PROFILER_TYPE:
-                    case REACT_STRICT_MODE_TYPE:
-                    case REACT_SUSPENSE_TYPE:
-                      return type;
-                    default:
-                      var $$typeofType = type && type.$$typeof;
-                      switch ($$typeofType) {
-                        case REACT_CONTEXT_TYPE:
-                        case REACT_FORWARD_REF_TYPE:
-                        case REACT_LAZY_TYPE2:
-                        case REACT_MEMO_TYPE:
-                        case REACT_PROVIDER_TYPE:
-                          return $$typeofType;
-                        default:
-                          return $$typeof;
-                      }
-                  }
-                case REACT_PORTAL_TYPE:
-                  return $$typeof;
-              }
-            }
-            return void 0;
-          }
-          var AsyncMode = REACT_ASYNC_MODE_TYPE;
-          var ConcurrentMode = REACT_CONCURRENT_MODE_TYPE;
-          var ContextConsumer = REACT_CONTEXT_TYPE;
-          var ContextProvider = REACT_PROVIDER_TYPE;
-          var Element = REACT_ELEMENT_TYPE;
-          var ForwardRef = REACT_FORWARD_REF_TYPE;
-          var Fragment6 = REACT_FRAGMENT_TYPE;
-          var Lazy = REACT_LAZY_TYPE2;
-          var Memo = REACT_MEMO_TYPE;
-          var Portal = REACT_PORTAL_TYPE;
-          var Profiler = REACT_PROFILER_TYPE;
-          var StrictMode = REACT_STRICT_MODE_TYPE;
-          var Suspense = REACT_SUSPENSE_TYPE;
-          var hasWarnedAboutDeprecatedIsAsyncMode = false;
-          function isAsyncMode(object) {
-            {
-              if (!hasWarnedAboutDeprecatedIsAsyncMode) {
-                hasWarnedAboutDeprecatedIsAsyncMode = true;
-                console["warn"]("The ReactIs.isAsyncMode() alias has been deprecated, and will be removed in React 17+. Update your code to use ReactIs.isConcurrentMode() instead. It has the exact same API.");
-              }
-            }
-            return isConcurrentMode(object) || typeOf(object) === REACT_ASYNC_MODE_TYPE;
-          }
-          function isConcurrentMode(object) {
-            return typeOf(object) === REACT_CONCURRENT_MODE_TYPE;
-          }
-          function isContextConsumer(object) {
-            return typeOf(object) === REACT_CONTEXT_TYPE;
-          }
-          function isContextProvider(object) {
-            return typeOf(object) === REACT_PROVIDER_TYPE;
-          }
-          function isElement(object) {
-            return typeof object === "object" && object !== null && object.$$typeof === REACT_ELEMENT_TYPE;
-          }
-          function isForwardRef(object) {
-            return typeOf(object) === REACT_FORWARD_REF_TYPE;
-          }
-          function isFragment(object) {
-            return typeOf(object) === REACT_FRAGMENT_TYPE;
-          }
-          function isLazy(object) {
-            return typeOf(object) === REACT_LAZY_TYPE2;
-          }
-          function isMemo(object) {
-            return typeOf(object) === REACT_MEMO_TYPE;
-          }
-          function isPortal(object) {
-            return typeOf(object) === REACT_PORTAL_TYPE;
-          }
-          function isProfiler(object) {
-            return typeOf(object) === REACT_PROFILER_TYPE;
-          }
-          function isStrictMode(object) {
-            return typeOf(object) === REACT_STRICT_MODE_TYPE;
-          }
-          function isSuspense(object) {
-            return typeOf(object) === REACT_SUSPENSE_TYPE;
-          }
-          exports.AsyncMode = AsyncMode;
-          exports.ConcurrentMode = ConcurrentMode;
-          exports.ContextConsumer = ContextConsumer;
-          exports.ContextProvider = ContextProvider;
-          exports.Element = Element;
-          exports.ForwardRef = ForwardRef;
-          exports.Fragment = Fragment6;
-          exports.Lazy = Lazy;
-          exports.Memo = Memo;
-          exports.Portal = Portal;
-          exports.Profiler = Profiler;
-          exports.StrictMode = StrictMode;
-          exports.Suspense = Suspense;
-          exports.isAsyncMode = isAsyncMode;
-          exports.isConcurrentMode = isConcurrentMode;
-          exports.isContextConsumer = isContextConsumer;
-          exports.isContextProvider = isContextProvider;
-          exports.isElement = isElement;
-          exports.isForwardRef = isForwardRef;
-          exports.isFragment = isFragment;
-          exports.isLazy = isLazy;
-          exports.isMemo = isMemo;
-          exports.isPortal = isPortal;
-          exports.isProfiler = isProfiler;
-          exports.isStrictMode = isStrictMode;
-          exports.isSuspense = isSuspense;
-          exports.isValidElementType = isValidElementType2;
-          exports.typeOf = typeOf;
-        })();
-      }
-    }
-  });
-
-  // node_modules/react-is/index.js
-  var require_react_is = __commonJS({
-    "node_modules/react-is/index.js"(exports, module) {
-      "use strict";
-      if (false) {
-        module.exports = null;
-      } else {
-        module.exports = require_react_is_development();
-      }
-    }
-  });
-
-  // node_modules/hoist-non-react-statics/dist/hoist-non-react-statics.cjs.js
-  var require_hoist_non_react_statics_cjs = __commonJS({
-    "node_modules/hoist-non-react-statics/dist/hoist-non-react-statics.cjs.js"(exports, module) {
-      "use strict";
-      var reactIs = require_react_is();
-      var REACT_STATICS = {
-        childContextTypes: true,
-        contextType: true,
-        contextTypes: true,
-        defaultProps: true,
-        displayName: true,
-        getDefaultProps: true,
-        getDerivedStateFromError: true,
-        getDerivedStateFromProps: true,
-        mixins: true,
-        propTypes: true,
-        type: true
-      };
-      var KNOWN_STATICS = {
-        name: true,
-        length: true,
-        prototype: true,
-        caller: true,
-        callee: true,
-        arguments: true,
-        arity: true
-      };
-      var FORWARD_REF_STATICS = {
-        "$$typeof": true,
-        render: true,
-        defaultProps: true,
-        displayName: true,
-        propTypes: true
-      };
-      var MEMO_STATICS = {
-        "$$typeof": true,
-        compare: true,
-        defaultProps: true,
-        displayName: true,
-        propTypes: true,
-        type: true
-      };
-      var TYPE_STATICS = {};
-      TYPE_STATICS[reactIs.ForwardRef] = FORWARD_REF_STATICS;
-      TYPE_STATICS[reactIs.Memo] = MEMO_STATICS;
-      function getStatics(component) {
-        if (reactIs.isMemo(component)) {
-          return MEMO_STATICS;
-        }
-        return TYPE_STATICS[component["$$typeof"]] || REACT_STATICS;
-      }
-      var defineProperty = Object.defineProperty;
-      var getOwnPropertyNames = Object.getOwnPropertyNames;
-      var getOwnPropertySymbols = Object.getOwnPropertySymbols;
-      var getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
-      var getPrototypeOf = Object.getPrototypeOf;
-      var objectPrototype = Object.prototype;
-      function hoistNonReactStatics(targetComponent, sourceComponent, blacklist) {
-        if (typeof sourceComponent !== "string") {
-          if (objectPrototype) {
-            var inheritedComponent = getPrototypeOf(sourceComponent);
-            if (inheritedComponent && inheritedComponent !== objectPrototype) {
-              hoistNonReactStatics(targetComponent, inheritedComponent, blacklist);
-            }
-          }
-          var keys = getOwnPropertyNames(sourceComponent);
-          if (getOwnPropertySymbols) {
-            keys = keys.concat(getOwnPropertySymbols(sourceComponent));
-          }
-          var targetStatics = getStatics(targetComponent);
-          var sourceStatics = getStatics(sourceComponent);
-          for (var i = 0; i < keys.length; ++i) {
-            var key = keys[i];
-            if (!KNOWN_STATICS[key] && !(blacklist && blacklist[key]) && !(sourceStatics && sourceStatics[key]) && !(targetStatics && targetStatics[key])) {
-              var descriptor = getOwnPropertyDescriptor(sourceComponent, key);
-              try {
-                defineProperty(targetComponent, key, descriptor);
-              } catch (e) {
-              }
-            }
-          }
-        }
-        return targetComponent;
-      }
-      module.exports = hoistNonReactStatics;
-    }
-  });
-
-  // node_modules/object-assign/index.js
-  var require_object_assign = __commonJS({
-    "node_modules/object-assign/index.js"(exports, module) {
-      "use strict";
-      var getOwnPropertySymbols = Object.getOwnPropertySymbols;
-      var hasOwnProperty = Object.prototype.hasOwnProperty;
-      var propIsEnumerable = Object.prototype.propertyIsEnumerable;
-      function toObject(val) {
-        if (val === null || val === void 0) {
-          throw new TypeError("Object.assign cannot be called with null or undefined");
-        }
-        return Object(val);
-      }
-      function shouldUseNative() {
-        try {
-          if (!Object.assign) {
-            return false;
-          }
-          var test1 = new String("abc");
-          test1[5] = "de";
-          if (Object.getOwnPropertyNames(test1)[0] === "5") {
-            return false;
-          }
-          var test2 = {};
-          for (var i = 0; i < 10; i++) {
-            test2["_" + String.fromCharCode(i)] = i;
-          }
-          var order2 = Object.getOwnPropertyNames(test2).map(function(n) {
-            return test2[n];
-          });
-          if (order2.join("") !== "0123456789") {
-            return false;
-          }
-          var test3 = {};
-          "abcdefghijklmnopqrst".split("").forEach(function(letter) {
-            test3[letter] = letter;
-          });
-          if (Object.keys(Object.assign({}, test3)).join("") !== "abcdefghijklmnopqrst") {
-            return false;
-          }
-          return true;
-        } catch (err) {
-          return false;
-        }
-      }
-      module.exports = shouldUseNative() ? Object.assign : function(target, source) {
-        var from2;
-        var to = toObject(target);
-        var symbols;
-        for (var s = 1; s < arguments.length; s++) {
-          from2 = Object(arguments[s]);
-          for (var key in from2) {
-            if (hasOwnProperty.call(from2, key)) {
-              to[key] = from2[key];
-            }
-          }
-          if (getOwnPropertySymbols) {
-            symbols = getOwnPropertySymbols(from2);
-            for (var i = 0; i < symbols.length; i++) {
-              if (propIsEnumerable.call(from2, symbols[i])) {
-                to[symbols[i]] = from2[symbols[i]];
-              }
-            }
-          }
-        }
-        return to;
-      };
-    }
-  });
-
-  // node_modules/prop-types/lib/ReactPropTypesSecret.js
-  var require_ReactPropTypesSecret = __commonJS({
-    "node_modules/prop-types/lib/ReactPropTypesSecret.js"(exports, module) {
-      "use strict";
-      var ReactPropTypesSecret = "SECRET_DO_NOT_PASS_THIS_OR_YOU_WILL_BE_FIRED";
-      module.exports = ReactPropTypesSecret;
-    }
-  });
-
-  // node_modules/prop-types/lib/has.js
-  var require_has = __commonJS({
-    "node_modules/prop-types/lib/has.js"(exports, module) {
-      module.exports = Function.call.bind(Object.prototype.hasOwnProperty);
-    }
-  });
-
-  // node_modules/prop-types/checkPropTypes.js
-  var require_checkPropTypes = __commonJS({
-    "node_modules/prop-types/checkPropTypes.js"(exports, module) {
-      "use strict";
-      var printWarning = function() {
-      };
-      if (true) {
-        ReactPropTypesSecret = require_ReactPropTypesSecret();
-        loggedTypeFailures = {};
-        has = require_has();
-        printWarning = function(text) {
-          var message = "Warning: " + text;
-          if (typeof console !== "undefined") {
-            console.error(message);
-          }
-          try {
-            throw new Error(message);
-          } catch (x) {
-          }
-        };
-      }
-      var ReactPropTypesSecret;
-      var loggedTypeFailures;
-      var has;
-      function checkPropTypes(typeSpecs, values2, location2, componentName, getStack) {
-        if (true) {
-          for (var typeSpecName in typeSpecs) {
-            if (has(typeSpecs, typeSpecName)) {
-              var error;
-              try {
-                if (typeof typeSpecs[typeSpecName] !== "function") {
-                  var err = Error(
-                    (componentName || "React class") + ": " + location2 + " type `" + typeSpecName + "` is invalid; it must be a function, usually from the `prop-types` package, but received `" + typeof typeSpecs[typeSpecName] + "`.This often happens because of typos such as `PropTypes.function` instead of `PropTypes.func`."
-                  );
-                  err.name = "Invariant Violation";
-                  throw err;
-                }
-                error = typeSpecs[typeSpecName](values2, typeSpecName, componentName, location2, null, ReactPropTypesSecret);
-              } catch (ex) {
-                error = ex;
-              }
-              if (error && !(error instanceof Error)) {
-                printWarning(
-                  (componentName || "React class") + ": type specification of " + location2 + " `" + typeSpecName + "` is invalid; the type checker function must return `null` or an `Error` but returned a " + typeof error + ". You may have forgotten to pass an argument to the type checker creator (arrayOf, instanceOf, objectOf, oneOf, oneOfType, and shape all require an argument)."
-                );
-              }
-              if (error instanceof Error && !(error.message in loggedTypeFailures)) {
-                loggedTypeFailures[error.message] = true;
-                var stack = getStack ? getStack() : "";
-                printWarning(
-                  "Failed " + location2 + " type: " + error.message + (stack != null ? stack : "")
-                );
-              }
-            }
-          }
-        }
-      }
-      checkPropTypes.resetWarningCache = function() {
-        if (true) {
-          loggedTypeFailures = {};
-        }
-      };
-      module.exports = checkPropTypes;
-    }
-  });
-
-  // node_modules/prop-types/factoryWithTypeCheckers.js
-  var require_factoryWithTypeCheckers = __commonJS({
-    "node_modules/prop-types/factoryWithTypeCheckers.js"(exports, module) {
-      "use strict";
-      var ReactIs = require_react_is();
-      var assign2 = require_object_assign();
-      var ReactPropTypesSecret = require_ReactPropTypesSecret();
-      var has = require_has();
-      var checkPropTypes = require_checkPropTypes();
-      var printWarning = function() {
-      };
-      if (true) {
-        printWarning = function(text) {
-          var message = "Warning: " + text;
-          if (typeof console !== "undefined") {
-            console.error(message);
-          }
-          try {
-            throw new Error(message);
-          } catch (x) {
-          }
-        };
-      }
-      function emptyFunctionThatReturnsNull() {
-        return null;
-      }
-      module.exports = function(isValidElement3, throwOnDirectAccess) {
-        var ITERATOR_SYMBOL = typeof Symbol === "function" && Symbol.iterator;
-        var FAUX_ITERATOR_SYMBOL = "@@iterator";
-        function getIteratorFn(maybeIterable) {
-          var iteratorFn = maybeIterable && (ITERATOR_SYMBOL && maybeIterable[ITERATOR_SYMBOL] || maybeIterable[FAUX_ITERATOR_SYMBOL]);
-          if (typeof iteratorFn === "function") {
-            return iteratorFn;
-          }
-        }
-        var ANONYMOUS = "<<anonymous>>";
-        var ReactPropTypes = {
-          array: createPrimitiveTypeChecker("array"),
-          bigint: createPrimitiveTypeChecker("bigint"),
-          bool: createPrimitiveTypeChecker("boolean"),
-          func: createPrimitiveTypeChecker("function"),
-          number: createPrimitiveTypeChecker("number"),
-          object: createPrimitiveTypeChecker("object"),
-          string: createPrimitiveTypeChecker("string"),
-          symbol: createPrimitiveTypeChecker("symbol"),
-          any: createAnyTypeChecker(),
-          arrayOf: createArrayOfTypeChecker,
-          element: createElementTypeChecker(),
-          elementType: createElementTypeTypeChecker(),
-          instanceOf: createInstanceTypeChecker,
-          node: createNodeChecker(),
-          objectOf: createObjectOfTypeChecker,
-          oneOf: createEnumTypeChecker,
-          oneOfType: createUnionTypeChecker,
-          shape: createShapeTypeChecker,
-          exact: createStrictShapeTypeChecker
-        };
-        function is(x, y) {
-          if (x === y) {
-            return x !== 0 || 1 / x === 1 / y;
-          } else {
-            return x !== x && y !== y;
-          }
-        }
-        function PropTypeError(message, data) {
-          this.message = message;
-          this.data = data && typeof data === "object" ? data : {};
-          this.stack = "";
-        }
-        PropTypeError.prototype = Error.prototype;
-        function createChainableTypeChecker(validate) {
-          if (true) {
-            var manualPropTypeCallCache = {};
-            var manualPropTypeWarningCount = 0;
-          }
-          function checkType(isRequired, props, propName, componentName, location2, propFullName, secret) {
-            componentName = componentName || ANONYMOUS;
-            propFullName = propFullName || propName;
-            if (secret !== ReactPropTypesSecret) {
-              if (throwOnDirectAccess) {
-                var err = new Error(
-                  "Calling PropTypes validators directly is not supported by the `prop-types` package. Use `PropTypes.checkPropTypes()` to call them. Read more at http://fb.me/use-check-prop-types"
-                );
-                err.name = "Invariant Violation";
-                throw err;
-              } else if (typeof console !== "undefined") {
-                var cacheKey = componentName + ":" + propName;
-                if (!manualPropTypeCallCache[cacheKey] && // Avoid spamming the console because they are often not actionable except for lib authors
-                manualPropTypeWarningCount < 3) {
-                  printWarning(
-                    "You are manually calling a React.PropTypes validation function for the `" + propFullName + "` prop on `" + componentName + "`. This is deprecated and will throw in the standalone `prop-types` package. You may be seeing this warning due to a third-party PropTypes library. See https://fb.me/react-warning-dont-call-proptypes for details."
-                  );
-                  manualPropTypeCallCache[cacheKey] = true;
-                  manualPropTypeWarningCount++;
-                }
-              }
-            }
-            if (props[propName] == null) {
-              if (isRequired) {
-                if (props[propName] === null) {
-                  return new PropTypeError("The " + location2 + " `" + propFullName + "` is marked as required " + ("in `" + componentName + "`, but its value is `null`."));
-                }
-                return new PropTypeError("The " + location2 + " `" + propFullName + "` is marked as required in " + ("`" + componentName + "`, but its value is `undefined`."));
-              }
-              return null;
-            } else {
-              return validate(props, propName, componentName, location2, propFullName);
-            }
-          }
-          var chainedCheckType = checkType.bind(null, false);
-          chainedCheckType.isRequired = checkType.bind(null, true);
-          return chainedCheckType;
-        }
-        function createPrimitiveTypeChecker(expectedType) {
-          function validate(props, propName, componentName, location2, propFullName, secret) {
-            var propValue = props[propName];
-            var propType = getPropType(propValue);
-            if (propType !== expectedType) {
-              var preciseType = getPreciseType(propValue);
-              return new PropTypeError(
-                "Invalid " + location2 + " `" + propFullName + "` of type " + ("`" + preciseType + "` supplied to `" + componentName + "`, expected ") + ("`" + expectedType + "`."),
-                { expectedType }
-              );
-            }
-            return null;
-          }
-          return createChainableTypeChecker(validate);
-        }
-        function createAnyTypeChecker() {
-          return createChainableTypeChecker(emptyFunctionThatReturnsNull);
-        }
-        function createArrayOfTypeChecker(typeChecker) {
-          function validate(props, propName, componentName, location2, propFullName) {
-            if (typeof typeChecker !== "function") {
-              return new PropTypeError("Property `" + propFullName + "` of component `" + componentName + "` has invalid PropType notation inside arrayOf.");
-            }
-            var propValue = props[propName];
-            if (!Array.isArray(propValue)) {
-              var propType = getPropType(propValue);
-              return new PropTypeError("Invalid " + location2 + " `" + propFullName + "` of type " + ("`" + propType + "` supplied to `" + componentName + "`, expected an array."));
-            }
-            for (var i = 0; i < propValue.length; i++) {
-              var error = typeChecker(propValue, i, componentName, location2, propFullName + "[" + i + "]", ReactPropTypesSecret);
-              if (error instanceof Error) {
-                return error;
-              }
-            }
-            return null;
-          }
-          return createChainableTypeChecker(validate);
-        }
-        function createElementTypeChecker() {
-          function validate(props, propName, componentName, location2, propFullName) {
-            var propValue = props[propName];
-            if (!isValidElement3(propValue)) {
-              var propType = getPropType(propValue);
-              return new PropTypeError("Invalid " + location2 + " `" + propFullName + "` of type " + ("`" + propType + "` supplied to `" + componentName + "`, expected a single ReactElement."));
-            }
-            return null;
-          }
-          return createChainableTypeChecker(validate);
-        }
-        function createElementTypeTypeChecker() {
-          function validate(props, propName, componentName, location2, propFullName) {
-            var propValue = props[propName];
-            if (!ReactIs.isValidElementType(propValue)) {
-              var propType = getPropType(propValue);
-              return new PropTypeError("Invalid " + location2 + " `" + propFullName + "` of type " + ("`" + propType + "` supplied to `" + componentName + "`, expected a single ReactElement type."));
-            }
-            return null;
-          }
-          return createChainableTypeChecker(validate);
-        }
-        function createInstanceTypeChecker(expectedClass) {
-          function validate(props, propName, componentName, location2, propFullName) {
-            if (!(props[propName] instanceof expectedClass)) {
-              var expectedClassName = expectedClass.name || ANONYMOUS;
-              var actualClassName = getClassName(props[propName]);
-              return new PropTypeError("Invalid " + location2 + " `" + propFullName + "` of type " + ("`" + actualClassName + "` supplied to `" + componentName + "`, expected ") + ("instance of `" + expectedClassName + "`."));
-            }
-            return null;
-          }
-          return createChainableTypeChecker(validate);
-        }
-        function createEnumTypeChecker(expectedValues) {
-          if (!Array.isArray(expectedValues)) {
-            if (true) {
-              if (arguments.length > 1) {
-                printWarning(
-                  "Invalid arguments supplied to oneOf, expected an array, got " + arguments.length + " arguments. A common mistake is to write oneOf(x, y, z) instead of oneOf([x, y, z])."
-                );
-              } else {
-                printWarning("Invalid argument supplied to oneOf, expected an array.");
-              }
-            }
-            return emptyFunctionThatReturnsNull;
-          }
-          function validate(props, propName, componentName, location2, propFullName) {
-            var propValue = props[propName];
-            for (var i = 0; i < expectedValues.length; i++) {
-              if (is(propValue, expectedValues[i])) {
-                return null;
-              }
-            }
-            var valuesString = JSON.stringify(expectedValues, function replacer(key, value2) {
-              var type = getPreciseType(value2);
-              if (type === "symbol") {
-                return String(value2);
-              }
-              return value2;
-            });
-            return new PropTypeError("Invalid " + location2 + " `" + propFullName + "` of value `" + String(propValue) + "` " + ("supplied to `" + componentName + "`, expected one of " + valuesString + "."));
-          }
-          return createChainableTypeChecker(validate);
-        }
-        function createObjectOfTypeChecker(typeChecker) {
-          function validate(props, propName, componentName, location2, propFullName) {
-            if (typeof typeChecker !== "function") {
-              return new PropTypeError("Property `" + propFullName + "` of component `" + componentName + "` has invalid PropType notation inside objectOf.");
-            }
-            var propValue = props[propName];
-            var propType = getPropType(propValue);
-            if (propType !== "object") {
-              return new PropTypeError("Invalid " + location2 + " `" + propFullName + "` of type " + ("`" + propType + "` supplied to `" + componentName + "`, expected an object."));
-            }
-            for (var key in propValue) {
-              if (has(propValue, key)) {
-                var error = typeChecker(propValue, key, componentName, location2, propFullName + "." + key, ReactPropTypesSecret);
-                if (error instanceof Error) {
-                  return error;
-                }
-              }
-            }
-            return null;
-          }
-          return createChainableTypeChecker(validate);
-        }
-        function createUnionTypeChecker(arrayOfTypeCheckers) {
-          if (!Array.isArray(arrayOfTypeCheckers)) {
-            true ? printWarning("Invalid argument supplied to oneOfType, expected an instance of array.") : void 0;
-            return emptyFunctionThatReturnsNull;
-          }
-          for (var i = 0; i < arrayOfTypeCheckers.length; i++) {
-            var checker = arrayOfTypeCheckers[i];
-            if (typeof checker !== "function") {
-              printWarning(
-                "Invalid argument supplied to oneOfType. Expected an array of check functions, but received " + getPostfixForTypeWarning(checker) + " at index " + i + "."
-              );
-              return emptyFunctionThatReturnsNull;
-            }
-          }
-          function validate(props, propName, componentName, location2, propFullName) {
-            var expectedTypes = [];
-            for (var i2 = 0; i2 < arrayOfTypeCheckers.length; i2++) {
-              var checker2 = arrayOfTypeCheckers[i2];
-              var checkerResult = checker2(props, propName, componentName, location2, propFullName, ReactPropTypesSecret);
-              if (checkerResult == null) {
-                return null;
-              }
-              if (checkerResult.data && has(checkerResult.data, "expectedType")) {
-                expectedTypes.push(checkerResult.data.expectedType);
-              }
-            }
-            var expectedTypesMessage = expectedTypes.length > 0 ? ", expected one of type [" + expectedTypes.join(", ") + "]" : "";
-            return new PropTypeError("Invalid " + location2 + " `" + propFullName + "` supplied to " + ("`" + componentName + "`" + expectedTypesMessage + "."));
-          }
-          return createChainableTypeChecker(validate);
-        }
-        function createNodeChecker() {
-          function validate(props, propName, componentName, location2, propFullName) {
-            if (!isNode(props[propName])) {
-              return new PropTypeError("Invalid " + location2 + " `" + propFullName + "` supplied to " + ("`" + componentName + "`, expected a ReactNode."));
-            }
-            return null;
-          }
-          return createChainableTypeChecker(validate);
-        }
-        function invalidValidatorError(componentName, location2, propFullName, key, type) {
-          return new PropTypeError(
-            (componentName || "React class") + ": " + location2 + " type `" + propFullName + "." + key + "` is invalid; it must be a function, usually from the `prop-types` package, but received `" + type + "`."
-          );
-        }
-        function createShapeTypeChecker(shapeTypes) {
-          function validate(props, propName, componentName, location2, propFullName) {
-            var propValue = props[propName];
-            var propType = getPropType(propValue);
-            if (propType !== "object") {
-              return new PropTypeError("Invalid " + location2 + " `" + propFullName + "` of type `" + propType + "` " + ("supplied to `" + componentName + "`, expected `object`."));
-            }
-            for (var key in shapeTypes) {
-              var checker = shapeTypes[key];
-              if (typeof checker !== "function") {
-                return invalidValidatorError(componentName, location2, propFullName, key, getPreciseType(checker));
-              }
-              var error = checker(propValue, key, componentName, location2, propFullName + "." + key, ReactPropTypesSecret);
-              if (error) {
-                return error;
-              }
-            }
-            return null;
-          }
-          return createChainableTypeChecker(validate);
-        }
-        function createStrictShapeTypeChecker(shapeTypes) {
-          function validate(props, propName, componentName, location2, propFullName) {
-            var propValue = props[propName];
-            var propType = getPropType(propValue);
-            if (propType !== "object") {
-              return new PropTypeError("Invalid " + location2 + " `" + propFullName + "` of type `" + propType + "` " + ("supplied to `" + componentName + "`, expected `object`."));
-            }
-            var allKeys = assign2({}, props[propName], shapeTypes);
-            for (var key in allKeys) {
-              var checker = shapeTypes[key];
-              if (has(shapeTypes, key) && typeof checker !== "function") {
-                return invalidValidatorError(componentName, location2, propFullName, key, getPreciseType(checker));
-              }
-              if (!checker) {
-                return new PropTypeError(
-                  "Invalid " + location2 + " `" + propFullName + "` key `" + key + "` supplied to `" + componentName + "`.\nBad object: " + JSON.stringify(props[propName], null, "  ") + "\nValid keys: " + JSON.stringify(Object.keys(shapeTypes), null, "  ")
-                );
-              }
-              var error = checker(propValue, key, componentName, location2, propFullName + "." + key, ReactPropTypesSecret);
-              if (error) {
-                return error;
-              }
-            }
-            return null;
-          }
-          return createChainableTypeChecker(validate);
-        }
-        function isNode(propValue) {
-          switch (typeof propValue) {
-            case "number":
-            case "string":
-            case "undefined":
-              return true;
-            case "boolean":
-              return !propValue;
-            case "object":
-              if (Array.isArray(propValue)) {
-                return propValue.every(isNode);
-              }
-              if (propValue === null || isValidElement3(propValue)) {
-                return true;
-              }
-              var iteratorFn = getIteratorFn(propValue);
-              if (iteratorFn) {
-                var iterator = iteratorFn.call(propValue);
-                var step;
-                if (iteratorFn !== propValue.entries) {
-                  while (!(step = iterator.next()).done) {
-                    if (!isNode(step.value)) {
-                      return false;
-                    }
-                  }
-                } else {
-                  while (!(step = iterator.next()).done) {
-                    var entry = step.value;
-                    if (entry) {
-                      if (!isNode(entry[1])) {
-                        return false;
-                      }
-                    }
-                  }
-                }
-              } else {
-                return false;
-              }
-              return true;
-            default:
-              return false;
-          }
-        }
-        function isSymbol(propType, propValue) {
-          if (propType === "symbol") {
-            return true;
-          }
-          if (!propValue) {
-            return false;
-          }
-          if (propValue["@@toStringTag"] === "Symbol") {
-            return true;
-          }
-          if (typeof Symbol === "function" && propValue instanceof Symbol) {
-            return true;
-          }
-          return false;
-        }
-        function getPropType(propValue) {
-          var propType = typeof propValue;
-          if (Array.isArray(propValue)) {
-            return "array";
-          }
-          if (propValue instanceof RegExp) {
-            return "object";
-          }
-          if (isSymbol(propType, propValue)) {
-            return "symbol";
-          }
-          return propType;
-        }
-        function getPreciseType(propValue) {
-          if (typeof propValue === "undefined" || propValue === null) {
-            return "" + propValue;
-          }
-          var propType = getPropType(propValue);
-          if (propType === "object") {
-            if (propValue instanceof Date) {
-              return "date";
-            } else if (propValue instanceof RegExp) {
-              return "regexp";
-            }
-          }
-          return propType;
-        }
-        function getPostfixForTypeWarning(value2) {
-          var type = getPreciseType(value2);
-          switch (type) {
-            case "array":
-            case "object":
-              return "an " + type;
-            case "boolean":
-            case "date":
-            case "regexp":
-              return "a " + type;
-            default:
-              return type;
-          }
-        }
-        function getClassName(propValue) {
-          if (!propValue.constructor || !propValue.constructor.name) {
-            return ANONYMOUS;
-          }
-          return propValue.constructor.name;
-        }
-        ReactPropTypes.checkPropTypes = checkPropTypes;
-        ReactPropTypes.resetWarningCache = checkPropTypes.resetWarningCache;
-        ReactPropTypes.PropTypes = ReactPropTypes;
-        return ReactPropTypes;
-      };
-    }
-  });
-
-  // node_modules/prop-types/index.js
-  var require_prop_types = __commonJS({
-    "node_modules/prop-types/index.js"(exports, module) {
-      if (true) {
-        ReactIs = require_react_is();
-        throwOnDirectAccess = true;
-        module.exports = require_factoryWithTypeCheckers()(ReactIs.isElement, throwOnDirectAccess);
-      } else {
-        module.exports = null();
-      }
-      var ReactIs;
-      var throwOnDirectAccess;
-    }
-  });
-
-  // node_modules/@mui/utils/node_modules/react-is/cjs/react-is.development.js
-  var require_react_is_development2 = __commonJS({
-    "node_modules/@mui/utils/node_modules/react-is/cjs/react-is.development.js"(exports) {
+  // node_modules/scheduler/cjs/scheduler.development.js
+  var require_scheduler_development = __commonJS({
+    "node_modules/scheduler/cjs/scheduler.development.js"(exports) {
       "use strict";
       (function() {
-        function typeOf(object) {
-          if ("object" === typeof object && null !== object) {
-            var $$typeof = object.$$typeof;
-            switch ($$typeof) {
-              case REACT_ELEMENT_TYPE:
-                switch (object = object.type, object) {
-                  case REACT_FRAGMENT_TYPE:
-                  case REACT_PROFILER_TYPE:
-                  case REACT_STRICT_MODE_TYPE:
-                  case REACT_SUSPENSE_TYPE:
-                  case REACT_SUSPENSE_LIST_TYPE:
-                  case REACT_VIEW_TRANSITION_TYPE:
-                    return object;
-                  default:
-                    switch (object = object && object.$$typeof, object) {
-                      case REACT_CONTEXT_TYPE:
-                      case REACT_FORWARD_REF_TYPE:
-                      case REACT_LAZY_TYPE2:
-                      case REACT_MEMO_TYPE:
-                        return object;
-                      case REACT_CONSUMER_TYPE:
-                        return object;
-                      default:
-                        return $$typeof;
+        function performWorkUntilDeadline() {
+          needsPaint = false;
+          if (isMessageLoopRunning) {
+            var currentTime = exports.unstable_now();
+            startTime = currentTime;
+            var hasMoreWork = true;
+            try {
+              a: {
+                isHostCallbackScheduled = false;
+                isHostTimeoutScheduled && (isHostTimeoutScheduled = false, localClearTimeout(taskTimeoutID), taskTimeoutID = -1);
+                isPerformingWork = true;
+                var previousPriorityLevel = currentPriorityLevel;
+                try {
+                  b: {
+                    advanceTimers(currentTime);
+                    for (currentTask = peek(taskQueue); null !== currentTask && !(currentTask.expirationTime > currentTime && shouldYieldToHost()); ) {
+                      var callback = currentTask.callback;
+                      if ("function" === typeof callback) {
+                        currentTask.callback = null;
+                        currentPriorityLevel = currentTask.priorityLevel;
+                        var continuationCallback = callback(
+                          currentTask.expirationTime <= currentTime
+                        );
+                        currentTime = exports.unstable_now();
+                        if ("function" === typeof continuationCallback) {
+                          currentTask.callback = continuationCallback;
+                          advanceTimers(currentTime);
+                          hasMoreWork = true;
+                          break b;
+                        }
+                        currentTask === peek(taskQueue) && pop(taskQueue);
+                        advanceTimers(currentTime);
+                      } else pop(taskQueue);
+                      currentTask = peek(taskQueue);
                     }
+                    if (null !== currentTask) hasMoreWork = true;
+                    else {
+                      var firstTimer = peek(timerQueue);
+                      null !== firstTimer && requestHostTimeout(
+                        handleTimeout,
+                        firstTimer.startTime - currentTime
+                      );
+                      hasMoreWork = false;
+                    }
+                  }
+                  break a;
+                } finally {
+                  currentTask = null, currentPriorityLevel = previousPriorityLevel, isPerformingWork = false;
                 }
-              case REACT_PORTAL_TYPE:
-                return $$typeof;
+                hasMoreWork = void 0;
+              }
+            } finally {
+              hasMoreWork ? schedulePerformWorkUntilDeadline() : isMessageLoopRunning = false;
             }
           }
         }
-        var REACT_ELEMENT_TYPE = Symbol.for("react.transitional.element"), REACT_PORTAL_TYPE = Symbol.for("react.portal"), REACT_FRAGMENT_TYPE = Symbol.for("react.fragment"), REACT_STRICT_MODE_TYPE = Symbol.for("react.strict_mode"), REACT_PROFILER_TYPE = Symbol.for("react.profiler"), REACT_CONSUMER_TYPE = Symbol.for("react.consumer"), REACT_CONTEXT_TYPE = Symbol.for("react.context"), REACT_FORWARD_REF_TYPE = Symbol.for("react.forward_ref"), REACT_SUSPENSE_TYPE = Symbol.for("react.suspense"), REACT_SUSPENSE_LIST_TYPE = Symbol.for("react.suspense_list"), REACT_MEMO_TYPE = Symbol.for("react.memo"), REACT_LAZY_TYPE2 = Symbol.for("react.lazy"), REACT_VIEW_TRANSITION_TYPE = Symbol.for("react.view_transition"), REACT_CLIENT_REFERENCE = Symbol.for("react.client.reference");
-        exports.ContextConsumer = REACT_CONSUMER_TYPE;
-        exports.ContextProvider = REACT_CONTEXT_TYPE;
-        exports.Element = REACT_ELEMENT_TYPE;
-        exports.ForwardRef = REACT_FORWARD_REF_TYPE;
-        exports.Fragment = REACT_FRAGMENT_TYPE;
-        exports.Lazy = REACT_LAZY_TYPE2;
-        exports.Memo = REACT_MEMO_TYPE;
-        exports.Portal = REACT_PORTAL_TYPE;
-        exports.Profiler = REACT_PROFILER_TYPE;
-        exports.StrictMode = REACT_STRICT_MODE_TYPE;
-        exports.Suspense = REACT_SUSPENSE_TYPE;
-        exports.SuspenseList = REACT_SUSPENSE_LIST_TYPE;
-        exports.isContextConsumer = function(object) {
-          return typeOf(object) === REACT_CONSUMER_TYPE;
+        function push(heap, node) {
+          var index = heap.length;
+          heap.push(node);
+          a: for (; 0 < index; ) {
+            var parentIndex = index - 1 >>> 1, parent = heap[parentIndex];
+            if (0 < compare(parent, node))
+              heap[parentIndex] = node, heap[index] = parent, index = parentIndex;
+            else break a;
+          }
+        }
+        function peek(heap) {
+          return 0 === heap.length ? null : heap[0];
+        }
+        function pop(heap) {
+          if (0 === heap.length) return null;
+          var first = heap[0], last = heap.pop();
+          if (last !== first) {
+            heap[0] = last;
+            a: for (var index = 0, length = heap.length, halfLength = length >>> 1; index < halfLength; ) {
+              var leftIndex = 2 * (index + 1) - 1, left = heap[leftIndex], rightIndex = leftIndex + 1, right = heap[rightIndex];
+              if (0 > compare(left, last))
+                rightIndex < length && 0 > compare(right, left) ? (heap[index] = right, heap[rightIndex] = last, index = rightIndex) : (heap[index] = left, heap[leftIndex] = last, index = leftIndex);
+              else if (rightIndex < length && 0 > compare(right, last))
+                heap[index] = right, heap[rightIndex] = last, index = rightIndex;
+              else break a;
+            }
+          }
+          return first;
+        }
+        function compare(a, b) {
+          var diff = a.sortIndex - b.sortIndex;
+          return 0 !== diff ? diff : a.id - b.id;
+        }
+        function advanceTimers(currentTime) {
+          for (var timer = peek(timerQueue); null !== timer; ) {
+            if (null === timer.callback) pop(timerQueue);
+            else if (timer.startTime <= currentTime)
+              pop(timerQueue), timer.sortIndex = timer.expirationTime, push(taskQueue, timer);
+            else break;
+            timer = peek(timerQueue);
+          }
+        }
+        function handleTimeout(currentTime) {
+          isHostTimeoutScheduled = false;
+          advanceTimers(currentTime);
+          if (!isHostCallbackScheduled)
+            if (null !== peek(taskQueue))
+              isHostCallbackScheduled = true, isMessageLoopRunning || (isMessageLoopRunning = true, schedulePerformWorkUntilDeadline());
+            else {
+              var firstTimer = peek(timerQueue);
+              null !== firstTimer && requestHostTimeout(
+                handleTimeout,
+                firstTimer.startTime - currentTime
+              );
+            }
+        }
+        function shouldYieldToHost() {
+          return needsPaint ? true : exports.unstable_now() - startTime < frameInterval ? false : true;
+        }
+        function requestHostTimeout(callback, ms) {
+          taskTimeoutID = localSetTimeout(function() {
+            callback(exports.unstable_now());
+          }, ms);
+        }
+        "undefined" !== typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ && "function" === typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart && __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart(Error());
+        exports.unstable_now = void 0;
+        if ("object" === typeof performance && "function" === typeof performance.now) {
+          var localPerformance = performance;
+          exports.unstable_now = function() {
+            return localPerformance.now();
+          };
+        } else {
+          var localDate = Date, initialTime = localDate.now();
+          exports.unstable_now = function() {
+            return localDate.now() - initialTime;
+          };
+        }
+        var taskQueue = [], timerQueue = [], taskIdCounter = 1, currentTask = null, currentPriorityLevel = 3, isPerformingWork = false, isHostCallbackScheduled = false, isHostTimeoutScheduled = false, needsPaint = false, localSetTimeout = "function" === typeof setTimeout ? setTimeout : null, localClearTimeout = "function" === typeof clearTimeout ? clearTimeout : null, localSetImmediate = "undefined" !== typeof setImmediate ? setImmediate : null, isMessageLoopRunning = false, taskTimeoutID = -1, frameInterval = 5, startTime = -1;
+        if ("function" === typeof localSetImmediate)
+          var schedulePerformWorkUntilDeadline = function() {
+            localSetImmediate(performWorkUntilDeadline);
+          };
+        else if ("undefined" !== typeof MessageChannel) {
+          var channel = new MessageChannel(), port = channel.port2;
+          channel.port1.onmessage = performWorkUntilDeadline;
+          schedulePerformWorkUntilDeadline = function() {
+            port.postMessage(null);
+          };
+        } else
+          schedulePerformWorkUntilDeadline = function() {
+            localSetTimeout(performWorkUntilDeadline, 0);
+          };
+        exports.unstable_IdlePriority = 5;
+        exports.unstable_ImmediatePriority = 1;
+        exports.unstable_LowPriority = 4;
+        exports.unstable_NormalPriority = 3;
+        exports.unstable_Profiling = null;
+        exports.unstable_UserBlockingPriority = 2;
+        exports.unstable_cancelCallback = function(task) {
+          task.callback = null;
         };
-        exports.isContextProvider = function(object) {
-          return typeOf(object) === REACT_CONTEXT_TYPE;
+        exports.unstable_forceFrameRate = function(fps) {
+          0 > fps || 125 < fps ? console.error(
+            "forceFrameRate takes a positive int between 0 and 125, forcing frame rates higher than 125 fps is not supported"
+          ) : frameInterval = 0 < fps ? Math.floor(1e3 / fps) : 5;
         };
-        exports.isElement = function(object) {
-          return "object" === typeof object && null !== object && object.$$typeof === REACT_ELEMENT_TYPE;
+        exports.unstable_getCurrentPriorityLevel = function() {
+          return currentPriorityLevel;
         };
-        exports.isForwardRef = function(object) {
-          return typeOf(object) === REACT_FORWARD_REF_TYPE;
+        exports.unstable_next = function(eventHandler) {
+          switch (currentPriorityLevel) {
+            case 1:
+            case 2:
+            case 3:
+              var priorityLevel = 3;
+              break;
+            default:
+              priorityLevel = currentPriorityLevel;
+          }
+          var previousPriorityLevel = currentPriorityLevel;
+          currentPriorityLevel = priorityLevel;
+          try {
+            return eventHandler();
+          } finally {
+            currentPriorityLevel = previousPriorityLevel;
+          }
         };
-        exports.isFragment = function(object) {
-          return typeOf(object) === REACT_FRAGMENT_TYPE;
+        exports.unstable_requestPaint = function() {
+          needsPaint = true;
         };
-        exports.isLazy = function(object) {
-          return typeOf(object) === REACT_LAZY_TYPE2;
+        exports.unstable_runWithPriority = function(priorityLevel, eventHandler) {
+          switch (priorityLevel) {
+            case 1:
+            case 2:
+            case 3:
+            case 4:
+            case 5:
+              break;
+            default:
+              priorityLevel = 3;
+          }
+          var previousPriorityLevel = currentPriorityLevel;
+          currentPriorityLevel = priorityLevel;
+          try {
+            return eventHandler();
+          } finally {
+            currentPriorityLevel = previousPriorityLevel;
+          }
         };
-        exports.isMemo = function(object) {
-          return typeOf(object) === REACT_MEMO_TYPE;
+        exports.unstable_scheduleCallback = function(priorityLevel, callback, options) {
+          var currentTime = exports.unstable_now();
+          "object" === typeof options && null !== options ? (options = options.delay, options = "number" === typeof options && 0 < options ? currentTime + options : currentTime) : options = currentTime;
+          switch (priorityLevel) {
+            case 1:
+              var timeout = -1;
+              break;
+            case 2:
+              timeout = 250;
+              break;
+            case 5:
+              timeout = 1073741823;
+              break;
+            case 4:
+              timeout = 1e4;
+              break;
+            default:
+              timeout = 5e3;
+          }
+          timeout = options + timeout;
+          priorityLevel = {
+            id: taskIdCounter++,
+            callback,
+            priorityLevel,
+            startTime: options,
+            expirationTime: timeout,
+            sortIndex: -1
+          };
+          options > currentTime ? (priorityLevel.sortIndex = options, push(timerQueue, priorityLevel), null === peek(taskQueue) && priorityLevel === peek(timerQueue) && (isHostTimeoutScheduled ? (localClearTimeout(taskTimeoutID), taskTimeoutID = -1) : isHostTimeoutScheduled = true, requestHostTimeout(handleTimeout, options - currentTime))) : (priorityLevel.sortIndex = timeout, push(taskQueue, priorityLevel), isHostCallbackScheduled || isPerformingWork || (isHostCallbackScheduled = true, isMessageLoopRunning || (isMessageLoopRunning = true, schedulePerformWorkUntilDeadline())));
+          return priorityLevel;
         };
-        exports.isPortal = function(object) {
-          return typeOf(object) === REACT_PORTAL_TYPE;
+        exports.unstable_shouldYield = shouldYieldToHost;
+        exports.unstable_wrapCallback = function(callback) {
+          var parentPriorityLevel = currentPriorityLevel;
+          return function() {
+            var previousPriorityLevel = currentPriorityLevel;
+            currentPriorityLevel = parentPriorityLevel;
+            try {
+              return callback.apply(this, arguments);
+            } finally {
+              currentPriorityLevel = previousPriorityLevel;
+            }
+          };
         };
-        exports.isProfiler = function(object) {
-          return typeOf(object) === REACT_PROFILER_TYPE;
-        };
-        exports.isStrictMode = function(object) {
-          return typeOf(object) === REACT_STRICT_MODE_TYPE;
-        };
-        exports.isSuspense = function(object) {
-          return typeOf(object) === REACT_SUSPENSE_TYPE;
-        };
-        exports.isSuspenseList = function(object) {
-          return typeOf(object) === REACT_SUSPENSE_LIST_TYPE;
-        };
-        exports.isValidElementType = function(type) {
-          return "string" === typeof type || "function" === typeof type || type === REACT_FRAGMENT_TYPE || type === REACT_PROFILER_TYPE || type === REACT_STRICT_MODE_TYPE || type === REACT_SUSPENSE_TYPE || type === REACT_SUSPENSE_LIST_TYPE || "object" === typeof type && null !== type && (type.$$typeof === REACT_LAZY_TYPE2 || type.$$typeof === REACT_MEMO_TYPE || type.$$typeof === REACT_CONTEXT_TYPE || type.$$typeof === REACT_CONSUMER_TYPE || type.$$typeof === REACT_FORWARD_REF_TYPE || type.$$typeof === REACT_CLIENT_REFERENCE || void 0 !== type.getModuleId) ? true : false;
-        };
-        exports.typeOf = typeOf;
+        "undefined" !== typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ && "function" === typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStop && __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStop(Error());
       })();
     }
   });
 
-  // node_modules/@mui/utils/node_modules/react-is/index.js
-  var require_react_is2 = __commonJS({
-    "node_modules/@mui/utils/node_modules/react-is/index.js"(exports, module) {
+  // node_modules/scheduler/index.js
+  var require_scheduler = __commonJS({
+    "node_modules/scheduler/index.js"(exports, module) {
       "use strict";
       if (false) {
         module.exports = null;
       } else {
-        module.exports = require_react_is_development2();
+        module.exports = require_scheduler_development();
       }
     }
   });
@@ -2302,7 +1603,7 @@
           return dispatcher;
         }
         "undefined" !== typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ && "function" === typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart && __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart(Error());
-        var React14 = require_react(), Internals = {
+        var React5 = require_react(), Internals = {
           d: {
             f: noop,
             r: function() {
@@ -2320,7 +1621,7 @@
           },
           p: 0,
           findDOMNode: null
-        }, REACT_PORTAL_TYPE = Symbol.for("react.portal"), ReactSharedInternals = React14.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
+        }, REACT_PORTAL_TYPE = Symbol.for("react.portal"), ReactSharedInternals = React5.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
         "function" === typeof Map && null != Map.prototype && "function" === typeof Map.prototype.forEach && "function" === typeof Set && null != Set.prototype && "function" === typeof Set.prototype.clear && "function" === typeof Set.prototype.forEach || console.error(
           "React depends on Map and Set built-in types. Make sure that you load a polyfill in older browsers. https://reactjs.org/link/react-polyfills"
         );
@@ -2510,277 +1811,6 @@
     }
   });
 
-  // node_modules/scheduler/cjs/scheduler.development.js
-  var require_scheduler_development = __commonJS({
-    "node_modules/scheduler/cjs/scheduler.development.js"(exports) {
-      "use strict";
-      (function() {
-        function performWorkUntilDeadline() {
-          needsPaint = false;
-          if (isMessageLoopRunning) {
-            var currentTime = exports.unstable_now();
-            startTime = currentTime;
-            var hasMoreWork = true;
-            try {
-              a: {
-                isHostCallbackScheduled = false;
-                isHostTimeoutScheduled && (isHostTimeoutScheduled = false, localClearTimeout(taskTimeoutID), taskTimeoutID = -1);
-                isPerformingWork = true;
-                var previousPriorityLevel = currentPriorityLevel;
-                try {
-                  b: {
-                    advanceTimers(currentTime);
-                    for (currentTask = peek2(taskQueue); null !== currentTask && !(currentTask.expirationTime > currentTime && shouldYieldToHost()); ) {
-                      var callback = currentTask.callback;
-                      if ("function" === typeof callback) {
-                        currentTask.callback = null;
-                        currentPriorityLevel = currentTask.priorityLevel;
-                        var continuationCallback = callback(
-                          currentTask.expirationTime <= currentTime
-                        );
-                        currentTime = exports.unstable_now();
-                        if ("function" === typeof continuationCallback) {
-                          currentTask.callback = continuationCallback;
-                          advanceTimers(currentTime);
-                          hasMoreWork = true;
-                          break b;
-                        }
-                        currentTask === peek2(taskQueue) && pop(taskQueue);
-                        advanceTimers(currentTime);
-                      } else pop(taskQueue);
-                      currentTask = peek2(taskQueue);
-                    }
-                    if (null !== currentTask) hasMoreWork = true;
-                    else {
-                      var firstTimer = peek2(timerQueue);
-                      null !== firstTimer && requestHostTimeout(
-                        handleTimeout,
-                        firstTimer.startTime - currentTime
-                      );
-                      hasMoreWork = false;
-                    }
-                  }
-                  break a;
-                } finally {
-                  currentTask = null, currentPriorityLevel = previousPriorityLevel, isPerformingWork = false;
-                }
-                hasMoreWork = void 0;
-              }
-            } finally {
-              hasMoreWork ? schedulePerformWorkUntilDeadline() : isMessageLoopRunning = false;
-            }
-          }
-        }
-        function push(heap, node2) {
-          var index = heap.length;
-          heap.push(node2);
-          a: for (; 0 < index; ) {
-            var parentIndex = index - 1 >>> 1, parent = heap[parentIndex];
-            if (0 < compare(parent, node2))
-              heap[parentIndex] = node2, heap[index] = parent, index = parentIndex;
-            else break a;
-          }
-        }
-        function peek2(heap) {
-          return 0 === heap.length ? null : heap[0];
-        }
-        function pop(heap) {
-          if (0 === heap.length) return null;
-          var first = heap[0], last = heap.pop();
-          if (last !== first) {
-            heap[0] = last;
-            a: for (var index = 0, length2 = heap.length, halfLength = length2 >>> 1; index < halfLength; ) {
-              var leftIndex = 2 * (index + 1) - 1, left = heap[leftIndex], rightIndex = leftIndex + 1, right = heap[rightIndex];
-              if (0 > compare(left, last))
-                rightIndex < length2 && 0 > compare(right, left) ? (heap[index] = right, heap[rightIndex] = last, index = rightIndex) : (heap[index] = left, heap[leftIndex] = last, index = leftIndex);
-              else if (rightIndex < length2 && 0 > compare(right, last))
-                heap[index] = right, heap[rightIndex] = last, index = rightIndex;
-              else break a;
-            }
-          }
-          return first;
-        }
-        function compare(a, b) {
-          var diff = a.sortIndex - b.sortIndex;
-          return 0 !== diff ? diff : a.id - b.id;
-        }
-        function advanceTimers(currentTime) {
-          for (var timer = peek2(timerQueue); null !== timer; ) {
-            if (null === timer.callback) pop(timerQueue);
-            else if (timer.startTime <= currentTime)
-              pop(timerQueue), timer.sortIndex = timer.expirationTime, push(taskQueue, timer);
-            else break;
-            timer = peek2(timerQueue);
-          }
-        }
-        function handleTimeout(currentTime) {
-          isHostTimeoutScheduled = false;
-          advanceTimers(currentTime);
-          if (!isHostCallbackScheduled)
-            if (null !== peek2(taskQueue))
-              isHostCallbackScheduled = true, isMessageLoopRunning || (isMessageLoopRunning = true, schedulePerformWorkUntilDeadline());
-            else {
-              var firstTimer = peek2(timerQueue);
-              null !== firstTimer && requestHostTimeout(
-                handleTimeout,
-                firstTimer.startTime - currentTime
-              );
-            }
-        }
-        function shouldYieldToHost() {
-          return needsPaint ? true : exports.unstable_now() - startTime < frameInterval ? false : true;
-        }
-        function requestHostTimeout(callback, ms) {
-          taskTimeoutID = localSetTimeout(function() {
-            callback(exports.unstable_now());
-          }, ms);
-        }
-        "undefined" !== typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ && "function" === typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart && __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart(Error());
-        exports.unstable_now = void 0;
-        if ("object" === typeof performance && "function" === typeof performance.now) {
-          var localPerformance = performance;
-          exports.unstable_now = function() {
-            return localPerformance.now();
-          };
-        } else {
-          var localDate = Date, initialTime = localDate.now();
-          exports.unstable_now = function() {
-            return localDate.now() - initialTime;
-          };
-        }
-        var taskQueue = [], timerQueue = [], taskIdCounter = 1, currentTask = null, currentPriorityLevel = 3, isPerformingWork = false, isHostCallbackScheduled = false, isHostTimeoutScheduled = false, needsPaint = false, localSetTimeout = "function" === typeof setTimeout ? setTimeout : null, localClearTimeout = "function" === typeof clearTimeout ? clearTimeout : null, localSetImmediate = "undefined" !== typeof setImmediate ? setImmediate : null, isMessageLoopRunning = false, taskTimeoutID = -1, frameInterval = 5, startTime = -1;
-        if ("function" === typeof localSetImmediate)
-          var schedulePerformWorkUntilDeadline = function() {
-            localSetImmediate(performWorkUntilDeadline);
-          };
-        else if ("undefined" !== typeof MessageChannel) {
-          var channel = new MessageChannel(), port = channel.port2;
-          channel.port1.onmessage = performWorkUntilDeadline;
-          schedulePerformWorkUntilDeadline = function() {
-            port.postMessage(null);
-          };
-        } else
-          schedulePerformWorkUntilDeadline = function() {
-            localSetTimeout(performWorkUntilDeadline, 0);
-          };
-        exports.unstable_IdlePriority = 5;
-        exports.unstable_ImmediatePriority = 1;
-        exports.unstable_LowPriority = 4;
-        exports.unstable_NormalPriority = 3;
-        exports.unstable_Profiling = null;
-        exports.unstable_UserBlockingPriority = 2;
-        exports.unstable_cancelCallback = function(task) {
-          task.callback = null;
-        };
-        exports.unstable_forceFrameRate = function(fps) {
-          0 > fps || 125 < fps ? console.error(
-            "forceFrameRate takes a positive int between 0 and 125, forcing frame rates higher than 125 fps is not supported"
-          ) : frameInterval = 0 < fps ? Math.floor(1e3 / fps) : 5;
-        };
-        exports.unstable_getCurrentPriorityLevel = function() {
-          return currentPriorityLevel;
-        };
-        exports.unstable_next = function(eventHandler) {
-          switch (currentPriorityLevel) {
-            case 1:
-            case 2:
-            case 3:
-              var priorityLevel = 3;
-              break;
-            default:
-              priorityLevel = currentPriorityLevel;
-          }
-          var previousPriorityLevel = currentPriorityLevel;
-          currentPriorityLevel = priorityLevel;
-          try {
-            return eventHandler();
-          } finally {
-            currentPriorityLevel = previousPriorityLevel;
-          }
-        };
-        exports.unstable_requestPaint = function() {
-          needsPaint = true;
-        };
-        exports.unstable_runWithPriority = function(priorityLevel, eventHandler) {
-          switch (priorityLevel) {
-            case 1:
-            case 2:
-            case 3:
-            case 4:
-            case 5:
-              break;
-            default:
-              priorityLevel = 3;
-          }
-          var previousPriorityLevel = currentPriorityLevel;
-          currentPriorityLevel = priorityLevel;
-          try {
-            return eventHandler();
-          } finally {
-            currentPriorityLevel = previousPriorityLevel;
-          }
-        };
-        exports.unstable_scheduleCallback = function(priorityLevel, callback, options) {
-          var currentTime = exports.unstable_now();
-          "object" === typeof options && null !== options ? (options = options.delay, options = "number" === typeof options && 0 < options ? currentTime + options : currentTime) : options = currentTime;
-          switch (priorityLevel) {
-            case 1:
-              var timeout = -1;
-              break;
-            case 2:
-              timeout = 250;
-              break;
-            case 5:
-              timeout = 1073741823;
-              break;
-            case 4:
-              timeout = 1e4;
-              break;
-            default:
-              timeout = 5e3;
-          }
-          timeout = options + timeout;
-          priorityLevel = {
-            id: taskIdCounter++,
-            callback,
-            priorityLevel,
-            startTime: options,
-            expirationTime: timeout,
-            sortIndex: -1
-          };
-          options > currentTime ? (priorityLevel.sortIndex = options, push(timerQueue, priorityLevel), null === peek2(taskQueue) && priorityLevel === peek2(timerQueue) && (isHostTimeoutScheduled ? (localClearTimeout(taskTimeoutID), taskTimeoutID = -1) : isHostTimeoutScheduled = true, requestHostTimeout(handleTimeout, options - currentTime))) : (priorityLevel.sortIndex = timeout, push(taskQueue, priorityLevel), isHostCallbackScheduled || isPerformingWork || (isHostCallbackScheduled = true, isMessageLoopRunning || (isMessageLoopRunning = true, schedulePerformWorkUntilDeadline())));
-          return priorityLevel;
-        };
-        exports.unstable_shouldYield = shouldYieldToHost;
-        exports.unstable_wrapCallback = function(callback) {
-          var parentPriorityLevel = currentPriorityLevel;
-          return function() {
-            var previousPriorityLevel = currentPriorityLevel;
-            currentPriorityLevel = parentPriorityLevel;
-            try {
-              return callback.apply(this, arguments);
-            } finally {
-              currentPriorityLevel = previousPriorityLevel;
-            }
-          };
-        };
-        "undefined" !== typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ && "function" === typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStop && __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStop(Error());
-      })();
-    }
-  });
-
-  // node_modules/scheduler/index.js
-  var require_scheduler = __commonJS({
-    "node_modules/scheduler/index.js"(exports, module) {
-      "use strict";
-      if (false) {
-        module.exports = null;
-      } else {
-        module.exports = require_scheduler_development();
-      }
-    }
-  });
-
   // node_modules/react-dom/cjs/react-dom-client.development.js
   var require_react_dom_client_development = __commonJS({
     "node_modules/react-dom/cjs/react-dom-client.development.js"(exports) {
@@ -2793,7 +1823,7 @@
         }
         function copyWithSetImpl(obj, path, index, value2) {
           if (index >= path.length) return value2;
-          var key = path[index], updated = isArrayImpl(obj) ? obj.slice() : assign2({}, obj);
+          var key = path[index], updated = isArrayImpl(obj) ? obj.slice() : assign({}, obj);
           updated[key] = copyWithSetImpl(obj[key], path, index + 1, value2);
           return updated;
         }
@@ -2812,7 +1842,7 @@
           }
         }
         function copyWithRenameImpl(obj, oldPath, newPath, index) {
-          var oldKey = oldPath[index], updated = isArrayImpl(obj) ? obj.slice() : assign2({}, obj);
+          var oldKey = oldPath[index], updated = isArrayImpl(obj) ? obj.slice() : assign({}, obj);
           index + 1 === oldPath.length ? (updated[newPath[index]] = updated[oldKey], isArrayImpl(updated) ? updated.splice(oldKey, 1) : delete updated[oldKey]) : updated[oldKey] = copyWithRenameImpl(
             obj[oldKey],
             oldPath,
@@ -2822,7 +1852,7 @@
           return updated;
         }
         function copyWithDeleteImpl(obj, path, index) {
-          var key = path[index], updated = isArrayImpl(obj) ? obj.slice() : assign2({}, obj);
+          var key = path[index], updated = isArrayImpl(obj) ? obj.slice() : assign({}, obj);
           if (index + 1 === path.length)
             return isArrayImpl(updated) ? updated.splice(key, 1) : delete updated[key], updated;
           updated[key] = copyWithDeleteImpl(obj[key], path, index + 1);
@@ -2877,19 +1907,19 @@
         function setRefreshHandler(handler) {
           resolveFamily = handler;
         }
-        function isValidContainer(node2) {
-          return !(!node2 || 1 !== node2.nodeType && 9 !== node2.nodeType && 11 !== node2.nodeType);
+        function isValidContainer(node) {
+          return !(!node || 1 !== node.nodeType && 9 !== node.nodeType && 11 !== node.nodeType);
         }
         function getNearestMountedFiber(fiber) {
-          var node2 = fiber, nearestMounted = fiber;
-          if (fiber.alternate) for (; node2.return; ) node2 = node2.return;
+          var node = fiber, nearestMounted = fiber;
+          if (fiber.alternate) for (; node.return; ) node = node.return;
           else {
-            fiber = node2;
+            fiber = node;
             do
-              node2 = fiber, 0 !== (node2.flags & 4098) && (nearestMounted = node2.return), fiber = node2.return;
+              node = fiber, 0 !== (node.flags & 4098) && (nearestMounted = node.return), fiber = node.return;
             while (fiber);
           }
-          return 3 === node2.tag ? nearestMounted : null;
+          return 3 === node.tag ? nearestMounted : null;
         }
         function getSuspenseInstanceFromFiber(fiber) {
           if (13 === fiber.tag) {
@@ -2987,13 +2017,13 @@
             throw Error("Unable to find node on an unmounted component.");
           return a.stateNode.current === a ? fiber : alternate;
         }
-        function findCurrentHostFiberImpl(node2) {
-          var tag = node2.tag;
-          if (5 === tag || 26 === tag || 27 === tag || 6 === tag) return node2;
-          for (node2 = node2.child; null !== node2; ) {
-            tag = findCurrentHostFiberImpl(node2);
+        function findCurrentHostFiberImpl(node) {
+          var tag = node.tag;
+          if (5 === tag || 26 === tag || 27 === tag || 6 === tag) return node;
+          for (node = node.child; null !== node; ) {
+            tag = findCurrentHostFiberImpl(node);
             if (null !== tag) return tag;
-            node2 = node2.sibling;
+            node = node.sibling;
           }
           return null;
         }
@@ -3117,14 +2147,14 @@
         function createCursor(defaultValue) {
           return { current: defaultValue };
         }
-        function pop(cursor2, fiber) {
-          0 > index$jscomp$0 ? console.error("Unexpected pop.") : (fiber !== fiberStack[index$jscomp$0] && console.error("Unexpected Fiber popped."), cursor2.current = valueStack[index$jscomp$0], valueStack[index$jscomp$0] = null, fiberStack[index$jscomp$0] = null, index$jscomp$0--);
+        function pop(cursor, fiber) {
+          0 > index$jscomp$0 ? console.error("Unexpected pop.") : (fiber !== fiberStack[index$jscomp$0] && console.error("Unexpected Fiber popped."), cursor.current = valueStack[index$jscomp$0], valueStack[index$jscomp$0] = null, fiberStack[index$jscomp$0] = null, index$jscomp$0--);
         }
-        function push(cursor2, value2, fiber) {
+        function push(cursor, value2, fiber) {
           index$jscomp$0++;
-          valueStack[index$jscomp$0] = cursor2.current;
+          valueStack[index$jscomp$0] = cursor.current;
           fiberStack[index$jscomp$0] = fiber;
-          cursor2.current = value2;
+          cursor.current = value2;
         }
         function requiredContext(c) {
           null === c && console.error(
@@ -3225,13 +2255,13 @@
           if (0 === disabledDepth) {
             var props = { configurable: true, enumerable: true, writable: true };
             Object.defineProperties(console, {
-              log: assign2({}, props, { value: prevLog }),
-              info: assign2({}, props, { value: prevInfo }),
-              warn: assign2({}, props, { value: prevWarn }),
-              error: assign2({}, props, { value: prevError }),
-              group: assign2({}, props, { value: prevGroup }),
-              groupCollapsed: assign2({}, props, { value: prevGroupCollapsed }),
-              groupEnd: assign2({}, props, { value: prevGroupEnd })
+              log: assign({}, props, { value: prevLog }),
+              info: assign({}, props, { value: prevInfo }),
+              warn: assign({}, props, { value: prevWarn }),
+              error: assign({}, props, { value: prevError }),
+              group: assign({}, props, { value: prevGroup }),
+              groupCollapsed: assign({}, props, { value: prevGroupCollapsed }),
+              groupEnd: assign({}, props, { value: prevGroupEnd })
             });
           }
           0 > disabledDepth && console.error(
@@ -3257,15 +2287,15 @@
           return error;
         }
         function describeBuiltInComponentFrame(name) {
-          if (void 0 === prefix2)
+          if (void 0 === prefix)
             try {
               throw Error();
             } catch (x) {
-              var match2 = x.stack.trim().match(/\n( *(at )?)/);
-              prefix2 = match2 && match2[1] || "";
+              var match = x.stack.trim().match(/\n( *(at )?)/);
+              prefix = match && match[1] || "";
               suffix = -1 < x.stack.indexOf("\n    at") ? " (<anonymous>)" : -1 < x.stack.indexOf("@") ? "@unknown:0:0" : "";
             }
-          return "\n" + prefix2 + name + suffix;
+          return "\n" + prefix + name + suffix;
         }
         function describeNativeComponentFrame(fn, construct) {
           if (!fn || reentry) return "";
@@ -3828,12 +2858,12 @@
             ReactDOMSharedInternals.p = previousPriority;
           }
         }
-        function detachDeletedInstance(node2) {
-          delete node2[internalInstanceKey];
-          delete node2[internalPropsKey];
-          delete node2[internalEventHandlersKey];
-          delete node2[internalEventHandlerListenersKey];
-          delete node2[internalEventHandlesSetKey];
+        function detachDeletedInstance(node) {
+          delete node[internalInstanceKey];
+          delete node[internalPropsKey];
+          delete node[internalEventHandlersKey];
+          delete node[internalEventHandlerListenersKey];
+          delete node[internalEventHandlesSetKey];
         }
         function getClosestInstanceFromNode(targetNode) {
           var targetInst = targetNode[internalInstanceKey];
@@ -3854,11 +2884,11 @@
           }
           return null;
         }
-        function getInstanceFromNode(node2) {
-          if (node2 = node2[internalInstanceKey] || node2[internalContainerInstanceKey]) {
-            var tag = node2.tag;
+        function getInstanceFromNode(node) {
+          if (node = node[internalInstanceKey] || node[internalContainerInstanceKey]) {
+            var tag = node.tag;
             if (5 === tag || 6 === tag || 13 === tag || 31 === tag || 26 === tag || 27 === tag || 3 === tag)
-              return node2;
+              return node;
           }
           return null;
         }
@@ -3873,8 +2903,8 @@
           resources || (resources = root3[internalRootNodeResourcesKey] = { hoistableStyles: /* @__PURE__ */ new Map(), hoistableScripts: /* @__PURE__ */ new Map() });
           return resources;
         }
-        function markNodeAsHoistable(node2) {
-          node2[internalHoistableMarker] = true;
+        function markNodeAsHoistable(node) {
+          node[internalHoistableMarker] = true;
         }
         function registerTwoPhaseEvent(registrationName, dependencies) {
           registerDirectEvent(registrationName, dependencies);
@@ -3913,9 +2943,9 @@
           console.error("Invalid attribute name: `%s`", attributeName);
           return false;
         }
-        function getValueForAttributeOnCustomComponent(node2, name, expected) {
+        function getValueForAttributeOnCustomComponent(node, name, expected) {
           if (isAttributeNameSafe(name)) {
-            if (!node2.hasAttribute(name)) {
+            if (!node.hasAttribute(name)) {
               switch (typeof expected) {
                 case "symbol":
                 case "object":
@@ -3927,61 +2957,61 @@
               }
               return void 0 === expected ? void 0 : null;
             }
-            node2 = node2.getAttribute(name);
-            if ("" === node2 && true === expected) return true;
+            node = node.getAttribute(name);
+            if ("" === node && true === expected) return true;
             checkAttributeStringCoercion(expected, name);
-            return node2 === "" + expected ? expected : node2;
+            return node === "" + expected ? expected : node;
           }
         }
-        function setValueForAttribute(node2, name, value2) {
+        function setValueForAttribute(node, name, value2) {
           if (isAttributeNameSafe(name))
-            if (null === value2) node2.removeAttribute(name);
+            if (null === value2) node.removeAttribute(name);
             else {
               switch (typeof value2) {
                 case "undefined":
                 case "function":
                 case "symbol":
-                  node2.removeAttribute(name);
+                  node.removeAttribute(name);
                   return;
                 case "boolean":
-                  var prefix3 = name.toLowerCase().slice(0, 5);
-                  if ("data-" !== prefix3 && "aria-" !== prefix3) {
-                    node2.removeAttribute(name);
+                  var prefix2 = name.toLowerCase().slice(0, 5);
+                  if ("data-" !== prefix2 && "aria-" !== prefix2) {
+                    node.removeAttribute(name);
                     return;
                   }
               }
               checkAttributeStringCoercion(value2, name);
-              node2.setAttribute(name, "" + value2);
+              node.setAttribute(name, "" + value2);
             }
         }
-        function setValueForKnownAttribute(node2, name, value2) {
-          if (null === value2) node2.removeAttribute(name);
+        function setValueForKnownAttribute(node, name, value2) {
+          if (null === value2) node.removeAttribute(name);
           else {
             switch (typeof value2) {
               case "undefined":
               case "function":
               case "symbol":
               case "boolean":
-                node2.removeAttribute(name);
+                node.removeAttribute(name);
                 return;
             }
             checkAttributeStringCoercion(value2, name);
-            node2.setAttribute(name, "" + value2);
+            node.setAttribute(name, "" + value2);
           }
         }
-        function setValueForNamespacedAttribute(node2, namespace, name, value2) {
-          if (null === value2) node2.removeAttribute(name);
+        function setValueForNamespacedAttribute(node, namespace, name, value2) {
+          if (null === value2) node.removeAttribute(name);
           else {
             switch (typeof value2) {
               case "undefined":
               case "function":
               case "symbol":
               case "boolean":
-                node2.removeAttribute(name);
+                node.removeAttribute(name);
                 return;
             }
             checkAttributeStringCoercion(value2, name);
-            node2.setAttributeNS(namespace, name, "" + value2);
+            node.setAttributeNS(namespace, name, "" + value2);
           }
         }
         function getToStringValue(value2) {
@@ -4002,14 +3032,14 @@
           var type = elem.type;
           return (elem = elem.nodeName) && "input" === elem.toLowerCase() && ("checkbox" === type || "radio" === type);
         }
-        function trackValueOnNode(node2, valueField, currentValue) {
+        function trackValueOnNode(node, valueField, currentValue) {
           var descriptor = Object.getOwnPropertyDescriptor(
-            node2.constructor.prototype,
+            node.constructor.prototype,
             valueField
           );
-          if (!node2.hasOwnProperty(valueField) && "undefined" !== typeof descriptor && "function" === typeof descriptor.get && "function" === typeof descriptor.set) {
+          if (!node.hasOwnProperty(valueField) && "undefined" !== typeof descriptor && "function" === typeof descriptor.get && "function" === typeof descriptor.set) {
             var get = descriptor.get, set = descriptor.set;
-            Object.defineProperty(node2, valueField, {
+            Object.defineProperty(node, valueField, {
               configurable: true,
               get: function() {
                 return get.call(this);
@@ -4020,7 +3050,7 @@
                 set.call(this, value2);
               }
             });
-            Object.defineProperty(node2, valueField, {
+            Object.defineProperty(node, valueField, {
               enumerable: descriptor.enumerable
             });
             return {
@@ -4032,31 +3062,31 @@
                 currentValue = "" + value2;
               },
               stopTracking: function() {
-                node2._valueTracker = null;
-                delete node2[valueField];
+                node._valueTracker = null;
+                delete node[valueField];
               }
             };
           }
         }
-        function track(node2) {
-          if (!node2._valueTracker) {
-            var valueField = isCheckable(node2) ? "checked" : "value";
-            node2._valueTracker = trackValueOnNode(
-              node2,
+        function track(node) {
+          if (!node._valueTracker) {
+            var valueField = isCheckable(node) ? "checked" : "value";
+            node._valueTracker = trackValueOnNode(
+              node,
               valueField,
-              "" + node2[valueField]
+              "" + node[valueField]
             );
           }
         }
-        function updateValueIfChanged(node2) {
-          if (!node2) return false;
-          var tracker = node2._valueTracker;
+        function updateValueIfChanged(node) {
+          if (!node) return false;
+          var tracker = node._valueTracker;
           if (!tracker) return true;
           var lastValue = tracker.getValue();
           var value2 = "";
-          node2 && (value2 = isCheckable(node2) ? node2.checked ? "true" : "false" : node2.value);
-          node2 = value2;
-          return node2 !== lastValue ? (tracker.setValue(node2), true) : false;
+          node && (value2 = isCheckable(node) ? node.checked ? "true" : "false" : node.value);
+          node = value2;
+          return node !== lastValue ? (tracker.setValue(node), true) : false;
         }
         function getActiveElement(doc) {
           doc = doc || ("undefined" !== typeof document ? document : void 0);
@@ -4122,11 +3152,11 @@
           null != name && "function" !== typeof name && "symbol" !== typeof name && "boolean" !== typeof name && (checkAttributeStringCoercion(name, "name"), element.name = name);
           track(element);
         }
-        function setDefaultValue(node2, type, value2) {
-          "number" === type && getActiveElement(node2.ownerDocument) === node2 || node2.defaultValue === "" + value2 || (node2.defaultValue = "" + value2);
+        function setDefaultValue(node, type, value2) {
+          "number" === type && getActiveElement(node.ownerDocument) === node || node.defaultValue === "" + value2 || (node.defaultValue = "" + value2);
         }
         function validateOptionProps(element, props) {
-          null == props.value && ("object" === typeof props.children && null !== props.children ? React14.Children.forEach(props.children, function(child) {
+          null == props.value && ("object" === typeof props.children && null !== props.children ? React5.Children.forEach(props.children, function(child) {
             null == child || "string" === typeof child || "number" === typeof child || "bigint" === typeof child || didWarnInvalidChild || (didWarnInvalidChild = true, console.error(
               "Cannot infer the option value of complex children. Pass a `value` prop or use a plain string as children to <option>."
             ));
@@ -4141,24 +3171,24 @@
           var ownerName = getCurrentFiberOwnerNameInDevOrNull();
           return ownerName ? "\n\nCheck the render method of `" + ownerName + "`." : "";
         }
-        function updateOptions(node2, multiple, propValue, setDefaultSelected) {
-          node2 = node2.options;
+        function updateOptions(node, multiple, propValue, setDefaultSelected) {
+          node = node.options;
           if (multiple) {
             multiple = {};
             for (var i = 0; i < propValue.length; i++)
               multiple["$" + propValue[i]] = true;
-            for (propValue = 0; propValue < node2.length; propValue++)
-              i = multiple.hasOwnProperty("$" + node2[propValue].value), node2[propValue].selected !== i && (node2[propValue].selected = i), i && setDefaultSelected && (node2[propValue].defaultSelected = true);
+            for (propValue = 0; propValue < node.length; propValue++)
+              i = multiple.hasOwnProperty("$" + node[propValue].value), node[propValue].selected !== i && (node[propValue].selected = i), i && setDefaultSelected && (node[propValue].defaultSelected = true);
           } else {
             propValue = "" + getToStringValue(propValue);
             multiple = null;
-            for (i = 0; i < node2.length; i++) {
-              if (node2[i].value === propValue) {
-                node2[i].selected = true;
-                setDefaultSelected && (node2[i].defaultSelected = true);
+            for (i = 0; i < node.length; i++) {
+              if (node[i].value === propValue) {
+                node[i].selected = true;
+                setDefaultSelected && (node[i].defaultSelected = true);
                 return;
               }
-              null !== multiple || node2[i].disabled || (multiple = node2[i]);
+              null !== multiple || node[i].disabled || (multiple = node[i]);
             }
             null !== multiple && (multiple.selected = true);
           }
@@ -4222,8 +3252,8 @@
           children === defaultValue && "" !== children && null !== children && (element.value = children);
           track(element);
         }
-        function findNotableNode(node2, indent) {
-          return void 0 === node2.serverProps && 0 === node2.serverTail.length && 1 === node2.children.length && 3 < node2.distanceFromLeaf && node2.distanceFromLeaf > 15 - indent ? findNotableNode(node2.children[0], indent) : node2;
+        function findNotableNode(node, indent) {
+          return void 0 === node.serverProps && 0 === node.serverTail.length && 1 === node.children.length && 3 < node.distanceFromLeaf && node.distanceFromLeaf > 15 - indent ? findNotableNode(node.children[0], indent) : node;
         }
         function indentation(indent) {
           return "  " + "  ".repeat(indent);
@@ -4320,7 +3350,7 @@
           return "string" !== typeof value2 || needsEscaping.test(value2) ? "{" + describeValue(value2, maxLength - 2) + "}" : value2.length > maxLength - 2 ? 5 > maxLength ? '"..."' : '"' + value2.slice(0, maxLength - 5) + '..."' : '"' + value2 + '"';
         }
         function describeExpandedElement(type, props, rowPrefix) {
-          var remainingRowLength = 120 - rowPrefix.length - type.length, properties2 = [], propName;
+          var remainingRowLength = 120 - rowPrefix.length - type.length, properties = [], propName;
           for (propName in props)
             if (props.hasOwnProperty(propName) && "children" !== propName) {
               var propValue = describePropValue(
@@ -4328,24 +3358,24 @@
                 120 - rowPrefix.length - propName.length - 1
               );
               remainingRowLength -= propName.length + propValue.length + 2;
-              properties2.push(propName + "=" + propValue);
+              properties.push(propName + "=" + propValue);
             }
-          return 0 === properties2.length ? rowPrefix + "<" + type + ">\n" : 0 < remainingRowLength ? rowPrefix + "<" + type + " " + properties2.join(" ") + ">\n" : rowPrefix + "<" + type + "\n" + rowPrefix + "  " + properties2.join("\n" + rowPrefix + "  ") + "\n" + rowPrefix + ">\n";
+          return 0 === properties.length ? rowPrefix + "<" + type + ">\n" : 0 < remainingRowLength ? rowPrefix + "<" + type + " " + properties.join(" ") + ">\n" : rowPrefix + "<" + type + "\n" + rowPrefix + "  " + properties.join("\n" + rowPrefix + "  ") + "\n" + rowPrefix + ">\n";
         }
         function describePropertiesDiff(clientObject, serverObject, indent) {
-          var properties2 = "", remainingServerProperties = assign2({}, serverObject), propName;
+          var properties = "", remainingServerProperties = assign({}, serverObject), propName;
           for (propName in clientObject)
             if (clientObject.hasOwnProperty(propName)) {
               delete remainingServerProperties[propName];
               var maxLength = 120 - 2 * indent - propName.length - 2, clientPropValue = describeValue(clientObject[propName], maxLength);
-              serverObject.hasOwnProperty(propName) ? (maxLength = describeValue(serverObject[propName], maxLength), properties2 += added(indent) + propName + ": " + clientPropValue + "\n", properties2 += removed(indent) + propName + ": " + maxLength + "\n") : properties2 += added(indent) + propName + ": " + clientPropValue + "\n";
+              serverObject.hasOwnProperty(propName) ? (maxLength = describeValue(serverObject[propName], maxLength), properties += added(indent) + propName + ": " + clientPropValue + "\n", properties += removed(indent) + propName + ": " + maxLength + "\n") : properties += added(indent) + propName + ": " + clientPropValue + "\n";
             }
           for (var _propName in remainingServerProperties)
             remainingServerProperties.hasOwnProperty(_propName) && (clientObject = describeValue(
               remainingServerProperties[_propName],
               120 - 2 * indent - _propName.length - 2
-            ), properties2 += removed(indent) + _propName + ": " + clientObject + "\n");
-          return properties2;
+            ), properties += removed(indent) + _propName + ": " + clientObject + "\n");
+          return properties;
         }
         function describeElementDiff(type, clientProps, serverProps, indent) {
           var content = "", serverPropNames = /* @__PURE__ */ new Map();
@@ -4413,23 +3443,23 @@
           }
           return indentation(indent) + "<" + type + ">\n";
         }
-        function describeNode(node2, indent) {
-          var skipToNode = findNotableNode(node2, indent);
-          if (skipToNode !== node2 && (1 !== node2.children.length || node2.children[0] !== skipToNode))
+        function describeNode(node, indent) {
+          var skipToNode = findNotableNode(node, indent);
+          if (skipToNode !== node && (1 !== node.children.length || node.children[0] !== skipToNode))
             return indentation(indent) + "...\n" + describeNode(skipToNode, indent + 1);
           skipToNode = "";
-          var debugInfo = node2.fiber._debugInfo;
+          var debugInfo = node.fiber._debugInfo;
           if (debugInfo)
             for (var i = 0; i < debugInfo.length; i++) {
               var serverComponentName = debugInfo[i].name;
               "string" === typeof serverComponentName && (skipToNode += indentation(indent) + "<" + serverComponentName + ">\n", indent++);
             }
           debugInfo = "";
-          i = node2.fiber.pendingProps;
-          if (6 === node2.fiber.tag)
-            debugInfo = describeTextDiff(i, node2.serverProps, indent), indent++;
-          else if (serverComponentName = describeFiberType(node2.fiber), null !== serverComponentName)
-            if (void 0 === node2.serverProps) {
+          i = node.fiber.pendingProps;
+          if (6 === node.fiber.tag)
+            debugInfo = describeTextDiff(i, node.serverProps, indent), indent++;
+          else if (serverComponentName = describeFiberType(node.fiber), null !== serverComponentName)
+            if (void 0 === node.serverProps) {
               debugInfo = indent;
               var maxLength = 120 - 2 * debugInfo - serverComponentName.length - 2, content = "";
               for (propName in i)
@@ -4445,27 +3475,27 @@
               debugInfo = indentation(debugInfo) + "<" + serverComponentName + content + ">\n";
               indent++;
             } else
-              null === node2.serverProps ? (debugInfo = describeExpandedElement(
+              null === node.serverProps ? (debugInfo = describeExpandedElement(
                 serverComponentName,
                 i,
                 added(indent)
-              ), indent++) : "string" === typeof node2.serverProps ? console.error(
+              ), indent++) : "string" === typeof node.serverProps ? console.error(
                 "Should not have matched a non HostText fiber to a Text node. This is a bug in React."
               ) : (debugInfo = describeElementDiff(
                 serverComponentName,
                 i,
-                node2.serverProps,
+                node.serverProps,
                 indent
               ), indent++);
           var propName = "";
-          i = node2.fiber.child;
-          for (serverComponentName = 0; i && serverComponentName < node2.children.length; )
-            maxLength = node2.children[serverComponentName], maxLength.fiber === i ? (propName += describeNode(maxLength, indent), serverComponentName++) : propName += describeSiblingFiber(i, indent), i = i.sibling;
-          i && 0 < node2.children.length && (propName += indentation(indent) + "...\n");
-          i = node2.serverTail;
-          null === node2.serverProps && indent--;
-          for (node2 = 0; node2 < i.length; node2++)
-            serverComponentName = i[node2], propName = "string" === typeof serverComponentName ? propName + (removed(indent) + describeTextNode(serverComponentName, 120 - 2 * indent) + "\n") : propName + describeExpandedElement(
+          i = node.fiber.child;
+          for (serverComponentName = 0; i && serverComponentName < node.children.length; )
+            maxLength = node.children[serverComponentName], maxLength.fiber === i ? (propName += describeNode(maxLength, indent), serverComponentName++) : propName += describeSiblingFiber(i, indent), i = i.sibling;
+          i && 0 < node.children.length && (propName += indentation(indent) + "...\n");
+          i = node.serverTail;
+          null === node.serverProps && indent--;
+          for (node = 0; node < i.length; node++)
+            serverComponentName = i[node], propName = "string" === typeof serverComponentName ? propName + (removed(indent) + describeTextNode(serverComponentName, 120 - 2 * indent) + "\n") : propName + describeExpandedElement(
               serverComponentName.type,
               serverComponentName.props,
               removed(indent)
@@ -4480,18 +3510,18 @@
           }
         }
         function describeAncestors(ancestor, child, props) {
-          for (var fiber = child, node2 = null, distanceFromLeaf = 0; fiber; )
-            fiber === ancestor && (distanceFromLeaf = 0), node2 = {
+          for (var fiber = child, node = null, distanceFromLeaf = 0; fiber; )
+            fiber === ancestor && (distanceFromLeaf = 0), node = {
               fiber,
-              children: null !== node2 ? [node2] : [],
+              children: null !== node ? [node] : [],
               serverProps: fiber === child ? props : fiber === ancestor ? null : void 0,
               serverTail: [],
               distanceFromLeaf
             }, distanceFromLeaf++, fiber = fiber.return;
-          return null !== node2 ? describeDiff(node2).replaceAll(/^[+-]/gm, ">") : "";
+          return null !== node ? describeDiff(node).replaceAll(/^[+-]/gm, ">") : "";
         }
         function updatedAncestorInfoDev(oldInfo, tag) {
-          var ancestorInfo = assign2({}, oldInfo || emptyAncestorInfoDev), info = { tag };
+          var ancestorInfo = assign({}, oldInfo || emptyAncestorInfoDev), info = { tag };
           -1 !== inScopeTags.indexOf(tag) && (ancestorInfo.aTagInScope = null, ancestorInfo.buttonTagInScope = null, ancestorInfo.nobrTagInScope = null);
           -1 !== buttonScopeTags.indexOf(tag) && (ancestorInfo.pTagInButtonScope = null);
           -1 !== specialTags.indexOf(tag) && "address" !== tag && "div" !== tag && "p" !== tag && (ancestorInfo.listItemTagAutoclosing = null, ancestorInfo.dlItemTagAutoclosing = null);
@@ -4693,24 +3723,24 @@
           );
           return false;
         }
-        function setTextContent(node2, text) {
+        function setTextContent(node, text) {
           if (text) {
-            var firstChild = node2.firstChild;
-            if (firstChild && firstChild === node2.lastChild && 3 === firstChild.nodeType) {
+            var firstChild = node.firstChild;
+            if (firstChild && firstChild === node.lastChild && 3 === firstChild.nodeType) {
               firstChild.nodeValue = text;
               return;
             }
           }
-          node2.textContent = text;
+          node.textContent = text;
         }
         function camelize(string) {
-          return string.replace(hyphenPattern, function(_, character2) {
-            return character2.toUpperCase();
+          return string.replace(hyphenPattern, function(_, character) {
+            return character.toUpperCase();
           });
         }
-        function setValueForStyle(style4, styleName, value2) {
-          var isCustomProperty3 = 0 === styleName.indexOf("--");
-          isCustomProperty3 || (-1 < styleName.indexOf("-") ? warnedStyleNames.hasOwnProperty(styleName) && warnedStyleNames[styleName] || (warnedStyleNames[styleName] = true, console.error(
+        function setValueForStyle(style2, styleName, value2) {
+          var isCustomProperty = 0 === styleName.indexOf("--");
+          isCustomProperty || (-1 < styleName.indexOf("-") ? warnedStyleNames.hasOwnProperty(styleName) && warnedStyleNames[styleName] || (warnedStyleNames[styleName] = true, console.error(
             "Unsupported style property %s. Did you mean %s?",
             styleName,
             camelize(styleName.replace(msPattern, "ms-"))
@@ -4729,30 +3759,30 @@
             "`Infinity` is an invalid value for the `%s` css style property.",
             styleName
           ))));
-          null == value2 || "boolean" === typeof value2 || "" === value2 ? isCustomProperty3 ? style4.setProperty(styleName, "") : "float" === styleName ? style4.cssFloat = "" : style4[styleName] = "" : isCustomProperty3 ? style4.setProperty(styleName, value2) : "number" !== typeof value2 || 0 === value2 || unitlessNumbers.has(styleName) ? "float" === styleName ? style4.cssFloat = value2 : (checkCSSPropertyStringCoercion(value2, styleName), style4[styleName] = ("" + value2).trim()) : style4[styleName] = value2 + "px";
+          null == value2 || "boolean" === typeof value2 || "" === value2 ? isCustomProperty ? style2.setProperty(styleName, "") : "float" === styleName ? style2.cssFloat = "" : style2[styleName] = "" : isCustomProperty ? style2.setProperty(styleName, value2) : "number" !== typeof value2 || 0 === value2 || unitlessNumbers.has(styleName) ? "float" === styleName ? style2.cssFloat = value2 : (checkCSSPropertyStringCoercion(value2, styleName), style2[styleName] = ("" + value2).trim()) : style2[styleName] = value2 + "px";
         }
-        function setValueForStyles(node2, styles2, prevStyles) {
-          if (null != styles2 && "object" !== typeof styles2)
+        function setValueForStyles(node, styles, prevStyles) {
+          if (null != styles && "object" !== typeof styles)
             throw Error(
               "The `style` prop expects a mapping from style properties to values, not a string. For example, style={{marginRight: spacing + 'em'}} when using JSX."
             );
-          styles2 && Object.freeze(styles2);
-          node2 = node2.style;
+          styles && Object.freeze(styles);
+          node = node.style;
           if (null != prevStyles) {
-            if (styles2) {
+            if (styles) {
               var expandedUpdates = {};
               if (prevStyles) {
                 for (var key in prevStyles)
-                  if (prevStyles.hasOwnProperty(key) && !styles2.hasOwnProperty(key))
+                  if (prevStyles.hasOwnProperty(key) && !styles.hasOwnProperty(key))
                     for (var longhands = shorthandToLonghand[key] || [key], i = 0; i < longhands.length; i++)
                       expandedUpdates[longhands[i]] = key;
               }
-              for (var _key in styles2)
-                if (styles2.hasOwnProperty(_key) && (!prevStyles || prevStyles[_key] !== styles2[_key]))
+              for (var _key in styles)
+                if (styles.hasOwnProperty(_key) && (!prevStyles || prevStyles[_key] !== styles[_key]))
                   for (key = shorthandToLonghand[_key] || [_key], longhands = 0; longhands < key.length; longhands++)
                     expandedUpdates[key[longhands]] = _key;
               _key = {};
-              for (var key$jscomp$0 in styles2)
+              for (var key$jscomp$0 in styles)
                 for (key = shorthandToLonghand[key$jscomp$0] || [key$jscomp$0], longhands = 0; longhands < key.length; longhands++)
                   _key[key[longhands]] = key$jscomp$0;
               key$jscomp$0 = {};
@@ -4760,7 +3790,7 @@
                 if (key = expandedUpdates[_key2], (longhands = _key[_key2]) && key !== longhands && (i = key + "," + longhands, !key$jscomp$0[i])) {
                   key$jscomp$0[i] = true;
                   i = console;
-                  var value2 = styles2[key];
+                  var value2 = styles[key];
                   i.error.call(
                     i,
                     "%s a style property during rerender (%s) when a conflicting property is set (%s) can lead to styling bugs. To avoid this, don't mix shorthand and non-shorthand properties for the same value; instead, replace the shorthand with separate values.",
@@ -4771,12 +3801,12 @@
                 }
             }
             for (var styleName in prevStyles)
-              !prevStyles.hasOwnProperty(styleName) || null != styles2 && styles2.hasOwnProperty(styleName) || (0 === styleName.indexOf("--") ? node2.setProperty(styleName, "") : "float" === styleName ? node2.cssFloat = "" : node2[styleName] = "");
-            for (var _styleName in styles2)
-              _key2 = styles2[_styleName], styles2.hasOwnProperty(_styleName) && prevStyles[_styleName] !== _key2 && setValueForStyle(node2, _styleName, _key2);
+              !prevStyles.hasOwnProperty(styleName) || null != styles && styles.hasOwnProperty(styleName) || (0 === styleName.indexOf("--") ? node.setProperty(styleName, "") : "float" === styleName ? node.cssFloat = "" : node[styleName] = "");
+            for (var _styleName in styles)
+              _key2 = styles[_styleName], styles.hasOwnProperty(_styleName) && prevStyles[_styleName] !== _key2 && setValueForStyle(node, _styleName, _key2);
           } else
-            for (expandedUpdates in styles2)
-              styles2.hasOwnProperty(expandedUpdates) && setValueForStyle(node2, expandedUpdates, styles2[expandedUpdates]);
+            for (expandedUpdates in styles)
+              styles.hasOwnProperty(expandedUpdates) && setValueForStyle(node, expandedUpdates, styles[expandedUpdates]);
         }
         function isCustomElement(tagName) {
           if (-1 === tagName.indexOf("-")) return false;
@@ -4795,7 +3825,7 @@
           }
         }
         function getAttributeAlias(name) {
-          return aliases2.get(name) || name;
+          return aliases.get(name) || name;
         }
         function validateProperty$1(tagName, name) {
           if (hasOwnProperty.call(warnedProperties$1, name) && warnedProperties$1[name])
@@ -5199,7 +4229,7 @@
             this.isPropagationStopped = functionThatReturnsFalse;
             return this;
           }
-          assign2(SyntheticBaseEvent.prototype, {
+          assign(SyntheticBaseEvent.prototype, {
             preventDefault: function() {
               this.defaultPrevented = true;
               var event = this.nativeEvent;
@@ -5351,31 +4381,31 @@
           }
           return true;
         }
-        function getLeafNode(node2) {
-          for (; node2 && node2.firstChild; ) node2 = node2.firstChild;
-          return node2;
+        function getLeafNode(node) {
+          for (; node && node.firstChild; ) node = node.firstChild;
+          return node;
         }
         function getNodeForCharacterOffset(root3, offset) {
-          var node2 = getLeafNode(root3);
+          var node = getLeafNode(root3);
           root3 = 0;
-          for (var nodeEnd; node2; ) {
-            if (3 === node2.nodeType) {
-              nodeEnd = root3 + node2.textContent.length;
+          for (var nodeEnd; node; ) {
+            if (3 === node.nodeType) {
+              nodeEnd = root3 + node.textContent.length;
               if (root3 <= offset && nodeEnd >= offset)
-                return { node: node2, offset: offset - root3 };
+                return { node, offset: offset - root3 };
               root3 = nodeEnd;
             }
             a: {
-              for (; node2; ) {
-                if (node2.nextSibling) {
-                  node2 = node2.nextSibling;
+              for (; node; ) {
+                if (node.nextSibling) {
+                  node = node.nextSibling;
                   break a;
                 }
-                node2 = node2.parentNode;
+                node = node.parentNode;
               }
-              node2 = void 0;
+              node = void 0;
             }
-            node2 = getLeafNode(node2);
+            node = getLeafNode(node);
           }
         }
         function containsNode(outerNode, innerNode) {
@@ -5426,7 +4456,7 @@
           if (!vendorPrefixes[eventName]) return eventName;
           var prefixMap = vendorPrefixes[eventName], styleProp;
           for (styleProp in prefixMap)
-            if (prefixMap.hasOwnProperty(styleProp) && styleProp in style3)
+            if (prefixMap.hasOwnProperty(styleProp) && styleProp in style)
               return prefixedEventNames[eventName] = prefixMap[styleProp];
           return eventName;
         }
@@ -5451,11 +4481,11 @@
           }
           return kind;
         }
-        function addObjectToProperties(object, properties2, indent, prefix3) {
+        function addObjectToProperties(object, properties, indent, prefix2) {
           for (var key in object)
-            hasOwnProperty.call(object, key) && "_" !== key[0] && addValueToProperties(key, object[key], properties2, indent, prefix3);
+            hasOwnProperty.call(object, key) && "_" !== key[0] && addValueToProperties(key, object[key], properties, indent, prefix2);
         }
-        function addValueToProperties(propertyName, value2, properties2, indent, prefix3) {
+        function addValueToProperties(propertyName, value2, properties, indent, prefix2) {
           switch (typeof value2) {
             case "object":
               if (null === value2) {
@@ -5474,27 +4504,27 @@
                     value2 = "<" + typeName2 + " \u2026 />";
                     break;
                   }
-                  properties2.push([
-                    prefix3 + "\xA0\xA0".repeat(indent) + propertyName,
+                  properties.push([
+                    prefix2 + "\xA0\xA0".repeat(indent) + propertyName,
                     "<" + typeName2
                   ]);
                   null !== key && addValueToProperties(
                     "key",
                     key,
-                    properties2,
+                    properties,
                     indent + 1,
-                    prefix3
+                    prefix2
                   );
                   propertyName = false;
                   for (var propKey in value2)
                     "children" === propKey ? null != value2.children && (!isArrayImpl(value2.children) || 0 < value2.children.length) && (propertyName = true) : hasOwnProperty.call(value2, propKey) && "_" !== propKey[0] && addValueToProperties(
                       propKey,
                       value2[propKey],
-                      properties2,
+                      properties,
                       indent + 1,
-                      prefix3
+                      prefix2
                     );
-                  properties2.push([
+                  properties.push([
                     "",
                     propertyName ? ">\u2026</" + typeName2 + ">" : "/>"
                   ]);
@@ -5507,57 +4537,57 @@
                     value2 = JSON.stringify(value2);
                     break;
                   } else if (propKey === ENTRIES_ARRAY) {
-                    properties2.push([
-                      prefix3 + "\xA0\xA0".repeat(indent) + propertyName,
+                    properties.push([
+                      prefix2 + "\xA0\xA0".repeat(indent) + propertyName,
                       ""
                     ]);
                     for (propertyName = 0; propertyName < value2.length; propertyName++)
                       typeName2 = value2[propertyName], addValueToProperties(
                         typeName2[0],
                         typeName2[1],
-                        properties2,
+                        properties,
                         indent + 1,
-                        prefix3
+                        prefix2
                       );
                     return;
                   }
                 }
                 if ("Promise" === typeName2) {
                   if ("fulfilled" === value2.status) {
-                    if (typeName2 = properties2.length, addValueToProperties(
+                    if (typeName2 = properties.length, addValueToProperties(
                       propertyName,
                       value2.value,
-                      properties2,
+                      properties,
                       indent,
-                      prefix3
-                    ), properties2.length > typeName2) {
-                      properties2 = properties2[typeName2];
-                      properties2[1] = "Promise<" + (properties2[1] || "Object") + ">";
+                      prefix2
+                    ), properties.length > typeName2) {
+                      properties = properties[typeName2];
+                      properties[1] = "Promise<" + (properties[1] || "Object") + ">";
                       return;
                     }
-                  } else if ("rejected" === value2.status && (typeName2 = properties2.length, addValueToProperties(
+                  } else if ("rejected" === value2.status && (typeName2 = properties.length, addValueToProperties(
                     propertyName,
                     value2.reason,
-                    properties2,
+                    properties,
                     indent,
-                    prefix3
-                  ), properties2.length > typeName2)) {
-                    properties2 = properties2[typeName2];
-                    properties2[1] = "Rejected Promise<" + properties2[1] + ">";
+                    prefix2
+                  ), properties.length > typeName2)) {
+                    properties = properties[typeName2];
+                    properties[1] = "Rejected Promise<" + properties[1] + ">";
                     return;
                   }
-                  properties2.push([
+                  properties.push([
                     "\xA0\xA0".repeat(indent) + propertyName,
                     "Promise"
                   ]);
                   return;
                 }
                 "Object" === typeName2 && (propKey = Object.getPrototypeOf(value2)) && "function" === typeof propKey.constructor && (typeName2 = propKey.constructor.name);
-                properties2.push([
-                  prefix3 + "\xA0\xA0".repeat(indent) + propertyName,
+                properties.push([
+                  prefix2 + "\xA0\xA0".repeat(indent) + propertyName,
                   "Object" === typeName2 ? 3 > indent ? "" : "\u2026" : typeName2
                 ]);
-                3 > indent && addObjectToProperties(value2, properties2, indent + 1, prefix3);
+                3 > indent && addObjectToProperties(value2, properties, indent + 1, prefix2);
                 return;
               }
             case "function":
@@ -5575,25 +4605,25 @@
             default:
               value2 = String(value2);
           }
-          properties2.push([
-            prefix3 + "\xA0\xA0".repeat(indent) + propertyName,
+          properties.push([
+            prefix2 + "\xA0\xA0".repeat(indent) + propertyName,
             value2
           ]);
         }
-        function addObjectDiffToProperties(prev2, next2, properties2, indent) {
+        function addObjectDiffToProperties(prev, next, properties, indent) {
           var isDeeplyEqual = true;
-          for (key in prev2)
-            key in next2 || (properties2.push([
+          for (key in prev)
+            key in next || (properties.push([
               REMOVED + "\xA0\xA0".repeat(indent) + key,
               "\u2026"
             ]), isDeeplyEqual = false);
-          for (var _key in next2)
-            if (_key in prev2) {
-              var key = prev2[_key];
-              var nextValue = next2[_key];
+          for (var _key in next)
+            if (_key in prev) {
+              var key = prev[_key];
+              var nextValue = next[_key];
               if (key !== nextValue) {
                 if (0 === indent && "children" === _key)
-                  isDeeplyEqual = "\xA0\xA0".repeat(indent) + _key, properties2.push(
+                  isDeeplyEqual = "\xA0\xA0".repeat(indent) + _key, properties.push(
                     [REMOVED + isDeeplyEqual, "\u2026"],
                     [ADDED + isDeeplyEqual, "\u2026"]
                   );
@@ -5605,7 +4635,7 @@
                           key = getComponentNameFromType(nextValue.type) || "\u2026";
                           isDeeplyEqual = "\xA0\xA0".repeat(indent) + _key;
                           key = "<" + key + " \u2026 />";
-                          properties2.push(
+                          properties.push(
                             [REMOVED + isDeeplyEqual, key],
                             [ADDED + isDeeplyEqual, key]
                           );
@@ -5619,33 +4649,33 @@
                             UNCHANGED + "\xA0\xA0".repeat(indent) + _key,
                             "[object Array]" === nextKind ? "Array" : ""
                           ];
-                          properties2.push(prevKind);
-                          nextKind = properties2.length;
+                          properties.push(prevKind);
+                          nextKind = properties.length;
                           addObjectDiffToProperties(
                             key,
                             nextValue,
-                            properties2,
+                            properties,
                             indent + 1
-                          ) ? nextKind === properties2.length && (prevKind[1] = "Referentially unequal but deeply equal objects. Consider memoization.") : isDeeplyEqual = false;
+                          ) ? nextKind === properties.length && (prevKind[1] = "Referentially unequal but deeply equal objects. Consider memoization.") : isDeeplyEqual = false;
                           continue;
                         }
                       }
                     else if ("function" === typeof key && "function" === typeof nextValue && key.name === nextValue.name && key.length === nextValue.length && (prevKind = Function.prototype.toString.call(key), nextKind = Function.prototype.toString.call(nextValue), prevKind === nextKind)) {
                       key = "" === nextValue.name ? "() => {}" : nextValue.name + "() {}";
-                      properties2.push([
+                      properties.push([
                         UNCHANGED + "\xA0\xA0".repeat(indent) + _key,
                         key + " Referentially unequal function closure. Consider memoization."
                       ]);
                       continue;
                     }
                   }
-                  addValueToProperties(_key, key, properties2, indent, REMOVED);
-                  addValueToProperties(_key, nextValue, properties2, indent, ADDED);
+                  addValueToProperties(_key, key, properties, indent, REMOVED);
+                  addValueToProperties(_key, nextValue, properties, indent, ADDED);
                 }
                 isDeeplyEqual = false;
               }
             } else
-              properties2.push([
+              properties.push([
                 ADDED + "\xA0\xA0".repeat(indent) + _key,
                 "\u2026"
               ]), isDeeplyEqual = false;
@@ -5714,17 +4744,17 @@
           if (supportsUserTiming) {
             var name = getComponentNameFromFiber(fiber);
             if (null !== name) {
-              for (var debugTask = null, properties2 = [], i = 0; i < errors.length; i++) {
+              for (var debugTask = null, properties = [], i = 0; i < errors.length; i++) {
                 var capturedValue = errors[i];
                 null == debugTask && null !== capturedValue.source && (debugTask = capturedValue.source._debugTask);
                 capturedValue = capturedValue.value;
-                properties2.push([
+                properties.push([
                   "Error",
                   "object" === typeof capturedValue && null !== capturedValue && "string" === typeof capturedValue.message ? String(capturedValue.message) : String(capturedValue)
                 ]);
               }
-              null !== fiber.key && addValueToProperties("key", fiber.key, properties2, 0, "");
-              null !== fiber.memoizedProps && addObjectToProperties(fiber.memoizedProps, properties2, 0, "");
+              null !== fiber.key && addValueToProperties("key", fiber.key, properties, 0, "");
+              null !== fiber.memoizedProps && addObjectToProperties(fiber.memoizedProps, properties, 0, "");
               null == debugTask && (debugTask = fiber._debugTask);
               fiber = {
                 start: startTime,
@@ -5734,7 +4764,7 @@
                     color: "error",
                     track: COMPONENTS_TRACK,
                     tooltipText: 13 === fiber.tag ? "Hydration failed" : "Error boundary caught an error",
-                    properties: properties2
+                    properties
                   }
                 }
               };
@@ -5802,7 +4832,7 @@
         }
         function logRenderPhase(startTime, endTime, lanes, debugTask) {
           if (supportsUserTiming && !(endTime <= startTime)) {
-            var color2 = (lanes & 738197653) === lanes ? "tertiary-dark" : "primary-dark";
+            var color = (lanes & 738197653) === lanes ? "tertiary-dark" : "primary-dark";
             lanes = (lanes & 536870912) === lanes ? "Prepared" : (lanes & 201326741) === lanes ? "Hydrated" : "Render";
             debugTask ? debugTask.run(
               console.timeStamp.bind(
@@ -5812,7 +4842,7 @@
                 endTime,
                 currentTrack,
                 LANES_TRACK_GROUP,
-                color2
+                color
               )
             ) : console.timeStamp(
               lanes,
@@ -5820,7 +4850,7 @@
               endTime,
               currentTrack,
               LANES_TRACK_GROUP,
-              color2
+              color
             );
           }
         }
@@ -5934,9 +4964,9 @@
         }
         function logCommitErrored(startTime, endTime, errors, passive, debugTask) {
           if (supportsUserTiming && !(endTime <= startTime)) {
-            for (var properties2 = [], i = 0; i < errors.length; i++) {
+            for (var properties = [], i = 0; i < errors.length; i++) {
               var error = errors[i].value;
-              properties2.push([
+              properties.push([
                 "Error",
                 "object" === typeof error && null !== error && "string" === typeof error.message ? String(error.message) : String(error)
               ]);
@@ -5950,7 +4980,7 @@
                   track: currentTrack,
                   trackGroup: LANES_TRACK_GROUP,
                   tooltipText: passive ? "Remaining Effects Errored" : "Commit Errored",
-                  properties: properties2
+                  properties
                 }
               }
             };
@@ -6032,9 +5062,9 @@
             "Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render."
           ));
           null === sourceFiber.alternate && 0 !== (sourceFiber.flags & 4098) && warnAboutUpdateOnNotYetMountedFiberInDEV(sourceFiber);
-          for (var node2 = sourceFiber, parent = node2.return; null !== parent; )
-            null === node2.alternate && 0 !== (node2.flags & 4098) && warnAboutUpdateOnNotYetMountedFiberInDEV(sourceFiber), node2 = parent, parent = node2.return;
-          return 3 === node2.tag ? node2.stateNode : null;
+          for (var node = sourceFiber, parent = node.return; null !== parent; )
+            null === node.alternate && 0 !== (node.flags & 4098) && warnAboutUpdateOnNotYetMountedFiberInDEV(sourceFiber), node = parent, parent = node.return;
+          return 3 === node.tag ? node.stateNode : null;
         }
         function resolveFunctionForHotReloading(type) {
           if (null === resolveFamily) return type;
@@ -6332,16 +5362,16 @@
           var baseLength = 32 - clz32(baseIdWithLeadingBit) - 1;
           baseIdWithLeadingBit &= ~(1 << baseLength);
           index += 1;
-          var length2 = 32 - clz32(totalChildren) + baseLength;
-          if (30 < length2) {
+          var length = 32 - clz32(totalChildren) + baseLength;
+          if (30 < length) {
             var numberOfOverflowBits = baseLength - baseLength % 5;
-            length2 = (baseIdWithLeadingBit & (1 << numberOfOverflowBits) - 1).toString(32);
+            length = (baseIdWithLeadingBit & (1 << numberOfOverflowBits) - 1).toString(32);
             baseIdWithLeadingBit >>= numberOfOverflowBits;
             baseLength -= numberOfOverflowBits;
             treeContextId = 1 << 32 - clz32(totalChildren) + baseLength | index << baseLength | baseIdWithLeadingBit;
-            treeContextOverflow = length2 + workInProgress2;
+            treeContextOverflow = length + workInProgress2;
           } else
-            treeContextId = 1 << length2 | index << baseLength | baseIdWithLeadingBit, treeContextOverflow = workInProgress2;
+            treeContextId = 1 << length | index << baseLength | baseIdWithLeadingBit, treeContextOverflow = workInProgress2;
         }
         function pushMaterializedTreeId(workInProgress2) {
           warnIfNotHydrating();
@@ -6748,7 +5778,7 @@
           } else lastContextDependency = lastContextDependency.next = context;
           return value2;
         }
-        function createCache3() {
+        function createCache() {
           return {
             controller: new AbortControllerLocal(),
             data: /* @__PURE__ */ new Map(),
@@ -6841,9 +5871,9 @@
           return prevErrors;
         }
         function pushComponentEffectDidSpawnUpdate() {
-          var prev2 = componentEffectSpawnedUpdate;
+          var prev = componentEffectSpawnedUpdate;
           componentEffectSpawnedUpdate = false;
-          return prev2;
+          return prev;
         }
         function startProfilerTimer(fiber) {
           profilerStartTime = now();
@@ -7951,7 +6981,7 @@
                         isDisallowedContextReadInDEV = false;
                       } else partialState = nextState;
                       if (null === partialState || void 0 === partialState) break a;
-                      newState = assign2({}, newState, partialState);
+                      newState = assign({}, newState, partialState);
                       break a;
                     case ForceUpdate:
                       hasForceUpdate = true;
@@ -8055,25 +7085,25 @@
           pop(suspenseStackCursor, fiber);
         }
         function findFirstSuspended(row) {
-          for (var node2 = row; null !== node2; ) {
-            if (13 === node2.tag) {
-              var state = node2.memoizedState;
+          for (var node = row; null !== node; ) {
+            if (13 === node.tag) {
+              var state = node.memoizedState;
               if (null !== state && (state = state.dehydrated, null === state || isSuspenseInstancePending(state) || isSuspenseInstanceFallback(state)))
-                return node2;
-            } else if (19 === node2.tag && ("forwards" === node2.memoizedProps.revealOrder || "backwards" === node2.memoizedProps.revealOrder || "unstable_legacy-backwards" === node2.memoizedProps.revealOrder || "together" === node2.memoizedProps.revealOrder)) {
-              if (0 !== (node2.flags & 128)) return node2;
-            } else if (null !== node2.child) {
-              node2.child.return = node2;
-              node2 = node2.child;
+                return node;
+            } else if (19 === node.tag && ("forwards" === node.memoizedProps.revealOrder || "backwards" === node.memoizedProps.revealOrder || "unstable_legacy-backwards" === node.memoizedProps.revealOrder || "together" === node.memoizedProps.revealOrder)) {
+              if (0 !== (node.flags & 128)) return node;
+            } else if (null !== node.child) {
+              node.child.return = node;
+              node = node.child;
               continue;
             }
-            if (node2 === row) break;
-            for (; null === node2.sibling; ) {
-              if (null === node2.return || node2.return === row) return null;
-              node2 = node2.return;
+            if (node === row) break;
+            for (; null === node.sibling; ) {
+              if (null === node.return || node.return === row) return null;
+              node = node.return;
             }
-            node2.sibling.return = node2.return;
-            node2 = node2.sibling;
+            node.sibling.return = node.return;
+            node = node.sibling;
           }
           return null;
         }
@@ -8699,18 +7729,18 @@
             null === setPendingState ? (actionNode.next = actionQueue.pending = actionNode, runActionStateAction(actionQueue, actionNode)) : (actionNode.next = setPendingState.next, actionQueue.pending = setPendingState.next = actionNode);
           }
         }
-        function runActionStateAction(actionQueue, node2) {
-          var action = node2.action, payload = node2.payload, prevState = actionQueue.state;
-          if (node2.isTransition) {
+        function runActionStateAction(actionQueue, node) {
+          var action = node.action, payload = node.payload, prevState = actionQueue.state;
+          if (node.isTransition) {
             var prevTransition = ReactSharedInternals.T, currentTransition = {};
             currentTransition._updatedFibers = /* @__PURE__ */ new Set();
             ReactSharedInternals.T = currentTransition;
             try {
               var returnValue = action(prevState, payload), onStartTransitionFinish = ReactSharedInternals.S;
               null !== onStartTransitionFinish && onStartTransitionFinish(currentTransition, returnValue);
-              handleActionReturnValue(actionQueue, node2, returnValue);
+              handleActionReturnValue(actionQueue, node, returnValue);
             } catch (error) {
-              onActionError(actionQueue, node2, error);
+              onActionError(actionQueue, node, error);
             } finally {
               null !== prevTransition && null !== currentTransition.types && (null !== prevTransition.types && prevTransition.types !== currentTransition.types && console.error(
                 "We expected inner Transitions to have transferred the outer types set and that you cannot add to the outer Transition while inside the inner.This is a bug in React."
@@ -8720,22 +7750,22 @@
             }
           } else
             try {
-              currentTransition = action(prevState, payload), handleActionReturnValue(actionQueue, node2, currentTransition);
+              currentTransition = action(prevState, payload), handleActionReturnValue(actionQueue, node, currentTransition);
             } catch (error$4) {
-              onActionError(actionQueue, node2, error$4);
+              onActionError(actionQueue, node, error$4);
             }
         }
-        function handleActionReturnValue(actionQueue, node2, returnValue) {
+        function handleActionReturnValue(actionQueue, node, returnValue) {
           null !== returnValue && "object" === typeof returnValue && "function" === typeof returnValue.then ? (ReactSharedInternals.asyncTransitions++, returnValue.then(releaseAsyncTransition, releaseAsyncTransition), returnValue.then(
             function(nextState) {
-              onActionSuccess(actionQueue, node2, nextState);
+              onActionSuccess(actionQueue, node, nextState);
             },
             function(error) {
-              return onActionError(actionQueue, node2, error);
+              return onActionError(actionQueue, node, error);
             }
-          ), node2.isTransition || console.error(
+          ), node.isTransition || console.error(
             "An async function with useActionState was called outside of a transition. This is likely not what you intended (for example, isPending will not update correctly). Either call the returned function inside startTransition, or pass it to an `action` or `formAction` prop."
-          )) : onActionSuccess(actionQueue, node2, returnValue);
+          )) : onActionSuccess(actionQueue, node, returnValue);
         }
         function onActionSuccess(actionQueue, actionNode, nextState) {
           actionNode.status = "fulfilled";
@@ -9269,7 +8299,7 @@
               case 3:
                 var lane = requestUpdateLane(provider), refreshUpdate = createUpdate(lane), root3 = enqueueUpdate(provider, refreshUpdate, lane);
                 null !== root3 && (startUpdateTimerByLane(lane, "refresh()", fiber), scheduleUpdateOnFiber(root3, provider, lane), entangleTransitions(root3, provider, lane));
-                fiber = createCache3();
+                fiber = createCache();
                 null !== seedKey && void 0 !== seedKey && null !== root3 && console.error(
                   "The seed argument is not enabled outside experimental channels."
                 );
@@ -9404,7 +8434,7 @@
             "%s.getDerivedStateFromProps(): A valid state object (or null) must be returned. You have returned undefined.",
             ctor
           )));
-          prevState = null === partialState || void 0 === partialState ? prevState : assign2({}, prevState, partialState);
+          prevState = null === partialState || void 0 === partialState ? prevState : assign({}, prevState, partialState);
           workInProgress2.memoizedState = prevState;
           0 === workInProgress2.lanes && (workInProgress2.updateQueue.baseState = prevState);
         }
@@ -9457,7 +8487,7 @@
               "ref" !== propName && (newProps[propName] = baseProps[propName]);
           }
           if (Component = Component.defaultProps) {
-            newProps === baseProps && (newProps = assign2({}, newProps));
+            newProps === baseProps && (newProps = assign({}, newProps));
             for (var _propName in Component)
               void 0 === newProps[_propName] && (newProps[_propName] = Component[_propName]);
           }
@@ -11316,7 +10346,7 @@
                 workInProgress2.pendingProps
               );
             case 24:
-              return prepareToReadContext(workInProgress2), returnFiber = readContext(CacheContext), null === current2 ? (prevSibling = peekCacheFromPool(), null === prevSibling && (prevSibling = workInProgressRoot, prevState = createCache3(), prevSibling.pooledCache = prevState, retainCache(prevState), null !== prevState && (prevSibling.pooledCacheLanes |= renderLanes2), prevSibling = prevState), workInProgress2.memoizedState = {
+              return prepareToReadContext(workInProgress2), returnFiber = readContext(CacheContext), null === current2 ? (prevSibling = peekCacheFromPool(), null === prevSibling && (prevSibling = workInProgressRoot, prevState = createCache(), prevSibling.pooledCache = prevState, retainCache(prevState), null !== prevState && (prevSibling.pooledCacheLanes |= renderLanes2), prevSibling = prevState), workInProgress2.memoizedState = {
                 parent: returnFiber,
                 cache: prevSibling
               }, initializeUpdateQueue(workInProgress2), pushProvider(workInProgress2, CacheContext, prevSibling)) : (0 !== (current2.lanes & renderLanes2) && (cloneUpdateQueue(current2, workInProgress2), processUpdateQueue(workInProgress2, null, null, renderLanes2), suspendIfUpdateReadFromEntangledAsyncAction()), prevSibling = current2.memoizedState, prevState = workInProgress2.memoizedState, prevSibling.parent !== returnFiber ? (prevSibling = {
@@ -11910,13 +10940,13 @@
               var firstEffect = lastEffect.next;
               updateQueue = firstEffect;
               do {
-                if ((updateQueue.tag & flags) === flags && (lastEffect = void 0, (flags & Insertion5) !== NoFlags && (isRunningInsertionEffect = true), lastEffect = runWithFiberInDEV(
+                if ((updateQueue.tag & flags) === flags && (lastEffect = void 0, (flags & Insertion) !== NoFlags && (isRunningInsertionEffect = true), lastEffect = runWithFiberInDEV(
                   finishedWork,
                   callCreateInDEV,
                   updateQueue
-                ), (flags & Insertion5) !== NoFlags && (isRunningInsertionEffect = false), void 0 !== lastEffect && "function" !== typeof lastEffect)) {
+                ), (flags & Insertion) !== NoFlags && (isRunningInsertionEffect = false), void 0 !== lastEffect && "function" !== typeof lastEffect)) {
                   var hookName = void 0;
-                  hookName = 0 !== (updateQueue.tag & Layout) ? "useLayoutEffect" : 0 !== (updateQueue.tag & Insertion5) ? "useInsertionEffect" : "useEffect";
+                  hookName = 0 !== (updateQueue.tag & Layout) ? "useLayoutEffect" : 0 !== (updateQueue.tag & Insertion) ? "useInsertionEffect" : "useEffect";
                   var addendum = void 0;
                   addendum = null === lastEffect ? " You returned null. If your effect does not require clean up, return undefined (or nothing)." : "function" === typeof lastEffect.then ? "\n\nIt looks like you wrote " + hookName + "(async () => ...) or returned a Promise. Instead, write the async function inside your effect and call it immediately:\n\n" + hookName + "(() => {\n  async function fetchData() {\n    // You can await here\n    const response = await MyAPI.getData(someId);\n    // ...\n  }\n  fetchData();\n}, [someId]); // Or [] if effect doesn't need props or state\n\nLearn more about data fetching with Hooks: https://react.dev/link/hooks-data-fetching" : " You returned: " + lastEffect;
                   runWithFiberInDEV(
@@ -11948,13 +10978,13 @@
               do {
                 if ((updateQueue.tag & flags) === flags) {
                   var inst = updateQueue.inst, destroy = inst.destroy;
-                  void 0 !== destroy && (inst.destroy = void 0, (flags & Insertion5) !== NoFlags && (isRunningInsertionEffect = true), lastEffect = finishedWork, runWithFiberInDEV(
+                  void 0 !== destroy && (inst.destroy = void 0, (flags & Insertion) !== NoFlags && (isRunningInsertionEffect = true), lastEffect = finishedWork, runWithFiberInDEV(
                     lastEffect,
                     callDestroyInDEV,
                     lastEffect,
                     nearestMountedAncestor,
                     destroy
-                  ), (flags & Insertion5) !== NoFlags && (isRunningInsertionEffect = false));
+                  ), (flags & Insertion) !== NoFlags && (isRunningInsertionEffect = false));
                 }
                 updateQueue = updateQueue.next;
               } while (updateQueue !== firstEffect);
@@ -12202,21 +11232,21 @@
             if (!(fiber.flags & 2)) return fiber.stateNode;
           }
         }
-        function insertOrAppendPlacementNodeIntoContainer(node2, before, parent) {
-          var tag = node2.tag;
+        function insertOrAppendPlacementNodeIntoContainer(node, before, parent) {
+          var tag = node.tag;
           if (5 === tag || 6 === tag)
-            node2 = node2.stateNode, before ? (warnForReactChildrenConflict(parent), (9 === parent.nodeType ? parent.body : "HTML" === parent.nodeName ? parent.ownerDocument.body : parent).insertBefore(node2, before)) : (warnForReactChildrenConflict(parent), before = 9 === parent.nodeType ? parent.body : "HTML" === parent.nodeName ? parent.ownerDocument.body : parent, before.appendChild(node2), parent = parent._reactRootContainer, null !== parent && void 0 !== parent || null !== before.onclick || (before.onclick = noop$1));
-          else if (4 !== tag && (27 === tag && isSingletonScope(node2.type) && (parent = node2.stateNode, before = null), node2 = node2.child, null !== node2))
-            for (insertOrAppendPlacementNodeIntoContainer(node2, before, parent), node2 = node2.sibling; null !== node2; )
-              insertOrAppendPlacementNodeIntoContainer(node2, before, parent), node2 = node2.sibling;
+            node = node.stateNode, before ? (warnForReactChildrenConflict(parent), (9 === parent.nodeType ? parent.body : "HTML" === parent.nodeName ? parent.ownerDocument.body : parent).insertBefore(node, before)) : (warnForReactChildrenConflict(parent), before = 9 === parent.nodeType ? parent.body : "HTML" === parent.nodeName ? parent.ownerDocument.body : parent, before.appendChild(node), parent = parent._reactRootContainer, null !== parent && void 0 !== parent || null !== before.onclick || (before.onclick = noop$1));
+          else if (4 !== tag && (27 === tag && isSingletonScope(node.type) && (parent = node.stateNode, before = null), node = node.child, null !== node))
+            for (insertOrAppendPlacementNodeIntoContainer(node, before, parent), node = node.sibling; null !== node; )
+              insertOrAppendPlacementNodeIntoContainer(node, before, parent), node = node.sibling;
         }
-        function insertOrAppendPlacementNode(node2, before, parent) {
-          var tag = node2.tag;
+        function insertOrAppendPlacementNode(node, before, parent) {
+          var tag = node.tag;
           if (5 === tag || 6 === tag)
-            node2 = node2.stateNode, before ? parent.insertBefore(node2, before) : parent.appendChild(node2);
-          else if (4 !== tag && (27 === tag && isSingletonScope(node2.type) && (parent = node2.stateNode), node2 = node2.child, null !== node2))
-            for (insertOrAppendPlacementNode(node2, before, parent), node2 = node2.sibling; null !== node2; )
-              insertOrAppendPlacementNode(node2, before, parent), node2 = node2.sibling;
+            node = node.stateNode, before ? parent.insertBefore(node, before) : parent.appendChild(node);
+          else if (4 !== tag && (27 === tag && isSingletonScope(node.type) && (parent = node.stateNode), node = node.child, null !== node))
+            for (insertOrAppendPlacementNode(node, before, parent), node = node.sibling; null !== node; )
+              insertOrAppendPlacementNode(node, before, parent), node = node.sibling;
         }
         function commitPlacement(finishedWork) {
           for (var hostParentFiber, parentFiber = finishedWork.return; null !== parentFiber; ) {
@@ -12308,25 +11338,25 @@
                     JSCompiler_temp = null;
                     break a;
                   }
-                  var length2 = 0, start = -1, end = -1, indexWithinAnchor = 0, indexWithinFocus = 0, node2 = root3, parentNode = null;
+                  var length = 0, start = -1, end = -1, indexWithinAnchor = 0, indexWithinFocus = 0, node = root3, parentNode = null;
                   b: for (; ; ) {
-                    for (var next2; ; ) {
-                      node2 !== JSCompiler_temp || 0 !== anchorOffset && 3 !== node2.nodeType || (start = length2 + anchorOffset);
-                      node2 !== focusNode || 0 !== selection && 3 !== node2.nodeType || (end = length2 + selection);
-                      3 === node2.nodeType && (length2 += node2.nodeValue.length);
-                      if (null === (next2 = node2.firstChild)) break;
-                      parentNode = node2;
-                      node2 = next2;
+                    for (var next; ; ) {
+                      node !== JSCompiler_temp || 0 !== anchorOffset && 3 !== node.nodeType || (start = length + anchorOffset);
+                      node !== focusNode || 0 !== selection && 3 !== node.nodeType || (end = length + selection);
+                      3 === node.nodeType && (length += node.nodeValue.length);
+                      if (null === (next = node.firstChild)) break;
+                      parentNode = node;
+                      node = next;
                     }
                     for (; ; ) {
-                      if (node2 === root3) break b;
-                      parentNode === JSCompiler_temp && ++indexWithinAnchor === anchorOffset && (start = length2);
-                      parentNode === focusNode && ++indexWithinFocus === selection && (end = length2);
-                      if (null !== (next2 = node2.nextSibling)) break;
-                      node2 = parentNode;
-                      parentNode = node2.parentNode;
+                      if (node === root3) break b;
+                      parentNode === JSCompiler_temp && ++indexWithinAnchor === anchorOffset && (start = length);
+                      parentNode === focusNode && ++indexWithinFocus === selection && (end = length);
+                      if (null !== (next = node.nextSibling)) break;
+                      node = parentNode;
+                      parentNode = node.parentNode;
                     }
-                    node2 = next2;
+                    node = next;
                   }
                   JSCompiler_temp = -1 === start || -1 === end ? null : { start, end };
                 } else JSCompiler_temp = null;
@@ -12727,7 +11757,7 @@
             case 14:
             case 15:
               commitHookEffectListUnmount(
-                Insertion5,
+                Insertion,
                 deletedFiber,
                 nearestMountedAncestor
               );
@@ -12907,10 +11937,10 @@
               recursivelyTraverseMutationEffects(root3, finishedWork);
               commitReconciliationEffects(finishedWork);
               flags & 4 && (commitHookEffectListUnmount(
-                Insertion5 | HasEffect,
+                Insertion | HasEffect,
                 finishedWork,
                 finishedWork.return
-              ), commitHookEffectListMount(Insertion5 | HasEffect, finishedWork), commitHookLayoutUnmountEffects(
+              ), commitHookEffectListMount(Insertion | HasEffect, finishedWork), commitHookLayoutUnmountEffects(
                 finishedWork,
                 finishedWork.return,
                 Layout | HasEffect
@@ -14533,9 +13563,9 @@
           );
         }
         function isRenderConsistentWithExternalStores(finishedWork) {
-          for (var node2 = finishedWork; ; ) {
-            var tag = node2.tag;
-            if ((0 === tag || 11 === tag || 15 === tag) && node2.flags & 16384 && (tag = node2.updateQueue, null !== tag && (tag = tag.stores, null !== tag)))
+          for (var node = finishedWork; ; ) {
+            var tag = node.tag;
+            if ((0 === tag || 11 === tag || 15 === tag) && node.flags & 16384 && (tag = node.updateQueue, null !== tag && (tag = tag.stores, null !== tag)))
               for (var i = 0; i < tag.length; i++) {
                 var check = tag[i], getSnapshot = check.getSnapshot;
                 check = check.value;
@@ -14545,17 +13575,17 @@
                   return false;
                 }
               }
-            tag = node2.child;
-            if (node2.subtreeFlags & 16384 && null !== tag)
-              tag.return = node2, node2 = tag;
+            tag = node.child;
+            if (node.subtreeFlags & 16384 && null !== tag)
+              tag.return = node, node = tag;
             else {
-              if (node2 === finishedWork) break;
-              for (; null === node2.sibling; ) {
-                if (null === node2.return || node2.return === finishedWork) return true;
-                node2 = node2.return;
+              if (node === finishedWork) break;
+              for (; null === node.sibling; ) {
+                if (null === node.return || node.return === finishedWork) return true;
+                node = node.return;
               }
-              node2.sibling.return = node2.return;
-              node2 = node2.sibling;
+              node.sibling.return = node.return;
+              node = node.sibling;
             }
           }
           return true;
@@ -14638,7 +13668,7 @@
             else {
               var endTime = renderStartTime, debugTask = workInProgressUpdateTask;
               if (supportsUserTiming && !(endTime <= previousRenderStartTime)) {
-                var color2 = (lanes & 738197653) === lanes ? "tertiary-dark" : "primary-dark", label = (lanes & 536870912) === lanes ? "Prewarm" : (lanes & 201326741) === lanes ? "Interrupted Hydration" : "Interrupted Render";
+                var color = (lanes & 738197653) === lanes ? "tertiary-dark" : "primary-dark", label = (lanes & 536870912) === lanes ? "Prewarm" : (lanes & 201326741) === lanes ? "Interrupted Hydration" : "Interrupted Render";
                 debugTask ? debugTask.run(
                   console.timeStamp.bind(
                     console,
@@ -14647,7 +13677,7 @@
                     endTime,
                     currentTrack,
                     LANES_TRACK_GROUP,
-                    color2
+                    color
                   )
                 ) : console.timeStamp(
                   label,
@@ -14655,7 +13685,7 @@
                   endTime,
                   currentTrack,
                   LANES_TRACK_GROUP,
-                  color2
+                  color
                 );
               }
             }
@@ -14667,18 +13697,18 @@
             workInProgressUpdateTask = blockingUpdateTask;
             debugTask = 0 <= blockingUpdateTime && blockingUpdateTime < blockingClampTime ? blockingClampTime : blockingUpdateTime;
             endTime = 0 <= blockingEventTime && blockingEventTime < blockingClampTime ? blockingClampTime : blockingEventTime;
-            color2 = 0 <= endTime ? endTime : 0 <= debugTask ? debugTask : renderStartTime;
+            color = 0 <= endTime ? endTime : 0 <= debugTask ? debugTask : renderStartTime;
             0 <= blockingSuspendedTime ? (setCurrentTrackFromLanes(2), logSuspendedWithDelayPhase(
               blockingSuspendedTime,
-              color2,
+              color,
               lanes,
               previousRenderStartTime
-            )) : 0 !== (animatingLanes & 127) && (setCurrentTrackFromLanes(2), logAnimatingPhase(blockingClampTime, color2, animatingTask));
+            )) : 0 !== (animatingLanes & 127) && (setCurrentTrackFromLanes(2), logAnimatingPhase(blockingClampTime, color, animatingTask));
             previousRenderStartTime = debugTask;
             var eventTime = endTime, eventType = blockingEventType, eventIsRepeat = 0 < blockingEventRepeatTime, isSpawnedUpdate = blockingUpdateType === SPAWNED_UPDATE, isPingedUpdate = blockingUpdateType === PINGED_UPDATE;
             debugTask = renderStartTime;
             endTime = blockingUpdateTask;
-            color2 = blockingUpdateMethodName;
+            color = blockingUpdateMethodName;
             label = blockingUpdateComponentName;
             if (supportsUserTiming) {
               currentTrack = "Blocking";
@@ -14705,7 +13735,7 @@
                   color$jscomp$0
                 );
               }
-              debugTask > previousRenderStartTime && (eventTime = isSpawnedUpdate ? "error" : (lanes & 738197653) === lanes ? "tertiary-light" : "primary-light", isSpawnedUpdate = isPingedUpdate ? "Promise Resolved" : isSpawnedUpdate ? "Cascading Update" : 5 < debugTask - previousRenderStartTime ? "Update Blocked" : "Update", isPingedUpdate = [], null != label && isPingedUpdate.push(["Component name", label]), null != color2 && isPingedUpdate.push(["Method name", color2]), previousRenderStartTime = {
+              debugTask > previousRenderStartTime && (eventTime = isSpawnedUpdate ? "error" : (lanes & 738197653) === lanes ? "tertiary-light" : "primary-light", isSpawnedUpdate = isPingedUpdate ? "Promise Resolved" : isSpawnedUpdate ? "Cascading Update" : 5 < debugTask - previousRenderStartTime ? "Update Blocked" : "Update", isPingedUpdate = [], null != label && isPingedUpdate.push(["Component name", label]), null != color && isPingedUpdate.push(["Method name", color]), previousRenderStartTime = {
                 start: previousRenderStartTime,
                 end: debugTask,
                 detail: {
@@ -14732,12 +13762,12 @@
             blockingEventTime = -1.1;
             blockingClampTime = now();
           }
-          0 !== (lanes & 4194048) && (workInProgressUpdateTask = transitionUpdateTask, debugTask = 0 <= transitionStartTime && transitionStartTime < transitionClampTime ? transitionClampTime : transitionStartTime, previousRenderStartTime = 0 <= transitionUpdateTime && transitionUpdateTime < transitionClampTime ? transitionClampTime : transitionUpdateTime, endTime = 0 <= transitionEventTime && transitionEventTime < transitionClampTime ? transitionClampTime : transitionEventTime, color2 = 0 <= endTime ? endTime : 0 <= previousRenderStartTime ? previousRenderStartTime : renderStartTime, 0 <= transitionSuspendedTime ? (setCurrentTrackFromLanes(256), logSuspendedWithDelayPhase(
+          0 !== (lanes & 4194048) && (workInProgressUpdateTask = transitionUpdateTask, debugTask = 0 <= transitionStartTime && transitionStartTime < transitionClampTime ? transitionClampTime : transitionStartTime, previousRenderStartTime = 0 <= transitionUpdateTime && transitionUpdateTime < transitionClampTime ? transitionClampTime : transitionUpdateTime, endTime = 0 <= transitionEventTime && transitionEventTime < transitionClampTime ? transitionClampTime : transitionEventTime, color = 0 <= endTime ? endTime : 0 <= previousRenderStartTime ? previousRenderStartTime : renderStartTime, 0 <= transitionSuspendedTime ? (setCurrentTrackFromLanes(256), logSuspendedWithDelayPhase(
             transitionSuspendedTime,
-            color2,
+            color,
             lanes,
             workInProgressUpdateTask
-          )) : 0 !== (animatingLanes & 4194048) && (setCurrentTrackFromLanes(256), logAnimatingPhase(transitionClampTime, color2, animatingTask)), isPingedUpdate = endTime, eventTime = transitionEventType, eventType = 0 < transitionEventRepeatTime, eventIsRepeat = transitionUpdateType === PINGED_UPDATE, color2 = renderStartTime, endTime = transitionUpdateTask, label = transitionUpdateMethodName, isSpawnedUpdate = transitionUpdateComponentName, supportsUserTiming && (currentTrack = "Transition", 0 < previousRenderStartTime ? previousRenderStartTime > color2 && (previousRenderStartTime = color2) : previousRenderStartTime = color2, 0 < debugTask ? debugTask > previousRenderStartTime && (debugTask = previousRenderStartTime) : debugTask = previousRenderStartTime, 0 < isPingedUpdate ? isPingedUpdate > debugTask && (isPingedUpdate = debugTask) : isPingedUpdate = debugTask, debugTask > isPingedUpdate && null !== eventTime && (color$jscomp$0 = eventType ? "secondary-light" : "warning", endTime ? endTime.run(
+          )) : 0 !== (animatingLanes & 4194048) && (setCurrentTrackFromLanes(256), logAnimatingPhase(transitionClampTime, color, animatingTask)), isPingedUpdate = endTime, eventTime = transitionEventType, eventType = 0 < transitionEventRepeatTime, eventIsRepeat = transitionUpdateType === PINGED_UPDATE, color = renderStartTime, endTime = transitionUpdateTask, label = transitionUpdateMethodName, isSpawnedUpdate = transitionUpdateComponentName, supportsUserTiming && (currentTrack = "Transition", 0 < previousRenderStartTime ? previousRenderStartTime > color && (previousRenderStartTime = color) : previousRenderStartTime = color, 0 < debugTask ? debugTask > previousRenderStartTime && (debugTask = previousRenderStartTime) : debugTask = previousRenderStartTime, 0 < isPingedUpdate ? isPingedUpdate > debugTask && (isPingedUpdate = debugTask) : isPingedUpdate = debugTask, debugTask > isPingedUpdate && null !== eventTime && (color$jscomp$0 = eventType ? "secondary-light" : "warning", endTime ? endTime.run(
             console.timeStamp.bind(
               console,
               eventType ? "Consecutive" : "Event: " + eventTime,
@@ -14771,9 +13801,9 @@
             currentTrack,
             LANES_TRACK_GROUP,
             "primary-dark"
-          )), color2 > previousRenderStartTime && (debugTask = eventIsRepeat ? "Promise Resolved" : 5 < color2 - previousRenderStartTime ? "Update Blocked" : "Update", isPingedUpdate = [], null != isSpawnedUpdate && isPingedUpdate.push(["Component name", isSpawnedUpdate]), null != label && isPingedUpdate.push(["Method name", label]), previousRenderStartTime = {
+          )), color > previousRenderStartTime && (debugTask = eventIsRepeat ? "Promise Resolved" : 5 < color - previousRenderStartTime ? "Update Blocked" : "Update", isPingedUpdate = [], null != isSpawnedUpdate && isPingedUpdate.push(["Component name", isSpawnedUpdate]), null != label && isPingedUpdate.push(["Method name", label]), previousRenderStartTime = {
             start: previousRenderStartTime,
-            end: color2,
+            end: color,
             detail: {
               devtools: {
                 properties: isPingedUpdate,
@@ -14816,7 +13846,7 @@
           endTime = root3.entangledLanes;
           if (0 !== endTime)
             for (root3 = root3.entanglements, endTime &= lanes; 0 < endTime; )
-              debugTask = 31 - clz32(endTime), color2 = 1 << debugTask, lanes |= root3[debugTask], endTime &= ~color2;
+              debugTask = 31 - clz32(endTime), color = 1 << debugTask, lanes |= root3[debugTask], endTime &= ~color;
           entangledRenderLanes = lanes;
           finishQueueingConcurrentUpdates();
           root3 = getCurrentTime();
@@ -15077,9 +14107,9 @@
           null === current2 ? completeUnitOfWork(unitOfWork) : workInProgress = current2;
         }
         function replaySuspendedUnitOfWork(unitOfWork) {
-          var next2 = runWithFiberInDEV(unitOfWork, replayBeginWork, unitOfWork);
+          var next = runWithFiberInDEV(unitOfWork, replayBeginWork, unitOfWork);
           unitOfWork.memoizedProps = unitOfWork.pendingProps;
-          null === next2 ? completeUnitOfWork(unitOfWork) : workInProgress = next2;
+          null === next ? completeUnitOfWork(unitOfWork) : workInProgress = next;
         }
         function replayBeginWork(unitOfWork) {
           var current2 = unitOfWork.alternate, isProfilingMode = (unitOfWork.mode & ProfileMode) !== NoMode;
@@ -15191,26 +14221,26 @@
         }
         function unwindUnitOfWork(unitOfWork, skipSiblings) {
           do {
-            var next2 = unwindWork(unitOfWork.alternate, unitOfWork);
-            if (null !== next2) {
-              next2.flags &= 32767;
-              workInProgress = next2;
+            var next = unwindWork(unitOfWork.alternate, unitOfWork);
+            if (null !== next) {
+              next.flags &= 32767;
+              workInProgress = next;
               return;
             }
             if ((unitOfWork.mode & ProfileMode) !== NoMode) {
               stopProfilerTimerIfRunningAndRecordIncompleteDuration(unitOfWork);
-              next2 = unitOfWork.actualDuration;
+              next = unitOfWork.actualDuration;
               for (var child = unitOfWork.child; null !== child; )
-                next2 += child.actualDuration, child = child.sibling;
-              unitOfWork.actualDuration = next2;
+                next += child.actualDuration, child = child.sibling;
+              unitOfWork.actualDuration = next;
             }
-            next2 = unitOfWork.return;
-            null !== next2 && (next2.flags |= 32768, next2.subtreeFlags = 0, next2.deletions = null);
+            next = unitOfWork.return;
+            null !== next && (next.flags |= 32768, next.subtreeFlags = 0, next.deletions = null);
             if (!skipSiblings && (unitOfWork = unitOfWork.sibling, null !== unitOfWork)) {
               workInProgress = unitOfWork;
               return;
             }
-            workInProgress = unitOfWork = next2;
+            workInProgress = unitOfWork = next;
           } while (null !== unitOfWork);
           workInProgressRootExitStatus = RootSuspendedAtTheShell;
           workInProgress = null;
@@ -15340,10 +14370,10 @@
                     else {
                       var doc = priorFocusedElem.ownerDocument || document, win = doc && doc.defaultView || window;
                       if (win.getSelection) {
-                        var selection = win.getSelection(), length2 = priorFocusedElem.textContent.length, start$jscomp$0 = Math.min(
+                        var selection = win.getSelection(), length = priorFocusedElem.textContent.length, start$jscomp$0 = Math.min(
                           priorSelectionRange.start,
-                          length2
-                        ), end$jscomp$0 = void 0 === priorSelectionRange.end ? start$jscomp$0 : Math.min(priorSelectionRange.end, length2);
+                          length
+                        ), end$jscomp$0 = void 0 === priorSelectionRange.end ? start$jscomp$0 : Math.min(priorSelectionRange.end, length);
                         !selection.extend && start$jscomp$0 > end$jscomp$0 && (curFocusedElem = end$jscomp$0, end$jscomp$0 = start$jscomp$0, start$jscomp$0 = curFocusedElem);
                         var startMarker = getNodeForCharacterOffset(
                           priorFocusedElem,
@@ -15928,13 +14958,13 @@
           mightHavePendingSyncWork = didScheduleMicrotask_act = didScheduleMicrotask = false;
           var syncTransitionLanes = 0;
           0 !== currentEventTransitionLane && shouldAttemptEagerTransition() && (syncTransitionLanes = currentEventTransitionLane);
-          for (var currentTime = now$1(), prev2 = null, root3 = firstScheduledRoot; null !== root3; ) {
-            var next2 = root3.next, nextLanes = scheduleTaskForRootDuringMicrotask(root3, currentTime);
+          for (var currentTime = now$1(), prev = null, root3 = firstScheduledRoot; null !== root3; ) {
+            var next = root3.next, nextLanes = scheduleTaskForRootDuringMicrotask(root3, currentTime);
             if (0 === nextLanes)
-              root3.next = null, null === prev2 ? firstScheduledRoot = next2 : prev2.next = next2, null === next2 && (lastScheduledRoot = prev2);
-            else if (prev2 = root3, 0 !== syncTransitionLanes || 0 !== (nextLanes & 3))
+              root3.next = null, null === prev ? firstScheduledRoot = next : prev.next = next, null === next && (lastScheduledRoot = prev);
+            else if (prev = root3, 0 !== syncTransitionLanes || 0 !== (nextLanes & 3))
               mightHavePendingSyncWork = true;
-            root3 = next2;
+            root3 = next;
           }
           pendingEffectsStatus !== NO_PENDING_EFFECTS && pendingEffectsStatus !== PENDING_PASSIVE_PHASE || flushSyncWorkAcrossRoots_impl(syncTransitionLanes, false);
           0 !== currentEventTransitionLane && (currentEventTransitionLane = 0);
@@ -16601,11 +15631,11 @@
           while (inst && 5 !== inst.tag && 27 !== inst.tag);
           return inst ? inst : null;
         }
-        function accumulateEnterLeaveListenersForEvent(dispatchQueue, event, target, common2, inCapturePhase) {
-          for (var registrationName = event._reactName, listeners = []; null !== target && target !== common2; ) {
+        function accumulateEnterLeaveListenersForEvent(dispatchQueue, event, target, common, inCapturePhase) {
+          for (var registrationName = event._reactName, listeners = []; null !== target && target !== common; ) {
             var _instance4 = target, alternate = _instance4.alternate, stateNode = _instance4.stateNode;
             _instance4 = _instance4.tag;
-            if (null !== alternate && alternate === common2) break;
+            if (null !== alternate && alternate === common) break;
             5 !== _instance4 && 26 !== _instance4 && 27 !== _instance4 || null === stateNode || (alternate = stateNode, inCapturePhase ? (stateNode = getListener(target, registrationName), null != stateNode && listeners.unshift(
               createDispatchListener(target, stateNode, alternate)
             )) : inCapturePhase || (stateNode = getListener(target, registrationName), null != stateNode && listeners.push(
@@ -16653,12 +15683,12 @@
             typeof listener
           );
         }
-        function normalizeHTML(parent, html2) {
+        function normalizeHTML(parent, html) {
           parent = parent.namespaceURI === MATH_NAMESPACE || parent.namespaceURI === SVG_NAMESPACE ? parent.ownerDocument.createElementNS(
             parent.namespaceURI,
             parent.tagName
           ) : parent.ownerDocument.createElement(parent.tagName);
-          parent.innerHTML = html2;
+          parent.innerHTML = html;
           return parent.innerHTML;
         }
         function normalizeMarkupForTextOrAttribute(markup) {
@@ -17592,11 +16622,11 @@
             );
           else {
             var clientValue;
-            var delimiter2 = clientValue = "", styleName;
+            var delimiter = clientValue = "", styleName;
             for (styleName in value$jscomp$0)
               if (value$jscomp$0.hasOwnProperty(styleName)) {
                 var value2 = value$jscomp$0[styleName];
-                null != value2 && "boolean" !== typeof value2 && "" !== value2 && (0 === styleName.indexOf("--") ? (checkCSSPropertyStringCoercion(value2, styleName), clientValue += delimiter2 + styleName + ":" + ("" + value2).trim()) : "number" !== typeof value2 || 0 === value2 || unitlessNumbers.has(styleName) ? (checkCSSPropertyStringCoercion(value2, styleName), clientValue += delimiter2 + styleName.replace(uppercasePattern, "-$1").toLowerCase().replace(msPattern$1, "-ms-") + ":" + ("" + value2).trim()) : clientValue += delimiter2 + styleName.replace(uppercasePattern, "-$1").toLowerCase().replace(msPattern$1, "-ms-") + ":" + value2 + "px", delimiter2 = ";");
+                null != value2 && "boolean" !== typeof value2 && "" !== value2 && (0 === styleName.indexOf("--") ? (checkCSSPropertyStringCoercion(value2, styleName), clientValue += delimiter + styleName + ":" + ("" + value2).trim()) : "number" !== typeof value2 || 0 === value2 || unitlessNumbers.has(styleName) ? (checkCSSPropertyStringCoercion(value2, styleName), clientValue += delimiter + styleName.replace(uppercasePattern, "-$1").toLowerCase().replace(msPattern$1, "-ms-") + ":" + ("" + value2).trim()) : clientValue += delimiter + styleName.replace(uppercasePattern, "-$1").toLowerCase().replace(msPattern$1, "-ms-") + ":" + value2 + "px", delimiter = ";");
               }
             clientValue = clientValue || null;
             value$jscomp$0 = domElement.getAttribute("style");
@@ -18301,15 +17331,15 @@
         function estimateBandwidth() {
           if ("function" === typeof performance.getEntriesByType) {
             for (var count = 0, bits = 0, resourceEntries = performance.getEntriesByType("resource"), i = 0; i < resourceEntries.length; i++) {
-              var entry = resourceEntries[i], transferSize = entry.transferSize, initiatorType = entry.initiatorType, duration2 = entry.duration;
-              if (transferSize && duration2 && isLikelyStaticResource(initiatorType)) {
+              var entry = resourceEntries[i], transferSize = entry.transferSize, initiatorType = entry.initiatorType, duration = entry.duration;
+              if (transferSize && duration && isLikelyStaticResource(initiatorType)) {
                 initiatorType = 0;
-                duration2 = entry.responseEnd;
+                duration = entry.responseEnd;
                 for (i += 1; i < resourceEntries.length; i++) {
                   var overlapEntry = resourceEntries[i], overlapStartTime = overlapEntry.startTime;
-                  if (overlapStartTime > duration2) break;
+                  if (overlapStartTime > duration) break;
                   var overlapTransferSize = overlapEntry.transferSize, overlapInitiatorType = overlapEntry.initiatorType;
-                  overlapTransferSize && isLikelyStaticResource(overlapInitiatorType) && (overlapEntry = overlapEntry.responseEnd, initiatorType += overlapTransferSize * (overlapEntry < duration2 ? 1 : (duration2 - overlapStartTime) / (overlapEntry - overlapStartTime)));
+                  overlapTransferSize && isLikelyStaticResource(overlapInitiatorType) && (overlapEntry = overlapEntry.responseEnd, initiatorType += overlapTransferSize * (overlapEntry < duration ? 1 : (duration - overlapStartTime) / (overlapEntry - overlapStartTime)));
                 }
                 --i;
                 bits += 8 * (transferSize + initiatorType) / (entry.duration / 1e3);
@@ -18423,52 +17453,52 @@
           (9 === container2.nodeType ? container2.body : "HTML" === container2.nodeName ? container2.ownerDocument.body : container2).removeChild(child);
         }
         function clearHydrationBoundary(parentInstance, hydrationInstance) {
-          var node2 = hydrationInstance, depth = 0;
+          var node = hydrationInstance, depth = 0;
           do {
-            var nextNode = node2.nextSibling;
-            parentInstance.removeChild(node2);
+            var nextNode = node.nextSibling;
+            parentInstance.removeChild(node);
             if (nextNode && 8 === nextNode.nodeType)
-              if (node2 = nextNode.data, node2 === SUSPENSE_END_DATA || node2 === ACTIVITY_END_DATA) {
+              if (node = nextNode.data, node === SUSPENSE_END_DATA || node === ACTIVITY_END_DATA) {
                 if (0 === depth) {
                   parentInstance.removeChild(nextNode);
                   retryIfBlockedOn(hydrationInstance);
                   return;
                 }
                 depth--;
-              } else if (node2 === SUSPENSE_START_DATA || node2 === SUSPENSE_PENDING_START_DATA || node2 === SUSPENSE_QUEUED_START_DATA || node2 === SUSPENSE_FALLBACK_START_DATA || node2 === ACTIVITY_START_DATA)
+              } else if (node === SUSPENSE_START_DATA || node === SUSPENSE_PENDING_START_DATA || node === SUSPENSE_QUEUED_START_DATA || node === SUSPENSE_FALLBACK_START_DATA || node === ACTIVITY_START_DATA)
                 depth++;
-              else if (node2 === PREAMBLE_CONTRIBUTION_HTML)
+              else if (node === PREAMBLE_CONTRIBUTION_HTML)
                 releaseSingletonInstance(
                   parentInstance.ownerDocument.documentElement
                 );
-              else if (node2 === PREAMBLE_CONTRIBUTION_HEAD) {
-                node2 = parentInstance.ownerDocument.head;
-                releaseSingletonInstance(node2);
-                for (var node$jscomp$0 = node2.firstChild; node$jscomp$0; ) {
+              else if (node === PREAMBLE_CONTRIBUTION_HEAD) {
+                node = parentInstance.ownerDocument.head;
+                releaseSingletonInstance(node);
+                for (var node$jscomp$0 = node.firstChild; node$jscomp$0; ) {
                   var nextNode$jscomp$0 = node$jscomp$0.nextSibling, nodeName = node$jscomp$0.nodeName;
-                  node$jscomp$0[internalHoistableMarker] || "SCRIPT" === nodeName || "STYLE" === nodeName || "LINK" === nodeName && "stylesheet" === node$jscomp$0.rel.toLowerCase() || node2.removeChild(node$jscomp$0);
+                  node$jscomp$0[internalHoistableMarker] || "SCRIPT" === nodeName || "STYLE" === nodeName || "LINK" === nodeName && "stylesheet" === node$jscomp$0.rel.toLowerCase() || node.removeChild(node$jscomp$0);
                   node$jscomp$0 = nextNode$jscomp$0;
                 }
               } else
-                node2 === PREAMBLE_CONTRIBUTION_BODY && releaseSingletonInstance(parentInstance.ownerDocument.body);
-            node2 = nextNode;
-          } while (node2);
+                node === PREAMBLE_CONTRIBUTION_BODY && releaseSingletonInstance(parentInstance.ownerDocument.body);
+            node = nextNode;
+          } while (node);
           retryIfBlockedOn(hydrationInstance);
         }
         function hideOrUnhideDehydratedBoundary(suspenseInstance, isHidden) {
-          var node2 = suspenseInstance;
+          var node = suspenseInstance;
           suspenseInstance = 0;
           do {
-            var nextNode = node2.nextSibling;
-            1 === node2.nodeType ? isHidden ? (node2._stashedDisplay = node2.style.display, node2.style.display = "none") : (node2.style.display = node2._stashedDisplay || "", "" === node2.getAttribute("style") && node2.removeAttribute("style")) : 3 === node2.nodeType && (isHidden ? (node2._stashedText = node2.nodeValue, node2.nodeValue = "") : node2.nodeValue = node2._stashedText || "");
+            var nextNode = node.nextSibling;
+            1 === node.nodeType ? isHidden ? (node._stashedDisplay = node.style.display, node.style.display = "none") : (node.style.display = node._stashedDisplay || "", "" === node.getAttribute("style") && node.removeAttribute("style")) : 3 === node.nodeType && (isHidden ? (node._stashedText = node.nodeValue, node.nodeValue = "") : node.nodeValue = node._stashedText || "");
             if (nextNode && 8 === nextNode.nodeType)
-              if (node2 = nextNode.data, node2 === SUSPENSE_END_DATA)
+              if (node = nextNode.data, node === SUSPENSE_END_DATA)
                 if (0 === suspenseInstance) break;
                 else suspenseInstance--;
               else
-                node2 !== SUSPENSE_START_DATA && node2 !== SUSPENSE_PENDING_START_DATA && node2 !== SUSPENSE_QUEUED_START_DATA && node2 !== SUSPENSE_FALLBACK_START_DATA || suspenseInstance++;
-            node2 = nextNode;
-          } while (node2);
+                node !== SUSPENSE_START_DATA && node !== SUSPENSE_PENDING_START_DATA && node !== SUSPENSE_QUEUED_START_DATA && node !== SUSPENSE_FALLBACK_START_DATA || suspenseInstance++;
+            node = nextNode;
+          } while (node);
         }
         function hideDehydratedBoundary(suspenseInstance) {
           hideOrUnhideDehydratedBoundary(suspenseInstance, true);
@@ -18495,22 +17525,22 @@
           var nextNode = container2.firstChild;
           nextNode && 10 === nextNode.nodeType && (nextNode = nextNode.nextSibling);
           for (; nextNode; ) {
-            var node2 = nextNode;
+            var node = nextNode;
             nextNode = nextNode.nextSibling;
-            switch (node2.nodeName) {
+            switch (node.nodeName) {
               case "HTML":
               case "HEAD":
               case "BODY":
-                clearContainerSparingly(node2);
-                detachDeletedInstance(node2);
+                clearContainerSparingly(node);
+                detachDeletedInstance(node);
                 continue;
               case "SCRIPT":
               case "STYLE":
                 continue;
               case "LINK":
-                if ("stylesheet" === node2.rel.toLowerCase()) continue;
+                if ("stylesheet" === node.rel.toLowerCase()) continue;
             }
-            container2.removeChild(node2);
+            container2.removeChild(node);
           }
         }
         function canHydrateInstance(instance, type, props, inRootOrSingleton) {
@@ -18594,19 +17624,19 @@
             instance._reactRetry = listener;
           }
         }
-        function getNextHydratable(node2) {
-          for (; null != node2; node2 = node2.nextSibling) {
-            var nodeType = node2.nodeType;
+        function getNextHydratable(node) {
+          for (; null != node; node = node.nextSibling) {
+            var nodeType = node.nodeType;
             if (1 === nodeType || 3 === nodeType) break;
             if (8 === nodeType) {
-              nodeType = node2.data;
+              nodeType = node.data;
               if (nodeType === SUSPENSE_START_DATA || nodeType === SUSPENSE_FALLBACK_START_DATA || nodeType === SUSPENSE_PENDING_START_DATA || nodeType === SUSPENSE_QUEUED_START_DATA || nodeType === ACTIVITY_START_DATA || nodeType === FORM_STATE_IS_MATCHING || nodeType === FORM_STATE_IS_NOT_MATCHING)
                 break;
               if (nodeType === SUSPENSE_END_DATA || nodeType === ACTIVITY_END_DATA)
                 return null;
             }
           }
-          return node2;
+          return node;
         }
         function describeHydratableInstanceForDevWarnings(instance) {
           if (1 === instance.nodeType) {
@@ -18821,7 +17851,7 @@
           return 'link[rel="stylesheet"][' + key + "]";
         }
         function stylesheetPropsFromRawProps(rawProps) {
-          return assign2({}, rawProps, {
+          return assign({}, rawProps, {
             "data-precedence": rawProps.precedence,
             precedence: null
           });
@@ -18851,7 +17881,7 @@
                 );
                 if (instance)
                   return resource.instance = instance, markNodeAsHoistable(instance), instance;
-                var styleProps = assign2({}, props, {
+                var styleProps = assign({}, props, {
                   "data-href": props.href,
                   "data-precedence": props.precedence,
                   href: null,
@@ -18890,7 +17920,7 @@
                   return resource.instance = styleProps, markNodeAsHoistable(styleProps), styleProps;
                 instance = props;
                 if (styleProps = preloadPropsMap.get(_instance))
-                  instance = assign2({}, props), adoptPreloadPropsForScript(instance, styleProps);
+                  instance = assign({}, props), adoptPreloadPropsForScript(instance, styleProps);
                 hoistableRoot = hoistableRoot.ownerDocument || hoistableRoot;
                 styleProps = hoistableRoot.createElement("script");
                 markNodeAsHoistable(styleProps);
@@ -18912,8 +17942,8 @@
           for (var nodes = root3.querySelectorAll(
             'link[rel="stylesheet"][data-precedence],style[data-precedence]'
           ), last = nodes.length ? nodes[nodes.length - 1] : null, prior = last, i = 0; i < nodes.length; i++) {
-            var node2 = nodes[i];
-            if (node2.dataset.precedence === precedence) prior = node2;
+            var node = nodes[i];
+            if (node.dataset.precedence === precedence) prior = node;
             else if (prior !== last) break;
           }
           prior ? prior.parentNode.insertBefore(instance, prior.nextSibling) : (precedence = 9 === root3.nodeType ? root3.head : root3, precedence.insertBefore(instance, precedence.firstChild));
@@ -18939,12 +17969,12 @@
           cache2.set(type, null);
           ownerDocument = ownerDocument.getElementsByTagName(type);
           for (caches = 0; caches < ownerDocument.length; caches++) {
-            var node2 = ownerDocument[caches];
-            if (!(node2[internalHoistableMarker] || node2[internalInstanceKey] || "link" === type && "stylesheet" === node2.getAttribute("rel")) && node2.namespaceURI !== SVG_NAMESPACE) {
-              var nodeKey = node2.getAttribute(keyAttribute) || "";
+            var node = ownerDocument[caches];
+            if (!(node[internalHoistableMarker] || node[internalInstanceKey] || "link" === type && "stylesheet" === node.getAttribute("rel")) && node.namespaceURI !== SVG_NAMESPACE) {
+              var nodeKey = node.getAttribute(keyAttribute) || "";
               nodeKey = type + nodeKey;
               var existing = cache2.get(nodeKey);
-              existing ? existing.push(node2) : cache2.set(nodeKey, [node2]);
+              existing ? existing.push(node) : cache2.set(nodeKey, [node]);
             }
           }
           return cache2;
@@ -19124,17 +18154,17 @@
               for (var nodes = root3.querySelectorAll(
                 "link[data-precedence],style[data-precedence]"
               ), i = 0; i < nodes.length; i++) {
-                var node2 = nodes[i];
-                if ("LINK" === node2.nodeName || "not all" !== node2.getAttribute("media"))
-                  precedences.set(node2.dataset.precedence, node2), last = node2;
+                var node = nodes[i];
+                if ("LINK" === node.nodeName || "not all" !== node.getAttribute("media"))
+                  precedences.set(node.dataset.precedence, node), last = node;
               }
               last && precedences.set(LAST_PRECEDENCE, last);
             }
             nodes = resource.instance;
-            node2 = nodes.getAttribute("data-precedence");
-            i = precedences.get(node2) || last;
+            node = nodes.getAttribute("data-precedence");
+            i = precedences.get(node) || last;
             i === last && precedences.set(LAST_PRECEDENCE, nodes);
-            precedences.set(node2, nodes);
+            precedences.set(node, nodes);
             this.count++;
             last = onUnsuspend.bind(this);
             nodes.addEventListener("load", last);
@@ -19186,7 +18216,7 @@
           isStrictMode = createFiber(3, null, null, tag);
           containerInfo.current = isStrictMode;
           isStrictMode.stateNode = containerInfo;
-          tag = createCache3();
+          tag = createCache();
           retainCache(tag);
           containerInfo.pooledCache = tag;
           retainCache(tag);
@@ -19758,14 +18788,14 @@
           ));
         }
         "undefined" !== typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ && "function" === typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart && __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart(Error());
-        var Scheduler = require_scheduler(), React14 = require_react(), ReactDOM = require_react_dom(), assign2 = Object.assign, REACT_LEGACY_ELEMENT_TYPE = Symbol.for("react.element"), REACT_ELEMENT_TYPE = Symbol.for("react.transitional.element"), REACT_PORTAL_TYPE = Symbol.for("react.portal"), REACT_FRAGMENT_TYPE = Symbol.for("react.fragment"), REACT_STRICT_MODE_TYPE = Symbol.for("react.strict_mode"), REACT_PROFILER_TYPE = Symbol.for("react.profiler"), REACT_CONSUMER_TYPE = Symbol.for("react.consumer"), REACT_CONTEXT_TYPE = Symbol.for("react.context"), REACT_FORWARD_REF_TYPE = Symbol.for("react.forward_ref"), REACT_SUSPENSE_TYPE = Symbol.for("react.suspense"), REACT_SUSPENSE_LIST_TYPE = Symbol.for("react.suspense_list"), REACT_MEMO_TYPE = Symbol.for("react.memo"), REACT_LAZY_TYPE2 = Symbol.for("react.lazy");
+        var Scheduler = require_scheduler(), React5 = require_react(), ReactDOM = require_react_dom(), assign = Object.assign, REACT_LEGACY_ELEMENT_TYPE = Symbol.for("react.element"), REACT_ELEMENT_TYPE = Symbol.for("react.transitional.element"), REACT_PORTAL_TYPE = Symbol.for("react.portal"), REACT_FRAGMENT_TYPE = Symbol.for("react.fragment"), REACT_STRICT_MODE_TYPE = Symbol.for("react.strict_mode"), REACT_PROFILER_TYPE = Symbol.for("react.profiler"), REACT_CONSUMER_TYPE = Symbol.for("react.consumer"), REACT_CONTEXT_TYPE = Symbol.for("react.context"), REACT_FORWARD_REF_TYPE = Symbol.for("react.forward_ref"), REACT_SUSPENSE_TYPE = Symbol.for("react.suspense"), REACT_SUSPENSE_LIST_TYPE = Symbol.for("react.suspense_list"), REACT_MEMO_TYPE = Symbol.for("react.memo"), REACT_LAZY_TYPE2 = Symbol.for("react.lazy");
         Symbol.for("react.scope");
         var REACT_ACTIVITY_TYPE = Symbol.for("react.activity");
         Symbol.for("react.legacy_hidden");
         Symbol.for("react.tracing_marker");
         var REACT_MEMO_CACHE_SENTINEL = Symbol.for("react.memo_cache_sentinel");
         Symbol.for("react.view_transition");
-        var MAYBE_ITERATOR_SYMBOL = Symbol.iterator, REACT_CLIENT_REFERENCE = Symbol.for("react.client.reference"), isArrayImpl = Array.isArray, ReactSharedInternals = React14.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE, ReactDOMSharedInternals = ReactDOM.__DOM_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE, NotPending = Object.freeze({
+        var MAYBE_ITERATOR_SYMBOL = Symbol.iterator, REACT_CLIENT_REFERENCE = Symbol.for("react.client.reference"), isArrayImpl = Array.isArray, ReactSharedInternals = React5.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE, ReactDOMSharedInternals = ReactDOM.__DOM_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE, NotPending = Object.freeze({
           pending: false,
           data: null,
           method: null,
@@ -19774,7 +18804,7 @@
         var fiberStack = [];
         var index$jscomp$0 = -1, contextStackCursor = createCursor(null), contextFiberStackCursor = createCursor(null), rootInstanceStackCursor = createCursor(null), hostTransitionProviderCursor = createCursor(null), disabledDepth = 0, prevLog, prevInfo, prevWarn, prevError, prevGroup, prevGroupCollapsed, prevGroupEnd;
         disabledLog.__reactDisabledLog = true;
-        var prefix2, suffix, reentry = false;
+        var prefix, suffix, reentry = false;
         var componentFrameCache = new ("function" === typeof WeakMap ? WeakMap : Map)();
         var current = null, isRendering = false, hasOwnProperty = Object.prototype.hasOwnProperty, scheduleCallback$3 = Scheduler.unstable_scheduleCallback, cancelCallback$1 = Scheduler.unstable_cancelCallback, shouldYield = Scheduler.unstable_shouldYield, requestPaint = Scheduler.unstable_requestPaint, now$1 = Scheduler.unstable_now, getCurrentPriorityLevel = Scheduler.unstable_getCurrentPriorityLevel, ImmediatePriority = Scheduler.unstable_ImmediatePriority, UserBlockingPriority = Scheduler.unstable_UserBlockingPriority, NormalPriority$1 = Scheduler.unstable_NormalPriority, LowPriority = Scheduler.unstable_LowPriority, IdlePriority = Scheduler.unstable_IdlePriority, log$1 = Scheduler.log, unstable_setDisableYieldValue = Scheduler.unstable_setDisableYieldValue, rendererID = null, injectedHook = null, hasLoggedError = false, isDevToolsPresent = "undefined" !== typeof __REACT_DEVTOOLS_GLOBAL_HOOK__, clz32 = Math.clz32 ? Math.clz32 : clz32Fallback, log = Math.log, LN2 = Math.LN2, nextTransitionUpdateLane = 256, nextTransitionDeferredLane = 262144, nextRetryLane = 4194304, DiscreteEventPriority = 2, ContinuousEventPriority = 8, DefaultEventPriority = 32, IdleEventPriority = 268435456, randomKey = Math.random().toString(36).slice(2), internalInstanceKey = "__reactFiber$" + randomKey, internalPropsKey = "__reactProps$" + randomKey, internalContainerInstanceKey = "__reactContainer$" + randomKey, internalEventHandlersKey = "__reactEvents$" + randomKey, internalEventHandlerListenersKey = "__reactListeners$" + randomKey, internalEventHandlesSetKey = "__reactHandles$" + randomKey, internalRootNodeResourcesKey = "__reactResources$" + randomKey, internalHoistableMarker = "__reactMarker$" + randomKey, allNativeEvents = /* @__PURE__ */ new Set(), registrationNameDependencies = {}, possibleRegistrationNames = {}, hasReadOnlyValue = {
           button: true,
@@ -19937,7 +18967,7 @@
           "animationIterationCount aspectRatio borderImageOutset borderImageSlice borderImageWidth boxFlex boxFlexGroup boxOrdinalGroup columnCount columns flex flexGrow flexPositive flexShrink flexNegative flexOrder gridArea gridRow gridRowEnd gridRowSpan gridRowStart gridColumn gridColumnEnd gridColumnSpan gridColumnStart fontWeight lineClamp lineHeight opacity order orphans scale tabSize widows zIndex zoom fillOpacity floodOpacity stopOpacity strokeDasharray strokeDashoffset strokeMiterlimit strokeOpacity strokeWidth MozAnimationIterationCount MozBoxFlex MozBoxFlexGroup MozLineClamp msAnimationIterationCount msFlex msZoom msFlexGrow msFlexNegative msFlexOrder msFlexPositive msFlexShrink msGridColumn msGridColumnSpan msGridRow msGridRowSpan WebkitAnimationIterationCount WebkitBoxFlex WebKitBoxFlexGroup WebkitBoxOrdinalGroup WebkitColumnCount WebkitColumns WebkitFlex WebkitFlexGrow WebkitFlexPositive WebkitFlexShrink WebkitLineClamp".split(
             " "
           )
-        ), MATH_NAMESPACE = "http://www.w3.org/1998/Math/MathML", SVG_NAMESPACE = "http://www.w3.org/2000/svg", aliases2 = /* @__PURE__ */ new Map([
+        ), MATH_NAMESPACE = "http://www.w3.org/1998/Math/MathML", SVG_NAMESPACE = "http://www.w3.org/2000/svg", aliases = /* @__PURE__ */ new Map([
           ["acceptCharset", "accept-charset"],
           ["htmlFor", "for"],
           ["httpEquiv", "http-equiv"],
@@ -20594,7 +19624,7 @@
           },
           defaultPrevented: 0,
           isTrusted: 0
-        }, SyntheticEvent = createSyntheticEvent(EventInterface), UIEventInterface = assign2({}, EventInterface, { view: 0, detail: 0 }), SyntheticUIEvent = createSyntheticEvent(UIEventInterface), lastMovementX, lastMovementY, lastMouseEvent, MouseEventInterface = assign2({}, UIEventInterface, {
+        }, SyntheticEvent = createSyntheticEvent(EventInterface), UIEventInterface = assign({}, EventInterface, { view: 0, detail: 0 }), SyntheticUIEvent = createSyntheticEvent(UIEventInterface), lastMovementX, lastMovementY, lastMouseEvent, MouseEventInterface = assign({}, UIEventInterface, {
           screenX: 0,
           screenY: 0,
           clientX: 0,
@@ -20619,15 +19649,15 @@
           movementY: function(event) {
             return "movementY" in event ? event.movementY : lastMovementY;
           }
-        }), SyntheticMouseEvent = createSyntheticEvent(MouseEventInterface), DragEventInterface = assign2({}, MouseEventInterface, { dataTransfer: 0 }), SyntheticDragEvent = createSyntheticEvent(DragEventInterface), FocusEventInterface = assign2({}, UIEventInterface, { relatedTarget: 0 }), SyntheticFocusEvent = createSyntheticEvent(FocusEventInterface), AnimationEventInterface = assign2({}, EventInterface, {
+        }), SyntheticMouseEvent = createSyntheticEvent(MouseEventInterface), DragEventInterface = assign({}, MouseEventInterface, { dataTransfer: 0 }), SyntheticDragEvent = createSyntheticEvent(DragEventInterface), FocusEventInterface = assign({}, UIEventInterface, { relatedTarget: 0 }), SyntheticFocusEvent = createSyntheticEvent(FocusEventInterface), AnimationEventInterface = assign({}, EventInterface, {
           animationName: 0,
           elapsedTime: 0,
           pseudoElement: 0
-        }), SyntheticAnimationEvent = createSyntheticEvent(AnimationEventInterface), ClipboardEventInterface = assign2({}, EventInterface, {
+        }), SyntheticAnimationEvent = createSyntheticEvent(AnimationEventInterface), ClipboardEventInterface = assign({}, EventInterface, {
           clipboardData: function(event) {
             return "clipboardData" in event ? event.clipboardData : window.clipboardData;
           }
-        }), SyntheticClipboardEvent = createSyntheticEvent(ClipboardEventInterface), CompositionEventInterface = assign2({}, EventInterface, { data: 0 }), SyntheticCompositionEvent = createSyntheticEvent(
+        }), SyntheticClipboardEvent = createSyntheticEvent(ClipboardEventInterface), CompositionEventInterface = assign({}, EventInterface, { data: 0 }), SyntheticCompositionEvent = createSyntheticEvent(
           CompositionEventInterface
         ), SyntheticInputEvent = SyntheticCompositionEvent, normalizeKey = {
           Esc: "Escape",
@@ -20684,7 +19714,7 @@
           Control: "ctrlKey",
           Meta: "metaKey",
           Shift: "shiftKey"
-        }, KeyboardEventInterface = assign2({}, UIEventInterface, {
+        }, KeyboardEventInterface = assign({}, UIEventInterface, {
           key: function(nativeEvent) {
             if (nativeEvent.key) {
               var key = normalizeKey[nativeEvent.key] || nativeEvent.key;
@@ -20710,7 +19740,7 @@
           which: function(event) {
             return "keypress" === event.type ? getEventCharCode(event) : "keydown" === event.type || "keyup" === event.type ? event.keyCode : 0;
           }
-        }), SyntheticKeyboardEvent = createSyntheticEvent(KeyboardEventInterface), PointerEventInterface = assign2({}, MouseEventInterface, {
+        }), SyntheticKeyboardEvent = createSyntheticEvent(KeyboardEventInterface), PointerEventInterface = assign({}, MouseEventInterface, {
           pointerId: 0,
           width: 0,
           height: 0,
@@ -20721,7 +19751,7 @@
           twist: 0,
           pointerType: 0,
           isPrimary: 0
-        }), SyntheticPointerEvent = createSyntheticEvent(PointerEventInterface), TouchEventInterface = assign2({}, UIEventInterface, {
+        }), SyntheticPointerEvent = createSyntheticEvent(PointerEventInterface), TouchEventInterface = assign({}, UIEventInterface, {
           touches: 0,
           targetTouches: 0,
           changedTouches: 0,
@@ -20730,11 +19760,11 @@
           ctrlKey: 0,
           shiftKey: 0,
           getModifierState: getEventModifierState
-        }), SyntheticTouchEvent = createSyntheticEvent(TouchEventInterface), TransitionEventInterface = assign2({}, EventInterface, {
+        }), SyntheticTouchEvent = createSyntheticEvent(TouchEventInterface), TransitionEventInterface = assign({}, EventInterface, {
           propertyName: 0,
           elapsedTime: 0,
           pseudoElement: 0
-        }), SyntheticTransitionEvent = createSyntheticEvent(TransitionEventInterface), WheelEventInterface = assign2({}, MouseEventInterface, {
+        }), SyntheticTransitionEvent = createSyntheticEvent(TransitionEventInterface), WheelEventInterface = assign({}, MouseEventInterface, {
           deltaX: function(event) {
             return "deltaX" in event ? event.deltaX : "wheelDeltaX" in event ? -event.wheelDeltaX : 0;
           },
@@ -20743,7 +19773,7 @@
           },
           deltaZ: 0,
           deltaMode: 0
-        }), SyntheticWheelEvent = createSyntheticEvent(WheelEventInterface), ToggleEventInterface = assign2({}, EventInterface, {
+        }), SyntheticWheelEvent = createSyntheticEvent(WheelEventInterface), ToggleEventInterface = assign({}, EventInterface, {
           newState: 0,
           oldState: 0
         }), SyntheticToggleEvent = createSyntheticEvent(ToggleEventInterface), END_KEYCODES = [9, 13, 27, 32], START_KEYCODE = 229, canUseCompositionEvent = canUseDOM && "CompositionEvent" in window, documentMode = null;
@@ -20774,8 +19804,8 @@
           transitionstart: makePrefixMap("Transition", "TransitionStart"),
           transitioncancel: makePrefixMap("Transition", "TransitionCancel"),
           transitionend: makePrefixMap("Transition", "TransitionEnd")
-        }, prefixedEventNames = {}, style3 = {};
-        canUseDOM && (style3 = document.createElement("div").style, "AnimationEvent" in window || (delete vendorPrefixes.animationend.animation, delete vendorPrefixes.animationiteration.animation, delete vendorPrefixes.animationstart.animation), "TransitionEvent" in window || delete vendorPrefixes.transitionend.transition);
+        }, prefixedEventNames = {}, style = {};
+        canUseDOM && (style = document.createElement("div").style, "AnimationEvent" in window || (delete vendorPrefixes.animationend.animation, delete vendorPrefixes.animationiteration.animation, delete vendorPrefixes.animationstart.animation), "TransitionEvent" in window || delete vendorPrefixes.transitionend.transition);
         var ANIMATION_END = getVendorPrefixedEventName("animationend"), ANIMATION_ITERATION = getVendorPrefixedEventName("animationiteration"), ANIMATION_START = getVendorPrefixedEventName("animationstart"), TRANSITION_RUN = getVendorPrefixedEventName("transitionrun"), TRANSITION_START = getVendorPrefixedEventName("transitionstart"), TRANSITION_CANCEL = getVendorPrefixedEventName("transitioncancel"), TRANSITION_END = getVendorPrefixedEventName("transitionend"), topLevelEventsToReactNames = /* @__PURE__ */ new Map(), simpleEventPluginEvents = "abort auxClick beforeToggle cancel canPlay canPlayThrough click close contextMenu copy cut drag dragEnd dragEnter dragExit dragLeave dragOver dragStart drop durationChange emptied encrypted ended error gotPointerCapture input invalid keyDown keyPress keyUp load loadedData loadedMetadata loadStart lostPointerCapture mouseDown mouseMove mouseOut mouseOver mouseUp paste pause play playing pointerCancel pointerDown pointerMove pointerOut pointerOver pointerUp progress rateChange reset resize seeked seeking stalled submit suspend timeUpdate touchCancel touchEnd touchStart volumeChange scroll toggle touchMove waiting wheel".split(
           " "
         );
@@ -20970,11 +20000,11 @@
         var pendingLegacyContextWarning = /* @__PURE__ */ new Map(), didWarnAboutLegacyContext = /* @__PURE__ */ new Set();
         ReactStrictModeWarnings.recordLegacyContextWarning = function(fiber, instance) {
           var strictRoot = null;
-          for (var node2 = fiber; null !== node2; )
-            node2.mode & StrictLegacyMode && (strictRoot = node2), node2 = node2.return;
+          for (var node = fiber; null !== node; )
+            node.mode & StrictLegacyMode && (strictRoot = node), node = node.return;
           null === strictRoot ? console.error(
             "Expected to find a StrictMode component in a strict mode tree. This error is likely caused by a bug in React. Please file an issue."
-          ) : !didWarnAboutLegacyContext.has(fiber.type) && (node2 = pendingLegacyContextWarning.get(strictRoot), null != fiber.type.contextTypes || null != fiber.type.childContextTypes || null !== instance && "function" === typeof instance.getChildContext) && (void 0 === node2 && (node2 = [], pendingLegacyContextWarning.set(strictRoot, node2)), node2.push(fiber));
+          ) : !didWarnAboutLegacyContext.has(fiber.type) && (node = pendingLegacyContextWarning.get(strictRoot), null != fiber.type.contextTypes || null != fiber.type.childContextTypes || null !== instance && "function" === typeof instance.getChildContext) && (void 0 === node && (node = [], pendingLegacyContextWarning.set(strictRoot, node)), node.push(fiber));
         };
         ReactStrictModeWarnings.flushLegacyContextWarning = function() {
           pendingLegacyContextWarning.forEach(function(fiberArray) {
@@ -21129,7 +20159,7 @@
         var reconcileChildFibers = createChildReconciler(true), mountChildFibers = createChildReconciler(false), UpdateState = 0, ReplaceState = 1, ForceUpdate = 2, CaptureUpdate = 3, hasForceUpdate = false;
         var didWarnUpdateInsideUpdate = false;
         var currentlyProcessingQueue = null;
-        var didReadFromEntangledAsyncAction = false, currentTreeHiddenStackCursor = createCursor(null), prevEntangledRenderLanesCursor = createCursor(0), suspenseHandlerStackCursor = createCursor(null), shellBoundary = null, SubtreeSuspenseContextMask = 1, ForceSuspenseFallback = 2, suspenseStackCursor = createCursor(0), NoFlags = 0, HasEffect = 1, Insertion5 = 2, Layout = 4, Passive = 8, didWarnUncachedGetSnapshot;
+        var didReadFromEntangledAsyncAction = false, currentTreeHiddenStackCursor = createCursor(null), prevEntangledRenderLanesCursor = createCursor(0), suspenseHandlerStackCursor = createCursor(null), shellBoundary = null, SubtreeSuspenseContextMask = 1, ForceSuspenseFallback = 2, suspenseStackCursor = createCursor(0), NoFlags = 0, HasEffect = 1, Insertion = 2, Layout = 4, Passive = 8, didWarnUncachedGetSnapshot;
         var didWarnAboutMismatchedHooksForComponent = /* @__PURE__ */ new Set();
         var didWarnAboutUseWrappedInTryCatch = /* @__PURE__ */ new Set();
         var didWarnAboutAsyncClientComponent = /* @__PURE__ */ new Set();
@@ -21193,7 +20223,7 @@
             currentHookNameInDev = "useInsertionEffect";
             mountHookTypesDev();
             checkDepsAreArrayDev(deps);
-            mountEffectImpl(4, Insertion5, create, deps);
+            mountEffectImpl(4, Insertion, create, deps);
           },
           useLayoutEffect: function(create, deps) {
             currentHookNameInDev = "useLayoutEffect";
@@ -21325,7 +20355,7 @@
           useInsertionEffect: function(create, deps) {
             currentHookNameInDev = "useInsertionEffect";
             updateHookTypesDev();
-            mountEffectImpl(4, Insertion5, create, deps);
+            mountEffectImpl(4, Insertion, create, deps);
           },
           useLayoutEffect: function(create, deps) {
             currentHookNameInDev = "useLayoutEffect";
@@ -21455,7 +20485,7 @@
           useInsertionEffect: function(create, deps) {
             currentHookNameInDev = "useInsertionEffect";
             updateHookTypesDev();
-            return updateEffectImpl(4, Insertion5, create, deps);
+            return updateEffectImpl(4, Insertion, create, deps);
           },
           useLayoutEffect: function(create, deps) {
             currentHookNameInDev = "useLayoutEffect";
@@ -21585,7 +20615,7 @@
           useInsertionEffect: function(create, deps) {
             currentHookNameInDev = "useInsertionEffect";
             updateHookTypesDev();
-            return updateEffectImpl(4, Insertion5, create, deps);
+            return updateEffectImpl(4, Insertion, create, deps);
           },
           useLayoutEffect: function(create, deps) {
             currentHookNameInDev = "useLayoutEffect";
@@ -21724,7 +20754,7 @@
             currentHookNameInDev = "useInsertionEffect";
             warnInvalidHookAccess();
             mountHookTypesDev();
-            mountEffectImpl(4, Insertion5, create, deps);
+            mountEffectImpl(4, Insertion, create, deps);
           },
           useLayoutEffect: function(create, deps) {
             currentHookNameInDev = "useLayoutEffect";
@@ -21879,7 +20909,7 @@
             currentHookNameInDev = "useInsertionEffect";
             warnInvalidHookAccess();
             updateHookTypesDev();
-            return updateEffectImpl(4, Insertion5, create, deps);
+            return updateEffectImpl(4, Insertion, create, deps);
           },
           useLayoutEffect: function(create, deps) {
             currentHookNameInDev = "useLayoutEffect";
@@ -22034,7 +21064,7 @@
             currentHookNameInDev = "useInsertionEffect";
             warnInvalidHookAccess();
             updateHookTypesDev();
-            return updateEffectImpl(4, Insertion5, create, deps);
+            return updateEffectImpl(4, Insertion, create, deps);
           },
           useLayoutEffect: function(create, deps) {
             currentHookNameInDev = "useLayoutEffect";
@@ -22326,7 +21356,7 @@
                 case "script":
                   key = getScriptKey(href);
               }
-              preloadPropsMap.has(key) || (href = assign2(
+              preloadPropsMap.has(key) || (href = assign(
                 {
                   rel: "preload",
                   href: "image" === as && options && options.imageSrcSet ? void 0 : href,
@@ -22352,7 +21382,7 @@
                 case "script":
                   key = getScriptKey(href);
               }
-              if (!preloadPropsMap.has(key) && (href = assign2({ rel: "modulepreload", href }, options), preloadPropsMap.set(key, href), null === ownerDocument.querySelector(preloadSelector))) {
+              if (!preloadPropsMap.has(key) && (href = assign({ rel: "modulepreload", href }, options), preloadPropsMap.set(key, href), null === ownerDocument.querySelector(preloadSelector))) {
                 switch (as) {
                   case "audioworklet":
                   case "paintworklet":
@@ -22377,7 +21407,7 @@
               var scripts = getResourcesFromRoot(ownerDocument).hoistableScripts, key = getScriptKey(src), resource = scripts.get(key);
               resource || (resource = ownerDocument.querySelector(
                 getScriptSelectorFromKey(key)
-              ), resource || (src = assign2({ src, async: true }, options), (options = preloadPropsMap.get(key)) && adoptPreloadPropsForScript(src, options), resource = ownerDocument.createElement("script"), markNodeAsHoistable(resource), setInitialProperties(resource, "link", src), ownerDocument.head.appendChild(resource)), resource = {
+              ), resource || (src = assign({ src, async: true }, options), (options = preloadPropsMap.get(key)) && adoptPreloadPropsForScript(src, options), resource = ownerDocument.createElement("script"), markNodeAsHoistable(resource), setInitialProperties(resource, "link", src), ownerDocument.head.appendChild(resource)), resource = {
                 type: "script",
                 instance: resource,
                 count: 1,
@@ -22389,9 +21419,9 @@
             previousDispatcher.S(href, precedence, options);
             var ownerDocument = globalDocument;
             if (ownerDocument && href) {
-              var styles2 = getResourcesFromRoot(ownerDocument).hoistableStyles, key = getStyleKey(href);
+              var styles = getResourcesFromRoot(ownerDocument).hoistableStyles, key = getStyleKey(href);
               precedence = precedence || "default";
-              var resource = styles2.get(key);
+              var resource = styles.get(key);
               if (!resource) {
                 var state = { loading: NotLoaded, preload: null };
                 if (resource = ownerDocument.querySelector(
@@ -22399,7 +21429,7 @@
                 ))
                   state.loading = Loaded | Inserted;
                 else {
-                  href = assign2(
+                  href = assign(
                     {
                       rel: "stylesheet",
                       href,
@@ -22430,7 +21460,7 @@
                   count: 1,
                   state
                 };
-                styles2.set(key, resource);
+                styles.set(key, resource);
               }
             }
           },
@@ -22441,7 +21471,7 @@
               var scripts = getResourcesFromRoot(ownerDocument).hoistableScripts, key = getScriptKey(src), resource = scripts.get(key);
               resource || (resource = ownerDocument.querySelector(
                 getScriptSelectorFromKey(key)
-              ), resource || (src = assign2({ src, async: true, type: "module" }, options), (options = preloadPropsMap.get(key)) && adoptPreloadPropsForScript(src, options), resource = ownerDocument.createElement("script"), markNodeAsHoistable(resource), setInitialProperties(resource, "link", src), ownerDocument.head.appendChild(resource)), resource = {
+              ), resource || (src = assign({ src, async: true, type: "module" }, options), (options = preloadPropsMap.get(key)) && adoptPreloadPropsForScript(src, options), resource = ownerDocument.createElement("script"), markNodeAsHoistable(resource), setInitialProperties(resource, "link", src), ownerDocument.head.appendChild(resource)), resource = {
                 type: "script",
                 instance: resource,
                 count: 1,
@@ -22462,15 +21492,15 @@
         var overrideHookState = null, overrideHookStateDeletePath = null, overrideHookStateRenamePath = null, overrideProps = null, overridePropsDeletePath = null, overridePropsRenamePath = null, scheduleUpdate = null, scheduleRetry = null, setErrorHandler = null, setSuspenseHandler = null;
         overrideHookState = function(fiber, id, path, value2) {
           id = findHook(fiber, id);
-          null !== id && (path = copyWithSetImpl(id.memoizedState, path, 0, value2), id.memoizedState = path, id.baseState = path, fiber.memoizedProps = assign2({}, fiber.memoizedProps), path = enqueueConcurrentRenderForLane(fiber, 2), null !== path && scheduleUpdateOnFiber(path, fiber, 2));
+          null !== id && (path = copyWithSetImpl(id.memoizedState, path, 0, value2), id.memoizedState = path, id.baseState = path, fiber.memoizedProps = assign({}, fiber.memoizedProps), path = enqueueConcurrentRenderForLane(fiber, 2), null !== path && scheduleUpdateOnFiber(path, fiber, 2));
         };
         overrideHookStateDeletePath = function(fiber, id, path) {
           id = findHook(fiber, id);
-          null !== id && (path = copyWithDeleteImpl(id.memoizedState, path, 0), id.memoizedState = path, id.baseState = path, fiber.memoizedProps = assign2({}, fiber.memoizedProps), path = enqueueConcurrentRenderForLane(fiber, 2), null !== path && scheduleUpdateOnFiber(path, fiber, 2));
+          null !== id && (path = copyWithDeleteImpl(id.memoizedState, path, 0), id.memoizedState = path, id.baseState = path, fiber.memoizedProps = assign({}, fiber.memoizedProps), path = enqueueConcurrentRenderForLane(fiber, 2), null !== path && scheduleUpdateOnFiber(path, fiber, 2));
         };
         overrideHookStateRenamePath = function(fiber, id, oldPath, newPath) {
           id = findHook(fiber, id);
-          null !== id && (oldPath = copyWithRename(id.memoizedState, oldPath, newPath), id.memoizedState = oldPath, id.baseState = oldPath, fiber.memoizedProps = assign2({}, fiber.memoizedProps), oldPath = enqueueConcurrentRenderForLane(fiber, 2), null !== oldPath && scheduleUpdateOnFiber(oldPath, fiber, 2));
+          null !== id && (oldPath = copyWithRename(id.memoizedState, oldPath, newPath), id.memoizedState = oldPath, id.baseState = oldPath, fiber.memoizedProps = assign({}, fiber.memoizedProps), oldPath = enqueueConcurrentRenderForLane(fiber, 2), null !== oldPath && scheduleUpdateOnFiber(oldPath, fiber, 2));
         };
         overrideProps = function(fiber, path, value2) {
           fiber.pendingProps = copyWithSetImpl(fiber.memoizedProps, path, 0, value2);
@@ -22553,7 +21583,7 @@
           }
         };
         (function() {
-          var isomorphicReactPackageVersion = React14.version;
+          var isomorphicReactPackageVersion = React5.version;
           if ("19.2.0" !== isomorphicReactPackageVersion)
             throw Error(
               'Incompatible React versions: The "react" and "react-dom" packages must have the exact same version. Instead got:\n  - react:      ' + (isomorphicReactPackageVersion + "\n  - react-dom:  19.2.0\nLearn more: https://react.dev/warnings/version-mismatch")
@@ -22694,5244 +21724,16 @@
   });
 
   // dist/js/index.js
-  var import_jsx_runtime17 = __toESM(require_jsx_runtime(), 1);
-
-  // node_modules/@mui/material/esm/colors/common.js
-  var common = {
-    black: "#000",
-    white: "#fff"
-  };
-  var common_default = common;
-
-  // node_modules/@mui/material/esm/colors/red.js
-  var red = {
-    50: "#ffebee",
-    100: "#ffcdd2",
-    200: "#ef9a9a",
-    300: "#e57373",
-    400: "#ef5350",
-    500: "#f44336",
-    600: "#e53935",
-    700: "#d32f2f",
-    800: "#c62828",
-    900: "#b71c1c",
-    A100: "#ff8a80",
-    A200: "#ff5252",
-    A400: "#ff1744",
-    A700: "#d50000"
-  };
-  var red_default = red;
-
-  // node_modules/@mui/material/esm/colors/purple.js
-  var purple = {
-    50: "#f3e5f5",
-    100: "#e1bee7",
-    200: "#ce93d8",
-    300: "#ba68c8",
-    400: "#ab47bc",
-    500: "#9c27b0",
-    600: "#8e24aa",
-    700: "#7b1fa2",
-    800: "#6a1b9a",
-    900: "#4a148c",
-    A100: "#ea80fc",
-    A200: "#e040fb",
-    A400: "#d500f9",
-    A700: "#aa00ff"
-  };
-  var purple_default = purple;
-
-  // node_modules/@mui/material/esm/colors/blue.js
-  var blue = {
-    50: "#e3f2fd",
-    100: "#bbdefb",
-    200: "#90caf9",
-    300: "#64b5f6",
-    400: "#42a5f5",
-    500: "#2196f3",
-    600: "#1e88e5",
-    700: "#1976d2",
-    800: "#1565c0",
-    900: "#0d47a1",
-    A100: "#82b1ff",
-    A200: "#448aff",
-    A400: "#2979ff",
-    A700: "#2962ff"
-  };
-  var blue_default = blue;
-
-  // node_modules/@mui/material/esm/colors/lightBlue.js
-  var lightBlue = {
-    50: "#e1f5fe",
-    100: "#b3e5fc",
-    200: "#81d4fa",
-    300: "#4fc3f7",
-    400: "#29b6f6",
-    500: "#03a9f4",
-    600: "#039be5",
-    700: "#0288d1",
-    800: "#0277bd",
-    900: "#01579b",
-    A100: "#80d8ff",
-    A200: "#40c4ff",
-    A400: "#00b0ff",
-    A700: "#0091ea"
-  };
-  var lightBlue_default = lightBlue;
-
-  // node_modules/@mui/material/esm/colors/green.js
-  var green = {
-    50: "#e8f5e9",
-    100: "#c8e6c9",
-    200: "#a5d6a7",
-    300: "#81c784",
-    400: "#66bb6a",
-    500: "#4caf50",
-    600: "#43a047",
-    700: "#388e3c",
-    800: "#2e7d32",
-    900: "#1b5e20",
-    A100: "#b9f6ca",
-    A200: "#69f0ae",
-    A400: "#00e676",
-    A700: "#00c853"
-  };
-  var green_default = green;
-
-  // node_modules/@mui/material/esm/colors/orange.js
-  var orange = {
-    50: "#fff3e0",
-    100: "#ffe0b2",
-    200: "#ffcc80",
-    300: "#ffb74d",
-    400: "#ffa726",
-    500: "#ff9800",
-    600: "#fb8c00",
-    700: "#f57c00",
-    800: "#ef6c00",
-    900: "#e65100",
-    A100: "#ffd180",
-    A200: "#ffab40",
-    A400: "#ff9100",
-    A700: "#ff6d00"
-  };
-  var orange_default = orange;
-
-  // node_modules/@mui/material/esm/colors/grey.js
-  var grey = {
-    50: "#fafafa",
-    100: "#f5f5f5",
-    200: "#eeeeee",
-    300: "#e0e0e0",
-    400: "#bdbdbd",
-    500: "#9e9e9e",
-    600: "#757575",
-    700: "#616161",
-    800: "#424242",
-    900: "#212121",
-    A100: "#f5f5f5",
-    A200: "#eeeeee",
-    A400: "#bdbdbd",
-    A700: "#616161"
-  };
-  var grey_default = grey;
-
-  // node_modules/@mui/material/esm/styles/identifier.js
-  var identifier_default = "$$material";
-
-  // node_modules/@babel/runtime/helpers/esm/extends.js
-  function _extends() {
-    return _extends = Object.assign ? Object.assign.bind() : function(n) {
-      for (var e = 1; e < arguments.length; e++) {
-        var t = arguments[e];
-        for (var r2 in t) ({}).hasOwnProperty.call(t, r2) && (n[r2] = t[r2]);
-      }
-      return n;
-    }, _extends.apply(null, arguments);
-  }
-
-  // node_modules/@emotion/react/dist/emotion-element-f0de968e.browser.esm.js
-  var React2 = __toESM(require_react());
-  var import_react = __toESM(require_react());
-
-  // node_modules/@emotion/sheet/dist/emotion-sheet.esm.js
-  var isDevelopment = false;
-  function sheetForTag(tag) {
-    if (tag.sheet) {
-      return tag.sheet;
-    }
-    for (var i = 0; i < document.styleSheets.length; i++) {
-      if (document.styleSheets[i].ownerNode === tag) {
-        return document.styleSheets[i];
-      }
-    }
-    return void 0;
-  }
-  function createStyleElement(options) {
-    var tag = document.createElement("style");
-    tag.setAttribute("data-emotion", options.key);
-    if (options.nonce !== void 0) {
-      tag.setAttribute("nonce", options.nonce);
-    }
-    tag.appendChild(document.createTextNode(""));
-    tag.setAttribute("data-s", "");
-    return tag;
-  }
-  var StyleSheet = /* @__PURE__ */ (function() {
-    function StyleSheet2(options) {
-      var _this = this;
-      this._insertTag = function(tag) {
-        var before;
-        if (_this.tags.length === 0) {
-          if (_this.insertionPoint) {
-            before = _this.insertionPoint.nextSibling;
-          } else if (_this.prepend) {
-            before = _this.container.firstChild;
-          } else {
-            before = _this.before;
-          }
-        } else {
-          before = _this.tags[_this.tags.length - 1].nextSibling;
-        }
-        _this.container.insertBefore(tag, before);
-        _this.tags.push(tag);
-      };
-      this.isSpeedy = options.speedy === void 0 ? !isDevelopment : options.speedy;
-      this.tags = [];
-      this.ctr = 0;
-      this.nonce = options.nonce;
-      this.key = options.key;
-      this.container = options.container;
-      this.prepend = options.prepend;
-      this.insertionPoint = options.insertionPoint;
-      this.before = null;
-    }
-    var _proto = StyleSheet2.prototype;
-    _proto.hydrate = function hydrate(nodes) {
-      nodes.forEach(this._insertTag);
-    };
-    _proto.insert = function insert(rule) {
-      if (this.ctr % (this.isSpeedy ? 65e3 : 1) === 0) {
-        this._insertTag(createStyleElement(this));
-      }
-      var tag = this.tags[this.tags.length - 1];
-      if (this.isSpeedy) {
-        var sheet = sheetForTag(tag);
-        try {
-          sheet.insertRule(rule, sheet.cssRules.length);
-        } catch (e) {
-        }
-      } else {
-        tag.appendChild(document.createTextNode(rule));
-      }
-      this.ctr++;
-    };
-    _proto.flush = function flush() {
-      this.tags.forEach(function(tag) {
-        var _tag$parentNode;
-        return (_tag$parentNode = tag.parentNode) == null ? void 0 : _tag$parentNode.removeChild(tag);
-      });
-      this.tags = [];
-      this.ctr = 0;
-    };
-    return StyleSheet2;
-  })();
-
-  // node_modules/stylis/src/Enum.js
-  var MS = "-ms-";
-  var MOZ = "-moz-";
-  var WEBKIT = "-webkit-";
-  var COMMENT = "comm";
-  var RULESET = "rule";
-  var DECLARATION = "decl";
-  var IMPORT = "@import";
-  var KEYFRAMES = "@keyframes";
-  var LAYER = "@layer";
-
-  // node_modules/stylis/src/Utility.js
-  var abs = Math.abs;
-  var from = String.fromCharCode;
-  var assign = Object.assign;
-  function hash(value2, length2) {
-    return charat(value2, 0) ^ 45 ? (((length2 << 2 ^ charat(value2, 0)) << 2 ^ charat(value2, 1)) << 2 ^ charat(value2, 2)) << 2 ^ charat(value2, 3) : 0;
-  }
-  function trim(value2) {
-    return value2.trim();
-  }
-  function match(value2, pattern) {
-    return (value2 = pattern.exec(value2)) ? value2[0] : value2;
-  }
-  function replace(value2, pattern, replacement) {
-    return value2.replace(pattern, replacement);
-  }
-  function indexof(value2, search) {
-    return value2.indexOf(search);
-  }
-  function charat(value2, index) {
-    return value2.charCodeAt(index) | 0;
-  }
-  function substr(value2, begin, end) {
-    return value2.slice(begin, end);
-  }
-  function strlen(value2) {
-    return value2.length;
-  }
-  function sizeof(value2) {
-    return value2.length;
-  }
-  function append(value2, array) {
-    return array.push(value2), value2;
-  }
-  function combine(array, callback) {
-    return array.map(callback).join("");
-  }
-
-  // node_modules/stylis/src/Tokenizer.js
-  var line = 1;
-  var column = 1;
-  var length = 0;
-  var position = 0;
-  var character = 0;
-  var characters = "";
-  function node(value2, root2, parent, type, props, children, length2) {
-    return { value: value2, root: root2, parent, type, props, children, line, column, length: length2, return: "" };
-  }
-  function copy(root2, props) {
-    return assign(node("", null, null, "", null, null, 0), root2, { length: -root2.length }, props);
-  }
-  function char() {
-    return character;
-  }
-  function prev() {
-    character = position > 0 ? charat(characters, --position) : 0;
-    if (column--, character === 10)
-      column = 1, line--;
-    return character;
-  }
-  function next() {
-    character = position < length ? charat(characters, position++) : 0;
-    if (column++, character === 10)
-      column = 1, line++;
-    return character;
-  }
-  function peek() {
-    return charat(characters, position);
-  }
-  function caret() {
-    return position;
-  }
-  function slice(begin, end) {
-    return substr(characters, begin, end);
-  }
-  function token(type) {
-    switch (type) {
-      // \0 \t \n \r \s whitespace token
-      case 0:
-      case 9:
-      case 10:
-      case 13:
-      case 32:
-        return 5;
-      // ! + , / > @ ~ isolate token
-      case 33:
-      case 43:
-      case 44:
-      case 47:
-      case 62:
-      case 64:
-      case 126:
-      // ; { } breakpoint token
-      case 59:
-      case 123:
-      case 125:
-        return 4;
-      // : accompanied token
-      case 58:
-        return 3;
-      // " ' ( [ opening delimit token
-      case 34:
-      case 39:
-      case 40:
-      case 91:
-        return 2;
-      // ) ] closing delimit token
-      case 41:
-      case 93:
-        return 1;
-    }
-    return 0;
-  }
-  function alloc(value2) {
-    return line = column = 1, length = strlen(characters = value2), position = 0, [];
-  }
-  function dealloc(value2) {
-    return characters = "", value2;
-  }
-  function delimit(type) {
-    return trim(slice(position - 1, delimiter(type === 91 ? type + 2 : type === 40 ? type + 1 : type)));
-  }
-  function whitespace(type) {
-    while (character = peek())
-      if (character < 33)
-        next();
-      else
-        break;
-    return token(type) > 2 || token(character) > 3 ? "" : " ";
-  }
-  function escaping(index, count) {
-    while (--count && next())
-      if (character < 48 || character > 102 || character > 57 && character < 65 || character > 70 && character < 97)
-        break;
-    return slice(index, caret() + (count < 6 && peek() == 32 && next() == 32));
-  }
-  function delimiter(type) {
-    while (next())
-      switch (character) {
-        // ] ) " '
-        case type:
-          return position;
-        // " '
-        case 34:
-        case 39:
-          if (type !== 34 && type !== 39)
-            delimiter(character);
-          break;
-        // (
-        case 40:
-          if (type === 41)
-            delimiter(type);
-          break;
-        // \
-        case 92:
-          next();
-          break;
-      }
-    return position;
-  }
-  function commenter(type, index) {
-    while (next())
-      if (type + character === 47 + 10)
-        break;
-      else if (type + character === 42 + 42 && peek() === 47)
-        break;
-    return "/*" + slice(index, position - 1) + "*" + from(type === 47 ? type : next());
-  }
-  function identifier(index) {
-    while (!token(peek()))
-      next();
-    return slice(index, position);
-  }
-
-  // node_modules/stylis/src/Parser.js
-  function compile(value2) {
-    return dealloc(parse("", null, null, null, [""], value2 = alloc(value2), 0, [0], value2));
-  }
-  function parse(value2, root2, parent, rule, rules, rulesets, pseudo, points, declarations) {
-    var index = 0;
-    var offset = 0;
-    var length2 = pseudo;
-    var atrule = 0;
-    var property = 0;
-    var previous = 0;
-    var variable = 1;
-    var scanning = 1;
-    var ampersand = 1;
-    var character2 = 0;
-    var type = "";
-    var props = rules;
-    var children = rulesets;
-    var reference = rule;
-    var characters2 = type;
-    while (scanning)
-      switch (previous = character2, character2 = next()) {
-        // (
-        case 40:
-          if (previous != 108 && charat(characters2, length2 - 1) == 58) {
-            if (indexof(characters2 += replace(delimit(character2), "&", "&\f"), "&\f") != -1)
-              ampersand = -1;
-            break;
-          }
-        // " ' [
-        case 34:
-        case 39:
-        case 91:
-          characters2 += delimit(character2);
-          break;
-        // \t \n \r \s
-        case 9:
-        case 10:
-        case 13:
-        case 32:
-          characters2 += whitespace(previous);
-          break;
-        // \
-        case 92:
-          characters2 += escaping(caret() - 1, 7);
-          continue;
-        // /
-        case 47:
-          switch (peek()) {
-            case 42:
-            case 47:
-              append(comment(commenter(next(), caret()), root2, parent), declarations);
-              break;
-            default:
-              characters2 += "/";
-          }
-          break;
-        // {
-        case 123 * variable:
-          points[index++] = strlen(characters2) * ampersand;
-        // } ; \0
-        case 125 * variable:
-        case 59:
-        case 0:
-          switch (character2) {
-            // \0 }
-            case 0:
-            case 125:
-              scanning = 0;
-            // ;
-            case 59 + offset:
-              if (ampersand == -1) characters2 = replace(characters2, /\f/g, "");
-              if (property > 0 && strlen(characters2) - length2)
-                append(property > 32 ? declaration(characters2 + ";", rule, parent, length2 - 1) : declaration(replace(characters2, " ", "") + ";", rule, parent, length2 - 2), declarations);
-              break;
-            // @ ;
-            case 59:
-              characters2 += ";";
-            // { rule/at-rule
-            default:
-              append(reference = ruleset(characters2, root2, parent, index, offset, rules, points, type, props = [], children = [], length2), rulesets);
-              if (character2 === 123)
-                if (offset === 0)
-                  parse(characters2, root2, reference, reference, props, rulesets, length2, points, children);
-                else
-                  switch (atrule === 99 && charat(characters2, 3) === 110 ? 100 : atrule) {
-                    // d l m s
-                    case 100:
-                    case 108:
-                    case 109:
-                    case 115:
-                      parse(value2, reference, reference, rule && append(ruleset(value2, reference, reference, 0, 0, rules, points, type, rules, props = [], length2), children), rules, children, length2, points, rule ? props : children);
-                      break;
-                    default:
-                      parse(characters2, reference, reference, reference, [""], children, 0, points, children);
-                  }
-          }
-          index = offset = property = 0, variable = ampersand = 1, type = characters2 = "", length2 = pseudo;
-          break;
-        // :
-        case 58:
-          length2 = 1 + strlen(characters2), property = previous;
-        default:
-          if (variable < 1) {
-            if (character2 == 123)
-              --variable;
-            else if (character2 == 125 && variable++ == 0 && prev() == 125)
-              continue;
-          }
-          switch (characters2 += from(character2), character2 * variable) {
-            // &
-            case 38:
-              ampersand = offset > 0 ? 1 : (characters2 += "\f", -1);
-              break;
-            // ,
-            case 44:
-              points[index++] = (strlen(characters2) - 1) * ampersand, ampersand = 1;
-              break;
-            // @
-            case 64:
-              if (peek() === 45)
-                characters2 += delimit(next());
-              atrule = peek(), offset = length2 = strlen(type = characters2 += identifier(caret())), character2++;
-              break;
-            // -
-            case 45:
-              if (previous === 45 && strlen(characters2) == 2)
-                variable = 0;
-          }
-      }
-    return rulesets;
-  }
-  function ruleset(value2, root2, parent, index, offset, rules, points, type, props, children, length2) {
-    var post = offset - 1;
-    var rule = offset === 0 ? rules : [""];
-    var size = sizeof(rule);
-    for (var i = 0, j = 0, k = 0; i < index; ++i)
-      for (var x = 0, y = substr(value2, post + 1, post = abs(j = points[i])), z = value2; x < size; ++x)
-        if (z = trim(j > 0 ? rule[x] + " " + y : replace(y, /&\f/g, rule[x])))
-          props[k++] = z;
-    return node(value2, root2, parent, offset === 0 ? RULESET : type, props, children, length2);
-  }
-  function comment(value2, root2, parent) {
-    return node(value2, root2, parent, COMMENT, from(char()), substr(value2, 2, -2), 0);
-  }
-  function declaration(value2, root2, parent, length2) {
-    return node(value2, root2, parent, DECLARATION, substr(value2, 0, length2), substr(value2, length2 + 1, -1), length2);
-  }
-
-  // node_modules/stylis/src/Serializer.js
-  function serialize(children, callback) {
-    var output = "";
-    var length2 = sizeof(children);
-    for (var i = 0; i < length2; i++)
-      output += callback(children[i], i, children, callback) || "";
-    return output;
-  }
-  function stringify(element, index, children, callback) {
-    switch (element.type) {
-      case LAYER:
-        if (element.children.length) break;
-      case IMPORT:
-      case DECLARATION:
-        return element.return = element.return || element.value;
-      case COMMENT:
-        return "";
-      case KEYFRAMES:
-        return element.return = element.value + "{" + serialize(element.children, callback) + "}";
-      case RULESET:
-        element.value = element.props.join(",");
-    }
-    return strlen(children = serialize(element.children, callback)) ? element.return = element.value + "{" + children + "}" : "";
-  }
-
-  // node_modules/stylis/src/Middleware.js
-  function middleware(collection) {
-    var length2 = sizeof(collection);
-    return function(element, index, children, callback) {
-      var output = "";
-      for (var i = 0; i < length2; i++)
-        output += collection[i](element, index, children, callback) || "";
-      return output;
-    };
-  }
-  function rulesheet(callback) {
-    return function(element) {
-      if (!element.root) {
-        if (element = element.return)
-          callback(element);
-      }
-    };
-  }
-
-  // node_modules/@emotion/memoize/dist/emotion-memoize.esm.js
-  function memoize(fn) {
-    var cache2 = /* @__PURE__ */ Object.create(null);
-    return function(arg) {
-      if (cache2[arg] === void 0) cache2[arg] = fn(arg);
-      return cache2[arg];
-    };
-  }
-
-  // node_modules/@emotion/cache/dist/emotion-cache.browser.esm.js
-  var identifierWithPointTracking = function identifierWithPointTracking2(begin, points, index) {
-    var previous = 0;
-    var character2 = 0;
-    while (true) {
-      previous = character2;
-      character2 = peek();
-      if (previous === 38 && character2 === 12) {
-        points[index] = 1;
-      }
-      if (token(character2)) {
-        break;
-      }
-      next();
-    }
-    return slice(begin, position);
-  };
-  var toRules = function toRules2(parsed, points) {
-    var index = -1;
-    var character2 = 44;
-    do {
-      switch (token(character2)) {
-        case 0:
-          if (character2 === 38 && peek() === 12) {
-            points[index] = 1;
-          }
-          parsed[index] += identifierWithPointTracking(position - 1, points, index);
-          break;
-        case 2:
-          parsed[index] += delimit(character2);
-          break;
-        case 4:
-          if (character2 === 44) {
-            parsed[++index] = peek() === 58 ? "&\f" : "";
-            points[index] = parsed[index].length;
-            break;
-          }
-        // fallthrough
-        default:
-          parsed[index] += from(character2);
-      }
-    } while (character2 = next());
-    return parsed;
-  };
-  var getRules = function getRules2(value2, points) {
-    return dealloc(toRules(alloc(value2), points));
-  };
-  var fixedElements = /* @__PURE__ */ new WeakMap();
-  var compat = function compat2(element) {
-    if (element.type !== "rule" || !element.parent || // positive .length indicates that this rule contains pseudo
-    // negative .length indicates that this rule has been already prefixed
-    element.length < 1) {
-      return;
-    }
-    var value2 = element.value;
-    var parent = element.parent;
-    var isImplicitRule = element.column === parent.column && element.line === parent.line;
-    while (parent.type !== "rule") {
-      parent = parent.parent;
-      if (!parent) return;
-    }
-    if (element.props.length === 1 && value2.charCodeAt(0) !== 58 && !fixedElements.get(parent)) {
-      return;
-    }
-    if (isImplicitRule) {
-      return;
-    }
-    fixedElements.set(element, true);
-    var points = [];
-    var rules = getRules(value2, points);
-    var parentRules = parent.props;
-    for (var i = 0, k = 0; i < rules.length; i++) {
-      for (var j = 0; j < parentRules.length; j++, k++) {
-        element.props[k] = points[i] ? rules[i].replace(/&\f/g, parentRules[j]) : parentRules[j] + " " + rules[i];
-      }
-    }
-  };
-  var removeLabel = function removeLabel2(element) {
-    if (element.type === "decl") {
-      var value2 = element.value;
-      if (
-        // charcode for l
-        value2.charCodeAt(0) === 108 && // charcode for b
-        value2.charCodeAt(2) === 98
-      ) {
-        element["return"] = "";
-        element.value = "";
-      }
-    }
-  };
-  function prefix(value2, length2) {
-    switch (hash(value2, length2)) {
-      // color-adjust
-      case 5103:
-        return WEBKIT + "print-" + value2 + value2;
-      // animation, animation-(delay|direction|duration|fill-mode|iteration-count|name|play-state|timing-function)
-      case 5737:
-      case 4201:
-      case 3177:
-      case 3433:
-      case 1641:
-      case 4457:
-      case 2921:
-      // text-decoration, filter, clip-path, backface-visibility, column, box-decoration-break
-      case 5572:
-      case 6356:
-      case 5844:
-      case 3191:
-      case 6645:
-      case 3005:
-      // mask, mask-image, mask-(mode|clip|size), mask-(repeat|origin), mask-position, mask-composite,
-      case 6391:
-      case 5879:
-      case 5623:
-      case 6135:
-      case 4599:
-      case 4855:
-      // background-clip, columns, column-(count|fill|gap|rule|rule-color|rule-style|rule-width|span|width)
-      case 4215:
-      case 6389:
-      case 5109:
-      case 5365:
-      case 5621:
-      case 3829:
-        return WEBKIT + value2 + value2;
-      // appearance, user-select, transform, hyphens, text-size-adjust
-      case 5349:
-      case 4246:
-      case 4810:
-      case 6968:
-      case 2756:
-        return WEBKIT + value2 + MOZ + value2 + MS + value2 + value2;
-      // flex, flex-direction
-      case 6828:
-      case 4268:
-        return WEBKIT + value2 + MS + value2 + value2;
-      // order
-      case 6165:
-        return WEBKIT + value2 + MS + "flex-" + value2 + value2;
-      // align-items
-      case 5187:
-        return WEBKIT + value2 + replace(value2, /(\w+).+(:[^]+)/, WEBKIT + "box-$1$2" + MS + "flex-$1$2") + value2;
-      // align-self
-      case 5443:
-        return WEBKIT + value2 + MS + "flex-item-" + replace(value2, /flex-|-self/, "") + value2;
-      // align-content
-      case 4675:
-        return WEBKIT + value2 + MS + "flex-line-pack" + replace(value2, /align-content|flex-|-self/, "") + value2;
-      // flex-shrink
-      case 5548:
-        return WEBKIT + value2 + MS + replace(value2, "shrink", "negative") + value2;
-      // flex-basis
-      case 5292:
-        return WEBKIT + value2 + MS + replace(value2, "basis", "preferred-size") + value2;
-      // flex-grow
-      case 6060:
-        return WEBKIT + "box-" + replace(value2, "-grow", "") + WEBKIT + value2 + MS + replace(value2, "grow", "positive") + value2;
-      // transition
-      case 4554:
-        return WEBKIT + replace(value2, /([^-])(transform)/g, "$1" + WEBKIT + "$2") + value2;
-      // cursor
-      case 6187:
-        return replace(replace(replace(value2, /(zoom-|grab)/, WEBKIT + "$1"), /(image-set)/, WEBKIT + "$1"), value2, "") + value2;
-      // background, background-image
-      case 5495:
-      case 3959:
-        return replace(value2, /(image-set\([^]*)/, WEBKIT + "$1$`$1");
-      // justify-content
-      case 4968:
-        return replace(replace(value2, /(.+:)(flex-)?(.*)/, WEBKIT + "box-pack:$3" + MS + "flex-pack:$3"), /s.+-b[^;]+/, "justify") + WEBKIT + value2 + value2;
-      // (margin|padding)-inline-(start|end)
-      case 4095:
-      case 3583:
-      case 4068:
-      case 2532:
-        return replace(value2, /(.+)-inline(.+)/, WEBKIT + "$1$2") + value2;
-      // (min|max)?(width|height|inline-size|block-size)
-      case 8116:
-      case 7059:
-      case 5753:
-      case 5535:
-      case 5445:
-      case 5701:
-      case 4933:
-      case 4677:
-      case 5533:
-      case 5789:
-      case 5021:
-      case 4765:
-        if (strlen(value2) - 1 - length2 > 6) switch (charat(value2, length2 + 1)) {
-          // (m)ax-content, (m)in-content
-          case 109:
-            if (charat(value2, length2 + 4) !== 45) break;
-          // (f)ill-available, (f)it-content
-          case 102:
-            return replace(value2, /(.+:)(.+)-([^]+)/, "$1" + WEBKIT + "$2-$3$1" + MOZ + (charat(value2, length2 + 3) == 108 ? "$3" : "$2-$3")) + value2;
-          // (s)tretch
-          case 115:
-            return ~indexof(value2, "stretch") ? prefix(replace(value2, "stretch", "fill-available"), length2) + value2 : value2;
-        }
-        break;
-      // position: sticky
-      case 4949:
-        if (charat(value2, length2 + 1) !== 115) break;
-      // display: (flex|inline-flex)
-      case 6444:
-        switch (charat(value2, strlen(value2) - 3 - (~indexof(value2, "!important") && 10))) {
-          // stic(k)y
-          case 107:
-            return replace(value2, ":", ":" + WEBKIT) + value2;
-          // (inline-)?fl(e)x
-          case 101:
-            return replace(value2, /(.+:)([^;!]+)(;|!.+)?/, "$1" + WEBKIT + (charat(value2, 14) === 45 ? "inline-" : "") + "box$3$1" + WEBKIT + "$2$3$1" + MS + "$2box$3") + value2;
-        }
-        break;
-      // writing-mode
-      case 5936:
-        switch (charat(value2, length2 + 11)) {
-          // vertical-l(r)
-          case 114:
-            return WEBKIT + value2 + MS + replace(value2, /[svh]\w+-[tblr]{2}/, "tb") + value2;
-          // vertical-r(l)
-          case 108:
-            return WEBKIT + value2 + MS + replace(value2, /[svh]\w+-[tblr]{2}/, "tb-rl") + value2;
-          // horizontal(-)tb
-          case 45:
-            return WEBKIT + value2 + MS + replace(value2, /[svh]\w+-[tblr]{2}/, "lr") + value2;
-        }
-        return WEBKIT + value2 + MS + value2 + value2;
-    }
-    return value2;
-  }
-  var prefixer = function prefixer2(element, index, children, callback) {
-    if (element.length > -1) {
-      if (!element["return"]) switch (element.type) {
-        case DECLARATION:
-          element["return"] = prefix(element.value, element.length);
-          break;
-        case KEYFRAMES:
-          return serialize([copy(element, {
-            value: replace(element.value, "@", "@" + WEBKIT)
-          })], callback);
-        case RULESET:
-          if (element.length) return combine(element.props, function(value2) {
-            switch (match(value2, /(::plac\w+|:read-\w+)/)) {
-              // :read-(only|write)
-              case ":read-only":
-              case ":read-write":
-                return serialize([copy(element, {
-                  props: [replace(value2, /:(read-\w+)/, ":" + MOZ + "$1")]
-                })], callback);
-              // :placeholder
-              case "::placeholder":
-                return serialize([copy(element, {
-                  props: [replace(value2, /:(plac\w+)/, ":" + WEBKIT + "input-$1")]
-                }), copy(element, {
-                  props: [replace(value2, /:(plac\w+)/, ":" + MOZ + "$1")]
-                }), copy(element, {
-                  props: [replace(value2, /:(plac\w+)/, MS + "input-$1")]
-                })], callback);
-            }
-            return "";
-          });
-      }
-    }
-  };
-  var defaultStylisPlugins = [prefixer];
-  var createCache = function createCache2(options) {
-    var key = options.key;
-    if (key === "css") {
-      var ssrStyles = document.querySelectorAll("style[data-emotion]:not([data-s])");
-      Array.prototype.forEach.call(ssrStyles, function(node2) {
-        var dataEmotionAttribute = node2.getAttribute("data-emotion");
-        if (dataEmotionAttribute.indexOf(" ") === -1) {
-          return;
-        }
-        document.head.appendChild(node2);
-        node2.setAttribute("data-s", "");
-      });
-    }
-    var stylisPlugins = options.stylisPlugins || defaultStylisPlugins;
-    var inserted = {};
-    var container2;
-    var nodesToHydrate = [];
-    {
-      container2 = options.container || document.head;
-      Array.prototype.forEach.call(
-        // this means we will ignore elements which don't have a space in them which
-        // means that the style elements we're looking at are only Emotion 11 server-rendered style elements
-        document.querySelectorAll('style[data-emotion^="' + key + ' "]'),
-        function(node2) {
-          var attrib = node2.getAttribute("data-emotion").split(" ");
-          for (var i = 1; i < attrib.length; i++) {
-            inserted[attrib[i]] = true;
-          }
-          nodesToHydrate.push(node2);
-        }
-      );
-    }
-    var _insert;
-    var omnipresentPlugins = [compat, removeLabel];
-    {
-      var currentSheet;
-      var finalizingPlugins = [stringify, rulesheet(function(rule) {
-        currentSheet.insert(rule);
-      })];
-      var serializer = middleware(omnipresentPlugins.concat(stylisPlugins, finalizingPlugins));
-      var stylis = function stylis2(styles2) {
-        return serialize(compile(styles2), serializer);
-      };
-      _insert = function insert(selector, serialized, sheet, shouldCache) {
-        currentSheet = sheet;
-        stylis(selector ? selector + "{" + serialized.styles + "}" : serialized.styles);
-        if (shouldCache) {
-          cache2.inserted[serialized.name] = true;
-        }
-      };
-    }
-    var cache2 = {
-      key,
-      sheet: new StyleSheet({
-        key,
-        container: container2,
-        nonce: options.nonce,
-        speedy: options.speedy,
-        prepend: options.prepend,
-        insertionPoint: options.insertionPoint
-      }),
-      nonce: options.nonce,
-      inserted,
-      registered: {},
-      insert: _insert
-    };
-    cache2.sheet.hydrate(nodesToHydrate);
-    return cache2;
-  };
-
-  // node_modules/@emotion/utils/dist/emotion-utils.browser.esm.js
-  var isBrowser = true;
-  function getRegisteredStyles(registered, registeredStyles, classNames) {
-    var rawClassName = "";
-    classNames.split(" ").forEach(function(className) {
-      if (registered[className] !== void 0) {
-        registeredStyles.push(registered[className] + ";");
-      } else if (className) {
-        rawClassName += className + " ";
-      }
-    });
-    return rawClassName;
-  }
-  var registerStyles = function registerStyles2(cache2, serialized, isStringTag) {
-    var className = cache2.key + "-" + serialized.name;
-    if (
-      // we only need to add the styles to the registered cache if the
-      // class name could be used further down
-      // the tree but if it's a string tag, we know it won't
-      // so we don't have to add it to registered cache.
-      // this improves memory usage since we can avoid storing the whole style string
-      (isStringTag === false || // we need to always store it if we're in compat mode and
-      // in node since emotion-server relies on whether a style is in
-      // the registered cache to know whether a style is global or not
-      // also, note that this check will be dead code eliminated in the browser
-      isBrowser === false) && cache2.registered[className] === void 0
-    ) {
-      cache2.registered[className] = serialized.styles;
-    }
-  };
-  var insertStyles = function insertStyles2(cache2, serialized, isStringTag) {
-    registerStyles(cache2, serialized, isStringTag);
-    var className = cache2.key + "-" + serialized.name;
-    if (cache2.inserted[serialized.name] === void 0) {
-      var current = serialized;
-      do {
-        cache2.insert(serialized === current ? "." + className : "", current, cache2.sheet, true);
-        current = current.next;
-      } while (current !== void 0);
-    }
-  };
-
-  // node_modules/@emotion/hash/dist/emotion-hash.esm.js
-  function murmur2(str) {
-    var h = 0;
-    var k, i = 0, len = str.length;
-    for (; len >= 4; ++i, len -= 4) {
-      k = str.charCodeAt(i) & 255 | (str.charCodeAt(++i) & 255) << 8 | (str.charCodeAt(++i) & 255) << 16 | (str.charCodeAt(++i) & 255) << 24;
-      k = /* Math.imul(k, m): */
-      (k & 65535) * 1540483477 + ((k >>> 16) * 59797 << 16);
-      k ^= /* k >>> r: */
-      k >>> 24;
-      h = /* Math.imul(k, m): */
-      (k & 65535) * 1540483477 + ((k >>> 16) * 59797 << 16) ^ /* Math.imul(h, m): */
-      (h & 65535) * 1540483477 + ((h >>> 16) * 59797 << 16);
-    }
-    switch (len) {
-      case 3:
-        h ^= (str.charCodeAt(i + 2) & 255) << 16;
-      case 2:
-        h ^= (str.charCodeAt(i + 1) & 255) << 8;
-      case 1:
-        h ^= str.charCodeAt(i) & 255;
-        h = /* Math.imul(h, m): */
-        (h & 65535) * 1540483477 + ((h >>> 16) * 59797 << 16);
-    }
-    h ^= h >>> 13;
-    h = /* Math.imul(h, m): */
-    (h & 65535) * 1540483477 + ((h >>> 16) * 59797 << 16);
-    return ((h ^ h >>> 15) >>> 0).toString(36);
-  }
-
-  // node_modules/@emotion/unitless/dist/emotion-unitless.esm.js
-  var unitlessKeys = {
-    animationIterationCount: 1,
-    aspectRatio: 1,
-    borderImageOutset: 1,
-    borderImageSlice: 1,
-    borderImageWidth: 1,
-    boxFlex: 1,
-    boxFlexGroup: 1,
-    boxOrdinalGroup: 1,
-    columnCount: 1,
-    columns: 1,
-    flex: 1,
-    flexGrow: 1,
-    flexPositive: 1,
-    flexShrink: 1,
-    flexNegative: 1,
-    flexOrder: 1,
-    gridRow: 1,
-    gridRowEnd: 1,
-    gridRowSpan: 1,
-    gridRowStart: 1,
-    gridColumn: 1,
-    gridColumnEnd: 1,
-    gridColumnSpan: 1,
-    gridColumnStart: 1,
-    msGridRow: 1,
-    msGridRowSpan: 1,
-    msGridColumn: 1,
-    msGridColumnSpan: 1,
-    fontWeight: 1,
-    lineHeight: 1,
-    opacity: 1,
-    order: 1,
-    orphans: 1,
-    scale: 1,
-    tabSize: 1,
-    widows: 1,
-    zIndex: 1,
-    zoom: 1,
-    WebkitLineClamp: 1,
-    // SVG-related properties
-    fillOpacity: 1,
-    floodOpacity: 1,
-    stopOpacity: 1,
-    strokeDasharray: 1,
-    strokeDashoffset: 1,
-    strokeMiterlimit: 1,
-    strokeOpacity: 1,
-    strokeWidth: 1
-  };
-
-  // node_modules/@emotion/serialize/dist/emotion-serialize.esm.js
-  var isDevelopment2 = false;
-  var hyphenateRegex = /[A-Z]|^ms/g;
-  var animationRegex = /_EMO_([^_]+?)_([^]*?)_EMO_/g;
-  var isCustomProperty = function isCustomProperty2(property) {
-    return property.charCodeAt(1) === 45;
-  };
-  var isProcessableValue = function isProcessableValue2(value2) {
-    return value2 != null && typeof value2 !== "boolean";
-  };
-  var processStyleName = /* @__PURE__ */ memoize(function(styleName) {
-    return isCustomProperty(styleName) ? styleName : styleName.replace(hyphenateRegex, "-$&").toLowerCase();
-  });
-  var processStyleValue = function processStyleValue2(key, value2) {
-    switch (key) {
-      case "animation":
-      case "animationName": {
-        if (typeof value2 === "string") {
-          return value2.replace(animationRegex, function(match2, p1, p2) {
-            cursor = {
-              name: p1,
-              styles: p2,
-              next: cursor
-            };
-            return p1;
-          });
-        }
-      }
-    }
-    if (unitlessKeys[key] !== 1 && !isCustomProperty(key) && typeof value2 === "number" && value2 !== 0) {
-      return value2 + "px";
-    }
-    return value2;
-  };
-  var noComponentSelectorMessage = "Component selectors can only be used in conjunction with @emotion/babel-plugin, the swc Emotion plugin, or another Emotion-aware compiler transform.";
-  function handleInterpolation(mergedProps, registered, interpolation) {
-    if (interpolation == null) {
-      return "";
-    }
-    var componentSelector = interpolation;
-    if (componentSelector.__emotion_styles !== void 0) {
-      return componentSelector;
-    }
-    switch (typeof interpolation) {
-      case "boolean": {
-        return "";
-      }
-      case "object": {
-        var keyframes2 = interpolation;
-        if (keyframes2.anim === 1) {
-          cursor = {
-            name: keyframes2.name,
-            styles: keyframes2.styles,
-            next: cursor
-          };
-          return keyframes2.name;
-        }
-        var serializedStyles = interpolation;
-        if (serializedStyles.styles !== void 0) {
-          var next2 = serializedStyles.next;
-          if (next2 !== void 0) {
-            while (next2 !== void 0) {
-              cursor = {
-                name: next2.name,
-                styles: next2.styles,
-                next: cursor
-              };
-              next2 = next2.next;
-            }
-          }
-          var styles2 = serializedStyles.styles + ";";
-          return styles2;
-        }
-        return createStringFromObject(mergedProps, registered, interpolation);
-      }
-      case "function": {
-        if (mergedProps !== void 0) {
-          var previousCursor = cursor;
-          var result = interpolation(mergedProps);
-          cursor = previousCursor;
-          return handleInterpolation(mergedProps, registered, result);
-        }
-        break;
-      }
-    }
-    var asString = interpolation;
-    if (registered == null) {
-      return asString;
-    }
-    var cached = registered[asString];
-    return cached !== void 0 ? cached : asString;
-  }
-  function createStringFromObject(mergedProps, registered, obj) {
-    var string = "";
-    if (Array.isArray(obj)) {
-      for (var i = 0; i < obj.length; i++) {
-        string += handleInterpolation(mergedProps, registered, obj[i]) + ";";
-      }
-    } else {
-      for (var key in obj) {
-        var value2 = obj[key];
-        if (typeof value2 !== "object") {
-          var asString = value2;
-          if (registered != null && registered[asString] !== void 0) {
-            string += key + "{" + registered[asString] + "}";
-          } else if (isProcessableValue(asString)) {
-            string += processStyleName(key) + ":" + processStyleValue(key, asString) + ";";
-          }
-        } else {
-          if (key === "NO_COMPONENT_SELECTOR" && isDevelopment2) {
-            throw new Error(noComponentSelectorMessage);
-          }
-          if (Array.isArray(value2) && typeof value2[0] === "string" && (registered == null || registered[value2[0]] === void 0)) {
-            for (var _i = 0; _i < value2.length; _i++) {
-              if (isProcessableValue(value2[_i])) {
-                string += processStyleName(key) + ":" + processStyleValue(key, value2[_i]) + ";";
-              }
-            }
-          } else {
-            var interpolated = handleInterpolation(mergedProps, registered, value2);
-            switch (key) {
-              case "animation":
-              case "animationName": {
-                string += processStyleName(key) + ":" + interpolated + ";";
-                break;
-              }
-              default: {
-                string += key + "{" + interpolated + "}";
-              }
-            }
-          }
-        }
-      }
-    }
-    return string;
-  }
-  var labelPattern = /label:\s*([^\s;{]+)\s*(;|$)/g;
-  var cursor;
-  function serializeStyles(args, registered, mergedProps) {
-    if (args.length === 1 && typeof args[0] === "object" && args[0] !== null && args[0].styles !== void 0) {
-      return args[0];
-    }
-    var stringMode = true;
-    var styles2 = "";
-    cursor = void 0;
-    var strings = args[0];
-    if (strings == null || strings.raw === void 0) {
-      stringMode = false;
-      styles2 += handleInterpolation(mergedProps, registered, strings);
-    } else {
-      var asTemplateStringsArr = strings;
-      styles2 += asTemplateStringsArr[0];
-    }
-    for (var i = 1; i < args.length; i++) {
-      styles2 += handleInterpolation(mergedProps, registered, args[i]);
-      if (stringMode) {
-        var templateStringsArr = strings;
-        styles2 += templateStringsArr[i];
-      }
-    }
-    labelPattern.lastIndex = 0;
-    var identifierName = "";
-    var match2;
-    while ((match2 = labelPattern.exec(styles2)) !== null) {
-      identifierName += "-" + match2[1];
-    }
-    var name = murmur2(styles2) + identifierName;
-    return {
-      name,
-      styles: styles2,
-      next: cursor
-    };
-  }
-
-  // node_modules/@emotion/use-insertion-effect-with-fallbacks/dist/emotion-use-insertion-effect-with-fallbacks.browser.esm.js
-  var React = __toESM(require_react());
-  var syncFallback = function syncFallback2(create) {
-    return create();
-  };
-  var useInsertionEffect2 = React["useInsertionEffect"] ? React["useInsertionEffect"] : false;
-  var useInsertionEffectAlwaysWithSyncFallback = useInsertionEffect2 || syncFallback;
-  var useInsertionEffectWithLayoutFallback = useInsertionEffect2 || React.useLayoutEffect;
-
-  // node_modules/@emotion/react/dist/emotion-element-f0de968e.browser.esm.js
-  var isDevelopment3 = false;
-  var EmotionCacheContext = /* @__PURE__ */ React2.createContext(
-    // we're doing this to avoid preconstruct's dead code elimination in this one case
-    // because this module is primarily intended for the browser and node
-    // but it's also required in react native and similar environments sometimes
-    // and we could have a special build just for that
-    // but this is much easier and the native packages
-    // might use a different theme context in the future anyway
-    typeof HTMLElement !== "undefined" ? /* @__PURE__ */ createCache({
-      key: "css"
-    }) : null
-  );
-  var CacheProvider = EmotionCacheContext.Provider;
-  var withEmotionCache = function withEmotionCache2(func) {
-    return /* @__PURE__ */ (0, import_react.forwardRef)(function(props, ref) {
-      var cache2 = (0, import_react.useContext)(EmotionCacheContext);
-      return func(props, cache2, ref);
-    });
-  };
-  var ThemeContext = /* @__PURE__ */ React2.createContext({});
-  var hasOwn = {}.hasOwnProperty;
-  var typePropName = "__EMOTION_TYPE_PLEASE_DO_NOT_USE__";
-  var createEmotionProps = function createEmotionProps2(type, props) {
-    var newProps = {};
-    for (var _key in props) {
-      if (hasOwn.call(props, _key)) {
-        newProps[_key] = props[_key];
-      }
-    }
-    newProps[typePropName] = type;
-    return newProps;
-  };
-  var Insertion = function Insertion2(_ref) {
-    var cache2 = _ref.cache, serialized = _ref.serialized, isStringTag = _ref.isStringTag;
-    registerStyles(cache2, serialized, isStringTag);
-    useInsertionEffectAlwaysWithSyncFallback(function() {
-      return insertStyles(cache2, serialized, isStringTag);
-    });
-    return null;
-  };
-  var Emotion = /* @__PURE__ */ withEmotionCache(function(props, cache2, ref) {
-    var cssProp = props.css;
-    if (typeof cssProp === "string" && cache2.registered[cssProp] !== void 0) {
-      cssProp = cache2.registered[cssProp];
-    }
-    var WrappedComponent = props[typePropName];
-    var registeredStyles = [cssProp];
-    var className = "";
-    if (typeof props.className === "string") {
-      className = getRegisteredStyles(cache2.registered, registeredStyles, props.className);
-    } else if (props.className != null) {
-      className = props.className + " ";
-    }
-    var serialized = serializeStyles(registeredStyles, void 0, React2.useContext(ThemeContext));
-    className += cache2.key + "-" + serialized.name;
-    var newProps = {};
-    for (var _key2 in props) {
-      if (hasOwn.call(props, _key2) && _key2 !== "css" && _key2 !== typePropName && !isDevelopment3) {
-        newProps[_key2] = props[_key2];
-      }
-    }
-    newProps.className = className;
-    if (ref) {
-      newProps.ref = ref;
-    }
-    return /* @__PURE__ */ React2.createElement(React2.Fragment, null, /* @__PURE__ */ React2.createElement(Insertion, {
-      cache: cache2,
-      serialized,
-      isStringTag: typeof WrappedComponent === "string"
-    }), /* @__PURE__ */ React2.createElement(WrappedComponent, newProps));
-  });
-  var Emotion$1 = Emotion;
-
-  // node_modules/@emotion/react/dist/emotion-react.browser.esm.js
-  var React3 = __toESM(require_react());
-  var import_hoist_non_react_statics = __toESM(require_hoist_non_react_statics_cjs());
-  var jsx = function jsx2(type, props) {
-    var args = arguments;
-    if (props == null || !hasOwn.call(props, "css")) {
-      return React3.createElement.apply(void 0, args);
-    }
-    var argsLength = args.length;
-    var createElementArgArray = new Array(argsLength);
-    createElementArgArray[0] = Emotion$1;
-    createElementArgArray[1] = createEmotionProps(type, props);
-    for (var i = 2; i < argsLength; i++) {
-      createElementArgArray[i] = args[i];
-    }
-    return React3.createElement.apply(null, createElementArgArray);
-  };
-  (function(_jsx17) {
-    var JSX;
-    /* @__PURE__ */ (function(_JSX) {
-    })(JSX || (JSX = _jsx17.JSX || (_jsx17.JSX = {})));
-  })(jsx || (jsx = {}));
-  var Global = /* @__PURE__ */ withEmotionCache(function(props, cache2) {
-    var styles2 = props.styles;
-    var serialized = serializeStyles([styles2], void 0, React3.useContext(ThemeContext));
-    var sheetRef = React3.useRef();
-    useInsertionEffectWithLayoutFallback(function() {
-      var key = cache2.key + "-global";
-      var sheet = new cache2.sheet.constructor({
-        key,
-        nonce: cache2.sheet.nonce,
-        container: cache2.sheet.container,
-        speedy: cache2.sheet.isSpeedy
-      });
-      var rehydrating = false;
-      var node2 = document.querySelector('style[data-emotion="' + key + " " + serialized.name + '"]');
-      if (cache2.sheet.tags.length) {
-        sheet.before = cache2.sheet.tags[0];
-      }
-      if (node2 !== null) {
-        rehydrating = true;
-        node2.setAttribute("data-emotion", key);
-        sheet.hydrate([node2]);
-      }
-      sheetRef.current = [sheet, rehydrating];
-      return function() {
-        sheet.flush();
-      };
-    }, [cache2]);
-    useInsertionEffectWithLayoutFallback(function() {
-      var sheetRefCurrent = sheetRef.current;
-      var sheet = sheetRefCurrent[0], rehydrating = sheetRefCurrent[1];
-      if (rehydrating) {
-        sheetRefCurrent[1] = false;
-        return;
-      }
-      if (serialized.next !== void 0) {
-        insertStyles(cache2, serialized.next, true);
-      }
-      if (sheet.tags.length) {
-        var element = sheet.tags[sheet.tags.length - 1].nextElementSibling;
-        sheet.before = element;
-        sheet.flush();
-      }
-      cache2.insert("", serialized, sheet, false);
-    }, [cache2, serialized.name]);
-    return null;
-  });
-
-  // node_modules/@emotion/styled/base/dist/emotion-styled-base.browser.esm.js
-  var React4 = __toESM(require_react());
-
-  // node_modules/@emotion/is-prop-valid/dist/emotion-is-prop-valid.esm.js
-  var reactPropsRegex = /^((children|dangerouslySetInnerHTML|key|ref|autoFocus|defaultValue|defaultChecked|innerHTML|suppressContentEditableWarning|suppressHydrationWarning|valueLink|abbr|accept|acceptCharset|accessKey|action|allow|allowUserMedia|allowPaymentRequest|allowFullScreen|allowTransparency|alt|async|autoComplete|autoPlay|capture|cellPadding|cellSpacing|challenge|charSet|checked|cite|classID|className|cols|colSpan|content|contentEditable|contextMenu|controls|controlsList|coords|crossOrigin|data|dateTime|decoding|default|defer|dir|disabled|disablePictureInPicture|disableRemotePlayback|download|draggable|encType|enterKeyHint|fetchpriority|fetchPriority|form|formAction|formEncType|formMethod|formNoValidate|formTarget|frameBorder|headers|height|hidden|high|href|hrefLang|htmlFor|httpEquiv|id|inputMode|integrity|is|keyParams|keyType|kind|label|lang|list|loading|loop|low|marginHeight|marginWidth|max|maxLength|media|mediaGroup|method|min|minLength|multiple|muted|name|nonce|noValidate|open|optimum|pattern|placeholder|playsInline|popover|popoverTarget|popoverTargetAction|poster|preload|profile|radioGroup|readOnly|referrerPolicy|rel|required|reversed|role|rows|rowSpan|sandbox|scope|scoped|scrolling|seamless|selected|shape|size|sizes|slot|span|spellCheck|src|srcDoc|srcLang|srcSet|start|step|style|summary|tabIndex|target|title|translate|type|useMap|value|width|wmode|wrap|about|datatype|inlist|prefix|property|resource|typeof|vocab|autoCapitalize|autoCorrect|autoSave|color|incremental|fallback|inert|itemProp|itemScope|itemType|itemID|itemRef|on|option|results|security|unselectable|accentHeight|accumulate|additive|alignmentBaseline|allowReorder|alphabetic|amplitude|arabicForm|ascent|attributeName|attributeType|autoReverse|azimuth|baseFrequency|baselineShift|baseProfile|bbox|begin|bias|by|calcMode|capHeight|clip|clipPathUnits|clipPath|clipRule|colorInterpolation|colorInterpolationFilters|colorProfile|colorRendering|contentScriptType|contentStyleType|cursor|cx|cy|d|decelerate|descent|diffuseConstant|direction|display|divisor|dominantBaseline|dur|dx|dy|edgeMode|elevation|enableBackground|end|exponent|externalResourcesRequired|fill|fillOpacity|fillRule|filter|filterRes|filterUnits|floodColor|floodOpacity|focusable|fontFamily|fontSize|fontSizeAdjust|fontStretch|fontStyle|fontVariant|fontWeight|format|from|fr|fx|fy|g1|g2|glyphName|glyphOrientationHorizontal|glyphOrientationVertical|glyphRef|gradientTransform|gradientUnits|hanging|horizAdvX|horizOriginX|ideographic|imageRendering|in|in2|intercept|k|k1|k2|k3|k4|kernelMatrix|kernelUnitLength|kerning|keyPoints|keySplines|keyTimes|lengthAdjust|letterSpacing|lightingColor|limitingConeAngle|local|markerEnd|markerMid|markerStart|markerHeight|markerUnits|markerWidth|mask|maskContentUnits|maskUnits|mathematical|mode|numOctaves|offset|opacity|operator|order|orient|orientation|origin|overflow|overlinePosition|overlineThickness|panose1|paintOrder|pathLength|patternContentUnits|patternTransform|patternUnits|pointerEvents|points|pointsAtX|pointsAtY|pointsAtZ|preserveAlpha|preserveAspectRatio|primitiveUnits|r|radius|refX|refY|renderingIntent|repeatCount|repeatDur|requiredExtensions|requiredFeatures|restart|result|rotate|rx|ry|scale|seed|shapeRendering|slope|spacing|specularConstant|specularExponent|speed|spreadMethod|startOffset|stdDeviation|stemh|stemv|stitchTiles|stopColor|stopOpacity|strikethroughPosition|strikethroughThickness|string|stroke|strokeDasharray|strokeDashoffset|strokeLinecap|strokeLinejoin|strokeMiterlimit|strokeOpacity|strokeWidth|surfaceScale|systemLanguage|tableValues|targetX|targetY|textAnchor|textDecoration|textRendering|textLength|to|transform|u1|u2|underlinePosition|underlineThickness|unicode|unicodeBidi|unicodeRange|unitsPerEm|vAlphabetic|vHanging|vIdeographic|vMathematical|values|vectorEffect|version|vertAdvY|vertOriginX|vertOriginY|viewBox|viewTarget|visibility|widths|wordSpacing|writingMode|x|xHeight|x1|x2|xChannelSelector|xlinkActuate|xlinkArcrole|xlinkHref|xlinkRole|xlinkShow|xlinkTitle|xlinkType|xmlBase|xmlns|xmlnsXlink|xmlLang|xmlSpace|y|y1|y2|yChannelSelector|z|zoomAndPan|for|class|autofocus)|(([Dd][Aa][Tt][Aa]|[Aa][Rr][Ii][Aa]|x)-.*))$/;
-  var isPropValid = /* @__PURE__ */ memoize(
-    function(prop) {
-      return reactPropsRegex.test(prop) || prop.charCodeAt(0) === 111 && prop.charCodeAt(1) === 110 && prop.charCodeAt(2) < 91;
-    }
-    /* Z+1 */
-  );
-
-  // node_modules/@emotion/styled/base/dist/emotion-styled-base.browser.esm.js
-  var isDevelopment4 = false;
-  var testOmitPropsOnStringTag = isPropValid;
-  var testOmitPropsOnComponent = function testOmitPropsOnComponent2(key) {
-    return key !== "theme";
-  };
-  var getDefaultShouldForwardProp = function getDefaultShouldForwardProp2(tag) {
-    return typeof tag === "string" && // 96 is one less than the char code
-    // for "a" so this is checking that
-    // it's a lowercase character
-    tag.charCodeAt(0) > 96 ? testOmitPropsOnStringTag : testOmitPropsOnComponent;
-  };
-  var composeShouldForwardProps = function composeShouldForwardProps2(tag, options, isReal) {
-    var shouldForwardProp;
-    if (options) {
-      var optionsShouldForwardProp = options.shouldForwardProp;
-      shouldForwardProp = tag.__emotion_forwardProp && optionsShouldForwardProp ? function(propName) {
-        return tag.__emotion_forwardProp(propName) && optionsShouldForwardProp(propName);
-      } : optionsShouldForwardProp;
-    }
-    if (typeof shouldForwardProp !== "function" && isReal) {
-      shouldForwardProp = tag.__emotion_forwardProp;
-    }
-    return shouldForwardProp;
-  };
-  var Insertion3 = function Insertion4(_ref) {
-    var cache2 = _ref.cache, serialized = _ref.serialized, isStringTag = _ref.isStringTag;
-    registerStyles(cache2, serialized, isStringTag);
-    useInsertionEffectAlwaysWithSyncFallback(function() {
-      return insertStyles(cache2, serialized, isStringTag);
-    });
-    return null;
-  };
-  var createStyled = function createStyled2(tag, options) {
-    var isReal = tag.__emotion_real === tag;
-    var baseTag = isReal && tag.__emotion_base || tag;
-    var identifierName;
-    var targetClassName;
-    if (options !== void 0) {
-      identifierName = options.label;
-      targetClassName = options.target;
-    }
-    var shouldForwardProp = composeShouldForwardProps(tag, options, isReal);
-    var defaultShouldForwardProp = shouldForwardProp || getDefaultShouldForwardProp(baseTag);
-    var shouldUseAs = !defaultShouldForwardProp("as");
-    return function() {
-      var args = arguments;
-      var styles2 = isReal && tag.__emotion_styles !== void 0 ? tag.__emotion_styles.slice(0) : [];
-      if (identifierName !== void 0) {
-        styles2.push("label:" + identifierName + ";");
-      }
-      if (args[0] == null || args[0].raw === void 0) {
-        styles2.push.apply(styles2, args);
-      } else {
-        var templateStringsArr = args[0];
-        styles2.push(templateStringsArr[0]);
-        var len = args.length;
-        var i = 1;
-        for (; i < len; i++) {
-          styles2.push(args[i], templateStringsArr[i]);
-        }
-      }
-      var Styled = withEmotionCache(function(props, cache2, ref) {
-        var FinalTag = shouldUseAs && props.as || baseTag;
-        var className = "";
-        var classInterpolations = [];
-        var mergedProps = props;
-        if (props.theme == null) {
-          mergedProps = {};
-          for (var key in props) {
-            mergedProps[key] = props[key];
-          }
-          mergedProps.theme = React4.useContext(ThemeContext);
-        }
-        if (typeof props.className === "string") {
-          className = getRegisteredStyles(cache2.registered, classInterpolations, props.className);
-        } else if (props.className != null) {
-          className = props.className + " ";
-        }
-        var serialized = serializeStyles(styles2.concat(classInterpolations), cache2.registered, mergedProps);
-        className += cache2.key + "-" + serialized.name;
-        if (targetClassName !== void 0) {
-          className += " " + targetClassName;
-        }
-        var finalShouldForwardProp = shouldUseAs && shouldForwardProp === void 0 ? getDefaultShouldForwardProp(FinalTag) : defaultShouldForwardProp;
-        var newProps = {};
-        for (var _key in props) {
-          if (shouldUseAs && _key === "as") continue;
-          if (finalShouldForwardProp(_key)) {
-            newProps[_key] = props[_key];
-          }
-        }
-        newProps.className = className;
-        if (ref) {
-          newProps.ref = ref;
-        }
-        return /* @__PURE__ */ React4.createElement(React4.Fragment, null, /* @__PURE__ */ React4.createElement(Insertion3, {
-          cache: cache2,
-          serialized,
-          isStringTag: typeof FinalTag === "string"
-        }), /* @__PURE__ */ React4.createElement(FinalTag, newProps));
-      });
-      Styled.displayName = identifierName !== void 0 ? identifierName : "Styled(" + (typeof baseTag === "string" ? baseTag : baseTag.displayName || baseTag.name || "Component") + ")";
-      Styled.defaultProps = tag.defaultProps;
-      Styled.__emotion_real = Styled;
-      Styled.__emotion_base = baseTag;
-      Styled.__emotion_styles = styles2;
-      Styled.__emotion_forwardProp = shouldForwardProp;
-      Object.defineProperty(Styled, "toString", {
-        value: function value2() {
-          if (targetClassName === void 0 && isDevelopment4) {
-            return "NO_COMPONENT_SELECTOR";
-          }
-          return "." + targetClassName;
-        }
-      });
-      Styled.withComponent = function(nextTag, nextOptions) {
-        var newStyled = createStyled2(nextTag, _extends({}, options, nextOptions, {
-          shouldForwardProp: composeShouldForwardProps(Styled, nextOptions, true)
-        }));
-        return newStyled.apply(void 0, styles2);
-      };
-      return Styled;
-    };
-  };
-
-  // node_modules/@emotion/styled/dist/emotion-styled.browser.esm.js
-  var import_react3 = __toESM(require_react());
-  var tags = [
-    "a",
-    "abbr",
-    "address",
-    "area",
-    "article",
-    "aside",
-    "audio",
-    "b",
-    "base",
-    "bdi",
-    "bdo",
-    "big",
-    "blockquote",
-    "body",
-    "br",
-    "button",
-    "canvas",
-    "caption",
-    "cite",
-    "code",
-    "col",
-    "colgroup",
-    "data",
-    "datalist",
-    "dd",
-    "del",
-    "details",
-    "dfn",
-    "dialog",
-    "div",
-    "dl",
-    "dt",
-    "em",
-    "embed",
-    "fieldset",
-    "figcaption",
-    "figure",
-    "footer",
-    "form",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "head",
-    "header",
-    "hgroup",
-    "hr",
-    "html",
-    "i",
-    "iframe",
-    "img",
-    "input",
-    "ins",
-    "kbd",
-    "keygen",
-    "label",
-    "legend",
-    "li",
-    "link",
-    "main",
-    "map",
-    "mark",
-    "marquee",
-    "menu",
-    "menuitem",
-    "meta",
-    "meter",
-    "nav",
-    "noscript",
-    "object",
-    "ol",
-    "optgroup",
-    "option",
-    "output",
-    "p",
-    "param",
-    "picture",
-    "pre",
-    "progress",
-    "q",
-    "rp",
-    "rt",
-    "ruby",
-    "s",
-    "samp",
-    "script",
-    "section",
-    "select",
-    "small",
-    "source",
-    "span",
-    "strong",
-    "style",
-    "sub",
-    "summary",
-    "sup",
-    "table",
-    "tbody",
-    "td",
-    "textarea",
-    "tfoot",
-    "th",
-    "thead",
-    "time",
-    "title",
-    "tr",
-    "track",
-    "u",
-    "ul",
-    "var",
-    "video",
-    "wbr",
-    // SVG
-    "circle",
-    "clipPath",
-    "defs",
-    "ellipse",
-    "foreignObject",
-    "g",
-    "image",
-    "line",
-    "linearGradient",
-    "mask",
-    "path",
-    "pattern",
-    "polygon",
-    "polyline",
-    "radialGradient",
-    "rect",
-    "stop",
-    "svg",
-    "text",
-    "tspan"
-  ];
-  var styled = createStyled.bind(null);
-  tags.forEach(function(tagName) {
-    styled[tagName] = styled(tagName);
-  });
-
-  // node_modules/@mui/styled-engine/esm/GlobalStyles/GlobalStyles.js
-  var import_prop_types = __toESM(require_prop_types(), 1);
-  var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
-  function isEmpty(obj) {
-    return obj === void 0 || obj === null || Object.keys(obj).length === 0;
-  }
-  function GlobalStyles(props) {
-    const {
-      styles: styles2,
-      defaultTheme: defaultTheme2 = {}
-    } = props;
-    const globalStyles = typeof styles2 === "function" ? (themeInput) => styles2(isEmpty(themeInput) ? defaultTheme2 : themeInput) : styles2;
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Global, {
-      styles: globalStyles
-    });
-  }
-  true ? GlobalStyles.propTypes = {
-    defaultTheme: import_prop_types.default.object,
-    styles: import_prop_types.default.oneOfType([import_prop_types.default.array, import_prop_types.default.string, import_prop_types.default.object, import_prop_types.default.func])
-  } : void 0;
-
-  // node_modules/@mui/styled-engine/esm/index.js
-  var wrapper = [];
-  function internal_serializeStyles(styles2) {
-    wrapper[0] = styles2;
-    return serializeStyles(wrapper);
-  }
-
-  // node_modules/@mui/system/esm/GlobalStyles/GlobalStyles.js
-  var import_prop_types3 = __toESM(require_prop_types(), 1);
-
-  // node_modules/@mui/utils/esm/deepmerge/deepmerge.js
-  var React5 = __toESM(require_react(), 1);
-  var import_react_is = __toESM(require_react_is2(), 1);
-  function isPlainObject(item) {
-    if (typeof item !== "object" || item === null) {
-      return false;
-    }
-    const prototype = Object.getPrototypeOf(item);
-    return (prototype === null || prototype === Object.prototype || Object.getPrototypeOf(prototype) === null) && !(Symbol.toStringTag in item) && !(Symbol.iterator in item);
-  }
-  function deepClone(source) {
-    if (/* @__PURE__ */ React5.isValidElement(source) || (0, import_react_is.isValidElementType)(source) || !isPlainObject(source)) {
-      return source;
-    }
-    const output = {};
-    Object.keys(source).forEach((key) => {
-      output[key] = deepClone(source[key]);
-    });
-    return output;
-  }
-  function deepmerge(target, source, options = {
-    clone: true
-  }) {
-    const output = options.clone ? {
-      ...target
-    } : target;
-    if (isPlainObject(target) && isPlainObject(source)) {
-      Object.keys(source).forEach((key) => {
-        if (/* @__PURE__ */ React5.isValidElement(source[key]) || (0, import_react_is.isValidElementType)(source[key])) {
-          output[key] = source[key];
-        } else if (isPlainObject(source[key]) && // Avoid prototype pollution
-        Object.prototype.hasOwnProperty.call(target, key) && isPlainObject(target[key])) {
-          output[key] = deepmerge(target[key], source[key], options);
-        } else if (options.clone) {
-          output[key] = isPlainObject(source[key]) ? deepClone(source[key]) : source[key];
-        } else {
-          output[key] = source[key];
-        }
-      });
-    }
-    return output;
-  }
-
-  // node_modules/@mui/system/esm/createBreakpoints/createBreakpoints.js
-  var sortBreakpointsValues = (values2) => {
-    const breakpointsAsArray = Object.keys(values2).map((key) => ({
-      key,
-      val: values2[key]
-    })) || [];
-    breakpointsAsArray.sort((breakpoint1, breakpoint2) => breakpoint1.val - breakpoint2.val);
-    return breakpointsAsArray.reduce((acc, obj) => {
-      return {
-        ...acc,
-        [obj.key]: obj.val
-      };
-    }, {});
-  };
-  function createBreakpoints(breakpoints) {
-    const {
-      // The breakpoint **start** at this value.
-      // For instance with the first breakpoint xs: [xs, sm).
-      values: values2 = {
-        xs: 0,
-        // phone
-        sm: 600,
-        // tablet
-        md: 900,
-        // small laptop
-        lg: 1200,
-        // desktop
-        xl: 1536
-        // large screen
-      },
-      unit = "px",
-      step = 5,
-      ...other
-    } = breakpoints;
-    const sortedValues = sortBreakpointsValues(values2);
-    const keys = Object.keys(sortedValues);
-    function up(key) {
-      const value2 = typeof values2[key] === "number" ? values2[key] : key;
-      return `@media (min-width:${value2}${unit})`;
-    }
-    function down(key) {
-      const value2 = typeof values2[key] === "number" ? values2[key] : key;
-      return `@media (max-width:${value2 - step / 100}${unit})`;
-    }
-    function between(start, end) {
-      const endIndex = keys.indexOf(end);
-      return `@media (min-width:${typeof values2[start] === "number" ? values2[start] : start}${unit}) and (max-width:${(endIndex !== -1 && typeof values2[keys[endIndex]] === "number" ? values2[keys[endIndex]] : end) - step / 100}${unit})`;
-    }
-    function only(key) {
-      if (keys.indexOf(key) + 1 < keys.length) {
-        return between(key, keys[keys.indexOf(key) + 1]);
-      }
-      return up(key);
-    }
-    function not(key) {
-      const keyIndex = keys.indexOf(key);
-      if (keyIndex === 0) {
-        return up(keys[1]);
-      }
-      if (keyIndex === keys.length - 1) {
-        return down(keys[keyIndex]);
-      }
-      return between(key, keys[keys.indexOf(key) + 1]).replace("@media", "@media not all and");
-    }
-    return {
-      keys,
-      values: sortedValues,
-      up,
-      down,
-      between,
-      only,
-      not,
-      unit,
-      ...other
-    };
-  }
-
-  // node_modules/@mui/system/esm/cssContainerQueries/cssContainerQueries.js
-  function sortContainerQueries(theme, css2) {
-    if (!theme.containerQueries) {
-      return css2;
-    }
-    const sorted = Object.keys(css2).filter((key) => key.startsWith("@container")).sort((a, b) => {
-      const regex = /min-width:\s*([0-9.]+)/;
-      return +(a.match(regex)?.[1] || 0) - +(b.match(regex)?.[1] || 0);
-    });
-    if (!sorted.length) {
-      return css2;
-    }
-    return sorted.reduce((acc, key) => {
-      const value2 = css2[key];
-      delete acc[key];
-      acc[key] = value2;
-      return acc;
-    }, {
-      ...css2
-    });
-  }
-  function isCqShorthand(breakpointKeys, value2) {
-    return value2 === "@" || value2.startsWith("@") && (breakpointKeys.some((key) => value2.startsWith(`@${key}`)) || !!value2.match(/^@\d/));
-  }
-  function getContainerQuery(theme, shorthand) {
-    const matches = shorthand.match(/^@([^/]+)?\/?(.+)?$/);
-    if (!matches) {
-      if (true) {
-        throw new Error(true ? `MUI: The provided shorthand ${`(${shorthand})`} is invalid. The format should be \`@<breakpoint | number>\` or \`@<breakpoint | number>/<container>\`.
-For example, \`@sm\` or \`@600\` or \`@40rem/sidebar\`.` : formatMuiErrorMessage(18, `(${shorthand})`));
-      }
-      return null;
-    }
-    const [, containerQuery, containerName] = matches;
-    const value2 = Number.isNaN(+containerQuery) ? containerQuery || 0 : +containerQuery;
-    return theme.containerQueries(containerName).up(value2);
-  }
-  function cssContainerQueries(themeInput) {
-    const toContainerQuery = (mediaQuery, name) => mediaQuery.replace("@media", name ? `@container ${name}` : "@container");
-    function attachCq(node3, name) {
-      node3.up = (...args) => toContainerQuery(themeInput.breakpoints.up(...args), name);
-      node3.down = (...args) => toContainerQuery(themeInput.breakpoints.down(...args), name);
-      node3.between = (...args) => toContainerQuery(themeInput.breakpoints.between(...args), name);
-      node3.only = (...args) => toContainerQuery(themeInput.breakpoints.only(...args), name);
-      node3.not = (...args) => {
-        const result = toContainerQuery(themeInput.breakpoints.not(...args), name);
-        if (result.includes("not all and")) {
-          return result.replace("not all and ", "").replace("min-width:", "width<").replace("max-width:", "width>").replace("and", "or");
-        }
-        return result;
-      };
-    }
-    const node2 = {};
-    const containerQueries = (name) => {
-      attachCq(node2, name);
-      return node2;
-    };
-    attachCq(containerQueries);
-    return {
-      ...themeInput,
-      containerQueries
-    };
-  }
-
-  // node_modules/@mui/system/esm/createTheme/shape.js
-  var shape = {
-    borderRadius: 4
-  };
-  var shape_default = shape;
-
-  // node_modules/@mui/system/esm/responsivePropType/responsivePropType.js
-  var import_prop_types2 = __toESM(require_prop_types(), 1);
-  var responsivePropType = true ? import_prop_types2.default.oneOfType([import_prop_types2.default.number, import_prop_types2.default.string, import_prop_types2.default.object, import_prop_types2.default.array]) : {};
-  var responsivePropType_default = responsivePropType;
-
-  // node_modules/@mui/system/esm/merge/merge.js
-  function merge(acc, item) {
-    if (!item) {
-      return acc;
-    }
-    return deepmerge(acc, item, {
-      clone: false
-      // No need to clone deep, it's way faster.
-    });
-  }
-  var merge_default = merge;
-
-  // node_modules/@mui/system/esm/breakpoints/breakpoints.js
-  var values = {
-    xs: 0,
-    // phone
-    sm: 600,
-    // tablet
-    md: 900,
-    // small laptop
-    lg: 1200,
-    // desktop
-    xl: 1536
-    // large screen
-  };
-  var defaultBreakpoints = {
-    // Sorted ASC by size. That's important.
-    // It can't be configured as it's used statically for propTypes.
-    keys: ["xs", "sm", "md", "lg", "xl"],
-    up: (key) => `@media (min-width:${values[key]}px)`
-  };
-  var defaultContainerQueries = {
-    containerQueries: (containerName) => ({
-      up: (key) => {
-        let result = typeof key === "number" ? key : values[key] || key;
-        if (typeof result === "number") {
-          result = `${result}px`;
-        }
-        return containerName ? `@container ${containerName} (min-width:${result})` : `@container (min-width:${result})`;
-      }
-    })
-  };
-  function handleBreakpoints(props, propValue, styleFromPropValue) {
-    const theme = props.theme || {};
-    if (Array.isArray(propValue)) {
-      const themeBreakpoints = theme.breakpoints || defaultBreakpoints;
-      return propValue.reduce((acc, item, index) => {
-        acc[themeBreakpoints.up(themeBreakpoints.keys[index])] = styleFromPropValue(propValue[index]);
-        return acc;
-      }, {});
-    }
-    if (typeof propValue === "object") {
-      const themeBreakpoints = theme.breakpoints || defaultBreakpoints;
-      return Object.keys(propValue).reduce((acc, breakpoint) => {
-        if (isCqShorthand(themeBreakpoints.keys, breakpoint)) {
-          const containerKey = getContainerQuery(theme.containerQueries ? theme : defaultContainerQueries, breakpoint);
-          if (containerKey) {
-            acc[containerKey] = styleFromPropValue(propValue[breakpoint], breakpoint);
-          }
-        } else if (Object.keys(themeBreakpoints.values || values).includes(breakpoint)) {
-          const mediaKey = themeBreakpoints.up(breakpoint);
-          acc[mediaKey] = styleFromPropValue(propValue[breakpoint], breakpoint);
-        } else {
-          const cssKey = breakpoint;
-          acc[cssKey] = propValue[cssKey];
-        }
-        return acc;
-      }, {});
-    }
-    const output = styleFromPropValue(propValue);
-    return output;
-  }
-  function createEmptyBreakpointObject(breakpointsInput = {}) {
-    const breakpointsInOrder = breakpointsInput.keys?.reduce((acc, key) => {
-      const breakpointStyleKey = breakpointsInput.up(key);
-      acc[breakpointStyleKey] = {};
-      return acc;
-    }, {});
-    return breakpointsInOrder || {};
-  }
-  function removeUnusedBreakpoints(breakpointKeys, style3) {
-    return breakpointKeys.reduce((acc, key) => {
-      const breakpointOutput = acc[key];
-      const isBreakpointUnused = !breakpointOutput || Object.keys(breakpointOutput).length === 0;
-      if (isBreakpointUnused) {
-        delete acc[key];
-      }
-      return acc;
-    }, style3);
-  }
-
-  // node_modules/@mui/utils/esm/capitalize/capitalize.js
-  function capitalize(string) {
-    if (typeof string !== "string") {
-      throw new Error(true ? "MUI: `capitalize(string)` expects a string argument." : formatMuiErrorMessage(7));
-    }
-    return string.charAt(0).toUpperCase() + string.slice(1);
-  }
-
-  // node_modules/@mui/system/esm/style/style.js
-  function getPath(obj, path, checkVars = true) {
-    if (!path || typeof path !== "string") {
-      return null;
-    }
-    if (obj && obj.vars && checkVars) {
-      const val = `vars.${path}`.split(".").reduce((acc, item) => acc && acc[item] ? acc[item] : null, obj);
-      if (val != null) {
-        return val;
-      }
-    }
-    return path.split(".").reduce((acc, item) => {
-      if (acc && acc[item] != null) {
-        return acc[item];
-      }
-      return null;
-    }, obj);
-  }
-  function getStyleValue(themeMapping, transform, propValueFinal, userValue = propValueFinal) {
-    let value2;
-    if (typeof themeMapping === "function") {
-      value2 = themeMapping(propValueFinal);
-    } else if (Array.isArray(themeMapping)) {
-      value2 = themeMapping[propValueFinal] || userValue;
-    } else {
-      value2 = getPath(themeMapping, propValueFinal) || userValue;
-    }
-    if (transform) {
-      value2 = transform(value2, userValue, themeMapping);
-    }
-    return value2;
-  }
-  function style(options) {
-    const {
-      prop,
-      cssProperty = options.prop,
-      themeKey,
-      transform
-    } = options;
-    const fn = (props) => {
-      if (props[prop] == null) {
-        return null;
-      }
-      const propValue = props[prop];
-      const theme = props.theme;
-      const themeMapping = getPath(theme, themeKey) || {};
-      const styleFromPropValue = (propValueFinal) => {
-        let value2 = getStyleValue(themeMapping, transform, propValueFinal);
-        if (propValueFinal === value2 && typeof propValueFinal === "string") {
-          value2 = getStyleValue(themeMapping, transform, `${prop}${propValueFinal === "default" ? "" : capitalize(propValueFinal)}`, propValueFinal);
-        }
-        if (cssProperty === false) {
-          return value2;
-        }
-        return {
-          [cssProperty]: value2
-        };
-      };
-      return handleBreakpoints(props, propValue, styleFromPropValue);
-    };
-    fn.propTypes = true ? {
-      [prop]: responsivePropType_default
-    } : {};
-    fn.filterProps = [prop];
-    return fn;
-  }
-  var style_default = style;
-
-  // node_modules/@mui/system/esm/memoize/memoize.js
-  function memoize2(fn) {
-    const cache2 = {};
-    return (arg) => {
-      if (cache2[arg] === void 0) {
-        cache2[arg] = fn(arg);
-      }
-      return cache2[arg];
-    };
-  }
-
-  // node_modules/@mui/system/esm/spacing/spacing.js
-  var properties = {
-    m: "margin",
-    p: "padding"
-  };
-  var directions = {
-    t: "Top",
-    r: "Right",
-    b: "Bottom",
-    l: "Left",
-    x: ["Left", "Right"],
-    y: ["Top", "Bottom"]
-  };
-  var aliases = {
-    marginX: "mx",
-    marginY: "my",
-    paddingX: "px",
-    paddingY: "py"
-  };
-  var getCssProperties = memoize2((prop) => {
-    if (prop.length > 2) {
-      if (aliases[prop]) {
-        prop = aliases[prop];
-      } else {
-        return [prop];
-      }
-    }
-    const [a, b] = prop.split("");
-    const property = properties[a];
-    const direction = directions[b] || "";
-    return Array.isArray(direction) ? direction.map((dir) => property + dir) : [property + direction];
-  });
-  var marginKeys = ["m", "mt", "mr", "mb", "ml", "mx", "my", "margin", "marginTop", "marginRight", "marginBottom", "marginLeft", "marginX", "marginY", "marginInline", "marginInlineStart", "marginInlineEnd", "marginBlock", "marginBlockStart", "marginBlockEnd"];
-  var paddingKeys = ["p", "pt", "pr", "pb", "pl", "px", "py", "padding", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "paddingX", "paddingY", "paddingInline", "paddingInlineStart", "paddingInlineEnd", "paddingBlock", "paddingBlockStart", "paddingBlockEnd"];
-  var spacingKeys = [...marginKeys, ...paddingKeys];
-  function createUnaryUnit(theme, themeKey, defaultValue, propName) {
-    const themeSpacing = getPath(theme, themeKey, true) ?? defaultValue;
-    if (typeof themeSpacing === "number" || typeof themeSpacing === "string") {
-      return (val) => {
-        if (typeof val === "string") {
-          return val;
-        }
-        if (true) {
-          if (typeof val !== "number") {
-            console.error(`MUI: Expected ${propName} argument to be a number or a string, got ${val}.`);
-          }
-        }
-        if (typeof themeSpacing === "string") {
-          if (themeSpacing.startsWith("var(") && val === 0) {
-            return 0;
-          }
-          if (themeSpacing.startsWith("var(") && val === 1) {
-            return themeSpacing;
-          }
-          return `calc(${val} * ${themeSpacing})`;
-        }
-        return themeSpacing * val;
-      };
-    }
-    if (Array.isArray(themeSpacing)) {
-      return (val) => {
-        if (typeof val === "string") {
-          return val;
-        }
-        const abs2 = Math.abs(val);
-        if (true) {
-          if (!Number.isInteger(abs2)) {
-            console.error([`MUI: The \`theme.${themeKey}\` array type cannot be combined with non integer values.You should either use an integer value that can be used as index, or define the \`theme.${themeKey}\` as a number.`].join("\n"));
-          } else if (abs2 > themeSpacing.length - 1) {
-            console.error([`MUI: The value provided (${abs2}) overflows.`, `The supported values are: ${JSON.stringify(themeSpacing)}.`, `${abs2} > ${themeSpacing.length - 1}, you need to add the missing values.`].join("\n"));
-          }
-        }
-        const transformed = themeSpacing[abs2];
-        if (val >= 0) {
-          return transformed;
-        }
-        if (typeof transformed === "number") {
-          return -transformed;
-        }
-        if (typeof transformed === "string" && transformed.startsWith("var(")) {
-          return `calc(-1 * ${transformed})`;
-        }
-        return `-${transformed}`;
-      };
-    }
-    if (typeof themeSpacing === "function") {
-      return themeSpacing;
-    }
-    if (true) {
-      console.error([`MUI: The \`theme.${themeKey}\` value (${themeSpacing}) is invalid.`, "It should be a number, an array or a function."].join("\n"));
-    }
-    return () => void 0;
-  }
-  function createUnarySpacing(theme) {
-    return createUnaryUnit(theme, "spacing", 8, "spacing");
-  }
-  function getValue(transformer, propValue) {
-    if (typeof propValue === "string" || propValue == null) {
-      return propValue;
-    }
-    return transformer(propValue);
-  }
-  function getStyleFromPropValue(cssProperties, transformer) {
-    return (propValue) => cssProperties.reduce((acc, cssProperty) => {
-      acc[cssProperty] = getValue(transformer, propValue);
-      return acc;
-    }, {});
-  }
-  function resolveCssProperty(props, keys, prop, transformer) {
-    if (!keys.includes(prop)) {
-      return null;
-    }
-    const cssProperties = getCssProperties(prop);
-    const styleFromPropValue = getStyleFromPropValue(cssProperties, transformer);
-    const propValue = props[prop];
-    return handleBreakpoints(props, propValue, styleFromPropValue);
-  }
-  function style2(props, keys) {
-    const transformer = createUnarySpacing(props.theme);
-    return Object.keys(props).map((prop) => resolveCssProperty(props, keys, prop, transformer)).reduce(merge_default, {});
-  }
-  function margin(props) {
-    return style2(props, marginKeys);
-  }
-  margin.propTypes = true ? marginKeys.reduce((obj, key) => {
-    obj[key] = responsivePropType_default;
-    return obj;
-  }, {}) : {};
-  margin.filterProps = marginKeys;
-  function padding(props) {
-    return style2(props, paddingKeys);
-  }
-  padding.propTypes = true ? paddingKeys.reduce((obj, key) => {
-    obj[key] = responsivePropType_default;
-    return obj;
-  }, {}) : {};
-  padding.filterProps = paddingKeys;
-  function spacing(props) {
-    return style2(props, spacingKeys);
-  }
-  spacing.propTypes = true ? spacingKeys.reduce((obj, key) => {
-    obj[key] = responsivePropType_default;
-    return obj;
-  }, {}) : {};
-  spacing.filterProps = spacingKeys;
-
-  // node_modules/@mui/system/esm/createTheme/createSpacing.js
-  function createSpacing(spacingInput = 8, transform = createUnarySpacing({
-    spacing: spacingInput
-  })) {
-    if (spacingInput.mui) {
-      return spacingInput;
-    }
-    const spacing2 = (...argsInput) => {
-      if (true) {
-        if (!(argsInput.length <= 4)) {
-          console.error(`MUI: Too many arguments provided, expected between 0 and 4, got ${argsInput.length}`);
-        }
-      }
-      const args = argsInput.length === 0 ? [1] : argsInput;
-      return args.map((argument) => {
-        const output = transform(argument);
-        return typeof output === "number" ? `${output}px` : output;
-      }).join(" ");
-    };
-    spacing2.mui = true;
-    return spacing2;
-  }
-
-  // node_modules/@mui/system/esm/compose/compose.js
-  function compose(...styles2) {
-    const handlers = styles2.reduce((acc, style3) => {
-      style3.filterProps.forEach((prop) => {
-        acc[prop] = style3;
-      });
-      return acc;
-    }, {});
-    const fn = (props) => {
-      return Object.keys(props).reduce((acc, prop) => {
-        if (handlers[prop]) {
-          return merge_default(acc, handlers[prop](props));
-        }
-        return acc;
-      }, {});
-    };
-    fn.propTypes = true ? styles2.reduce((acc, style3) => Object.assign(acc, style3.propTypes), {}) : {};
-    fn.filterProps = styles2.reduce((acc, style3) => acc.concat(style3.filterProps), []);
-    return fn;
-  }
-  var compose_default = compose;
-
-  // node_modules/@mui/system/esm/borders/borders.js
-  function borderTransform(value2) {
-    if (typeof value2 !== "number") {
-      return value2;
-    }
-    return `${value2}px solid`;
-  }
-  function createBorderStyle(prop, transform) {
-    return style_default({
-      prop,
-      themeKey: "borders",
-      transform
-    });
-  }
-  var border = createBorderStyle("border", borderTransform);
-  var borderTop = createBorderStyle("borderTop", borderTransform);
-  var borderRight = createBorderStyle("borderRight", borderTransform);
-  var borderBottom = createBorderStyle("borderBottom", borderTransform);
-  var borderLeft = createBorderStyle("borderLeft", borderTransform);
-  var borderColor = createBorderStyle("borderColor");
-  var borderTopColor = createBorderStyle("borderTopColor");
-  var borderRightColor = createBorderStyle("borderRightColor");
-  var borderBottomColor = createBorderStyle("borderBottomColor");
-  var borderLeftColor = createBorderStyle("borderLeftColor");
-  var outline = createBorderStyle("outline", borderTransform);
-  var outlineColor = createBorderStyle("outlineColor");
-  var borderRadius = (props) => {
-    if (props.borderRadius !== void 0 && props.borderRadius !== null) {
-      const transformer = createUnaryUnit(props.theme, "shape.borderRadius", 4, "borderRadius");
-      const styleFromPropValue = (propValue) => ({
-        borderRadius: getValue(transformer, propValue)
-      });
-      return handleBreakpoints(props, props.borderRadius, styleFromPropValue);
-    }
-    return null;
-  };
-  borderRadius.propTypes = true ? {
-    borderRadius: responsivePropType_default
-  } : {};
-  borderRadius.filterProps = ["borderRadius"];
-  var borders = compose_default(border, borderTop, borderRight, borderBottom, borderLeft, borderColor, borderTopColor, borderRightColor, borderBottomColor, borderLeftColor, borderRadius, outline, outlineColor);
-
-  // node_modules/@mui/system/esm/cssGrid/cssGrid.js
-  var gap = (props) => {
-    if (props.gap !== void 0 && props.gap !== null) {
-      const transformer = createUnaryUnit(props.theme, "spacing", 8, "gap");
-      const styleFromPropValue = (propValue) => ({
-        gap: getValue(transformer, propValue)
-      });
-      return handleBreakpoints(props, props.gap, styleFromPropValue);
-    }
-    return null;
-  };
-  gap.propTypes = true ? {
-    gap: responsivePropType_default
-  } : {};
-  gap.filterProps = ["gap"];
-  var columnGap = (props) => {
-    if (props.columnGap !== void 0 && props.columnGap !== null) {
-      const transformer = createUnaryUnit(props.theme, "spacing", 8, "columnGap");
-      const styleFromPropValue = (propValue) => ({
-        columnGap: getValue(transformer, propValue)
-      });
-      return handleBreakpoints(props, props.columnGap, styleFromPropValue);
-    }
-    return null;
-  };
-  columnGap.propTypes = true ? {
-    columnGap: responsivePropType_default
-  } : {};
-  columnGap.filterProps = ["columnGap"];
-  var rowGap = (props) => {
-    if (props.rowGap !== void 0 && props.rowGap !== null) {
-      const transformer = createUnaryUnit(props.theme, "spacing", 8, "rowGap");
-      const styleFromPropValue = (propValue) => ({
-        rowGap: getValue(transformer, propValue)
-      });
-      return handleBreakpoints(props, props.rowGap, styleFromPropValue);
-    }
-    return null;
-  };
-  rowGap.propTypes = true ? {
-    rowGap: responsivePropType_default
-  } : {};
-  rowGap.filterProps = ["rowGap"];
-  var gridColumn = style_default({
-    prop: "gridColumn"
-  });
-  var gridRow = style_default({
-    prop: "gridRow"
-  });
-  var gridAutoFlow = style_default({
-    prop: "gridAutoFlow"
-  });
-  var gridAutoColumns = style_default({
-    prop: "gridAutoColumns"
-  });
-  var gridAutoRows = style_default({
-    prop: "gridAutoRows"
-  });
-  var gridTemplateColumns = style_default({
-    prop: "gridTemplateColumns"
-  });
-  var gridTemplateRows = style_default({
-    prop: "gridTemplateRows"
-  });
-  var gridTemplateAreas = style_default({
-    prop: "gridTemplateAreas"
-  });
-  var gridArea = style_default({
-    prop: "gridArea"
-  });
-  var grid = compose_default(gap, columnGap, rowGap, gridColumn, gridRow, gridAutoFlow, gridAutoColumns, gridAutoRows, gridTemplateColumns, gridTemplateRows, gridTemplateAreas, gridArea);
-
-  // node_modules/@mui/system/esm/palette/palette.js
-  function paletteTransform(value2, userValue) {
-    if (userValue === "grey") {
-      return userValue;
-    }
-    return value2;
-  }
-  var color = style_default({
-    prop: "color",
-    themeKey: "palette",
-    transform: paletteTransform
-  });
-  var bgcolor = style_default({
-    prop: "bgcolor",
-    cssProperty: "backgroundColor",
-    themeKey: "palette",
-    transform: paletteTransform
-  });
-  var backgroundColor = style_default({
-    prop: "backgroundColor",
-    themeKey: "palette",
-    transform: paletteTransform
-  });
-  var palette = compose_default(color, bgcolor, backgroundColor);
-
-  // node_modules/@mui/system/esm/sizing/sizing.js
-  function sizingTransform(value2) {
-    return value2 <= 1 && value2 !== 0 ? `${value2 * 100}%` : value2;
-  }
-  var width = style_default({
-    prop: "width",
-    transform: sizingTransform
-  });
-  var maxWidth = (props) => {
-    if (props.maxWidth !== void 0 && props.maxWidth !== null) {
-      const styleFromPropValue = (propValue) => {
-        const breakpoint = props.theme?.breakpoints?.values?.[propValue] || values[propValue];
-        if (!breakpoint) {
-          return {
-            maxWidth: sizingTransform(propValue)
-          };
-        }
-        if (props.theme?.breakpoints?.unit !== "px") {
-          return {
-            maxWidth: `${breakpoint}${props.theme.breakpoints.unit}`
-          };
-        }
-        return {
-          maxWidth: breakpoint
-        };
-      };
-      return handleBreakpoints(props, props.maxWidth, styleFromPropValue);
-    }
-    return null;
-  };
-  maxWidth.filterProps = ["maxWidth"];
-  var minWidth = style_default({
-    prop: "minWidth",
-    transform: sizingTransform
-  });
-  var height = style_default({
-    prop: "height",
-    transform: sizingTransform
-  });
-  var maxHeight = style_default({
-    prop: "maxHeight",
-    transform: sizingTransform
-  });
-  var minHeight = style_default({
-    prop: "minHeight",
-    transform: sizingTransform
-  });
-  var sizeWidth = style_default({
-    prop: "size",
-    cssProperty: "width",
-    transform: sizingTransform
-  });
-  var sizeHeight = style_default({
-    prop: "size",
-    cssProperty: "height",
-    transform: sizingTransform
-  });
-  var boxSizing = style_default({
-    prop: "boxSizing"
-  });
-  var sizing = compose_default(width, maxWidth, minWidth, height, maxHeight, minHeight, boxSizing);
-
-  // node_modules/@mui/system/esm/styleFunctionSx/defaultSxConfig.js
-  var defaultSxConfig = {
-    // borders
-    border: {
-      themeKey: "borders",
-      transform: borderTransform
-    },
-    borderTop: {
-      themeKey: "borders",
-      transform: borderTransform
-    },
-    borderRight: {
-      themeKey: "borders",
-      transform: borderTransform
-    },
-    borderBottom: {
-      themeKey: "borders",
-      transform: borderTransform
-    },
-    borderLeft: {
-      themeKey: "borders",
-      transform: borderTransform
-    },
-    borderColor: {
-      themeKey: "palette"
-    },
-    borderTopColor: {
-      themeKey: "palette"
-    },
-    borderRightColor: {
-      themeKey: "palette"
-    },
-    borderBottomColor: {
-      themeKey: "palette"
-    },
-    borderLeftColor: {
-      themeKey: "palette"
-    },
-    outline: {
-      themeKey: "borders",
-      transform: borderTransform
-    },
-    outlineColor: {
-      themeKey: "palette"
-    },
-    borderRadius: {
-      themeKey: "shape.borderRadius",
-      style: borderRadius
-    },
-    // palette
-    color: {
-      themeKey: "palette",
-      transform: paletteTransform
-    },
-    bgcolor: {
-      themeKey: "palette",
-      cssProperty: "backgroundColor",
-      transform: paletteTransform
-    },
-    backgroundColor: {
-      themeKey: "palette",
-      transform: paletteTransform
-    },
-    // spacing
-    p: {
-      style: padding
-    },
-    pt: {
-      style: padding
-    },
-    pr: {
-      style: padding
-    },
-    pb: {
-      style: padding
-    },
-    pl: {
-      style: padding
-    },
-    px: {
-      style: padding
-    },
-    py: {
-      style: padding
-    },
-    padding: {
-      style: padding
-    },
-    paddingTop: {
-      style: padding
-    },
-    paddingRight: {
-      style: padding
-    },
-    paddingBottom: {
-      style: padding
-    },
-    paddingLeft: {
-      style: padding
-    },
-    paddingX: {
-      style: padding
-    },
-    paddingY: {
-      style: padding
-    },
-    paddingInline: {
-      style: padding
-    },
-    paddingInlineStart: {
-      style: padding
-    },
-    paddingInlineEnd: {
-      style: padding
-    },
-    paddingBlock: {
-      style: padding
-    },
-    paddingBlockStart: {
-      style: padding
-    },
-    paddingBlockEnd: {
-      style: padding
-    },
-    m: {
-      style: margin
-    },
-    mt: {
-      style: margin
-    },
-    mr: {
-      style: margin
-    },
-    mb: {
-      style: margin
-    },
-    ml: {
-      style: margin
-    },
-    mx: {
-      style: margin
-    },
-    my: {
-      style: margin
-    },
-    margin: {
-      style: margin
-    },
-    marginTop: {
-      style: margin
-    },
-    marginRight: {
-      style: margin
-    },
-    marginBottom: {
-      style: margin
-    },
-    marginLeft: {
-      style: margin
-    },
-    marginX: {
-      style: margin
-    },
-    marginY: {
-      style: margin
-    },
-    marginInline: {
-      style: margin
-    },
-    marginInlineStart: {
-      style: margin
-    },
-    marginInlineEnd: {
-      style: margin
-    },
-    marginBlock: {
-      style: margin
-    },
-    marginBlockStart: {
-      style: margin
-    },
-    marginBlockEnd: {
-      style: margin
-    },
-    // display
-    displayPrint: {
-      cssProperty: false,
-      transform: (value2) => ({
-        "@media print": {
-          display: value2
-        }
-      })
-    },
-    display: {},
-    overflow: {},
-    textOverflow: {},
-    visibility: {},
-    whiteSpace: {},
-    // flexbox
-    flexBasis: {},
-    flexDirection: {},
-    flexWrap: {},
-    justifyContent: {},
-    alignItems: {},
-    alignContent: {},
-    order: {},
-    flex: {},
-    flexGrow: {},
-    flexShrink: {},
-    alignSelf: {},
-    justifyItems: {},
-    justifySelf: {},
-    // grid
-    gap: {
-      style: gap
-    },
-    rowGap: {
-      style: rowGap
-    },
-    columnGap: {
-      style: columnGap
-    },
-    gridColumn: {},
-    gridRow: {},
-    gridAutoFlow: {},
-    gridAutoColumns: {},
-    gridAutoRows: {},
-    gridTemplateColumns: {},
-    gridTemplateRows: {},
-    gridTemplateAreas: {},
-    gridArea: {},
-    // positions
-    position: {},
-    zIndex: {
-      themeKey: "zIndex"
-    },
-    top: {},
-    right: {},
-    bottom: {},
-    left: {},
-    // shadows
-    boxShadow: {
-      themeKey: "shadows"
-    },
-    // sizing
-    width: {
-      transform: sizingTransform
-    },
-    maxWidth: {
-      style: maxWidth
-    },
-    minWidth: {
-      transform: sizingTransform
-    },
-    height: {
-      transform: sizingTransform
-    },
-    maxHeight: {
-      transform: sizingTransform
-    },
-    minHeight: {
-      transform: sizingTransform
-    },
-    boxSizing: {},
-    // typography
-    font: {
-      themeKey: "font"
-    },
-    fontFamily: {
-      themeKey: "typography"
-    },
-    fontSize: {
-      themeKey: "typography"
-    },
-    fontStyle: {
-      themeKey: "typography"
-    },
-    fontWeight: {
-      themeKey: "typography"
-    },
-    letterSpacing: {},
-    textTransform: {},
-    lineHeight: {},
-    textAlign: {},
-    typography: {
-      cssProperty: false,
-      themeKey: "typography"
-    }
-  };
-  var defaultSxConfig_default = defaultSxConfig;
-
-  // node_modules/@mui/system/esm/styleFunctionSx/styleFunctionSx.js
-  function objectsHaveSameKeys(...objects) {
-    const allKeys = objects.reduce((keys, object) => keys.concat(Object.keys(object)), []);
-    const union = new Set(allKeys);
-    return objects.every((object) => union.size === Object.keys(object).length);
-  }
-  function callIfFn(maybeFn, arg) {
-    return typeof maybeFn === "function" ? maybeFn(arg) : maybeFn;
-  }
-  function unstable_createStyleFunctionSx() {
-    function getThemeValue(prop, val, theme, config) {
-      const props = {
-        [prop]: val,
-        theme
-      };
-      const options = config[prop];
-      if (!options) {
-        return {
-          [prop]: val
-        };
-      }
-      const {
-        cssProperty = prop,
-        themeKey,
-        transform,
-        style: style3
-      } = options;
-      if (val == null) {
-        return null;
-      }
-      if (themeKey === "typography" && val === "inherit") {
-        return {
-          [prop]: val
-        };
-      }
-      const themeMapping = getPath(theme, themeKey) || {};
-      if (style3) {
-        return style3(props);
-      }
-      const styleFromPropValue = (propValueFinal) => {
-        let value2 = getStyleValue(themeMapping, transform, propValueFinal);
-        if (propValueFinal === value2 && typeof propValueFinal === "string") {
-          value2 = getStyleValue(themeMapping, transform, `${prop}${propValueFinal === "default" ? "" : capitalize(propValueFinal)}`, propValueFinal);
-        }
-        if (cssProperty === false) {
-          return value2;
-        }
-        return {
-          [cssProperty]: value2
-        };
-      };
-      return handleBreakpoints(props, val, styleFromPropValue);
-    }
-    function styleFunctionSx2(props) {
-      const {
-        sx,
-        theme = {},
-        nested
-      } = props || {};
-      if (!sx) {
-        return null;
-      }
-      const config = theme.unstable_sxConfig ?? defaultSxConfig_default;
-      function traverse(sxInput) {
-        let sxObject = sxInput;
-        if (typeof sxInput === "function") {
-          sxObject = sxInput(theme);
-        } else if (typeof sxInput !== "object") {
-          return sxInput;
-        }
-        if (!sxObject) {
-          return null;
-        }
-        const emptyBreakpoints = createEmptyBreakpointObject(theme.breakpoints);
-        const breakpointsKeys = Object.keys(emptyBreakpoints);
-        let css2 = emptyBreakpoints;
-        Object.keys(sxObject).forEach((styleKey) => {
-          const value2 = callIfFn(sxObject[styleKey], theme);
-          if (value2 !== null && value2 !== void 0) {
-            if (typeof value2 === "object") {
-              if (config[styleKey]) {
-                css2 = merge_default(css2, getThemeValue(styleKey, value2, theme, config));
-              } else {
-                const breakpointsValues = handleBreakpoints({
-                  theme
-                }, value2, (x) => ({
-                  [styleKey]: x
-                }));
-                if (objectsHaveSameKeys(breakpointsValues, value2)) {
-                  css2[styleKey] = styleFunctionSx2({
-                    sx: value2,
-                    theme,
-                    nested: true
-                  });
-                } else {
-                  css2 = merge_default(css2, breakpointsValues);
-                }
-              }
-            } else {
-              css2 = merge_default(css2, getThemeValue(styleKey, value2, theme, config));
-            }
-          }
-        });
-        if (!nested && theme.modularCssLayers) {
-          return {
-            "@layer sx": sortContainerQueries(theme, removeUnusedBreakpoints(breakpointsKeys, css2))
-          };
-        }
-        return sortContainerQueries(theme, removeUnusedBreakpoints(breakpointsKeys, css2));
-      }
-      return Array.isArray(sx) ? sx.map(traverse) : traverse(sx);
-    }
-    return styleFunctionSx2;
-  }
-  var styleFunctionSx = unstable_createStyleFunctionSx();
-  styleFunctionSx.filterProps = ["sx"];
-  var styleFunctionSx_default = styleFunctionSx;
-
-  // node_modules/@mui/system/esm/createTheme/applyStyles.js
-  function applyStyles(key, styles2) {
-    const theme = this;
-    if (theme.vars) {
-      if (!theme.colorSchemes?.[key] || typeof theme.getColorSchemeSelector !== "function") {
-        return {};
-      }
-      let selector = theme.getColorSchemeSelector(key);
-      if (selector === "&") {
-        return styles2;
-      }
-      if (selector.includes("data-") || selector.includes(".")) {
-        selector = `*:where(${selector.replace(/\s*&$/, "")}) &`;
-      }
-      return {
-        [selector]: styles2
-      };
-    }
-    if (theme.palette.mode === key) {
-      return styles2;
-    }
-    return {};
-  }
-
-  // node_modules/@mui/system/esm/createTheme/createTheme.js
-  function createTheme(options = {}, ...args) {
-    const {
-      breakpoints: breakpointsInput = {},
-      palette: paletteInput = {},
-      spacing: spacingInput,
-      shape: shapeInput = {},
-      ...other
-    } = options;
-    const breakpoints = createBreakpoints(breakpointsInput);
-    const spacing2 = createSpacing(spacingInput);
-    let muiTheme = deepmerge({
-      breakpoints,
-      direction: "ltr",
-      components: {},
-      // Inject component definitions.
-      palette: {
-        mode: "light",
-        ...paletteInput
-      },
-      spacing: spacing2,
-      shape: {
-        ...shape_default,
-        ...shapeInput
-      }
-    }, other);
-    muiTheme = cssContainerQueries(muiTheme);
-    muiTheme.applyStyles = applyStyles;
-    muiTheme = args.reduce((acc, argument) => deepmerge(acc, argument), muiTheme);
-    muiTheme.unstable_sxConfig = {
-      ...defaultSxConfig_default,
-      ...other?.unstable_sxConfig
-    };
-    muiTheme.unstable_sx = function sx(props) {
-      return styleFunctionSx_default({
-        sx: props,
-        theme: this
-      });
-    };
-    return muiTheme;
-  }
-  var createTheme_default = createTheme;
-
-  // node_modules/@mui/system/esm/useThemeWithoutDefault/useThemeWithoutDefault.js
-  var React6 = __toESM(require_react(), 1);
-  function isObjectEmpty(obj) {
-    return Object.keys(obj).length === 0;
-  }
-  function useTheme2(defaultTheme2 = null) {
-    const contextTheme = React6.useContext(ThemeContext);
-    return !contextTheme || isObjectEmpty(contextTheme) ? defaultTheme2 : contextTheme;
-  }
-  var useThemeWithoutDefault_default = useTheme2;
-
-  // node_modules/@mui/system/esm/useTheme/useTheme.js
-  var systemDefaultTheme = createTheme_default();
-  function useTheme3(defaultTheme2 = systemDefaultTheme) {
-    return useThemeWithoutDefault_default(defaultTheme2);
-  }
-  var useTheme_default = useTheme3;
-
-  // node_modules/@mui/system/esm/GlobalStyles/GlobalStyles.js
-  var import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
-  function wrapGlobalLayer(styles2) {
-    const serialized = internal_serializeStyles(styles2);
-    if (styles2 !== serialized && serialized.styles) {
-      if (!serialized.styles.match(/^@layer\s+[^{]*$/)) {
-        serialized.styles = `@layer global{${serialized.styles}}`;
-      }
-      return serialized;
-    }
-    return styles2;
-  }
-  function GlobalStyles2({
-    styles: styles2,
-    themeId,
-    defaultTheme: defaultTheme2 = {}
-  }) {
-    const upperTheme = useTheme_default(defaultTheme2);
-    const resolvedTheme = themeId ? upperTheme[themeId] || upperTheme : upperTheme;
-    let globalStyles = typeof styles2 === "function" ? styles2(resolvedTheme) : styles2;
-    if (resolvedTheme.modularCssLayers) {
-      if (Array.isArray(globalStyles)) {
-        globalStyles = globalStyles.map((styleArg) => {
-          if (typeof styleArg === "function") {
-            return wrapGlobalLayer(styleArg(resolvedTheme));
-          }
-          return wrapGlobalLayer(styleArg);
-        });
-      } else {
-        globalStyles = wrapGlobalLayer(globalStyles);
-      }
-    }
-    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(GlobalStyles, {
-      styles: globalStyles
-    });
-  }
-  true ? GlobalStyles2.propTypes = {
-    // ┌────────────────────────────── Warning ──────────────────────────────┐
-    // │ These PropTypes are generated from the TypeScript type definitions. │
-    // │ To update them, edit the TypeScript types and run `pnpm proptypes`. │
-    // └─────────────────────────────────────────────────────────────────────┘
-    /**
-     * @ignore
-     */
-    defaultTheme: import_prop_types3.default.object,
-    /**
-     * @ignore
-     */
-    styles: import_prop_types3.default.oneOfType([import_prop_types3.default.array, import_prop_types3.default.func, import_prop_types3.default.number, import_prop_types3.default.object, import_prop_types3.default.string, import_prop_types3.default.bool]),
-    /**
-     * @ignore
-     */
-    themeId: import_prop_types3.default.string
-  } : void 0;
-  var GlobalStyles_default = GlobalStyles2;
-
-  // node_modules/@mui/utils/esm/ClassNameGenerator/ClassNameGenerator.js
-  var defaultGenerator = (componentName) => componentName;
-  var createClassNameGenerator = () => {
-    let generate = defaultGenerator;
-    return {
-      configure(generator) {
-        generate = generator;
-      },
-      generate(componentName) {
-        return generate(componentName);
-      },
-      reset() {
-        generate = defaultGenerator;
-      }
-    };
-  };
-  var ClassNameGenerator = createClassNameGenerator();
-  var ClassNameGenerator_default = ClassNameGenerator;
-
-  // node_modules/clsx/dist/clsx.mjs
-  function r(e) {
-    var t, f, n = "";
-    if ("string" == typeof e || "number" == typeof e) n += e;
-    else if ("object" == typeof e) if (Array.isArray(e)) {
-      var o = e.length;
-      for (t = 0; t < o; t++) e[t] && (f = r(e[t])) && (n && (n += " "), n += f);
-    } else for (f in e) e[f] && (n && (n += " "), n += f);
-    return n;
-  }
-  function clsx() {
-    for (var e, t, f = 0, n = "", o = arguments.length; f < o; f++) (e = arguments[f]) && (t = r(e)) && (n && (n += " "), n += t);
-    return n;
-  }
-  var clsx_default = clsx;
-
-  // node_modules/@mui/utils/esm/generateUtilityClass/generateUtilityClass.js
-  var globalStateClasses = {
-    active: "active",
-    checked: "checked",
-    completed: "completed",
-    disabled: "disabled",
-    error: "error",
-    expanded: "expanded",
-    focused: "focused",
-    focusVisible: "focusVisible",
-    open: "open",
-    readOnly: "readOnly",
-    required: "required",
-    selected: "selected"
-  };
-  function generateUtilityClass(componentName, slot, globalStatePrefix = "Mui") {
-    const globalStateClass = globalStateClasses[slot];
-    return globalStateClass ? `${globalStatePrefix}-${globalStateClass}` : `${ClassNameGenerator_default.generate(componentName)}-${slot}`;
-  }
-
-  // node_modules/@mui/utils/esm/resolveProps/resolveProps.js
-  function resolveProps(defaultProps, props, mergeClassNameAndStyle = false) {
-    const output = {
-      ...props
-    };
-    for (const key in defaultProps) {
-      if (Object.prototype.hasOwnProperty.call(defaultProps, key)) {
-        const propName = key;
-        if (propName === "components" || propName === "slots") {
-          output[propName] = {
-            ...defaultProps[propName],
-            ...output[propName]
-          };
-        } else if (propName === "componentsProps" || propName === "slotProps") {
-          const defaultSlotProps = defaultProps[propName];
-          const slotProps = props[propName];
-          if (!slotProps) {
-            output[propName] = defaultSlotProps || {};
-          } else if (!defaultSlotProps) {
-            output[propName] = slotProps;
-          } else {
-            output[propName] = {
-              ...slotProps
-            };
-            for (const slotKey in defaultSlotProps) {
-              if (Object.prototype.hasOwnProperty.call(defaultSlotProps, slotKey)) {
-                const slotPropName = slotKey;
-                output[propName][slotPropName] = resolveProps(defaultSlotProps[slotPropName], slotProps[slotPropName], mergeClassNameAndStyle);
-              }
-            }
-          }
-        } else if (propName === "className" && mergeClassNameAndStyle && props.className) {
-          output.className = clsx_default(defaultProps?.className, props?.className);
-        } else if (propName === "style" && mergeClassNameAndStyle && props.style) {
-          output.style = {
-            ...defaultProps?.style,
-            ...props?.style
-          };
-        } else if (output[propName] === void 0) {
-          output[propName] = defaultProps[propName];
-        }
-      }
-    }
-    return output;
-  }
-
-  // node_modules/@mui/utils/esm/clamp/clamp.js
-  function clamp(val, min = Number.MIN_SAFE_INTEGER, max = Number.MAX_SAFE_INTEGER) {
-    return Math.max(min, Math.min(val, max));
-  }
-  var clamp_default = clamp;
-
-  // node_modules/@mui/system/esm/colorManipulator/colorManipulator.js
-  function clampWrapper(value2, min = 0, max = 1) {
-    if (true) {
-      if (value2 < min || value2 > max) {
-        console.error(`MUI: The value provided ${value2} is out of range [${min}, ${max}].`);
-      }
-    }
-    return clamp_default(value2, min, max);
-  }
-  function hexToRgb(color2) {
-    color2 = color2.slice(1);
-    const re2 = new RegExp(`.{1,${color2.length >= 6 ? 2 : 1}}`, "g");
-    let colors = color2.match(re2);
-    if (colors && colors[0].length === 1) {
-      colors = colors.map((n) => n + n);
-    }
-    if (true) {
-      if (color2.length !== color2.trim().length) {
-        console.error(`MUI: The color: "${color2}" is invalid. Make sure the color input doesn't contain leading/trailing space.`);
-      }
-    }
-    return colors ? `rgb${colors.length === 4 ? "a" : ""}(${colors.map((n, index) => {
-      return index < 3 ? parseInt(n, 16) : Math.round(parseInt(n, 16) / 255 * 1e3) / 1e3;
-    }).join(", ")})` : "";
-  }
-  function decomposeColor(color2) {
-    if (color2.type) {
-      return color2;
-    }
-    if (color2.charAt(0) === "#") {
-      return decomposeColor(hexToRgb(color2));
-    }
-    const marker = color2.indexOf("(");
-    const type = color2.substring(0, marker);
-    if (!["rgb", "rgba", "hsl", "hsla", "color"].includes(type)) {
-      throw new Error(true ? `MUI: Unsupported \`${color2}\` color.
-The following formats are supported: #nnn, #nnnnnn, rgb(), rgba(), hsl(), hsla(), color().` : formatMuiErrorMessage(9, color2));
-    }
-    let values2 = color2.substring(marker + 1, color2.length - 1);
-    let colorSpace;
-    if (type === "color") {
-      values2 = values2.split(" ");
-      colorSpace = values2.shift();
-      if (values2.length === 4 && values2[3].charAt(0) === "/") {
-        values2[3] = values2[3].slice(1);
-      }
-      if (!["srgb", "display-p3", "a98-rgb", "prophoto-rgb", "rec-2020"].includes(colorSpace)) {
-        throw new Error(true ? `MUI: unsupported \`${colorSpace}\` color space.
-The following color spaces are supported: srgb, display-p3, a98-rgb, prophoto-rgb, rec-2020.` : formatMuiErrorMessage(10, colorSpace));
-      }
-    } else {
-      values2 = values2.split(",");
-    }
-    values2 = values2.map((value2) => parseFloat(value2));
-    return {
-      type,
-      values: values2,
-      colorSpace
-    };
-  }
-  var colorChannel = (color2) => {
-    const decomposedColor = decomposeColor(color2);
-    return decomposedColor.values.slice(0, 3).map((val, idx) => decomposedColor.type.includes("hsl") && idx !== 0 ? `${val}%` : val).join(" ");
-  };
-  var private_safeColorChannel = (color2, warning) => {
-    try {
-      return colorChannel(color2);
-    } catch (error) {
-      if (warning && true) {
-        console.warn(warning);
-      }
-      return color2;
-    }
-  };
-  function recomposeColor(color2) {
-    const {
-      type,
-      colorSpace
-    } = color2;
-    let {
-      values: values2
-    } = color2;
-    if (type.includes("rgb")) {
-      values2 = values2.map((n, i) => i < 3 ? parseInt(n, 10) : n);
-    } else if (type.includes("hsl")) {
-      values2[1] = `${values2[1]}%`;
-      values2[2] = `${values2[2]}%`;
-    }
-    if (type.includes("color")) {
-      values2 = `${colorSpace} ${values2.join(" ")}`;
-    } else {
-      values2 = `${values2.join(", ")}`;
-    }
-    return `${type}(${values2})`;
-  }
-  function hslToRgb(color2) {
-    color2 = decomposeColor(color2);
-    const {
-      values: values2
-    } = color2;
-    const h = values2[0];
-    const s = values2[1] / 100;
-    const l = values2[2] / 100;
-    const a = s * Math.min(l, 1 - l);
-    const f = (n, k = (n + h / 30) % 12) => l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
-    let type = "rgb";
-    const rgb = [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)];
-    if (color2.type === "hsla") {
-      type += "a";
-      rgb.push(values2[3]);
-    }
-    return recomposeColor({
-      type,
-      values: rgb
-    });
-  }
-  function getLuminance(color2) {
-    color2 = decomposeColor(color2);
-    let rgb = color2.type === "hsl" || color2.type === "hsla" ? decomposeColor(hslToRgb(color2)).values : color2.values;
-    rgb = rgb.map((val) => {
-      if (color2.type !== "color") {
-        val /= 255;
-      }
-      return val <= 0.03928 ? val / 12.92 : ((val + 0.055) / 1.055) ** 2.4;
-    });
-    return Number((0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]).toFixed(3));
-  }
-  function getContrastRatio(foreground, background) {
-    const lumA = getLuminance(foreground);
-    const lumB = getLuminance(background);
-    return (Math.max(lumA, lumB) + 0.05) / (Math.min(lumA, lumB) + 0.05);
-  }
-  function alpha(color2, value2) {
-    color2 = decomposeColor(color2);
-    value2 = clampWrapper(value2);
-    if (color2.type === "rgb" || color2.type === "hsl") {
-      color2.type += "a";
-    }
-    if (color2.type === "color") {
-      color2.values[3] = `/${value2}`;
-    } else {
-      color2.values[3] = value2;
-    }
-    return recomposeColor(color2);
-  }
-  function private_safeAlpha(color2, value2, warning) {
-    try {
-      return alpha(color2, value2);
-    } catch (error) {
-      if (warning && true) {
-        console.warn(warning);
-      }
-      return color2;
-    }
-  }
-  function darken(color2, coefficient) {
-    color2 = decomposeColor(color2);
-    coefficient = clampWrapper(coefficient);
-    if (color2.type.includes("hsl")) {
-      color2.values[2] *= 1 - coefficient;
-    } else if (color2.type.includes("rgb") || color2.type.includes("color")) {
-      for (let i = 0; i < 3; i += 1) {
-        color2.values[i] *= 1 - coefficient;
-      }
-    }
-    return recomposeColor(color2);
-  }
-  function private_safeDarken(color2, coefficient, warning) {
-    try {
-      return darken(color2, coefficient);
-    } catch (error) {
-      if (warning && true) {
-        console.warn(warning);
-      }
-      return color2;
-    }
-  }
-  function lighten(color2, coefficient) {
-    color2 = decomposeColor(color2);
-    coefficient = clampWrapper(coefficient);
-    if (color2.type.includes("hsl")) {
-      color2.values[2] += (100 - color2.values[2]) * coefficient;
-    } else if (color2.type.includes("rgb")) {
-      for (let i = 0; i < 3; i += 1) {
-        color2.values[i] += (255 - color2.values[i]) * coefficient;
-      }
-    } else if (color2.type.includes("color")) {
-      for (let i = 0; i < 3; i += 1) {
-        color2.values[i] += (1 - color2.values[i]) * coefficient;
-      }
-    }
-    return recomposeColor(color2);
-  }
-  function private_safeLighten(color2, coefficient, warning) {
-    try {
-      return lighten(color2, coefficient);
-    } catch (error) {
-      if (warning && true) {
-        console.warn(warning);
-      }
-      return color2;
-    }
-  }
-  function emphasize(color2, coefficient = 0.15) {
-    return getLuminance(color2) > 0.5 ? darken(color2, coefficient) : lighten(color2, coefficient);
-  }
-  function private_safeEmphasize(color2, coefficient, warning) {
-    try {
-      return emphasize(color2, coefficient);
-    } catch (error) {
-      if (warning && true) {
-        console.warn(warning);
-      }
-      return color2;
-    }
-  }
-
-  // node_modules/@mui/system/esm/DefaultPropsProvider/DefaultPropsProvider.js
-  var React7 = __toESM(require_react(), 1);
-  var import_prop_types4 = __toESM(require_prop_types(), 1);
-  var import_jsx_runtime3 = __toESM(require_jsx_runtime(), 1);
-  var PropsContext = /* @__PURE__ */ React7.createContext(void 0);
-  function DefaultPropsProvider({
-    value: value2,
-    children
-  }) {
-    return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(PropsContext.Provider, {
-      value: value2,
-      children
-    });
-  }
-  true ? DefaultPropsProvider.propTypes = {
-    // ┌────────────────────────────── Warning ──────────────────────────────┐
-    // │ These PropTypes are generated from the TypeScript type definitions. │
-    // │ To update them, edit the TypeScript types and run `pnpm proptypes`. │
-    // └─────────────────────────────────────────────────────────────────────┘
-    /**
-     * @ignore
-     */
-    children: import_prop_types4.default.node,
-    /**
-     * @ignore
-     */
-    value: import_prop_types4.default.object
-  } : void 0;
-  function getThemeProps(params) {
-    const {
-      theme,
-      name,
-      props
-    } = params;
-    if (!theme || !theme.components || !theme.components[name]) {
-      return props;
-    }
-    const config = theme.components[name];
-    if (config.defaultProps) {
-      return resolveProps(config.defaultProps, props, theme.components.mergeClassNameAndStyle);
-    }
-    if (!config.styleOverrides && !config.variants) {
-      return resolveProps(config, props, theme.components.mergeClassNameAndStyle);
-    }
-    return props;
-  }
-  function useDefaultProps({
-    props,
-    name
-  }) {
-    const ctx = React7.useContext(PropsContext);
-    return getThemeProps({
-      props,
-      name,
-      theme: {
-        components: ctx
-      }
-    });
-  }
-  var DefaultPropsProvider_default = DefaultPropsProvider;
-
-  // node_modules/@mui/system/esm/cssVars/createGetCssVar.js
-  function createGetCssVar(prefix2 = "") {
-    function appendVar(...vars) {
-      if (!vars.length) {
-        return "";
-      }
-      const value2 = vars[0];
-      if (typeof value2 === "string" && !value2.match(/(#|\(|\)|(-?(\d*\.)?\d+)(px|em|%|ex|ch|rem|vw|vh|vmin|vmax|cm|mm|in|pt|pc))|^(-?(\d*\.)?\d+)$|(\d+ \d+ \d+)/)) {
-        return `, var(--${prefix2 ? `${prefix2}-` : ""}${value2}${appendVar(...vars.slice(1))})`;
-      }
-      return `, ${value2}`;
-    }
-    const getCssVar = (field, ...fallbacks) => {
-      return `var(--${prefix2 ? `${prefix2}-` : ""}${field}${appendVar(...fallbacks)})`;
-    };
-    return getCssVar;
-  }
-
-  // node_modules/@mui/system/esm/cssVars/cssVarsParser.js
-  var assignNestedKeys = (obj, keys, value2, arrayKeys = []) => {
-    let temp = obj;
-    keys.forEach((k, index) => {
-      if (index === keys.length - 1) {
-        if (Array.isArray(temp)) {
-          temp[Number(k)] = value2;
-        } else if (temp && typeof temp === "object") {
-          temp[k] = value2;
-        }
-      } else if (temp && typeof temp === "object") {
-        if (!temp[k]) {
-          temp[k] = arrayKeys.includes(k) ? [] : {};
-        }
-        temp = temp[k];
-      }
-    });
-  };
-  var walkObjectDeep = (obj, callback, shouldSkipPaths) => {
-    function recurse(object, parentKeys = [], arrayKeys = []) {
-      Object.entries(object).forEach(([key, value2]) => {
-        if (!shouldSkipPaths || shouldSkipPaths && !shouldSkipPaths([...parentKeys, key])) {
-          if (value2 !== void 0 && value2 !== null) {
-            if (typeof value2 === "object" && Object.keys(value2).length > 0) {
-              recurse(value2, [...parentKeys, key], Array.isArray(value2) ? [...arrayKeys, key] : arrayKeys);
-            } else {
-              callback([...parentKeys, key], value2, arrayKeys);
-            }
-          }
-        }
-      });
-    }
-    recurse(obj);
-  };
-  var getCssValue = (keys, value2) => {
-    if (typeof value2 === "number") {
-      if (["lineHeight", "fontWeight", "opacity", "zIndex"].some((prop) => keys.includes(prop))) {
-        return value2;
-      }
-      const lastKey = keys[keys.length - 1];
-      if (lastKey.toLowerCase().includes("opacity")) {
-        return value2;
-      }
-      return `${value2}px`;
-    }
-    return value2;
-  };
-  function cssVarsParser(theme, options) {
-    const {
-      prefix: prefix2,
-      shouldSkipGeneratingVar: shouldSkipGeneratingVar2
-    } = options || {};
-    const css2 = {};
-    const vars = {};
-    const varsWithDefaults = {};
-    walkObjectDeep(
-      theme,
-      (keys, value2, arrayKeys) => {
-        if (typeof value2 === "string" || typeof value2 === "number") {
-          if (!shouldSkipGeneratingVar2 || !shouldSkipGeneratingVar2(keys, value2)) {
-            const cssVar = `--${prefix2 ? `${prefix2}-` : ""}${keys.join("-")}`;
-            const resolvedValue = getCssValue(keys, value2);
-            Object.assign(css2, {
-              [cssVar]: resolvedValue
-            });
-            assignNestedKeys(vars, keys, `var(${cssVar})`, arrayKeys);
-            assignNestedKeys(varsWithDefaults, keys, `var(${cssVar}, ${resolvedValue})`, arrayKeys);
-          }
-        }
-      },
-      (keys) => keys[0] === "vars"
-      // skip 'vars/*' paths
-    );
-    return {
-      css: css2,
-      vars,
-      varsWithDefaults
-    };
-  }
-
-  // node_modules/@mui/system/esm/cssVars/prepareCssVars.js
-  function prepareCssVars(theme, parserConfig = {}) {
-    const {
-      getSelector = defaultGetSelector,
-      disableCssColorScheme,
-      colorSchemeSelector: selector,
-      enableContrastVars
-    } = parserConfig;
-    const {
-      colorSchemes = {},
-      components,
-      defaultColorScheme = "light",
-      ...otherTheme
-    } = theme;
-    const {
-      vars: rootVars,
-      css: rootCss,
-      varsWithDefaults: rootVarsWithDefaults
-    } = cssVarsParser(otherTheme, parserConfig);
-    let themeVars = rootVarsWithDefaults;
-    const colorSchemesMap = {};
-    const {
-      [defaultColorScheme]: defaultScheme,
-      ...otherColorSchemes
-    } = colorSchemes;
-    Object.entries(otherColorSchemes || {}).forEach(([key, scheme]) => {
-      const {
-        vars,
-        css: css2,
-        varsWithDefaults
-      } = cssVarsParser(scheme, parserConfig);
-      themeVars = deepmerge(themeVars, varsWithDefaults);
-      colorSchemesMap[key] = {
-        css: css2,
-        vars
-      };
-    });
-    if (defaultScheme) {
-      const {
-        css: css2,
-        vars,
-        varsWithDefaults
-      } = cssVarsParser(defaultScheme, parserConfig);
-      themeVars = deepmerge(themeVars, varsWithDefaults);
-      colorSchemesMap[defaultColorScheme] = {
-        css: css2,
-        vars
-      };
-    }
-    function defaultGetSelector(colorScheme, cssObject) {
-      let rule = selector;
-      if (selector === "class") {
-        rule = ".%s";
-      }
-      if (selector === "data") {
-        rule = "[data-%s]";
-      }
-      if (selector?.startsWith("data-") && !selector.includes("%s")) {
-        rule = `[${selector}="%s"]`;
-      }
-      if (colorScheme) {
-        if (rule === "media") {
-          if (theme.defaultColorScheme === colorScheme) {
-            return ":root";
-          }
-          const mode = colorSchemes[colorScheme]?.palette?.mode || colorScheme;
-          return {
-            [`@media (prefers-color-scheme: ${mode})`]: {
-              ":root": cssObject
-            }
-          };
-        }
-        if (rule) {
-          if (theme.defaultColorScheme === colorScheme) {
-            return `:root, ${rule.replace("%s", String(colorScheme))}`;
-          }
-          return rule.replace("%s", String(colorScheme));
-        }
-      }
-      return ":root";
-    }
-    const generateThemeVars = () => {
-      let vars = {
-        ...rootVars
-      };
-      Object.entries(colorSchemesMap).forEach(([, {
-        vars: schemeVars
-      }]) => {
-        vars = deepmerge(vars, schemeVars);
-      });
-      return vars;
-    };
-    const generateStyleSheets = () => {
-      const stylesheets = [];
-      const colorScheme = theme.defaultColorScheme || "light";
-      function insertStyleSheet(key, css2) {
-        if (Object.keys(css2).length) {
-          stylesheets.push(typeof key === "string" ? {
-            [key]: {
-              ...css2
-            }
-          } : key);
-        }
-      }
-      insertStyleSheet(getSelector(void 0, {
-        ...rootCss
-      }), rootCss);
-      const {
-        [colorScheme]: defaultSchemeVal,
-        ...other
-      } = colorSchemesMap;
-      if (defaultSchemeVal) {
-        const {
-          css: css2
-        } = defaultSchemeVal;
-        const cssColorSheme = colorSchemes[colorScheme]?.palette?.mode;
-        const finalCss = !disableCssColorScheme && cssColorSheme ? {
-          colorScheme: cssColorSheme,
-          ...css2
-        } : {
-          ...css2
-        };
-        insertStyleSheet(getSelector(colorScheme, {
-          ...finalCss
-        }), finalCss);
-      }
-      Object.entries(other).forEach(([key, {
-        css: css2
-      }]) => {
-        const cssColorSheme = colorSchemes[key]?.palette?.mode;
-        const finalCss = !disableCssColorScheme && cssColorSheme ? {
-          colorScheme: cssColorSheme,
-          ...css2
-        } : {
-          ...css2
-        };
-        insertStyleSheet(getSelector(key, {
-          ...finalCss
-        }), finalCss);
-      });
-      if (enableContrastVars) {
-        stylesheets.push({
-          ":root": {
-            // use double underscore to indicate that these are private variables
-            "--__l-threshold": "0.7",
-            "--__l": "clamp(0, (l / var(--__l-threshold) - 1) * -infinity, 1)",
-            "--__a": "clamp(0.87, (l / var(--__l-threshold) - 1) * -infinity, 1)"
-            // 0.87 is the default alpha value for black text.
-          }
-        });
-      }
-      return stylesheets;
-    };
-    return {
-      vars: themeVars,
-      generateThemeVars,
-      generateStyleSheets
-    };
-  }
-  var prepareCssVars_default = prepareCssVars;
-
-  // node_modules/@mui/system/esm/cssVars/getColorSchemeSelector.js
-  function createGetColorSchemeSelector(selector) {
-    return function getColorSchemeSelector(colorScheme) {
-      if (selector === "media") {
-        if (true) {
-          if (colorScheme !== "light" && colorScheme !== "dark") {
-            console.error(`MUI: @media (prefers-color-scheme) supports only 'light' or 'dark', but receive '${colorScheme}'.`);
-          }
-        }
-        return `@media (prefers-color-scheme: ${colorScheme})`;
-      }
-      if (selector) {
-        if (selector.startsWith("data-") && !selector.includes("%s")) {
-          return `[${selector}="${colorScheme}"] &`;
-        }
-        if (selector === "class") {
-          return `.${colorScheme} &`;
-        }
-        if (selector === "data") {
-          return `[data-${colorScheme}] &`;
-        }
-        return `${selector.replace("%s", colorScheme)} &`;
-      }
-      return "&";
-    };
-  }
-
-  // node_modules/@mui/material/esm/styles/createPalette.js
-  function getLight() {
-    return {
-      // The colors used to style the text.
-      text: {
-        // The most important text.
-        primary: "rgba(0, 0, 0, 0.87)",
-        // Secondary text.
-        secondary: "rgba(0, 0, 0, 0.6)",
-        // Disabled text have even lower visual prominence.
-        disabled: "rgba(0, 0, 0, 0.38)"
-      },
-      // The color used to divide different elements.
-      divider: "rgba(0, 0, 0, 0.12)",
-      // The background colors used to style the surfaces.
-      // Consistency between these values is important.
-      background: {
-        paper: common_default.white,
-        default: common_default.white
-      },
-      // The colors used to style the action elements.
-      action: {
-        // The color of an active action like an icon button.
-        active: "rgba(0, 0, 0, 0.54)",
-        // The color of an hovered action.
-        hover: "rgba(0, 0, 0, 0.04)",
-        hoverOpacity: 0.04,
-        // The color of a selected action.
-        selected: "rgba(0, 0, 0, 0.08)",
-        selectedOpacity: 0.08,
-        // The color of a disabled action.
-        disabled: "rgba(0, 0, 0, 0.26)",
-        // The background color of a disabled action.
-        disabledBackground: "rgba(0, 0, 0, 0.12)",
-        disabledOpacity: 0.38,
-        focus: "rgba(0, 0, 0, 0.12)",
-        focusOpacity: 0.12,
-        activatedOpacity: 0.12
-      }
-    };
-  }
-  var light = getLight();
-  function getDark() {
-    return {
-      text: {
-        primary: common_default.white,
-        secondary: "rgba(255, 255, 255, 0.7)",
-        disabled: "rgba(255, 255, 255, 0.5)",
-        icon: "rgba(255, 255, 255, 0.5)"
-      },
-      divider: "rgba(255, 255, 255, 0.12)",
-      background: {
-        paper: "#121212",
-        default: "#121212"
-      },
-      action: {
-        active: common_default.white,
-        hover: "rgba(255, 255, 255, 0.08)",
-        hoverOpacity: 0.08,
-        selected: "rgba(255, 255, 255, 0.16)",
-        selectedOpacity: 0.16,
-        disabled: "rgba(255, 255, 255, 0.3)",
-        disabledBackground: "rgba(255, 255, 255, 0.12)",
-        disabledOpacity: 0.38,
-        focus: "rgba(255, 255, 255, 0.12)",
-        focusOpacity: 0.12,
-        activatedOpacity: 0.24
-      }
-    };
-  }
-  var dark = getDark();
-  function addLightOrDark(intent, direction, shade, tonalOffset) {
-    const tonalOffsetLight = tonalOffset.light || tonalOffset;
-    const tonalOffsetDark = tonalOffset.dark || tonalOffset * 1.5;
-    if (!intent[direction]) {
-      if (intent.hasOwnProperty(shade)) {
-        intent[direction] = intent[shade];
-      } else if (direction === "light") {
-        intent.light = lighten(intent.main, tonalOffsetLight);
-      } else if (direction === "dark") {
-        intent.dark = darken(intent.main, tonalOffsetDark);
-      }
-    }
-  }
-  function mixLightOrDark(colorSpace, intent, direction, shade, tonalOffset) {
-    const tonalOffsetLight = tonalOffset.light || tonalOffset;
-    const tonalOffsetDark = tonalOffset.dark || tonalOffset * 1.5;
-    if (!intent[direction]) {
-      if (intent.hasOwnProperty(shade)) {
-        intent[direction] = intent[shade];
-      } else if (direction === "light") {
-        intent.light = `color-mix(in ${colorSpace}, ${intent.main}, #fff ${(tonalOffsetLight * 100).toFixed(0)}%)`;
-      } else if (direction === "dark") {
-        intent.dark = `color-mix(in ${colorSpace}, ${intent.main}, #000 ${(tonalOffsetDark * 100).toFixed(0)}%)`;
-      }
-    }
-  }
-  function getDefaultPrimary(mode = "light") {
-    if (mode === "dark") {
-      return {
-        main: blue_default[200],
-        light: blue_default[50],
-        dark: blue_default[400]
-      };
-    }
-    return {
-      main: blue_default[700],
-      light: blue_default[400],
-      dark: blue_default[800]
-    };
-  }
-  function getDefaultSecondary(mode = "light") {
-    if (mode === "dark") {
-      return {
-        main: purple_default[200],
-        light: purple_default[50],
-        dark: purple_default[400]
-      };
-    }
-    return {
-      main: purple_default[500],
-      light: purple_default[300],
-      dark: purple_default[700]
-    };
-  }
-  function getDefaultError(mode = "light") {
-    if (mode === "dark") {
-      return {
-        main: red_default[500],
-        light: red_default[300],
-        dark: red_default[700]
-      };
-    }
-    return {
-      main: red_default[700],
-      light: red_default[400],
-      dark: red_default[800]
-    };
-  }
-  function getDefaultInfo(mode = "light") {
-    if (mode === "dark") {
-      return {
-        main: lightBlue_default[400],
-        light: lightBlue_default[300],
-        dark: lightBlue_default[700]
-      };
-    }
-    return {
-      main: lightBlue_default[700],
-      light: lightBlue_default[500],
-      dark: lightBlue_default[900]
-    };
-  }
-  function getDefaultSuccess(mode = "light") {
-    if (mode === "dark") {
-      return {
-        main: green_default[400],
-        light: green_default[300],
-        dark: green_default[700]
-      };
-    }
-    return {
-      main: green_default[800],
-      light: green_default[500],
-      dark: green_default[900]
-    };
-  }
-  function getDefaultWarning(mode = "light") {
-    if (mode === "dark") {
-      return {
-        main: orange_default[400],
-        light: orange_default[300],
-        dark: orange_default[700]
-      };
-    }
-    return {
-      main: "#ed6c02",
-      // closest to orange[800] that pass 3:1.
-      light: orange_default[500],
-      dark: orange_default[900]
-    };
-  }
-  function contrastColor(background) {
-    return `oklch(from ${background} var(--__l) 0 h / var(--__a))`;
-  }
-  function createPalette(palette2) {
-    const {
-      mode = "light",
-      contrastThreshold = 3,
-      tonalOffset = 0.2,
-      colorSpace,
-      ...other
-    } = palette2;
-    const primary = palette2.primary || getDefaultPrimary(mode);
-    const secondary = palette2.secondary || getDefaultSecondary(mode);
-    const error = palette2.error || getDefaultError(mode);
-    const info = palette2.info || getDefaultInfo(mode);
-    const success = palette2.success || getDefaultSuccess(mode);
-    const warning = palette2.warning || getDefaultWarning(mode);
-    function getContrastText(background) {
-      if (colorSpace) {
-        return contrastColor(background);
-      }
-      const contrastText = getContrastRatio(background, dark.text.primary) >= contrastThreshold ? dark.text.primary : light.text.primary;
-      if (true) {
-        const contrast = getContrastRatio(background, contrastText);
-        if (contrast < 3) {
-          console.error([`MUI: The contrast ratio of ${contrast}:1 for ${contrastText} on ${background}`, "falls below the WCAG recommended absolute minimum contrast ratio of 3:1.", "https://www.w3.org/TR/2008/REC-WCAG20-20081211/#visual-audio-contrast-contrast"].join("\n"));
-        }
-      }
-      return contrastText;
-    }
-    const augmentColor = ({
-      color: color2,
-      name,
-      mainShade = 500,
-      lightShade = 300,
-      darkShade = 700
-    }) => {
-      color2 = {
-        ...color2
-      };
-      if (!color2.main && color2[mainShade]) {
-        color2.main = color2[mainShade];
-      }
-      if (!color2.hasOwnProperty("main")) {
-        throw new Error(true ? `MUI: The color${name ? ` (${name})` : ""} provided to augmentColor(color) is invalid.
-The color object needs to have a \`main\` property or a \`${mainShade}\` property.` : formatMuiErrorMessage(11, name ? ` (${name})` : "", mainShade));
-      }
-      if (typeof color2.main !== "string") {
-        throw new Error(true ? `MUI: The color${name ? ` (${name})` : ""} provided to augmentColor(color) is invalid.
-\`color.main\` should be a string, but \`${JSON.stringify(color2.main)}\` was provided instead.
-
-Did you intend to use one of the following approaches?
-
-import { green } from "@mui/material/colors";
-
-const theme1 = createTheme({ palette: {
-  primary: green,
-} });
-
-const theme2 = createTheme({ palette: {
-  primary: { main: green[500] },
-} });` : formatMuiErrorMessage(12, name ? ` (${name})` : "", JSON.stringify(color2.main)));
-      }
-      if (colorSpace) {
-        mixLightOrDark(colorSpace, color2, "light", lightShade, tonalOffset);
-        mixLightOrDark(colorSpace, color2, "dark", darkShade, tonalOffset);
-      } else {
-        addLightOrDark(color2, "light", lightShade, tonalOffset);
-        addLightOrDark(color2, "dark", darkShade, tonalOffset);
-      }
-      if (!color2.contrastText) {
-        color2.contrastText = getContrastText(color2.main);
-      }
-      return color2;
-    };
-    let modeHydrated;
-    if (mode === "light") {
-      modeHydrated = getLight();
-    } else if (mode === "dark") {
-      modeHydrated = getDark();
-    }
-    if (true) {
-      if (!modeHydrated) {
-        console.error(`MUI: The palette mode \`${mode}\` is not supported.`);
-      }
-    }
-    const paletteOutput = deepmerge({
-      // A collection of common colors.
-      common: {
-        ...common_default
-      },
-      // prevent mutable object.
-      // The palette mode, can be light or dark.
-      mode,
-      // The colors used to represent primary interface elements for a user.
-      primary: augmentColor({
-        color: primary,
-        name: "primary"
-      }),
-      // The colors used to represent secondary interface elements for a user.
-      secondary: augmentColor({
-        color: secondary,
-        name: "secondary",
-        mainShade: "A400",
-        lightShade: "A200",
-        darkShade: "A700"
-      }),
-      // The colors used to represent interface elements that the user should be made aware of.
-      error: augmentColor({
-        color: error,
-        name: "error"
-      }),
-      // The colors used to represent potentially dangerous actions or important messages.
-      warning: augmentColor({
-        color: warning,
-        name: "warning"
-      }),
-      // The colors used to present information to the user that is neutral and not necessarily important.
-      info: augmentColor({
-        color: info,
-        name: "info"
-      }),
-      // The colors used to indicate the successful completion of an action that user triggered.
-      success: augmentColor({
-        color: success,
-        name: "success"
-      }),
-      // The grey colors.
-      grey: grey_default,
-      // Used by `getContrastText()` to maximize the contrast between
-      // the background and the text.
-      contrastThreshold,
-      // Takes a background color and returns the text color that maximizes the contrast.
-      getContrastText,
-      // Generate a rich color object.
-      augmentColor,
-      // Used by the functions below to shift a color's luminance by approximately
-      // two indexes within its tonal palette.
-      // E.g., shift from Red 500 to Red 300 or Red 700.
-      tonalOffset,
-      // The light and dark mode object.
-      ...modeHydrated
-    }, other);
-    return paletteOutput;
-  }
-
-  // node_modules/@mui/system/esm/cssVars/prepareTypographyVars.js
-  function prepareTypographyVars(typography) {
-    const vars = {};
-    const entries = Object.entries(typography);
-    entries.forEach((entry) => {
-      const [key, value2] = entry;
-      if (typeof value2 === "object") {
-        vars[key] = `${value2.fontStyle ? `${value2.fontStyle} ` : ""}${value2.fontVariant ? `${value2.fontVariant} ` : ""}${value2.fontWeight ? `${value2.fontWeight} ` : ""}${value2.fontStretch ? `${value2.fontStretch} ` : ""}${value2.fontSize || ""}${value2.lineHeight ? `/${value2.lineHeight} ` : ""}${value2.fontFamily || ""}`;
-      }
-    });
-    return vars;
-  }
-
-  // node_modules/@mui/material/esm/styles/createMixins.js
-  function createMixins(breakpoints, mixins) {
-    return {
-      toolbar: {
-        minHeight: 56,
-        [breakpoints.up("xs")]: {
-          "@media (orientation: landscape)": {
-            minHeight: 48
-          }
-        },
-        [breakpoints.up("sm")]: {
-          minHeight: 64
-        }
-      },
-      ...mixins
-    };
-  }
-
-  // node_modules/@mui/material/esm/styles/createTypography.js
-  function round(value2) {
-    return Math.round(value2 * 1e5) / 1e5;
-  }
-  var caseAllCaps = {
-    textTransform: "uppercase"
-  };
-  var defaultFontFamily = '"Roboto", "Helvetica", "Arial", sans-serif';
-  function createTypography(palette2, typography) {
-    const {
-      fontFamily = defaultFontFamily,
-      // The default font size of the Material Specification.
-      fontSize = 14,
-      // px
-      fontWeightLight = 300,
-      fontWeightRegular = 400,
-      fontWeightMedium = 500,
-      fontWeightBold = 700,
-      // Tell MUI what's the font-size on the html element.
-      // 16px is the default font-size used by browsers.
-      htmlFontSize = 16,
-      // Apply the CSS properties to all the variants.
-      allVariants,
-      pxToRem: pxToRem2,
-      ...other
-    } = typeof typography === "function" ? typography(palette2) : typography;
-    if (true) {
-      if (typeof fontSize !== "number") {
-        console.error("MUI: `fontSize` is required to be a number.");
-      }
-      if (typeof htmlFontSize !== "number") {
-        console.error("MUI: `htmlFontSize` is required to be a number.");
-      }
-    }
-    const coef = fontSize / 14;
-    const pxToRem = pxToRem2 || ((size) => `${size / htmlFontSize * coef}rem`);
-    const buildVariant = (fontWeight, size, lineHeight, letterSpacing, casing) => ({
-      fontFamily,
-      fontWeight,
-      fontSize: pxToRem(size),
-      // Unitless following https://meyerweb.com/eric/thoughts/2006/02/08/unitless-line-heights/
-      lineHeight,
-      // The letter spacing was designed for the Roboto font-family. Using the same letter-spacing
-      // across font-families can cause issues with the kerning.
-      ...fontFamily === defaultFontFamily ? {
-        letterSpacing: `${round(letterSpacing / size)}em`
-      } : {},
-      ...casing,
-      ...allVariants
-    });
-    const variants = {
-      h1: buildVariant(fontWeightLight, 96, 1.167, -1.5),
-      h2: buildVariant(fontWeightLight, 60, 1.2, -0.5),
-      h3: buildVariant(fontWeightRegular, 48, 1.167, 0),
-      h4: buildVariant(fontWeightRegular, 34, 1.235, 0.25),
-      h5: buildVariant(fontWeightRegular, 24, 1.334, 0),
-      h6: buildVariant(fontWeightMedium, 20, 1.6, 0.15),
-      subtitle1: buildVariant(fontWeightRegular, 16, 1.75, 0.15),
-      subtitle2: buildVariant(fontWeightMedium, 14, 1.57, 0.1),
-      body1: buildVariant(fontWeightRegular, 16, 1.5, 0.15),
-      body2: buildVariant(fontWeightRegular, 14, 1.43, 0.15),
-      button: buildVariant(fontWeightMedium, 14, 1.75, 0.4, caseAllCaps),
-      caption: buildVariant(fontWeightRegular, 12, 1.66, 0.4),
-      overline: buildVariant(fontWeightRegular, 12, 2.66, 1, caseAllCaps),
-      // TODO v6: Remove handling of 'inherit' variant from the theme as it is already handled in Material UI's Typography component. Also, remember to remove the associated types.
-      inherit: {
-        fontFamily: "inherit",
-        fontWeight: "inherit",
-        fontSize: "inherit",
-        lineHeight: "inherit",
-        letterSpacing: "inherit"
-      }
-    };
-    return deepmerge({
-      htmlFontSize,
-      pxToRem,
-      fontFamily,
-      fontSize,
-      fontWeightLight,
-      fontWeightRegular,
-      fontWeightMedium,
-      fontWeightBold,
-      ...variants
-    }, other, {
-      clone: false
-      // No need to clone deep
-    });
-  }
-
-  // node_modules/@mui/material/esm/styles/shadows.js
-  var shadowKeyUmbraOpacity = 0.2;
-  var shadowKeyPenumbraOpacity = 0.14;
-  var shadowAmbientShadowOpacity = 0.12;
-  function createShadow(...px) {
-    return [`${px[0]}px ${px[1]}px ${px[2]}px ${px[3]}px rgba(0,0,0,${shadowKeyUmbraOpacity})`, `${px[4]}px ${px[5]}px ${px[6]}px ${px[7]}px rgba(0,0,0,${shadowKeyPenumbraOpacity})`, `${px[8]}px ${px[9]}px ${px[10]}px ${px[11]}px rgba(0,0,0,${shadowAmbientShadowOpacity})`].join(",");
-  }
-  var shadows = ["none", createShadow(0, 2, 1, -1, 0, 1, 1, 0, 0, 1, 3, 0), createShadow(0, 3, 1, -2, 0, 2, 2, 0, 0, 1, 5, 0), createShadow(0, 3, 3, -2, 0, 3, 4, 0, 0, 1, 8, 0), createShadow(0, 2, 4, -1, 0, 4, 5, 0, 0, 1, 10, 0), createShadow(0, 3, 5, -1, 0, 5, 8, 0, 0, 1, 14, 0), createShadow(0, 3, 5, -1, 0, 6, 10, 0, 0, 1, 18, 0), createShadow(0, 4, 5, -2, 0, 7, 10, 1, 0, 2, 16, 1), createShadow(0, 5, 5, -3, 0, 8, 10, 1, 0, 3, 14, 2), createShadow(0, 5, 6, -3, 0, 9, 12, 1, 0, 3, 16, 2), createShadow(0, 6, 6, -3, 0, 10, 14, 1, 0, 4, 18, 3), createShadow(0, 6, 7, -4, 0, 11, 15, 1, 0, 4, 20, 3), createShadow(0, 7, 8, -4, 0, 12, 17, 2, 0, 5, 22, 4), createShadow(0, 7, 8, -4, 0, 13, 19, 2, 0, 5, 24, 4), createShadow(0, 7, 9, -4, 0, 14, 21, 2, 0, 5, 26, 4), createShadow(0, 8, 9, -5, 0, 15, 22, 2, 0, 6, 28, 5), createShadow(0, 8, 10, -5, 0, 16, 24, 2, 0, 6, 30, 5), createShadow(0, 8, 11, -5, 0, 17, 26, 2, 0, 6, 32, 5), createShadow(0, 9, 11, -5, 0, 18, 28, 2, 0, 7, 34, 6), createShadow(0, 9, 12, -6, 0, 19, 29, 2, 0, 7, 36, 6), createShadow(0, 10, 13, -6, 0, 20, 31, 3, 0, 8, 38, 7), createShadow(0, 10, 13, -6, 0, 21, 33, 3, 0, 8, 40, 7), createShadow(0, 10, 14, -6, 0, 22, 35, 3, 0, 8, 42, 7), createShadow(0, 11, 14, -7, 0, 23, 36, 3, 0, 9, 44, 8), createShadow(0, 11, 15, -7, 0, 24, 38, 3, 0, 9, 46, 8)];
-  var shadows_default = shadows;
-
-  // node_modules/@mui/material/esm/styles/createTransitions.js
-  var easing = {
-    // This is the most common easing curve.
-    easeInOut: "cubic-bezier(0.4, 0, 0.2, 1)",
-    // Objects enter the screen at full velocity from off-screen and
-    // slowly decelerate to a resting point.
-    easeOut: "cubic-bezier(0.0, 0, 0.2, 1)",
-    // Objects leave the screen at full velocity. They do not decelerate when off-screen.
-    easeIn: "cubic-bezier(0.4, 0, 1, 1)",
-    // The sharp curve is used by objects that may return to the screen at any time.
-    sharp: "cubic-bezier(0.4, 0, 0.6, 1)"
-  };
-  var duration = {
-    shortest: 150,
-    shorter: 200,
-    short: 250,
-    // most basic recommended timing
-    standard: 300,
-    // this is to be used in complex animations
-    complex: 375,
-    // recommended when something is entering screen
-    enteringScreen: 225,
-    // recommended when something is leaving screen
-    leavingScreen: 195
-  };
-  function formatMs(milliseconds) {
-    return `${Math.round(milliseconds)}ms`;
-  }
-  function getAutoHeightDuration(height2) {
-    if (!height2) {
-      return 0;
-    }
-    const constant = height2 / 36;
-    return Math.min(Math.round((4 + 15 * constant ** 0.25 + constant / 5) * 10), 3e3);
-  }
-  function createTransitions(inputTransitions) {
-    const mergedEasing = {
-      ...easing,
-      ...inputTransitions.easing
-    };
-    const mergedDuration = {
-      ...duration,
-      ...inputTransitions.duration
-    };
-    const create = (props = ["all"], options = {}) => {
-      const {
-        duration: durationOption = mergedDuration.standard,
-        easing: easingOption = mergedEasing.easeInOut,
-        delay = 0,
-        ...other
-      } = options;
-      if (true) {
-        const isString = (value2) => typeof value2 === "string";
-        const isNumber = (value2) => !Number.isNaN(parseFloat(value2));
-        if (!isString(props) && !Array.isArray(props)) {
-          console.error('MUI: Argument "props" must be a string or Array.');
-        }
-        if (!isNumber(durationOption) && !isString(durationOption)) {
-          console.error(`MUI: Argument "duration" must be a number or a string but found ${durationOption}.`);
-        }
-        if (!isString(easingOption)) {
-          console.error('MUI: Argument "easing" must be a string.');
-        }
-        if (!isNumber(delay) && !isString(delay)) {
-          console.error('MUI: Argument "delay" must be a number or a string.');
-        }
-        if (typeof options !== "object") {
-          console.error(["MUI: Secong argument of transition.create must be an object.", "Arguments should be either `create('prop1', options)` or `create(['prop1', 'prop2'], options)`"].join("\n"));
-        }
-        if (Object.keys(other).length !== 0) {
-          console.error(`MUI: Unrecognized argument(s) [${Object.keys(other).join(",")}].`);
-        }
-      }
-      return (Array.isArray(props) ? props : [props]).map((animatedProp) => `${animatedProp} ${typeof durationOption === "string" ? durationOption : formatMs(durationOption)} ${easingOption} ${typeof delay === "string" ? delay : formatMs(delay)}`).join(",");
-    };
-    return {
-      getAutoHeightDuration,
-      create,
-      ...inputTransitions,
-      easing: mergedEasing,
-      duration: mergedDuration
-    };
-  }
-
-  // node_modules/@mui/material/esm/styles/zIndex.js
-  var zIndex = {
-    mobileStepper: 1e3,
-    fab: 1050,
-    speedDial: 1050,
-    appBar: 1100,
-    drawer: 1200,
-    modal: 1300,
-    snackbar: 1400,
-    tooltip: 1500
-  };
-  var zIndex_default = zIndex;
-
-  // node_modules/@mui/material/esm/styles/stringifyTheme.js
-  function isSerializable(val) {
-    return isPlainObject(val) || typeof val === "undefined" || typeof val === "string" || typeof val === "boolean" || typeof val === "number" || Array.isArray(val);
-  }
-  function stringifyTheme(baseTheme = {}) {
-    const serializableTheme = {
-      ...baseTheme
-    };
-    function serializeTheme(object) {
-      const array = Object.entries(object);
-      for (let index = 0; index < array.length; index++) {
-        const [key, value2] = array[index];
-        if (!isSerializable(value2) || key.startsWith("unstable_")) {
-          delete object[key];
-        } else if (isPlainObject(value2)) {
-          object[key] = {
-            ...value2
-          };
-          serializeTheme(object[key]);
-        }
-      }
-    }
-    serializeTheme(serializableTheme);
-    return `import { unstable_createBreakpoints as createBreakpoints, createTransitions } from '@mui/material/styles';
-
-const theme = ${JSON.stringify(serializableTheme, null, 2)};
-
-theme.breakpoints = createBreakpoints(theme.breakpoints || {});
-theme.transitions = createTransitions(theme.transitions || {});
-
-export default theme;`;
-  }
-
-  // node_modules/@mui/material/esm/styles/createThemeNoVars.js
-  function coefficientToPercentage(coefficient) {
-    if (typeof coefficient === "number") {
-      return `${(coefficient * 100).toFixed(0)}%`;
-    }
-    return `calc((${coefficient}) * 100%)`;
-  }
-  var parseAddition = (str) => {
-    if (!Number.isNaN(+str)) {
-      return +str;
-    }
-    const numbers = str.match(/\d*\.?\d+/g);
-    if (!numbers) {
-      return 0;
-    }
-    let sum = 0;
-    for (let i = 0; i < numbers.length; i += 1) {
-      sum += +numbers[i];
-    }
-    return sum;
-  };
-  function attachColorManipulators(theme) {
-    Object.assign(theme, {
-      alpha(color2, coefficient) {
-        const obj = this || theme;
-        if (obj.colorSpace) {
-          return `oklch(from ${color2} l c h / ${typeof coefficient === "string" ? `calc(${coefficient})` : coefficient})`;
-        }
-        if (obj.vars) {
-          return `rgba(${color2.replace(/var\(--([^,\s)]+)(?:,[^)]+)?\)+/g, "var(--$1Channel)")} / ${typeof coefficient === "string" ? `calc(${coefficient})` : coefficient})`;
-        }
-        return alpha(color2, parseAddition(coefficient));
-      },
-      lighten(color2, coefficient) {
-        const obj = this || theme;
-        if (obj.colorSpace) {
-          return `color-mix(in ${obj.colorSpace}, ${color2}, #fff ${coefficientToPercentage(coefficient)})`;
-        }
-        return lighten(color2, coefficient);
-      },
-      darken(color2, coefficient) {
-        const obj = this || theme;
-        if (obj.colorSpace) {
-          return `color-mix(in ${obj.colorSpace}, ${color2}, #000 ${coefficientToPercentage(coefficient)})`;
-        }
-        return darken(color2, coefficient);
-      }
-    });
-  }
-  function createThemeNoVars(options = {}, ...args) {
-    const {
-      breakpoints: breakpointsInput,
-      mixins: mixinsInput = {},
-      spacing: spacingInput,
-      palette: paletteInput = {},
-      transitions: transitionsInput = {},
-      typography: typographyInput = {},
-      shape: shapeInput,
-      colorSpace,
-      ...other
-    } = options;
-    if (options.vars && // The error should throw only for the root theme creation because user is not allowed to use a custom node `vars`.
-    // `generateThemeVars` is the closest identifier for checking that the `options` is a result of `createTheme` with CSS variables so that user can create new theme for nested ThemeProvider.
-    options.generateThemeVars === void 0) {
-      throw new Error(true ? "MUI: `vars` is a private field used for CSS variables support.\nPlease use another name or follow the [docs](https://mui.com/material-ui/customization/css-theme-variables/usage/) to enable the feature." : formatMuiErrorMessage(20));
-    }
-    const palette2 = createPalette({
-      ...paletteInput,
-      colorSpace
-    });
-    const systemTheme = createTheme_default(options);
-    let muiTheme = deepmerge(systemTheme, {
-      mixins: createMixins(systemTheme.breakpoints, mixinsInput),
-      palette: palette2,
-      // Don't use [...shadows] until you've verified its transpiled code is not invoking the iterator protocol.
-      shadows: shadows_default.slice(),
-      typography: createTypography(palette2, typographyInput),
-      transitions: createTransitions(transitionsInput),
-      zIndex: {
-        ...zIndex_default
-      }
-    });
-    muiTheme = deepmerge(muiTheme, other);
-    muiTheme = args.reduce((acc, argument) => deepmerge(acc, argument), muiTheme);
-    if (true) {
-      const stateClasses = ["active", "checked", "completed", "disabled", "error", "expanded", "focused", "focusVisible", "required", "selected"];
-      const traverse = (node2, component) => {
-        let key;
-        for (key in node2) {
-          const child = node2[key];
-          if (stateClasses.includes(key) && Object.keys(child).length > 0) {
-            if (true) {
-              const stateClass = generateUtilityClass("", key);
-              console.error([`MUI: The \`${component}\` component increases the CSS specificity of the \`${key}\` internal state.`, "You can not override it like this: ", JSON.stringify(node2, null, 2), "", `Instead, you need to use the '&.${stateClass}' syntax:`, JSON.stringify({
-                root: {
-                  [`&.${stateClass}`]: child
-                }
-              }, null, 2), "", "https://mui.com/r/state-classes-guide"].join("\n"));
-            }
-            node2[key] = {};
-          }
-        }
-      };
-      Object.keys(muiTheme.components).forEach((component) => {
-        const styleOverrides = muiTheme.components[component].styleOverrides;
-        if (styleOverrides && component.startsWith("Mui")) {
-          traverse(styleOverrides, component);
-        }
-      });
-    }
-    muiTheme.unstable_sxConfig = {
-      ...defaultSxConfig_default,
-      ...other?.unstable_sxConfig
-    };
-    muiTheme.unstable_sx = function sx(props) {
-      return styleFunctionSx_default({
-        sx: props,
-        theme: this
-      });
-    };
-    muiTheme.toRuntimeSource = stringifyTheme;
-    attachColorManipulators(muiTheme);
-    return muiTheme;
-  }
-  var createThemeNoVars_default = createThemeNoVars;
-
-  // node_modules/@mui/material/esm/styles/getOverlayAlpha.js
-  function getOverlayAlpha(elevation) {
-    let alphaValue;
-    if (elevation < 1) {
-      alphaValue = 5.11916 * elevation ** 2;
-    } else {
-      alphaValue = 4.5 * Math.log(elevation + 1) + 2;
-    }
-    return Math.round(alphaValue * 10) / 1e3;
-  }
-
-  // node_modules/@mui/material/esm/styles/createColorScheme.js
-  var defaultDarkOverlays = [...Array(25)].map((_, index) => {
-    if (index === 0) {
-      return "none";
-    }
-    const overlay = getOverlayAlpha(index);
-    return `linear-gradient(rgba(255 255 255 / ${overlay}), rgba(255 255 255 / ${overlay}))`;
-  });
-  function getOpacity(mode) {
-    return {
-      inputPlaceholder: mode === "dark" ? 0.5 : 0.42,
-      inputUnderline: mode === "dark" ? 0.7 : 0.42,
-      switchTrackDisabled: mode === "dark" ? 0.2 : 0.12,
-      switchTrack: mode === "dark" ? 0.3 : 0.38
-    };
-  }
-  function getOverlays(mode) {
-    return mode === "dark" ? defaultDarkOverlays : [];
-  }
-  function createColorScheme(options) {
-    const {
-      palette: paletteInput = {
-        mode: "light"
-      },
-      // need to cast to avoid module augmentation test
-      opacity,
-      overlays,
-      colorSpace,
-      ...other
-    } = options;
-    const palette2 = createPalette({
-      ...paletteInput,
-      colorSpace
-    });
-    return {
-      palette: palette2,
-      opacity: {
-        ...getOpacity(palette2.mode),
-        ...opacity
-      },
-      overlays: overlays || getOverlays(palette2.mode),
-      ...other
-    };
-  }
-
-  // node_modules/@mui/material/esm/styles/shouldSkipGeneratingVar.js
-  function shouldSkipGeneratingVar(keys) {
-    return !!keys[0].match(/(cssVarPrefix|colorSchemeSelector|modularCssLayers|rootSelector|typography|mixins|breakpoints|direction|transitions)/) || !!keys[0].match(/sxConfig$/) || // ends with sxConfig
-    keys[0] === "palette" && !!keys[1]?.match(/(mode|contrastThreshold|tonalOffset)/);
-  }
-
-  // node_modules/@mui/material/esm/styles/excludeVariablesFromRoot.js
-  var excludeVariablesFromRoot = (cssVarPrefix) => [...[...Array(25)].map((_, index) => `--${cssVarPrefix ? `${cssVarPrefix}-` : ""}overlays-${index}`), `--${cssVarPrefix ? `${cssVarPrefix}-` : ""}palette-AppBar-darkBg`, `--${cssVarPrefix ? `${cssVarPrefix}-` : ""}palette-AppBar-darkColor`];
-  var excludeVariablesFromRoot_default = excludeVariablesFromRoot;
-
-  // node_modules/@mui/material/esm/styles/createGetSelector.js
-  var createGetSelector_default = (theme) => (colorScheme, css2) => {
-    const root2 = theme.rootSelector || ":root";
-    const selector = theme.colorSchemeSelector;
-    let rule = selector;
-    if (selector === "class") {
-      rule = ".%s";
-    }
-    if (selector === "data") {
-      rule = "[data-%s]";
-    }
-    if (selector?.startsWith("data-") && !selector.includes("%s")) {
-      rule = `[${selector}="%s"]`;
-    }
-    if (theme.defaultColorScheme === colorScheme) {
-      if (colorScheme === "dark") {
-        const excludedVariables = {};
-        excludeVariablesFromRoot_default(theme.cssVarPrefix).forEach((cssVar) => {
-          excludedVariables[cssVar] = css2[cssVar];
-          delete css2[cssVar];
-        });
-        if (rule === "media") {
-          return {
-            [root2]: css2,
-            [`@media (prefers-color-scheme: dark)`]: {
-              [root2]: excludedVariables
-            }
-          };
-        }
-        if (rule) {
-          return {
-            [rule.replace("%s", colorScheme)]: excludedVariables,
-            [`${root2}, ${rule.replace("%s", colorScheme)}`]: css2
-          };
-        }
-        return {
-          [root2]: {
-            ...css2,
-            ...excludedVariables
-          }
-        };
-      }
-      if (rule && rule !== "media") {
-        return `${root2}, ${rule.replace("%s", String(colorScheme))}`;
-      }
-    } else if (colorScheme) {
-      if (rule === "media") {
-        return {
-          [`@media (prefers-color-scheme: ${String(colorScheme)})`]: {
-            [root2]: css2
-          }
-        };
-      }
-      if (rule) {
-        return rule.replace("%s", String(colorScheme));
-      }
-    }
-    return root2;
-  };
-
-  // node_modules/@mui/material/esm/styles/createThemeWithVars.js
-  function assignNode(obj, keys) {
-    keys.forEach((k) => {
-      if (!obj[k]) {
-        obj[k] = {};
-      }
-    });
-  }
-  function setColor(obj, key, defaultValue) {
-    if (!obj[key] && defaultValue) {
-      obj[key] = defaultValue;
-    }
-  }
-  function toRgb(color2) {
-    if (typeof color2 !== "string" || !color2.startsWith("hsl")) {
-      return color2;
-    }
-    return hslToRgb(color2);
-  }
-  function setColorChannel(obj, key) {
-    if (!(`${key}Channel` in obj)) {
-      obj[`${key}Channel`] = private_safeColorChannel(toRgb(obj[key]), `MUI: Can't create \`palette.${key}Channel\` because \`palette.${key}\` is not one of these formats: #nnn, #nnnnnn, rgb(), rgba(), hsl(), hsla(), color().
-To suppress this warning, you need to explicitly provide the \`palette.${key}Channel\` as a string (in rgb format, for example "12 12 12") or undefined if you want to remove the channel token.`);
-    }
-  }
-  function getSpacingVal(spacingInput) {
-    if (typeof spacingInput === "number") {
-      return `${spacingInput}px`;
-    }
-    if (typeof spacingInput === "string" || typeof spacingInput === "function" || Array.isArray(spacingInput)) {
-      return spacingInput;
-    }
-    return "8px";
-  }
-  var silent = (fn) => {
-    try {
-      return fn();
-    } catch (error) {
-    }
-    return void 0;
-  };
-  var createGetCssVar2 = (cssVarPrefix = "mui") => createGetCssVar(cssVarPrefix);
-  function attachColorScheme(colorSpace, colorSchemes, scheme, restTheme, colorScheme) {
-    if (!scheme) {
-      return void 0;
-    }
-    scheme = scheme === true ? {} : scheme;
-    const mode = colorScheme === "dark" ? "dark" : "light";
-    if (!restTheme) {
-      colorSchemes[colorScheme] = createColorScheme({
-        ...scheme,
-        palette: {
-          mode,
-          ...scheme?.palette
-        },
-        colorSpace
-      });
-      return void 0;
-    }
-    const {
-      palette: palette2,
-      ...muiTheme
-    } = createThemeNoVars_default({
-      ...restTheme,
-      palette: {
-        mode,
-        ...scheme?.palette
-      },
-      colorSpace
-    });
-    colorSchemes[colorScheme] = {
-      ...scheme,
-      palette: palette2,
-      opacity: {
-        ...getOpacity(mode),
-        ...scheme?.opacity
-      },
-      overlays: scheme?.overlays || getOverlays(mode)
-    };
-    return muiTheme;
-  }
-  function createThemeWithVars(options = {}, ...args) {
-    const {
-      colorSchemes: colorSchemesInput = {
-        light: true
-      },
-      defaultColorScheme: defaultColorSchemeInput,
-      disableCssColorScheme = false,
-      cssVarPrefix = "mui",
-      nativeColor = false,
-      shouldSkipGeneratingVar: shouldSkipGeneratingVar2 = shouldSkipGeneratingVar,
-      colorSchemeSelector: selector = colorSchemesInput.light && colorSchemesInput.dark ? "media" : void 0,
-      rootSelector = ":root",
-      ...input
-    } = options;
-    const firstColorScheme = Object.keys(colorSchemesInput)[0];
-    const defaultColorScheme = defaultColorSchemeInput || (colorSchemesInput.light && firstColorScheme !== "light" ? "light" : firstColorScheme);
-    const getCssVar = createGetCssVar2(cssVarPrefix);
-    const {
-      [defaultColorScheme]: defaultSchemeInput,
-      light: builtInLight,
-      dark: builtInDark,
-      ...customColorSchemes
-    } = colorSchemesInput;
-    const colorSchemes = {
-      ...customColorSchemes
-    };
-    let defaultScheme = defaultSchemeInput;
-    if (defaultColorScheme === "dark" && !("dark" in colorSchemesInput) || defaultColorScheme === "light" && !("light" in colorSchemesInput)) {
-      defaultScheme = true;
-    }
-    if (!defaultScheme) {
-      throw new Error(true ? `MUI: The \`colorSchemes.${defaultColorScheme}\` option is either missing or invalid.` : formatMuiErrorMessage(21, defaultColorScheme));
-    }
-    let colorSpace;
-    if (nativeColor) {
-      colorSpace = "oklch";
-    }
-    const muiTheme = attachColorScheme(colorSpace, colorSchemes, defaultScheme, input, defaultColorScheme);
-    if (builtInLight && !colorSchemes.light) {
-      attachColorScheme(colorSpace, colorSchemes, builtInLight, void 0, "light");
-    }
-    if (builtInDark && !colorSchemes.dark) {
-      attachColorScheme(colorSpace, colorSchemes, builtInDark, void 0, "dark");
-    }
-    let theme = {
-      defaultColorScheme,
-      ...muiTheme,
-      cssVarPrefix,
-      colorSchemeSelector: selector,
-      rootSelector,
-      getCssVar,
-      colorSchemes,
-      font: {
-        ...prepareTypographyVars(muiTheme.typography),
-        ...muiTheme.font
-      },
-      spacing: getSpacingVal(input.spacing)
-    };
-    Object.keys(theme.colorSchemes).forEach((key) => {
-      const palette2 = theme.colorSchemes[key].palette;
-      const setCssVarColor = (cssVar) => {
-        const tokens = cssVar.split("-");
-        const color2 = tokens[1];
-        const colorToken = tokens[2];
-        return getCssVar(cssVar, palette2[color2][colorToken]);
-      };
-      if (palette2.mode === "light") {
-        setColor(palette2.common, "background", "#fff");
-        setColor(palette2.common, "onBackground", "#000");
-      }
-      if (palette2.mode === "dark") {
-        setColor(palette2.common, "background", "#000");
-        setColor(palette2.common, "onBackground", "#fff");
-      }
-      function colorMix(method, color2, coefficient) {
-        if (colorSpace) {
-          let mixer;
-          if (method === private_safeAlpha) {
-            mixer = `transparent ${((1 - coefficient) * 100).toFixed(0)}%`;
-          }
-          if (method === private_safeDarken) {
-            mixer = `#000 ${(coefficient * 100).toFixed(0)}%`;
-          }
-          if (method === private_safeLighten) {
-            mixer = `#fff ${(coefficient * 100).toFixed(0)}%`;
-          }
-          return `color-mix(in ${colorSpace}, ${color2}, ${mixer})`;
-        }
-        return method(color2, coefficient);
-      }
-      assignNode(palette2, ["Alert", "AppBar", "Avatar", "Button", "Chip", "FilledInput", "LinearProgress", "Skeleton", "Slider", "SnackbarContent", "SpeedDialAction", "StepConnector", "StepContent", "Switch", "TableCell", "Tooltip"]);
-      if (palette2.mode === "light") {
-        setColor(palette2.Alert, "errorColor", colorMix(private_safeDarken, palette2.error.light, 0.6));
-        setColor(palette2.Alert, "infoColor", colorMix(private_safeDarken, palette2.info.light, 0.6));
-        setColor(palette2.Alert, "successColor", colorMix(private_safeDarken, palette2.success.light, 0.6));
-        setColor(palette2.Alert, "warningColor", colorMix(private_safeDarken, palette2.warning.light, 0.6));
-        setColor(palette2.Alert, "errorFilledBg", setCssVarColor("palette-error-main"));
-        setColor(palette2.Alert, "infoFilledBg", setCssVarColor("palette-info-main"));
-        setColor(palette2.Alert, "successFilledBg", setCssVarColor("palette-success-main"));
-        setColor(palette2.Alert, "warningFilledBg", setCssVarColor("palette-warning-main"));
-        setColor(palette2.Alert, "errorFilledColor", silent(() => palette2.getContrastText(palette2.error.main)));
-        setColor(palette2.Alert, "infoFilledColor", silent(() => palette2.getContrastText(palette2.info.main)));
-        setColor(palette2.Alert, "successFilledColor", silent(() => palette2.getContrastText(palette2.success.main)));
-        setColor(palette2.Alert, "warningFilledColor", silent(() => palette2.getContrastText(palette2.warning.main)));
-        setColor(palette2.Alert, "errorStandardBg", colorMix(private_safeLighten, palette2.error.light, 0.9));
-        setColor(palette2.Alert, "infoStandardBg", colorMix(private_safeLighten, palette2.info.light, 0.9));
-        setColor(palette2.Alert, "successStandardBg", colorMix(private_safeLighten, palette2.success.light, 0.9));
-        setColor(palette2.Alert, "warningStandardBg", colorMix(private_safeLighten, palette2.warning.light, 0.9));
-        setColor(palette2.Alert, "errorIconColor", setCssVarColor("palette-error-main"));
-        setColor(palette2.Alert, "infoIconColor", setCssVarColor("palette-info-main"));
-        setColor(palette2.Alert, "successIconColor", setCssVarColor("palette-success-main"));
-        setColor(palette2.Alert, "warningIconColor", setCssVarColor("palette-warning-main"));
-        setColor(palette2.AppBar, "defaultBg", setCssVarColor("palette-grey-100"));
-        setColor(palette2.Avatar, "defaultBg", setCssVarColor("palette-grey-400"));
-        setColor(palette2.Button, "inheritContainedBg", setCssVarColor("palette-grey-300"));
-        setColor(palette2.Button, "inheritContainedHoverBg", setCssVarColor("palette-grey-A100"));
-        setColor(palette2.Chip, "defaultBorder", setCssVarColor("palette-grey-400"));
-        setColor(palette2.Chip, "defaultAvatarColor", setCssVarColor("palette-grey-700"));
-        setColor(palette2.Chip, "defaultIconColor", setCssVarColor("palette-grey-700"));
-        setColor(palette2.FilledInput, "bg", "rgba(0, 0, 0, 0.06)");
-        setColor(palette2.FilledInput, "hoverBg", "rgba(0, 0, 0, 0.09)");
-        setColor(palette2.FilledInput, "disabledBg", "rgba(0, 0, 0, 0.12)");
-        setColor(palette2.LinearProgress, "primaryBg", colorMix(private_safeLighten, palette2.primary.main, 0.62));
-        setColor(palette2.LinearProgress, "secondaryBg", colorMix(private_safeLighten, palette2.secondary.main, 0.62));
-        setColor(palette2.LinearProgress, "errorBg", colorMix(private_safeLighten, palette2.error.main, 0.62));
-        setColor(palette2.LinearProgress, "infoBg", colorMix(private_safeLighten, palette2.info.main, 0.62));
-        setColor(palette2.LinearProgress, "successBg", colorMix(private_safeLighten, palette2.success.main, 0.62));
-        setColor(palette2.LinearProgress, "warningBg", colorMix(private_safeLighten, palette2.warning.main, 0.62));
-        setColor(palette2.Skeleton, "bg", colorSpace ? colorMix(private_safeAlpha, palette2.text.primary, 0.11) : `rgba(${setCssVarColor("palette-text-primaryChannel")} / 0.11)`);
-        setColor(palette2.Slider, "primaryTrack", colorMix(private_safeLighten, palette2.primary.main, 0.62));
-        setColor(palette2.Slider, "secondaryTrack", colorMix(private_safeLighten, palette2.secondary.main, 0.62));
-        setColor(palette2.Slider, "errorTrack", colorMix(private_safeLighten, palette2.error.main, 0.62));
-        setColor(palette2.Slider, "infoTrack", colorMix(private_safeLighten, palette2.info.main, 0.62));
-        setColor(palette2.Slider, "successTrack", colorMix(private_safeLighten, palette2.success.main, 0.62));
-        setColor(palette2.Slider, "warningTrack", colorMix(private_safeLighten, palette2.warning.main, 0.62));
-        const snackbarContentBackground = colorSpace ? colorMix(private_safeDarken, palette2.background.default, 0.6825) : private_safeEmphasize(palette2.background.default, 0.8);
-        setColor(palette2.SnackbarContent, "bg", snackbarContentBackground);
-        setColor(palette2.SnackbarContent, "color", silent(() => colorSpace ? dark.text.primary : palette2.getContrastText(snackbarContentBackground)));
-        setColor(palette2.SpeedDialAction, "fabHoverBg", private_safeEmphasize(palette2.background.paper, 0.15));
-        setColor(palette2.StepConnector, "border", setCssVarColor("palette-grey-400"));
-        setColor(palette2.StepContent, "border", setCssVarColor("palette-grey-400"));
-        setColor(palette2.Switch, "defaultColor", setCssVarColor("palette-common-white"));
-        setColor(palette2.Switch, "defaultDisabledColor", setCssVarColor("palette-grey-100"));
-        setColor(palette2.Switch, "primaryDisabledColor", colorMix(private_safeLighten, palette2.primary.main, 0.62));
-        setColor(palette2.Switch, "secondaryDisabledColor", colorMix(private_safeLighten, palette2.secondary.main, 0.62));
-        setColor(palette2.Switch, "errorDisabledColor", colorMix(private_safeLighten, palette2.error.main, 0.62));
-        setColor(palette2.Switch, "infoDisabledColor", colorMix(private_safeLighten, palette2.info.main, 0.62));
-        setColor(palette2.Switch, "successDisabledColor", colorMix(private_safeLighten, palette2.success.main, 0.62));
-        setColor(palette2.Switch, "warningDisabledColor", colorMix(private_safeLighten, palette2.warning.main, 0.62));
-        setColor(palette2.TableCell, "border", colorMix(private_safeLighten, colorMix(private_safeAlpha, palette2.divider, 1), 0.88));
-        setColor(palette2.Tooltip, "bg", colorMix(private_safeAlpha, palette2.grey[700], 0.92));
-      }
-      if (palette2.mode === "dark") {
-        setColor(palette2.Alert, "errorColor", colorMix(private_safeLighten, palette2.error.light, 0.6));
-        setColor(palette2.Alert, "infoColor", colorMix(private_safeLighten, palette2.info.light, 0.6));
-        setColor(palette2.Alert, "successColor", colorMix(private_safeLighten, palette2.success.light, 0.6));
-        setColor(palette2.Alert, "warningColor", colorMix(private_safeLighten, palette2.warning.light, 0.6));
-        setColor(palette2.Alert, "errorFilledBg", setCssVarColor("palette-error-dark"));
-        setColor(palette2.Alert, "infoFilledBg", setCssVarColor("palette-info-dark"));
-        setColor(palette2.Alert, "successFilledBg", setCssVarColor("palette-success-dark"));
-        setColor(palette2.Alert, "warningFilledBg", setCssVarColor("palette-warning-dark"));
-        setColor(palette2.Alert, "errorFilledColor", silent(() => palette2.getContrastText(palette2.error.dark)));
-        setColor(palette2.Alert, "infoFilledColor", silent(() => palette2.getContrastText(palette2.info.dark)));
-        setColor(palette2.Alert, "successFilledColor", silent(() => palette2.getContrastText(palette2.success.dark)));
-        setColor(palette2.Alert, "warningFilledColor", silent(() => palette2.getContrastText(palette2.warning.dark)));
-        setColor(palette2.Alert, "errorStandardBg", colorMix(private_safeDarken, palette2.error.light, 0.9));
-        setColor(palette2.Alert, "infoStandardBg", colorMix(private_safeDarken, palette2.info.light, 0.9));
-        setColor(palette2.Alert, "successStandardBg", colorMix(private_safeDarken, palette2.success.light, 0.9));
-        setColor(palette2.Alert, "warningStandardBg", colorMix(private_safeDarken, palette2.warning.light, 0.9));
-        setColor(palette2.Alert, "errorIconColor", setCssVarColor("palette-error-main"));
-        setColor(palette2.Alert, "infoIconColor", setCssVarColor("palette-info-main"));
-        setColor(palette2.Alert, "successIconColor", setCssVarColor("palette-success-main"));
-        setColor(palette2.Alert, "warningIconColor", setCssVarColor("palette-warning-main"));
-        setColor(palette2.AppBar, "defaultBg", setCssVarColor("palette-grey-900"));
-        setColor(palette2.AppBar, "darkBg", setCssVarColor("palette-background-paper"));
-        setColor(palette2.AppBar, "darkColor", setCssVarColor("palette-text-primary"));
-        setColor(palette2.Avatar, "defaultBg", setCssVarColor("palette-grey-600"));
-        setColor(palette2.Button, "inheritContainedBg", setCssVarColor("palette-grey-800"));
-        setColor(palette2.Button, "inheritContainedHoverBg", setCssVarColor("palette-grey-700"));
-        setColor(palette2.Chip, "defaultBorder", setCssVarColor("palette-grey-700"));
-        setColor(palette2.Chip, "defaultAvatarColor", setCssVarColor("palette-grey-300"));
-        setColor(palette2.Chip, "defaultIconColor", setCssVarColor("palette-grey-300"));
-        setColor(palette2.FilledInput, "bg", "rgba(255, 255, 255, 0.09)");
-        setColor(palette2.FilledInput, "hoverBg", "rgba(255, 255, 255, 0.13)");
-        setColor(palette2.FilledInput, "disabledBg", "rgba(255, 255, 255, 0.12)");
-        setColor(palette2.LinearProgress, "primaryBg", colorMix(private_safeDarken, palette2.primary.main, 0.5));
-        setColor(palette2.LinearProgress, "secondaryBg", colorMix(private_safeDarken, palette2.secondary.main, 0.5));
-        setColor(palette2.LinearProgress, "errorBg", colorMix(private_safeDarken, palette2.error.main, 0.5));
-        setColor(palette2.LinearProgress, "infoBg", colorMix(private_safeDarken, palette2.info.main, 0.5));
-        setColor(palette2.LinearProgress, "successBg", colorMix(private_safeDarken, palette2.success.main, 0.5));
-        setColor(palette2.LinearProgress, "warningBg", colorMix(private_safeDarken, palette2.warning.main, 0.5));
-        setColor(palette2.Skeleton, "bg", colorSpace ? colorMix(private_safeAlpha, palette2.text.primary, 0.13) : `rgba(${setCssVarColor("palette-text-primaryChannel")} / 0.13)`);
-        setColor(palette2.Slider, "primaryTrack", colorMix(private_safeDarken, palette2.primary.main, 0.5));
-        setColor(palette2.Slider, "secondaryTrack", colorMix(private_safeDarken, palette2.secondary.main, 0.5));
-        setColor(palette2.Slider, "errorTrack", colorMix(private_safeDarken, palette2.error.main, 0.5));
-        setColor(palette2.Slider, "infoTrack", colorMix(private_safeDarken, palette2.info.main, 0.5));
-        setColor(palette2.Slider, "successTrack", colorMix(private_safeDarken, palette2.success.main, 0.5));
-        setColor(palette2.Slider, "warningTrack", colorMix(private_safeDarken, palette2.warning.main, 0.5));
-        const snackbarContentBackground = colorSpace ? colorMix(private_safeLighten, palette2.background.default, 0.985) : private_safeEmphasize(palette2.background.default, 0.98);
-        setColor(palette2.SnackbarContent, "bg", snackbarContentBackground);
-        setColor(palette2.SnackbarContent, "color", silent(() => colorSpace ? light.text.primary : palette2.getContrastText(snackbarContentBackground)));
-        setColor(palette2.SpeedDialAction, "fabHoverBg", private_safeEmphasize(palette2.background.paper, 0.15));
-        setColor(palette2.StepConnector, "border", setCssVarColor("palette-grey-600"));
-        setColor(palette2.StepContent, "border", setCssVarColor("palette-grey-600"));
-        setColor(palette2.Switch, "defaultColor", setCssVarColor("palette-grey-300"));
-        setColor(palette2.Switch, "defaultDisabledColor", setCssVarColor("palette-grey-600"));
-        setColor(palette2.Switch, "primaryDisabledColor", colorMix(private_safeDarken, palette2.primary.main, 0.55));
-        setColor(palette2.Switch, "secondaryDisabledColor", colorMix(private_safeDarken, palette2.secondary.main, 0.55));
-        setColor(palette2.Switch, "errorDisabledColor", colorMix(private_safeDarken, palette2.error.main, 0.55));
-        setColor(palette2.Switch, "infoDisabledColor", colorMix(private_safeDarken, palette2.info.main, 0.55));
-        setColor(palette2.Switch, "successDisabledColor", colorMix(private_safeDarken, palette2.success.main, 0.55));
-        setColor(palette2.Switch, "warningDisabledColor", colorMix(private_safeDarken, palette2.warning.main, 0.55));
-        setColor(palette2.TableCell, "border", colorMix(private_safeDarken, colorMix(private_safeAlpha, palette2.divider, 1), 0.68));
-        setColor(palette2.Tooltip, "bg", colorMix(private_safeAlpha, palette2.grey[700], 0.92));
-      }
-      setColorChannel(palette2.background, "default");
-      setColorChannel(palette2.background, "paper");
-      setColorChannel(palette2.common, "background");
-      setColorChannel(palette2.common, "onBackground");
-      setColorChannel(palette2, "divider");
-      Object.keys(palette2).forEach((color2) => {
-        const colors = palette2[color2];
-        if (color2 !== "tonalOffset" && colors && typeof colors === "object") {
-          if (colors.main) {
-            setColor(palette2[color2], "mainChannel", private_safeColorChannel(toRgb(colors.main)));
-          }
-          if (colors.light) {
-            setColor(palette2[color2], "lightChannel", private_safeColorChannel(toRgb(colors.light)));
-          }
-          if (colors.dark) {
-            setColor(palette2[color2], "darkChannel", private_safeColorChannel(toRgb(colors.dark)));
-          }
-          if (colors.contrastText) {
-            setColor(palette2[color2], "contrastTextChannel", private_safeColorChannel(toRgb(colors.contrastText)));
-          }
-          if (color2 === "text") {
-            setColorChannel(palette2[color2], "primary");
-            setColorChannel(palette2[color2], "secondary");
-          }
-          if (color2 === "action") {
-            if (colors.active) {
-              setColorChannel(palette2[color2], "active");
-            }
-            if (colors.selected) {
-              setColorChannel(palette2[color2], "selected");
-            }
-          }
-        }
-      });
-    });
-    theme = args.reduce((acc, argument) => deepmerge(acc, argument), theme);
-    const parserConfig = {
-      prefix: cssVarPrefix,
-      disableCssColorScheme,
-      shouldSkipGeneratingVar: shouldSkipGeneratingVar2,
-      getSelector: createGetSelector_default(theme),
-      enableContrastVars: nativeColor
-    };
-    const {
-      vars,
-      generateThemeVars,
-      generateStyleSheets
-    } = prepareCssVars_default(theme, parserConfig);
-    theme.vars = vars;
-    Object.entries(theme.colorSchemes[theme.defaultColorScheme]).forEach(([key, value2]) => {
-      theme[key] = value2;
-    });
-    theme.generateThemeVars = generateThemeVars;
-    theme.generateStyleSheets = generateStyleSheets;
-    theme.generateSpacing = function generateSpacing() {
-      return createSpacing(input.spacing, createUnarySpacing(this));
-    };
-    theme.getColorSchemeSelector = createGetColorSchemeSelector(selector);
-    theme.spacing = theme.generateSpacing();
-    theme.shouldSkipGeneratingVar = shouldSkipGeneratingVar2;
-    theme.unstable_sxConfig = {
-      ...defaultSxConfig_default,
-      ...input?.unstable_sxConfig
-    };
-    theme.unstable_sx = function sx(props) {
-      return styleFunctionSx_default({
-        sx: props,
-        theme: this
-      });
-    };
-    theme.toRuntimeSource = stringifyTheme;
-    return theme;
-  }
-
-  // node_modules/@mui/material/esm/styles/createTheme.js
-  function attachColorScheme2(theme, scheme, colorScheme) {
-    if (!theme.colorSchemes) {
-      return void 0;
-    }
-    if (colorScheme) {
-      theme.colorSchemes[scheme] = {
-        ...colorScheme !== true && colorScheme,
-        palette: createPalette({
-          ...colorScheme === true ? {} : colorScheme.palette,
-          mode: scheme
-        })
-        // cast type to skip module augmentation test
-      };
-    }
-  }
-  function createTheme2(options = {}, ...args) {
-    const {
-      palette: palette2,
-      cssVariables = false,
-      colorSchemes: initialColorSchemes = !palette2 ? {
-        light: true
-      } : void 0,
-      defaultColorScheme: initialDefaultColorScheme = palette2?.mode,
-      ...other
-    } = options;
-    const defaultColorSchemeInput = initialDefaultColorScheme || "light";
-    const defaultScheme = initialColorSchemes?.[defaultColorSchemeInput];
-    const colorSchemesInput = {
-      ...initialColorSchemes,
-      ...palette2 ? {
-        [defaultColorSchemeInput]: {
-          ...typeof defaultScheme !== "boolean" && defaultScheme,
-          palette: palette2
-        }
-      } : void 0
-    };
-    if (cssVariables === false) {
-      if (!("colorSchemes" in options)) {
-        return createThemeNoVars_default(options, ...args);
-      }
-      let paletteOptions = palette2;
-      if (!("palette" in options)) {
-        if (colorSchemesInput[defaultColorSchemeInput]) {
-          if (colorSchemesInput[defaultColorSchemeInput] !== true) {
-            paletteOptions = colorSchemesInput[defaultColorSchemeInput].palette;
-          } else if (defaultColorSchemeInput === "dark") {
-            paletteOptions = {
-              mode: "dark"
-            };
-          }
-        }
-      }
-      const theme = createThemeNoVars_default({
-        ...options,
-        palette: paletteOptions
-      }, ...args);
-      theme.defaultColorScheme = defaultColorSchemeInput;
-      theme.colorSchemes = colorSchemesInput;
-      if (theme.palette.mode === "light") {
-        theme.colorSchemes.light = {
-          ...colorSchemesInput.light !== true && colorSchemesInput.light,
-          palette: theme.palette
-        };
-        attachColorScheme2(theme, "dark", colorSchemesInput.dark);
-      }
-      if (theme.palette.mode === "dark") {
-        theme.colorSchemes.dark = {
-          ...colorSchemesInput.dark !== true && colorSchemesInput.dark,
-          palette: theme.palette
-        };
-        attachColorScheme2(theme, "light", colorSchemesInput.light);
-      }
-      return theme;
-    }
-    if (!palette2 && !("light" in colorSchemesInput) && defaultColorSchemeInput === "light") {
-      colorSchemesInput.light = true;
-    }
-    return createThemeWithVars({
-      ...other,
-      colorSchemes: colorSchemesInput,
-      defaultColorScheme: defaultColorSchemeInput,
-      ...typeof cssVariables !== "boolean" && cssVariables
-    }, ...args);
-  }
-
-  // node_modules/@mui/material/esm/styles/defaultTheme.js
-  var defaultTheme = createTheme2();
-  var defaultTheme_default = defaultTheme;
-
-  // node_modules/@mui/material/esm/GlobalStyles/GlobalStyles.js
-  var import_prop_types5 = __toESM(require_prop_types(), 1);
-  var import_jsx_runtime4 = __toESM(require_jsx_runtime(), 1);
-  function GlobalStyles3(props) {
-    return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(GlobalStyles_default, {
-      ...props,
-      defaultTheme: defaultTheme_default,
-      themeId: identifier_default
-    });
-  }
-  true ? GlobalStyles3.propTypes = {
-    // ┌────────────────────────────── Warning ──────────────────────────────┐
-    // │ These PropTypes are generated from the TypeScript type definitions. │
-    // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
-    // └─────────────────────────────────────────────────────────────────────┘
-    /**
-     * The styles you want to apply globally.
-     */
-    styles: import_prop_types5.default.oneOfType([import_prop_types5.default.array, import_prop_types5.default.func, import_prop_types5.default.number, import_prop_types5.default.object, import_prop_types5.default.string, import_prop_types5.default.bool])
-  } : void 0;
-  var GlobalStyles_default2 = GlobalStyles3;
-
-  // node_modules/@mui/material/esm/zero-styled/index.js
-  var import_jsx_runtime5 = __toESM(require_jsx_runtime(), 1);
-  function globalCss(styles2) {
-    return function GlobalStylesWrapper(props) {
-      return (
-        // Pigment CSS `globalCss` support callback with theme inside an object but `GlobalStyles` support theme as a callback value.
-        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(GlobalStyles_default2, {
-          styles: typeof styles2 === "function" ? (theme) => styles2({
-            theme,
-            ...props
-          }) : styles2
-        })
-      );
-    };
-  }
-
-  // node_modules/@mui/material/esm/DefaultPropsProvider/DefaultPropsProvider.js
-  var React8 = __toESM(require_react(), 1);
-  var import_prop_types6 = __toESM(require_prop_types(), 1);
-  var import_jsx_runtime6 = __toESM(require_jsx_runtime(), 1);
-  function DefaultPropsProvider2(props) {
-    return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(DefaultPropsProvider_default, {
-      ...props
-    });
-  }
-  true ? DefaultPropsProvider2.propTypes = {
-    // ┌────────────────────────────── Warning ──────────────────────────────┐
-    // │ These PropTypes are generated from the TypeScript type definitions. │
-    // │ To update them, edit the TypeScript types and run `pnpm proptypes`. │
-    // └─────────────────────────────────────────────────────────────────────┘
-    /**
-     * @ignore
-     */
-    children: import_prop_types6.default.node,
-    /**
-     * @ignore
-     */
-    value: import_prop_types6.default.object.isRequired
-  } : void 0;
-  function useDefaultProps2(params) {
-    return useDefaultProps(params);
-  }
-
-  // node_modules/@mui/material/esm/CssBaseline/CssBaseline.js
-  var React9 = __toESM(require_react(), 1);
-  var import_prop_types7 = __toESM(require_prop_types(), 1);
-  var import_jsx_runtime7 = __toESM(require_jsx_runtime(), 1);
-  var isDynamicSupport = typeof globalCss({}) === "function";
-  var html = (theme, enableColorScheme) => ({
-    WebkitFontSmoothing: "antialiased",
-    // Antialiasing.
-    MozOsxFontSmoothing: "grayscale",
-    // Antialiasing.
-    // Change from `box-sizing: content-box` so that `width`
-    // is not affected by `padding` or `border`.
-    boxSizing: "border-box",
-    // Fix font resize problem in iOS
-    WebkitTextSizeAdjust: "100%",
-    // When used under CssVarsProvider, colorScheme should not be applied dynamically because it will generate the stylesheet twice for server-rendered applications.
-    ...enableColorScheme && !theme.vars && {
-      colorScheme: theme.palette.mode
-    }
-  });
-  var body = (theme) => ({
-    color: (theme.vars || theme).palette.text.primary,
-    ...theme.typography.body1,
-    backgroundColor: (theme.vars || theme).palette.background.default,
-    "@media print": {
-      // Save printer ink.
-      backgroundColor: (theme.vars || theme).palette.common.white
-    }
-  });
-  var styles = (theme, enableColorScheme = false) => {
-    const colorSchemeStyles = {};
-    if (enableColorScheme && theme.colorSchemes && typeof theme.getColorSchemeSelector === "function") {
-      Object.entries(theme.colorSchemes).forEach(([key, scheme]) => {
-        const selector = theme.getColorSchemeSelector(key);
-        if (selector.startsWith("@")) {
-          colorSchemeStyles[selector] = {
-            ":root": {
-              colorScheme: scheme.palette?.mode
-            }
-          };
-        } else {
-          colorSchemeStyles[selector.replace(/\s*&/, "")] = {
-            colorScheme: scheme.palette?.mode
-          };
-        }
-      });
-    }
-    let defaultStyles = {
-      html: html(theme, enableColorScheme),
-      "*, *::before, *::after": {
-        boxSizing: "inherit"
-      },
-      "strong, b": {
-        fontWeight: theme.typography.fontWeightBold
-      },
-      body: {
-        margin: 0,
-        // Remove the margin in all browsers.
-        ...body(theme),
-        // Add support for document.body.requestFullScreen().
-        // Other elements, if background transparent, are not supported.
-        "&::backdrop": {
-          backgroundColor: (theme.vars || theme).palette.background.default
-        }
-      },
-      ...colorSchemeStyles
-    };
-    const themeOverrides = theme.components?.MuiCssBaseline?.styleOverrides;
-    if (themeOverrides) {
-      defaultStyles = [defaultStyles, themeOverrides];
-    }
-    return defaultStyles;
-  };
-  var SELECTOR = "mui-ecs";
-  var staticStyles = (theme) => {
-    const result = styles(theme, false);
-    const baseStyles = Array.isArray(result) ? result[0] : result;
-    if (!theme.vars && baseStyles) {
-      baseStyles.html[`:root:has(${SELECTOR})`] = {
-        colorScheme: theme.palette.mode
-      };
-    }
-    if (theme.colorSchemes) {
-      Object.entries(theme.colorSchemes).forEach(([key, scheme]) => {
-        const selector = theme.getColorSchemeSelector(key);
-        if (selector.startsWith("@")) {
-          baseStyles[selector] = {
-            [`:root:not(:has(.${SELECTOR}))`]: {
-              colorScheme: scheme.palette?.mode
-            }
-          };
-        } else {
-          baseStyles[selector.replace(/\s*&/, "")] = {
-            [`&:not(:has(.${SELECTOR}))`]: {
-              colorScheme: scheme.palette?.mode
-            }
-          };
-        }
-      });
-    }
-    return result;
-  };
-  var GlobalStyles4 = globalCss(isDynamicSupport ? ({
-    theme,
-    enableColorScheme
-  }) => styles(theme, enableColorScheme) : ({
-    theme
-  }) => staticStyles(theme));
-  function CssBaseline(inProps) {
-    const props = useDefaultProps2({
-      props: inProps,
-      name: "MuiCssBaseline"
-    });
-    const {
-      children,
-      enableColorScheme = false
-    } = props;
-    return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(React9.Fragment, {
-      children: [isDynamicSupport && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(GlobalStyles4, {
-        enableColorScheme
-      }), !isDynamicSupport && !enableColorScheme && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", {
-        className: SELECTOR,
-        style: {
-          display: "none"
-        }
-      }), children]
-    });
-  }
-  true ? CssBaseline.propTypes = {
-    // ┌────────────────────────────── Warning ──────────────────────────────┐
-    // │ These PropTypes are generated from the TypeScript type definitions. │
-    // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
-    // └─────────────────────────────────────────────────────────────────────┘
-    /**
-     * You can wrap a node.
-     */
-    children: import_prop_types7.default.node,
-    /**
-     * Enable `color-scheme` CSS property to use `theme.palette.mode`.
-     * For more details, check out https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/color-scheme
-     * For browser support, check out https://caniuse.com/?search=color-scheme
-     * @default false
-     */
-    enableColorScheme: import_prop_types7.default.bool
-  } : void 0;
-  var CssBaseline_default = CssBaseline;
-
-  // dist/js/index.js
-  var import_react11 = __toESM(require_react(), 1);
+  var import_jsx_runtime10 = __toESM(require_jsx_runtime(), 1);
+  var import_react6 = __toESM(require_react(), 1);
   var import_client = __toESM(require_client(), 1);
 
   // dist/js/lobby.js
-  var import_jsx_runtime16 = __toESM(require_jsx_runtime(), 1);
-  var import_react10 = __toESM(require_react(), 1);
+  var import_jsx_runtime9 = __toESM(require_jsx_runtime(), 1);
+  var import_react5 = __toESM(require_react(), 1);
 
   // node_modules/chia-gaming-lobby-connection/dist/index.js
-  var import_react6 = __toESM(require_react());
+  var import_react = __toESM(require_react());
 
   // node_modules/engine.io-parser/build/esm/commons.js
   var PACKET_TYPES = /* @__PURE__ */ Object.create(null);
@@ -28085,13 +21887,13 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
   // node_modules/engine.io-parser/build/esm/index.js
   var SEPARATOR = String.fromCharCode(30);
   var encodePayload = (packets, callback) => {
-    const length2 = packets.length;
-    const encodedPackets = new Array(length2);
+    const length = packets.length;
+    const encodedPackets = new Array(length);
     let count = 0;
     packets.forEach((packet, i) => {
       encodePacket(packet, false, (encodedPacket) => {
         encodedPackets[i] = encodedPacket;
-        if (++count === length2) {
+        if (++count === length) {
           callback(encodedPackets.join(SEPARATOR));
         }
       });
@@ -28346,21 +22148,21 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
     return Math.ceil((obj.byteLength || obj.size) * BASE64_OVERHEAD);
   }
   function utf8Length(str) {
-    let c = 0, length2 = 0;
+    let c = 0, length = 0;
     for (let i = 0, l = str.length; i < l; i++) {
       c = str.charCodeAt(i);
       if (c < 128) {
-        length2 += 1;
+        length += 1;
       } else if (c < 2048) {
-        length2 += 2;
+        length += 2;
       } else if (c < 55296 || c >= 57344) {
-        length2 += 3;
+        length += 3;
       } else {
         i++;
-        length2 += 4;
+        length += 4;
       }
     }
-    return length2;
+    return length;
   }
   function randomString() {
     return Date.now().toString(36).substring(3) + Math.random().toString(36).substring(2, 5);
@@ -29082,7 +22884,7 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
     "query",
     "anchor"
   ];
-  function parse2(str) {
+  function parse(str) {
     if (str.length > 8e3) {
       throw "URI too long";
     }
@@ -29153,14 +22955,14 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
         uri = null;
       }
       if (uri) {
-        const parsedUri = parse2(uri);
+        const parsedUri = parse(uri);
         opts.hostname = parsedUri.host;
         opts.secure = parsedUri.protocol === "https" || parsedUri.protocol === "wss";
         opts.port = parsedUri.port;
         if (parsedUri.query)
           opts.query = parsedUri.query;
       } else if (opts.host) {
-        opts.hostname = parse2(opts.host).host;
+        opts.hostname = parse(opts.host).host;
       }
       installTimerFunctions(this, opts);
       this.secure = null != opts.secure ? opts.secure : typeof location !== "undefined" && "https:" === location.protocol;
@@ -29715,7 +23517,7 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
           uri = "https://" + uri;
         }
       }
-      obj = parse2(uri);
+      obj = parse(uri);
     }
     if (!obj.port) {
       if (/^(http|ws)$/.test(obj.protocol)) {
@@ -30007,8 +23809,8 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
       } else {
         p.nsp = "/";
       }
-      const next2 = str.charAt(i + 1);
-      if ("" !== next2 && Number(next2) == next2) {
+      const next = str.charAt(i + 1);
+      if ("" !== next && Number(next) == next) {
         const start = i + 1;
         while (++i) {
           const c = str.charAt(i);
@@ -31296,18 +25098,18 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
 
   // node_modules/chia-gaming-lobby-connection/dist/index.js
   function useLobbySocket(lobbyUrl, uniqueId, alias, walletConnect, params, fragment, navigate) {
-    const [players, setPlayers] = (0, import_react6.useState)([]);
-    const [rooms, setRooms] = (0, import_react6.useState)([]);
-    const [messages, setMessages] = (0, import_react6.useState)([]);
-    const [didJoin, setDidJoin] = (0, import_react6.useState)(false);
-    const [lobbyGames, setLobbyGames] = (0, import_react6.useState)([]);
-    const socketRef = (0, import_react6.useRef)(void 0);
+    const [players, setPlayers] = (0, import_react.useState)([]);
+    const [rooms, setRooms] = (0, import_react.useState)([]);
+    const [messages, setMessages] = (0, import_react.useState)([]);
+    const [didJoin, setDidJoin] = (0, import_react.useState)(false);
+    const [lobbyGames, setLobbyGames] = (0, import_react.useState)([]);
+    const socketRef = (0, import_react.useRef)(void 0);
     console.log("fragment retrieved", fragment);
-    const joinRoom = (0, import_react6.useCallback)(async (token2) => {
+    const joinRoom = (0, import_react.useCallback)(async (token) => {
       const { data } = await fetch(`${lobbyUrl}/lobby/join-room`, {
         method: "POST",
         body: JSON.stringify({
-          token: token2,
+          token,
           id: uniqueId,
           alias,
           game: "lobby",
@@ -31356,15 +25158,15 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
       }
     }
     tryJoinRoom();
-    (0, import_react6.useEffect)(() => {
+    (0, import_react.useEffect)(() => {
       const socket = lookup2(lobbyUrl);
       socketRef.current = socket;
       socket.emit("join", { id: uniqueId, alias });
       socket.on("lobby_update", (q) => setPlayers(q));
       socket.on("room_update", (r2) => {
         const updated = Array.isArray(r2) ? r2 : [r2];
-        setRooms((prev2) => {
-          const map = new Map(prev2.map((x) => [x.token, x]));
+        setRooms((prev) => {
+          const map = new Map(prev.map((x) => [x.token, x]));
           updated.forEach((x) => map.set(x.token, x));
           return Array.from(map.values());
         });
@@ -31381,13 +25183,13 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
         socket.disconnect();
       };
     }, [uniqueId]);
-    const sendMessage = (0, import_react6.useCallback)((msg) => {
+    const sendMessage = (0, import_react.useCallback)((msg) => {
       socketRef.current?.emit("chat_message", {
         alias,
         content: { text: msg, sender: alias }
       });
     }, [uniqueId]);
-    const generateRoom = (0, import_react6.useCallback)(async (game, amount, perGame) => {
+    const generateRoom = (0, import_react.useCallback)(async (game, amount, perGame) => {
       const data = await fetch(`${lobbyUrl}/lobby/generate-room`, {
         method: "POST",
         body: JSON.stringify({
@@ -31400,7 +25202,7 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
       }).then((res) => res.json());
       return data;
     }, [uniqueId]);
-    const setLobbyAlias = (0, import_react6.useCallback)(async (id, alias2) => {
+    const setLobbyAlias = (0, import_react.useCallback)(async (id, alias2) => {
       console.log("setLobbyAlias", id, alias2);
       const { data } = await fetch(`${lobbyUrl}/lobby/change-alias`, {
         method: "POST",
@@ -31412,7 +25214,7 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
       }).then((res) => res.json());
       return data.player;
     }, [uniqueId]);
-    const leaveRoom = (0, import_react6.useCallback)(async (_token) => {
+    const leaveRoom = (0, import_react.useCallback)(async (_token) => {
       console.error("implement leave room");
     }, [uniqueId]);
     return {
@@ -31522,16 +25324,16 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
   }
 
   // dist/js/features/lobbyComponents/ConnectedPlayers.js
-  var import_jsx_runtime8 = __toESM(require_jsx_runtime(), 1);
+  var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
 
   // node_modules/lucide-react/dist/esm/createLucideIcon.js
-  var import_react8 = __toESM(require_react());
+  var import_react3 = __toESM(require_react());
 
   // node_modules/lucide-react/dist/esm/shared/src/utils.js
   var toKebabCase = (string) => string.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
   var toCamelCase = (string) => string.replace(
     /^([A-Z])|[\s-_]+(\w)/g,
-    (match2, p1, p2) => p2 ? p2.toUpperCase() : p1.toLowerCase()
+    (match, p1, p2) => p2 ? p2.toUpperCase() : p1.toLowerCase()
   );
   var toPascalCase = (string) => {
     const camelCase = toCamelCase(string);
@@ -31549,7 +25351,7 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
   };
 
   // node_modules/lucide-react/dist/esm/Icon.js
-  var import_react7 = __toESM(require_react());
+  var import_react2 = __toESM(require_react());
 
   // node_modules/lucide-react/dist/esm/defaultAttributes.js
   var defaultAttributes = {
@@ -31565,9 +25367,9 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
   };
 
   // node_modules/lucide-react/dist/esm/Icon.js
-  var Icon = (0, import_react7.forwardRef)(
+  var Icon = (0, import_react2.forwardRef)(
     ({
-      color: color2 = "currentColor",
+      color = "currentColor",
       size = 24,
       strokeWidth = 2,
       absoluteStrokeWidth,
@@ -31575,21 +25377,21 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
       children,
       iconNode,
       ...rest
-    }, ref) => (0, import_react7.createElement)(
+    }, ref) => (0, import_react2.createElement)(
       "svg",
       {
         ref,
         ...defaultAttributes,
         width: size,
         height: size,
-        stroke: color2,
+        stroke: color,
         strokeWidth: absoluteStrokeWidth ? Number(strokeWidth) * 24 / Number(size) : strokeWidth,
         className: mergeClasses("lucide", className),
         ...!children && !hasA11yProp(rest) && { "aria-hidden": "true" },
         ...rest
       },
       [
-        ...iconNode.map(([tag, attrs]) => (0, import_react7.createElement)(tag, attrs)),
+        ...iconNode.map(([tag, attrs]) => (0, import_react2.createElement)(tag, attrs)),
         ...Array.isArray(children) ? children : [children]
       ]
     )
@@ -31597,8 +25399,8 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
 
   // node_modules/lucide-react/dist/esm/createLucideIcon.js
   var createLucideIcon = (iconName, iconNode) => {
-    const Component = (0, import_react8.forwardRef)(
-      ({ className, ...props }, ref) => (0, import_react8.createElement)(Icon, {
+    const Component = (0, import_react3.forwardRef)(
+      ({ className, ...props }, ref) => (0, import_react3.createElement)(Icon, {
         ref,
         iconNode,
         className: mergeClasses(
@@ -31677,16 +25479,16 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
 
   // dist/js/features/lobbyComponents/ConnectedPlayers.js
   function ConnectedPlayers({ splitPct, editingAlias, myAlias, setMyAlias, commitEdit, setEditingAlias, players, uniqueId }) {
-    return (0, import_jsx_runtime8.jsx)("div", { className: "\n        flex flex-col shrink-0\n        bg-canvas-bg border-none shadow-none\n        rounded-tr-2xl\n      ", style: { flexBasis: `${splitPct}%` }, children: (0, import_jsx_runtime8.jsxs)("div", { className: "flex flex-col h-full min-h-0 p-4", children: [(0, import_jsx_runtime8.jsx)("div", { className: "flex flex-row justify-between items-center mb-3", children: (0, import_jsx_runtime8.jsx)("h6", { className: "text-lg font-semibold text-canvas-text-contrast", children: "Connected Players" }) }), (0, import_jsx_runtime8.jsx)("div", { className: "border-b border-canvas-line mb-2" }), (0, import_jsx_runtime8.jsxs)("div", { className: "flex-1 overflow-y-auto pr-1", children: [editingAlias ? (0, import_jsx_runtime8.jsxs)("div", { className: "flex flex-col sm:flex-row gap-2 mb-3", children: [(0, import_jsx_runtime8.jsx)("input", { "aria-label": "alias-input", className: "w-full px-3 py-2 rounded bg-canvas-bg text-canvas-text border border-canvas-border outline-none ", placeholder: "Enter new alias", value: myAlias, onChange: (e) => setMyAlias(e.target.value), onKeyDown: (e) => e.key === "Enter" && commitEdit(e), onBlur: commitEdit }), (0, import_jsx_runtime8.jsx)("button", { onClick: commitEdit, "aria-label": "save-alias", className: "px-4 py-2 rounded bg-secondary text-white font-medium", children: "Save" }), (0, import_jsx_runtime8.jsx)("button", { onClick: () => setEditingAlias(false), className: "w-8 h-8 flex items-center justify-center text-red-500", children: (0, import_jsx_runtime8.jsx)(Cross, { className: "w-5 h-5" }) })] }) : (0, import_jsx_runtime8.jsxs)("div", { className: "flex flex-row items-center gap-2 mb-2", children: [(0, import_jsx_runtime8.jsxs)("p", { className: "text-canvas-text", children: ["Alias:\xA0", (0, import_jsx_runtime8.jsx)("strong", { className: "text-canvas-text-contrast font-bold", children: myAlias })] }), (0, import_jsx_runtime8.jsx)("button", { "aria-label": "edit-alias", onClick: () => setEditingAlias(true), className: "text-canvas-solid w-6 h-6 flex items-center justify-center", children: (0, import_jsx_runtime8.jsx)(SquarePen, { className: "w-4 h-4" }) })] }), players.length === 0 ? (0, import_jsx_runtime8.jsxs)("div", { className: "text-center py-6 text-canvas-text", children: [(0, import_jsx_runtime8.jsx)(User, { className: "mx-auto mb-1", style: {
+    return (0, import_jsx_runtime.jsx)("div", { className: "\n        flex flex-col shrink-0\n        bg-canvas-bg border-none shadow-none\n        rounded-tr-2xl\n      ", style: { flexBasis: `${splitPct}%` }, children: (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-col h-full min-h-0 p-4", children: [(0, import_jsx_runtime.jsx)("div", { className: "flex flex-row justify-between items-center mb-3", children: (0, import_jsx_runtime.jsx)("h6", { className: "text-lg font-semibold text-canvas-text-contrast", children: "Connected Players" }) }), (0, import_jsx_runtime.jsx)("div", { className: "border-b border-canvas-line mb-2" }), (0, import_jsx_runtime.jsxs)("div", { className: "flex-1 overflow-y-auto pr-1", children: [editingAlias ? (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-col sm:flex-row gap-2 mb-3", children: [(0, import_jsx_runtime.jsx)("input", { "aria-label": "alias-input", className: "w-full px-3 py-2 rounded bg-canvas-bg text-canvas-text border border-canvas-border outline-none ", placeholder: "Enter new alias", value: myAlias, onChange: (e) => setMyAlias(e.target.value), onKeyDown: (e) => e.key === "Enter" && commitEdit(e), onBlur: commitEdit }), (0, import_jsx_runtime.jsx)("button", { onClick: commitEdit, "aria-label": "save-alias", className: "px-4 py-2 rounded bg-secondary text-white font-medium", children: "Save" }), (0, import_jsx_runtime.jsx)("button", { onClick: () => setEditingAlias(false), className: "w-8 h-8 flex items-center justify-center text-red-500", children: (0, import_jsx_runtime.jsx)(Cross, { className: "w-5 h-5" }) })] }) : (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-row items-center gap-2 mb-2", children: [(0, import_jsx_runtime.jsxs)("p", { className: "text-canvas-text", children: ["Alias:\xA0", (0, import_jsx_runtime.jsx)("strong", { className: "text-canvas-text-contrast font-bold", children: myAlias })] }), (0, import_jsx_runtime.jsx)("button", { "aria-label": "edit-alias", onClick: () => setEditingAlias(true), className: "text-canvas-solid w-6 h-6 flex items-center justify-center", children: (0, import_jsx_runtime.jsx)(SquarePen, { className: "w-4 h-4" }) })] }), players.length === 0 ? (0, import_jsx_runtime.jsxs)("div", { className: "text-center py-6 text-canvas-text", children: [(0, import_jsx_runtime.jsx)(User, { className: "mx-auto mb-1", style: {
       fontSize: 48,
       color: "var(--color-canvas-solid)"
-    } }), (0, import_jsx_runtime8.jsx)("h6", { className: "text-lg font-medium text-canvas-text-contrast", children: "No Other Players Connected" }), (0, import_jsx_runtime8.jsx)("p", { className: "text-sm text-canvas-text", children: "Waiting for others to join\u2026" })] }) : (0, import_jsx_runtime8.jsx)("div", { children: players.map((player, index) => (0, import_jsx_runtime8.jsxs)("p", { className: "text-sm text-canvas-text mb-1", children: [index + 1, ":\xA0", player.id === uniqueId ? (0, import_jsx_runtime8.jsxs)("span", { className: "inline-flex items-center gap-1", children: [player.alias, " (You)", (0, import_jsx_runtime8.jsx)(Crown, { className: "w-5 h-5 ", style: { color: "var(-warning-solid)" } })] }) : player.alias] }, player.id)) })] })] }) });
+    } }), (0, import_jsx_runtime.jsx)("h6", { className: "text-lg font-medium text-canvas-text-contrast", children: "No Other Players Connected" }), (0, import_jsx_runtime.jsx)("p", { className: "text-sm text-canvas-text", children: "Waiting for others to join\u2026" })] }) : (0, import_jsx_runtime.jsx)("div", { children: players.map((player, index) => (0, import_jsx_runtime.jsxs)("p", { className: "text-sm text-canvas-text mb-1", children: [index + 1, ":\xA0", player.id === uniqueId ? (0, import_jsx_runtime.jsxs)("span", { className: "inline-flex items-center gap-1", children: [player.alias, " (You)", (0, import_jsx_runtime.jsx)(Crown, { className: "w-5 h-5 ", style: { color: "var(-warning-solid)" } })] }) : player.alias] }, player.id)) })] })] }) });
   }
 
   // dist/js/features/lobbyComponents/CardDivider.js
-  var import_jsx_runtime9 = __toESM(require_jsx_runtime(), 1);
+  var import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
   function CardDivider({ rightColumnRef }) {
-    return (0, import_jsx_runtime9.jsx)("div", { onMouseDown: (e) => {
+    return (0, import_jsx_runtime2.jsx)("div", { onMouseDown: (e) => {
       const el = rightColumnRef.current;
       if (el && typeof el._startDrag === "function")
         el._startDrag(e.clientY);
@@ -31694,26 +25496,26 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
       const el = rightColumnRef.current;
       if (el && typeof el._startDrag === "function")
         el._startDrag(e.touches[0].clientY);
-    }, className: "hidden md:block h-2 cursor-row-resize bg-transparent" });
+    }, className: "hidden md:block h-1 cursor-w-resize bg-transparent" });
   }
 
   // dist/js/features/lobbyComponents/Chat.js
-  var import_jsx_runtime10 = __toESM(require_jsx_runtime(), 1);
+  var import_jsx_runtime3 = __toESM(require_jsx_runtime(), 1);
   function Chat({ splitPct, messagesRef, messages, chatInput, setChatInput, handleSend }) {
-    return (0, import_jsx_runtime10.jsx)("div", { className: "flex flex-col bg-canvas-bg shadow-none border-none rounded-br-xl", style: { flexBasis: `${100 - splitPct}%` }, children: (0, import_jsx_runtime10.jsxs)("div", { className: "flex flex-col h-full min-h-0 p-0", children: [(0, import_jsx_runtime10.jsx)("div", { className: "\n            flex flex-row items-center justify-between\n            px-2 py-1.5 border-b border-canvas-line\n          ", children: (0, import_jsx_runtime10.jsx)("h6", { className: "text-base font-semibold text-canvas-text-contrast", children: "Lobby Chat" }) }), (0, import_jsx_runtime10.jsx)("div", { className: "border-b border-canvas-line" }), (0, import_jsx_runtime10.jsx)("div", { ref: messagesRef, className: "flex-1 overflow-y-auto p-2", children: messages.length === 0 ? (0, import_jsx_runtime10.jsx)("p", { className: "text-center text-canvas-text", children: "No messages yet." }) : messages.map((m, i) => (0, import_jsx_runtime10.jsxs)("p", { className: "text-sm mb-1 text-canvas-text", children: [(0, import_jsx_runtime10.jsxs)("strong", { children: [m.alias, ":"] }), " ", m.content.text] }, i)) }), (0, import_jsx_runtime10.jsx)("div", { className: "border-t border-canvas-line" }), (0, import_jsx_runtime10.jsx)("div", { className: "\n            p-2 sticky bottom-0 z-20\n            bg-canvas-bg border-t border-canvas-line\n          ", children: (0, import_jsx_runtime10.jsx)("input", { "aria-label": "lobby-chat-input", className: "\n              w-full px-3 py-2 rounded bg-canvas-bg\n              text-canvas-text border border-canvas-border\n              outline-none\n            ", placeholder: "Type your message...", value: chatInput, onChange: (e) => setChatInput(e.target.value), onKeyDown: (e) => e.key === "Enter" && handleSend() }) }), (0, import_jsx_runtime10.jsx)("div", { className: "border-t border-canvas-line" })] }) });
+    return (0, import_jsx_runtime3.jsx)("div", { className: "flex flex-col bg-canvas-bg shadow-none border-none rounded-br-xl", style: { flexBasis: `${100 - splitPct}%` }, children: (0, import_jsx_runtime3.jsxs)("div", { className: "flex flex-col h-full min-h-0 p-0", children: [(0, import_jsx_runtime3.jsx)("div", { className: "\n            flex flex-row items-center justify-between\n            px-2 py-1.5 border-b border-canvas-line\n          ", children: (0, import_jsx_runtime3.jsx)("h6", { className: "text-base font-semibold text-canvas-text-contrast", children: "Lobby Chat" }) }), (0, import_jsx_runtime3.jsx)("div", { className: "border-b border-canvas-line" }), (0, import_jsx_runtime3.jsx)("div", { ref: messagesRef, className: "flex-1 overflow-y-auto p-2", children: messages.length === 0 ? (0, import_jsx_runtime3.jsx)("p", { className: "text-center text-canvas-text", children: "No messages yet." }) : messages.map((m, i) => (0, import_jsx_runtime3.jsxs)("p", { className: "text-sm mb-1 text-canvas-text", children: [(0, import_jsx_runtime3.jsxs)("strong", { children: [m.alias, ":"] }), " ", m.content.text] }, i)) }), (0, import_jsx_runtime3.jsx)("div", { className: "border-t border-canvas-line" }), (0, import_jsx_runtime3.jsx)("div", { className: "\n            p-2 sticky bottom-0 z-20\n            bg-canvas-bg border-t border-canvas-line\n          ", children: (0, import_jsx_runtime3.jsx)("input", { "aria-label": "lobby-chat-input", className: "\n              w-full px-3 py-2 rounded bg-canvas-bg\n              text-canvas-text border border-canvas-border\n              outline-none\n            ", placeholder: "Type your message...", value: chatInput, onChange: (e) => setChatInput(e.target.value), onKeyDown: (e) => e.key === "Enter" && handleSend() }) }), (0, import_jsx_runtime3.jsx)("div", { className: "border-t border-canvas-line" })] }) });
   }
 
   // dist/js/features/lobbyComponents/ActiveRooms.js
-  var import_jsx_runtime13 = __toESM(require_jsx_runtime(), 1);
+  var import_jsx_runtime6 = __toESM(require_jsx_runtime(), 1);
 
   // dist/js/button.js
-  var import_jsx_runtime12 = __toESM(require_jsx_runtime(), 1);
+  var import_jsx_runtime5 = __toESM(require_jsx_runtime(), 1);
 
   // node_modules/@radix-ui/react-slot/dist/index.mjs
-  var React11 = __toESM(require_react(), 1);
+  var React2 = __toESM(require_react(), 1);
 
   // node_modules/@radix-ui/react-compose-refs/dist/index.mjs
-  var React10 = __toESM(require_react(), 1);
+  var React = __toESM(require_react(), 1);
   function setRef(ref, value2) {
     if (typeof ref === "function") {
       return ref(value2);
@@ -31722,10 +25524,10 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
     }
   }
   function composeRefs(...refs) {
-    return (node2) => {
+    return (node) => {
       let hasCleanup = false;
       const cleanups = refs.map((ref) => {
-        const cleanup = setRef(ref, node2);
+        const cleanup = setRef(ref, node);
         if (!hasCleanup && typeof cleanup == "function") {
           hasCleanup = true;
         }
@@ -31747,9 +25549,9 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
   }
 
   // node_modules/@radix-ui/react-slot/dist/index.mjs
-  var import_jsx_runtime11 = __toESM(require_jsx_runtime(), 1);
+  var import_jsx_runtime4 = __toESM(require_jsx_runtime(), 1);
   var REACT_LAZY_TYPE = Symbol.for("react.lazy");
-  var use = React11[" use ".trim().toString()];
+  var use = React2[" use ".trim().toString()];
   function isPromiseLike(value2) {
     return typeof value2 === "object" && value2 !== null && "then" in value2;
   }
@@ -31759,26 +25561,26 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
   // @__NO_SIDE_EFFECTS__
   function createSlot(ownerName) {
     const SlotClone = /* @__PURE__ */ createSlotClone(ownerName);
-    const Slot2 = React11.forwardRef((props, forwardedRef) => {
+    const Slot2 = React2.forwardRef((props, forwardedRef) => {
       let { children, ...slotProps } = props;
       if (isLazyComponent(children) && typeof use === "function") {
         children = use(children._payload);
       }
-      const childrenArray = React11.Children.toArray(children);
+      const childrenArray = React2.Children.toArray(children);
       const slottable = childrenArray.find(isSlottable);
       if (slottable) {
         const newElement = slottable.props.children;
         const newChildren = childrenArray.map((child) => {
           if (child === slottable) {
-            if (React11.Children.count(newElement) > 1) return React11.Children.only(null);
-            return React11.isValidElement(newElement) ? newElement.props.children : null;
+            if (React2.Children.count(newElement) > 1) return React2.Children.only(null);
+            return React2.isValidElement(newElement) ? newElement.props.children : null;
           } else {
             return child;
           }
         });
-        return /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(SlotClone, { ...slotProps, ref: forwardedRef, children: React11.isValidElement(newElement) ? React11.cloneElement(newElement, void 0, newChildren) : null });
+        return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(SlotClone, { ...slotProps, ref: forwardedRef, children: React2.isValidElement(newElement) ? React2.cloneElement(newElement, void 0, newChildren) : null });
       }
-      return /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(SlotClone, { ...slotProps, ref: forwardedRef, children });
+      return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(SlotClone, { ...slotProps, ref: forwardedRef, children });
     });
     Slot2.displayName = `${ownerName}.Slot`;
     return Slot2;
@@ -31786,27 +25588,27 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
   var Slot = /* @__PURE__ */ createSlot("Slot");
   // @__NO_SIDE_EFFECTS__
   function createSlotClone(ownerName) {
-    const SlotClone = React11.forwardRef((props, forwardedRef) => {
+    const SlotClone = React2.forwardRef((props, forwardedRef) => {
       let { children, ...slotProps } = props;
       if (isLazyComponent(children) && typeof use === "function") {
         children = use(children._payload);
       }
-      if (React11.isValidElement(children)) {
+      if (React2.isValidElement(children)) {
         const childrenRef = getElementRef(children);
         const props2 = mergeProps(slotProps, children.props);
-        if (children.type !== React11.Fragment) {
+        if (children.type !== React2.Fragment) {
           props2.ref = forwardedRef ? composeRefs(forwardedRef, childrenRef) : childrenRef;
         }
-        return React11.cloneElement(children, props2);
+        return React2.cloneElement(children, props2);
       }
-      return React11.Children.count(children) > 1 ? React11.Children.only(null) : null;
+      return React2.Children.count(children) > 1 ? React2.Children.only(null) : null;
     });
     SlotClone.displayName = `${ownerName}.SlotClone`;
     return SlotClone;
   }
   var SLOTTABLE_IDENTIFIER = Symbol("radix.slottable");
   function isSlottable(child) {
-    return React11.isValidElement(child) && typeof child.type === "function" && "__radixId" in child.type && child.type.__radixId === SLOTTABLE_IDENTIFIER;
+    return React2.isValidElement(child) && typeof child.type === "function" && "__radixId" in child.type && child.type.__radixId === SLOTTABLE_IDENTIFIER;
   }
   function mergeProps(slotProps, childProps) {
     const overrideProps = { ...childProps };
@@ -31844,6 +25646,21 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
       return element.props.ref;
     }
     return element.props.ref || element.ref;
+  }
+
+  // node_modules/clsx/dist/clsx.mjs
+  function r(e) {
+    var t, f, n = "";
+    if ("string" == typeof e || "number" == typeof e) n += e;
+    else if ("object" == typeof e) if (Array.isArray(e)) {
+      var o = e.length;
+      for (t = 0; t < o; t++) e[t] && (f = r(e[t])) && (n && (n += " "), n += f);
+    } else for (f in e) e[f] && (n && (n += " "), n += f);
+    return n;
+  }
+  function clsx() {
+    for (var e, t, f = 0, n = "", o = arguments.length; f < o; f++) (e = arguments[f]) && (t = r(e)) && (n && (n += " "), n += t);
+    return n;
   }
 
   // node_modules/class-variance-authority/dist/index.mjs
@@ -31889,9 +25706,9 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
   };
 
   // dist/js/button.js
-  var React12 = __toESM(require_react(), 1);
-  var import_react9 = __toESM(require_react(), 1);
-  var Spinner = () => (0, import_jsx_runtime12.jsxs)("svg", { className: "h-4 w-4 animate-spin", xmlns: "http://www.w3.org/2000/svg", fill: "none", viewBox: "0 0 24 24", children: [(0, import_jsx_runtime12.jsx)("circle", { className: "opacity-25", cx: "12", cy: "12", r: "10", stroke: "currentColor", strokeWidth: "4" }), (0, import_jsx_runtime12.jsx)("path", { className: "opacity-75", fill: "currentColor", d: "M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" })] });
+  var React3 = __toESM(require_react(), 1);
+  var import_react4 = __toESM(require_react(), 1);
+  var Spinner = () => (0, import_jsx_runtime5.jsxs)("svg", { className: "h-4 w-4 animate-spin", xmlns: "http://www.w3.org/2000/svg", fill: "none", viewBox: "0 0 24 24", children: [(0, import_jsx_runtime5.jsx)("circle", { className: "opacity-25", cx: "12", cy: "12", r: "10", stroke: "currentColor", strokeWidth: "4" }), (0, import_jsx_runtime5.jsx)("path", { className: "opacity-75", fill: "currentColor", d: "M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" })] });
   var buttonVariants = cva("items-center justify-center rounded-lg font-bold transition-all duration-300 ease-out disabled:opacity-50 hover:cursor-pointer disabled:cursor-not-allowed leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 select-none hover:shadow-[0_1px_3px_0_rgb(0,0,0,0.1),0_1px_2px_-1px_rgb(0,0,0,0.1)]", {
     variants: {
       color: {
@@ -32069,52 +25886,52 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
       fullWidth: false
     }
   });
-  var Button = React12.forwardRef(({ color: color2, variant, size, asChild = false, leadingIcon, trailingIcon, iconOnly = false, isLoading = false, loadingText, className, children, disabled, fullWidth = false, ...props }, ref) => {
+  var Button = React3.forwardRef(({ color, variant, size, asChild = false, leadingIcon, trailingIcon, iconOnly = false, isLoading = false, loadingText, className, children, disabled, fullWidth = false, ...props }, ref) => {
     const Comp = asChild ? Slot : "button";
     const icon = iconOnly ? leadingIcon : null;
     const isDisabled = isLoading || disabled;
-    return (0, import_jsx_runtime12.jsxs)(Comp, { ref, type: "button", className: buttonVariants({
-      color: color2,
+    return (0, import_jsx_runtime5.jsxs)(Comp, { ref, type: "button", className: buttonVariants({
+      color,
       variant,
       size,
       isIcon: iconOnly,
       isLoading,
       fullWidth,
       className
-    }), disabled: isDisabled, ...props, children: [isLoading && iconOnly && (0, import_jsx_runtime12.jsx)(Spinner, {}), isLoading && !iconOnly && (0, import_jsx_runtime12.jsxs)(import_jsx_runtime12.Fragment, { children: [(0, import_jsx_runtime12.jsx)("span", { className: "mr-2", children: (0, import_jsx_runtime12.jsx)(Spinner, {}) }), loadingText || children] }), !isLoading && iconOnly && icon, !isLoading && !iconOnly && (0, import_jsx_runtime12.jsxs)(import_jsx_runtime12.Fragment, { children: [leadingIcon && (0, import_jsx_runtime12.jsx)("span", { className: "mr-2", children: leadingIcon }), children, trailingIcon && (0, import_jsx_runtime12.jsx)("span", { className: "ml-2", children: trailingIcon })] })] });
+    }), disabled: isDisabled, ...props, children: [isLoading && iconOnly && (0, import_jsx_runtime5.jsx)(Spinner, {}), isLoading && !iconOnly && (0, import_jsx_runtime5.jsxs)(import_jsx_runtime5.Fragment, { children: [(0, import_jsx_runtime5.jsx)("span", { className: "mr-2", children: (0, import_jsx_runtime5.jsx)(Spinner, {}) }), loadingText || children] }), !isLoading && iconOnly && icon, !isLoading && !iconOnly && (0, import_jsx_runtime5.jsxs)(import_jsx_runtime5.Fragment, { children: [leadingIcon && (0, import_jsx_runtime5.jsx)("span", { className: "mr-2", children: leadingIcon }), children, trailingIcon && (0, import_jsx_runtime5.jsx)("span", { className: "ml-2", children: trailingIcon })] })] });
   });
   Button.displayName = "Button";
-  var ButtonMemoized = (0, import_react9.memo)(Button);
+  var ButtonMemoized = (0, import_react4.memo)(Button);
 
   // dist/js/features/lobbyComponents/ActiveRooms.js
   function ActiveRooms({ rooms, openDialog, joinRoom, getPlayerAlias }) {
-    return (0, import_jsx_runtime13.jsx)("div", { className: "flex w-full lg:w-2/3 pr-0 h-full", children: (0, import_jsx_runtime13.jsx)("div", { className: "bg-canvas-bg w-full rounded-l-xl h-full shadow-none border-none", children: (0, import_jsx_runtime13.jsxs)("div", { className: "h-full pb-24 flex flex-col", children: [(0, import_jsx_runtime13.jsxs)("div", { className: "flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1 p-4", children: [(0, import_jsx_runtime13.jsx)("h6", { className: "text-lg font-semibold text-canvas-text-contrast", children: "Active Rooms" }), (0, import_jsx_runtime13.jsx)(ButtonMemoized, { variant: "solid", color: "secondary", onClick: openDialog, "aria-label": "generate-room", children: "Generate Rooms" })] }), (0, import_jsx_runtime13.jsx)("div", { className: "border-b border-canvas-line mb-3" }), (0, import_jsx_runtime13.jsx)("div", { className: "overflow-y-auto h-full pr-2 pb-24", children: rooms.length === 0 ? (0, import_jsx_runtime13.jsxs)("div", { className: "text-center py-24 text-canvas-text", children: [(0, import_jsx_runtime13.jsx)(Gamepad, { className: "mx-auto mb-1", style: {
+    return (0, import_jsx_runtime6.jsx)("div", { className: "flex w-full lg:w-2/3 pr-0 h-full", children: (0, import_jsx_runtime6.jsx)("div", { className: "bg-canvas-bg w-full rounded-l-xl h-full shadow-none border-none", children: (0, import_jsx_runtime6.jsxs)("div", { className: "h-full pb-24 flex flex-col", children: [(0, import_jsx_runtime6.jsxs)("div", { className: "flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1 p-4", children: [(0, import_jsx_runtime6.jsx)("h6", { className: "text-lg font-semibold text-canvas-text-contrast", children: "Active Rooms" }), (0, import_jsx_runtime6.jsx)(ButtonMemoized, { variant: "solid", color: "secondary", onClick: openDialog, "aria-label": "generate-room", children: "Generate Rooms" })] }), (0, import_jsx_runtime6.jsx)("div", { className: "border-b border-canvas-line mb-3" }), (0, import_jsx_runtime6.jsx)("div", { className: "overflow-y-auto h-full pr-2 pb-24", children: rooms.length === 0 ? (0, import_jsx_runtime6.jsxs)("div", { className: "text-center py-24 text-canvas-text", children: [(0, import_jsx_runtime6.jsx)(Gamepad, { className: "mx-auto mb-1", style: {
       fontSize: 48,
       color: "var(--color-canvas-solid)"
-    } }), (0, import_jsx_runtime13.jsx)("h6", { className: "text-lg font-medium text-canvas-text-contrast", children: "No Active Rooms" }), (0, import_jsx_runtime13.jsx)("p", { className: "text-sm text-canvas-text", children: "Choose 'Start Session' to play." })] }) : rooms.map((r2) => (0, import_jsx_runtime13.jsxs)("div", { className: "p-2 mb-1.5 rounded border border-canvas-line bg-canvas-bg flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1", children: [(0, import_jsx_runtime13.jsxs)("div", { children: [(0, import_jsx_runtime13.jsx)("h6", { className: "text-sm font-semibold text-canvas-text-contrast", children: r2.token || "Unknown Game" }), (0, import_jsx_runtime13.jsxs)("p", { className: "text-sm text-canvas-text", children: ["Host: ", getPlayerAlias(r2.host)] }), (0, import_jsx_runtime13.jsxs)("p", { className: "text-sm text-canvas-text", children: ["Game: ", r2.game] })] }), (0, import_jsx_runtime13.jsx)(ButtonMemoized, { variant: "solid", color: "secondary", onClick: () => joinRoom(r2.token), children: "Join" })] }, r2.token)) })] }) }) });
+    } }), (0, import_jsx_runtime13.jsx)("h6", { className: "text-lg font-medium text-canvas-text-contrast", children: "No Active Rooms" }), (0, import_jsx_runtime13.jsx)("p", { className: "text-sm text-canvas-text", children: "Create a room to start a game." })] }) : rooms.map((r2) => (0, import_jsx_runtime13.jsxs)("div", { className: "p-2 mb-1.5 rounded border border-canvas-line bg-canvas-bg flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1", children: [(0, import_jsx_runtime13.jsxs)("div", { children: [(0, import_jsx_runtime13.jsx)("h6", { className: "text-sm font-semibold text-canvas-text-contrast", children: r2.token || "Unknown Game" }), (0, import_jsx_runtime13.jsxs)("p", { className: "text-sm text-canvas-text", children: ["Host: ", getPlayerAlias(r2.host)] }), (0, import_jsx_runtime13.jsxs)("p", { className: "text-sm text-canvas-text", children: ["Game: ", r2.game] })] }), (0, import_jsx_runtime13.jsx)(ButtonMemoized, { variant: "solid", color: "secondary", onClick: () => joinRoom(r2.token), children: "Join" })] }, r2.token)) })] }) }) });
   }
 
   // dist/js/features/lobbyComponents/CreateRoomDialog.js
-  var import_jsx_runtime14 = __toESM(require_jsx_runtime(), 1);
+  var import_jsx_runtime7 = __toESM(require_jsx_runtime(), 1);
   var CreateRoomDialog = ({ dialogOpen, closeDialog, gameChoice, setGameChoice, lobbyGames, wagerInput, setWagerInput, perHandInput, setPerHandInput, wagerValidationError, handleCreate }) => {
     if (!dialogOpen)
       return null;
-    return (0, import_jsx_runtime14.jsx)("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-black/40", onClick: closeDialog, children: (0, import_jsx_runtime14.jsxs)("div", { className: "bg-canvas-bg text-canvas-text rounded-lg w-full max-w-lg p-6", onClick: (e) => e.stopPropagation(), children: [(0, import_jsx_runtime14.jsx)("h2", { className: "text-xl font-bold mb-4", children: "Create a Room" }), (0, import_jsx_runtime14.jsxs)("div", { className: "mb-4", children: [(0, import_jsx_runtime14.jsx)("label", { className: "block mb-1 font-medium", children: "Game" }), (0, import_jsx_runtime14.jsx)("select", { value: gameChoice, onChange: (e) => setGameChoice(e.target.value), className: "w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded", children: lobbyGames.map((g) => (0, import_jsx_runtime14.jsx)("option", { value: g.game, "data-testid": `choose-${g.game}`, children: g.game }, g.game)) })] }), wagerValidationError && (0, import_jsx_runtime14.jsx)("div", { className: "mb-1 text-secondary-solid", children: wagerValidationError }), (0, import_jsx_runtime14.jsxs)("div", { className: "mb-4", children: [(0, import_jsx_runtime14.jsx)("label", { className: "block mb-1 font-medium", children: "Wager (mojo)" }), (0, import_jsx_runtime14.jsx)("input", { type: "number", value: wagerInput, onChange: (e) => setWagerInput(e.target.value), placeholder: "Buy-in (minimum 100 mojos)", className: "w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded placeholder-canvas-text-contrast" })] }), wagerValidationError && (0, import_jsx_runtime14.jsx)("p", { style: { color: "#FF6F00", marginBottom: 1 }, children: "    " + wagerValidationError }), (0, import_jsx_runtime14.jsxs)("div", { className: "mb-4", children: [(0, import_jsx_runtime14.jsx)("label", { className: "block mb-1 font-medium", children: "Each hand (mojo)" }), (0, import_jsx_runtime14.jsx)("input", { type: "number", value: perHandInput, onChange: (e) => setPerHandInput(e.target.value), placeholder: "Enter per hand", className: "w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded placeholder-canvas-text-contrast" })] }), (0, import_jsx_runtime14.jsxs)("div", { className: "flex justify-end gap-2 mt-4", children: [(0, import_jsx_runtime14.jsx)(ButtonMemoized, { variant: "destructive", color: "outline", onClick: closeDialog, className: "px-4 py-2 border border-secondary-solid text-secondary-solid rounded hover:bg-secondary-solid/10", children: "Cancel" }), (0, import_jsx_runtime14.jsx)(ButtonMemoized, { variant: "solid", color: "secondary", onClick: handleCreate, className: "px-4 py-2 bg-secondary-solid text-canvas-bg rounded hover:bg-secondary-solid/90", children: "Create" })] })] }) });
+    return (0, import_jsx_runtime14.jsx)("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-black/40", onClick: closeDialog, children: (0, import_jsx_runtime14.jsxs)("div", { className: "bg-canvas-bg text-canvas-text rounded-lg w-full max-w-lg p-6", onClick: (e) => e.stopPropagation(), children: [(0, import_jsx_runtime14.jsx)("h2", { className: "text-xl font-bold mb-4", children: "Create a Room" }), (0, import_jsx_runtime14.jsxs)("div", { className: "mb-4", children: [(0, import_jsx_runtime14.jsx)("label", { className: "block mb-1 font-medium", children: "Game" }), (0, import_jsx_runtime14.jsx)("select", { value: gameChoice, onChange: (e) => setGameChoice(e.target.value), className: "w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded", children: lobbyGames.map((g) => (0, import_jsx_runtime14.jsx)("option", { value: g.game, "data-testid": `choose-${g.game}`, children: g.game }, g.game)) })] }), wagerValidationError && (0, import_jsx_runtime14.jsx)("div", { className: "mb-1 text-secondary-solid", children: wagerValidationError }), (0, import_jsx_runtime14.jsxs)("div", { className: "mb-4", children: [(0, import_jsx_runtime14.jsx)("label", { className: "block mb-1 font-medium", children: "Wager (mojo)" }), (0, import_jsx_runtime14.jsx)("input", { type: "number", value: wagerInput, onChange: (e) => setWagerInput(e.target.value), placeholder: "Enter wager", className: "w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded placeholder-canvas-text-contrast" })] }), (0, import_jsx_runtime14.jsxs)("div", { className: "mb-4", children: [(0, import_jsx_runtime14.jsx)("label", { className: "block mb-1 font-medium", children: "Each hand (mojo)" }), (0, import_jsx_runtime14.jsx)("input", { type: "number", value: perHandInput, onChange: (e) => setPerHandInput(e.target.value), placeholder: "Enter per hand", className: "w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded placeholder-canvas-text-contrast" })] }), (0, import_jsx_runtime14.jsxs)("div", { className: "flex justify-end gap-2 mt-4", children: [(0, import_jsx_runtime14.jsx)(ButtonMemoized, { variant: "destructive", color: "outline", onClick: closeDialog, className: "px-4 py-2 border border-secondary-solid text-secondary-solid rounded hover:bg-secondary-solid/10", children: "Cancel" }), (0, import_jsx_runtime14.jsx)(ButtonMemoized, { variant: "solid", color: "secondary", onClick: handleCreate, className: "px-4 py-2 bg-secondary-solid text-canvas-bg rounded hover:bg-secondary-solid/90", children: "Create" })] })] }) });
   };
   var CreateRoomDialog_default = CreateRoomDialog;
 
   // dist/js/features/lobbyComponents/ShareRoomDialog.js
-  var import_jsx_runtime15 = __toESM(require_jsx_runtime(), 1);
+  var import_jsx_runtime8 = __toESM(require_jsx_runtime(), 1);
   var ShareRoomDialog = ({ urlDialogOpen, handleCancelShare, shortenedUrl, handleCopyAndClose }) => {
     if (!urlDialogOpen)
       return null;
-    return (0, import_jsx_runtime15.jsx)("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-black/40", onClick: handleCancelShare, children: (0, import_jsx_runtime15.jsxs)("div", { className: "bg-canvas-bg text-canvas-text rounded-lg w-full max-w-xs p-4", onClick: (e) => e.stopPropagation(), children: [(0, import_jsx_runtime15.jsxs)("div", { className: "flex justify-between items-center mb-4 pr-1", children: [(0, import_jsx_runtime15.jsx)("h2", { className: "text-lg font-semibold", children: "Room Created \u{1F389}" }), (0, import_jsx_runtime15.jsx)("button", { onClick: handleCancelShare, className: "p-1 text-canvas-text hover:text-canvas-text-contrast rounded", children: "\u2715" })] }), (0, import_jsx_runtime15.jsx)("p", { className: "mb-2", children: "Share this room URL:" }), (0, import_jsx_runtime15.jsxs)("div", { className: "flex items-center justify-between bg-canvas-bg-subtle rounded p-2 text-secondary-solid ", children: [(0, import_jsx_runtime15.jsx)("span", { className: "flex-1 mr-1 overflow-hidden text-ellipsis whitespace-nowrap text-canvas-text", children: shortenedUrl }), (0, import_jsx_runtime15.jsx)("button", { onClick: handleCopyAndClose, className: "p-1 text-secondary-solid hover:text-secondary-solid-hover rounded", children: (0, import_jsx_runtime15.jsx)(Copy, { className: "w-4 h-4 font-secondary-bg-active" }) })] })] }) });
+    return (0, import_jsx_runtime8.jsx)("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-black/40", onClick: handleCancelShare, children: (0, import_jsx_runtime8.jsxs)("div", { className: "bg-canvas-bg text-canvas-text rounded-lg w-full max-w-xs p-4", onClick: (e) => e.stopPropagation(), children: [(0, import_jsx_runtime8.jsxs)("div", { className: "flex justify-between items-center mb-4 pr-1", children: [(0, import_jsx_runtime8.jsx)("h2", { className: "text-lg font-semibold", children: "Room Created \u{1F389}" }), (0, import_jsx_runtime8.jsx)("button", { onClick: handleCancelShare, className: "p-1 text-canvas-text hover:text-canvas-text-contrast rounded", children: "\u2715" })] }), (0, import_jsx_runtime8.jsx)("p", { className: "mb-2", children: "Share this room URL:" }), (0, import_jsx_runtime8.jsxs)("div", { className: "flex items-center justify-between bg-canvas-bg-subtle rounded p-2 text-secondary-solid ", children: [(0, import_jsx_runtime8.jsx)("span", { className: "flex-1 mr-1 overflow-hidden text-ellipsis whitespace-nowrap text-canvas-text", children: shortenedUrl }), (0, import_jsx_runtime8.jsx)("button", { onClick: handleCopyAndClose, className: "p-1 text-secondary-solid hover:text-secondary-solid-hover rounded", children: (0, import_jsx_runtime8.jsx)(Copy, { className: "w-4 h-4 font-secondary-bg-active" }) })] })] }) });
   };
   var ShareRoomDialog_default = ShareRoomDialog;
 
   // dist/js/lobby.js
   var LobbyScreen = () => {
-    const [myAlias, setMyAlias] = (0, import_react10.useState)(generateOrRetrieveAlias());
+    const [myAlias, setMyAlias] = (0, import_react5.useState)(generateOrRetrieveAlias());
     const params = getSearchParams();
     const fragment = getFragmentParams();
     const uniqueId = params.uniqueId;
@@ -32122,20 +25939,20 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
       console.warn(`from tryJoinRoom, navigate ${newUrl}`);
       window.location.href = newUrl;
     });
-    const [chatInput, setChatInput] = (0, import_react10.useState)("");
-    const [dialogOpen, setDialogOpen] = (0, import_react10.useState)(false);
-    const [gameChoice, setGameChoice] = (0, import_react10.useState)(lobbyGames[0]?.game || "");
-    const [wagerInput, setWagerInputPrimitive] = (0, import_react10.useState)("");
-    const [wagerValidationError, setWagerValidationError] = (0, import_react10.useState)("");
-    const [perHandInput, setPerHandInput] = (0, import_react10.useState)("");
-    const [editingAlias, setEditingAlias] = (0, import_react10.useState)(false);
-    const [gotoUrl, setGotoUrl] = (0, import_react10.useState)("");
-    const [urlDialogOpen, setUrlDialogOpen] = (0, import_react10.useState)(false);
-    const [secureUrl, setSecureUrl] = (0, import_react10.useState)("");
-    const [splitPct, setSplitPct] = (0, import_react10.useState)(50);
-    const rightColumnRef = (0, import_react10.useRef)(null);
-    const messagesRef = (0, import_react10.useRef)(null);
-    const setWagerInput = (0, import_react10.useCallback)((newWagerInput) => {
+    const [chatInput, setChatInput] = (0, import_react5.useState)("");
+    const [dialogOpen, setDialogOpen] = (0, import_react5.useState)(false);
+    const [gameChoice, setGameChoice] = (0, import_react5.useState)(lobbyGames[0]?.game || "");
+    const [wagerInput, setWagerInputPrimitive] = (0, import_react5.useState)("");
+    const [wagerValidationError, setWagerValidationError] = (0, import_react5.useState)("");
+    const [perHandInput, setPerHandInput] = (0, import_react5.useState)("");
+    const [editingAlias, setEditingAlias] = (0, import_react5.useState)(false);
+    const [gotoUrl, setGotoUrl] = (0, import_react5.useState)("");
+    const [urlDialogOpen, setUrlDialogOpen] = (0, import_react5.useState)(false);
+    const [secureUrl, setSecureUrl] = (0, import_react5.useState)("");
+    const [splitPct, setSplitPct] = (0, import_react5.useState)(50);
+    const rightColumnRef = (0, import_react5.useRef)(null);
+    const messagesRef = (0, import_react5.useRef)(null);
+    const setWagerInput = (0, import_react5.useCallback)((newWagerInput) => {
       setWagerInputPrimitive(newWagerInput);
       try {
         const newWagerInputInteger = parseInt(newWagerInput);
@@ -32152,20 +25969,13 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
         setChatInput("");
       }
     };
-    const validateCreateSessionIsOK = () => {
-      if (parseInt(wagerInput) < 100) {
-        setWagerValidationError("Please buy-in with 100 mojos or more.");
-        return false;
-      }
-      return true;
-    };
     (0, import_react10.useEffect)(() => {
       if (messagesRef.current) {
         const el = messagesRef.current;
         el.scrollTop = el.scrollHeight;
       }
     }, [messages]);
-    (0, import_react10.useEffect)(() => {
+    (0, import_react5.useEffect)(() => {
       let dragging = false;
       const onMove = (clientY) => {
         if (!rightColumnRef.current)
@@ -32239,7 +26049,7 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
       setUrlDialogOpen(false);
       closeDialog();
     };
-    (0, import_react10.useEffect)(() => {
+    (0, import_react5.useEffect)(() => {
       if (fragment.token)
         joinRoom(fragment.token);
     }, [fragment, joinRoom]);
@@ -32253,20 +26063,20 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
       const player = players.find((p) => p.id === id);
       return player ? player.alias : `Unknown Player (${id})`;
     }
-    (0, import_react10.useEffect)(() => {
+    (0, import_react5.useEffect)(() => {
       if (lobbyGames.length > 0 && !gameChoice) {
         setGameChoice(lobbyGames[0].game);
       }
     }, [lobbyGames, gameChoice]);
     const shortenedUrl = secureUrl?.length > 40 ? `${secureUrl.slice(0, 40)}...` : secureUrl;
-    return (0, import_jsx_runtime16.jsxs)("div", { className: "p-4 sm:p-6 md:p-8 pb-0 min-h-screen bg-canvas-bg-subtle relative", children: [(0, import_jsx_runtime16.jsxs)("div", { className: "flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-3", children: [(0, import_jsx_runtime16.jsx)("div", { children: (0, import_jsx_runtime16.jsx)("h2", { className: "text-xl font-bold text-canvas-text-contrast", children: "Game Lobby" }) }), (0, import_jsx_runtime16.jsx)(ButtonMemoized, { variant: "surface", color: "secondary", fullWidth: false, children: "Change WalletConnect Connection" })] }), (0, import_jsx_runtime16.jsx)("div", { className: "absolute opacity-0", "aria-label": "partner-target-url", children: gotoUrl }), (0, import_jsx_runtime16.jsxs)("div", { className: "flex flex-col md:flex-row border-none md:border md:border-canvas-border rounded-3xl gap-3 md:gap-0 h-auto md:h-[calc(100vh-150px)]", children: [(0, import_jsx_runtime16.jsx)(ActiveRooms, { rooms, openDialog, joinRoom, getPlayerAlias }), (0, import_jsx_runtime16.jsxs)("div", { ref: rightColumnRef, className: "flex flex-col w-full lg:w-1/3 min-w-0 h-full md:border-l border-canvas-border rounded-tr-2xl", children: [(0, import_jsx_runtime16.jsx)(ConnectedPlayers, { splitPct, editingAlias, myAlias, setMyAlias, commitEdit, setEditingAlias, players, uniqueId }), (0, import_jsx_runtime16.jsx)(CardDivider, { rightColumnRef }), (0, import_jsx_runtime16.jsx)(Chat, { splitPct, messagesRef, messages, chatInput, setChatInput, handleSend })] })] }), (0, import_jsx_runtime16.jsx)(CreateRoomDialog_default, { dialogOpen, closeDialog: () => setDialogOpen(false), gameChoice, setGameChoice, lobbyGames, wagerInput, setWagerInput, perHandInput, setPerHandInput, wagerValidationError, handleCreate }), (0, import_jsx_runtime16.jsx)(ShareRoomDialog_default, { urlDialogOpen, handleCancelShare, shortenedUrl, handleCopyAndClose })] });
+    return (0, import_jsx_runtime9.jsxs)("div", { className: "p-4 sm:p-6 md:p-8 pb-0 min-h-screen bg-canvas-bg-subtle relative", children: [(0, import_jsx_runtime9.jsxs)("div", { className: "flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-3", children: [(0, import_jsx_runtime9.jsx)("div", { children: (0, import_jsx_runtime9.jsx)("h2", { className: "text-xl font-bold text-canvas-text-contrast", children: "Game Lobby" }) }), (0, import_jsx_runtime9.jsx)(ButtonMemoized, { variant: "surface", color: "secondary", fullWidth: false, children: "Change WalletConnect Connection" })] }), (0, import_jsx_runtime9.jsx)("div", { className: "absolute opacity-0", "aria-label": "partner-target-url", children: gotoUrl }), (0, import_jsx_runtime9.jsxs)("div", { className: "flex flex-col md:flex-row border-none md:border md:border-canvas-border rounded-3xl gap-3 md:gap-0 h-auto md:h-[calc(100vh-150px)]", children: [(0, import_jsx_runtime9.jsx)(ActiveRooms, { rooms, openDialog, joinRoom, getPlayerAlias }), (0, import_jsx_runtime9.jsxs)("div", { ref: rightColumnRef, className: "flex flex-col w-full lg:w-1/3 min-w-0 h-full md:border-l border-canvas-border rounded-tr-2xl", children: [(0, import_jsx_runtime9.jsx)(ConnectedPlayers, { splitPct, editingAlias, myAlias, setMyAlias, commitEdit, setEditingAlias, players, uniqueId }), (0, import_jsx_runtime9.jsx)(CardDivider, { rightColumnRef }), (0, import_jsx_runtime9.jsx)(Chat, { splitPct, messagesRef, messages, chatInput, setChatInput, handleSend })] })] }), (0, import_jsx_runtime9.jsx)(CreateRoomDialog_default, { dialogOpen, closeDialog: () => setDialogOpen(false), gameChoice, setGameChoice, lobbyGames, wagerInput, setWagerInput, perHandInput, setPerHandInput, wagerValidationError, handleCreate }), (0, import_jsx_runtime9.jsx)(ShareRoomDialog_default, { urlDialogOpen, handleCancelShare, shortenedUrl, handleCopyAndClose })] });
   };
   var lobby_default = LobbyScreen;
 
   // dist/js/index.js
   var container = document.getElementById("root");
   var root = (0, import_client.createRoot)(container);
-  root.render((0, import_jsx_runtime17.jsxs)(import_react11.default.StrictMode, { children: [(0, import_jsx_runtime17.jsx)(CssBaseline_default, {}), (0, import_jsx_runtime17.jsx)(lobby_default, {})] }));
+  root.render((0, import_jsx_runtime10.jsx)(import_react6.default.StrictMode, { children: (0, import_jsx_runtime10.jsx)(lobby_default, {}) }));
 })();
 /*! Bundled license information:
 
@@ -32292,27 +26102,10 @@ react/cjs/react-jsx-runtime.development.js:
    * LICENSE file in the root directory of this source tree.
    *)
 
-react-is/cjs/react-is.development.js:
-  (** @license React v16.13.1
-   * react-is.development.js
-   *
-   * Copyright (c) Facebook, Inc. and its affiliates.
-   *
-   * This source code is licensed under the MIT license found in the
-   * LICENSE file in the root directory of this source tree.
-   *)
-
-object-assign/index.js:
-  (*
-  object-assign
-  (c) Sindre Sorhus
-  @license MIT
-  *)
-
-react-is/cjs/react-is.development.js:
+scheduler/cjs/scheduler.development.js:
   (**
    * @license React
-   * react-is.development.js
+   * scheduler.development.js
    *
    * Copyright (c) Meta Platforms, Inc. and affiliates.
    *
@@ -32331,17 +26124,6 @@ react-dom/cjs/react-dom.development.js:
    * LICENSE file in the root directory of this source tree.
    *)
 
-scheduler/cjs/scheduler.development.js:
-  (**
-   * @license React
-   * scheduler.development.js
-   *
-   * Copyright (c) Meta Platforms, Inc. and affiliates.
-   *
-   * This source code is licensed under the MIT license found in the
-   * LICENSE file in the root directory of this source tree.
-   *)
-
 react-dom/cjs/react-dom-client.development.js:
   (**
    * @license React
@@ -32349,33 +26131,6 @@ react-dom/cjs/react-dom-client.development.js:
    *
    * Copyright (c) Meta Platforms, Inc. and affiliates.
    *
-   * This source code is licensed under the MIT license found in the
-   * LICENSE file in the root directory of this source tree.
-   *)
-
-@mui/styled-engine/esm/index.js:
-  (**
-   * @mui/styled-engine v7.3.6
-   *
-   * @license MIT
-   * This source code is licensed under the MIT license found in the
-   * LICENSE file in the root directory of this source tree.
-   *)
-
-@mui/system/esm/index.js:
-  (**
-   * @mui/system v7.3.6
-   *
-   * @license MIT
-   * This source code is licensed under the MIT license found in the
-   * LICENSE file in the root directory of this source tree.
-   *)
-
-@mui/material/esm/index.js:
-  (**
-   * @mui/material v7.3.6
-   *
-   * @license MIT
    * This source code is licensed under the MIT license found in the
    * LICENSE file in the root directory of this source tree.
    *)

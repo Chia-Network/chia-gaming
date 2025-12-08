@@ -38,7 +38,7 @@ const GameBottomBar = ({
       </div>
 
       {/* Button section */}
-      <div className='flex w-full flex-1 h-full items-center justify-center bg-transparent order-2'>
+      <div className='flex shadow-lg w-full flex-1 h-full items-center justify-center bg-transparent order-2'>
         {gameState === GAME_STATES.FINAL ? (
           <Button
             variant='solid'

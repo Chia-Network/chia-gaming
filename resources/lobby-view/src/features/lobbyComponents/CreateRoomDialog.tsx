@@ -30,18 +30,17 @@ const CreateRoomDialog: React.FC<CreateRoomDialogProps> = ({
 }) => {
   if (!dialogOpen) return null;
 
-
-return(
-  <div
-    className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-    onClick={closeDialog}
-  >
+  return (
     <div
-      className="bg-canvas-bg text-canvas-text rounded-lg w-full max-w-lg p-6"
-      onClick={(e) => e.stopPropagation()} // prevent closing when clicking inside
+      className="fixed inset-0 z-50 flex items-center justify-center bg-canvas-overlay bg-opacity-50"
+      onClick={closeDialog}
     >
-      {/* Title */}
-      <h2 className="text-xl font-bold mb-4">Create a Room</h2>
+      <div
+        className="bg-canvas-bg text-canvas-text rounded-lg w-full max-w-lg p-6"
+        onClick={(e) => e.stopPropagation()} // prevent closing when clicking inside
+      >
+        {/* Title */}
+        <h2 className="text-xl font-bold mb-4">Create a Room</h2>
 
       {/* Game Select */}
       <div className="mb-4">
@@ -95,10 +94,9 @@ return(
         {/* Actions */}
         <div className="flex justify-end gap-2 mt-4">
           <Button
-            variant={'destructive'}
-            color={'outline'}
+            variant={'outline'}
+            color={'secondary'}
             onClick={closeDialog}
-            className="px-4 py-2 border border-secondary-solid text-secondary-solid rounded hover:bg-secondary-solid/10"
           >
             Cancel
           </Button>

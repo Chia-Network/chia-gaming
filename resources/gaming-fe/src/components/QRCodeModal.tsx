@@ -1,6 +1,3 @@
-
-import { CircularProgress, useMediaQuery, useTheme } from '@mui/material';
-
 import QRCode from 'qrcode';
 import { useEffect, useState } from 'react';
 import { Dialog, DialogClose, DialogContent, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
@@ -8,6 +5,7 @@ import { Alert, AlertDescription, AlertTitle } from './ui/alert';
 import { Button } from './button';
 import { Close } from '@radix-ui/react-dialog';
 import { CheckCircle, Copy, QrCode, Smartphone } from 'lucide-react';
+import { motion } from 'framer-motion';
 
 interface QRCodeModalProps {
   open: boolean;
@@ -21,9 +19,11 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string>('');
 
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const isDark = document.documentElement.classList.contains("dark");
 
+  const fg = isDark ? "#FFFFFF" : "#000000";   // foreground
+  const bg = isDark ? "#121212" : "#FFFFFF";   // background
+  const isMobile = window.innerWidth < 640 ? 250 : 300;
   useEffect(() => {
     if (uri && open) {
       setIsGenerating(true);
@@ -33,8 +33,8 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
         width: isMobile ? 250 : 300,
         margin: 2,
         color: {
-          dark: theme.palette.mode === 'dark' ? '#FFFFFF' : '#000000',
-          light: theme.palette.mode === 'dark' ? '#121212' : '#FFFFFF',
+          dark: fg,   // foreground (data)
+          light: bg,
         },
         errorCorrectionLevel: 'M',
       })
@@ -48,7 +48,7 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
           setIsGenerating(false);
         });
     }
-  }, [uri, open, isMobile, theme.palette.mode]);
+  }, [uri, open]);
 
   const copyToClipboard = async () => {
     if (!uri) return;
@@ -71,22 +71,14 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent
-        className={`
-             ${isMobile
-            ? "w-full max-w-full rounded-none p-0 pt-16"
-            : "w-full max-w-xl rounded-2xl p-0"
-          }
-            border border-canvas-border bg-canvas-bg shadow-xl
-            overflow-hidden
-          `}
+        className={"w-full max-w-full rounded-none p-0 pt-16 md:max-w-xl md:rounded-2xl border border-canvas-border bg-canvas-bg shadow-xl overflow-hidden"}
       >
         {/* HEADER */}
-        <DialogHeader
-          className="
-        flex flex-row items-center justify-between
-        px-4 py-3 border-b border-canvas-line
-        bg-canvas-bg-subtle
-      "
+        <DialogHeader className="
+                flex flex-row items-center justify-between
+                px-4 py-3 border-b border-canvas-line
+                bg-canvas-bg-subtle
+              "
         >
           <div className="flex items-center gap-2">
             <QrCode className="text-primary-text" />
@@ -133,7 +125,16 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
           >
             {isGenerating ? (
               <div className="flex flex-col items-center gap-3 min-h-[300px] justify-center">
-                <CircularProgress size={40} />
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                  className="
+                            w-10 h-10
+                            rounded-full
+                            border-4 border-primary-bg
+                            border-t-transparent border-b-transparent border-l-transparent
+                          "
+                />
                 <p className="text-sm text-secondary-text">
                   Generating QR Code...
                 </p>

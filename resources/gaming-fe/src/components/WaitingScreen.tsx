@@ -1,5 +1,3 @@
-
-import { CircularProgress } from '@mui/material';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useEffect, useState } from 'react';
 
@@ -21,7 +19,7 @@ const WaitingScreen = ({ stateName, messages, cycleInterval = 2000 }: WaitingScr
   }, [messages, cycleInterval]);
 
   return (
-     <div className="h-screen w-full flex flex-col items-center justify-center text-center gap-3 bg-canvas-bg-subtle text-canvas-text overflow-hidden">
+    <div className="h-screen w-full flex flex-col items-center justify-center text-center gap-3 bg-canvas-bg-subtle text-canvas-text overflow-hidden">
       {/* Title */}
       <motion.div
         initial={{ opacity: 0, y: -10 }}
@@ -56,19 +54,14 @@ const WaitingScreen = ({ stateName, messages, cycleInterval = 2000 }: WaitingScr
       {/* Circular Progress */}
       <motion.div
         animate={{ rotate: 360 }}
-        transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
-        className="flex justify-center items-center"
-      >
-        <div className="relative inline-flex">
-          <div className="w-15 h-15">
-            <CircularProgress
-              className="w-full h-full text-canvas-solid drop-shadow-[0_0_6px_rgba(0,0,0,0.04)]"
-              value={100} // full circle
-              thickness={4}
-            />
-          </div>
-        </div>
-      </motion.div>
+        transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+        className="
+          w-10 h-10
+          rounded-full
+          border-4 border-primary-bg
+          border-t-transparent border-b-transparent border-l-transparent
+        "
+      />
     </div>
   );
 };
