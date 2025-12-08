@@ -89,8 +89,8 @@ function HandDisplay(props: HandDisplayProps) {
       return () => clearTimeout(t);
     }
   }, [cards, showPlaceholders]);
-  console.log(winnerType,'winnerType');
-  
+
+
   const isWinner = winner === winnerType;
   const isTie = winner === 'tie';
   const isPlayer = area === 'player';
@@ -105,11 +105,11 @@ function HandDisplay(props: HandDisplayProps) {
   return (
     <div
       ref={containerRef}
-      className='p-1 rounded-lg max-w-full mx-auto gap-8 mb-2 relative text-canvas-text'
+      className='p-1 rounded-lg max-w-full mx-auto gap-[32px] mb-2 relative text-canvas-text'
       data-area={area}
     >
       {displayText && (
-        <h3 className='text-sm font-bold py-2 text-center text-canvas-solid'>
+        <h3 className='text-sm font-bold py-2 text-center text-success-text-contrast'>
           {displayText}
         </h3>
       )}
@@ -117,11 +117,10 @@ function HandDisplay(props: HandDisplayProps) {
       <div className='relative'>
         {gameState === GAME_STATES.FINAL && (isWinner || isTie) && (
           <div
-            className={`absolute -top-5 ${
-              isWinner
-                ? 'bg-success-solid text-success-on-success'
-                : 'bg-canvas-solid text-canvas-on-canvas'
-            } px-4 py-2 rounded-full font-bold text-base shadow-lg z-10`}
+            className={`absolute -top-5 ${isWinner
+              ? 'bg-success-solid text-success-on-success'
+              : 'bg-canvas-solid text-canvas-on-canvas'
+              } px-4 py-2 rounded-full font-bold text-base shadow-lg z-10`}
             style={{
               left: '50%',
               transform: `translateX(calc(-50% + ${winnerIndicatorOffset}px))`,
@@ -131,28 +130,45 @@ function HandDisplay(props: HandDisplayProps) {
           </div>
         )}
 
-        <div>
+        <div className='min-w-full'>
           {showPlaceholders ? (
-            <div className='flex flex-wrap justify-center gap-2'>
+
+            <div className="inline-grid
+                            grid-flow-row-dense
+                            gap-4
+                            h-full
+                            justify-center
+                            grid-cols-3
+                            md:grid-cols-4
+                            lg:grid-cols-8
+                            xl:grid-cols-8
+                            grid-cols-2-xs
+                          ">
+
               {Array.from({ length: 8 }).map((_, i) => {
                 const frontCard = cards && cards[i];
                 const originalIndex = frontCard
                   ? cards.findIndex(
-                      (c) =>
-                        c.suit === frontCard.suit && c.rank === frontCard.rank,
-                    )
+                    (c) => c.suit === frontCard.suit && c.rank === frontCard.rank
+                  )
                   : -1;
 
                 return (
-                  <div key={`placeholder-${i}`} className='w-24 h-32 shrink-0'>
-                    <div className='flip-container'>
-                      <div
-                        className={`flip-inner ${placeholderFlip ? 'is-flipped' : ''}`}
-                      >
-                        <div className='flip-back rounded border border-canvas-border bg-canvas-bg-subtle'></div>
-
+                  <div key={`placeholder-${i}`} className="w-20 h-28 lg:w-20 lg:h-28 md:w-24 md:h-32 xl:w-24 xl:h-32 flex items-center justify-center">
+                    <div className="flip-container">
+                      <div className={`flip-inner ${placeholderFlip ? 'is-flipped' : ''}`}>
+                        {/* Back of the card */}
                         <div
-                          className='flip-front rounded border border-canvas-border'
+                          className="flip-back rounded-lg border-2 border-canvas-border flex items-center justify-center
+                   bg-canvas-bg-subtle dark:bg-canvas-bg/90 text-canvas-border dark:text-canvas-bg-subtle"
+                        >
+                          {/* Poker Spade in the center */}
+                          <span className="text-4xl font-bold">♠</span>
+                        </div>
+
+                        {/* Front of the card */}
+                        <div
+                          className="flip-front rounded-lg border-2 border-canvas-border bg-white shadow-md"
                           style={{ transform: 'rotateY(180deg)' }}
                         >
                           {frontCard && (
@@ -163,9 +179,7 @@ function HandDisplay(props: HandDisplayProps) {
                               card={frontCard}
                               cardId={`${area}-${i}`}
                               isSelected={selectedCards.includes(originalIndex)}
-                              onClick={() =>
-                                onCardClick && onCardClick(originalIndex)
-                              }
+                              onClick={() => onCardClick && onCardClick(originalIndex)}
                               isBeingSwapped={false}
                               isInBestHand={false}
                             />
@@ -174,11 +188,22 @@ function HandDisplay(props: HandDisplayProps) {
                       </div>
                     </div>
                   </div>
+
+
                 );
               })}
             </div>
           ) : (
-            <div className='flex flex-wrap justify-center gap-2'>
+            <div className='inline-grid
+                            grid-flow-row-dense
+                            gap-4
+                            h-full
+                            justify-center
+                            grid-cols-3
+                            md:grid-cols-4
+                            lg:grid-cols-
+                            xl:grid-cols-8
+                            grid-cols-2-xs'>
               {cards.map((card: any, idx: number) => {
                 const originalIndex = cards.findIndex(
                   (c) => c.suit === card.suit && c.rank === card.rank,
@@ -197,7 +222,7 @@ function HandDisplay(props: HandDisplayProps) {
                 return (
                   <div
                     key={`${area}-${originalIndex}`}
-                    className='w-20 h-28 shrink-0'
+                    className='w-20 h-28 lg:w-20 lg:h-28 md:w-24 md:h-32 xl:w-24 xl:h-32  flex items-center justify-center'
                   >
                     <Card
                       index={idx}

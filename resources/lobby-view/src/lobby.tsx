@@ -1,29 +1,14 @@
-import React from 'react';
+
 import { useState, useEffect, useCallback, useRef } from 'react';
-import {
-  Box,
-  Card,
-  CardContent,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  Divider,
-  IconButton,
-  Stack,
-  TextField,
-  Typography,
-  Select,
-  MenuItem,
-} from '@mui/material';
-import { Button } from './button';
-import { Close, SportsEsports, ContentCopy } from '@mui/icons-material';
 import { useLobbySocket } from 'chia-gaming-lobby-connection';
 import { getSearchParams, getFragmentParams, generateOrRetrieveAlias, updateAlias } from './util';
 import ConnectedPlayers from './features/lobbyComponents/ConnectedPlayers';
 import CardDivider from './features/lobbyComponents/CardDivider';
 import Chat from './features/lobbyComponents/Chat';
 import ActiveRooms from './features/lobbyComponents/ActiveRooms';
+import CreateRoomDialog from './features/lobbyComponents/CreateRoomDialog';
+import ShareRoomDialog from './features/lobbyComponents/ShareRoomDialog';
+import { Button } from './button';
 
 const LobbyScreen = () => {
   const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());
@@ -60,7 +45,6 @@ const LobbyScreen = () => {
   const [perHandInput, setPerHandInput] = useState('');
   const [editingAlias, setEditingAlias] = useState(false);
   const [gotoUrl, setGotoUrl] = useState('');
-  const [chatOpen, setChatOpen] = useState(false);
   const [urlDialogOpen, setUrlDialogOpen] = useState(false);
   const [secureUrl, setSecureUrl] = useState('');
   // UI state for split handle
@@ -208,55 +192,24 @@ const LobbyScreen = () => {
     secureUrl?.length > 40 ? `${secureUrl.slice(0, 40)}...` : secureUrl;
 
   return (
-    <Box
-      sx={{
-        p: { xs: 2, sm: 3, md: 8 },
-        pb: 0,
-        minHeight: '100vh',
-        bgcolor: 'var(--color-canvas-bg-subtle)',
-      }}
-    >
+    <div className="p-4 sm:p-6 md:p-8 pb-0 min-h-screen bg-canvas-bg-subtle relative">
       {/* Header */}
-      <Stack
-        direction={{ xs: 'column', sm: 'row' }}
-        justifyContent='space-between'
-        alignItems={{ xs: 'flex-start', sm: 'center' }}
-        spacing={2}
-        mb={3}
-      >
-        <Box>
-          <Typography
-            variant='h5'
-            fontWeight={700}
-            sx={{ color: 'var(--color-canvas-text-contrast)' }}
-          >
-            Game Lobby
-          </Typography>
-        </Box>
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-3">
+        <div>
+          <h2 className="text-xl font-bold text-canvas-text-contrast">Game Lobby</h2>
+        </div>
         <Button variant='surface' color={'secondary'} fullWidth={false}>
           Change WalletConnect Connection
         </Button>
-      </Stack>
+      </div>
 
       {/* Hidden automation URL */}
-      <Box
-        sx={{ position: 'absolute', opacity: 0 }}
-        aria-label='partner-target-url'
-      >
+      <div className="absolute opacity-0" aria-label="partner-target-url">
         {gotoUrl}
-      </Box>
+      </div>
 
       {/* Main Content */}
-      <Box
-        sx={{
-          display: 'flex',
-          flexDirection: { xs: 'column', md: 'row' },
-          border: { md: '1px solid var(--color-canvas-border)' },
-          borderRadius: 3,
-          gap: { xs: 3, md: 0 },
-          height: { md: 'calc(100vh - 150px)', xs: 'auto' },
-        }}
-      >
+      <div className="flex flex-col md:flex-row border-none md:border md:border-canvas-border rounded-3xl gap-3 md:gap-0 h-auto md:h-[calc(100vh-150px)]">
         {/* Active Rooms */}
         <ActiveRooms
           rooms={rooms}
@@ -265,10 +218,10 @@ const LobbyScreen = () => {
           getPlayerAlias={getPlayerAlias}
         />
 
-        {/* Connected Players */}
+        {/* Connected Players and Chat */}
         <div
           ref={rightColumnRef}
-          className='flex w-full md:w-1/3 flex-col min-w-0 h-full md:border-l border-canvas-border rounded-tr-2xl'
+          className="flex flex-col w-full lg:w-1/3 min-w-0 h-full md:border-l border-canvas-border rounded-tr-2xl"
         >
           <ConnectedPlayers
             splitPct={splitPct}
@@ -292,172 +245,32 @@ const LobbyScreen = () => {
             handleSend={handleSend}
           />
         </div>
-      </Box>
+      </div>
 
       {/* Create Room Dialog */}
-      <Dialog
-        open={dialogOpen}
-        onClose={closeDialog}
-        sx={{
-          '& .MuiPaper-root': {
-            backgroundColor: 'var(--canvas-bg)',
-            color: 'var(--canvas-text)',
-          },
-        }}
-      >
-        <DialogTitle sx={{ color: 'var(--canvas-text)' }}>
-          Create a Room
-        </DialogTitle>
+      <CreateRoomDialog
+        dialogOpen={dialogOpen}
+        closeDialog={() => setDialogOpen(false)}
+        gameChoice={gameChoice}
+        setGameChoice={setGameChoice}
+        lobbyGames={lobbyGames}
+        wagerInput={wagerInput}
+        setWagerInput={setWagerInput}
+        perHandInput={perHandInput}
+        setPerHandInput={setPerHandInput}
+        wagerValidationError={wagerValidationError}
+        handleCreate={handleCreate}
+      />
 
-        <DialogContent>
-          <Select
-            label='Game'
-            aria-label='game-id'
-            fullWidth
-            sx={{
-              backgroundColor: 'var(--canvas-bg)',
-              color: 'var(--canvas-text)',
-            }}
-            value={gameChoice}
-            onChange={(e) => setGameChoice(e.target.value)}
-          >
-            {lobbyGames.map((g) => (
-              <MenuItem data-testid={`choose-${g.game}`} value={g.game}>{g.game}</MenuItem>
-            ))}
-          </Select>
+      {/* Share Room Dialog */}
+      <ShareRoomDialog
+        urlDialogOpen={urlDialogOpen}
+        handleCancelShare={handleCancelShare}
+        shortenedUrl={shortenedUrl}
+        handleCopyAndClose={handleCopyAndClose}
+      />
+    </div>
 
-          {wagerValidationError && (
-            <Box mb={1} sx={{ color: 'var(--secondary-solid)' }}>
-              {wagerValidationError}
-            </Box>
-          )}
-
-          <TextField
-            label='Wager (mojo)'
-            aria-label='game-wager'
-            fullWidth
-            type='number'
-            margin='normal'
-            value={wagerInput}
-            onChange={(e) => setWagerInput(e.target.value)}
-            sx={{
-              backgroundColor: 'var(--canvas-bg)',
-              '& .MuiInputBase-input::placeholder': {
-                color: 'var(--canvas-text-contrast)',
-                opacity: 1, // important: otherwise MUI reduces opacity
-              },
-              '& .MuiInputBase-input': {
-                color: 'var(--canvas-text)',
-              },
-            }}
-          />
-
-          <TextField
-            label='Each hand (mojo)'
-            aria-label='per-hand'
-            fullWidth
-            type='number'
-            margin='normal'
-            value={perHandInput}
-            onChange={(e) => setPerHandInput(e.target.value)}
-            sx={{
-              backgroundColor: 'var(--canvas-bg)',
-              '& .MuiInputBase-input::placeholder': {
-                color: 'var(--canvas-text-contrast)',
-                opacity: 1, // important: otherwise MUI reduces opacity
-              },
-              '& .MuiInputBase-input': {
-                color: 'var(--canvas-text)',
-              },
-            }}
-          />
-        </DialogContent>
-
-        <DialogActions>
-          <Button variant='outline' color={'secondary'} onClick={closeDialog}>
-            Cancel
-          </Button>
-
-          <Button onClick={handleCreate} variant='solid' color={'secondary'}>
-            Create
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* SHARE DIALOG */}
-
-      <Dialog
-        open={urlDialogOpen}
-        onClose={handleCancelShare}
-        maxWidth='xs'
-        fullWidth
-        sx={{
-          '& .MuiPaper-root': {
-            backgroundColor: 'var(--canvas-bg)',
-            color: 'var(--canvas-text)',
-          },
-        }}
-      >
-        <DialogTitle
-          sx={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            pr: 1,
-          }}
-        >
-          Room Created 🎉
-          <IconButton onClick={handleCancelShare} size='small'>
-            <Close sx={{ color: 'var(--canvas-text)' }} />
-          </IconButton>
-        </DialogTitle>
-
-        <DialogContent>
-          <Typography variant='body1' sx={{ mb: 1 }}>
-            Share this room URL:
-          </Typography>
-
-          <Box
-            sx={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              bgcolor: 'var(--canvas-bg-subtle)',
-              borderRadius: 1,
-              p: 1.2,
-              color: 'var(--secondary-solid)',
-              fontFamily: 'monospace',
-              wordBreak: 'break-all',
-            }}
-          >
-            <Typography
-              variant='body2'
-              sx={{
-                flexGrow: 1,
-                mr: 1,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                color: 'var(--canvas-text)',
-              }}
-            >
-              {shortenedUrl}
-            </Typography>
-
-            <IconButton
-              size='small'
-              onClick={handleCopyAndClose}
-              sx={{
-                color: 'var(--secondary-solid)',
-                '&:hover': { color: 'var(--secondary-solid-hover)' },
-              }}
-            >
-              <ContentCopy fontSize='small' />
-            </IconButton>
-          </Box>
-        </DialogContent>
-      </Dialog>
-    </Box>
   );
 };
 
