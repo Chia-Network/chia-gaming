@@ -8,7 +8,13 @@ import {
   InternalBlockchainInterface,
 } from '../types/ChiaGaming';
 import { getSearchParams, empty, getRandomInt, getEvenHexString } from '../util';
-import { getGameSocket } from '../services/GameSocket';
+import { GameSocketReturn, getGameSocket } from '../services/GameSocket';
+import {
+  findMatchingGame,
+  loadSave,
+  startNewSession,
+  getSaveList,
+} from './save';
 
 // TODO: Maybe migrate this file's contents to WasmStateInit.ts
 
@@ -48,25 +54,41 @@ export async function configGameObject(
   return gameObject;
 }
 
+export async function deserializeGameObject(
+  gameObject: WasmBlobWrapper,
+  iStarted: boolean,
+  wasmStateInit: WasmStateInit,
+  blockchain:InternalBlockchainInterface,
+  serializedGame: any,
+  address: any,
+): Promise<WasmBlobWrapper> {
+  let wasmConnection = gameObject.getWasmConnection();
+  if (!wasmConnection) {
+    wasmConnection = await wasmStateInit.getWasmConnection();
+    gameObject.loadWasm(wasmConnection);
+  }
+  gameObject.setBlockchainAddress(address);
+  let cradle = wasmStateInit.deserializeGame(wasmConnection, serializedGame);
+  gameObject.setGameCradle(cradle);
+  gameObject.takeWrapperSerialization(serializedGame.wrapper);
+  return gameObject;
+}
+
+let hostLog: (msg: string) => void = (msg) => {};
+
 export function getBlobSingleton(
   blockchain: InternalBlockchainInterface,
+  searchParams: any,
   lobbyUrl: string,
   uniqueId: string,
   amount: number,
   perGameAmount: number,
   iStarted: boolean,
-
+  setUIState: (state: any) => void,
 ) {
   if (blobSingleton) {
-    return blobSingleton;
+    return { gameObject: blobSingleton, hostLog };
   }
-
-  const deliverMessage = (msg: string) => {
-    blobSingleton?.deliverMessage(msg);
-  };
-  const peercon = getGameSocket(lobbyUrl, deliverMessage, () => {
-    blobSingleton?.kickSystem(2);
-  });
 
   const doInternalLoadWasm = async () => {
     const fetchUrl = GAME_SERVICE_URL + '/chia_gaming_wasm_bg.wasm';
@@ -77,6 +99,66 @@ export function getBlobSingleton(
       });
   };
 
+  const deliverMessage = (msgno: number, msg: string) => {
+    blobSingleton?.deliverMessage(msgno, msg);
+  };
+
+  let signaledSave: string | undefined = undefined;
+  console.log('getGameSocket');
+  const peerconn = getGameSocket(
+    searchParams,
+    lobbyUrl,
+    deliverMessage,
+    (saves: string[]) => {
+      const systemState = blobSingleton.systemState();
+      const handleMatchingSave = async (matchingSave: string) => {
+        blobSingleton?.setReloading();
+        const loadedSave = loadSave(matchingSave);
+        await deserializeGameObject(
+          blobSingleton,
+          iStarted,
+          wasmStateInit,
+          blockchain,
+          loadedSave.game,
+          loadedSave.addressData
+        );
+        setUIState(loadedSave.game.ui);
+        blobSingleton?.idle();
+      };
+      const newSession = async () => {
+        startNewSession();
+        let calpokerHex = await loadCalpoker(fetchHex);
+        await configGameObject(
+          blobSingleton,
+          iStarted,
+          wasmStateInit,
+          calpokerHex,
+          blockchain,
+          uniqueId,
+          amount
+        );
+      };
+      const matchingSave = findMatchingGame(saves);
+      const wasmStateInit = new WasmStateInit(doInternalLoadWasm, fetchHex);
+
+      blobSingleton.kickSystem(2);
+      if (matchingSave) {
+        if (matchingSave != signaledSave) {
+          signaledSave = matchingSave;
+          handleMatchingSave(matchingSave);
+        }
+        return;
+      }
+
+      if ((systemState & 2) == 0) {
+        newSession();
+        return;
+      }
+    },
+    () => getSaveList()
+  );
+
+  hostLog = peerconn.hostLog;
   blobSingleton = new WasmBlobWrapper(
     blockchain,
     uniqueId,
@@ -85,10 +167,10 @@ export function getBlobSingleton(
     iStarted,
     doInternalLoadWasm,
     fetchHex,
-    peercon,
+    peerconn,
   );
 
   setupBlockchainConnection(uniqueId);
 
-  return blobSingleton;
+  return { gameObject: blobSingleton, hostLog };
 }
