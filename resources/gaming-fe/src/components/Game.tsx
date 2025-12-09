@@ -113,8 +113,7 @@ const Game = () => {
 
   return (
     <Calpoker
-      outcome={outcome}
-      lastOutcome={lastOutcome}
+      outcome={outcome ? outcome : lastOutcome}
       moveNumber={moveNumber}
       iStarted={iStarted}
       isPlayerTurn={isPlayerTurn}

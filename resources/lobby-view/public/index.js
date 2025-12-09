@@ -25496,7 +25496,7 @@
       const el = rightColumnRef.current;
       if (el && typeof el._startDrag === "function")
         el._startDrag(e.touches[0].clientY);
-    }, className: "hidden md:block h-1 cursor-w-resize bg-transparent" });
+    }, className: "hidden md:block h-1 cursor-s-resize bg-transparent" });
   }
 
   // dist/js/features/lobbyComponents/Chat.js

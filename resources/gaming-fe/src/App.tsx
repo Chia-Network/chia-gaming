@@ -14,6 +14,8 @@ const App = () => {
   const shouldRedirectToLobby = !params.lobby && !params.iStarted;
   const [havePeak, setHavePeak] = useState(false);
   const [iframeUrl, setIframeUrl] = useState('about:blank');
+  const [fetchedUrls, setFetchedUrls] = useState(false);
+  const [iframeAllowed, setIframeAllowed] = useState('');
   const gameName = params.game;
   const joinCode = params.join;
   const [showPopup, setShowPopup] = useState(false);
@@ -28,6 +30,20 @@ const App = () => {
 
     return () => subscription.unsubscribe();
   });
+
+  // Fetch the urls document and get the tracker url so we know to allow the iframe
+  // to use the clipboard.
+  useEffect(() => {
+    if (!fetchedUrls) {
+      setFetchedUrls(true);
+      fetch('/urls')
+        .then((res) => res.json())
+	.then((urls) => {
+	  let trackerURL = new URL(urls.tracker);
+	  setIframeAllowed(trackerURL.origin);
+        });
+    }
+  }, [fetchedUrls]);
 
   // Redirect to the lobby if we haven't been given enough information to render
   // the game yet.
@@ -192,6 +208,7 @@ const App = () => {
           id='subframe'
           className="w-full h-full border-0 m-0 md:py-0 py-6 bg-canvas-bg-subtle"
           src={iframeUrl}
+	allow={`clipboard-write self ${iframeAllowed}`}
         ></iframe>
       </div>
       <GameRedirectPopup

@@ -10,7 +10,6 @@ import { cn } from '../../lib/utils';
 
 export interface CalpokerProps {
   outcome: CalpokerOutcome | undefined;
-  lastOutcome: CalpokerOutcome | undefined;
   ourShare: number | undefined;
   theirShare: number | undefined;
   moveNumber: number;
@@ -29,7 +28,6 @@ export interface CalpokerProps {
 
 const Calpoker: React.FC<CalpokerProps> = ({
   outcome,
-  lastOutcome,
   ourShare,
   theirShare,
   moveNumber,
@@ -148,7 +146,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
               setCardSelections={setCardSelections}
               handleMakeMove={handleMakeMove}
               iStarted={iStarted}
-              lastOutcome={lastOutcome}
+              outcome={outcome}
               log={log}
               myWinOutcome={myWinOutcome}
               banner={banner}
