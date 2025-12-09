@@ -38,7 +38,6 @@ function translateTopline(topline: string | undefined): string | null {
   const res = { 'win': 'player', 'lose': 'ai' }[topline];
   return res ? res : 'tie';
 }
-import GameBottomBar from './components/GameBottomBar';
 
 
 // Main Component
@@ -498,6 +497,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
 
 
 
+
             <Card className='flex flex-col py-0 w-full flex-1 lg:flex-[0_0_43%] border border-canvas-line shadow-md overflow-hidden'>
               <CardHeader className='relative p-0 w-full flex justify-center items-center'>
                 <CardTitle className="w-full pl-4 flex items-center gap-2">
@@ -609,18 +609,20 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
             </div>
           </div>
         )}
-      </div>
+    </div>
 
-      {/* Animations */}
-      {movingCards.map((cardData) => (
-        <MovingCard
-          key={cardData.id}
-          cardData={cardData}
-          showAnimation={showSwapAnimation}
-        />
-      ))}
+      {/* Animations */ }
+  {
+    movingCards.map((cardData) => (
+      <MovingCard
+        key={cardData.id}
+        cardData={cardData}
+        showAnimation={showSwapAnimation}
+      />
+    ))
+  }
 
-      <style>{`
+  <style>{`
     .animate-move {
       animation: moveCard 2s ease-in-out forwards;
     }
@@ -629,7 +631,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       to { left: var(--end-x); top: var(--end-y); }
     }
   `}</style>
-    </div>
+    </div >
   );
 };
 
