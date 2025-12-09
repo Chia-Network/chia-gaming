@@ -21,6 +21,9 @@ export function startNewSession() {
 export function saveGame(g: any): [string, any] | undefined {
   try {
     const saveList = getSaveList();
+    if (saveList.length > 2) {
+      localStorage.removeItem(`save-${saveList.pop()}`);
+    }
     saveList.unshift(g.id);
     localStorage.setItem(`save-${g.id}`, JSON.stringify(g));
     // We setSaveList last so the save is only included if everything worked.
