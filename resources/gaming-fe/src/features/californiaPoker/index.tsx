@@ -609,20 +609,20 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
             </div>
           </div>
         )}
-    </div>
+      </div>
 
-      {/* Animations */ }
-  {
-    movingCards.map((cardData) => (
-      <MovingCard
-        key={cardData.id}
-        cardData={cardData}
-        showAnimation={showSwapAnimation}
-      />
-    ))
-  }
+      {/* Animations */}
+      {
+        movingCards.map((cardData) => (
+          <MovingCard
+            key={cardData.id}
+            cardData={cardData}
+            showAnimation={showSwapAnimation}
+          />
+        ))
+      }
 
-  <style>{`
+      <style>{`
     .animate-move {
       animation: moveCard 2s ease-in-out forwards;
     }
