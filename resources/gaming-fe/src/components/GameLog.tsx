@@ -7,7 +7,7 @@ import {
 
 import { RANK_SYMBOLS, SUIT_COLORS } from '../features/californiaPoker/constants/constants';
 import { cn } from '../lib/utils';
-import { Expand, History } from 'lucide-react';
+import { AArrowDown, ChevronDown, Expand, History } from 'lucide-react';
 
 interface GameLogProps {
   log: OutcomeLogLine[];
@@ -144,7 +144,7 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                         </div>
                       </div>
 
-                      <Expand
+                      <ChevronDown
                         data-testid={`log-expand-button-${index}`}
                         className={`ml-1 shrink-0 transform transition-transform duration-200 ${isExpanded ? 'rotate-180' : 'rotate-0'
                           } text-canvas-muted`}

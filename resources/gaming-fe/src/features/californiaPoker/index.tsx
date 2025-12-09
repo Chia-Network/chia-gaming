@@ -399,7 +399,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 </div>
               </CardHeader>
               <CardContent>
-                <div className='flex-1 h-full lg:mt-0 mt-4 flex items-center justify-center p-2'>
+                <div className='flex-1 h-full mt-4 flex items-center justify-center p-2'>
                   <HandDisplay
                     title=''
                     cards={opponentCards.length ? opponentCards : rememberedCards[1]}
@@ -431,7 +431,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 </div>
               </CardHeader>
               <CardContent>
-                <div className='flex-1 lg:mt-0 mt-4 h-full flex items-center justify-center p-2'>
+                <div className='flex-1 mt-4 h-full flex items-center justify-center p-2'>
                   <HandDisplay
                     title=''
                     cards={playerCards.length ? playerCards : rememberedCards[0]}
@@ -450,72 +450,35 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 </div>
               </CardContent>
             </Card>
-          
+
 
             {/* ACTION BAR */}
-        <div className='h-[10%] flex pt-4 lg:pt-0'>
-          <div className='flex flex-1 rounded-xl overflow-hidden border border-canvas-line shadow-md bg-canvas-bg'>
-            {/* Left banner */}
-            <div className='flex flex-1 items-center justify-center'>
-              <span
-                className={`font-bold text-xl ${isPlayerTurn ? 'text-success-text' : 'text-alert-text'
-                  }`}
-              >
-                {isPlayerTurn ? 'Your Turn' : "Opponent's turn"}
-              </span>
-            </div>
-
-            {/* Button */}
-            <div className='flex flex-1 p-0.5 items-center justify-center bg-transparent'>
-              {gameState === GAME_STATES.FINAL ? (
-                <Button
-                  variant={'solid'}
-                  color={'primary'}
-                  onClick={NewGame}
-                  disabled={!isPlayerTurn}
-                  fullWidth
-                  className='h-full'
-                >
-                  {isPlayerTurn ? 'Start New Game' : 'Opponent to Start...'}
-                </Button>
-              ) : (
-                <Button
-                  variant={'solid'}
-                  color={'primary'}
-                  onClick={doHandleMakeMove}
-                  disabled={isDisabled}
-                  fullWidth
-                  className='h-full'
-                >
-                  {buttonText}
-                </Button>
-              )}
-            </div>
-
-            {/* Move number */}
-            <div className='flex flex-1 items-center justify-center'>
-              <span className='font-bold text-xl text-canvas-solid'>
-                Move {moveNumber}
-              </span>
-            </div>
+            <GameBottomBar
+              isPlayerTurn={isPlayerTurn}
+              gameState={gameState}
+              buttonText={buttonText}
+              moveNumber={moveNumber}
+              isDisabled={isDisabled}
+              NewGame={NewGame}
+              doHandleMakeMove={doHandleMakeMove}
+              GAME_STATES={GAME_STATES}
+            />
           </div>
-        </div>
-      </div>
         )}
-    </div>
+      </div>
 
-      {/* Animations */ }
-  {
-    movingCards.map((cardData) => (
-      <MovingCard
-        key={cardData.id}
-        cardData={cardData}
-        showAnimation={showSwapAnimation}
-      />
-    ))
-  }
+      {/* Animations */}
+      {
+        movingCards.map((cardData) => (
+          <MovingCard
+            key={cardData.id}
+            cardData={cardData}
+            showAnimation={showSwapAnimation}
+          />
+        ))
+      }
 
-  <style>{`
+      <style>{`
     .animate-move {
       animation: moveCard 2s ease-in-out forwards;
     }

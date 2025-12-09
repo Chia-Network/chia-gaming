@@ -117,7 +117,7 @@ function HandDisplay(props: HandDisplayProps) {
       <div className='relative'>
         {gameState === GAME_STATES.FINAL && (isWinner || isTie) && (
           <div
-            className={`absolute -top-5 ${isWinner
+            className={`absolute z-1200 -top-5 ${isWinner
               ? 'bg-success-solid text-success-on-success'
               : 'bg-canvas-solid text-canvas-on-canvas'
               } px-4 py-2 rounded-full font-bold text-base shadow-lg z-10`}

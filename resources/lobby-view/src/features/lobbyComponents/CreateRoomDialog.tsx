@@ -32,11 +32,11 @@ const CreateRoomDialog: React.FC<CreateRoomDialogProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-canvas-overlay bg-opacity-50"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-canvas-bg-subtle/75"
       onClick={closeDialog}
     >
       <div
-        className="bg-canvas-bg text-canvas-text rounded-lg w-full max-w-lg p-6"
+        className="bg-canvas-bg-subtle text-canvas-text shadow-2xl rounded-lg w-full max-w-lg p-6"
         onClick={(e) => e.stopPropagation()} // prevent closing when clicking inside
       >
         {/* Title */}
