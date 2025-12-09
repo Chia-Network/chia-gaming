@@ -64,13 +64,13 @@ const Game: React.FC<GameParams> = ({ params }) => {
           {`Cal Poker - shutdown succeeded`}
         </Typography>
         <Box>
-          {gameConnectionState.stateDetail.map((c: any) => (
+          {gameConnectionState.stateDetail.map((c: string) => (
             <Typography variant='h5' align='center'>
               {c}
             </Typography>
           ))}
           <Box>
-            {gameConnectionState.stateDetail.map((c: any) => (
+            {gameConnectionState.stateDetail.map((c: string) => (
               <Typography variant='h5' align='center'>
                 {c}
               </Typography>

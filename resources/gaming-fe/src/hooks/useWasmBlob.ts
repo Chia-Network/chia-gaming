@@ -33,10 +33,30 @@ import {
 
 let blobSingleton: any = null;
 
-export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: string) {
+export interface UseWasmBlobResult {
+  error: any;
+  log: OutcomeLogLine[];
+  amount: number;
+  addressData: BlockchainInboundAddressResult | undefined;
+  ourShare: number | undefined;
+  theirShare: number | undefined;
+  gameConnectionState: GameConnectionState;
+  isPlayerTurn: boolean;
+  iStarted: boolean;
+  moveNumber: number;
+  handleMakeMove: (hex: string) => void;
+  playerHand: number[][];
+  opponentHand: number[][];
+  playerNumber: number;
+  cardSelections: number;
+  setCardSelections: (s: number) => void;
+  outcome: CalpokerOutcome | undefined;
+  lastOutcome: CalpokerOutcome | undefined;
+  stopPlaying: () => void;
+};
+
+export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: string): UseWasmBlobResult {
   const [realPublicKey] = useState<string | undefined>(undefined);
-  const [gameIdentity] = useState<any | undefined>(undefined);
-  const [uniqueWalletConnectionId] = useState(uuidv4());
   const [balance, setBalance] = useState<number | undefined>(undefined);
   const [ourShare, setOurShare] = useState<number | undefined>(undefined);
   const [theirShare, setTheirShare] = useState<number | undefined>(undefined);
@@ -240,10 +260,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     ourShare,
     theirShare,
     log,
-    gameIdentity,
     gameConnectionState,
-    uniqueWalletConnectionId,
-    realPublicKey,
     isPlayerTurn,
     iStarted,
     playerNumber,

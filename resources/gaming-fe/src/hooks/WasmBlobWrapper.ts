@@ -30,6 +30,27 @@ function combine_reports(old_report: WatchReport, new_report: WatchReport) {
   }
 }
 
+const uiSettingSource: Record<string, "value" | "array"> = {
+  uniqueId: "value",
+  messageNumber: "value",
+  remoteNumber: "value",
+  handshakeDone: "value",
+  currentBlock: "value",
+  iStarted: "value",
+  gameIds: "array",
+  storedMessages: "array",
+  messageQueue: "array",
+  myTurn: "value",
+  moveNumber: "value",
+  cardSelections: "value",
+  playerHand: "value",
+  opponentHand: "value",
+  shutdownCalled: "value",
+  finished: "value",
+  perGameAmount: "value",
+  gameOutcome: "value"
+};
+
 export class WasmBlobWrapper {
   amount: number;
   wc: WasmConnection | undefined;
@@ -407,26 +428,15 @@ export class WasmBlobWrapper {
       this.currentSave = newGameId;
       const saveData = this.cradle?.serialize();
       saveData.id = newGameId;
-      saveData.wrapper = {
-        uniqueId: this.uniqueId,
-        messageNumber: this.messageNumber,
-        remoteNumber: this.remoteNumber,
-        handshakeDone: this.handshakeDone,
-        currentBlock: this.currentBlock,
-        iStarted: this.iStarted,
-        gameIds: this.gameIds,
-        storedMessages: [...this.storedMessages],
-        messageQueue: [...this.messageQueue],
-        myTurn: this.myTurn,
-        moveNumber: this.moveNumber,
-        cardSelections: this.cardSelections,
-        playerHand: this.playerHand,
-        opponentHand: this.opponentHand,
-        shutdownCalled: this.shutdownCalled,
-        finished: this.finished,
-        perGameAmount: this.perGameAmount,
-        gameOutcome: this.gameOutcome,
-      };
+      const saveDataWrapper: any = {};
+      Object.keys(uiSettingSource).forEach((k) => {
+        if (uiSettingSource[k] === "array") {
+          saveDataWrapper[k] = [... (this as any)[k]];
+        } else {
+          saveDataWrapper[k] = (this as any)[k];
+        }
+      });
+      saveData.wrapper = saveDataWrapper;
       saveData.ui = this.uiUpdates;
       result.setSavedGame = saveData;
     }
@@ -561,7 +571,9 @@ export class WasmBlobWrapper {
   takeWrapperSerialization(wrapper: any) {
     const keys = Object.keys(wrapper);
     keys.forEach((k) => {
-      (this as any)[k] = wrapper[k];
+      if (uiSettingSource[k]) {
+        (this as any)[k] = wrapper[k];
+      }
     });
   }
 
