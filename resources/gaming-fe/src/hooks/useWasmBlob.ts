@@ -15,17 +15,48 @@ import {
   OutcomeLogLine,
   handValueToDescription,
   RngId,
+  SaveData,
 } from '../types/ChiaGaming';
 import { getSearchParams, empty, getRandomInt, getEvenHexString } from '../util';
 import { ChildFrameBlockchainInterface } from './ChildFrameBlockchainInterface';
-import { configGameObject, getBlobSingleton, initStarted, setInitStarted } from './blobSingleton';
+import {
+  configGameObject,
+  getBlobSingleton,
+  initStarted,
+  setInitStarted,
+  deserializeGameObject,
+} from './blobSingleton';
+import {
+  saveGame,
+  startNewSession,
+} from './save';
 
 let blobSingleton: any = null;
 
-export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
+export interface UseWasmBlobResult {
+  error: any;
+  log: OutcomeLogLine[];
+  amount: number;
+  addressData: BlockchainInboundAddressResult | undefined;
+  ourShare: number | undefined;
+  theirShare: number | undefined;
+  gameConnectionState: GameConnectionState;
+  isPlayerTurn: boolean;
+  iStarted: boolean;
+  moveNumber: number;
+  handleMakeMove: (hex: string) => void;
+  playerHand: number[][];
+  opponentHand: number[][];
+  playerNumber: number;
+  cardSelections: number;
+  setCardSelections: (s: number) => void;
+  outcome: CalpokerOutcome | undefined;
+  lastOutcome: CalpokerOutcome | undefined;
+  stopPlaying: () => void;
+};
+
+export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: string): UseWasmBlobResult {
   const [realPublicKey] = useState<string | undefined>(undefined);
-  const [gameIdentity] = useState<any | undefined>(undefined);
-  const [uniqueWalletConnectionId] = useState(uuidv4());
   const [balance, setBalance] = useState<number | undefined>(undefined);
   const [ourShare, setOurShare] = useState<number | undefined>(undefined);
   const [theirShare, setTheirShare] = useState<number | undefined>(undefined);
@@ -35,7 +66,6 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
       stateDetail: ['before handshake'],
     });
 
-  const searchParams = getSearchParams();
   const iStarted = searchParams.iStarted !== 'false';
   const playerNumber = iStarted ? 1 : 2;
   const [log, setLog] = useState<OutcomeLogLine[]>([]);
@@ -56,70 +86,15 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const [moveNumber, setMoveNumber] = useState<number>(0);
   const [error, setRealError] = useState<string | undefined>(undefined);
   const [cardSelections, setOurCardSelections] = useState<number>(0);
-  const [wasmStateInit, setWasmStateInit] = useState<WasmStateInit>(
-    new WasmStateInit(doInternalLoadWasm, fetchHex),
-  );
   const amount = parseInt(searchParams.amount);
 
-  let perGameAmount = amount / 10;
-  try {
-    perGameAmount = parseInt(searchParams.perGame);
-  } catch (e) {
-    // not ok if perGame wasn't empty.
-    if (searchParams.perGame) {
-      throw e;
-    }
-  }
-  const setError = (e: any) => {
-    if (e !== undefined && error === undefined) {
-      setRealError(e);
+  const setSavedGame = (game: any) => {
+    let serialized = { game, searchParams, id: game.id, addressData, url: window.location.toString() };
+    const saveResult = saveGame(serialized);
+    if (saveResult) {
+      setError(`${saveResult[0]}: ${saveResult[1].toString()}`);
     }
   };
-
-  const blockchain = new ChildFrameBlockchainInterface();
-
-  const gameObject = uniqueId
-    ? getBlobSingleton(
-        blockchain,
-        lobbyUrl,
-        uniqueId,
-        amount,
-        perGameAmount,
-        iStarted,
-      )
-    : null;
-
-  const setCardSelections = useCallback(
-    (mask: number) => {
-      gameObject?.setCardSelections(mask);
-    },
-    [gameObject],
-  );
-
-  const stopPlaying = useCallback(() => {
-    gameObject?.shutDown();
-  }, [gameObject]);
-
-  useEffect(() => {
-    const subscription = blockchain.getObservable().subscribe({
-      next: (e: BlockchainReport) => {
-        gameObject?.blockNotification(e.peak, e.block, e.report);
-      },
-    });
-
-    return () => {
-      subscription.unsubscribe();
-    };
-  });
-
-  const handleMakeMove = useCallback((move: any) => {
-    gameObject?.makeMove(move);
-  }, []);
-
-  (window as any).loadWasm = useCallback((chia_gaming_init: any, cg: any) => {
-    console.log('start loading wasm', gameObject);
-    gameObject?.loadWasm(chia_gaming_init, cg);
-  }, []);
 
   const recognizeOutcome = (outcome: CalpokerOutcome | undefined) => {
     setOutcome(outcome);
@@ -158,19 +133,32 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     }
   };
 
+  const recognizeGameConnectionState = async (cs: GameConnectionState) => {
+    if (cs.stateIdentifier === 'shutdown') {
+      startNewSession();
+    }
+    setGameConnectionState(cs);
+  }
+
+  const setError = (e: any) => {
+    if (e !== undefined && error === undefined) {
+      setRealError(e);
+    }
+  };
+
   const settable: any = {
-    setGameConnectionState: setGameConnectionState,
-    setPlayerHand: setPlayerHand,
-    setOpponentHand: setOpponentHand,
-    setMyTurn: setMyTurn,
-    setMoveNumber: setMoveNumber,
-    setError: setError,
+    setGameConnectionState: recognizeGameConnectionState,
+    setPlayerHand,
+    setOpponentHand,
+    setMyTurn,
+    setMoveNumber,
     setCardSelections: setOurCardSelections,
     setOutcome: recognizeOutcome,
-    setAddressData: setAddressData,
-    setOurShare: setOurShare,
-    setTheirShare: setTheirShare,
-    setLastOutcome: setLastOutcome,
+    setAddressData,
+    setOurShare,
+    setTheirShare,
+    setLastOutcome,
+    setError,
   };
 
   function setState(state: any): void {
@@ -184,7 +172,61 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
         settable[k](state[k]);
       }
     });
+
+    // Save last so we can observe all ui updates.
+    if (state.setSavedGame) {
+      setSavedGame(state.setSavedGame);
+    }
   }
+
+  let perGameAmount = amount / 10;
+  try {
+    perGameAmount = parseInt(searchParams.perGame);
+  } catch (e) {
+    // not ok if perGame wasn't empty.
+    if (searchParams.perGame) {
+      throw e;
+    }
+  }
+  const blockchain = new ChildFrameBlockchainInterface();
+
+  const { gameObject, hostLog } = getBlobSingleton(
+    blockchain,
+    searchParams,
+    lobbyUrl,
+    uniqueId,
+    amount,
+    perGameAmount,
+    iStarted,
+    setState,
+  );
+
+  const setCardSelections = useCallback(
+    (mask: number) => {
+      gameObject?.setCardSelections(mask);
+    },
+    [gameObject],
+  );
+
+  const stopPlaying = useCallback(() => {
+    gameObject?.shutDown();
+  }, [gameObject]);
+
+  useEffect(() => {
+    const subscription = blockchain.getObservable().subscribe({
+      next: (e: BlockchainReport) => {
+        gameObject?.blockNotification(e.peak, e.block, e.report);
+      },
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  });
+
+  const handleMakeMove = useCallback((move: any) => {
+    gameObject?.makeMove(move);
+  }, []);
 
   useEffect(() => {
     const subscription = gameObject.getObservable().subscribe({
@@ -199,17 +241,10 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
       setInitStarted(true);
     }
 
-    // pass wasmconnection into wasmblobwrapper
-    empty().then(async () => {
-      let calpokerHex = await loadCalpoker(fetchHex);
-      await configGameObject(gameObject, iStarted, wasmStateInit, calpokerHex, blockchain, uniqueId, amount);
-    });
-
     return () => {
       subscription.unsubscribe();
     }
   });
-
 
   // Called once at an arbitrary time.
   (window as any).loadWasm = useCallback((chia_gaming_init: any, cg: any) => {
@@ -229,10 +264,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     ourShare,
     theirShare,
     log,
-    gameIdentity,
     gameConnectionState,
-    uniqueWalletConnectionId,
-    realPublicKey,
     isPlayerTurn,
     iStarted,
     playerNumber,

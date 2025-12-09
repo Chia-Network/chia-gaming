@@ -35,6 +35,13 @@ export interface GameConnectionState {
   stateDetail: string[];
 }
 
+export interface SaveData {
+  ourTurn: boolean;
+  turnNumber: number;
+  unrollPuzzleHash: string;
+  gameCradle: any;
+}
+
 export type OpponentMove = [string, string];
 export type GameFinished = [string, number];
 
@@ -98,6 +105,7 @@ export interface WasmConnection {
   init: (print: any) => any;
   create_rng: (seed: string) => number;
   create_game_cradle: (config: any) => number;
+  create_serialized_game: (serialized: any) => number;
   deposit_file: (name: string, data: string) => any;
 
   // Blockchain
@@ -140,6 +148,9 @@ export interface WasmConnection {
   cradle_our_share: (cid: number) => any;
   cradle_their_share: (cid: number) => any;
   idle: (cid: number, callbacks: any) => any;
+  get_identity: (cid: number) => IChiaIdentity;
+  get_game_state_id: (cid: number) => string | undefined;
+  serialize_cradle: (cid: number) => any;
 
   // Misc
   chia_identity: (id: number) => any;
@@ -161,20 +172,17 @@ export class ChiaGame {
   waiting_messages: string[];
   private_key: string;
   cradle: number;
-  have_potato: boolean;
 
   constructor(
     wasm: WasmConnection,
     cradleId: number,
     private_key: string,  //identity: IChiaIdentity,
-    have_potato: boolean,
   ) {
     this.wasm = wasm;
     this.waiting_messages = [];
     this.private_key = private_key;
-    this.have_potato = have_potato;
     this.cradle = cradleId;
-    console.log('constructed', have_potato, "with cradle=", cradleId);
+    console.log('constructed with cradle=', cradleId);
   }
 
   start_games(initiator: boolean, game: any): string[] {
@@ -191,6 +199,14 @@ export class ChiaGame {
 
   their_share() {
     return this.wasm.cradle_their_share(this.cradle);
+  }
+
+  get_game_state_id() {
+    return this.wasm.get_game_state_id(this.cradle);
+  }
+
+  serialize() {
+    return this.wasm.serialize_cradle(this.cradle);
   }
 
   accept(id: string) {
@@ -423,7 +439,8 @@ function compare_card(a: number[], b: number[]): number {
 }
 
 export interface PeerConnectionResult {
-  sendMessage: (input: string) => void;
+  sendMessage: (msgno: number, input: string) => void;
+  hostLog: (msg: string) => void;
 }
 
 export class CalpokerOutcome {

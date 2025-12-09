@@ -60,6 +60,8 @@ function preset_file(name: string) {
   deposit_file(name, fs.readFileSync(rooted(name), 'utf8'));
 }
 
+interface SimpleMessage { msgno: number; msg: string };
+
 class WasmBlobWrapperAdapter {
   blob: WasmBlobWrapper | undefined;
   waiting_messages: Array<string>;
@@ -84,22 +86,22 @@ class WasmBlobWrapperAdapter {
     this.blob.kickSystem(2);
   }
 
-  deliver_message(msg: string) {
-    this.blob?.deliverMessage(msg);
+  deliver_message(msgno: number, msg: string) {
+    this.blob?.deliverMessage(msgno, msg);
   }
 
   handshaked(): boolean {
     return !!this.blob?.isHandshakeDone();
   }
 
-  outbound_messages(): Array<string> {
+  outbound_messages(): Array<SimpleMessage> {
     let w = this.waiting_messages;
     this.waiting_messages = [];
     return w;
   }
 
-  add_outbound_message(msg: string) {
-    this.waiting_messages.push(msg);
+  add_outbound_message(msgno: number, msg: string) {
+    this.waiting_messages.push({ msgno, msg });
   }
 }
 
@@ -159,8 +161,8 @@ async function action_with_messages(
     for (let c = 0; c < 2; c++) {
       let outbound = cradles[c].outbound_messages();
       for (let i = 0; i < outbound.length; i++) {
-        console.log(`delivering message from cradle ${c}: ${outbound[i]}`);
-        cradles[c ^ 1].deliver_message(outbound[i]);
+        console.log(`delivering message from cradle ${c}: ${JSON.stringify(outbound[i])}`);
+        cradles[c ^ 1].deliver_message(outbound[i].msgno, outbound[i].msg);
       }
     }
     await wait(10);
@@ -223,9 +225,10 @@ it(
 
     const cradle1 = new WasmBlobWrapperAdapter();
     let peer_conn1 = {
-      sendMessage: (message: string) => {
-        cradle1.add_outbound_message(message);
+      sendMessage: (msgno: number, message: string) => {
+        cradle1.add_outbound_message(msgno, message);
       },
+      hostLog: (msg: string) => console.log(msg)
     };
     console.log("after peer_conn1");
     let wasm_init1 = new WasmStateInit(doInternalLoadWasm, fetchHex);
@@ -244,9 +247,10 @@ it(
 
     const cradle2 = new WasmBlobWrapperAdapter();
     let peer_conn2 = {
-      sendMessage: (message: string) => {
-        cradle2.add_outbound_message(message);
+      sendMessage: (msgno: number, message: string) => {
+        cradle2.add_outbound_message(msgno, message);
       },
+      hostLog: (msg: string) => console.log(msg)
     };
     let wasm_init2 = new WasmStateInit(doInternalLoadWasm, fetchHex);
     let wasm_blob2 = await initWasmBlobWrapper(

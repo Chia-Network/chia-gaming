@@ -592,6 +592,13 @@ pub fn get_identity(cid: i32) -> Result<JsValue, JsValue> {
     .into_js()
 }
 
+#[wasm_bindgen]
+pub fn get_game_state_id(cid: i32) -> Result<Option<String>, JsValue> {
+    with_game(cid, move |cradle: &mut JsCradle| {
+        Ok(cradle.cradle.get_game_state_id(&mut cradle.allocator, &mut cradle.rng.0)?.map(|h| hex::encode(&h.bytes())))
+    })
+}
+
 // TODO: Resolve Amount(js+rs), (js)number, i32, u64
 #[wasm_bindgen]
 pub fn get_amount(cid: i32) -> Result<JsValue, JsValue> {
