@@ -1,9 +1,8 @@
-import { Observable, NextObserver } from 'rxjs';
+import { Subject, NextObserver } from 'rxjs';
 
 import {
   PeerConnectionResult,
   WasmConnection,
-  IChiaIdentity,
   ChiaGame,
   CalpokerOutcome,
   WatchReport,
@@ -31,16 +30,35 @@ function combine_reports(old_report: WatchReport, new_report: WatchReport) {
   }
 }
 
+const uiSettingSource: Record<string, "value" | "array"> = {
+  uniqueId: "value",
+  messageNumber: "value",
+  remoteNumber: "value",
+  handshakeDone: "value",
+  currentBlock: "value",
+  iStarted: "value",
+  gameIds: "array",
+  storedMessages: "array",
+  messageQueue: "array",
+  myTurn: "value",
+  moveNumber: "value",
+  cardSelections: "value",
+  playerHand: "value",
+  opponentHand: "value",
+  shutdownCalled: "value",
+  finished: "value",
+  perGameAmount: "value",
+  gameOutcome: "value"
+};
+
 export class WasmBlobWrapper {
   amount: number;
   wc: WasmConnection | undefined;
-  sendMessage: (msg: string) => void;
-  rngSeed: string;
-  rngId: number | undefined;
-  identity: IChiaIdentity | undefined;
+  sendMessage: (msgno: number, msg: string) => void;
+  messageNumber: number;
+  remoteNumber: number;
   cradle: ChiaGame | undefined;
   uniqueId: string;
-  calpokerHex: string | undefined;
   handshakeDone: boolean;
   handlingMessage: boolean;
   currentBlock: number;
@@ -51,19 +69,21 @@ export class WasmBlobWrapper {
   myTurn: boolean;
   moveNumber: number;
   qualifyingEvents: number;
-  // loadWasmEvent: any | undefined;
   cardSelections: number;
   playerHand: number[][];
   opponentHand: number[][];
   shutdownCalled: boolean;
   finished: boolean;
+  reloading: boolean;
   perGameAmount: number;
   gameOutcome: CalpokerOutcome | undefined;
   fetchHex: (path: string) => Promise<string>;
   doInternalLoadWasm: () => Promise<ArrayBuffer>;
-  rxjsMessageSingleon: Observable<any>;
+  rxjsMessageSingleton: Subject<any>;
   rxjsEmitter: NextObserver<any> | undefined;
   blockchain: InternalBlockchainInterface;
+  uiUpdates: any;
+  currentSave: string | undefined;
 
   constructor(
     blockchain: InternalBlockchainInterface,
@@ -77,8 +97,9 @@ export class WasmBlobWrapper {
   ) {
     const { sendMessage } = peer_conn;
     this.uniqueId = uniqueId;
-    this.rngSeed = this.uniqueId.substr(0, 8);
-    this.rngId = undefined;
+
+    this.messageNumber = 1;
+    this.remoteNumber = 0;
     this.sendMessage = sendMessage;
     this.amount = amount;
     this.currentBlock = 0;
@@ -95,15 +116,30 @@ export class WasmBlobWrapper {
     this.opponentHand = [];
     this.shutdownCalled = false;
     this.finished = false;
+    this.reloading = false;
     this.perGameAmount = perGameAmount;
     this.qualifyingEvents = 0;
     this.fetchHex = fetchHex;
     this.doInternalLoadWasm = doInternalLoadWasm;
     this.blockchain = blockchain;
-    this.rxjsMessageSingleon = new Observable<any>((emitter) => {
-      this.rxjsEmitter = emitter;
-    });
+    this.uiUpdates = {};
+    this.rxjsMessageSingleton = new Subject<any>();
+    this.rxjsEmitter = {
+      next: (settings: any) => {
+        Object.keys(settings).forEach((k) => {
+          this.uiUpdates[k] = settings[k];
+          delete this.uiUpdates['setSavedGame'];
+        });
+        this.rxjsMessageSingleton.next(settings);
+      }
+    };
   }
+
+  setReloading() { this.reloading = true; }
+
+  systemState(): number { return this.qualifyingEvents; }
+
+  getWasmConnection(): WasmConnection | undefined { return this.wc; }
 
   reportError(err: any) {
     // TODO: Use this method to report all errors
@@ -112,11 +148,20 @@ export class WasmBlobWrapper {
     });
   }
 
-  setGameCradle(cradle: ChiaGame) {
-    this.cradle = cradle;
-    this.storedMessages.forEach((m) => {
+  spillStoredMessages() {
+    if (this.qualifyingEvents != 15 || !this.cradle || this.reloading) {
+      return;
+    }
+    const storedMessages = this.storedMessages;
+    this.storedMessages = [];
+    storedMessages.forEach((m) => {
       this.cradle?.deliver_message(m);
     });
+  }
+
+  setGameCradle(cradle: ChiaGame) {
+    this.cradle = cradle;
+    this.spillStoredMessages();
   }
 
   activateSpend(coin: string) {
@@ -136,7 +181,7 @@ export class WasmBlobWrapper {
   }
 
   getObservable() {
-    return this.rxjsMessageSingleon;
+    return this.rxjsMessageSingleton;
   }
 
   kickSystem(flags: number) {
@@ -146,42 +191,8 @@ export class WasmBlobWrapper {
     this.qualifyingEvents |= flags;
     if (this.qualifyingEvents == 7) {
       this.qualifyingEvents |= 8;
-      // this.pushEvent(this.loadWasmEvent);
+      this.spillStoredMessages();
     }
-  }
-
-  loadPresets(presetFiles: string[]) {
-    const presetFetches = presetFiles.map((partialUrl) => {
-      return this.fetchHex(partialUrl).then((text) => {
-        return {
-          name: partialUrl,
-          content: text,
-        };
-      });
-    });
-    return Promise.all(presetFetches).then((presets) => {
-      presets.forEach((nameAndContent) => {
-        console.log(
-          `preset load ${nameAndContent.name} ${nameAndContent.content.length}`,
-        );
-        this.wc?.deposit_file(nameAndContent.name, nameAndContent.content);
-      });
-      const rngId = this.wc?.create_rng(this.rngSeed);
-      if (rngId === undefined) {
-        throw("Unvalid rngId");
-      }
-      this.rngId = rngId;
-      const newGameIdentity = this.wc?.chia_identity(rngId);
-      this.identity = newGameIdentity;
-      //this.pushEvent({ loadCalpoker: true });
-      return {
-        setGameConnectionState: {
-          stateIdentifier: 'starting',
-          stateDetail: ['loaded preset files'],
-        },
-        setGameIdentity: newGameIdentity,
-      };
-    });
   }
 
   internalKickIdle(): any {
@@ -208,7 +219,7 @@ export class WasmBlobWrapper {
     //console.log('handleOneMessage', Object.keys(msg));
 
     if (msg.deliverMessage) {
-      return this.internalDeliverMessage(msg.deliverMessage);
+      return this.internalDeliverMessage(msg.deliverMessage.msgno, msg.deliverMessage.msg);
     } else if (msg.move) {
       return this.internalMakeMove(msg.move);
     } else if (msg.takeOpponentMove) {
@@ -358,16 +369,19 @@ export class WasmBlobWrapper {
     return empty();
   }
 
-  deliverMessage(msg: string) {
-    this.pushEvent({ deliverMessage: msg });
+  deliverMessage(msgno: number, msg: string) {
+    this.pushEvent({ deliverMessage: { msg, msgno } });
   }
 
-  internalDeliverMessage(msg: string): any {
-    if (!this.wc) { throw new Error("this.wc is falsey") }
-    if (!this.cradle) {
+  internalDeliverMessage(msgno: number, msg: string): any {
+    if (!this.wc || !this.cradle || this.qualifyingEvents != 15 || this.reloading) {
       this.storedMessages.push(msg);
       return empty();
     }
+    if (this.remoteNumber >= msgno) {
+      return empty();
+    }
+    this.remoteNumber = msgno;
     console.log('deliver message', msg);
     this.cradle?.deliver_message(msg);
     return empty();
@@ -401,8 +415,31 @@ export class WasmBlobWrapper {
   idle(): any {
     const result: any = {};
 
+    this.reloading = false;
+    this.spillStoredMessages();
+
     result.setOurShare = this.cradle?.our_share()?.amt;
     result.setTheirShare = this.cradle?.their_share()?.amt;
+
+    // Create the save before we do any post-action items such as
+    // sending packets so we can send them again when we deserialize.
+    const newGameId = this.cradle?.get_game_state_id();
+    if (newGameId !== this.currentSave) {
+      this.currentSave = newGameId;
+      const saveData = this.cradle?.serialize();
+      saveData.id = newGameId;
+      const saveDataWrapper: any = {};
+      Object.keys(uiSettingSource).forEach((k) => {
+        if (uiSettingSource[k] === "array") {
+          saveDataWrapper[k] = [... (this as any)[k]];
+        } else {
+          saveDataWrapper[k] = (this as any)[k];
+        }
+      });
+      saveData.wrapper = saveDataWrapper;
+      saveData.ui = this.uiUpdates;
+      result.setSavedGame = saveData;
+    }
 
     const idle = this.cradle?.idle({
       // Local ui callbacks.
@@ -508,7 +545,7 @@ export class WasmBlobWrapper {
     console.log('idle2', idle.incoming_messages);
     for (const message of idle.outbound_messages) {
       console.log('send message to remote');
-      this.sendMessage(message);
+      this.sendMessage(this.messageNumber++, message);
     }
 
     for (const tx of idle.outbound_transactions) {
@@ -529,6 +566,15 @@ export class WasmBlobWrapper {
     });
 
     return result;
+  }
+
+  takeWrapperSerialization(wrapper: any) {
+    const keys = Object.keys(wrapper);
+    keys.forEach((k) => {
+      if (uiSettingSource[k]) {
+        (this as any)[k] = wrapper[k];
+      }
+    });
   }
 
   generateEntropy() {
