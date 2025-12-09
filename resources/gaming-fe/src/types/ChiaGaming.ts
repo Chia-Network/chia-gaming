@@ -426,16 +426,13 @@ export function card_color(
 }
 
 function compare_card(a: number[], b: number[]): number {
-  if (a.length === 0 && b.length === 0) {
-    return 0;
+  const aval = a[0];
+  const bval = b[0];
+  const rankdiff = aval - bval;
+  if (rankdiff === 0) {
+    return a[1] - b[1];
   }
-  if (a[0] < b[0]) {
-    return -1;
-  }
-  if (a[0] > b[0]) {
-    return 1;
-  }
-  return compare_card(a.slice(1), b.slice(1));
+  return rankdiff;
 }
 
 export interface PeerConnectionResult {
@@ -487,11 +484,11 @@ export class CalpokerOutcome {
     let raw_win_direction = result_list[5][0] === 255 ? -1 : result_list[5][0];
     if (iStarted) {
       raw_win_direction *= -1;
-      this.alice_discards = myDiscards;
-      this.bob_discards = result_list[0];
-    } else {
       this.alice_discards = result_list[0];
       this.bob_discards = myDiscards;
+    } else {
+      this.alice_discards = myDiscards;
+      this.bob_discards = result_list[0];
     }
 
     this.win_direction = raw_win_direction;
@@ -505,11 +502,11 @@ export class CalpokerOutcome {
       this.my_win_outcome = iStarted ? 'lose' : 'win';
     }
 
-    const [alice_for_bob, alice_for_alice] = select_cards_using_bits(
+    const [alice_for_alice, alice_for_bob] = select_cards_using_bits(
       this.alice_cards,
       this.alice_discards,
     );
-    const [bob_for_alice, bob_for_bob] = select_cards_using_bits(
+    const [bob_for_bob, bob_for_alice] = select_cards_using_bits(
       this.bob_cards,
       this.bob_discards,
     );

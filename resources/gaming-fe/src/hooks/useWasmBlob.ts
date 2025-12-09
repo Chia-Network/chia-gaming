@@ -99,17 +99,18 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
   const recognizeOutcome = (outcome: CalpokerOutcome | undefined) => {
     setOutcome(outcome);
     if (outcome) {
+      const iAmAlice = !iStarted;
       console.log('recognizeOutcome', outcome);
-      const mySelects = !iStarted ? outcome.alice_selects : outcome.bob_selects;
-      const theirSelects = !iStarted ? outcome.bob_selects : outcome.alice_selects;
-      const myFinalHand = !iStarted ? outcome.alice_final_hand : outcome.bob_final_hand;
-      const opponentFinalHand = !iStarted ? outcome.bob_final_hand : outcome.alice_final_hand;
-      const myCards = !iStarted ? outcome.alice_used_cards : outcome.bob_used_cards;
-      const myValue = !iStarted
+      const mySelects = iAmAlice ? outcome.alice_selects : outcome.bob_selects;
+      const theirSelects = iAmAlice ? outcome.bob_selects : outcome.alice_selects;
+      const myFinalHand = iAmAlice ? outcome.alice_final_hand : outcome.bob_final_hand;
+      const opponentFinalHand = iAmAlice ? outcome.bob_final_hand : outcome.alice_final_hand;
+      const myCards = iAmAlice ? outcome.alice_used_cards : outcome.bob_used_cards;
+      const myValue = iAmAlice
         ? outcome.alice_hand_value
         : outcome.bob_hand_value;
-      const theirCards = !iStarted ? outcome.bob_used_cards : outcome.alice_used_cards;
-      const theirValue = !iStarted
+      const theirCards = iAmAlice ? outcome.bob_used_cards : outcome.alice_used_cards;
+      const theirValue = iAmAlice
         ? outcome.bob_hand_value
         : outcome.alice_hand_value;
       const myHandDescription = handValueToDescription(myValue, myCards);
@@ -126,8 +127,8 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
         opponentFinalHand,
         mySelects,
         opponentSelects: theirSelects,
-        myPicks: iStarted ? outcome.alice_discards : outcome.bob_discards,
-        opponentPicks: iStarted ? outcome.bob_discards : outcome.alice_discards
+        myPicks: iAmAlice ? outcome.alice_discards : outcome.bob_discards,
+        opponentPicks: iAmAlice ? outcome.bob_discards : outcome.alice_discards
       };
       setLog([newLogObject, ...log]);
     }
