@@ -593,7 +593,7 @@ export class WasmBlobWrapper {
     return this.handshakeDone;
   }
 
-  internalMakeMove(move: any): any {
+  internalMakeMove(_move: any): any {
     if (!this.handshakeDone || !this.wc || !this.cradle) {
       return empty();
     }

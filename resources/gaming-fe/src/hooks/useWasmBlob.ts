@@ -90,7 +90,10 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
 
   const setSavedGame = (game: any) => {
     let serialized = { game, searchParams, id: game.id, addressData, url: window.location.toString() };
-    saveGame(serialized);
+    const saveResult = saveGame(serialized);
+    if (saveResult) {
+      setError(`${saveResult[0]}: ${saveResult[1].toString()}`);
+    }
   };
 
   const recognizeOutcome = (outcome: CalpokerOutcome | undefined) => {
@@ -137,6 +140,12 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     setGameConnectionState(cs);
   }
 
+  const setError = (e: any) => {
+    if (e !== undefined && error === undefined) {
+      setRealError(e);
+    }
+  };
+
   const settable: any = {
     setGameConnectionState: recognizeGameConnectionState,
     setPlayerHand,
@@ -149,6 +158,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     setOurShare,
     setTheirShare,
     setLastOutcome,
+    setError,
   };
 
   function setState(state: any): void {
@@ -178,12 +188,6 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
       throw e;
     }
   }
-  const setError = (e: any) => {
-    if (e !== undefined && error === undefined) {
-      setRealError(e);
-    }
-  };
-
   const blockchain = new ChildFrameBlockchainInterface();
 
   const { gameObject, hostLog } = getBlobSingleton(

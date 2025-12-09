@@ -18,25 +18,24 @@ export function startNewSession() {
   setSaveList([]);
 }
 
-export function saveGame(g: any) {
-  const saveList = getSaveList();
-  saveList.unshift(g.id);
-  localStorage.setItem(`save-${g.id}`, JSON.stringify(g));
-  setSaveList(saveList);
+export function saveGame(g: any): [string, any] | undefined {
+  try {
+    const saveList = getSaveList();
+    saveList.unshift(g.id);
+    localStorage.setItem(`save-${g.id}`, JSON.stringify(g));
+    // We setSaveList last so the save is only included if everything worked.
+    setSaveList(saveList);
+    return undefined;
+  } catch (e) {
+    return ["Error saving game turn", e];
+  }
 }
 
 // Find a compatible save from the set of saves we have if it exists.
 export function findMatchingGame(peerSaves: string[]): string | undefined {
+  const peerSet = new Set(peerSaves);
   const mySaves = getSaveList();
-  for (let p of peerSaves) {
-    for (let m of mySaves) {
-      if (m === p) {
-        return m;
-      }
-    }
-  }
-
-  return undefined;
+  return mySaves.find(save => peerSet.has(save));
 }
 
 export function loadSave(saveId: string): any | undefined {
