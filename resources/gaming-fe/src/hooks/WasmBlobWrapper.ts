@@ -765,10 +765,12 @@ export class WasmBlobWrapper {
         }
       }
     }
+    if (!(this.qualifyingEvents & 4)) {
+      this.setGameConnectionState('starting', ['have block notification'], [
+        { id: "blockchain", long_name: "Blockchain Interface", initialized: true }
+      ]);
+    }
     this.kickSystem(4);
-    this.setGameConnectionState('starting', ['have block notification'], [
-      { id: "blockchain", long_name: "Blockchain Interface", initialized: true }
-    ]);
     this.pushEvent({
       takeBlockData: {
         peak: peak,
