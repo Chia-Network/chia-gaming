@@ -21,7 +21,7 @@ export interface BlockSpends {
   spends: unknown[];
 }
 
-export function get_block_spends(header_hash: string) {
+export function get_current_peak() {
   return fetch(
     `http://localhost:5800/block_spends?header_hash=${header_hash}`,
     { method: 'POST' },
@@ -29,6 +29,18 @@ export function get_block_spends(header_hash: string) {
     .then((res: Response) => res.json())
     .then((value: unknown) => {
       return value as BlockSpends;
+    });
+}
+
+// https://www.coinset.org/docs/usage/full--node/get_blockchain_state
+export function get_block_spends(header_hash: string) {
+  return fetch(
+    `http://localhost:5800/get_blockchain_state`,
+    { method: 'POST' },
+  )
+    .then((res: Response) => res.json())
+    .then((value: unknown) => {
+      return value;
     });
 }
 
