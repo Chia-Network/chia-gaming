@@ -87,12 +87,12 @@ export const getGameSocket = (
   const beaconId = uuidv4();
   let receivedBeaconId: string | undefined = undefined;
   const beacon = setInterval(() => {
-    socketRef?.emit('peer', { iStarted, beaconId });
+    socketRef?.emit('peer', { iStarted, beaconId, token });
   }, 500);
 
   // When we receive a message from our peer, we know we're connected.
   socket?.on('peer', (msg) => {
-    if (msg.iStarted == iStarted) {
+    if (msg.iStarted == iStarted || msg.token !== token) {
       return;
     }
 
@@ -104,13 +104,13 @@ export const getGameSocket = (
     }
     if (msg.beaconId != receivedBeaconId) {
       receivedBeaconId = msg.beaconId;
-      socketRef?.emit('peer', { iStarted, beaconId });
-      socketRef?.emit('saves', { iStarted, saves: saves() });
+      socketRef?.emit('peer', { iStarted, beaconId, token });
+      socketRef?.emit('saves', { iStarted, token, saves: saves() });
     }
   });
 
   socket?.on('saves', (msg) => {
-    if (msg.iStarted != iStarted) {
+    if (msg.iStarted != iStarted || msg.token !== token) {
       setSocketEnabled(msg.saves);
     }
   });
