@@ -7,7 +7,12 @@ export function getSaveList(): string[] {
     return result.split(',').filter((s) => {
       const saveMillisecondDateStr = localStorage.getItem(`date-${s}`);
       const saveMillisecondDate = saveMillisecondDateStr ? parseInt(saveMillisecondDateStr) : undefined;
-      return !saveMillisecondDate || (saveMillisecondDate < currentTime - STALE_SAVE_TIME_MS);
+      const saveOk = !saveMillisecondDate || (saveMillisecondDate < currentTime - STALE_SAVE_TIME_MS);
+      if (!saveOk) {
+        localStorage.removeItem(`save-${s}`);
+        localStorage.removeItem(`date-${s}`);
+      }
+      return saveOk;
     });
   }
   return [];
