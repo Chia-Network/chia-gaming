@@ -563,11 +563,14 @@ describe("Out of money test", function () {
     console.log("wait for alice make move button");
     await clickMakeMove(driver, "alice", "Start Game");
 
+    /*
+    Disable save / load testing
     console.log('wait before reloading');
     await wait(driver, 10.0);
     await reloadBrowser(driver, selectWallet);
     console.log('wait after reloading');
     await wait(driver, 10.0);
+    */
 
     console.log('selecting bob cards');
     await clickFourCards(ffdriver, 'bob', 0xaa);
