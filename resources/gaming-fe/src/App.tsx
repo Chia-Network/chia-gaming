@@ -178,10 +178,27 @@ const App = () => {
     </div>
   );
 
+const pre_lobby_status = (
+  <div
+    /*className="flex flex-col relative w-screen h-screen"*/
+    className="w-full flex-1 border-0 m-0 p-0"
+    style={{
+        backgroundColor: 'var(--color-canvas-bg-subtle)',
+        display: 'flex',          // Enables flexbox
+        alignItems: 'center',     // Centers children vertically
+        justifyContent: 'center', // Optional: centers children horizontally as well
+        height: '100vh',          // Optional: ensures the container takes up the full viewport height
+      }}
+  >
+  Waiting for peak from coinset.org ...
+  </div>
+);
+
   if (!havePeak) {
     return (
       <div className="flex flex-col relative w-screen h-screen" style={{ backgroundColor: 'var(--color-canvas-bg-subtle)' }}>
         {wcHeading}
+        {pre_lobby_status}
       </div>
     );
   }
