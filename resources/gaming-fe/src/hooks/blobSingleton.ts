@@ -105,6 +105,7 @@ export function getBlobSingleton(
 
   let signaledSave: string | undefined = undefined;
   console.log('getGameSocket');
+  const wasmStateInit = new WasmStateInit(doInternalLoadWasm, fetchHex);
   const peerconn = getGameSocket(
     searchParams,
     lobbyUrl,
@@ -139,7 +140,6 @@ export function getBlobSingleton(
         );
       };
       const matchingSave = findMatchingGame(saves);
-      const wasmStateInit = new WasmStateInit(doInternalLoadWasm, fetchHex);
 
       blobSingleton.kickSystem(2);
       if (matchingSave) {
