@@ -17,14 +17,9 @@ import {
 
 // Utils
 import {
-  calculateMovingCards,
-  compareRanks,
-  evaluateHand,
   formatHandDescription,
-  getCombinations,
 } from './utils';
 import { HandDisplay, MovingCard } from './components';
-import { CalpokerOutcome } from '../../types/ChiaGaming';
 import { CalpokerOutcome } from '../../types/ChiaGaming';
 import { SuitName } from '../../types/californiaPoker/CardValueSuit';
 
