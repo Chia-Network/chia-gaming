@@ -61,6 +61,7 @@ const GameRedirectPopup = ({
                         <Button
                             variant={"solid"}
                             color={'secondary'}
+                            data-testid="accept"
                             onClick={onAccept}
                         >
                             Accept & Join

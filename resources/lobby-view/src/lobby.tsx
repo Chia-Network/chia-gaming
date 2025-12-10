@@ -44,7 +44,6 @@ const LobbyScreen = () => {
   const [wagerValidationError, setWagerValidationError] = useState('');
   const [perHandInput, setPerHandInput] = useState('');
   const [editingAlias, setEditingAlias] = useState(false);
-  const [gotoUrl, setGotoUrl] = useState('');
   const [urlDialogOpen, setUrlDialogOpen] = useState(false);
   const [secureUrl, setSecureUrl] = useState('');
   // UI state for split handle
@@ -156,7 +155,6 @@ const LobbyScreen = () => {
     } catch (err) {
       console.error('Failed to copy:', err);
     }
-    setGotoUrl(secureUrl);
     setUrlDialogOpen(false);
     closeDialog();
   };
@@ -205,7 +203,7 @@ const LobbyScreen = () => {
 
       {/* Hidden automation URL */}
       <div className="absolute opacity-0" aria-label="partner-target-url">
-        {gotoUrl}
+        {secureUrl}
       </div>
 
       {/* Main Content */}

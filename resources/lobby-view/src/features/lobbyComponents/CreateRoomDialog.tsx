@@ -47,6 +47,7 @@ const CreateRoomDialog: React.FC<CreateRoomDialogProps> = ({
           <label className="block mb-1 font-medium">Game</label>
           <select
             value={gameChoice}
+	    data-testid="game-id"
             onChange={(e) => setGameChoice(e.target.value)}
             className="w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded"
           >
@@ -68,6 +69,7 @@ const CreateRoomDialog: React.FC<CreateRoomDialogProps> = ({
           <label className="block mb-1 font-medium">Wager (mojo)</label>
           <input
             type="number"
+	    data-testid="game-wager"
             value={wagerInput}
             onChange={(e) => setWagerInput(e.target.value)}
             placeholder="Enter wager"
@@ -80,6 +82,7 @@ const CreateRoomDialog: React.FC<CreateRoomDialogProps> = ({
           <label className="block mb-1 font-medium">Each hand (mojo)</label>
           <input
             type="number"
+	    data-testid="per-hand"
             value={perHandInput}
             onChange={(e) => setPerHandInput(e.target.value)}
             placeholder="Enter per hand"

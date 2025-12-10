@@ -48,6 +48,7 @@ const ShareRoomDialog: React.FC<ShareRoomDialogProps> = ({
           </span>
           <button
             onClick={handleCopyAndClose}
+	    data-testid="ContentCopyIcon"
             className="p-1 text-secondary-solid hover:text-secondary-solid-hover rounded"
           >
             <Copy className="w-4 h-4 font-secondary-bg-active" />
