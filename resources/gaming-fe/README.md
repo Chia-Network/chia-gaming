@@ -38,3 +38,5 @@ Go to http://localhost:3000 in both.
 Enter a wager amount and find an opponent:
 
 In both windows, enter a wager amount (e.g., 50) and click "Find an opponent".
+
+demo
