@@ -96,10 +96,7 @@ function HandDisplay(props: HandDisplayProps) {
   const isPlayer = area === 'player';
 
   // Only show the title, not the hand description
-  let displayText = title;
-  if (gameState === GAME_STATES.FINAL && bestHand?.cards) {
-    displayText = formatHandDescription(bestHand.rank);
-  }
+ 
   // We'll render cards in a responsive grid (2 -> 4 -> 6 -> 8 columns)
 
   return (
@@ -108,11 +105,7 @@ function HandDisplay(props: HandDisplayProps) {
       className='p-1 rounded-lg max-w-full mx-auto gap-8 mb-2 relative text-canvas-text'
       data-area={area}
     >
-      {displayText && (
-        <h3 className='text-sm font-bold py-2 text-center text-canvas-solid'>
-          {displayText}
-        </h3>
-      )}
+      
 
       <div className='relative'>
         {gameState === GAME_STATES.FINAL && (isWinner || isTie) && (

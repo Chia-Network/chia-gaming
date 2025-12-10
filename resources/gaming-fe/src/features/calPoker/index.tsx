@@ -100,34 +100,12 @@ const Calpoker: React.FC<CalpokerProps> = ({
       : '';
 
   return (
-    <Box
-      p={{ xs: 2, sm: 3, md: 4 }}
-      sx={{
-        bgcolor: 'var(--canvas-bg-subtle)',
-        color: 'var(--canvas-text)',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        minHeight: '100%',
-      }}
+    <div
+      className='relative gap-4 flex min-h-screen w-full flex-col justify-center items-center bg-canvas-bg-subtle px-4 text-canvas-text sm:px-6 md:px-8'
     >
       {/* Header */}
-      <Box
-        width='100%'
-        display='flex'
-        flexDirection={{ xs: 'column', sm: 'row' }}
-        justifyContent='space-between'
-        alignItems='center'
-        marginY={3}
-      >
-        <Typography
-          variant={isMobile ? 'h5' : 'h4'}
-          sx={{
-            fontWeight: 700,
-            color: 'var(--canvas-text-contrast)',
-            textAlign: { xs: 'center', sm: 'left' },
-          }}
-        >
+      <div className='flex w-full flex-col items-center pt-4 justify-between gap-4 sm:flex-row sm:gap-6'>
+        <h1 className='w-full text-3xl font-bold text-canvas-text-contrast sm:text-left sm:text-4xl'>
           California Poker
         </Typography>
 
@@ -185,14 +163,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
           }}
         >
           {/* MAIN GAME AREA */}
-          <Box
-            sx={{
-              flex: { xs: 'unset', md: '3 1 0%' },
-              height: { xs: 'auto', md: '100%' },
-              overflow: 'auto',
-              minHeight: { md: 0 },
-            }}
-          >
+          <div className='flex-1 overflow-auto lg:flex-[18_1_0%] lg:min-h-0'>
             <CaliforniaPoker
               playerNumber={playerNumber}
               isPlayerTurn={isPlayerTurn}
@@ -212,16 +183,8 @@ const Calpoker: React.FC<CalpokerProps> = ({
           </Box>
 
           {/* GAME LOG */}
-          <Box
-            sx={{
-              flex: { xs: 'unset', md: '1 1 0%' },
-              height: { xs: 'auto', md: '100%' },
-              overflowY: 'auto',
-              minHeight: { md: 0 },
-              bgcolor: 'var(--canvas-bg)',
-            }}
-          >
-            <Box sx={{ height: '100%' }}>
+          <div className='bg-canvas-bg lg:flex-[7_1_0%] lg:min-h-0 lg:overflow-y-auto'>
+            <div className='h-full'>
               <GameLog log={log} />
             </Box>
           </Box>

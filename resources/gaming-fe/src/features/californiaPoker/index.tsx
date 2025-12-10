@@ -7,7 +7,7 @@ import {
   MovingCardData,
   SwappingCards,
 } from '../../types/californiaPoker';
-import { Button } from '../../components/button';
+import { Button, } from '../../components/button';
 // Constants
 import {
   ANIMATION_DELAY,
@@ -27,12 +27,14 @@ import {
 import { HandDisplay, MovingCard } from './components';
 import { CalpokerOutcome } from '../../types/ChiaGaming';
 import { SuitName } from '../../types/californiaPoker/CardValueSuit';
-
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { WalletIcon } from 'lucide-react';
+import { makeDescription } from './utils/MakeDescription';
+
 
 function translateTopline(topline: string | undefined): string | null {
   if (!topline) return null;
-  const res = {'win':'player', 'lose':'ai'}[topline];
+  const res = { 'win': 'player', 'lose': 'ai' }[topline];
   return res ? res : 'tie';
 }
 
@@ -75,7 +77,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const [rememberedOutcome, setRememberedOutcome] = useState<CalpokerOutcome | undefined>(undefined);
   const [rememberedCards, setRememberedCards] = useState<CardValueSuit[][]>([playerCards, opponentCards]);
   const [rememberedCardSelections, setRememberedCardSelections] = useState(0);
-
+  const [playerDisplayText, setPlayerDisplayText] = useState<string>('');
+  const [opponentDisplayText, setOpponentDisplayText] = useState<string>('');
   const cvsFromCard: (card: number[], index: number) => CardValueSuit = ([rank, suit], index) => ({
     rank,
     suit: suitMap[suit],
@@ -133,15 +136,18 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     console.log('starting again');
     doHandleMakeMove();
     setGameState(GAME_STATES.SELECTING);
-    setRememberedCards([[],[]]);
+    setRememberedCards([[], []]);
     setWinner(null);
     setRememberedOutcome(undefined);
     setMovingCards([]);
     setCardSelections(0);
     setPlayerSelected([]);
+    setPlayerBestHand(undefined);
+    setAiBestHand(undefined);
     setShowSwapAnimation(false);
     setSwappingCards({ player: [], ai: [] });
   };
+
   const toggleCardSelection = (cardIndex: number) => {
     if (gameState !== GAME_STATES.SELECTING) return;
 
@@ -172,10 +178,10 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       ? false
       : moveNumber === 1
         ? !(
-            (gameState === GAME_STATES.SELECTING &&
-              playerSelected.length === 4) ||
-            gameState === GAME_STATES.SWAPPING
-          )
+          (gameState === GAME_STATES.SELECTING &&
+            playerSelected.length === 4) ||
+          gameState === GAME_STATES.SWAPPING
+        )
         : true);
 
   const isActive = !isDisabled; // single source of truth
@@ -317,25 +323,13 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     return movingCardData;
   };
 
+
+
   const swapCards = (rememberedOutcome: CalpokerOutcome) => {
     const liveWinner = translateTopline(rememberedOutcome.my_win_outcome);
     console.log('swapping, outcome', liveWinner, rememberedOutcome);
     setWinner(liveWinner);
     setGameState(GAME_STATES.SWAPPING);
-
-    // Map the correct hands depending on perspective
-    const playerOriginal = isPlayerAlice
-      ? rememberedOutcome.alice_cards
-      : rememberedOutcome.bob_cards;
-    const playerFinal = isPlayerAlice
-      ? rememberedOutcome.alice_final_hand
-      : rememberedOutcome.bob_final_hand;
-    const opponentOriginal = isPlayerAlice
-      ? rememberedOutcome.bob_cards
-      : rememberedOutcome.alice_cards;
-    const opponentFinal = isPlayerAlice
-      ? rememberedOutcome.bob_final_hand
-      : rememberedOutcome.alice_final_hand;
 
     const playerSelected = isPlayerAlice ? rememberedOutcome.alice_discards : rememberedOutcome.bob_discards;
     const aiSelected = isPlayerAlice ? rememberedOutcome.bob_discards : rememberedOutcome.alice_discards;
@@ -365,9 +359,60 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     setShowSwapAnimation(true);
 
     setTimeout(() => {
-      console.log('done swapping');
+      // Copy current hands
+      const newPlayer = [...playerCards];
+      const newOpponent = [...opponentCards];
+
+      // Apply exact card swaps based on animation index mapping
+      for (let i = 0; i < playerSwapIndices.length; i++) {
+        const pIndex = playerSwapIndices[i];
+        const aiIndex = aiSwapIndices[i];
+
+        // Player gives card to AI
+        newOpponent[aiIndex] = playerCards[pIndex];
+
+        // AI gives card to Player
+        newPlayer[pIndex] = opponentCards[aiIndex];
+      }
+
+      // Update UI
+      setPlayerCards(newPlayer);
+      setOpponentCards(newOpponent);
+      setPlayerSelected([]);
+
+      // --- Best hands ---
+      const lastLog = log[0];
+
+      // Convert hand arrays into CardValueSuit objects
+      const playerBestCards: CardValueSuit[] = lastLog.myHand.map(
+        ([rank, suit], idx) => ({
+          rank,
+          suit: suitMap[suit],
+          originalIndex: idx,
+        })
+      );
+
+      const opponentBestCards: CardValueSuit[] = lastLog.opponentHand.map(
+        ([rank, suit], idx) => ({
+          rank,
+          suit: suitMap[suit],
+          originalIndex: idx,
+        })
+      );
+
+      setPlayerBestHand({ cards: playerBestCards, rank: { name: '', score: 0, tiebreakers: [] } });
+      setAiBestHand({ cards: opponentBestCards, rank: { name: '', score: 0, tiebreakers: [] } });
+
+
+      console.log('done swapping', log.length - 1, log, newPlayer, newOpponent, playerBestCards, opponentBestCards);
+
+      setMovingCards([]);
+      setShowSwapAnimation(false);
       setGameState(GAME_STATES.FINAL);
+      setPlayerDisplayText(makeDescription(log[0].myHandDescription));
+      setOpponentDisplayText(makeDescription(log[0].opponentHandDescription));
     }, SWAP_ANIMATION_DURATION);
+
   };
 
   useEffect(() => {
@@ -389,31 +434,50 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         )}
 
         {gameState !== GAME_STATES.INITIAL && (
-          <div className='h-full flex flex-col overflow-y-auto'>
-            <div className='flex-1'>
-              {/* OPPONENT PANEL */}
-              <div className='text-center lg:gap-0 gap-4 relative h-[45%] mb-4 border border-canvas-line bg-canvas-bg shadow-md rounded-lg'>
-                <div className='w-full relative'>
-                  <div className='absolute left-1/2 top-5 transform -translate-x-1/2'>
-                    <h3 className='text-[16px] font-bold text-center text-canvas-solid'>
-                      Opponent hand
-                    </h3>
-                  </div>
+          <div className='flex flex-col gap-4 h-full flex-1 min-h-0'>
 
-                  {/* Opponent balance */}
-                  <div className='flex justify-end'>
-                    <div className='flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-1.5 py-1 shadow-sm'>
-                      <span className='text-canvas-solid'>
-                        <WalletIcon size='19.6px' />
-                      </span>
-                      <span className='ml-2 font-bold text-sm text-canvas-text-contrast'>
-                        {opponentBalance}
-                      </span>
-                    </div>
+            <Card className='flex flex-col py-0 min-h-[260px] w-full flex-1 lg:flex-[0_0_43%] border border-canvas-line shadow-md overflow-hidden'>
+              {/* Make Card relative so absolute div is positioned relative to it */}
+              <CardHeader className='relative p-0 w-full flex justify-center items-center'>
+                <CardTitle className="w-full pl-4 flex items-center gap-2">
+
+                  {/* Opponent Title */}
+                  <span className="font-semibold text-alert-text">
+                    Opponent Hand
+                  </span>
+
+                  {/* Dull Hand Description */}
+                  {opponentDisplayText && (
+                    <span className="text-canvas-text">
+                      ({opponentDisplayText})
+                    </span>
+                  )}
+
+                  {/* Winner / Lost Badge */}
+                  {winner && !showSwapAnimation && (
+                    <span
+                      className={`px-2 py-0.5 rounded-md text-xs font-medium ${
+                        winner === "ai"
+                          ? "bg-success-solid text-success-on-success"
+                          : "bg-alert-solid text-alert-on-alert"
+                      }`}
+                    >
+                      {winner === "ai" ? "Winner" : "Loser"}
+                    </span>
+                  )}
+
+                </CardTitle>
+
+
+                <div className='w-full flex justify-end'>
+                  <div className=' flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-2 py-1 shadow-sm bg-canvas-bg'>
+                    <WalletIcon size='19.6px' />
+                    <span className='ml-2 font-bold text-sm text-canvas-text-contrast'>{playerBalance}</span>
                   </div>
                 </div>
-
-                <div className='flex-1 h-full lg:mt-0 mt-4 flex items-center justify-center p-2'>
+              </CardHeader>
+              <CardContent>
+                <div className='flex-1 h-full mt-4 flex items-center justify-center p-2'>
                   <HandDisplay
                     title=''
                     cards={opponentCards.length ? opponentCards : rememberedCards[1]}
@@ -429,31 +493,52 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                     selectedCards={[]}
                   />
                 </div>
-              </div>
+              </CardContent>
+            </Card>
 
-              {/* PLAYER PANEL */}
-              <div className='text-center relative lg:gap-0 gap-4 h-[45%] bg-canvas-bg border border-canvas-line shadow-md rounded-lg'>
-                <div className='w-full relative'>
-                  <div className='absolute left-1/2 top-5 transform -translate-x-1/2'>
-                    <h3 className='text-[16px] font-bold text-center text-canvas-solid'>
-                      Your hand
-                    </h3>
-                  </div>
 
-                  {/* Player balance */}
-                  <div className='flex justify-end'>
-                    <div className='flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-1.5 py-1 bg-canvas-bg shadow-sm'>
-                      <span className='text-canvas-solid'>
-                        <WalletIcon size='19.6px' />
-                      </span>
-                      <span className='ml-2 font-bold text-sm text-canvas-text-contrast'>
-                        {playerBalance}
-                      </span>
-                    </div>
+
+            <Card className='flex flex-col py-0 w-full flex-1 lg:flex-[0_0_43%] border border-canvas-line shadow-md overflow-hidden'>
+              <CardHeader className='relative p-0 w-full flex justify-center items-center'>
+                <CardTitle className="w-full pl-4 flex items-center gap-2">
+
+                  {/* Player Title */}
+                  <span className="font-semibold text-success-text">
+                    Your Hand
+                  </span>
+
+                  {/* Dull Hand Description */}
+                  {playerDisplayText && (
+                    <span className="text-canvas-text">
+                      ({playerDisplayText})
+                    </span>
+                  )}
+
+                  {/* Winner / Lost Badge */}
+                  {winner && !showSwapAnimation && (
+                    <span
+                    className={`px-2 py-0.5 rounded-md text-xs font-medium ${
+                      winner === "player"
+                        ? "bg-success-solid text-success-on-success"
+                        : "bg-alert-solid text-alert-on-alert"
+                    }`}
+                    >
+                      {winner === "player" ? "Winner" : "Loser"}
+                    </span>
+                  )}
+
+                </CardTitle>
+
+
+                <div className='w-full flex justify-end'>
+                  <div className=' flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-2 py-1 shadow-sm bg-canvas-bg'>
+                    <WalletIcon size='19.6px' />
+                    <span className='ml-2 font-bold text-sm text-canvas-text-contrast'>{playerBalance}</span>
                   </div>
                 </div>
-
-                <div className='flex-1 lg:mt-0 mt-4 h-full flex items-center justify-center p-2'>
+              </CardHeader>
+              <CardContent>
+                <div className='flex-1 mt-4 h-full flex items-center justify-center p-2'>
                   <HandDisplay
                     title=''
                     cards={playerCards.length ? playerCards : rememberedCards[0]}
@@ -470,8 +555,9 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                     formatHandDescription={formatHandDescription}
                   />
                 </div>
-              </div>
-            </div>
+              </CardContent>
+            </Card>
+
 
             {/* ACTION BAR */}
             <div className='h-[10%] flex pt-4 lg:pt-0'>
@@ -479,9 +565,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 {/* Left banner */}
                 <div className='flex flex-1 items-center justify-center'>
                   <span
-                    className={`font-bold text-xl ${
-                      isPlayerTurn ? 'text-success-text' : 'text-alert-text'
-                    }`}
+                    className={`font-bold text-xl ${isPlayerTurn ? 'text-success-text' : 'text-alert-text'
+                      }`}
                   >
                     {isPlayerTurn ? 'Your Turn' : "Opponent's turn"}
                   </span>
@@ -507,7 +592,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                       onClick={doHandleMakeMove}
                       disabled={isDisabled}
                       fullWidth
- className='h-full'
+                      className='h-full'
                     >
                       {buttonText}
                     </Button>
