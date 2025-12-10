@@ -91,7 +91,7 @@ export function getBlobSingleton(
   }
 
   const doInternalLoadWasm = async () => {
-    const fetchUrl = GAME_SERVICE_URL + '/chia_gaming_wasm_bg.wasm';
+    const fetchUrl = '/chia_gaming_wasm_bg.wasm';
     return fetch(fetchUrl)
       .then((wasm) => wasm.blob())
       .then((blob) => {
