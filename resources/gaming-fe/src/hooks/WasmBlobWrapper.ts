@@ -55,10 +55,11 @@ const uiSettingSource: Record<string, "value" | "array"> = {
 export class WasmBlobWrapper {
   waitingSubsystems: SubsystemStatus[] = [
     {id: "blockchain", long_name: "Blockchain", initialized: false},
-    {id: "wallet_connect_up", long_name: "Wallet Connect Initialized", initialized: false},
+    {id: "wallet_connect_up", long_name: "Wallet Connect", initialized: false},
     {id: "channel_coin", long_name: "Channel Coin", initialized: false},
     {id: "loading_wasm", long_name: "Loading WASM", initialized: false},
     {id: "loading_hex_data", long_name: "Loading CLVM .hex data files", initialized: false},
+
     // started_handshake
     // handshaked
     // started first game
@@ -218,6 +219,9 @@ export class WasmBlobWrapper {
     for (let i = 0; i<a.length; i++) {
       let new_value = updateMap[a[i].id];
       if (new_value) {
+        if (new_value.initialized === false && a[i].initialized) {
+          console.error(`${a[i].id} initialized was true, and is being set to false!`);
+        }
         a[i] = new_value;
         delete updateMap[new_value.id];
       }

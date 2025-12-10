@@ -66,13 +66,13 @@ const WalletConnectHeading: React.FC<WalletConnectHeadingParams> = ({appReceived
       const subframe = document.getElementById('subframe');
       let new_event: any = { };
       new_event[evt_type] = evt;
-      if (subframe) {
+      if (subframe && (subframe as any).contentWindow) {
         (subframe as any).contentWindow.postMessage(
           new_event,
           '*',
         );
       } else {
-        throw new Error('attempted blockchain reply to peer, but no subframe exists');
+        throw new Error('attempted blockchain reply to peer, but the subframe doesn\'t exist yet');
       }
   }
 
