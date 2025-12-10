@@ -73,6 +73,7 @@ const LobbyScreen = () => {
     try {
       const newWagerInputInteger = parseInt(newWagerInput);
       setWagerValidationError('');
+      //if (!validateCreateSessionIsOK()) return;
       const newPerHand = Math.max(1, Math.floor(newWagerInputInteger / 10));
       setPerHandInput(newPerHand.toString());
     } catch (e: any) {
@@ -86,6 +87,14 @@ const LobbyScreen = () => {
       setChatInput('');
     }
   };
+
+  const validateCreateSessionIsOK = () => {
+    if (parseInt(wagerInput) < 100) {
+      setWagerValidationError('Please buy-in with 100 mojos or more.');
+      return false;
+    }
+    return true;
+  }
 
   // Auto-scroll chat messages to bottom when new messages arrive
   useEffect(() => {
@@ -157,6 +166,7 @@ const LobbyScreen = () => {
 
   const handleCreate = async () => {
     if (!gameChoice || !wagerInput) return;
+    if (!validateCreateSessionIsOK()) return;
     const { secureUrl } = await generateRoom(
       gameChoice,
       wagerInput,
@@ -306,7 +316,7 @@ const LobbyScreen = () => {
         }}
       >
         <DialogTitle sx={{ color: 'var(--canvas-text)' }}>
-          Create a Room
+          Start a Calpoker Session
         </DialogTitle>
 
         <DialogContent>
@@ -327,13 +337,13 @@ const LobbyScreen = () => {
           </Select>
 
           {wagerValidationError && (
-            <Box mb={1} sx={{ color: 'var(--secondary-solid)' }}>
-              {wagerValidationError}
+            <Box mb={1} sx={{ color: '#FF6F00' }}>
+              {"    " + wagerValidationError}
             </Box>
           )}
 
           <TextField
-            label='Wager (mojo)'
+            label='Buy-in (minimum 100 mojos)'
             aria-label='game-wager'
             fullWidth
             type='number'
