@@ -2,8 +2,13 @@ const STALE_SAVE_TIME_MS = 60 * 60 * 1000;
 
 export function getSaveList(): string[] {
   const result = localStorage.getItem('saveNames');
+  const currentTime = new Date().getTime();
   if (result) {
-    return result.split(',');
+    return result.split(',').filter((s) => {
+      const saveMillisecondDateStr = localStorage.getItem(`date-${s}`);
+      const saveMillisecondDate = saveMillisecondDateStr ? parseInt(saveMillisecondDateStr) : undefined;
+      return !saveMillisecondDate || (saveMillisecondDate < currentTime - STALE_SAVE_TIME_MS);
+    });
   }
   return [];
 }
@@ -42,12 +47,7 @@ export function saveGame(g: any): [string, any] | undefined {
 // Find a compatible save from the set of saves we have if it exists.
 export function findMatchingGame(peerSaves: string[]): string | undefined {
   const peerSet = new Set(peerSaves);
-  const currentTime = new Date().getTime();
-  const mySaves = getSaveList().filter((s) => {
-    const saveMillisecondDateStr = localStorage.getItem(`date-${s}`);
-    const saveMillisecondDate = saveMillisecondDateStr ? parseInt(saveMillisecondDateStr) : undefined;
-    return !saveMillisecondDate || (saveMillisecondDate < currentTime - STALE_SAVE_TIME_MS);
-  });
+  const mySaves = getSaveList();
   return mySaves.find(save => peerSet.has(save));
 }
 
