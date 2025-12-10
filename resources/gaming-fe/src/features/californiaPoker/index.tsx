@@ -4,6 +4,7 @@ import {
   BestHandType,
   CaliforniapokerProps,
   CardValueSuit,
+  FormatHandProps,
   MovingCardData,
   SwappingCards,
 } from '../../types/californiaPoker';
@@ -12,6 +13,7 @@ import { Button } from '../../components/button';
 import {
   ANIMATION_DELAY,
   GAME_STATES,
+  RANK_SYMBOLS,
   SWAP_ANIMATION_DURATION,
 } from './constants/constants';
 
@@ -22,9 +24,10 @@ import {
   evaluateHand,
   formatHandDescription,
   getCombinations,
+  makeDescription,
 } from './utils';
 import { HandDisplay, MovingCard } from './components';
-import { CalpokerOutcome } from '../../types/ChiaGaming';
+import { CalpokerOutcome, OutcomeHandType, suitNames } from '../../types/ChiaGaming';
 import { SuitName } from '../../types/californiaPoker/CardValueSuit';
 
 import { WalletIcon } from 'lucide-react';
@@ -72,6 +75,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const [rememberedOutcome, setRememberedOutcome] = useState<CalpokerOutcome | undefined>(undefined);
   const [rememberedCards, setRememberedCards] = useState<CardValueSuit[][]>([playerCards, opponentCards]);
   const [rememberedCardSelections, setRememberedCardSelections] = useState(0);
+  const [playerDisplayText, setPlayerDisplayText] = useState<string>('');
+  const [opponentDisplayText, setOpponentDisplayText] = useState<string>('');
 
   const cvsFromCard: (card: number[], index: number) => CardValueSuit = ([rank, suit], index) => ({
     rank,
@@ -137,8 +142,11 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     setCardSelections(0);
     setPlayerSelected([]);
     setShowSwapAnimation(false);
+    setPlayerDisplayText('');
+    setOpponentDisplayText('');
     setSwappingCards({ player: [], ai: [] });
   };
+  
   const toggleCardSelection = (cardIndex: number) => {
     if (gameState !== GAME_STATES.SELECTING) return;
 
@@ -316,6 +324,27 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     return movingCardData;
   };
 
+  const buildBestHandFromOutcome = (
+    fullHand: CardValueSuit[],
+    bestHand: number[][],
+    desc: OutcomeHandType
+  ): BestHandType => {
+    // Pick the actual cards from full hand that match best hand
+    const cards = fullHand.filter((c) =>
+      bestHand.some(([rank, suit]) => rank === c.rank && c.suit === suitNames[suit])
+    );
+
+    // Create a dummy FormatHandProps object to satisfy type
+    const rank: FormatHandProps = {
+      name: desc.name,
+      score: typeof desc.rank === 'number' ? desc.rank : 0,
+      tiebreakers: desc.values ?? [],
+    };
+
+    return { cards, rank };
+  };
+
+
   const swapCards = (rememberedOutcome: CalpokerOutcome) => {
     const liveWinner = translateTopline(rememberedOutcome.my_win_outcome);
     console.log('swapping, outcome', liveWinner, rememberedOutcome);
@@ -364,14 +393,40 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     setShowSwapAnimation(true);
 
     setTimeout(() => {
-      console.log('done swapping');
+      console.log('done swapping', log);
+
+      // Copy current hands
+      const newPlayer = [...playerCards];
+      const newOpponent = [...opponentCards];
+
+      // Apply exact card swaps based on animation index mapping
+      for (let i = 0; i < playerSwapIndices.length; i++) {
+        const pIndex = playerSwapIndices[i];
+        const aiIndex = aiSwapIndices[i];
+
+        // Player gives card to AI
+        newOpponent[aiIndex] = playerCards[pIndex];
+
+        // AI gives card to Player
+        newPlayer[pIndex] = opponentCards[aiIndex];
+      }
+      
+      // Update UI
+      setPlayerCards(newPlayer);
+      setOpponentCards(newOpponent);
+
+      setMovingCards([]);
+      setShowSwapAnimation(false);
       setGameState(GAME_STATES.FINAL);
+      setPlayerDisplayText(makeDescription(log[log.length - 1].myHandDescription))
+      setOpponentDisplayText(makeDescription(log[log.length - 1].opponentHandDescription))
     }, SWAP_ANIMATION_DURATION);
   };
 
   useEffect(() => {
     dealCards();
   }, []);
+
 
   return (
     <div className='flex flex-col w-full h-full min-h-0 text-canvas-text'>
@@ -390,7 +445,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
             <Card className='flex flex-col py-0 min-h-[260px] w-full flex-1 lg:flex-[0_0_43%] border border-canvas-line shadow-md overflow-hidden'>
               {/* Make Card relative so absolute div is positioned relative to it */}
               <CardHeader className='relative p-0 w-full flex justify-center items-center'>
-                <CardTitle className='w-full pl-4'>Opponent Hand</CardTitle>
+                <CardTitle className='w-full pl-4'>{opponentDisplayText ? opponentDisplayText : 'Opponent Hand'}</CardTitle>
                 <div className='w-full flex justify-end'>
                   <div className=' flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-2 py-1 shadow-sm bg-canvas-bg'>
                     <WalletIcon size='19.6px' />
@@ -422,7 +477,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
 
             <Card className='flex flex-col py-0 w-full flex-1 lg:flex-[0_0_43%] border border-canvas-line shadow-md overflow-hidden'>
               <CardHeader className='relative p-0 w-full flex justify-center items-center'>
-                <CardTitle className='w-full pl-4'>Your Hand</CardTitle>
+                <CardTitle className='w-full pl-4'>{playerDisplayText ? playerDisplayText : 'Your Hand'}</CardTitle>
                 <div className='w-full flex justify-end'>
                   <div className=' flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-2 py-1 shadow-sm bg-canvas-bg'>
                     <WalletIcon size='19.6px' />

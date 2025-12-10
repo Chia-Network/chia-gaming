@@ -11,6 +11,7 @@ import calculateBalancedRows from './CalculateBalancedRows';
 import createDeck from './CreateDeck';
 import getRankValue from './GetRankValue';
 import calculateMovingCards from './CalculateMovingCards';
+import { makeDescription } from './MakeDescription';
 export {
   evaluateStraightPotential,
   formatHandDescription,
@@ -25,4 +26,5 @@ export {
   createDeck,
   getRankValue,
   calculateMovingCards,
+  makeDescription
 };
