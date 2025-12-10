@@ -53,6 +53,7 @@ const Game: React.FC<GameParams> = ({ params }) => {
       <WaitingScreen
         stateName={gameConnectionState.stateIdentifier}
         messages={gameConnectionState.stateDetail}
+        subsystemWaitingList={gameConnectionState.subsystemStatusList}
       />
     );
   }

@@ -9,6 +9,7 @@ import {
   InternalBlockchainInterface,
   GameInitParams,
   BlockchainInboundAddressResult,
+  SubsystemStatus,
 } from '../types/ChiaGaming';
 import {
   spend_bundle_to_clvm,
@@ -84,6 +85,7 @@ export class WasmBlobWrapper {
   blockchain: InternalBlockchainInterface;
   uiUpdates: any;
   currentSave: string | undefined;
+  waitingSubsystems: SubsystemStatus[];
 
   constructor(
     blockchain: InternalBlockchainInterface,
@@ -123,6 +125,9 @@ export class WasmBlobWrapper {
     this.doInternalLoadWasm = doInternalLoadWasm;
     this.blockchain = blockchain;
     this.uiUpdates = {};
+    this.waitingSubsystems = [
+      { id: "blockchain", long_name: "Blockchain Interface", initialized: false }
+    ];
     this.rxjsMessageSingleton = new Subject<any>();
     this.rxjsEmitter = {
       next: (settings: any) => {
@@ -193,6 +198,48 @@ export class WasmBlobWrapper {
       this.qualifyingEvents |= 8;
       this.spillStoredMessages();
     }
+  }
+
+  // XXX
+  // starting,
+  // running,
+  // end - no further moves will be accepted
+  // shutdown - shutdown() called locally, or idle() signalled finish
+  // TODO: rename GameConnectionState
+  setGameConnectionState(system_id: string, details: string[], subsystem_status_updates: SubsystemStatus[]) {
+    // Update or append subsystem updates with key "id", retaining state for other subsystem ids.
+    // We keep updated records in their previous order
+    if (!details || !subsystem_status_updates) {
+      const msg = `error while calling setGameConnectionState(${system_id}, ${details}, ${subsystem_status_updates})`;
+      throw(Error(msg));
+    }
+    let a = [... this.waitingSubsystems];
+    let updated_list = [];
+    let updateMap: Record<string, SubsystemStatus> = {};
+    for (const s of subsystem_status_updates) {
+      updateMap[s.id] = s;
+    }
+    for (let i = 0; i<a.length; i++) {
+      let new_value = updateMap[a[i].id];
+      if (new_value) {
+        a[i] = new_value;
+        delete updateMap[new_value.id];
+      }
+    }
+    for (const s of subsystem_status_updates) {
+      let new_item = updateMap[s.id];
+      if (new_item) {
+        a.push(new_item);
+      }
+    }
+    this.waitingSubsystems = a;
+    this.rxjsEmitter?.next({
+      setGameConnectionState: {
+        stateIdentifier: system_id,
+        stateDetail: details,
+        subsystemStatusList: this.waitingSubsystems,
+      },
+    });
   }
 
   internalKickIdle(): any {
@@ -719,6 +766,9 @@ export class WasmBlobWrapper {
       }
     }
     this.kickSystem(4);
+    this.setGameConnectionState('starting', ['have block notification'], [
+      { id: "blockchain", long_name: "Blockchain Interface", initialized: true }
+    ]);
     this.pushEvent({
       takeBlockData: {
         peak: peak,
