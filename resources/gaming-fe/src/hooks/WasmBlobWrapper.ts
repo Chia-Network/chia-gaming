@@ -7,8 +7,8 @@ import {
   CalpokerOutcome,
   WatchReport,
   InternalBlockchainInterface,
-  GameInitParams,
   BlockchainInboundAddressResult,
+  SubsystemStatus,
 } from '../types/ChiaGaming';
 import {
   spend_bundle_to_clvm,
@@ -17,6 +17,7 @@ import {
   popcount,
   empty,
 } from '../util';
+import { UpdateDisabledRounded } from '@mui/icons-material';
 
 function combine_reports(old_report: WatchReport, new_report: WatchReport) {
   for (const item of new_report.created_watched) {
@@ -52,6 +53,22 @@ const uiSettingSource: Record<string, "value" | "array"> = {
 };
 
 export class WasmBlobWrapper {
+  waitingSubsystems: SubsystemStatus[] = [
+    {id: "blockchain", long_name: "Blockchain", initialized: false},
+    {id: "wallet_connect_up", long_name: "Wallet Connect Initialized", initialized: false},
+    {id: "channel_coin", long_name: "Channel Coin", initialized: false},
+    {id: "loading_wasm", long_name: "Loading WASM", initialized: false},
+    {id: "loading_hex_data", long_name: "Loading CLVM .hex data files", initialized: false},
+    // started_handshake
+    // handshaked
+    // started first game
+    // peer contacted (2)
+    // recv'd first game msg?
+    // tx completed bob, tx completed alice
+    // tx sent SubsystemStatus
+    // Channel Coin coinid
+  ];
+  // TODO rename setGameConnectionState
   amount: number;
   wc: WasmConnection | undefined;
   sendMessage: (msgno: number, msg: string) => void;
@@ -84,6 +101,7 @@ export class WasmBlobWrapper {
   blockchain: InternalBlockchainInterface;
   uiUpdates: any;
   currentSave: string | undefined;
+  stateIdentifier: string;
 
   constructor(
     blockchain: InternalBlockchainInterface,
@@ -97,7 +115,7 @@ export class WasmBlobWrapper {
   ) {
     const { sendMessage } = peer_conn;
     this.uniqueId = uniqueId;
-
+    this.stateIdentifier = "starting";
     this.messageNumber = 1;
     this.remoteNumber = 0;
     this.sendMessage = sendMessage;
@@ -135,6 +153,15 @@ export class WasmBlobWrapper {
     };
   }
 
+  setWaitingSubsystems(subsystem_names: any[]) {
+    // TODO: Create a type for subsystem names
+    this.waitingSubsystems = subsystem_names;
+  }
+
+  getWaitingSubsystems(): any[] {
+    return this.waitingSubsystems;
+  }
+
   setReloading() { this.reloading = true; }
 
   systemState(): number { return this.qualifyingEvents; }
@@ -164,16 +191,66 @@ export class WasmBlobWrapper {
     this.spillStoredMessages();
   }
 
+  // XXX
+  // starting,
+  // running,
+  // end - no further moves will be accepted
+  // shutdown - shutdown() called locally, or idle() signalled finish
+
+  // TODO: rename GameConnectionState
+  setGameConnectionState(system_id: string, details: string[], subsystem_status_updates: SubsystemStatus[]) {
+    // Update or append subsystem updates with key "id", retaining state for other subsystem ids.
+    // We keep updated records in their previous order
+    if (this.stateIdentifier === 'running' && system_id === 'starting') {
+      throw("setGameConnectionState: starting after running ?!?");
+    }
+
+    if (!details || !subsystem_status_updates) {
+      const msg = `error while calling setGameConnectionState(${system_id}, ${details}, ${subsystem_status_updates})`;
+      throw(Error(msg));
+    }
+    let a = [... this.waitingSubsystems];
+    let updated_list = [];
+    let updateMap: Record<string, SubsystemStatus> = {};
+    for (const s of subsystem_status_updates) {
+      updateMap[s.id] = s;
+    }
+    for (let i = 0; i<a.length; i++) {
+      let new_value = updateMap[a[i].id];
+      if (new_value) {
+        a[i] = new_value;
+        delete updateMap[new_value.id];
+      }
+    }
+    for (const s of subsystem_status_updates) {
+      let new_item = updateMap[s.id];
+      if (new_item) {
+        a.push(new_item);
+      }
+    }
+
+    this.waitingSubsystems = a;
+    this.rxjsEmitter?.next({
+      setGameConnectionState: {
+        stateIdentifier: system_id,
+        stateDetail: details,
+        subsystemStatusList: this.waitingSubsystems,
+      },
+    });}
+
   activateSpend(coin: string) {
     if (!this.wc) { throw new Error("this.wc is falsey") }
     this.cradle?.opening_coin(coin);
 
+    this.setGameConnectionState('starting',['doing handshake'], []);
+    /*
     this.rxjsEmitter?.next({
       setGameConnectionState: {
         stateIdentifier: 'starting',
         stateDetail: ['doing handshake'],
       },
     });
+    */
   }
 
   setBlockchainAddress(a: BlockchainInboundAddressResult) {
@@ -187,6 +264,7 @@ export class WasmBlobWrapper {
   kickSystem(flags: number) {
     if (!(this.qualifyingEvents & flags)) {
       console.log("kickSystem", flags, this.wc);
+      this.setGameConnectionState("starting", ["kickSystem " + flags], []);
     }
     this.qualifyingEvents |= flags;
     if (this.qualifyingEvents == 7) {
@@ -366,6 +444,9 @@ export class WasmBlobWrapper {
     this.wc = wasmConnection;
     //this.loadWasmEvent = { loadWasmEvent: { chia_gaming_init, cg } };
     this.kickSystem(1);
+    this.setGameConnectionState('starting',['wasm loaded'],
+      [{id: "loading_wasm", long_name: "Loading WASM", initialized: false}]
+    );
     return empty();
   }
 
@@ -491,6 +572,7 @@ export class WasmBlobWrapper {
         result.setGameConnectionState = {
           stateIdentifier: 'running',
           stateDetail: [],
+          subsystemStatusList: this.waitingSubsystems,
         };
 
         result.setMyTurn = false;
@@ -516,6 +598,7 @@ export class WasmBlobWrapper {
         setGameConnectionState: {
           stateIdentifier: 'shutdown',
           stateDetail: [],
+          subsystemStatusList: this.waitingSubsystems,
         },
         outcome: undefined,
       });
@@ -530,19 +613,20 @@ export class WasmBlobWrapper {
     }
 
     result.setError = idle.receive_error;
-    console.log('idle1', idle.action_queue);
+    // console.log('idle1', idle.action_queue);
     if (idle.handshake_done && !this.handshakeDone) {
       console.warn('HANDSHAKE DONE');
       this.handshakeDone = true;
       result.setGameConnectionState = {
         stateIdentifier: 'running',
         stateDetail: [],
+        subsystemStatusList: this.waitingSubsystems,
       };
       console.log('starting games', this.iStarted);
       this.pushEvent({ startGame: true });
     }
 
-    console.log('idle2', idle.incoming_messages);
+    // console.log('idle2', idle.incoming_messages);
     for (const message of idle.outbound_messages) {
       console.log('send message to remote');
       this.sendMessage(this.messageNumber++, message);
@@ -550,6 +634,7 @@ export class WasmBlobWrapper {
 
     for (const tx of idle.outbound_transactions) {
       console.log('send transaction', tx);
+
       // Compose blob to spend
       const blob = spend_bundle_to_clvm(tx);
       const cvt = (blob: string) => {
@@ -634,6 +719,7 @@ export class WasmBlobWrapper {
           setGameConnectionState: {
             stateIdentifier: 'end',
             stateDetail: [],
+            subsystemStatusList: this.waitingSubsystems,
           },
         };
       });
@@ -669,6 +755,7 @@ export class WasmBlobWrapper {
       setGameConnectionState: {
         stateIdentifier: 'shutdown',
         stateDetail: details,
+        subsystemStatusList: this.waitingSubsystems,
       },
       outcome: undefined,
     };
@@ -692,6 +779,7 @@ export class WasmBlobWrapper {
     result.setGameConnectionState = {
       stateIdentifier: 'shutdown',
       stateDetail: [],
+      subsystemStatusList: this.waitingSubsystems,
     };
     result.outcome = undefined;
     return empty().then(() => result);
@@ -719,6 +807,12 @@ export class WasmBlobWrapper {
       }
     }
     this.kickSystem(4);
+    this.setGameConnectionState('starting', ["Blockchain initialized"],
+      [
+        {id: "blockchain", long_name: "Blockchain", initialized: true},
+        {id: "get_balance", long_name: "Get Chia Wallet Balance", initialized: false}
+      ]
+    );
     this.pushEvent({
       takeBlockData: {
         peak: peak,

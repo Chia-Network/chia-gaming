@@ -36,7 +36,6 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
   const socketRef = useRef<Socket>(undefined);
   const [fragment] = useState<FragmentData>(getFragmentParams());
   const [lobbyGames, setLobbyGames] = useState<GameDefinition[]>([]);
-  console.log('fragment retrieved', fragment);
 
   const joinRoom = useCallback(
     async (token: string) => {

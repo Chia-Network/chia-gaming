@@ -64,6 +64,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     useState<GameConnectionState>({
       stateIdentifier: 'starting',
       stateDetail: ['before handshake'],
+      subsystemStatusList: [],
     });
 
   const iStarted = searchParams.iStarted !== 'false';
@@ -163,6 +164,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
   };
 
   function setState(state: any): void {
+    console.log('SET_STATE', state);
     if (state.setMyTurn !== undefined) {
       console.log('state.setMyTurn:', state);
     }

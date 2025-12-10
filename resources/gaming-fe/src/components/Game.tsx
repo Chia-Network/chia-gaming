@@ -1,7 +1,7 @@
-import { Box, Button, Typography } from '@mui/material';
+import { Box, Typography } from '@mui/material';
 
 import { useWasmBlob } from '../hooks/useWasmBlob';
-import { getSearchParams, generateOrRetrieveUniqueId } from '../util';
+import { generateOrRetrieveUniqueId } from '../util';
 
 
 import WaitingScreen from './WaitingScreen';
@@ -48,16 +48,17 @@ const Game: React.FC<GameParams> = ({ params }) => {
     return <div>{error}</div>;
   }
 
+  console.log(gameConnectionState);
+
   if (gameConnectionState.stateIdentifier === 'starting') {
     return (
       <WaitingScreen
         stateName={gameConnectionState.stateIdentifier}
         messages={gameConnectionState.stateDetail}
+        subsystemWaitingList={gameConnectionState.subsystemStatusList}
       />
     );
-  }
-
-  if (gameConnectionState.stateIdentifier === 'shutdown') {
+  } else if (gameConnectionState.stateIdentifier === 'shutdown') {
     return (
       <Box p={4}>
         <Typography variant='h4' align='center' aria-label='shutdown'>
@@ -80,6 +81,8 @@ const Game: React.FC<GameParams> = ({ params }) => {
         </Box>
       </Box>
     );
+  } else {
+
   }
 
   return (

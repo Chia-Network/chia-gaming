@@ -14,6 +14,7 @@ const App = () => {
   let useParams = params;
   let useIframeUrl = 'about:blank';
   const saveList = getSaveList();
+  //const shouldRedirectToLobby = true;
   const shouldRedirectToLobby = saveList.length == 0 && !params.lobby && !params.iStarted;
   if (saveList.length > 0) {
     const decodedSave = loadSave(saveList[0]);
@@ -24,6 +25,7 @@ const App = () => {
   const [iframeUrl, setIframeUrl] = useState(useIframeUrl);
   const [fetchedUrls, setFetchedUrls] = useState(false);
   const [iframeAllowed, setIframeAllowed] = useState('');
+  const [receivedGameNavigate, setReceivedGameNavigate] = useState(false);
 
   useEffect(() => {
     const subscription = blockchainDataEmitter.getObservable().subscribe({
@@ -56,6 +58,7 @@ const App = () => {
   // connection soon.  I think we can change the iframe location from the outside
   // in that scenario.
   useEffect(() => {
+    console.log("saveList.length=", saveList.length, "params.lobby=", params.lobby, "params.iStarted=", params);
     if (shouldRedirectToLobby) {
       fetch('/urls')
         .then((res) => res.json())
@@ -137,6 +140,10 @@ const App = () => {
     // posts {type: 'theme-request'}, send the current theme to it.
     function messageHandler(ev: MessageEvent) {
       try {
+        if (ev.data && ev.data.type === '') {
+          setReceivedGameNavigate(true);
+//xxx
+        }
         if (ev.data && ev.data.type === 'theme-request') {
           // Only respond to requests coming from the iframe we care about.
           // If there are multiple iframes, more checks may be needed.
@@ -169,20 +176,41 @@ const App = () => {
   }
 
   if (params.game && !params.join) {
+    // Note that we allow postMessage to any domain here ("*"),
+    // but this is not sensitive data.
+    window.parent.postMessage({navigated_to_game: true}, "*");
     return <Game params={params}/>;
   }
 
   const wcHeading = (
     <div className="flex shrink-0 h-12 w-full">
-      <WalletConnectHeading />
+      <WalletConnectHeading appReceivedGameNavigate={receivedGameNavigate} />
     </div>
   );
+
+const pre_lobby_status = (
+  <div
+    /*className="flex flex-col relative w-screen h-screen"*/
+    className="w-full flex-1 border-0 m-0 p-0"
+    style={{
+        backgroundColor: 'var(--color-canvas-bg-subtle)',
+        display: 'flex',          // Enables flexbox
+        alignItems: 'center',     // Centers children vertically
+        justifyContent: 'center', // Optional: centers children horizontally as well
+        height: '100vh',          // Optional: ensures the container takes up the full viewport height
+      }}
+  >
+  Waiting for peak from coinset.org ...
+  </div>
+);
 
   if (!havePeak) {
     return (
       <div className="flex flex-col relative w-screen h-screen" style={{ backgroundColor: 'var(--color-canvas-bg-subtle)' }}>
         {wcHeading}
+                {pre_lobby_status}
       </div>
+
     );
   }
 
@@ -193,7 +221,7 @@ const App = () => {
         id='subframe'
         className="w-full flex-1 border-0 m-0 p-0"
         src={iframeUrl}
-	allow={`clipboard-write self ${iframeAllowed}`}
+        allow={`clipboard-write self ${iframeAllowed}`}
       ></iframe>
     </div>
   );

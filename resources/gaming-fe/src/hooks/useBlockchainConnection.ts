@@ -4,6 +4,7 @@ import {
   PARENT_FRAME_BLOCKCHAIN_ID,
   parentFrameBlockchainInfo,
 } from './ParentFrameBlockchainInfo';
+import { blobSingleton } from './blobSingleton';
 
 // This lives in the child frame.
 export function setupBlockchainConnection(uniqueId: string) {
@@ -26,6 +27,13 @@ export function setupBlockchainConnection(uniqueId: string) {
           });
 
           return;
+        } else if (data.type === 'walletBalance') {
+            blobSingleton.setGameConnectionState("starting", ["Blockchain up. Got Wallet Balance. Getting address ..."],
+              [
+                {id: "blockchain", long_name: "Blockchain", initialized: true},
+                {id: "get_address", long_name: "Get Address", initialized: false}
+              ]
+            );
         }
 
         throw new Error(`wrong origin for child event: ${JSON.stringify(evt)}`);

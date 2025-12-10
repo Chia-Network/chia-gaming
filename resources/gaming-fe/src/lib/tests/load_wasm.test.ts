@@ -142,7 +142,7 @@ async function action_with_messages(
     },
   });
 
-  let evt_results: Array<boolean> = [false, false];
+  let state_set_to_running: Array<boolean> = [false, false];
   cradles.forEach((cradle, index) => {
     cradle.getObservable().subscribe({
       next: (evt) => {
@@ -151,7 +151,7 @@ async function action_with_messages(
           evt.setGameConnectionState &&
           evt.setGameConnectionState.stateIdentifier === 'running'
         ) {
-          evt_results[index] = true;
+          state_set_to_running[index] = true;
         }
       },
     });
@@ -169,8 +169,8 @@ async function action_with_messages(
   }
 
   // If any evt_results are false, that means we did not get a setState msg from that cradle
-  if (!evt_results.every((x) => x)) {
-    console.log('got running:', evt_results);
+  if (!state_set_to_running.every((x) => x)) {
+    console.log('got running:', state_set_to_running);
     throw 'we expected running state in both cradles';
   }
   console.log("action_with_messages END")
