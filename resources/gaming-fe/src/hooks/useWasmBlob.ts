@@ -139,6 +139,10 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     if (cs.stateIdentifier === 'shutdown') {
       startNewSession();
     }
+    if (!cs.subsystemStatusList) {
+      cs.subsystemStatusList = gameConnectionState.subsystemStatusList;
+    }
+
     setGameConnectionState(cs);
   }
 
