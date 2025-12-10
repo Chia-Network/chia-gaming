@@ -7,7 +7,7 @@ import {
   IChiaIdentity,
 } from '../types/ChiaGaming';
 import { Observable, Subject } from 'rxjs';
-import { WasmBlobWrapper } from './WasmBlobWrapper';
+import { blobSingleton } from './blobSingleton';
 
 var chia_gaming_init: any = undefined;
 var cg: any = undefined;
@@ -51,6 +51,8 @@ export async function storeInitArgs(
   readyToInit.next(true);
 }
 
+var wasmStateInitCreations = 0;
+
 export class WasmStateInit {
   // Make a wasm connection, and make a fully initialized Wasm blob
   doInternalLoadWasm: () => Promise<ArrayBuffer>;
@@ -62,6 +64,10 @@ export class WasmStateInit {
     doInternalLoadWasm: () => Promise<ArrayBuffer>,
     fetchHex: (key: string) => Promise<string>,
   ) {
+    wasmStateInitCreations += 1;
+    if (wasmStateInitCreations > 2) {
+      throw("Who is calling this so much?");
+    }
     this.doInternalLoadWasm = doInternalLoadWasm;
     this.fetchHex = fetchHex;
     this.deferredWasmConnection = new Subject<WasmConnection>();
@@ -150,12 +156,11 @@ observable.subscribe({
         );
       });
 
-      return {
-        setGameConnectionState: {
-          stateIdentifier: 'starting',
-          stateDetail: ['loaded preset files'],
-        },
-      };
+      if (!blobSingleton) {
+        throw("blobSingleton is nil");
+      }
+      blobSingleton?.setGameConnectionState('starting', ['loaded preset files'], []);
+      return {};
     });
   }
 
@@ -294,6 +299,7 @@ observable.subscribe({
         reward_puzzle_hash: rewardPuzzleHash,
       }
     );
+    blobSingleton.setGameConnectionState("starting", ["New game created!"], []);
 
     return new ChiaGame(
       wasm,
@@ -309,6 +315,7 @@ observable.subscribe({
   ): ChiaGame {
     let chiaGameId = wasm.create_serialized_game(serializedGame);
     let identity = wasm.get_identity(chiaGameId);
+    blobSingleton.setGameConnectionState("starting", ["Loaded game state!"], []);
 
     return new ChiaGame(
       wasm,

@@ -191,7 +191,6 @@ export function useLobbySocket(
   const [didJoin, setDidJoin] = useState(false);
   const [lobbyGames, setLobbyGames] = useState<GameDefinition[]>([]);
   const socketRef = useRef<Socket>(undefined);
-  console.log('fragment retrieved', fragment);
 
   const joinRoom = useCallback(
     async (token: string) => {

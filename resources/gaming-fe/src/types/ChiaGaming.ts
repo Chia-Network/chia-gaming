@@ -30,9 +30,16 @@ export interface IChiaIdentity {
   puzzle_hash: string;
 }
 
+export interface SubsystemStatus {
+  id: string;
+  long_name: string;
+  initialized: boolean;
+};
+
 export interface GameConnectionState {
   stateIdentifier: string;
   stateDetail: string[];
+  subsystemStatusList: SubsystemStatus[];
 }
 
 export interface SaveData {

@@ -1,14 +1,16 @@
 import { Box, Typography, CircularProgress } from '@mui/material';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useEffect, useState } from 'react';
+import { SubsystemStatus } from '../types/ChiaGaming';
 
 interface WaitingScreenProps {
   stateName: string;
   messages: string[];
   cycleInterval?: number;
+  subsystemWaitingList: SubsystemStatus[];
 }
 
-const WaitingScreen = ({ stateName, messages, cycleInterval = 2000 }: WaitingScreenProps) => {
+const WaitingScreen = ({ stateName, messages, subsystemWaitingList, cycleInterval = 2000 }: WaitingScreenProps) => {
   const [currentIndex, setCurrentIndex] = useState(0);
 
   useEffect(() => {
@@ -79,7 +81,13 @@ const WaitingScreen = ({ stateName, messages, cycleInterval = 2000 }: WaitingScr
           </motion.div>
         </AnimatePresence>
       </Box>
-
+      <Box>
+      {
+        subsystemWaitingList.map((itm) => {
+          return (<div>{"" + itm.long_name + " initialized: " + itm.initialized}</div>);
+        }
+      )}
+      </Box>
       {/* Circular Progress */}
       <motion.div
         animate={{ rotate: 360 }}

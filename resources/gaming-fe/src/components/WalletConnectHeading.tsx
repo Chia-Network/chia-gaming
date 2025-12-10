@@ -30,7 +30,9 @@ import WalletBadge from './WalletBadge';
 
 import { Wrench, Sun } from 'lucide-react';
 
-const WalletConnectHeading = (_args: any) => {
+export interface WalletConnectHeadingParams {appReceivedGameNavigate: boolean};
+
+const WalletConnectHeading: React.FC<WalletConnectHeadingParams> = ({appReceivedGameNavigate}) => {
   const { wcInfo, setWcInfo } = useDebug();
   const [_alreadyConnected, setAlreadyConnected] = useState(false);
   const [_walletConnectError, setWalletConnectError] = useState<
@@ -47,7 +49,7 @@ const WalletConnectHeading = (_args: any) => {
   const [initializing, setInitializing] = useState(false);
   const [initialized, setInitialized] = useState(false);
   const [_connecting, setConnecting] = useState(false);
-  const [_waitingApproval, setWaitingApproval] = useState(false);
+  const [waitingApproval, setWaitingApproval] = useState(false);
   const [connected, setConnected] = useState(false);
   const [haveClient, setHaveClient] = useState(false);
   const [haveSession, setHaveSession] = useState(false);
@@ -55,8 +57,29 @@ const WalletConnectHeading = (_args: any) => {
   const [_address, setAddress] = useState();
   const [balance, setBalance] = useState<number | undefined>();
   const [haveBlock, setHaveBlock] = useState(false);
-
+  const [blockNumber, setBlockNumber] = useState(0);
+  const [receivedGameNavigate, setReceivedGameNavigate] = useState(false);
+  const [lastPeakNotification, setLastPeakNotification] = useState<any | undefined>();
   const uniqueId = generateOrRetrieveUniqueId();
+
+  function notifyBlockchainInfo(evt_type: string, evt: any) {
+      const subframe = document.getElementById('subframe');
+      let new_event: any = { };
+      new_event[evt_type] = evt;
+      if (subframe) {
+        (subframe as any).contentWindow.postMessage(
+          new_event,
+          '*',
+        );
+      } else {
+        throw new Error('attempted blockchain reply to peer, but no subframe exists');
+      }
+  }
+
+  if (!receivedGameNavigate && appReceivedGameNavigate) {
+    setReceivedGameNavigate(true);
+    notifyBlockchainInfo("blockchain_info", lastPeakNotification);
+  }
 
   // Theme state: keep dark/light in sync with document root and localStorage
   const [isDark, setIsDark] = useState<boolean>(() => {
@@ -174,20 +197,10 @@ const WalletConnectHeading = (_args: any) => {
       next: (evt: any) => {
         if (evt.getBalance) {
           setBalance(evt.getBalance);
+          notifyBlockchainInfo('walletBalance', { balance: evt.getBalance });
           setTimeout(requestBalance, 2000);
         }
-
-        const subframe = document.getElementById('subframe');
-        if (subframe) {
-          (subframe as any).contentWindow.postMessage(
-            {
-              blockchain_reply: evt,
-            },
-            window.location.origin,
-          );
-        } else {
-          throw new Error('blockchain reply to no subframe');
-        }
+        notifyBlockchainInfo("blockchain_reply", evt);
       },
     });
 
@@ -197,17 +210,11 @@ const WalletConnectHeading = (_args: any) => {
           setHaveBlock(true);
           requestBalance();
         }
-        const subframe = document.getElementById('subframe');
-        if (subframe) {
-          (subframe as any).contentWindow.postMessage(
-            {
-              blockchain_info: evt,
-            },
-            '*',
-          );
-        } else {
-          throw new Error('blockchain reply to no subframe');
+        if (evt.peak) {
+          setLastPeakNotification(evt);
+          setBlockNumber(parseInt(evt.peak.toString()));
         }
+        notifyBlockchainInfo("blockchain_info", evt);
       },
     });
 
@@ -345,7 +352,7 @@ const WalletConnectHeading = (_args: any) => {
     </Box>
   );
 
-  const ifExpanded = expanded ? 
+  const ifExpanded = expanded ?
     <div
       style={{
         display: 'flex',
@@ -437,7 +444,7 @@ const WalletConnectHeading = (_args: any) => {
             )}
           </div>
 
-          {/* RIGHT: WalletConnect + Balance */}
+          {/* RIGHT: Block + WalletConnect + Balance */}
           <div
             className={`flex items-center gap-1.5 sm:gap-2 md:gap-3 ${
               window.innerWidth < 640
@@ -445,6 +452,40 @@ const WalletConnectHeading = (_args: any) => {
                 : 'justify-end w-auto'
             }`}
           >
+            {/* Alert User to check their Wallet*/}
+            <div className='flex items-center gap-1 min-w-auto'>
+              <span
+                className='font-medium opacity-80 whitespace-nowrap'
+                style={{
+                  fontSize:
+                    window.innerWidth < 640
+                      ? '0.7rem'
+                      : window.innerWidth < 768
+                        ? '0.85rem'
+                        : '0.95rem',
+                  color: 'red',
+                }}
+              >
+              {waitingApproval && "Please check wallet!"}
+              </span>
+            </div>
+
+            {/* Block Number */}
+            <div className='flex items-center gap-1 min-w-auto'>
+              <span
+                className='font-medium opacity-80 whitespace-nowrap'
+                style={{
+                  fontSize:
+                    window.innerWidth < 640
+                      ? '0.7rem'
+                      : window.innerWidth < 768
+                        ? '0.85rem'
+                        : '0.95rem',
+                  color: 'var(--color-canvas-solid)',
+                }}
+              >Block {blockNumber}
+              </span>
+            </div>
             {/* WalletConnect Status */}
             <div className='flex items-center gap-1 min-w-auto'>
               <span

@@ -46,10 +46,15 @@ export async function configGameObject(
   let rngId = wasmConnection.create_rng(seedStr);
   let identity = wasmConnection.chia_identity(rngId);
   let address = await blockchain.getAddress();
+  gameObject.setGameConnectionState("starting", ["Setting Blockchain address ..."], []);
   gameObject.setBlockchainAddress(address);
+  gameObject.setGameConnectionState("starting", ["Done setting Blockchain address."], []);
   let cradle = wasmStateInit.createGame(calpokerHex, rngId, wasmConnection, identity.private_key, iStarted, amount, amount, address.puzzleHash);
   gameObject.setGameCradle(cradle);
+  gameObject.setGameConnectionState("starting", ["Funding the channel ..."], []);
   let coin = await wasmStateInit.createStartCoin(blockchain, uniqueId, identity, amount, wasmConnection);
+  // await waitForStartCoin(coin);
+  gameObject.setGameConnectionState("starting", ["Got funding coin. Creating Channel ..."], []);
   gameObject.activateSpend(coin.coinString);
   return gameObject;
 }
@@ -140,7 +145,7 @@ export function getBlobSingleton(
       };
       const matchingSave = findMatchingGame(saves);
       const wasmStateInit = new WasmStateInit(doInternalLoadWasm, fetchHex);
-
+      blobSingleton.setGameConnectionState("starting", ["Created Wasm state initializer"], []);
       blobSingleton.kickSystem(2);
       if (matchingSave) {
         if (matchingSave != signaledSave) {
