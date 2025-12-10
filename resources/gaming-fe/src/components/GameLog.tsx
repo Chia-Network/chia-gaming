@@ -102,7 +102,7 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
             </div>
           ) : (
             <div className='flex flex-col gap-2'>
-              {log.slice().reverse().map((entry, index) => {
+              {log.map((entry, index) => {
                 const isExpanded = expandedIndex === index;
                 const iWin = entry.topLineOutcome === 'win';
                 const opWin = entry.topLineOutcome === 'lose';

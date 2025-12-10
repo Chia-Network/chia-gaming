@@ -33,6 +33,7 @@ import { SuitName } from '../../types/californiaPoker/CardValueSuit';
 import { WalletIcon } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/src/components/ui/card';
 import GameBottomBar from './components/GameBottomBar';
+import { cn } from '@/src/lib/utils';
 
 
 function translateTopline(topline: string | undefined): string | null {
@@ -141,12 +142,14 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     setMovingCards([]);
     setCardSelections(0);
     setPlayerSelected([]);
+    setPlayerBestHand(undefined);
+    setAiBestHand(undefined);
     setShowSwapAnimation(false);
     setPlayerDisplayText('');
     setOpponentDisplayText('');
     setSwappingCards({ player: [], ai: [] });
   };
-  
+
   const toggleCardSelection = (cardIndex: number) => {
     if (gameState !== GAME_STATES.SELECTING) return;
 
@@ -324,25 +327,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     return movingCardData;
   };
 
-  const buildBestHandFromOutcome = (
-    fullHand: CardValueSuit[],
-    bestHand: number[][],
-    desc: OutcomeHandType
-  ): BestHandType => {
-    // Pick the actual cards from full hand that match best hand
-    const cards = fullHand.filter((c) =>
-      bestHand.some(([rank, suit]) => rank === c.rank && c.suit === suitNames[suit])
-    );
-
-    // Create a dummy FormatHandProps object to satisfy type
-    const rank: FormatHandProps = {
-      name: desc.name,
-      score: typeof desc.rank === 'number' ? desc.rank : 0,
-      tiebreakers: desc.values ?? [],
-    };
-
-    return { cards, rank };
-  };
 
 
   const swapCards = (rememberedOutcome: CalpokerOutcome) => {
@@ -350,20 +334,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     console.log('swapping, outcome', liveWinner, rememberedOutcome);
     setWinner(liveWinner);
     setGameState(GAME_STATES.SWAPPING);
-
-    // Map the correct hands depending on perspective
-    const playerOriginal = isPlayerAlice
-      ? rememberedOutcome.alice_cards
-      : rememberedOutcome.bob_cards;
-    const playerFinal = isPlayerAlice
-      ? rememberedOutcome.alice_final_hand
-      : rememberedOutcome.bob_final_hand;
-    const opponentOriginal = isPlayerAlice
-      ? rememberedOutcome.bob_cards
-      : rememberedOutcome.alice_cards;
-    const opponentFinal = isPlayerAlice
-      ? rememberedOutcome.bob_final_hand
-      : rememberedOutcome.alice_final_hand;
 
     const playerSelected = isPlayerAlice ? rememberedOutcome.alice_discards : rememberedOutcome.bob_discards;
     const aiSelected = isPlayerAlice ? rememberedOutcome.bob_discards : rememberedOutcome.alice_discards;
@@ -393,8 +363,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     setShowSwapAnimation(true);
 
     setTimeout(() => {
-      console.log('done swapping', log);
-
       // Copy current hands
       const newPlayer = [...playerCards];
       const newOpponent = [...opponentCards];
@@ -410,17 +378,45 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         // AI gives card to Player
         newPlayer[pIndex] = opponentCards[aiIndex];
       }
-      
+
       // Update UI
       setPlayerCards(newPlayer);
       setOpponentCards(newOpponent);
+      setPlayerSelected([]);
+
+      // --- Best hands ---
+      const lastLog = log[0];
+
+      // Convert hand arrays into CardValueSuit objects
+      const playerBestCards: CardValueSuit[] = lastLog.myHand.map(
+        ([rank, suit], idx) => ({
+          rank,
+          suit: suitMap[suit],
+          originalIndex: idx,
+        })
+      );
+
+      const opponentBestCards: CardValueSuit[] = lastLog.opponentHand.map(
+        ([rank, suit], idx) => ({
+          rank,
+          suit: suitMap[suit],
+          originalIndex: idx,
+        })
+      );
+
+      setPlayerBestHand({ cards: playerBestCards, rank: { name: '', score: 0, tiebreakers: [] } });
+      setAiBestHand({ cards: opponentBestCards, rank: { name: '', score: 0, tiebreakers: [] } });
+
+
+      console.log('done swapping', log.length - 1, log, newPlayer, newOpponent, playerBestCards, opponentBestCards);
 
       setMovingCards([]);
       setShowSwapAnimation(false);
       setGameState(GAME_STATES.FINAL);
-      setPlayerDisplayText(makeDescription(log[log.length - 1].myHandDescription))
-      setOpponentDisplayText(makeDescription(log[log.length - 1].opponentHandDescription))
+      setPlayerDisplayText(makeDescription(log[0].myHandDescription));
+      setOpponentDisplayText(makeDescription(log[0].opponentHandDescription));
     }, SWAP_ANIMATION_DURATION);
+
   };
 
   useEffect(() => {
@@ -445,7 +441,37 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
             <Card className='flex flex-col py-0 min-h-[260px] w-full flex-1 lg:flex-[0_0_43%] border border-canvas-line shadow-md overflow-hidden'>
               {/* Make Card relative so absolute div is positioned relative to it */}
               <CardHeader className='relative p-0 w-full flex justify-center items-center'>
-                <CardTitle className='w-full pl-4'>{opponentDisplayText ? opponentDisplayText : 'Opponent Hand'}</CardTitle>
+                <CardTitle className="w-full pl-4 flex items-center gap-2">
+
+                  {/* Opponent Title */}
+                  <span className="font-semibold text-alert-text">
+                    Opponent Hand
+                  </span>
+
+                  {/* Dull Hand Description */}
+                  {opponentDisplayText && (
+                    <span className="text-canvas-text">
+                      ({opponentDisplayText})
+                    </span>
+                  )}
+
+                  {/* Winner / Lost Badge */}
+                  {winner && !showSwapAnimation && (
+                    <span
+                      className={cn(
+                        "px-2 py-0.5 rounded-md text-xs font-medium",
+                        winner === "ai"
+                          ? "bg-success-solid text-success-on-success"
+                          : "bg-alert-solid text-alert-on-alert"
+                      )}
+                    >
+                      {winner === "ai" ? "Winner" : "Loser"}
+                    </span>
+                  )}
+
+                </CardTitle>
+
+
                 <div className='w-full flex justify-end'>
                   <div className=' flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-2 py-1 shadow-sm bg-canvas-bg'>
                     <WalletIcon size='19.6px' />
@@ -477,7 +503,37 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
 
             <Card className='flex flex-col py-0 w-full flex-1 lg:flex-[0_0_43%] border border-canvas-line shadow-md overflow-hidden'>
               <CardHeader className='relative p-0 w-full flex justify-center items-center'>
-                <CardTitle className='w-full pl-4'>{playerDisplayText ? playerDisplayText : 'Your Hand'}</CardTitle>
+                <CardTitle className="w-full pl-4 flex items-center gap-2">
+
+                  {/* Player Title */}
+                  <span className="font-semibold text-success-text">
+                    Your Hand
+                  </span>
+
+                  {/* Dull Hand Description */}
+                  {playerDisplayText && (
+                    <span className="text-canvas-text">
+                      ({playerDisplayText})
+                    </span>
+                  )}
+
+                  {/* Winner / Lost Badge */}
+                  {winner && !showSwapAnimation && (
+                    <span
+                      className={cn(
+                        "px-2 py-0.5 rounded-md  text-xs font-medium",
+                        winner === "player"
+                          ? "bg-success-solid text-success-on-success"
+                          : "bg-alert-solid text-alert-on-alert"
+                      )}
+                    >
+                      {winner === "player" ? "Winner" : "Loser"}
+                    </span>
+                  )}
+
+                </CardTitle>
+
+
                 <div className='w-full flex justify-end'>
                   <div className=' flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-2 py-1 shadow-sm bg-canvas-bg'>
                     <WalletIcon size='19.6px' />

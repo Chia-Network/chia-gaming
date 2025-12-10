@@ -96,10 +96,10 @@ const Calpoker: React.FC<CalpokerProps> = ({
 
   return (
     <div
-      className='relative gap-4 flex min-h-screen w-full flex-col justify-center items-center bg-canvas-bg-subtle px-4 py-8 text-canvas-text sm:px-6 md:px-8'
+      className='relative gap-4 flex min-h-screen w-full flex-col justify-center items-center bg-canvas-bg-subtle px-4 text-canvas-text sm:px-6 md:px-8'
     >
       {/* Header */}
-      <div className='flex w-full flex-col items-center justify-between gap-4 sm:flex-row sm:gap-6'>
+      <div className='flex w-full flex-col items-center pt-4 justify-between gap-4 sm:flex-row sm:gap-6'>
         <h1 className='w-full text-3xl font-bold text-canvas-text-contrast sm:text-left sm:text-4xl'>
           California Poker
         </h1>
@@ -135,7 +135,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
       <div className='flex w-full justify-center overflow-visible lg:h-[calc(100vh-100px)]'>
         <div className='flex w-full flex-col gap-2 overflow-hidden lg:h-full lg:min-h-0 lg:flex-row'>
           {/* MAIN GAME AREA */}
-          <div className='flex-1 overflow-auto lg:flex-[3_1_0%] lg:min-h-0'>
+          <div className='flex-1 overflow-auto lg:flex-[18_1_0%] lg:min-h-0'>
             <CaliforniaPoker
               playerNumber={playerNumber}
               isPlayerTurn={isPlayerTurn}
@@ -155,7 +155,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
           </div>
 
           {/* GAME LOG */}
-          <div className='bg-canvas-bg lg:flex-[1_1_0%] lg:min-h-0 lg:overflow-y-auto'>
+          <div className='bg-canvas-bg lg:flex-[7_1_0%] lg:min-h-0 lg:overflow-y-auto'>
             <div className='h-full'>
               <GameLog log={log} />
             </div>
