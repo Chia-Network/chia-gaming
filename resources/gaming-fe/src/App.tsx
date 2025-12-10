@@ -17,8 +17,10 @@ const App = () => {
   const shouldRedirectToLobby = saveList.length == 0 && !params.lobby && !params.iStarted;
   if (saveList.length > 0) {
     const decodedSave = loadSave(saveList[0]);
-    useParams = decodedSave.searchParams;
-    useIframeUrl = decodedSave.url;
+    if (decodedSave) {
+      useParams = decodedSave.searchParams;
+      useIframeUrl = decodedSave.url;
+    }
   }
   const [havePeak, setHavePeak] = useState(false);
   const [iframeUrl, setIframeUrl] = useState(useIframeUrl);
