@@ -13,8 +13,8 @@ const App = () => {
   const params = getSearchParams();
   let useParams = params;
   let useIframeUrl = 'about:blank';
-  const saveList = getSaveList();
-  //const shouldRedirectToLobby = true;
+  // const saveList = getSaveList();
+  const saveList: string[] = []; // Disable save / reload
   const shouldRedirectToLobby = saveList.length == 0 && !params.lobby && !params.iStarted;
   if (saveList.length > 0) {
     const decodedSave = loadSave(saveList[0]);
