@@ -1,4 +1,4 @@
-const STALE_SAVE_TIME_MS = 60 * 60 * 1000;
+const STALE_SAVE_TIME_MS = 10 * 60 * 1000;
 
 export function getSaveList(): string[] {
   const result = localStorage.getItem('saveNames');
