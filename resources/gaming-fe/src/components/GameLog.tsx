@@ -8,23 +8,18 @@ import {
 import { RANK_SYMBOLS, SUIT_COLORS } from '../features/californiaPoker/constants/constants';
 import { cn } from '../lib/utils';
 import { AArrowDown, ChevronDown, Expand, History } from 'lucide-react';
+import { makeDescription } from '../features/californiaPoker/utils';
 
 interface GameLogProps {
   log: OutcomeLogLine[];
 }
 
-const getRankSymbol = (n: number) => RANK_SYMBOLS[n] ?? n.toString();
+
 
 const GameLog: React.FC<GameLogProps> = ({ log }) => {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
 
-  const makeDescription = (desc: OutcomeHandType) => {
-    const mappedValues = desc.values.map((v: number) => getRankSymbol(v));
-    if (desc.rank) {
-      return `${desc.name} ${mappedValues.join(', ')}`;
-    }
-    return `${desc.name} ${mappedValues[0]}`;
-  };
+
 
   const cardDisplay = (
     c: number[],
@@ -107,7 +102,7 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
             </div>
           ) : (
             <div className='flex flex-col gap-2'>
-              {log.map((entry, index) => {
+              {log.slice().reverse().map((entry, index) => {
                 const isExpanded = expandedIndex === index;
                 const iWin = entry.topLineOutcome === 'win';
                 const opWin = entry.topLineOutcome === 'lose';

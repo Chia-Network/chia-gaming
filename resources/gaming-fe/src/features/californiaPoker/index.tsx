@@ -4,6 +4,7 @@ import {
   BestHandType,
   CaliforniapokerProps,
   CardValueSuit,
+  FormatHandProps,
   MovingCardData,
   SwappingCards,
 } from '../../types/californiaPoker';
@@ -14,6 +15,7 @@ import {
   BUTTON_ACTIVE,
   BUTTON_BASE,
   GAME_STATES,
+  RANK_SYMBOLS,
   SWAP_ANIMATION_DURATION,
 } from './constants/constants';
 
@@ -24,13 +26,13 @@ import {
   evaluateHand,
   formatHandDescription,
   getCombinations,
+  makeDescription,
 } from './utils';
 import { HandDisplay, MovingCard } from './components';
-import { CalpokerOutcome } from '../../types/ChiaGaming';
+import { CalpokerOutcome, OutcomeHandType, suitNames } from '../../types/ChiaGaming';
 import { SuitName } from '../../types/californiaPoker/CardValueSuit';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { WalletIcon } from 'lucide-react';
-import { makeDescription } from './utils/MakeDescription';
 
 
 function translateTopline(topline: string | undefined): string | null {
@@ -76,6 +78,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const [rememberedCardSelections, setRememberedCardSelections] = useState(0);
   const [playerDisplayText, setPlayerDisplayText] = useState<string>('');
   const [opponentDisplayText, setOpponentDisplayText] = useState<string>('');
+
   const cvsFromCard: (card: number[], index: number) => CardValueSuit = ([rank, suit], index) => ({
     rank,
     suit: suitMap[suit],
@@ -142,6 +145,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     setPlayerBestHand(undefined);
     setAiBestHand(undefined);
     setShowSwapAnimation(false);
+    setPlayerDisplayText('');
+    setOpponentDisplayText('');
     setSwappingCards({ player: [], ai: [] });
   };
 
@@ -417,6 +422,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   useEffect(() => {
     dealCards();
   }, []);
+
 
   return (
     <div className='flex flex-col w-full h-full overflow-hidden text-canvas-text'>
