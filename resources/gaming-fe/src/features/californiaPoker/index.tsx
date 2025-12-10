@@ -25,6 +25,7 @@ import {
 } from './utils';
 import { HandDisplay, MovingCard } from './components';
 import { CalpokerOutcome } from '../../types/ChiaGaming';
+import { CalpokerOutcome } from '../../types/ChiaGaming';
 import { SuitName } from '../../types/californiaPoker/CardValueSuit';
 
 import { WalletIcon } from 'lucide-react';
@@ -129,16 +130,13 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const NewGame = () => {
     console.log('starting again');
     doHandleMakeMove();
-    console.log('starting again');
-    doHandleMakeMove();
     setGameState(GAME_STATES.SELECTING);
-    setRememberedCards([[], []]);
+    setRememberedCards([[],[]]);
     setWinner(null);
     setRememberedOutcome(undefined);
     setMovingCards([]);
     setCardSelections(0);
     setPlayerSelected([]);
-    setShowSwapAnimation(false);
     setShowSwapAnimation(false);
     setSwappingCards({ player: [], ai: [] });
   };

@@ -11,6 +11,9 @@ import { Separator } from './ui/separator';
 export interface GameParams {
   params: any;
 }
+export interface GameParams {
+  params: any;
+}
 
 const Game: React.FC<GameParams> = ({ params }) => {
   const uniqueId = generateOrRetrieveUniqueId();

@@ -25,10 +25,8 @@ const App = () => {
   const [iframeUrl, setIframeUrl] = useState(useIframeUrl);
   const [fetchedUrls, setFetchedUrls] = useState(false);
   const [iframeAllowed, setIframeAllowed] = useState('');
-
   const [showPopup, setShowPopup] = useState(false);
   const [pendingGameUrl, setPendingGameUrl] = useState<string | null>(null);
-
   useEffect(() => {
     const subscription = blockchainDataEmitter.getObservable().subscribe({
       next: (_peak: any) => {
@@ -191,7 +189,7 @@ const App = () => {
   }
 
   if (params.game && !params.join && !showPopup) {
-    return <Game params={params}/>;
+    return <Game params={params} />;
   }
 
   const wcHeading = (
