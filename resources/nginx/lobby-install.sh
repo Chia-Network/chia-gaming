@@ -90,5 +90,7 @@ if [ -d /etc/systemd/system ] ; then
 fi
 
 sed -e "s!/app!${WEBROOT}!g" -e "s!@PORT@!${PORT}!g" < nginx/lobby.conf > "${NGINX}/lobby.conf"
+mkdir -p "${WEBROOT}/lobby-view"
 cp -r public "${WEBROOT}/lobby-view"
+cp -r dist "${WEBROOT}/lobby-view"
 cp service.js "${SERVICE}"

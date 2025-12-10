@@ -337,6 +337,16 @@ async function verifyCardsWithLog(driver, cards) {
   checkCardsInLog(theirLogEntryDesc, convertedTheirUsedCards);
 }
 
+async function reloadBrowser(driver, selectWallet) {
+  console.log('reloading');
+  await driver.navigate().refresh();
+  console.log('selecting wallet');
+  await selectWallet(driver);
+  console.log('done reloading?');
+  await driver.wait(until.elementLocated(byAttribute('id', 'subframe')));
+  await driver.switchTo().frame("subframe");
+}
+
 // Define a category of tests using test framework, in this case Jasmine
 describe("Out of money test", function () {
   const baseUrl = "http://localhost:3000";
@@ -375,7 +385,7 @@ describe("Out of money test", function () {
       driver.wait(
         until.elementLocated(byAttribute("data-testid", "stop-playing")),
       ),
-      (elt) => waitAriaEnabled(driver, elt),
+      (elt) => waitEnabled(driver, elt),
       1.0,
     );
     await stopButton.click();
@@ -451,8 +461,14 @@ describe("Out of money test", function () {
 
     console.log("stop the game (2)");
     await driver.executeScript('window.scroll(0, 0);');
-    let stopButton = await driver.wait(
-      until.elementLocated(byAttribute("data-testid", "stop-playing")),
+    let stopButton = await waitForNonError(
+      driver,
+      () =>
+      driver.wait(
+        until.elementLocated(byAttribute("data-testid", "stop-playing")),
+      ),
+      (elt) => waitEnabled(driver, elt),
+      1.0,
     );
     await stopButton.click();
 
@@ -499,7 +515,7 @@ describe("Out of money test", function () {
     console.log("driver.get", baseUrl, driver);
     await driver.get(baseUrl);
 
-    await selectSimulator(driver);
+    await selectWallet(driver);
 
     await wait(driver, 5.0);
 
@@ -528,6 +544,62 @@ describe("Out of money test", function () {
     await wait(driver, 5.0);
   }
 
+  async function testOneGameReload(selectWallet) {
+    // Load the login page
+    await driver.get(baseUrl);
+
+    await selectWallet(driver);
+
+    await wait(driver, 5.0);
+
+    await driver.switchTo().frame("subframe");
+
+    const partnerUrl = await initiateGame(driver, 200);
+
+    // Spawn second browser.
+    console.log("second browser start");
+    await firefox_start_and_first_move(selectWallet, ffdriver, partnerUrl);
+
+    console.log("wait for alice make move button");
+    await clickMakeMove(driver, "alice", "Start Game");
+
+    console.log('wait before reloading');
+    await wait(driver, 10.0);
+    await reloadBrowser(driver, selectWallet);
+    console.log('wait after reloading');
+    await wait(driver, 10.0);
+
+    console.log('selecting bob cards');
+    await clickFourCards(ffdriver, 'bob', 0xaa);
+
+    console.log('selecting alice cards');
+    await clickFourCards(driver, 'alice', 0x55);
+
+    await wait(driver, 5.0);
+
+    console.log("stop the game");
+    await driver.executeScript('window.scroll(0, 0);');
+    let stopButton = await waitForNonError(
+      driver,
+      () =>
+      driver.wait(
+        until.elementLocated(byAttribute("data-testid", "stop-playing")),
+      ),
+      (elt) => waitEnabled(driver, elt),
+      1.0,
+    );
+    await stopButton.click();
+
+    console.log("awaiting shutdown");
+
+    console.warn("get ff shutdown");
+    await gotShutdown(ffdriver);
+    console.warn("get chrome shutdown");
+    await gotShutdown(driver);
+
+    await wait(driver, 5.0);
+  }
+
   it(
     "starts",
     async function () {
@@ -540,6 +612,11 @@ describe("Out of money test", function () {
       await prepareBrowser(driver2);
 
       await testRunOutOfMoney(selectSimulator);
+
+      await prepareBrowser(driver1);
+      await prepareBrowser(driver2);
+
+      await testOneGameReload(selectSimulator);
 
       await prepareBrowser(driver1);
       await prepareBrowser(driver2);

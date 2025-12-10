@@ -299,22 +299,23 @@ observable.subscribe({
       wasm,
       chiaGameId,
       private_key,
-      have_potato,
     );
 
   }
 
+  deserializeGame(
+    wasm: WasmConnection,
+    serializedGame: any,
+  ): ChiaGame {
+    let chiaGameId = wasm.create_serialized_game(serializedGame);
+    let identity = wasm.get_identity(chiaGameId);
 
-  // getDeserializedWasmBlobWrapper(serializedGame: any) {
-  //   let wc = this.wasmConnection;
-  //   if (wc) {
-  //     let cradleId = wc.create_serialized_game(serializedGame);
-  //     let cradle = new ChiaGame(wc, cradleId);
-  //     return cradle;
-  //   }
-  //   return undefined;
-  // }
-
+    return new ChiaGame(
+      wasm,
+      chiaGameId,
+      identity.private_key,
+    );
+  }
 }
 
 export function loadCalpoker(fetchHex: (filename: string) => Promise<string> ): any {

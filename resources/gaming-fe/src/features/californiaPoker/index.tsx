@@ -129,6 +129,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const NewGame = () => {
     console.log('starting again');
     doHandleMakeMove();
+    console.log('starting again');
+    doHandleMakeMove();
     setGameState(GAME_STATES.SELECTING);
     setRememberedCards([[], []]);
     setWinner(null);
@@ -136,6 +138,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     setMovingCards([]);
     setCardSelections(0);
     setPlayerSelected([]);
+    setShowSwapAnimation(false);
     setShowSwapAnimation(false);
     setSwappingCards({ player: [], ai: [] });
   };

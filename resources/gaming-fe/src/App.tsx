@@ -4,6 +4,7 @@ import Gallery from './components/Gallery';
 import Game from './components/Game';
 import WalletConnectHeading from './components/WalletConnectHeading';
 import { blockchainDataEmitter } from './hooks/BlockchainInfo';
+import { getSaveList, loadSave } from './hooks/save';
 import { getGameSelection, getSearchParams, generateOrRetrieveUniqueId } from './util';
 import GameRedirectPopup from './components/GameRedirectPopup';
 
@@ -11,13 +12,20 @@ const App = () => {
   const uniqueId = generateOrRetrieveUniqueId();
   const gameSelection = getGameSelection();
   const params = getSearchParams();
-  const shouldRedirectToLobby = !params.lobby && !params.iStarted;
+  let useParams = params;
+  let useIframeUrl = 'about:blank';
+  const saveList = getSaveList();
+  const shouldRedirectToLobby = saveList.length == 0 && !params.lobby && !params.iStarted;
+  if (saveList.length > 0) {
+    const decodedSave = loadSave(saveList[0]);
+    useParams = decodedSave.searchParams;
+    useIframeUrl = decodedSave.url;
+  }
   const [havePeak, setHavePeak] = useState(false);
-  const [iframeUrl, setIframeUrl] = useState('about:blank');
+  const [iframeUrl, setIframeUrl] = useState(useIframeUrl);
   const [fetchedUrls, setFetchedUrls] = useState(false);
   const [iframeAllowed, setIframeAllowed] = useState('');
-  const gameName = params.game;
-  const joinCode = params.join;
+
   const [showPopup, setShowPopup] = useState(false);
   const [pendingGameUrl, setPendingGameUrl] = useState<string | null>(null);
 
@@ -183,7 +191,7 @@ const App = () => {
   }
 
   if (params.game && !params.join && !showPopup) {
-    return <Game />;
+    return <Game params={params}/>;
   }
 
   const wcHeading = (
@@ -209,7 +217,7 @@ const App = () => {
           className="w-full h-full border-0 m-0 md:py-0 py-6 bg-canvas-bg-subtle"
           src={iframeUrl}
 	allow={`clipboard-write self ${iframeAllowed}`}
-        ></iframe>
+      ></iframe>
       </div>
       <GameRedirectPopup
         open={showPopup}
