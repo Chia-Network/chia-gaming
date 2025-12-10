@@ -33,9 +33,9 @@ export default function ActiveRooms({
             <button
               onClick={openDialog}
               aria-label='generate-room'
-              className='px-4 py-2 bg-secondary text-white rounded font-medium'
+              className='px-4 py-2 bg-secondary rounded font-medium border'
             >
-              Generate Room
+                 Start Session
             </button>
           </div>
 
@@ -56,7 +56,7 @@ export default function ActiveRooms({
                   No Active Rooms
                 </h6>
                 <p className='text-sm text-canvas-text'>
-                  Create a room to start a game.
+                  Choose 'Start Session' to play.
                 </p>
               </div>
             ) : (
@@ -76,7 +76,7 @@ export default function ActiveRooms({
                   </div>
                   <button
                     onClick={() => joinRoom(r.token)}
-                    className='px-3 py-1 bg-secondary text-white rounded font-medium'
+                    className='px-3 py-1 bg-secondary rounded font-medium border'
                   >
                     Join
                   </button>
