@@ -46,7 +46,7 @@ export function findMatchingGame(peerSaves: string[]): string | undefined {
   const mySaves = getSaveList().filter((s) => {
     const saveMillisecondDateStr = localStorage.getItem(`date-${s}`);
     const saveMillisecondDate = saveMillisecondDateStr ? parseInt(saveMillisecondDateStr) : undefined;
-    return !saveMillisecondDate || (saveMillisecondDate < currentTime - STALE_SAVE_TIME_MS);
+    return saveMillisecondDate && (saveMillisecondDate >= currentTime - STALE_SAVE_TIME_MS);
   });
   return mySaves.find(save => peerSet.has(save));
 }
