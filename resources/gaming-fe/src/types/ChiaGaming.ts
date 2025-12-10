@@ -37,7 +37,7 @@ export interface SubsystemStatus {
 };
 
 export interface GameConnectionState {
-  stateIdentifier: string;
+  stateIdentifier: StateIdentifier;
   stateDetail: string[];
   subsystemStatusList: SubsystemStatus[];
 }
@@ -51,6 +51,7 @@ export interface SaveData {
 
 export type OpponentMove = [string, string];
 export type GameFinished = [string, number];
+export type StateIdentifier = 'starting' | 'running' | 'shutdown' | 'end';
 
 export interface IdleResult {
   continue_on: boolean;

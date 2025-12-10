@@ -231,12 +231,12 @@ io.on('connection', (socket) => {
     io.emit('game_message', { party, token, msgno, msg });
   });
 
-  socket.on('saves', ({ iStarted, saves }) => {
-    io.emit('saves', { iStarted, saves });
+  socket.on('saves', ({ iStarted, saves, token }) => {
+    io.emit('saves', { iStarted, saves, token });
   });
 
-  socket.on('peer', ({ iStarted, beaconId }) => {
-    io.emit('peer', { iStarted, beaconId });
+  socket.on('peer', ({ iStarted, beaconId, token }) => {
+    io.emit('peer', { iStarted, beaconId, token });
   });
 });
 
