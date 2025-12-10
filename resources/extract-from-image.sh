@@ -16,6 +16,7 @@ export LOBBY="${TARGET}/l/${SHORT_LOBBY}"
 mkdir -p "${SOURCE}/app"
 mkdir -p "${SOURCE}/nginx"
 mkdir -p "${GAME}/dist/js"
+mkdir -p "${GAME}/dist/css"
 mkdir -p "${GAME}/public"
 mkdir -p "${GAME}/clsp"
 mkdir -p "${GAME}/nginx"
@@ -24,6 +25,7 @@ docker run -v "${SOURCE}:/artifacts" -t chia-gaming-test /bin/bash -c "cp -r /ap
 
 cp -r "${SOURCE}/app/game/dist"/*.* "${GAME}/dist"
 cp -r "${SOURCE}/app/game/dist/js/index-rollup.js" "${GAME}/dist/js"
+cp -r "${SOURCE}/app/game/dist/css/index.css" "${GAME}/dist/css"
 cp -r "${SOURCE}/app/game/public"/* "${GAME}/public"
 cp -r "${SOURCE}/app/clsp"/* "${GAME}/clsp"
 
@@ -35,9 +37,11 @@ cp -r resources/nginx/beacon.service "${GAME}/beacon.service"
 cp -r resources/nginx/GAME.md "${GAME}/README.md"
 
 mkdir -p "${LOBBY}/public"
+mkdir -p "${LOBBY}/dist/css"
 mkdir -p "${LOBBY}/nginx"
 
 cp -r "${SOURCE}/app/lobby-view/public"/* "${LOBBY}/public"
+cp -r "${SOURCE}/app/lobby-view/dist/css/index.css" "${LOBBY}/dist/css"
 cp -r "${SOURCE}/app/lobby-service/dist/index-rollup.cjs" "${LOBBY}/service.js"
 
 cp -r resources/nginx/lobby-install.sh "${LOBBY}/lobby-install.sh"
