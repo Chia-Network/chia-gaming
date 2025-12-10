@@ -73,7 +73,6 @@ const LobbyScreen = () => {
     try {
       const newWagerInputInteger = parseInt(newWagerInput);
       setWagerValidationError('');
-      //if (!validateCreateSessionIsOK()) return;
       const newPerHand = Math.max(1, Math.floor(newWagerInputInteger / 10));
       setPerHandInput(newPerHand.toString());
     } catch (e: any) {
