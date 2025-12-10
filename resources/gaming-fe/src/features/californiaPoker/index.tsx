@@ -33,6 +33,7 @@ import { CalpokerOutcome, OutcomeHandType, suitNames } from '../../types/ChiaGam
 import { SuitName } from '../../types/californiaPoker/CardValueSuit';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { WalletIcon } from 'lucide-react';
+import { cn } from '@/src/lib/utils';
 
 
 function translateTopline(topline: string | undefined): string | null {
@@ -461,11 +462,12 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                   {/* Winner / Lost Badge */}
                   {winner && !showSwapAnimation && (
                     <span
-                      className={`px-2 py-0.5 rounded-md text-xs font-medium ${
+                      className={cn(
+                        "px-2 py-0.5 rounded-md text-xs font-medium",
                         winner === "ai"
                           ? "bg-success-solid text-success-on-success"
                           : "bg-alert-solid text-alert-on-alert"
-                      }`}
+                      )}
                     >
                       {winner === "ai" ? "Winner" : "Loser"}
                     </span>
@@ -523,11 +525,12 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                   {/* Winner / Lost Badge */}
                   {winner && !showSwapAnimation && (
                     <span
-                    className={`px-2 py-0.5 rounded-md text-xs font-medium ${
-                      winner === "player"
-                        ? "bg-success-solid text-success-on-success"
-                        : "bg-alert-solid text-alert-on-alert"
-                    }`}
+                      className={cn(
+                        "px-2 py-0.5 rounded-md  text-xs font-medium",
+                        winner === "player"
+                          ? "bg-success-solid text-success-on-success"
+                          : "bg-alert-solid text-alert-on-alert"
+                      )}
                     >
                       {winner === "player" ? "Winner" : "Loser"}
                     </span>
