@@ -16,6 +16,8 @@ import {
   handValueToDescription,
   RngId,
   SaveData,
+  StatusUpdateWithTime,
+  SubsystemStatus,
 } from '../types/ChiaGaming';
 import { getSearchParams, empty, getRandomInt, getEvenHexString } from '../util';
 import { ChildFrameBlockchainInterface } from './ChildFrameBlockchainInterface';
@@ -53,6 +55,7 @@ export interface UseWasmBlobResult {
   outcome: CalpokerOutcome | undefined;
   lastOutcome: CalpokerOutcome | undefined;
   stopPlaying: () => void;
+  eventFireLog: StatusUpdateWithTime[];
 };
 
 export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: string): UseWasmBlobResult {
@@ -87,6 +90,8 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
   const [moveNumber, setMoveNumber] = useState<number>(0);
   const [error, setRealError] = useState<string | undefined>(undefined);
   const [cardSelections, setOurCardSelections] = useState<number>(0);
+  const [usedEventFireKeys, setUsedEventFireKeys] = useState<Record<string, number>>({});
+  const [eventFireLog, setEventFireLog] = useState<StatusUpdateWithTime[]>([]);
   const amount = parseInt(searchParams.amount);
 
   const setSavedGame = (game: any) => {
@@ -135,12 +140,41 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     }
   };
 
+  const updateEventFireLog = (newLogEvents: SubsystemStatus[]) => {
+    let newEventFireLog = [... eventFireLog];
+    let newEventFireKeys = {... usedEventFireKeys};
+
+    const currentTime = new Date().getTime();
+    for (let i = 0; i < newLogEvents.length; i++) {
+      const entry = newLogEvents[i];
+      const rowKey = usedEventFireKeys[entry.id];
+      if (rowKey !== undefined && entry.initialized && !newEventFireLog[rowKey].status.initialized) {
+        newEventFireLog[rowKey] = {
+          time: currentTime,
+          status: entry
+        };
+      } else {
+        const newKey = newEventFireLog.length;
+        newEventFireLog.push({
+          time: currentTime,
+          status: entry
+        });
+        newEventFireKeys[entry.id] = newKey;
+      }
+    }
+
+    setEventFireLog(newEventFireLog);
+    setUsedEventFireKeys(newEventFireKeys);
+  };
+
   const recognizeGameConnectionState = async (cs: GameConnectionState) => {
     if (cs.stateIdentifier === 'shutdown') {
       startNewSession();
     }
     if (!cs.subsystemStatusList) {
       cs.subsystemStatusList = gameConnectionState.subsystemStatusList;
+    } else {
+      updateEventFireLog(gameConnectionState.subsystemStatusList);
     }
 
     setGameConnectionState(cs);
@@ -265,6 +299,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
 
   return {
     error,
+    eventFireLog,
     addressData,
     amount,
     ourShare,

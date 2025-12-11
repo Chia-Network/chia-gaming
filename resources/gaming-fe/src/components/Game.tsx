@@ -19,6 +19,7 @@ const Game: React.FC<GameParams> = ({ params }) => {
   const {
     error,
     log,
+    eventFireLog,
     addressData,
     ourShare,
     theirShare,
@@ -47,6 +48,38 @@ const Game: React.FC<GameParams> = ({ params }) => {
   if (error) {
     return <div>{error}</div>;
   }
+
+  useEffect(() => {
+    // DEBUG use: hook ^L in the window so the user can get a download version of the startup log.
+    const saveOnKeypress = (evt: any) => {
+      if (evt.ctrlKey && evt.key === 'l') {
+        const content = JSON.stringify(eventFireLog);
+        const blob = new Blob([content], { type: "application/json" });
+        const blobUrl = window.URL.createObjectURL(blob);
+        const rootElement = document.getElementById('root');
+        if (blobUrl && rootElement) {
+          const newElement = document.createElement('a');
+          newElement.style = "width: 1px; height: 1px;";
+          newElement.download = 'startup.log';
+          newElement.href = blobUrl;
+          newElement.addEventListener('click', () => {
+            setTimeout(() => { window.URL.revokeObjectURL(blobUrl); }, 15000);
+          });
+          // Click link
+          setTimeout(() => {
+            newElement.dispatchEvent(new MouseEvent('click'));
+            rootElement.removeChild(newElement);
+          }, 500);
+          rootElement.appendChild(newElement);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', saveOnKeypress);
+    return () => {
+      window.removeEventListener('keydown', saveOnKeypress);
+    };
+  }, [eventFireLog]);
 
   if (gameConnectionState.stateIdentifier === 'starting') {
     return (

@@ -36,6 +36,11 @@ export interface SubsystemStatus {
   initialized: boolean;
 };
 
+export interface StatusUpdateWithTime {
+  status: SubsystemStatus;
+  time: number;
+}
+
 export interface GameConnectionState {
   stateIdentifier: string;
   stateDetail: string[];

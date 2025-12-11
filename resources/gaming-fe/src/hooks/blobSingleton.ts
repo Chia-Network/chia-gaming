@@ -45,8 +45,14 @@ export async function configGameObject(
   console.log("configGameObject wasmConnection", wasmConnection);
   let rngId = wasmConnection.create_rng(seedStr);
   let identity = wasmConnection.chia_identity(rngId);
+  gameObject.setGameConnectionState('starting', ['Getting wallet address'], [
+    { id: "walletAddress", long_name: "Get Wallet Address", initialized: false }
+  ]);
   let address = await blockchain.getAddress();
   gameObject.setBlockchainAddress(address);
+  gameObject.setGameConnectionState('starting', ['Have wallet address'], [
+    { id: "walletAddress", long_name: "Get Wallet Address", initialized: true }
+  ]);
   let cradle = wasmStateInit.createGame(calpokerHex, rngId, wasmConnection, identity.private_key, iStarted, amount, amount, address.puzzleHash);
   gameObject.setGameCradle(cradle);
   let coin = await wasmStateInit.createStartCoin(blockchain, uniqueId, identity, amount, wasmConnection);
