@@ -103,7 +103,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     needs:
-      - installers
+      - test
     steps:
       - uses: actions/checkout@v6
 
