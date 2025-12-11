@@ -124,7 +124,7 @@ jobs:
         run: |
           cd ${{ github.workspace }}/artifacts || exit 1
           DIRS="chia-gaming-frontend chia-gaming-lobby"
-          while IFS= read -r dir; do
+          for dir in $DIRS; do
             echo "Creating zip for $dir..."
             zip -r $dir.zip $dir
           done <<< "$DIRS"
