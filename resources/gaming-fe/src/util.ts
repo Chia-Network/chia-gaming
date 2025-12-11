@@ -192,3 +192,13 @@ export function getEvenHexString(n: number) {
     return hexString.slice(0, hexString.length - 1);
   }
 }
+
+export function waitMillisecs<T>(millisecs: number, action: () => Promise<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    setTimeout(() => {
+      action()
+      .then((r) => resolve(r))
+        .catch(reject);
+    }, millisecs);
+  });
+}
