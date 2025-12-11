@@ -91,12 +91,52 @@ jobs:
       - name: Archive chia-gaming-frontend
         uses: actions/upload-artifact@v4
         with:
-          name: chia-gaming-frontend.zip
+          name: chia-gaming-frontend
           path: ${{ github.workspace }}/chia-gaming-deploy/g
 
       - name: Archive chia-gaming-lobby
         uses: actions/upload-artifact@v4
         with:
-          name: chia-gaming-lobby.zip
+          name: chia-gaming-lobby
           path: ${{ github.workspace }}/chia-gaming-deploy/l
 
+  release:
+    runs-on: ubuntu-latest
+    needs:
+      - test
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set Env
+        uses: Chia-Network/actions/setjobenv@main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@v6
+        with:
+          path: artifacts
+
+      - name: Show artifacts
+        run: tree artifacts
+
+      - name: Generate artifact zips
+        if: env.RELEASE == 'true'
+        run: |
+          cd ${{ github.workspace }}/artifacts || exit 1
+          DIRS=$(find . -type d -name 'chia-gaming*')
+          while IFS= read -r dir; do
+            echo "Creating zip for $dir..."
+            zip -r $dir.zip $dir
+          done <<< "$DIRS"
+
+      - name: Upload Release Artifacts
+        if: env.RELEASE == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          FILES=$(find ${{ github.workspace }}/artifacts -type f -name 'chia-gaming*.zip')
+          while IFS= read -r file; do
+            gh release upload \
+              $RELEASE_TAG \
+              $file
+          done <<< "$FILES"
