@@ -123,7 +123,7 @@ jobs:
         if: env.RELEASE == 'true'
         run: |
           cd ${{ github.workspace }}/artifacts || exit 1
-          DIRS=$(find . -type d -name 'chia-gaming*')
+          DIRS="chia-gaming-frontend chia-gaming-lobby"
           while IFS= read -r dir; do
             echo "Creating zip for $dir..."
             zip -r $dir.zip $dir
@@ -137,6 +137,6 @@ jobs:
           FILES=$(find ${{ github.workspace }}/artifacts -type f -name 'chia-gaming*.zip')
           while IFS= read -r file; do
             gh release upload \
-              "${RELEASE_TAG}-$(echo ${file} | tr './' '__')" \
+              ${RELEASE_TAG} \
               $file
           done <<< "$FILES"
