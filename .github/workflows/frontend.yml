@@ -137,6 +137,6 @@ jobs:
           FILES=$(find ${{ github.workspace }}/artifacts -type f -name 'chia-gaming*.zip')
           while IFS= read -r file; do
             gh release upload \
-              $RELEASE_TAG \
+              "${RELEASE_TAG}-$(echo ${file} | tr './' '__')" \
               $file
           done <<< "$FILES"
