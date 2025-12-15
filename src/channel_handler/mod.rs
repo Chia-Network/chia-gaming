@@ -274,7 +274,7 @@ impl ChannelHandler {
     }
 
     pub fn amount(&self, on_chain: bool) -> Amount {
-        let allocated = self.my_allocated_balance.clone() + self.their_allocated_balance.clone();
+       v let allocated = self.my_allocated_balance.clone() + self.their_allocated_balance.clone();
 
         if on_chain {
             return allocated;
