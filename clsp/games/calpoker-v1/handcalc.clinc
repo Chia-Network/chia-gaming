@@ -75,11 +75,51 @@
     )
 )
 
+; Find the index of the highest singleton (count=1) in sorted grouped cards
+; Returns () if no singleton found, otherwise returns the index
+(defun best_singleton_index (sorted_grouped)
+    (if (not sorted_grouped)
+        ()  ; No singleton found
+        (assign
+            (@ first (count rank suit index)) (f sorted_grouped)
+            (if (= count 1)
+                index
+                (best_singleton_index (r sorted_grouped))
+            )
+        )
+    )
+)
+
+; Select best 5 card indices for group_candidate
+; Fixes kicker bug: when 5th card is from incomplete pair (3+ pairs case),
+; replace it with the highest singleton (if one exists)
+(defun select_group_indices (first_5 sorted_grouped)
+    (assign
+        c5 (f (r (r (r (r first_5)))))
+        (if (= (f c5) 1)
+            ; Common case: 5th card is singleton, use original logic
+            (map (lambda ((c r s i)) i) first_5)
+            ; Rare case: 5th card is from pair, check if incomplete
+            (assign
+                c4 (f (r (r (r first_5))))
+                indices (map (lambda ((c r s i)) i) first_5)
+                singleton_idx (best_singleton_index sorted_grouped)
+                ; Only replace if: ranks differ AND a singleton exists (non-zero index or check)
+                (if (logand (!= (f (r c5)) (f (r c4))) singleton_idx)
+                    (append (truncate 4 indices) (list singleton_idx))
+                    indices
+                )
+            )
+        )
+    )
+)
+
 (defun handcalc (cards)
     (assign
         ranks_first (sort deep> (map_enumerate (lambda ((rank . suit) index) (li rank suit index)) cards))
 
-        group_candidate (map (lambda ((count rank suit index)) index) (truncate 5 (sort deep> (prepend_count ranks_first))))
+        sorted_grouped (sort deep> (prepend_count ranks_first))
+        group_candidate (select_group_indices (truncate 5 sorted_grouped) sorted_grouped)
         straight_candidate (straight_indices ranks_first)
 
         suits_first (sort deep> (map_enumerate (lambda ((rank . suit) index) (li suit rank index)) cards))
