@@ -100,7 +100,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
     >
       {/* Header */}
       <div className='flex w-full flex-col items-center pt-4 justify-between gap-4 sm:flex-row sm:gap-6'>
-        <h1 className='w-full text-3xl font-bold text-canvas-text-contrast sm:text-left sm:text-4xl'>
+        <h1 className='w-full text-2xl font-semibold text-canvas-text-contrast sm:text-left sm:text-4xl'>
           California Poker
         </h1>
 

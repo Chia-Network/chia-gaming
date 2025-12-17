@@ -54,7 +54,7 @@ const GameBottomBar = ({
             variant='solid'
             color='primary'
             onClick={doHandleMakeMove}
-            disabled={isDisabled && moveNumber !== 0}
+            disabled={isDisabled}
             className='h-full w-full p-4 lg:p-0'
           >
             {buttonText}

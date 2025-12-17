@@ -34,6 +34,7 @@ import { SuitName } from '../../types/californiaPoker/CardValueSuit';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { WalletIcon } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
+import GameBottomBar from './components/GameBottomBar';
 
 
 function translateTopline(topline: string | undefined): string | null {
@@ -175,20 +176,21 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     }
   };
 
+
+
   const isDisabled =
-    !isPlayerTurn ||
-    (moveNumber === 0
-      ? false
-      : moveNumber === 1
-        ? !(
+  !isPlayerTurn ||
+  (moveNumber === 0
+    ? false
+    : moveNumber === 1
+      ? !(
           (gameState === GAME_STATES.SELECTING &&
             playerSelected.length === 4) ||
           gameState === GAME_STATES.SWAPPING
         )
-        : true);
+      : true);
 
-  const isActive = !isDisabled; // single source of truth
-
+const isActive = !isDisabled; // single source of truth
   // ---------- TEXT ----------
   let buttonText = '';
 
@@ -444,11 +446,11 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
 
             <Card className='flex flex-col py-0 min-h-[260px] w-full flex-1 lg:flex-[0_0_43%] border border-canvas-line shadow-md overflow-hidden'>
               {/* Make Card relative so absolute div is positioned relative to it */}
-              <CardHeader className='relative p-0 w-full flex justify-center items-center'>
-                <CardTitle className="w-full pl-4 flex items-center gap-2">
+              <CardHeader className='relative p-0 w-full flex-row flex justify-center items-center'>
+                <CardTitle className="w-full pl-4 py-1 text-base flex-col sm:flex-row flex items-start gap-2">
 
                   {/* Opponent Title */}
-                  <span className="font-semibold text-alert-text">
+                  <span className="text-base font-semibold text-alert-text">
                     Opponent Hand
                   </span>
 
@@ -476,8 +478,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 </CardTitle>
 
 
-                <div className='w-full flex justify-end'>
-                  <div className=' flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-2 py-1 shadow-sm bg-canvas-bg'>
+                <div className='flex justify-end'>
+                  <div className=' flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-2 py-2 shadow-sm bg-canvas-bg'>
                     <WalletIcon size='19.6px' />
                     <span className='ml-2 font-bold text-sm text-canvas-text-contrast'>{playerBalance}</span>
                   </div>
@@ -507,8 +509,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
 
 
             <Card className='flex flex-col py-0 w-full flex-1 lg:flex-[0_0_43%] border border-canvas-line shadow-md overflow-hidden'>
-              <CardHeader className='relative p-0 w-full flex justify-center items-center'>
-                <CardTitle className="w-full pl-4 flex items-center gap-2">
+              <CardHeader className='relative p-0 w-full flex-row flex justify-center items-center'>
+                <CardTitle className="w-full pl-4 py-1 text-base  flex-col sm:flex-row  flex items-start gap-2">
 
                   {/* Player Title */}
                   <span className="font-semibold text-success-text">
@@ -539,8 +541,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 </CardTitle>
 
 
-                <div className='w-full flex justify-end'>
-                  <div className=' flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-2 py-1 shadow-sm bg-canvas-bg'>
+                <div className='flex justify-end'>
+                  <div className=' flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-2 py-2 shadow-sm bg-canvas-bg'>
                     <WalletIcon size='19.6px' />
                     <span className='ml-2 font-bold text-sm text-canvas-text-contrast'>{playerBalance}</span>
                   </div>
@@ -569,53 +571,16 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
 
 
             {/* ACTION BAR */}
-            <div className='h-[10%] flex pt-4 lg:pt-0'>
-              <div className='flex flex-1 rounded-xl overflow-hidden border border-canvas-line shadow-md bg-canvas-bg'>
-                {/* Left banner */}
-                <div className='flex flex-1 items-center justify-center'>
-                  <span
-                    className={`font-bold text-xl ${isPlayerTurn ? 'text-success-text' : 'text-alert-text'
-                      }`}
-                  >
-                    {isPlayerTurn ? 'Your Turn' : "Opponent's turn"}
-                  </span>
-                </div>
-
-                {/* Button */}
-                <div className='flex flex-1 p-0.5 items-center justify-center bg-transparent'>
-                  {gameState === GAME_STATES.FINAL ? (
-                    <Button
-                      variant={'solid'}
-                      color={'primary'}
-                      onClick={NewGame}
-                      disabled={!isPlayerTurn}
-                      fullWidth
-                      className='h-full'
-                    >
-                      {isPlayerTurn ? 'Start New Game' : 'Opponent to Start...'}
-                    </Button>
-                  ) : (
-                    <Button
-                      variant={'solid'}
-                      color={'primary'}
-                      onClick={doHandleMakeMove}
-                      disabled={isDisabled}
-                      fullWidth
-                      className='h-full'
-                    >
-                      {buttonText}
-                    </Button>
-                  )}
-                </div>
-
-                {/* Move number */}
-                <div className='flex flex-1 items-center justify-center'>
-                  <span className='font-bold text-xl text-canvas-solid'>
-                    Move {moveNumber}
-                  </span>
-                </div>
-              </div>
-            </div>
+            <GameBottomBar
+              isPlayerTurn={isPlayerTurn}
+              gameState={gameState}
+              buttonText={buttonText}
+              moveNumber={moveNumber}
+              isDisabled={isDisabled}
+              NewGame={NewGame}
+              doHandleMakeMove={doHandleMakeMove}
+              GAME_STATES={GAME_STATES}
+            />
           </div>
         )}
       </div>
