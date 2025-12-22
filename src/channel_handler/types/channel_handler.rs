@@ -41,7 +41,7 @@ pub struct ChannelHandlerPrivateKeys {
     /// is used to communicate with it on our turn.  Except for timeout, the referee coin is driven by
     /// each user's referee private key separately.  The referee private key also sometimes is in
     /// command of standard coins emitted as a reward from a game that ended and must be moved to
-    /// the user's own wallet.  In the future, this mechanism should become more flexible away from
+    /// the user's own wallet.  In the future, this mechanism should become more flexible,
     /// only standard coins.
     pub my_referee_private_key: PrivateKey,
 }
