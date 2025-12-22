@@ -73,7 +73,7 @@ pub struct ChannelHandlerInitiationData {
     /// coin, despite its extra logic is also a standard coin puzzle formed around the
     /// sum of the two public keys.
     pub their_unroll_pubkey: PublicKey,
-    /// The puzzle has of a standard coin that responds to the opponent's referee private
+    /// The puzzle hash of a standard coin that responds to the opponent's referee private
     /// key is given here so we can use it to know the puzzle hash of a referee coin moving
     /// on to their turn.
     pub their_referee_puzzle_hash: PuzzleHash,
