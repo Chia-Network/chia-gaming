@@ -47,6 +47,7 @@ const CreateRoomDialog: React.FC<CreateRoomDialogProps> = ({
         <label className="block mb-1 font-medium">Game</label>
         <select
           value={gameChoice}
+          aria-label='game-id'
           onChange={(e) => setGameChoice(e.target.value)}
           className="w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded"
         >
