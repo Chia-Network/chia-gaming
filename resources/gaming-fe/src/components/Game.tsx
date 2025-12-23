@@ -73,7 +73,7 @@ const Game: React.FC<GameParams> = ({ params }) => {
 
           {/* HEADER */}
           <CardHeader className="text-center space-y-2 px-8 pt-8 shrink-0">
-            <CardTitle className="text-4xl font-extrabold tracking-tight text-canvas-text-contrast">
+            <CardTitle aria-label='shutdown' className="text-4xl font-extrabold tracking-tight text-canvas-text-contrast">
               Cal Poker – shutdown succeeded
             </CardTitle>
 
