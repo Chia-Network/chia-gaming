@@ -168,6 +168,7 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
             <textarea
               readOnly
               value={uri || ""}
+              aria-label='wallet-connect-uri'
               rows={isMobile ? 4 : 3}
               className="
             w-full text-sm font-mono rounded-md p-2 border
