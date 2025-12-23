@@ -21,7 +21,10 @@ wheels/
 
 # javascript
 node_modules/
-
+.yarn/
+.pnp.cjs
+.pnp.loader.mjs
+.yarnrc.yml
 # Virtual environments
 .venv/
 venv/
@@ -35,4 +38,3 @@ target/
 *.diff
 *.bak
 *.tmp
-

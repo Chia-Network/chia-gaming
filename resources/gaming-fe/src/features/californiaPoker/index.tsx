@@ -365,8 +365,57 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     setShowSwapAnimation(true);
 
     setTimeout(() => {
-      console.log('done swapping');
-      setGameState(GAME_STATES.FINAL);
+       // Copy current hands
+       const newPlayer = [...playerCards];
+       const newOpponent = [...opponentCards];
+ 
+       // Apply exact card swaps based on animation index mapping
+       for (let i = 0; i < playerSwapIndices.length; i++) {
+         const pIndex = playerSwapIndices[i];
+         const aiIndex = aiSwapIndices[i];
+ 
+         // Player gives card to AI
+         newOpponent[aiIndex] = playerCards[pIndex];
+ 
+         // AI gives card to Player
+         newPlayer[pIndex] = opponentCards[aiIndex];
+       }
+ 
+       // Update UI
+       setPlayerCards(newPlayer);
+       setOpponentCards(newOpponent);
+       setPlayerSelected([]);
+ 
+       // --- Best hands ---
+       const lastLog = log[0];
+ 
+       // Convert hand arrays into CardValueSuit objects
+       const playerBestCards: CardValueSuit[] = lastLog.myHand.map(
+         ([rank, suit], idx) => ({
+           rank,
+           suit: suitMap[suit],
+           originalIndex: idx,
+         })
+       );
+ 
+       const opponentBestCards: CardValueSuit[] = lastLog.opponentHand.map(
+         ([rank, suit], idx) => ({
+           rank,
+           suit: suitMap[suit],
+           originalIndex: idx,
+         })
+       );
+ 
+       setPlayerBestHand({ cards: playerBestCards, rank: { name: '', score: 0, tiebreakers: [] } });
+       setAiBestHand({ cards: opponentBestCards, rank: { name: '', score: 0, tiebreakers: [] } });
+ 
+ 
+       console.log('done swapping', log.length - 1, log, newPlayer, newOpponent, playerBestCards, opponentBestCards);
+ 
+       setMovingCards([]);
+       setShowSwapAnimation(false);
+       setGameState(GAME_STATES.FINAL);
+       
     }, SWAP_ANIMATION_DURATION);
   };
 
