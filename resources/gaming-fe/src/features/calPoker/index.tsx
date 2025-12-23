@@ -176,7 +176,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
           <span>{moveDescription}</span>
           <button
             type='button'
-            aria-label='close move description'
+            aria-label='close'
             className='ml-2 rounded-full p-1 text-canvas-text transition hover:bg-canvas-bg'
             onClick={handleCloseMoveToast}
           >
