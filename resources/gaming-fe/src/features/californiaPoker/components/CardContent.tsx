@@ -7,7 +7,7 @@ function CardContent(content: CardContentProps) {
   return (
     <>
       <div className={textSize}>{rankDisplay}</div>
-      <div className={`${textSize} -mt-2`}>{card.suit}</div>
+      <div className={`${textSize} mt-2`}>{card.suit}</div>
     </>
   );
 }

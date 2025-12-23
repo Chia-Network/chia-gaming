@@ -10,7 +10,8 @@ import getSwapCombinations from './GetSwapCombination';
 import calculateBalancedRows from './CalculateBalancedRows';
 import createDeck from './CreateDeck';
 import getRankValue from './GetRankValue';
-
+import calculateMovingCards from './CalculateMovingCards';
+import { makeDescription } from './MakeDescription';
 export {
   evaluateStraightPotential,
   formatHandDescription,
@@ -23,5 +24,7 @@ export {
   getSwapCombinations,
   calculateBalancedRows,
   createDeck,
-  getRankValue
+  getRankValue,
+  calculateMovingCards,
+  makeDescription
 };
