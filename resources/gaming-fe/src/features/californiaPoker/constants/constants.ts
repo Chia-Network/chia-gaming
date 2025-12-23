@@ -45,6 +45,7 @@ const GAME_STATES = {
 
 const ANIMATION_DELAY = 100;
 const SWAP_ANIMATION_DURATION = 2500;
+const SORT_ANIMATION_DURATION = 600;
 
 // Button styling classes
 const BUTTON_BASE = 'font-bold rounded-lg w-full h-full text-center';
@@ -58,6 +59,7 @@ export {
   GAME_STATES,
   ANIMATION_DELAY,
   SWAP_ANIMATION_DURATION,
+  SORT_ANIMATION_DURATION,
   BUTTON_BASE,
   BUTTON_ACTIVE,
   BUTTON_DISABLED,

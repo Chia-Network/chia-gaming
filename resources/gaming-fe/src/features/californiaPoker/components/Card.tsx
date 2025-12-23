@@ -14,47 +14,26 @@ function Card(props: CardRenderProps) {
     isInBestHand = false,
   } = props;
 
-  const getCardStyles = () => {
-    if (isBeingSwapped) {
-      return {
-        border: 'border-canvas-border',
-        bg: 'bg-canvas-bg-subtle',
-        cursor: '',
-      };
-    }
+  const getCardClasses = () => {
+  if (isBeingSwapped) {
+    return 'border-canvas-border bg-canvas-bg-subtle cursor-default';
+  }
 
-    if (isInBestHand) {
-      return {
-        border: 'border-primary-text',
-        bg: 'bg-primary-bg',
-        cursor: 'cursor-pointer',
-      };
-    }
+  if (isInBestHand || isSelected) {
+    return 'border-primary-solid bg-primary-bg cursor-pointer';
+  }
 
-    if (isSelected) {
-      return {
-        border: 'border-primary-text',
-        bg: 'bg-primary-bg',
-        cursor: 'cursor-pointer',
-      };
-    }
+  return 'border-canvas-border hover:border-primary-solid bg-canvas-bg-hover cursor-pointer';
+};
 
-    return {
-      border: 'border-canvas-border hover:border-primary-solid',
-      bg: 'bg-canvas-bg-hover',
-      cursor: 'cursor-pointer',
-    };
-  };
-
-  const styles = getCardStyles();
   const colorClass = SUIT_COLORS[card.suit] || '#000000';
 
   return (
     <div
       id={id}
       data-card-id={cardId}
-      className={`w-20 h-28 border-2 rounded flex flex-col items-center justify-center font-bold
-        ${styles.border} ${styles.bg} ${styles.cursor}
+      className={`w-20 h-28 lg:w-20 lg:h-28 md:w-24 md:h-32 xl:w-24 xl:h-32 border-2 rounded-lg flex flex-col items-center justify-center font-bold
+         ${getCardClasses()}
         ${isInBestHand ? 'shadow-lg' : ''}`}
       style={{ color: colorClass }}
       onClick={onClick}
