@@ -22,6 +22,7 @@ wheels/
 # javascript
 node_modules/
 .yarn/
+yarn.lock
 .pnp.cjs
 .pnp.loader.mjs
 .yarnrc.yml

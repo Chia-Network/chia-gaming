@@ -36,7 +36,7 @@ export default function ActiveRooms({
               onClick={openDialog}
               aria-label='generate-room'
             >
-              Generate Rooms
+              Start Session
             </Button>
           </div>
 
