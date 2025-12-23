@@ -1,9 +1,10 @@
+import { Info } from 'lucide-react';
 import {
   StartConnectResult,
   walletConnectState,
 } from '../hooks/useWalletConnect';
 import { QRCodeModal } from './QRCodeModal';
-import { InfoRounded } from '@mui/icons-material';
+
 import { Button } from './button';
 interface ShowWalletConnectState {
   initialized: boolean;
@@ -74,8 +75,8 @@ export const WalletConnectDialog: React.FC<ShowWalletConnectState> = ({
 
           <div className='bg-(--color-info-bg-subtle) rounded-lg p-4 flex gap-2 mt-3 text-(--color-info-text-contrast)'>
             <div className='p-1 bg-(--color-info-bg) rounded-full shrink-0 flex items-center justify-center h-fit'>
-              <InfoRounded
-                sx={{ color: 'var(--color-info-solid)', fontSize: '1.25rem' }}
+              <Info
+                style={{ color: 'var(--color-info-solid)', fontSize: '1.25rem' }}
               />
             </div>
             <div>

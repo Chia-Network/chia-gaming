@@ -1,5 +1,6 @@
-import { Box, Typography, Tooltip, IconButton } from '@mui/material';
-import { ContentCopy } from '@mui/icons-material';
+
+import { Copy } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 
 interface WalletBadgeProps {
   sessionConnected: 'connected' | 'simulator' | 'disconnected';
@@ -34,43 +35,40 @@ const WalletBadge = ({ sessionConnected, fakeAddress }: WalletBadgeProps) => {
   }
 
   return (
-    <Box
-      sx={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
+    <div
+      className="inline-flex items-center justify-center rounded-[28px] px-2 py-1 min-w-[36px] text-center font-semibold text-[0.7rem]"
+      style={{
         backgroundColor: bgColor,
         color: textColor,
         border: `1px solid ${borderColor}`,
-        borderRadius: '28px',
-        px: 0.8,
-        py: 0.4,
-        fontSize: '0.7rem',
-        fontWeight: 600,
-        minWidth: '36px',
-        textAlign: 'center',
       }}
     >
-      <Typography variant='body2' sx={{ fontSize: '0.7rem', fontWeight: 600,ml: 0.2 }}>
-        {label}
-      </Typography>
+      <span className="ml-0.5 text-[0.7rem] font-semibold">{label}</span>
+
       {fakeAddress && (
-        <Box sx={{ display: 'flex', alignItems: 'center' }}>
-          <Typography sx={{ fontSize: '0.75rem', color: '#856404', ml: 0.2 }}>
+        <div className="flex items-center ml-1">
+          <span className="ml-0.5 text-[0.75rem]" style={{ color: '#856404' }}>
             {`${fakeAddress.slice(0, 3)}...${fakeAddress.slice(-3)}`}
-          </Typography>
-          <Tooltip title='Copy address' color='#856404'>
-            <IconButton
-              size='small'
-              onClick={() => navigator.clipboard.writeText(fakeAddress)}
-              sx={{ color: '#856404', ml: 0.5 }}
-            >
-              <ContentCopy sx={{ fontSize: 16 }} />
-            </IconButton>
-          </Tooltip>
-        </Box>
+          </span>
+
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => navigator.clipboard.writeText(fakeAddress)}
+                  className="ml-1 text-[#856404] p-1 rounded hover:bg-[#8564041a] transition-colors"
+                >
+                  <Copy className="w-4 h-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top" align="center" className="bg-[#856404] text-white text-xs px-2 py-1 rounded shadow-md select-none">
+                Copy address
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
       )}
-    </Box>
+    </div>
   );
 };
 
