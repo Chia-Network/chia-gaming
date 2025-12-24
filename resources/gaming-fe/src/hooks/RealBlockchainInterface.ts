@@ -10,13 +10,14 @@ import {
   BlockchainInboundAddressResult,
 } from '../types/ChiaGaming';
 import { WalletBalance } from '../types/WalletBalance';
-import { toHexString, toUint8 } from '../util';
-
+import { toHexString, toUint8, waitMillisecs } from '../util';
+import { GetTransactionRequest, GetTransactionResponse } from '../types/rpc/GetTransaction';
 import {
   blockchainConnector,
   BlockchainOutboundRequest,
 } from './BlockchainConnector';
 import { blockchainDataEmitter } from './BlockchainInfo';
+import { resourceLimits } from 'worker_threads';
 
 function wsUrl(baseurl: string) {
   const url_with_new_method = baseurl.replace('http', 'ws');
@@ -24,7 +25,11 @@ function wsUrl(baseurl: string) {
 }
 
 const bech32: any = (bech32_module ? bech32_module : bech32_buffer);
-const PUSH_TX_RETRY_TO_LET_UNCOFIRMED_TRANSACTIONS_BE_CONFIRMED = 30000;
+
+// TODO: Add these to configuration
+const PUSH_TX_RETRY_TO_LET_UNCONFIRMED_TRANSACTIONS_BE_CONFIRMED = 1000;
+const WAIT_FOR_FUNDING_COIN_CONFIRMATION_TIME = 60000;
+const FUNDING_COIN_INTERVAL_MS = 5000;
 
 export class RealBlockchainInterface {
   baseUrl: string;
@@ -58,18 +63,24 @@ export class RealBlockchainInterface {
     return this.addressData;
   }
 
-  startMonitoring() {
+  async startMonitoring() {
     if (this.ws) {
       return;
     }
 
+    // Ask coinset.org what the current peak is
+    this.peak = await this.getPeak();
+    this.at_block = this.peak;
+    this.pushEvent({checkPeak: true, height: this.peak});
+
     this.ws = new ReconnectingWebSocket(wsUrl(this.baseUrl));
     this.ws?.addEventListener('message', (m: any) => {
       const json = JSON.parse(m.data);
-      console.log('coinset json', json);
+      // console.log('coinset json', json);
       if (json.type === 'peak') {
+        console.log('coinset json', json);
         this.peak = json.data.height;
-        this.pushEvent({ checkPeak: true });
+        this.pushEvent({ checkPeak: true, height: this.peak});
       }
     });
   }
@@ -120,7 +131,7 @@ export class RealBlockchainInterface {
         header_hash: header_hash,
       }),
     }).then((r) => r.json());
-    console.log('br_spends', br_spends.block_spends);
+    // console.log('br_spends', br_spends.block_spends);
     this.observable.next({
       peak: this.at_block,
       block: br_spends.block_spends,
@@ -217,6 +228,25 @@ export class RealBlockchainInterface {
         return r;
       });
   }
+
+  // TODO: route this new request into the WC stub at port 3002
+  // See get_current_peak in [blockchain.ts](resources/wc-stub/src/blockchain.ts)
+  async getPeak(): Promise<number> {
+    console.log('calling WalletConnect getPeak');
+    return await fetch(`${this.baseUrl}/get_blockchain_state`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({}),
+    }).then(async (r) => {
+      const return_json = await r.json();
+      console.log("Return from get_blockchain_state: ", return_json);
+      return return_json.blockchain_state.peak.height;
+    });
+  }
+
 }
 
 export const realBlockchainInfo: RealBlockchainInterface =
@@ -254,6 +284,28 @@ export function connectRealBlockchain(baseUrl: string) {
             waitForConfirmation: false,
           });
 
+          let confirmed = false;
+          const start = new Date().getTime();
+          while (!confirmed) {
+            const now = new Date().getTime();
+            let time_passed = now - start;
+            if (time_passed > WAIT_FOR_FUNDING_COIN_CONFIRMATION_TIME)
+              break;
+            // Ask coinset.org & walletconnect about the funding transaction
+            const transaction_id = result.transactionId;
+            const req: GetTransactionRequest  = {transactionId: transaction_id};
+
+            const checkFundingConfirmation = async () => {
+              const transaction_info: GetTransactionResponse = await rpc.getTransaction(req);
+              confirmed = transaction_info?.confirmed;
+            }
+            await waitMillisecs(FUNDING_COIN_INTERVAL_MS, checkFundingConfirmation);
+          }
+
+          if (!confirmed) {
+            throw(Error("Could not confirm funding transaction " + result.transaction));
+          }
+
           let resultCoin = undefined;
           console.log('full spend result', result);
           if (result.transaction) {
@@ -270,6 +322,7 @@ export function connectRealBlockchain(baseUrl: string) {
             resultCoin = (result as any).coin;
           }
 
+          // xxx failure of initial funding coin creation
           if (!resultCoin) {
             blockchainConnector.replyEmitter({
               responseId: evt.requestId,
@@ -316,7 +369,7 @@ export function connectRealBlockchain(baseUrl: string) {
           await new Promise((resolve, _reject) => {
             setTimeout(
               resolve,
-              PUSH_TX_RETRY_TO_LET_UNCOFIRMED_TRANSACTIONS_BE_CONFIRMED,
+              PUSH_TX_RETRY_TO_LET_UNCONFIRMED_TRANSACTIONS_BE_CONFIRMED,
             );
           });
         }
