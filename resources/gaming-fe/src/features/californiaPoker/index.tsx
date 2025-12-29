@@ -481,7 +481,7 @@ const isActive = !isDisabled; // single source of truth
                 <div className='flex justify-end'>
                   <div className=' flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-2 py-2 shadow-sm bg-canvas-bg'>
                     <WalletIcon size='19.6px' />
-                    <span className='ml-2 font-bold text-sm text-canvas-text-contrast'>{playerBalance}</span>
+                    <span className='ml-2 font-bold text-sm text-canvas-text-contrast'>{opponentBalance}</span>
                   </div>
                 </div>
               </CardHeader>

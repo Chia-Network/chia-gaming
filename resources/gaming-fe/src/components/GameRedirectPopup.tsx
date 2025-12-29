@@ -59,6 +59,7 @@ const GameRedirectPopup = ({
                         </Button>
 
                         <Button
+                            aria-label='AcceptJoin'
                             variant={"solid"}
                             color={'secondary'}
                             onClick={onAccept}

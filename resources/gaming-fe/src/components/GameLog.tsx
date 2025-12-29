@@ -110,6 +110,8 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                 return (
                   <div
                     key={`log-entry-${index}`}
+                    data-testid={`log-entry-${index}`}
+                    aria-expanded={isExpanded}
                     className={`p-2 rounded-lg border border-canvas-border cursor-pointer transition-all duration-200 ${isExpanded ? 'bg-canvas-light' : 'bg-canvas-bg'
                       } hover:bg-canvas-light hover:border-canvas-border-hover`}
                     onClick={() => setExpandedIndex(isExpanded ? null : index)}
@@ -139,11 +141,16 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                         </div>
                       </div>
 
-                      <ChevronDown
+                      <button
                         data-testid={`log-expand-button-${index}`}
+                        aria-label={`expand-log-${index}`}
+                        onClick={(e) => { e.stopPropagation(); setExpandedIndex(isExpanded ? null : index); }}
                         className={`ml-1 shrink-0 transform transition-transform duration-200 ${isExpanded ? 'rotate-180' : 'rotate-0'
                           } text-canvas-muted`}
-                      />
+                        type="button"
+                      >
+                        <ChevronDown className="h-4 w-4" />
+                      </button>
                     </div>
 
                     {/* Expanded Details */}
@@ -167,10 +174,10 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                             Cards
                           </p>
                           <div
-                            data-testid={`my-start-hand-${index} mt-1`}
-                            className='flex flex-wrap gap-1'
+                            data-testid={`my-start-hand-${index}`}
+                            className='flex flex-wrap gap-1 mt-1'
                           >
-                            {entry.myStartHand.map((c, i) =>
+                            {(entry.myStartHand || []).map((c, i) =>
                               cardDisplay(
                                 c,
                                 i,
@@ -184,10 +191,10 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                             Swapped Cards
                           </p>
                           <div
-                            data-testid={`my-final-hand-${index} mt-1`}
-                            className='flex flex-wrap gap-1'
+                            data-testid={`my-final-hand-${index}`}
+                            className='flex flex-wrap gap-1 mt-1'
                           >
-                            {entry.myFinalHand.map((c, i) =>
+                            {(entry.myFinalHand || []).map((c, i) =>
                               cardDisplay(
                                 c,
                                 i,
@@ -216,10 +223,10 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                             Start Cards
                           </p>
                           <div
-                            data-testid={`opponent-start-hand-${index} mt-1`}
-                            className='flex flex-wrap gap-1'
+                            data-testid={`opponent-start-hand-${index}`}
+                            className='flex flex-wrap gap-1 mt-1'
                           >
-                            {entry.opponentStartHand.map((c, i) =>
+                            {(entry.opponentStartHand || []).map((c, i) =>
                               cardDisplay(
                                 c,
                                 i,
@@ -233,10 +240,10 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                             Swapped Cards
                           </p>
                           <div
-                            data-testid={`opponent-final-hand-${index} mt-1`}
-                            className='flex flex-wrap gap-1'
+                            data-testid={`opponent-final-hand-${index}`}
+                            className='flex flex-wrap gap-1 mt-1'
                           >
-                            {entry.opponentFinalHand.map((c, i) =>
+                            {(entry.opponentFinalHand || []).map((c, i) =>
                               cardDisplay(
                                 c,
                                 i,

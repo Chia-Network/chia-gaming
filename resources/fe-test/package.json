@@ -8,12 +8,11 @@
     "format": "prettier --write 'src/**/*.{ts,tsx,js,jsx,mjs,json}' '*.{ts,js,mjs,json}'"
   },
   "dependencies": {
-    "chromedriver": "135.0.0",
     "geckodriver": "^5.0.0",
-    "jasmine": "^4.5.0",
+    "jasmine": "^4.6.0",
     "jest": "^29.7.0",
     "mocha": "^10.1.0",
-    "selenium-webdriver": "^4.17.0"
+    "selenium-webdriver": "^4.33.0"
   },
   "devDependencies": {
     "prettier": "^3.6.2"
