@@ -18,7 +18,8 @@ dist/
 wheels/
 *.egg-info
 *.cpython*
-
+.yarn
+.yarnrc.yml
 # javascript
 node_modules/
 
