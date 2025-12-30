@@ -1,11 +1,14 @@
-import React, { useState} from 'react';
+import React, { useState } from 'react';
 import {
   OutcomeLogLine,
   OutcomeHandType,
   suitNames,
 } from '../types/ChiaGaming';
 
-import { RANK_SYMBOLS, SUIT_COLORS } from '../features/californiaPoker/constants/constants';
+import {
+  RANK_SYMBOLS,
+  SUIT_COLORS,
+} from '../features/californiaPoker/constants/constants';
 import { cn } from '../lib/utils';
 import { AArrowDown, ChevronDown, Expand, History } from 'lucide-react';
 import { makeDescription } from '../features/californiaPoker/utils';
@@ -14,12 +17,8 @@ interface GameLogProps {
   log: OutcomeLogLine[];
 }
 
-
-
 const GameLog: React.FC<GameLogProps> = ({ log }) => {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
-
-
 
   const cardDisplay = (
     c: number[],
@@ -27,7 +26,6 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
     idPrefix: string,
     selected: boolean,
   ) => {
-
     type SuitKey = 'Q' | '♠' | '♥' | '♦' | '♣';
 
     const suitName: SuitKey = suitNames[c[1]] as SuitKey;
@@ -40,7 +38,9 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
         id={`${idPrefix}-${index}`}
         className={cn(
           'flex flex-col items-center justify-center min-w-9 px-4 py-2 rounded-md border border-canvas-border text-center whitespace-nowrap',
-          selected ? 'bg-canvas-border font-semibold' : 'bg-canvas-light font-medium'
+          selected
+            ? 'bg-canvas-border font-semibold'
+            : 'bg-canvas-light font-medium',
         )}
         style={{ color: colorClass }}
       >
@@ -81,24 +81,22 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
       <div className='flex flex-col h-full border border-canvas-border rounded-lg shadow-sm bg-canvas-bg overflow-hidden'>
         {/* Header - Non-scrolling */}
 
-        <div className="border-b border-canvas-border px-4 py-2">
-          <h2 className="text-sm font-semibold tracking-tight flex items-center gap-1.5 text-canvas-solid">
-            <History className="h-4 w-4 text-canvas-muted" />
+        <div className='border-b border-canvas-border px-4 py-2'>
+          <h2 className='text-sm font-semibold tracking-tight flex items-center gap-1.5 text-canvas-solid'>
+            <History className='h-4 w-4 text-canvas-muted' />
             Log
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-canvas-bg-subtle text-canvas-muted border border-canvas-border">
+            <span className='text-[10px] px-1.5 py-0.5 rounded bg-canvas-bg-subtle text-canvas-muted border border-canvas-border'>
               {log.length}
             </span>
           </h2>
         </div>
 
-
-
         {/* Scrollable Log Content */}
         <div className='flex-1 overflow-y-auto overflow-x-hidden px-4 py-2'>
           {log.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full py-6 text-center text-canvas-muted">
-              <History className="w-10 h-10 mb-2 opacity-60" />
-              <p className="text-sm font-medium">No game history yet</p>
+            <div className='flex flex-col items-center justify-center h-full py-6 text-center text-canvas-muted'>
+              <History className='w-10 h-10 mb-2 opacity-60' />
+              <p className='text-sm font-medium'>No game history yet</p>
             </div>
           ) : (
             <div className='flex flex-col gap-2'>
@@ -112,28 +110,47 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                     key={`log-entry-${index}`}
                     data-testid={`log-entry-${index}`}
                     aria-expanded={isExpanded}
-                    className={`p-2 rounded-lg border border-canvas-border cursor-pointer transition-all duration-200 ${isExpanded ? 'bg-canvas-light' : 'bg-canvas-bg'
-                      } hover:bg-canvas-light hover:border-canvas-border-hover`}
+                    className={`p-2 rounded-lg border border-canvas-border cursor-pointer transition-all duration-200 ${
+                      isExpanded ? 'bg-canvas-light' : 'bg-canvas-bg'
+                    } hover:bg-canvas-light hover:border-canvas-border-hover`}
                     onClick={() => setExpandedIndex(isExpanded ? null : index)}
                   >
                     {/* Compact Summary */}
                     <div
-                      className={`flex items-center justify-between mb-${isExpanded ? '2' : '0'
-                        }`}
+                      className={`flex items-center justify-between mb-${
+                        isExpanded ? '2' : '0'
+                      }`}
                     >
                       <div className='flex-1 min-w-0'>
-                        <p className={cn('text-sm font-semibold mb-1', iWin ? 'text-green-600' : opWin ? 'text-red-600' : 'text-canvas-muted')}>
-                          {iWin ? '🏆 You Won' : opWin ? '🏆 Opponent Won' : '🤝 Tie'}
+                        <p
+                          className={cn(
+                            'text-sm font-semibold mb-1',
+                            iWin
+                              ? 'text-green-600'
+                              : opWin
+                                ? 'text-red-600'
+                                : 'text-canvas-muted',
+                          )}
+                        >
+                          {iWin
+                            ? '🏆 You Won'
+                            : opWin
+                              ? '🏆 Opponent Won'
+                              : '🤝 Tie'}
                         </p>
                         <div className='grid grid-cols-2 gap-2'>
                           <div>
-                            <p className='text-xs font-medium text-canvas-muted'>You</p>
+                            <p className='text-xs font-medium text-canvas-muted'>
+                              You
+                            </p>
                             <p className='text-sm font-semibold text-canvas-solid'>
                               {makeDescription(entry.myHandDescription)}
                             </p>
                           </div>
                           <div>
-                            <p className='text-xs font-medium text-canvas-muted'>Opponent</p>
+                            <p className='text-xs font-medium text-canvas-muted'>
+                              Opponent
+                            </p>
                             <p className='text-sm font-semibold text-canvas-solid'>
                               {makeDescription(entry.opponentHandDescription)}
                             </p>
@@ -144,12 +161,16 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                       <button
                         data-testid={`log-expand-button-${index}`}
                         aria-label={`expand-log-${index}`}
-                        onClick={(e) => { e.stopPropagation(); setExpandedIndex(isExpanded ? null : index); }}
-                        className={`ml-1 shrink-0 transform transition-transform duration-200 ${isExpanded ? 'rotate-180' : 'rotate-0'
-                          } text-canvas-muted`}
-                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setExpandedIndex(isExpanded ? null : index);
+                        }}
+                        className={`ml-1 shrink-0 transform transition-transform duration-200 ${
+                          isExpanded ? 'rotate-180' : 'rotate-0'
+                        } text-canvas-muted`}
+                        type='button'
                       >
-                        <ChevronDown className="h-4 w-4" />
+                        <ChevronDown className='h-4 w-4' />
                       </button>
                     </div>
 

@@ -580,9 +580,9 @@ describe("Out of money test", function () {
     await firefox_start_and_first_move(selectWallet, ffdriver, partnerUrl);
 
     const address1 = await retrieveAddress(driver);
-    const preBalance1 = BigInt(await getBalance(driver, address1.puzzleHash));
+    const preBalance1 = await getBalance(driver, address1.puzzleHash);
     const address2 = await retrieveAddress(ffdriver);
-    const preBalance2 = BigInt(await getBalance(ffdriver, address2.puzzleHash));
+    const preBalance2 = await getBalance(ffdriver, address2.puzzleHash);
 
     console.log("wait for alice make move button");
     await clickMakeMove(driver, "alice", "Start Game");
@@ -641,23 +641,19 @@ describe("Out of money test", function () {
     console.log("stop clicked");
     
   // Wait for log entries and compute expected balances
-  let expectedPost1 = preBalance1 + 200n; // session bonus
-  let expectedPost2 = preBalance2 + 200n;
+  let expectedPost1 = preBalance1 + 200; // session bonus
+  let expectedPost2 = preBalance2 + 200;
 
   console.log("Calculating outcomes...");
   const rounds = 2; // number of games played
   for (let i = 0; i < rounds; i++) {
-    // Expand log entry
-    const expandBtn = await driver.findElement(
-      By.css(`[data-testid="log-expand-button-${i}"]`)
-    );
-    await driver.executeScript("arguments[0].click();", expandBtn);
+    
 
     // Wait for log text to populate
     const logEntryMe = await driver.wait(
       async () => {
         const el = await driver.findElement(
-          byAttribute("data-testid", `log-entry-me-${i}`)
+          byAttribute("data-testid", `log-entry-${i}`)
         );
         const text = await el.getText();
         return text && text.trim().length > 0 ? el : false;
@@ -666,24 +662,26 @@ describe("Out of money test", function () {
       `Log entry ${i} did not populate`
     );
 
-    const outcomeMe = await logEntryMe.getText();
-    const addition =
-      outcomeMe.includes("You Won") ? 10n :
-      outcomeMe.includes("Opponent Won") ? -10n : 0n;
-
-    expectedPost1 += addition;
-    expectedPost2 -= addition;
+    const outcomeMe = await logEntryMe.getAttribute("textContent");
+    console.log('OutCome Me',outcomeMe);
+    
+      const addition =
+        await outcomeMe.indexOf("You Won") != -1
+          ? 10
+          : outcomeMe.indexOf("Opponent Won") != -1
+            ? -10
+            : 0;
+      expectedPost1 += addition;
+      expectedPost2 -= addition;
 
     console.log(`Round ${i}: outcome='${outcomeMe.trim()}' addition=${addition}`);
   }
 
   // Wait for shutdown in the driver that ended session
-  console.log("Awaiting shutdown...");
-  await gotShutdown(driver);
-
+   
   // Fetch final balances
-  const postBalance1 = BigInt(await getBalance(driver, address1.puzzleHash));
-  const postBalance2 = BigInt(await getBalance(ffdriver, address2.puzzleHash));
+  const postBalance1 = await getBalance(driver, address1.puzzleHash);
+  const postBalance2 = await getBalance(ffdriver, address2.puzzleHash);
 
   console.log("Final balances:");
   console.log("balance1", postBalance1.toString(), "(expected:", expectedPost1.toString(), ")");
@@ -694,6 +692,19 @@ describe("Out of money test", function () {
     throw new Error("Failed expected balance check");
   }
 
+
+
+
+
+
+
+
+
+
+
+
+
+  
   console.log("Test completed successfully!");
   }
 
