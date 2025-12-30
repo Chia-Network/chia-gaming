@@ -10,7 +10,8 @@ import {
 } from '@mui/material';
 import { Button } from '../../components/button';
 import CloseIcon from '@mui/icons-material/Close';
-
+import Tabs from '@mui/material/Tabs';
+import Tab from '@mui/material/Tab';
 import { CalpokerOutcome, OutcomeLogLine } from '../../types/ChiaGaming';
 import GameLog from '../../components/GameLog';
 import CaliforniaPoker from '../californiaPoker';
@@ -53,7 +54,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
 }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-
+  const [logTab, setLogTab] = useState<'logs' | 'chat'>('logs');
   const myWinOutcome = outcome?.my_win_outcome;
 
   const iAmAlice = playerNumber === 2;
@@ -151,7 +152,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
 
           {/* Leave */}
           <Button
-	    data-testid='stop-playing'
+            data-testid='stop-playing'
             variant={'destructive'}
             onClick={stopPlaying}
             size={'sm'}
@@ -212,18 +213,48 @@ const Calpoker: React.FC<CalpokerProps> = ({
           </Box>
 
           {/* GAME LOG */}
+          {/* GAME LOGS / CHAT */}
           <Box
+            className='flex flex-col bg-canvas-bg'
             sx={{
               flex: { xs: 'unset', md: '1 1 0%' },
               height: { xs: 'auto', md: '100%' },
-              overflowY: 'auto',
               minHeight: { md: 0 },
-              bgcolor: 'var(--canvas-bg)',
             }}
           >
-            <Box sx={{ height: '100%' }}>
-              <GameLog log={log} />
-            </Box>
+            {/* Tabs header */}
+            <Tabs
+              value={logTab}
+              onChange={(_, v) => setLogTab(v)}
+              variant='fullWidth'
+              className='border-b border-canvas-line bg-canvas-bg-subtle'
+              TabIndicatorProps={{ className: 'bg-canvas-text-contrast' }}
+            >
+              <Tab
+                value='logs'
+                label='Game Logs'
+                className='text-sm font-semibold text-canvas-text'
+              />
+              <Tab
+                value='chat'
+                label='Chat'
+                className='text-sm font-semibold text-canvas-text'
+              />
+            </Tabs>
+
+            {/* Game Logs */}
+            {logTab === 'logs' && (
+              <Box className='flex-1 overflow-y-auto p-2'>
+                <GameLog log={log} />
+              </Box>
+            )}
+
+            {/* Chat (empty) */}
+            {logTab === 'chat' && (
+              <Box className='flex-1 overflow-y-auto p-4 text-sm text-canvas-text-muted'>
+                {/* Chat coming soon */}
+              </Box>
+            )}
           </Box>
         </Box>
       </Box>
