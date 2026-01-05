@@ -596,7 +596,7 @@ describe("Out of money test", function () {
     console.log("alice cards", allAliceCards);
 
     console.log("first game complete");
-
+    await driver.sleep(10000);
     await firefox_press_button_second_game(ffdriver);
 
     console.log("check alice cards");
@@ -615,6 +615,7 @@ describe("Out of money test", function () {
 
     console.log("stop the game (2)");
 
+    await driver.sleep(10000);
     await driver.switchTo().defaultContent();
 
     // 2. re-enter iframe
@@ -634,16 +635,15 @@ describe("Out of money test", function () {
       (elt) => waitEnabled(driver, elt),
       1.0
     );
-
     // 4. JS click bypasses overlay & coordinates
     await driver.executeScript("arguments[0].click();", stopButton);
 
     console.log("stop clicked");
-    
+    await driver.sleep(10000);
   // Wait for log entries and compute expected balances
   let expectedPost1 = preBalance1 + 200; // session bonus
   let expectedPost2 = preBalance2 + 200;
-
+    const outcomeToAddition = { lose: -10, win: 10, tie: 0 };
   console.log("Calculating outcomes...");
   const rounds = 2; // number of games played
   for (let i = 0; i < rounds; i++) {
@@ -661,7 +661,8 @@ describe("Out of money test", function () {
       5000,
       `Log entry ${i} did not populate`
     );
-
+    
+    // await driver.sleep(20000);
     const outcomeMe = await logEntryMe.getAttribute("textContent");
     console.log('OutCome Me',outcomeMe);
     
@@ -678,33 +679,25 @@ describe("Out of money test", function () {
   }
 
   // Wait for shutdown in the driver that ended session
-   
+  console.log("awaiting shutdown");
+   await gotShutdown(ffdriver);
+    await gotShutdown(driver);
   // Fetch final balances
+  await driver.sleep(10000);
   const postBalance1 = await getBalance(driver, address1.puzzleHash);
   const postBalance2 = await getBalance(ffdriver, address2.puzzleHash);
 
   console.log("Final balances:");
   console.log("balance1", postBalance1.toString(), "(expected:", expectedPost1.toString(), ")");
   console.log("balance2", postBalance2.toString(), "(expected:", expectedPost2.toString(), ")");
-
+  console.log("balance1", preBalance1, postBalance1);
+    console.log("balance2", preBalance2, postBalance2);
   // Validate balances
+
   if (postBalance1 !== expectedPost1 || postBalance2 !== expectedPost2) {
     throw new Error("Failed expected balance check");
   }
 
-
-
-
-
-
-
-
-
-
-
-
-
-  
   console.log("Test completed successfully!");
   }
 
