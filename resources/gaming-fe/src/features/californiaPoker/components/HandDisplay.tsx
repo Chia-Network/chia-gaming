@@ -97,6 +97,7 @@ function HandDisplay(props: HandDisplayProps) {
 
   // Only show the title, not the hand description
  
+  
   // We'll render cards in a responsive grid (2 -> 4 -> 6 -> 8 columns)
 
   return (
