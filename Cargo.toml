@@ -2,6 +2,15 @@
 name = "chia_gaming"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
+description = "A series of protocols that enable state-channels and gaming for the Chia blockchain."
+authors = [
+    "Art Yerkes <art.yerkes@gmail.com>",
+    "Adam Kelly <adam@chia.net>",
+    "Matt Howard <matt@chia.net>",
+]
+homepage = "https://github.com/Chia-Network/chia-gaming/"
+repository = "https://github.com/Chia-Network/chia-gaming/"
 
 [features]
 sim-tests = ["dep:pyo3","dep:tokio","dep:salvo","dep:exec"]
