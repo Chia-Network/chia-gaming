@@ -80,9 +80,7 @@ else
   STATUS=1
 fi
 
-# ---------------------------
-# Wait for container process
-# ---------------------------
-wait "$CONTAINER_PID" || true
+docker kill chia-gaming-test || true
+docker rm chia-gaming-test || true
 
 exit ${STATUS}
