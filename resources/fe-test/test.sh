@@ -80,4 +80,9 @@ else
   STATUS=1
 fi
 
+# ---------------------------
+# Wait for container process
+# ---------------------------
+wait "$CONTAINER_PID" || true
+
 exit ${STATUS}
