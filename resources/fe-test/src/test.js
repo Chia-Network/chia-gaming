@@ -290,16 +290,9 @@ async function firefox_press_button_second_game(driver) {
 }
 
 async function gotShutdown(driver) {
-  //  await driver.switchTo().defaultContent();
-
-  // Wait for element to exist
-  const shutdownEl = await driver.wait(
-    until.elementLocated(byAttribute("aria-label", "shutdown")),
-    20000
+  await driver.wait(
+    until.elementLocated(byExactText("Cal Poker - shutdown succeeded")),
   );
-
-  // Wait until element is visible
-  await driver.wait(until.elementIsVisible(shutdownEl), 5000);
 }
 
 async function initiateGame(driver, gameTotal, eachHand) {
@@ -550,7 +543,7 @@ describe("Out of money test", function () {
     await gotShutdown(driver);
   }
 
-  async function testTwoGamesAndShutdown(selectWallet) {
+ async function testTwoGamesAndShutdown(selectWallet) {
     // Load the login page
     await driver.get(baseUrl);
 
@@ -587,119 +580,83 @@ describe("Out of money test", function () {
     console.log("wait for alice make move button");
     await clickMakeMove(driver, "alice", "Start Game");
 
-    let allBobCards = await clickFourCards(ffdriver, "bob", 0xaa);
+    let allBobCards = await clickFourCards(ffdriver, 'bob', 0xaa);
 
-    console.log("selecting alice cards");
-    let allAliceCards = await clickFourCards(driver, "alice", 0x55);
+    console.log('selecting alice cards');
+    let allAliceCards = await clickFourCards(driver, 'alice', 0x55);
 
-    console.log("bob cards", allBobCards);
-    console.log("alice cards", allAliceCards);
+    console.log('bob cards', allBobCards);
+    console.log('alice cards', allAliceCards);
 
     console.log("first game complete");
-    await driver.sleep(10000);
+
     await firefox_press_button_second_game(ffdriver);
 
-    console.log("check alice cards");
+    console.log('check alice cards');
     await verifyCardsWithLog(driver, allAliceCards);
 
-    console.log("check bob cards");
+    console.log('check bob cards');
     await verifyCardsWithLog(ffdriver, allBobCards);
 
-    console.log("alice random number (2)");
-    await clickMakeMove(driver, "alice", "Start New Game");
+    console.log('alice random number (2)');
+    await clickMakeMove(driver, 'alice', "Start New Game");
 
-    await clickFourCards(ffdriver, "bob", 0xaa);
+    await clickFourCards(ffdriver, 'bob', 0xaa);
 
-    console.log("selecting alice cards (2)");
-    await clickFourCards(driver, "alice", 0x55);
+    console.log('selecting alice cards (2)');
+    await clickFourCards(driver, 'alice', 0x55);
 
     console.log("stop the game (2)");
-
-    await driver.sleep(10000);
-    await driver.switchTo().defaultContent();
-
-    // 2. re-enter iframe
-    const iframe = await driver.wait(
-      until.elementLocated(By.css('iframe[src*="view=game"]')),
-      20000
-    );
-    await driver.switchTo().frame(iframe);
-
-    // 3. locate button INSIDE iframe
+    await driver.executeScript('window.scroll(0, 0);');
     let stopButton = await waitForNonError(
       driver,
       () =>
-        driver.wait(
-          until.elementLocated(byAttribute("data-testid", "stop-playing"))
-        ),
+      driver.wait(
+        until.elementLocated(byAttribute("data-testid", "stop-playing")),
+      ),
       (elt) => waitEnabled(driver, elt),
-      1.0
+      1.0,
     );
-    // 4. JS click bypasses overlay & coordinates
-    await driver.executeScript("arguments[0].click();", stopButton);
+    await stopButton.click();
 
-    console.log("stop clicked");
-    await driver.sleep(10000);
-  // Wait for log entries and compute expected balances
-  let expectedPost1 = preBalance1 + 200; // session bonus
-  let expectedPost2 = preBalance2 + 200;
+    const logEntries = [];
+    let expectedPost1 = preBalance1 + 200;
+    let expectedPost2 = preBalance2 + 200;
     const outcomeToAddition = { lose: -10, win: 10, tie: 0 };
-  console.log("Calculating outcomes...");
-  const rounds = 2; // number of games played
-  for (let i = 0; i < rounds; i++) {
-    
 
-    // Wait for log text to populate
-    const logEntryMe = await driver.wait(
-      async () => {
-        const el = await driver.findElement(
-          byAttribute("data-testid", `log-entry-${i}`)
-        );
-        const text = await el.getText();
-        return text && text.trim().length > 0 ? el : false;
-      },
-      5000,
-      `Log entry ${i} did not populate`
-    );
-    
-    // await driver.sleep(20000);
-    const outcomeMe = await logEntryMe.getAttribute("textContent");
-    console.log('OutCome Me',outcomeMe);
-    
+    console.log("searching for outcome");
+    for (let i = 0; i < 2; i++) {
+      const logEntryMe = await driver.wait(
+        until.elementLocated(byAttribute("data-testid", `log-entry-me-${i}`)),
+      );
+      const outcomeMe = await logEntryMe.getAttribute("textContent");
       const addition =
-        await outcomeMe.indexOf("You Won") != -1
+        outcomeMe.indexOf("You Won") != -1
           ? 10
           : outcomeMe.indexOf("Opponent Won") != -1
             ? -10
             : 0;
       expectedPost1 += addition;
       expectedPost2 -= addition;
+    }
 
-    console.log(`Round ${i}: outcome='${outcomeMe.trim()}' addition=${addition}`);
-  }
-
-  // Wait for shutdown in the driver that ended session
-  console.log("awaiting shutdown");
-   await gotShutdown(ffdriver);
+    console.log("awaiting shutdown");
+    await gotShutdown(ffdriver);
     await gotShutdown(driver);
-  // Fetch final balances
-  await driver.sleep(10000);
-  const postBalance1 = await getBalance(driver, address1.puzzleHash);
-  const postBalance2 = await getBalance(ffdriver, address2.puzzleHash);
 
-  console.log("Final balances:");
-  console.log("balance1", postBalance1.toString(), "(expected:", expectedPost1.toString(), ")");
-  console.log("balance2", postBalance2.toString(), "(expected:", expectedPost2.toString(), ")");
-  console.log("balance1", preBalance1, postBalance1);
+    console.log("terminating");
+
+    const postBalance1 = await getBalance(driver, address1.puzzleHash);
+    const postBalance2 = await getBalance(ffdriver, address2.puzzleHash);
+
+    console.log("balance1", preBalance1, postBalance1);
     console.log("balance2", preBalance2, postBalance2);
-  // Validate balances
 
-  if (postBalance1 !== expectedPost1 || postBalance2 !== expectedPost2) {
-    throw new Error("Failed expected balance check");
+    if (postBalance1 != expectedPost1 || postBalance2 != expectedPost2) {
+      throw new Error("Failed expected balance check");
+    }
   }
 
-  console.log("Test completed successfully!");
-  }
 
   async function testRunOutOfMoney(selectWallet) {
     // Load the login page
