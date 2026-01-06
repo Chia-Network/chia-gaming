@@ -7,7 +7,6 @@ description = "tools for working with chialisp language; compiler, repl, python 
 homepage = "https://chialisp.com/"
 readme = "README.md"
 repository = "https://github.com/Chia-Network/chialisp"
-license = "MIT"
 keywords = ["chia", "chialisp", "clvm"]
 categories = ["command-line-utilities"]
 
