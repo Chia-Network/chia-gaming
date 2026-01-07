@@ -133,7 +133,7 @@ function HandDisplay(props: HandDisplayProps) {
                             h-full
                             justify-center
                             grid-cols-3
-                            md:grid-cols-4
+                            md:grid-cols-8
                             lg:grid-cols-8
                             xl:grid-cols-8
                             grid-cols-2-xs

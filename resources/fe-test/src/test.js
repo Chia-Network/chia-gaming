@@ -84,10 +84,10 @@ const driver2 = makeFirefox();
 
 afterAll(() => {
   if (driver1) {
-    driver1.close();
+    driver1.quit();
   }
   if (driver2) {
-    driver2.close();
+    driver2.quit();
   }
 });
 
