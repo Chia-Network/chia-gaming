@@ -5,8 +5,8 @@ use rand::distributions::Standard;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::types::{PotatoSignatures, UnrollCoin};
-use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
+use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::standard_coin::get_standard_coin_puzzle;
 use crate::common::types::{
     Aggsig, AllocEncoder, Error, Hash, PrivateKey, Puzzle, PuzzleHash, Sha256tree
@@ -76,9 +76,10 @@ impl<'a, R: Rng> ChannelHandlerEnv<'a, R> {
     pub fn new(
         allocator: &'a mut AllocEncoder,
         rng: &'a mut R,
-    ) -> Result<ChannelHandlerEnv<'a, R>, Error>{
+    ) -> Result<ChannelHandlerEnv<'a, R>, Error> {
         let referee_coin_puzzle = read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex")?;
-        let referee_coin_puzzle_v1 = read_hex_puzzle(allocator, "clsp/referee/onchain/referee-v1.hex")?;
+        let referee_coin_puzzle_v1 =
+            read_hex_puzzle(allocator, "clsp/referee/onchain/referee-v1.hex")?;
         let unroll_puzzle = read_hex_puzzle(
             allocator,
             "clsp/unroll/unroll_puzzle_state_channel_unrolling.hex",

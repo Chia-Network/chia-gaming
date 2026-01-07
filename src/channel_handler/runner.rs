@@ -6,9 +6,7 @@ use crate::channel_handler::{
     ChannelCoinSpendInfo, ChannelHandler, ChannelHandlerEnv, ChannelHandlerInitiationResult,
     ChannelHandlerPrivateKeys, HandshakeResult,
 };
-use crate::common::standard_coin::{
-    private_to_public_key, puzzle_for_pk,
-};
+use crate::common::standard_coin::{private_to_public_key, puzzle_for_pk};
 use crate::common::types::{
     Amount, CoinID, Error, GameID, PublicKey, Puzzle, PuzzleHash, Sha256tree, Timeout
 };
@@ -166,4 +164,3 @@ impl ChannelHandlerGame {
         ))
     }
 }
-

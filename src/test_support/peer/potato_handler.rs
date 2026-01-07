@@ -5,11 +5,6 @@ use clvm_traits::ToClvm;
 
 use log::debug;
 
-use rand::Rng;
-#[cfg(test)]
-use rand::SeedableRng;
-#[cfg(test)]
-use rand_chacha::ChaCha8Rng;
 use crate::channel_handler::types::ChannelHandlerEnv;
 #[cfg(test)]
 use crate::channel_handler::types::{ChannelHandlerPrivateKeys, GameStartFailed, ReadableMove};
@@ -35,6 +30,11 @@ use crate::potato_handler::types::{
 #[cfg(test)]
 use crate::potato_handler::types::{FromLocalUI, PotatoHandlerInit};
 use crate::potato_handler::PotatoHandler;
+use rand::Rng;
+#[cfg(test)]
+use rand::SeedableRng;
+#[cfg(test)]
+use rand_chacha::ChaCha8Rng;
 
 use crate::common::constants::CREATE_COIN;
 #[cfg(test)]

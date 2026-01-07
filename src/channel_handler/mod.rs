@@ -44,8 +44,8 @@ use crate::common::types::{
     Timeout,
 };
 use crate::potato_handler::types::GameAction;
+use crate::referee::Referee;
 use crate::referee::types::{GameMoveDetails, RefereeOnChainTransaction, TheirTurnCoinSpentResult};
-use crate::referee::{Referee, RefereeInterface};
 
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.
@@ -159,76 +159,6 @@ impl<'a, R: Rng> EnvDataForReferee for ChannelHandlerEnv<'a, R> {
     }
     fn agg_sig_me_additional_data(&self) -> Hash {
         self.agg_sig_me_additional_data.clone()
-    }
-}
-
-pub trait MakeRefereeFromGameStart {
-    fn make_referee(
-        &self,
-        env: &mut dyn EnvDataForReferee,
-        my_identity: ChiaIdentity,
-        their_puzzle_hash: &PuzzleHash,
-        reward_puzzle_hash: &PuzzleHash,
-        nonce: usize,
-        state_number: usize,
-    ) -> Result<(Rc<dyn RefereeInterface>, PuzzleHash), Error>;
-}
-
-impl MakeRefereeFromGameStart for GameStartInfo {
-    fn make_referee(
-        &self,
-        env: &mut dyn EnvDataForReferee,
-        my_identity: ChiaIdentity,
-        their_puzzle_hash: &PuzzleHash,
-        reward_puzzle_hash: &PuzzleHash,
-        nonce: usize,
-        state_number: usize,
-    ) -> Result<(Rc<dyn RefereeInterface>, PuzzleHash), Error> {
-        let ref_v0 = env.referee_puzzle_v0();
-        let ref_ph_v0 = env.referee_puzzle_hash_v0();
-        let agg_sig_me = env.agg_sig_me_additional_data();
-        let (r, ph) = Referee::new(
-            env.allocator(),
-            ref_v0,
-            ref_ph_v0,
-            self,
-            my_identity,
-            their_puzzle_hash,
-            reward_puzzle_hash,
-            nonce,
-            &agg_sig_me,
-            state_number,
-        )?;
-        Ok((Rc::new(r), ph))
-    }
-}
-
-impl MakeRefereeFromGameStart for v1::game_start_info::GameStartInfo {
-    fn make_referee(
-        &self,
-        env: &mut dyn EnvDataForReferee,
-        my_identity: ChiaIdentity,
-        their_puzzle_hash: &PuzzleHash,
-        reward_puzzle_hash: &PuzzleHash,
-        nonce: usize,
-        state_number: usize,
-    ) -> Result<(Rc<dyn RefereeInterface>, PuzzleHash), Error> {
-        let ref_v1 = env.referee_puzzle_v1();
-        let ref_ph_v1 = env.referee_puzzle_hash_v1();
-        let agg_sig_me = env.agg_sig_me_additional_data();
-        let (r, ph) = crate::referee::v1::Referee::new(
-            env.allocator(),
-            ref_v1,
-            ref_ph_v1,
-            self,
-            my_identity,
-            their_puzzle_hash,
-            reward_puzzle_hash,
-            nonce,
-            &agg_sig_me,
-            state_number,
-        )?;
-        Ok((Rc::new(r), ph))
     }
 }
 
@@ -817,22 +747,62 @@ impl ChannelHandler {
                 env.allocator,
                 self.private_keys.my_referee_private_key.clone(),
             )?;
-
-            let (referee_maker, puzzle_hash) = g.make_referee(
-                env,
-                referee_identity,
-                &self.their_referee_puzzle_hash,
-                &self.reward_puzzle_hash,
-                new_game_nonce,
-                self.current_state_number,
-            )?;
-            res.push(LiveGame::new(
-                g.game_id().clone(),
-                puzzle_hash,
-                referee_maker,
-                g.my_contribution_this_game().clone(),
-                g.their_contribution_this_game().clone(),
-            ));
+            match g.version() {
+                0 => {
+                    let ref_v0 = env.referee_coin_puzzle.clone();
+                    let ref_ph_v0 = env.referee_coin_puzzle_hash.clone();
+                    let agg_sig_me = env.agg_sig_me_additional_data.clone();
+                    let (r, ph) = Referee::new(
+                        env.allocator,
+                        ref_v0,
+                        ref_ph_v0,
+                        g,
+                        referee_identity,
+                        &self.their_referee_puzzle_hash,
+                        &self.reward_puzzle_hash,
+                        new_game_nonce,
+                        &agg_sig_me,
+                        self.current_state_number,
+                    )?;
+                    res.push(LiveGame::new(
+                        g.game_id().clone(),
+                        ph,
+                        Rc::new(r),
+                        g.my_contribution_this_game().clone(),
+                        g.their_contribution_this_game().clone(),
+                    ));
+                }
+                1 => {
+                    let ref_v1 = env.referee_coin_puzzle_v1.clone();
+                    let ref_ph_v1 = env.referee_coin_puzzle_hash_v1.clone();
+                    let agg_sig_me = env.agg_sig_me_additional_data.clone();
+                    let (r, ph) = crate::referee::v1::Referee::new(
+                        env.allocator,
+                        ref_v1,
+                        ref_ph_v1,
+                        g,
+                        referee_identity,
+                        &self.their_referee_puzzle_hash,
+                        &self.reward_puzzle_hash,
+                        new_game_nonce,
+                        &agg_sig_me,
+                        self.current_state_number,
+                    )?;
+                    res.push(LiveGame::new(
+                        g.game_id().clone(),
+                        ph,
+                        Rc::new(r),
+                        g.my_contribution_this_game().clone(),
+                        g.their_contribution_this_game().clone(),
+                    ));
+                }
+                _ => {
+                    return Err(Error::StrErr(format!(
+                        "unsupported referee version {}",
+                        g.version()
+                    )))
+                }
+            };
         }
 
         Ok(res)
