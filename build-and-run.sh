@@ -29,4 +29,4 @@ docker run -p 3000:3000 -p 3001:3001 -p 5800:5800 \
     -v "$(pwd)/resources/gaming-fe/public:/app/public" \
     -v "$(pwd)/resources/lobby-view/public:/app/lobby-view/public" \
     -v "$(pwd)/resources/lobby-view/dist:/app/lobby-view/dist" \
-    chia-latest:latest
+    chia-gaming-test:latest

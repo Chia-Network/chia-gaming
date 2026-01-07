@@ -17,7 +17,23 @@ function byAttribute(attr, val, sub) {
   if (!sub) {
     sub = "";
   }
-  return By.xpath(`//*[@${attr}='${val}']${sub}`);
+  // If a subselector (xpath-like) is provided, convert it to a CSS selector.
+  // Supports forms like "//input", "//div//input", "/div/input", etc.
+  if (sub && sub.length) {
+    // strip leading slashes
+    let subStr = sub.replace(/^\/+/, '');
+    // convert descendant '//' to space and single '/' to child combinator
+    subStr = subStr.replace(/\/\//g, ' ');
+    subStr = subStr.replace(/\//g, ' > ');
+    subStr = subStr.trim();
+    if (subStr.length === 0) {
+      return By.css(`[${attr}="${val}"]`);
+    }
+    return By.css(`${subStr}[${attr}="${val}"]`);
+  }
+
+  // No subselector: prefer CSS attribute selectors for robustness.
+  return By.css(`[${attr}="${val}"]`);
 }
 
 function byAttributePrefix(attr, val) {

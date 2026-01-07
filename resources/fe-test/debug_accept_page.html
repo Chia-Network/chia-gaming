@@ -1,0 +1,61 @@
+<html lang="en"><head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#000000">
+    <link rel="stylesheet" href="./index.css">
+    <title>Chia Gaming</title>
+  </head>
+  <body id="body">
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"><div class="flex flex-col relative w-screen h-screen bg-canvas-bg-subtle"><div class="flex shrink-0 h-12 w-full"><div class="flex flex-col w-screen" style="height: 50em; background-color: var(--color-canvas-bg);"><div class="flex flex-row h-auto"><div class="fixed top-0 left-0 w-full flex gap-1 shadow-md z-1200" style="flex-direction: row; align-items: center; justify-content: space-between; padding-left: 0.5rem; padding-right: 0.5rem; padding-top: 0px; min-height: 4.5em; background-color: var(--color-canvas-bg); color: var(--color-primary-text);"><div class="flex items-end gap-1 min-w-auto"><img alt="Chia Logo" class="max-w-24 h-auto rounded-md transition-opacity" src="/images/chia_logo.png"><span class="font-semibold whitespace-nowrap " style="font-size: 1.25rem; color: var(--color-canvas-text);">Gaming</span></div><div class="hidden md:flex"></div><div class="flex items-center gap-1.5 sm:gap-2 md:gap-3 justify-end w-auto"><div class="flex items-center gap-1 min-w-auto"><span class="font-semibold hidden sm:block" style="font-size: 0.95rem; color: var(--color-canvas-solid);">WalletConnect</span><div><div class="inline-flex items-center justify-center rounded-[28px] px-2 py-1 min-w-[36px] text-center font-semibold text-[0.7rem]" style="background-color: var(--color-warning-bg); color: var(--color-warning-text); border: 1px solid var(--color-warning-border);"><span class="ml-0.5 text-[0.7rem] font-semibold">Simulator</span><div class="flex items-center ml-1"><span class="ml-0.5 text-[0.75rem]" style="color: rgb(133, 100, 4);">b51...d89</span><button class="ml-1 text-[#856404] p-1 rounded hover:bg-[#8564041a] transition-colors" data-state="closed"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-copy w-4 h-4" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg></button></div></div></div></div><div class="flex items-center gap-1"><span class="font-medium opacity-80 whitespace-nowrap" style="font-size: 0.95rem; color: var(--color-canvas-solid);">Bal: 1999999999800 XCH</span><button class="p-1 border border-(--color-canvas-border) rounded text-canvas-text hover:bg-canvas-bg-hover"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-sun" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2"></path><path d="M12 20v2"></path><path d="m4.93 4.93 1.41 1.41"></path><path d="m17.66 17.66 1.41 1.41"></path><path d="M2 12h2"></path><path d="M20 12h2"></path><path d="m6.34 17.66-1.41 1.41"></path><path d="m19.07 4.93-1.41 1.41"></path></svg></button></div></div></div></div><div style="display: none;"></div><button class="fixed bottom-6 right-6 flex items-center justify-center p-1.5 rounded-full border border-canvas-border shadow-md" style="background-color: var(--color-canvas-bg); color: var(--color-canvas-text); border-radius: 20px; transition: 0.25s;"><svg xmlns="http://www.w3.org/2000/svg" width="20px" height="20px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-wrench" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"></path></svg></button></div></div><div class="relative z-0 w-full flex-1 bg-canvas-bg-subtle" style=""><iframe id="subframe" class="w-full h-full border-0 m-0 md:py-0 py-6 bg-canvas-bg-subtle" src="http://localhost:3001/?lobby=true&amp;uniqueId=00e2b71e-4f65-49f2-b3da-7536238565e8&amp;token=ddece6a19f50a3626d432ccfe55a8180&amp;view=game" allow="clipboard-write self http://localhost:3001"></iframe></div></div></div>
+    <script>
+     function getParamsFromString(paramString) {
+         const fragmentParts = paramString.split('&');
+         const params = Object.fromEntries(fragmentParts.map((part) => {
+             const partEqIdx = part.indexOf('=');
+
+             if (partEqIdx > 0) {
+                 return [part.substring(0, partEqIdx), part.substring(partEqIdx + 1)];
+             }
+
+             return [part, 'true'];
+         }));
+         return params;
+     }
+
+     function getSearchParams() {
+         if (window.location.search === '') {
+             return {};
+         }
+         const search = window.location.search.substring(1);
+         return getParamsFromString(search);
+     }
+
+     const params = getSearchParams();
+     if (params.game) {
+         const body = document.getElementById('body');
+         const scriptElement = document.createElement('script');
+         const text = [
+             'import * as cg from "./chia_gaming_wasm.js";',
+             'const intervalId = setInterval(() => {',
+             '  if (window.loadWasm) {',
+             '    clearInterval(intervalId);',
+             '    window.loadWasm(cg.initSync, cg);',
+             '  }',
+             '}, 500);'
+         ];
+         scriptElement.setAttribute('type', 'module');
+         scriptElement.appendChild(document.createTextNode(text.join('\n')));
+         body.appendChild(scriptElement);
+     }
+    </script><script type="module">import * as cg from "./chia_gaming_wasm.js";
+const intervalId = setInterval(() => {
+  if (window.loadWasm) {
+    clearInterval(intervalId);
+    window.loadWasm(cg.initSync, cg);
+  }
+}, 500);</script>
+    <script src="index.js"></script>
+  
+
+<iframe id="verify-api" src="https://verify.walletconnect.com/b919da6c796177dc819d12110ce22cc4" style="display: none;"></iframe></body></html>
