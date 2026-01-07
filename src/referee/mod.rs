@@ -244,12 +244,12 @@ impl Referee {
             .clone();
 
         let ip = match game_start_info.initial_validation_program() {
-            ValidationOrUpdateProgram::StateUpdate(state_update) => state_update,
-            ValidationOrUpdateProgram::Validation(_) => {
+            ValidationOrUpdateProgram::StateUpdate(_) => {
                 return Err(Error::StrErr(
-                    "Expected StateUpdateProgram for initial_validation_program".to_string(),
+                    "Expected ValidationProgram for initial_validation_program. This is the wrong version.".to_string(),
                 ));
             }
+            ValidationOrUpdateProgram::Validation(vp) => vp,
         };
         let ip_hash = ip.sha256tree(allocator).hash().clone();
         let vi_hash = Sha256Input::Array(vec![
