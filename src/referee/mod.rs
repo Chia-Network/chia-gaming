@@ -219,7 +219,7 @@ impl Referee {
         let initial_move = GameMoveStateInfo {
             mover_share: game_start_info.initial_mover_share().clone(),
             move_made: game_start_info.initial_move().to_vec(),
-            max_move_size: game_start_info.initial_max_move_size().clone(),
+            max_move_size: game_start_info.initial_max_move_size(),
         };
         let my_turn = game_start_info.game_handler().is_my_turn();
         debug!("referee maker: my_turn {my_turn}");

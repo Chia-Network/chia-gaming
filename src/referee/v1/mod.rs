@@ -93,7 +93,7 @@ impl Referee {
         let ip_hash = ip_hash.hash();
         let vi_hash = Sha256Input::Array(vec![
             Sha256Input::Hash(&is_hash),
-            Sha256Input::Hash(&ip_hash),
+            Sha256Input::Hash(ip_hash),
         ])
         .hash();
         let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
