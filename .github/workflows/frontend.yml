@@ -58,7 +58,7 @@ jobs:
         run: |
          # Expects chia-gaming-test to exist
          docker run -t chia-gaming-test /app/test.sh
-
+         docker kill chia-gaming-test
       - name: Extract Game side Artifact
         run: |
           export GW=${{ github.workspace }}
