@@ -9,7 +9,7 @@ use clvmr::{run_program, NodePtr};
 use log::debug;
 
 use crate::channel_handler::game::Game;
-use crate::channel_handler::runner::{channel_handler_env, ChannelHandlerGame};
+use crate::channel_handler::runner:: ChannelHandlerGame;
 use crate::channel_handler::types::{ChannelHandlerEnv, ReadableMove};
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_synthetic_public_key, standard_solution_partial, ChiaIdentity,
@@ -52,7 +52,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             ChiaIdentity::new(allocator, their_private_key).expect("should generate"),
         ];
 
-        let mut env = channel_handler_env(allocator, rng)?;
+        let mut env = ChannelHandlerEnv::new(allocator, rng)?;
         let simulator = Simulator::default();
         let (parties, coin) = new_channel_handler_game(
             &simulator,

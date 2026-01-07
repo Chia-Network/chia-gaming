@@ -6,14 +6,11 @@ use crate::channel_handler::{
     ChannelCoinSpendInfo, ChannelHandler, ChannelHandlerEnv, ChannelHandlerInitiationResult,
     ChannelHandlerPrivateKeys, HandshakeResult,
 };
-use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
-use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::standard_coin::{
-    get_standard_coin_puzzle, private_to_public_key, puzzle_for_pk,
+    private_to_public_key, puzzle_for_pk,
 };
 use crate::common::types::{
-    AllocEncoder, Amount, CoinID, Error, GameID, Hash, PublicKey, Puzzle, PuzzleHash, Sha256tree,
-    Timeout,
+    Amount, CoinID, Error, GameID, PublicKey, Puzzle, PuzzleHash, Sha256tree, Timeout
 };
 
 pub struct ChannelHandlerParty {
@@ -170,30 +167,3 @@ impl ChannelHandlerGame {
     }
 }
 
-pub fn channel_handler_env<'a, R: Rng>(
-    allocator: &'a mut AllocEncoder,
-    rng: &'a mut R,
-) -> Result<ChannelHandlerEnv<'a, R>, Error> {
-    let referee_coin_puzzle = read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex")?;
-    let referee_coin_puzzle_hash: PuzzleHash = referee_coin_puzzle.sha256tree(allocator);
-    let referee_coin_puzzle_v1 = read_hex_puzzle(allocator, "clsp/referee/onchain/referee-v1.hex")?;
-    let referee_coin_puzzle_hash_v1: PuzzleHash = referee_coin_puzzle_v1.sha256tree(allocator);
-    let unroll_puzzle = read_hex_puzzle(
-        allocator,
-        "clsp/unroll/unroll_puzzle_state_channel_unrolling.hex",
-    )?;
-    let unroll_metapuzzle = read_hex_puzzle(allocator, "clsp/unroll/unroll_meta_puzzle.hex")?;
-    let standard_puzzle = get_standard_coin_puzzle(allocator)?;
-    Ok(ChannelHandlerEnv {
-        allocator,
-        rng,
-        referee_coin_puzzle,
-        referee_coin_puzzle_hash,
-        referee_coin_puzzle_v1,
-        referee_coin_puzzle_hash_v1,
-        unroll_metapuzzle,
-        unroll_puzzle,
-        standard_puzzle,
-        agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
-    })
-}
