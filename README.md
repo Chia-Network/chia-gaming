@@ -53,7 +53,7 @@ Here's a breakdown of the key traits and structs used in the `chia-gaming` proje
 
 **Referee:**
 
-* **`RefereeMaker`:**  Handles the referee coin and its logic.
+* **`Referee`:**  Handles the referee coin and its logic.
 * **`GameMoveStateInfo`:** Stores basic information about a move, including the move made, mover share, and maximum move size.
 * **`GameMoveDetails`:** Extends `GameMoveStateInfo` with a validation info hash.
 * **`GameMoveWireData`:**  Contains the puzzle hash for unroll and the `GameMoveDetails` for a move.
