@@ -27,7 +27,6 @@ Here's a breakdown of the key traits and structs used in the `chia-gaming` proje
 **Channel Handler:**
 
 * **`ChannelHandlerPrivateKeys`:** Holds the private keys for a player's channel coin, unroll coin, and referee.
-* **`ChannelHandlerInitiationData`:** Data used to initiate a state channel, including launcher coin ID, contributions, and public keys of the other player.
 * **`ChannelHandlerInitiationResult`:**  Returned by the `ChannelHandler` constructor, containing the puzzle hash of the channel coin and the initial channel half signature.
 * **`PotatoSignatures`:** Contains half-signed information for sending the potato.
 * **`GameStartInfo`:**  Contains information for starting a game, including the game ID, initial state, amount, timeout, and game handlers.

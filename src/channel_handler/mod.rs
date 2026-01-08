@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::channel_handler::game_handler::TheirTurnResult;
 use crate::channel_handler::types::{
     prepend_rem_conditions, AcceptTransactionState, CachedPotatoRegenerateLastHop,
-    ChannelCoinSpendInfo, ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationData,
+    ChannelCoinSpendInfo, ChannelCoinSpentResult, ChannelHandlerEnv,
     ChannelHandlerInitiationResult, ChannelHandlerMoveResult, ChannelHandlerPrivateKeys,
     ChannelHandlerUnrollSpendInfo, CoinDataForReward, CoinSpentAccept, CoinSpentDisposition,
     CoinSpentInformation, CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartFailed,
@@ -419,58 +419,57 @@ impl ChannelHandler {
     pub fn new<R: Rng>(
         env: &mut ChannelHandlerEnv<R>,
         private_keys: ChannelHandlerPrivateKeys,
-        initiation: &ChannelHandlerInitiationData,
+        launcher_coin_id: CoinID,
+        we_start_with_potato: bool,
+        their_channel_pubkey: PublicKey,
+        their_unroll_pubkey: PublicKey,
+        their_referee_puzzle_hash: PuzzleHash,
+        their_reward_puzzle_hash: PuzzleHash,
+        my_contribution: Amount,
+        their_contribution: Amount,
+        unroll_advance_timeout: Timeout,
+        reward_puzzle_hash: PuzzleHash,
     ) -> Result<(Self, ChannelHandlerInitiationResult), Error> {
         let our_channel_pubkey = private_to_public_key(&private_keys.my_channel_coin_private_key);
         let our_unroll_pubkey = private_to_public_key(&private_keys.my_unroll_coin_private_key);
-        if initiation.their_channel_pubkey == our_channel_pubkey {
+        if their_channel_pubkey == our_channel_pubkey {
             return Err(Error::Channel(
                 "Duplicated channel coin public key".to_string(),
             ));
         }
 
-        if initiation.their_unroll_pubkey == our_unroll_pubkey {
+        if their_unroll_pubkey == our_unroll_pubkey {
             return Err(Error::Channel(
                 "Duplicated unroll coin public key".to_string(),
             ));
         }
 
-        let aggregate_public_key =
-            our_channel_pubkey.clone() + initiation.their_channel_pubkey.clone();
-        debug!(
-            "construct channel handler {}",
-            initiation.we_start_with_potato
-        );
+        let aggregate_public_key = our_channel_pubkey.clone() + their_channel_pubkey.clone();
+        debug!("construct channel handler {}", we_start_with_potato);
         debug!("aggregate public key {aggregate_public_key:?}");
         debug!("our unroll public key {our_unroll_pubkey:?}");
-        debug!(
-            "their unroll public key {:?}",
-            initiation.their_unroll_pubkey
-        );
+        debug!("their unroll public key {:?}", their_unroll_pubkey);
 
         let state_channel_coin_puzzle_hash =
             puzzle_hash_for_synthetic_public_key(env.allocator, &aggregate_public_key)?;
-        let amount = initiation.my_contribution.clone() + initiation.their_contribution.clone();
-        let channel_coin_parent = CoinString::from_parts(
-            &initiation.launcher_coin_id,
-            &state_channel_coin_puzzle_hash,
-            &amount,
-        );
+        let amount = my_contribution.clone() + their_contribution.clone();
+        let channel_coin_parent =
+            CoinString::from_parts(&launcher_coin_id, &state_channel_coin_puzzle_hash, &amount);
 
         let mut myself = ChannelHandler {
-            their_channel_coin_public_key: initiation.their_channel_pubkey.clone(),
-            their_unroll_coin_public_key: initiation.their_unroll_pubkey.clone(),
-            their_referee_puzzle_hash: initiation.their_referee_puzzle_hash.clone(),
-            their_reward_puzzle_hash: initiation.their_reward_puzzle_hash.clone(),
-            my_out_of_game_balance: initiation.my_contribution.clone(),
-            their_out_of_game_balance: initiation.their_contribution.clone(),
-            unroll_advance_timeout: initiation.unroll_advance_timeout.clone(),
-            reward_puzzle_hash: initiation.reward_puzzle_hash.clone(),
+            their_channel_coin_public_key: their_channel_pubkey.clone(),
+            their_unroll_coin_public_key: their_unroll_pubkey.clone(),
+            their_referee_puzzle_hash: their_referee_puzzle_hash.clone(),
+            their_reward_puzzle_hash: their_reward_puzzle_hash.clone(),
+            my_out_of_game_balance: my_contribution.clone(),
+            their_out_of_game_balance: their_contribution.clone(),
+            unroll_advance_timeout: unroll_advance_timeout.clone(),
+            reward_puzzle_hash: reward_puzzle_hash.clone(),
 
             my_allocated_balance: Amount::default(),
             their_allocated_balance: Amount::default(),
 
-            have_potato: initiation.we_start_with_potato,
+            have_potato: we_start_with_potato,
             initiated_on_chain: false,
             on_chain_for_error: false,
 

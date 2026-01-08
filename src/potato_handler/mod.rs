@@ -12,7 +12,7 @@ use rand::Rng;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::channel_handler::types::{
-    ChannelCoinSpendInfo, ChannelHandlerInitiationData, ChannelHandlerPrivateKeys, GameStartInfo,
+    ChannelCoinSpendInfo, ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, GameStartInfo,
     GameStartInfoInterface, PotatoSignatures, ReadableMove, StartGameResult,
 };
 use crate::channel_handler::v1;
@@ -1145,6 +1145,33 @@ impl PotatoHandler {
         Ok(())
     }
 
+    fn make_channel_handler<'a, G, R: Rng + 'a>(
+        &self,
+        parent: CoinID,
+        start_potato: bool,
+        msg: &HandshakeB,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+    ) -> Result<(ChannelHandler, ChannelHandlerInitiationResult), Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
+        let (env, _system_interface) = penv.env();
+        ChannelHandler::new(
+            env,
+            self.private_keys.clone(),
+            parent,
+            start_potato,
+            msg.channel_public_key.clone(),
+            msg.unroll_public_key.clone(),
+            msg.referee_puzzle_hash.clone(),
+            msg.reward_puzzle_hash.clone(),
+            self.my_contribution.clone(),
+            self.their_contribution.clone(),
+            self.channel_timeout.clone(),
+            self.reward_puzzle_hash.clone(),
+        )
+    }
+
     pub fn process_incoming_message<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
@@ -1157,20 +1184,6 @@ impl PotatoHandler {
         } else {
             return Ok(());
         };
-
-        let make_channel_handler_initiation =
-            |parent: CoinID, start_potato, msg: &HandshakeB| ChannelHandlerInitiationData {
-                launcher_coin_id: parent,
-                we_start_with_potato: start_potato,
-                their_channel_pubkey: msg.channel_public_key.clone(),
-                their_unroll_pubkey: msg.unroll_public_key.clone(),
-                their_referee_puzzle_hash: msg.referee_puzzle_hash.clone(),
-                my_contribution: self.my_contribution.clone(),
-                their_contribution: self.their_contribution.clone(),
-                unroll_advance_timeout: self.channel_timeout.clone(),
-                their_reward_puzzle_hash: msg.reward_puzzle_hash.clone(),
-                reward_puzzle_hash: self.reward_puzzle_hash.clone(),
-            };
 
         match &self.handshake_state {
             // non potato progression
@@ -1206,12 +1219,8 @@ impl PotatoHandler {
                 // alice will get a potato from bob or bob a request from alice.
                 //
                 // That should halt for the channel coin notifiation.
-                let init_data =
-                    make_channel_handler_initiation(parent_coin.to_coin_id(), false, msg);
-                let (mut channel_handler, _init_result) = {
-                    let (env, _system_interface) = penv.env();
-                    ChannelHandler::new(env, self.private_keys.clone(), &init_data)?
-                };
+                let (mut channel_handler, _init_result) =
+                    self.make_channel_handler(parent_coin.to_coin_id(), false, msg, penv)?;
 
                 let channel_coin = channel_handler.state_channel_coin();
                 let (_, channel_puzzle_hash, _) = channel_coin.get_coin_string_parts()?;
@@ -1283,12 +1292,8 @@ impl PotatoHandler {
                     )));
                 };
 
-                let init_data =
-                    make_channel_handler_initiation(msg.parent.to_coin_id(), true, &msg.simple);
-                let (channel_handler, _init_result) = {
-                    let (env, _system_interface) = penv.env();
-                    ChannelHandler::new(env, self.private_keys.clone(), &init_data)?
-                };
+                let (channel_handler, _init_result) =
+                    self.make_channel_handler(msg.parent.to_coin_id(), true, &msg.simple, penv)?;
 
                 let channel_public_key =
                     private_to_public_key(&channel_handler.channel_private_key());

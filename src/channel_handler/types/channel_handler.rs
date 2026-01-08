@@ -6,8 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::types::{PotatoSignatures, UnrollCoin};
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinID, Hash, PrivateKey, PublicKey, Puzzle, PuzzleHash,
-    Sha256tree, Timeout,
+    Aggsig, AllocEncoder, Hash, PrivateKey, Puzzle, PuzzleHash, Sha256tree,
 };
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -25,19 +24,6 @@ impl Distribution<ChannelHandlerPrivateKeys> for Standard {
             my_referee_private_key: rng.gen(),
         }
     }
-}
-
-pub struct ChannelHandlerInitiationData {
-    pub launcher_coin_id: CoinID,
-    pub we_start_with_potato: bool,
-    pub their_channel_pubkey: PublicKey,
-    pub their_unroll_pubkey: PublicKey,
-    pub their_referee_puzzle_hash: PuzzleHash,
-    pub their_reward_puzzle_hash: PuzzleHash,
-    pub my_contribution: Amount,
-    pub their_contribution: Amount,
-    pub unroll_advance_timeout: Timeout,
-    pub reward_puzzle_hash: PuzzleHash,
 }
 
 #[derive(Clone)]
