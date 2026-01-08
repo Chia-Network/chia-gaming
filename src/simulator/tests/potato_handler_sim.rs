@@ -270,7 +270,7 @@ impl<'a, 'b: 'a, R: Rng> SimulatedPeerSystem<'a, 'b, R> {
     ) -> Result<(), Error> {
         let ch = peer.channel_handler()?;
         let channel_coin = ch.state_channel_coin();
-        let channel_coin_amt = if let Some((_, _, amt)) = channel_coin.coin_string().to_parts() {
+        let channel_coin_amt = if let Some((_, _, amt)) = channel_coin.to_parts() {
             amt
         } else {
             return Err(Error::StrErr("no channel coin".to_string()));

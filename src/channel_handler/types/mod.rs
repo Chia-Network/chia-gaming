@@ -19,9 +19,7 @@ mod validation_info;
 mod validation_program;
 
 pub use accept_transaction_state::AcceptTransactionState;
-pub use channel_coin::{
-    ChannelCoin, ChannelCoinInfo, ChannelCoinSpendInfo, ChannelCoinSpentResult,
-};
+pub use channel_coin::{ChannelCoinSpendInfo, ChannelCoinSpentResult};
 pub use channel_handler::{
     ChannelHandlerEnv, ChannelHandlerInitiationData, ChannelHandlerInitiationResult,
     ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo, GameStartFailed, StartGameResult,

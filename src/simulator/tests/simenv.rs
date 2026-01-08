@@ -406,13 +406,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                     )?;
 
                 // The shutdown gives a spend, which we need to do here.
-                let channel_coin = self
-                    .parties
-                    .player(*player)
-                    .ch
-                    .state_channel_coin()
-                    .coin_string()
-                    .clone();
+                let channel_coin = self.parties.player(*player).ch.state_channel_coin().clone();
 
                 debug!("solution in full spend: {:?}", full_spend.solution);
 

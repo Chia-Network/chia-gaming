@@ -250,7 +250,7 @@ where
         let standard_puzzle = self.env.standard_puzzle.clone();
         let ch = peer.channel_handler()?;
         let channel_coin = ch.state_channel_coin();
-        let channel_coin_amt = if let Some((_, _, amt)) = channel_coin.coin_string().to_parts() {
+        let channel_coin_amt = if let Some((_, _, amt)) = channel_coin.to_parts() {
             amt
         } else {
             return Err(Error::StrErr("no channel coin".to_string()));
@@ -362,7 +362,7 @@ where
 
 fn get_channel_coin_for_peer(p: &PotatoHandler) -> Result<CoinString, Error> {
     let channel_handler = p.channel_handler()?;
-    Ok(channel_handler.state_channel_coin().coin_string().clone())
+    Ok(channel_handler.state_channel_coin().clone())
 }
 
 pub fn handshake<'a, P, R: Rng + 'a>(
