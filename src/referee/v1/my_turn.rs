@@ -335,9 +335,7 @@ impl MyTurnReferee {
     pub fn get_game_handler(&self) -> Option<GameHandler> {
         match self.state.borrow() {
             MyTurnRefereeGameState::Initial { game_handler, .. } => Some(game_handler.clone()),
-            MyTurnRefereeGameState::AfterTheirTurn { game_handler, .. } => {
-                game_handler.clone()
-            }
+            MyTurnRefereeGameState::AfterTheirTurn { game_handler, .. } => game_handler.clone(),
         }
     }
 

@@ -45,7 +45,7 @@ use crate::common::types::{
 };
 use crate::potato_handler::types::GameAction;
 use crate::referee::types::{GameMoveDetails, RefereeOnChainTransaction, TheirTurnCoinSpentResult};
-use crate::referee::{RefereeInterface, Referee};
+use crate::referee::{Referee, RefereeInterface};
 
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.

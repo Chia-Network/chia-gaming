@@ -621,9 +621,7 @@ impl RefereeInterface for Referee {
             Referee::MyTurn(_) => {
                 todo!();
             }
-            Referee::TheirTurn(t) => {
-                t.get_transaction_for_move(allocator, coin_string, on_chain)
-            }
+            Referee::TheirTurn(t) => t.get_transaction_for_move(allocator, coin_string, on_chain),
         }
     }
 

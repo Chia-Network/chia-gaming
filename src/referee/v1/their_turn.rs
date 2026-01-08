@@ -223,8 +223,7 @@ impl TheirTurnReferee {
     }
 
     pub fn get_move_info(&self) -> Option<Rc<OnChainRefereeMoveData>> {
-        if let TheirTurnRefereeGameState::AfterOurTurn { move_spend, .. } = self.state.borrow()
-        {
+        if let TheirTurnRefereeGameState::AfterOurTurn { move_spend, .. } = self.state.borrow() {
             return Some(move_spend.clone());
         }
 
