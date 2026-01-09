@@ -45,7 +45,7 @@ use crate::common::types::{
 };
 use crate::potato_handler::types::GameAction;
 use crate::referee::types::{GameMoveDetails, RefereeOnChainTransaction, TheirTurnCoinSpentResult};
-use crate::referee::{RefereeInterface, RefereeMaker};
+use crate::referee::{Referee, RefereeInterface};
 
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.
@@ -187,7 +187,7 @@ impl MakeRefereeFromGameStart for GameStartInfo {
         let ref_v0 = env.referee_puzzle_v0();
         let ref_ph_v0 = env.referee_puzzle_hash_v0();
         let agg_sig_me = env.agg_sig_me_additional_data();
-        let (r, ph) = RefereeMaker::new(
+        let (r, ph) = Referee::new(
             env.allocator(),
             ref_v0,
             ref_ph_v0,
@@ -216,7 +216,7 @@ impl MakeRefereeFromGameStart for v1::game_start_info::GameStartInfo {
         let ref_v1 = env.referee_puzzle_v1();
         let ref_ph_v1 = env.referee_puzzle_hash_v1();
         let agg_sig_me = env.agg_sig_me_additional_data();
-        let (r, ph) = crate::referee::v1::RefereeMaker::new(
+        let (r, ph) = crate::referee::v1::Referee::new(
             env.allocator(),
             ref_v1,
             ref_ph_v1,
