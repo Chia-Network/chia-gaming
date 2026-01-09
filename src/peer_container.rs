@@ -611,15 +611,14 @@ impl SynchronousGameCradle {
 
         let ch = self.peer.channel_handler()?;
         let channel_coin = ch.state_channel_coin();
-        let channel_coin_amt =
-            if let Some((ch_parent, ph, amt)) = channel_coin.coin_string().to_parts() {
-                // We can be sure we've got the right puzzle hash separately.
-                assert_eq!(ph, channel_puzzle_hash);
-                assert_eq!(ch_parent, parent.to_coin_id());
-                amt
-            } else {
-                return Err(Error::StrErr("no channel coin".to_string()));
-            };
+        let channel_coin_amt = if let Some((ch_parent, ph, amt)) = channel_coin.to_parts() {
+            // We can be sure we've got the right puzzle hash separately.
+            assert_eq!(ph, channel_puzzle_hash);
+            assert_eq!(ch_parent, parent.to_coin_id());
+            amt
+        } else {
+            return Err(Error::StrErr("no channel coin".to_string()));
+        };
 
         let conditions_clvm = [(
             CREATE_COIN,

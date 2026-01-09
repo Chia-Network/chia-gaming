@@ -12,7 +12,7 @@ use rand::Rng;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::channel_handler::types::{
-    ChannelCoinSpendInfo, ChannelHandlerInitiationData, ChannelHandlerPrivateKeys, GameStartInfo,
+    ChannelCoinSpendInfo, ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, GameStartInfo,
     GameStartInfoInterface, PotatoSignatures, ReadableMove, StartGameResult,
 };
 use crate::channel_handler::v1;
@@ -386,7 +386,7 @@ impl PotatoHandler {
 
         let (channel_coin, channel_public_key) = {
             let ch = self.channel_handler()?;
-            let cc = ch.state_channel_coin().coin_string().clone();
+            let cc = ch.state_channel_coin().clone();
             (cc, ch.get_aggregate_channel_public_key())
         };
 
@@ -479,7 +479,7 @@ impl PotatoHandler {
                 self.update_channel_coin_after_receive(penv, &spend_info)?;
             }
             PeerMessage::Shutdown(sig, conditions) => {
-                let coin = ch.state_channel_coin().coin_string();
+                let coin = ch.state_channel_coin();
                 let (env, system_interface) = penv.env();
                 let clvm_conditions = conditions.to_nodeptr(env.allocator)?;
                 // conditions must have a reward coin targeted at our referee_public_key.
@@ -808,7 +808,7 @@ impl PotatoHandler {
                     let want_puzzle_hash = ch.get_reward_puzzle_hash(env)?;
                     let want_amount = ch.clean_shutdown_amount();
                     (
-                        ch.state_channel_coin().coin_string(),
+                        ch.state_channel_coin(),
                         spend,
                         want_puzzle_hash,
                         want_amount,
@@ -1145,6 +1145,33 @@ impl PotatoHandler {
         Ok(())
     }
 
+    fn make_channel_handler<'a, G, R: Rng + 'a>(
+        &self,
+        parent: CoinID,
+        start_potato: bool,
+        msg: &HandshakeB,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+    ) -> Result<(ChannelHandler, ChannelHandlerInitiationResult), Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
+        let (env, _system_interface) = penv.env();
+        ChannelHandler::new(
+            env,
+            self.private_keys.clone(),
+            parent,
+            start_potato,
+            msg.channel_public_key.clone(),
+            msg.unroll_public_key.clone(),
+            msg.referee_puzzle_hash.clone(),
+            msg.reward_puzzle_hash.clone(),
+            self.my_contribution.clone(),
+            self.their_contribution.clone(),
+            self.channel_timeout.clone(),
+            self.reward_puzzle_hash.clone(),
+        )
+    }
+
     pub fn process_incoming_message<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
@@ -1157,20 +1184,6 @@ impl PotatoHandler {
         } else {
             return Ok(());
         };
-
-        let make_channel_handler_initiation =
-            |parent: CoinID, start_potato, msg: &HandshakeB| ChannelHandlerInitiationData {
-                launcher_coin_id: parent,
-                we_start_with_potato: start_potato,
-                their_channel_pubkey: msg.channel_public_key.clone(),
-                their_unroll_pubkey: msg.unroll_public_key.clone(),
-                their_referee_puzzle_hash: msg.referee_puzzle_hash.clone(),
-                my_contribution: self.my_contribution.clone(),
-                their_contribution: self.their_contribution.clone(),
-                unroll_advance_timeout: self.channel_timeout.clone(),
-                their_reward_puzzle_hash: msg.reward_puzzle_hash.clone(),
-                reward_puzzle_hash: self.reward_puzzle_hash.clone(),
-            };
 
         match &self.handshake_state {
             // non potato progression
@@ -1206,16 +1219,11 @@ impl PotatoHandler {
                 // alice will get a potato from bob or bob a request from alice.
                 //
                 // That should halt for the channel coin notifiation.
-                let init_data =
-                    make_channel_handler_initiation(parent_coin.to_coin_id(), false, msg);
-                let (mut channel_handler, _init_result) = {
-                    let (env, _system_interface) = penv.env();
-                    ChannelHandler::new(env, self.private_keys.clone(), &init_data)?
-                };
+                let (mut channel_handler, _init_result) =
+                    self.make_channel_handler(parent_coin.to_coin_id(), false, msg, penv)?;
 
                 let channel_coin = channel_handler.state_channel_coin();
-                let (_, channel_puzzle_hash, _) =
-                    channel_coin.coin_string().get_coin_string_parts()?;
+                let (_, channel_puzzle_hash, _) = channel_coin.get_coin_string_parts()?;
 
                 // Send the boostrap wallet interface the channel puzzle hash to use.
                 // it will reply at some point with the channel offer.
@@ -1223,7 +1231,7 @@ impl PotatoHandler {
                     let (_env, system_interface) = penv.env();
                     system_interface.channel_puzzle_hash(&channel_puzzle_hash)?;
                     system_interface.register_coin(
-                        channel_coin.coin_string(),
+                        channel_coin,
                         &self.channel_timeout,
                         Some("channel"),
                     )?;
@@ -1284,12 +1292,8 @@ impl PotatoHandler {
                     )));
                 };
 
-                let init_data =
-                    make_channel_handler_initiation(msg.parent.to_coin_id(), true, &msg.simple);
-                let (channel_handler, _init_result) = {
-                    let (env, _system_interface) = penv.env();
-                    ChannelHandler::new(env, self.private_keys.clone(), &init_data)?
-                };
+                let (channel_handler, _init_result) =
+                    self.make_channel_handler(msg.parent.to_coin_id(), true, &msg.simple, penv)?;
 
                 let channel_public_key =
                     private_to_public_key(&channel_handler.channel_private_key());
@@ -1350,7 +1354,7 @@ impl PotatoHandler {
                     ch.state_channel_coin()
                 };
 
-                debug!("PH: channel_coin {:?}", channel_coin.coin_string());
+                debug!("PH: channel_coin {:?}", channel_coin);
 
                 {
                     let (_env, system_interface) = penv.env();
@@ -1362,7 +1366,7 @@ impl PotatoHandler {
 
                     // Ensure we're watching for this coin.
                     system_interface.register_coin(
-                        channel_coin.coin_string(),
+                        channel_coin,
                         &self.channel_timeout,
                         Some("channel"),
                     )?;
@@ -1441,7 +1445,7 @@ impl PotatoHandler {
     {
         if let Some(ch) = self.channel_handler.as_ref() {
             let channel_coin = ch.state_channel_coin();
-            if coin_id == channel_coin.coin_string() {
+            if coin_id == channel_coin {
                 // Channel coin was spent so we're going on chain.
                 let mut hs = HandshakeState::StepA;
                 swap(&mut hs, &mut self.handshake_state);
@@ -1469,10 +1473,8 @@ impl PotatoHandler {
                             "{} notified of channel coin spend in run state",
                             ch.is_initial_potato()
                         );
-                        self.handshake_state = HandshakeState::OnChainWaitForConditions(
-                            channel_coin.coin_string().clone(),
-                            hs,
-                        );
+                        self.handshake_state =
+                            HandshakeState::OnChainWaitForConditions(channel_coin.clone(), hs);
                         let (_, system_interface) = penv.env();
                         system_interface.request_puzzle_and_solution(coin_id)?;
                         assert!(!matches!(self.handshake_state, HandshakeState::StepA));
@@ -2145,7 +2147,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             let channel_coin_created = self
                 .channel_handler()
                 .ok()
-                .map(|ch| ch.state_channel_coin().coin_string());
+                .map(|ch| ch.state_channel_coin());
 
             debug!("checking created coin {coin:?} vs expected {channel_coin_created:?}");
             if channel_coin_created.is_some() {
