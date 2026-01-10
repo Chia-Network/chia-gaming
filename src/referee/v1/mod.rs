@@ -8,8 +8,10 @@ use log::debug;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::types::{Evidence, ReadableMove};
-use crate::channel_handler::v1::game_start_info::GameStartInfo;
+use crate::channel_handler::types::{
+    Evidence, GameStartInfoInterface, ReadableMove, ValidationOrUpdateProgram,
+};
+
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
     AllocEncoder, Amount, CoinCondition, CoinString, Error, Hash, Program, Puzzle, PuzzleHash,
@@ -43,7 +45,7 @@ impl Referee {
         allocator: &mut AllocEncoder,
         referee_coin_puzzle: Puzzle,
         referee_coin_puzzle_hash: PuzzleHash,
-        game_start_info: &GameStartInfo,
+        game_start_info: &Rc<dyn GameStartInfoInterface>,
         my_identity: ChiaIdentity,
         their_puzzle_hash: &PuzzleHash,
         reward_puzzle_hash: &PuzzleHash,
@@ -53,11 +55,11 @@ impl Referee {
     ) -> Result<(Self, PuzzleHash), Error> {
         //debug!("referee maker: game start {:?}", game_start_info);
         let initial_move = GameMoveStateInfo {
-            mover_share: game_start_info.initial_mover_share.clone(),
-            move_made: game_start_info.initial_move.clone(),
+            mover_share: game_start_info.initial_mover_share().clone(),
+            move_made: game_start_info.initial_move().to_vec(),
             max_move_size: 0, // unused in v1
         };
-        let my_turn = game_start_info.game_handler.is_my_turn();
+        let my_turn = game_start_info.game_handler().is_my_turn();
         //debug!("referee maker: my_turn {my_turn}");
 
         let fixed_info = Rc::new(RMFixed {
@@ -66,40 +68,46 @@ impl Referee {
             their_referee_puzzle_hash: their_puzzle_hash.clone(),
             reward_puzzle_hash: reward_puzzle_hash.clone(),
             my_identity: my_identity.clone(),
-            timeout: game_start_info.timeout.clone(),
-            amount: game_start_info.amount.clone(),
+            timeout: game_start_info.timeout().clone(),
+            amount: game_start_info.amount().clone(),
             nonce,
             agg_sig_me_additional_data: agg_sig_me_additional_data.clone(),
         });
 
         // TODO: Revisit how we create initial_move
         let is_hash = game_start_info
-            .initial_state
+            .initial_state()
             .sha256tree(allocator)
             .hash()
             .clone();
-        let ip_hash = game_start_info
-            .initial_validation_program
-            .sha256tree(allocator)
-            .hash()
-            .clone();
+        let ip = match game_start_info.initial_validation_program() {
+            ValidationOrUpdateProgram::StateUpdate(su) => su,
+            ValidationOrUpdateProgram::Validation(_) => {
+                return Err(Error::StrErr(
+                    "Expected StateUpdate for initial_validation_program. This is wrong version."
+                        .to_string(),
+                ));
+            }
+        };
+        let ip_hash = ip.sha256tree(allocator);
+        let ip_hash = ip_hash.hash();
         let vi_hash = Sha256Input::Array(vec![
             Sha256Input::Hash(&is_hash),
-            Sha256Input::Hash(&ip_hash),
+            Sha256Input::Hash(ip_hash),
         ])
         .hash();
         let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
             &fixed_info,
             &GameMoveDetails {
                 basic: GameMoveStateInfo {
-                    mover_share: game_start_info.initial_mover_share.clone(),
-                    max_move_size: game_start_info.initial_max_move_size,
+                    mover_share: game_start_info.initial_mover_share().clone(),
+                    max_move_size: game_start_info.initial_max_move_size(),
                     ..initial_move.clone()
                 },
                 validation_info_hash: vi_hash.clone(),
             },
             None,
-            game_start_info.initial_validation_program.clone(),
+            ip.clone(),
             my_turn,
         ));
         // If this reflects my turn, then we will spend the next parameter set.

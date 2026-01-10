@@ -7,14 +7,16 @@ use clvm_traits::ToClvm;
 
 use log::debug;
 
+use crate::channel_handler::game_handler::GameHandler as OldGH;
 use crate::channel_handler::game_handler::{TheirTurnMoveData, TheirTurnResult};
 use crate::channel_handler::types::{
-    Evidence, HasStateUpdateProgram, ReadableMove, StateUpdateProgram, ValidationInfo,
+    Evidence, GameStartInfoInterface, HasStateUpdateProgram, ReadableMove, StateUpdateProgram,
+    ValidationInfo, ValidationOrUpdateProgram,
 };
 use crate::channel_handler::v1::game_handler::{
     GameHandler, MessageHandler, MessageInputs, TheirTurnInputs,
 };
-use crate::channel_handler::v1::game_start_info::GameStartInfo;
+
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
 use crate::common::types::{
@@ -124,7 +126,7 @@ impl TheirTurnReferee {
         allocator: &mut AllocEncoder,
         referee_coin_puzzle: Puzzle,
         referee_coin_puzzle_hash: PuzzleHash,
-        game_start_info: &GameStartInfo,
+        game_start_info: &Rc<dyn GameStartInfoInterface>,
         my_identity: ChiaIdentity,
         their_puzzle_hash: &PuzzleHash,
         reward_puzzle_hash: &PuzzleHash,
@@ -134,11 +136,11 @@ impl TheirTurnReferee {
     ) -> Result<(Self, PuzzleHash), Error> {
         debug!("referee maker: game start {:?}", game_start_info);
         let initial_move = GameMoveStateInfo {
-            mover_share: game_start_info.initial_mover_share.clone(),
-            move_made: game_start_info.initial_move.clone(),
-            max_move_size: game_start_info.initial_max_move_size,
+            mover_share: game_start_info.initial_mover_share().clone(),
+            move_made: game_start_info.initial_move().to_vec(),
+            max_move_size: game_start_info.initial_max_move_size(),
         };
-        let my_turn = game_start_info.game_handler.is_my_turn();
+        let my_turn = game_start_info.game_handler().is_my_turn();
         debug!("referee maker: my_turn {my_turn}");
 
         let fixed_info = Rc::new(RMFixed {
@@ -147,16 +149,25 @@ impl TheirTurnReferee {
             their_referee_puzzle_hash: their_puzzle_hash.clone(),
             reward_puzzle_hash: reward_puzzle_hash.clone(),
             my_identity: my_identity.clone(),
-            timeout: game_start_info.timeout.clone(),
-            amount: game_start_info.amount.clone(),
+            timeout: game_start_info.timeout().clone(),
+            amount: game_start_info.amount().clone(),
             nonce,
             agg_sig_me_additional_data: agg_sig_me_additional_data.clone(),
         });
 
+        let ip = match game_start_info.initial_validation_program() {
+            ValidationOrUpdateProgram::StateUpdate(su) => su,
+            ValidationOrUpdateProgram::Validation(_) => {
+                return Err(Error::StrErr(
+                    "Expected StateUpdate for initial_validation_program. This is wrong version."
+                        .to_string(),
+                ));
+            }
+        };
         let validation_info_hash = ValidationInfo::new_state_update(
             allocator,
-            game_start_info.initial_validation_program.clone(),
-            game_start_info.initial_state.p(),
+            ip.clone(),
+            game_start_info.initial_state().p(),
         );
         let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
             &fixed_info,
@@ -165,7 +176,7 @@ impl TheirTurnReferee {
                 validation_info_hash: validation_info_hash.hash().clone(),
             },
             None,
-            game_start_info.initial_validation_program.clone(),
+            ip.clone(),
             my_turn,
         ));
         // If this reflects my turn, then we will spend the next parameter set.
@@ -180,11 +191,19 @@ impl TheirTurnReferee {
                 ref_puzzle_args.mover_puzzle_hash
             );
         }
+        let handler = match game_start_info.game_handler() {
+            OldGH::HandlerV1(v1_handler) => v1_handler,
+            _ => {
+                return Err(Error::StrErr(
+                    "Expected v1 Handler. This is wrong version.".to_string(),
+                ));
+            }
+        };
         let state = Rc::new(TheirTurnRefereeGameState::Initial {
-            initial_state: game_start_info.initial_state.p(),
-            initial_validation_program: game_start_info.initial_validation_program.clone(),
+            initial_state: game_start_info.initial_state().p(),
+            initial_validation_program: ip.clone(),
             initial_puzzle_args: ref_puzzle_args.clone(),
-            game_handler: game_start_info.game_handler.clone(),
+            game_handler: handler.clone(),
         });
         let puzzle_hash =
             curry_referee_puzzle_hash(allocator, &referee_coin_puzzle_hash, &ref_puzzle_args)?;

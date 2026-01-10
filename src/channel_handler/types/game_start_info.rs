@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::types::StateUpdateProgram;
 use crate::channel_handler::types::ValidationProgram;
-use crate::channel_handler::MakeRefereeFromGameStart;
+
 use crate::common::types::{
     atom_from_clvm, usize_from_atom, AllocEncoder, Amount, Error, GameID, Hash, Program,
     ProgramRef, Timeout,
@@ -42,13 +42,9 @@ pub trait GameStartInfoInterfaceND {
     fn timeout(&self) -> &Timeout;
 }
 
-pub trait GameStartInfoInterface:
-    GameStartInfoInterfaceND + MakeRefereeFromGameStart + std::fmt::Debug
-{
-}
+pub trait GameStartInfoInterface: GameStartInfoInterfaceND + std::fmt::Debug {}
 
 impl GameStartInfoInterface for GameStartInfo {}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GameStartInfo {
     pub amount: Amount,

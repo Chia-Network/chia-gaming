@@ -5,8 +5,11 @@ use rand::distributions::Standard;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::types::{PotatoSignatures, UnrollCoin};
+use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
+use crate::common::load_clvm::read_hex_puzzle;
+use crate::common::standard_coin::get_standard_coin_puzzle;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Hash, PrivateKey, Puzzle, PuzzleHash, Sha256tree,
+    Aggsig, AllocEncoder, Error, Hash, PrivateKey, Puzzle, PuzzleHash, Sha256tree,
 };
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -73,16 +76,19 @@ impl<'a, R: Rng> ChannelHandlerEnv<'a, R> {
     pub fn new(
         allocator: &'a mut AllocEncoder,
         rng: &'a mut R,
-        unroll_metapuzzle: Puzzle,
-        unroll_puzzle: Puzzle,
-        referee_coin_puzzle: Puzzle,
-        referee_coin_puzzle_v1: Puzzle,
-        standard_puzzle: Puzzle,
-        agg_sig_me_additional_data: Hash,
-    ) -> ChannelHandlerEnv<'a, R> {
+    ) -> Result<ChannelHandlerEnv<'a, R>, Error> {
+        let referee_coin_puzzle = read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex")?;
+        let referee_coin_puzzle_v1 =
+            read_hex_puzzle(allocator, "clsp/referee/onchain/referee-v1.hex")?;
+        let unroll_puzzle = read_hex_puzzle(
+            allocator,
+            "clsp/unroll/unroll_puzzle_state_channel_unrolling.hex",
+        )?;
+        let unroll_metapuzzle = read_hex_puzzle(allocator, "clsp/unroll/unroll_meta_puzzle.hex")?;
+        let standard_puzzle = get_standard_coin_puzzle(allocator)?;
         let referee_coin_puzzle_hash = referee_coin_puzzle.sha256tree(allocator);
         let referee_coin_puzzle_hash_v1 = referee_coin_puzzle_v1.sha256tree(allocator);
-        ChannelHandlerEnv {
+        Ok(ChannelHandlerEnv {
             allocator,
             rng,
             referee_coin_puzzle,
@@ -92,7 +98,7 @@ impl<'a, R: Rng> ChannelHandlerEnv<'a, R> {
             unroll_metapuzzle,
             unroll_puzzle,
             standard_puzzle,
-            agg_sig_me_additional_data,
-        }
+            agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+        })
     }
 }
