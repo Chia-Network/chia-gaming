@@ -9,7 +9,7 @@ use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::standard_coin::get_standard_coin_puzzle;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Error, Hash, PrivateKey, Puzzle, PuzzleHash, Sha256tree
+    Aggsig, AllocEncoder, Error, Hash, PrivateKey, Puzzle, PuzzleHash, Sha256tree,
 };
 
 #[derive(Clone, Serialize, Deserialize)]

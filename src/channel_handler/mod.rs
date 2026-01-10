@@ -44,8 +44,8 @@ use crate::common::types::{
     Timeout,
 };
 use crate::potato_handler::types::GameAction;
-use crate::referee::Referee;
 use crate::referee::types::{GameMoveDetails, RefereeOnChainTransaction, TheirTurnCoinSpentResult};
+use crate::referee::Referee;
 
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.
