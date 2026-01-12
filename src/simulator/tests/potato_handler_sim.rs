@@ -7,7 +7,6 @@ use log::debug;
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
-use crate::channel_handler::runner::channel_handler_env;
 use crate::channel_handler::types::{
     ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartFailed, ReadableMove,
 };
@@ -98,7 +97,7 @@ pub fn update_and_report_coins<'a, R: Rng>(
 
     // Report timed out coins
     for who in 0..=1 {
-        let mut env = channel_handler_env(allocator, rng).expect("should work");
+        let mut env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
         let mut penv: SimulatedPeerSystem<'_, '_, R> =
             SimulatedPeerSystem::new(&mut env, &mut pipes[who]);
 
@@ -270,7 +269,7 @@ impl<'a, 'b: 'a, R: Rng> SimulatedPeerSystem<'a, 'b, R> {
     ) -> Result<(), Error> {
         let ch = peer.channel_handler()?;
         let channel_coin = ch.state_channel_coin();
-        let channel_coin_amt = if let Some((_, _, amt)) = channel_coin.coin_string().to_parts() {
+        let channel_coin_amt = if let Some((_, _, amt)) = channel_coin.to_parts() {
             amt
         } else {
             return Err(Error::StrErr("no channel coin".to_string()));
@@ -333,14 +332,14 @@ pub fn handshake<'a, R: Rng + 'a>(
 
         debug!("handshake iterate {who}");
         {
-            let mut env = channel_handler_env(allocator, rng).expect("should work");
+            let mut env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
             run_move(&mut env, Amount::new(200), pipes, &mut peers[who], who).expect("should send");
         }
 
         if let Some(ph) = pipes[who].channel_puzzle_hash.clone() {
             debug!("puzzle hash");
             pipes[who].channel_puzzle_hash = None;
-            let mut env = channel_handler_env(allocator, rng).expect("should work");
+            let mut env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
             let mut penv = SimulatedPeerSystem::new(&mut env, &mut pipes[who]);
             penv.test_handle_received_channel_puzzle_hash(
                 &identities[who],
@@ -357,12 +356,12 @@ pub fn handshake<'a, R: Rng + 'a>(
             );
 
             {
-                let mut env = channel_handler_env(allocator, rng).expect("should work");
+                let mut env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
                 let mut penv = SimulatedPeerSystem::new(&mut env, &mut pipes[who]);
                 peers[who].channel_transaction_completion(&mut penv, &u)?;
             }
 
-            let env = channel_handler_env(allocator, rng).expect("should work");
+            let env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
             let mut spends = u.clone();
             // Create no coins.  The target is already created in the partially funded
             // transaction.

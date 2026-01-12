@@ -11,26 +11,29 @@ use crate::channel_handler::game_handler::{
     GameHandler, MessageHandler, MessageInputs, MyTurnResult, TheirTurnInputs, TheirTurnMoveData,
     TheirTurnResult,
 };
-use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgram};
+use crate::channel_handler::types::{
+    GameStartInfo, GameStartInfoInterface, ReadableMove, ValidationOrUpdateProgram,
+    ValidationProgram,
+};
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
 use crate::common::types::{
     u64_from_atom, usize_from_atom, AllocEncoder, Amount, CoinCondition, CoinString, Error, GameID,
     Hash, IntoErr, Program, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
 };
-use crate::referee::my_turn::{MyTurnReferee, MyTurnRefereeMakerGameState};
+use crate::referee::my_turn::{MyTurnReferee, MyTurnRefereeGameState};
 use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, GameMoveDetails, GameMoveStateInfo,
     IdentityCoinAndSolution, OnChainRefereeMove, OnChainRefereeSolution, RMFixed,
     RefereeOnChainTransaction, RefereePuzzleArgs, TheirTurnCoinSpentResult, TheirTurnMoveResult,
     REM_CONDITION_FIELDS,
 };
-use crate::referee::RefereeByTurn;
+use crate::referee::Referee;
 
 // Contains a state of the game for use in currying the coin puzzle or for
 // reference when calling the game_handler.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum TheirTurnRefereeMakerGameState {
+pub enum TheirTurnRefereeGameState {
     Initial {
         initial_state: Rc<Program>,
         initial_validation_program: ValidationProgram,
@@ -47,14 +50,14 @@ pub enum TheirTurnRefereeMakerGameState {
     },
 }
 
-impl TheirTurnRefereeMakerGameState {
+impl TheirTurnRefereeGameState {
     pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         match self {
-            TheirTurnRefereeMakerGameState::Initial {
+            TheirTurnRefereeGameState::Initial {
                 initial_puzzle_args,
                 ..
             } => initial_puzzle_args.clone(),
-            TheirTurnRefereeMakerGameState::AfterOurTurn {
+            TheirTurnRefereeGameState::AfterOurTurn {
                 create_this_coin, ..
             } => create_this_coin.clone(),
         }
@@ -62,11 +65,11 @@ impl TheirTurnRefereeMakerGameState {
 
     pub fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         match self {
-            TheirTurnRefereeMakerGameState::Initial {
+            TheirTurnRefereeGameState::Initial {
                 initial_puzzle_args,
                 ..
             } => initial_puzzle_args.clone(),
-            TheirTurnRefereeMakerGameState::AfterOurTurn {
+            TheirTurnRefereeGameState::AfterOurTurn {
                 spend_this_coin, ..
             } => spend_this_coin.clone(),
         }
@@ -84,7 +87,7 @@ pub struct TheirTurnReferee {
     pub finished: bool,
     pub message_handler: Option<MessageHandler>,
 
-    pub state: Rc<TheirTurnRefereeMakerGameState>,
+    pub state: Rc<TheirTurnRefereeGameState>,
     pub state_number: usize,
     pub parent: Option<Rc<MyTurnReferee>>,
 }
@@ -95,7 +98,7 @@ impl TheirTurnReferee {
         allocator: &mut AllocEncoder,
         referee_coin_puzzle: Puzzle,
         referee_coin_puzzle_hash: PuzzleHash,
-        game_start_info: &GameStartInfo,
+        game_start_info: &Rc<dyn GameStartInfoInterface>,
         my_identity: ChiaIdentity,
         their_puzzle_hash: &PuzzleHash,
         reward_puzzle_hash: &PuzzleHash,
@@ -105,11 +108,11 @@ impl TheirTurnReferee {
     ) -> Result<(Self, PuzzleHash), Error> {
         debug!("referee maker: game start {:?}", game_start_info);
         let initial_move = GameMoveStateInfo {
-            mover_share: game_start_info.initial_mover_share.clone(),
-            move_made: game_start_info.initial_move.clone(),
-            max_move_size: game_start_info.initial_max_move_size,
+            mover_share: game_start_info.initial_mover_share().clone(),
+            move_made: game_start_info.initial_move().to_vec(),
+            max_move_size: game_start_info.initial_max_move_size(),
         };
-        let my_turn = game_start_info.game_handler.is_my_turn();
+        let my_turn = game_start_info.game_handler().is_my_turn();
         debug!("referee maker: my_turn {my_turn}");
 
         let fixed_info = Rc::new(RMFixed {
@@ -118,23 +121,27 @@ impl TheirTurnReferee {
             their_referee_puzzle_hash: their_puzzle_hash.clone(),
             reward_puzzle_hash: reward_puzzle_hash.clone(),
             my_identity: my_identity.clone(),
-            timeout: game_start_info.timeout.clone(),
-            amount: game_start_info.amount.clone(),
+            timeout: game_start_info.timeout().clone(),
+            amount: game_start_info.amount().clone(),
             nonce,
             agg_sig_me_additional_data: agg_sig_me_additional_data.clone(),
         });
 
         // TODO: Revisit how we create initial_move
         let is_hash = game_start_info
-            .initial_state
+            .initial_state()
             .sha256tree(allocator)
             .hash()
             .clone();
-        let ip_hash = game_start_info
-            .initial_validation_program
-            .sha256tree(allocator)
-            .hash()
-            .clone();
+        let ip = match game_start_info.initial_validation_program() {
+            ValidationOrUpdateProgram::StateUpdate(_) => {
+                return Err(Error::StrErr(
+                        "Expected ValidationProgram for initial_validation_program. This is wrong version.".to_string(),
+                    ));
+            }
+            ValidationOrUpdateProgram::Validation(vp) => vp,
+        };
+        let ip_hash = ip.sha256tree(allocator).hash().clone();
         let vi_hash = Sha256Input::Array(vec![
             Sha256Input::Hash(&is_hash),
             Sha256Input::Hash(&ip_hash),
@@ -164,11 +171,11 @@ impl TheirTurnReferee {
                 ref_puzzle_args.mover_puzzle_hash
             );
         }
-        let state = Rc::new(TheirTurnRefereeMakerGameState::Initial {
-            initial_state: game_start_info.initial_state.p(),
-            initial_validation_program: game_start_info.initial_validation_program.clone(),
+        let state = Rc::new(TheirTurnRefereeGameState::Initial {
+            initial_state: game_start_info.initial_state().p(),
+            initial_validation_program: ip,
             initial_puzzle_args: ref_puzzle_args.clone(),
-            game_handler: game_start_info.game_handler.clone(),
+            game_handler: game_start_info.game_handler().clone(),
         });
         let puzzle_hash =
             curry_referee_puzzle_hash(allocator, &referee_coin_puzzle_hash, &ref_puzzle_args)?;
@@ -208,17 +215,15 @@ impl TheirTurnReferee {
 
     pub fn get_game_handler(&self) -> GameHandler {
         match self.state.borrow() {
-            TheirTurnRefereeMakerGameState::Initial { game_handler, .. }
-            | TheirTurnRefereeMakerGameState::AfterOurTurn { game_handler, .. } => {
-                game_handler.clone()
-            }
+            TheirTurnRefereeGameState::Initial { game_handler, .. }
+            | TheirTurnRefereeGameState::AfterOurTurn { game_handler, .. } => game_handler.clone(),
         }
     }
 
     pub fn get_game_state(&self) -> Rc<Program> {
         match self.state.borrow() {
-            TheirTurnRefereeMakerGameState::Initial { initial_state, .. } => initial_state.clone(),
-            TheirTurnRefereeMakerGameState::AfterOurTurn { my_turn_result, .. } => {
+            TheirTurnRefereeGameState::Initial { initial_state, .. } => initial_state.clone(),
+            TheirTurnRefereeGameState::AfterOurTurn { my_turn_result, .. } => {
                 my_turn_result.state.clone()
             }
         }
@@ -265,7 +270,7 @@ impl TheirTurnReferee {
         };
 
         let new_state = match self.state.borrow() {
-            TheirTurnRefereeMakerGameState::Initial {
+            TheirTurnRefereeGameState::Initial {
                 initial_validation_program,
                 initial_state,
                 ..
@@ -283,7 +288,7 @@ impl TheirTurnReferee {
                 debug!("accept their move: state hash   {is_hash:?}");
                 debug!("accept their move: valprog hash {ip_hash:?}");
                 debug!("accept their move: validation info hash {vi_hash:?}");
-                MyTurnRefereeMakerGameState::AfterTheirTurn {
+                MyTurnRefereeGameState::AfterTheirTurn {
                     game_handler: raw_game_handler.clone(),
                     our_turn_game_handler: raw_game_handler.clone(),
                     most_recent_our_state_result: initial_state.clone(),
@@ -292,7 +297,7 @@ impl TheirTurnReferee {
                     spend_this_coin: referee_args,
                 }
             }
-            TheirTurnRefereeMakerGameState::AfterOurTurn { my_turn_result, .. } => {
+            TheirTurnRefereeGameState::AfterOurTurn { my_turn_result, .. } => {
                 let is_hash = my_turn_result.state.sha256tree(allocator).hash().clone();
                 let ip_hash = my_turn_result
                     .validation_program
@@ -307,7 +312,7 @@ impl TheirTurnReferee {
                 debug!("accept their move: state hash   {is_hash:?}");
                 debug!("accept their move: valprog hash {ip_hash:?}");
                 debug!("accept their move: validation info hash {vi_hash:?}");
-                MyTurnRefereeMakerGameState::AfterTheirTurn {
+                MyTurnRefereeGameState::AfterTheirTurn {
                     game_handler: raw_game_handler.clone(),
                     most_recent_our_state_result: my_turn_result.state.clone(),
                     most_recent_our_validation_program: my_turn_result.validation_program.clone(),
@@ -339,7 +344,7 @@ impl TheirTurnReferee {
     ) -> Result<ReadableMove, Error> {
         // Do stuff with message handler.
         let (state, move_data, mover_share) = match self.state.borrow() {
-            TheirTurnRefereeMakerGameState::Initial {
+            TheirTurnRefereeGameState::Initial {
                 game_handler,
                 initial_state,
                 initial_puzzle_args,
@@ -354,7 +359,7 @@ impl TheirTurnReferee {
                         - initial_puzzle_args.game_move.basic.mover_share.clone()
                 },
             ),
-            TheirTurnRefereeMakerGameState::AfterOurTurn {
+            TheirTurnRefereeGameState::AfterOurTurn {
                 my_turn_result,
                 create_this_coin,
                 ..
@@ -525,7 +530,7 @@ impl TheirTurnReferee {
         assert_eq!(args.mover_puzzle_hash, target_args.waiter_puzzle_hash);
         assert!(matches!(
             self.state.borrow(),
-            TheirTurnRefereeMakerGameState::AfterOurTurn { .. }
+            TheirTurnRefereeGameState::AfterOurTurn { .. }
         ));
         assert!(matches!(
             self.get_game_handler(),
@@ -709,7 +714,7 @@ impl TheirTurnReferee {
         coin_string: &CoinString,
         conditions: &[CoinCondition],
         state_number: usize,
-    ) -> Result<(RefereeByTurn, TheirTurnCoinSpentResult), Error> {
+    ) -> Result<(Referee, TheirTurnCoinSpentResult), Error> {
         let after_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &self.fixed.referee_coin_puzzle_hash,
@@ -769,7 +774,7 @@ impl TheirTurnReferee {
 
             debug!("game coin timed out: conditions {conditions:?}");
             return Ok((
-                RefereeByTurn::TheirTurn(my_rc),
+                Referee::TheirTurn(my_rc),
                 TheirTurnCoinSpentResult::Timedout {
                     my_reward_coin_string: Some(my_reward_coin_string),
                 },
@@ -821,7 +826,7 @@ impl TheirTurnReferee {
             // Not my turn.
             let nil_readable = ReadableMove::from_program(Program::from_hex("80")?.into());
             return Ok((
-                RefereeByTurn::TheirTurn(my_rc),
+                Referee::TheirTurn(my_rc),
                 TheirTurnCoinSpentResult::Moved {
                     new_coin_string: CoinString::from_parts(
                         &coin_string.to_coin_id(),
@@ -892,6 +897,6 @@ impl TheirTurnReferee {
             }
         };
 
-        final_result.map(|r| (RefereeByTurn::MyTurn(Rc::new(new_self)), r))
+        final_result.map(|r| (Referee::MyTurn(Rc::new(new_self)), r))
     }
 }

@@ -12,7 +12,9 @@ use log::debug;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::channel_handler::types::{Evidence, GameStartInfo, ReadableMove, ValidationProgram};
+use crate::channel_handler::types::{
+    Evidence, GameStartInfoInterface, ReadableMove, ValidationOrUpdateProgram, ValidationProgram,
+};
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
 use crate::common::types::{
@@ -29,15 +31,15 @@ use crate::referee::types::{
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum RefereeByTurn {
+pub enum Referee {
     MyTurn(Rc<MyTurnReferee>),
     TheirTurn(Rc<TheirTurnReferee>),
 }
 
 #[derive(Serialize, Deserialize)]
 pub enum RefereeSerializeContainer {
-    V0(RefereeByTurn),
-    V1(v1::RefereeByTurn),
+    V0(Referee),
+    V1(v1::Referee),
 }
 
 impl RefereeSerializeContainer {
@@ -199,13 +201,13 @@ pub trait RefereeInterface {
     fn get_serialized_form(&self) -> RefereeSerializeContainer;
 }
 
-impl RefereeByTurn {
+impl Referee {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         allocator: &mut AllocEncoder,
         referee_coin_puzzle: Puzzle,
         referee_coin_puzzle_hash: PuzzleHash,
-        game_start_info: &GameStartInfo,
+        game_start_info: &Rc<dyn GameStartInfoInterface>,
         my_identity: ChiaIdentity,
         their_puzzle_hash: &PuzzleHash,
         reward_puzzle_hash: &PuzzleHash,
@@ -215,11 +217,11 @@ impl RefereeByTurn {
     ) -> Result<(Self, PuzzleHash), Error> {
         debug!("referee maker: game start {:?}", game_start_info);
         let initial_move = GameMoveStateInfo {
-            mover_share: game_start_info.initial_mover_share.clone(),
-            move_made: game_start_info.initial_move.clone(),
-            max_move_size: game_start_info.initial_max_move_size,
+            mover_share: game_start_info.initial_mover_share().clone(),
+            move_made: game_start_info.initial_move().to_vec(),
+            max_move_size: game_start_info.initial_max_move_size(),
         };
-        let my_turn = game_start_info.game_handler.is_my_turn();
+        let my_turn = game_start_info.game_handler().is_my_turn();
         debug!("referee maker: my_turn {my_turn}");
 
         let fixed_info = Rc::new(RMFixed {
@@ -228,23 +230,28 @@ impl RefereeByTurn {
             their_referee_puzzle_hash: their_puzzle_hash.clone(),
             reward_puzzle_hash: reward_puzzle_hash.clone(),
             my_identity: my_identity.clone(),
-            timeout: game_start_info.timeout.clone(),
-            amount: game_start_info.amount.clone(),
+            timeout: game_start_info.timeout().clone(),
+            amount: game_start_info.amount().clone(),
             nonce,
             agg_sig_me_additional_data: agg_sig_me_additional_data.clone(),
         });
 
         // TODO: Revisit how we create initial_move
         let is_hash = game_start_info
-            .initial_state
+            .initial_state()
             .sha256tree(allocator)
             .hash()
             .clone();
-        let ip_hash = game_start_info
-            .initial_validation_program
-            .sha256tree(allocator)
-            .hash()
-            .clone();
+
+        let ip = match game_start_info.initial_validation_program() {
+            ValidationOrUpdateProgram::StateUpdate(_) => {
+                return Err(Error::StrErr(
+                    "Expected ValidationProgram for initial_validation_program. This is the wrong version.".to_string(),
+                ));
+            }
+            ValidationOrUpdateProgram::Validation(vp) => vp,
+        };
+        let ip_hash = ip.sha256tree(allocator).hash().clone();
         let vi_hash = Sha256Input::Array(vec![
             Sha256Input::Hash(&is_hash),
             Sha256Input::Hash(&ip_hash),
@@ -290,7 +297,7 @@ impl RefereeByTurn {
                 agg_sig_me_additional_data,
                 state_number,
             )?;
-            (RefereeByTurn::MyTurn(Rc::new(tr.0)), tr.1)
+            (Referee::MyTurn(Rc::new(tr.0)), tr.1)
         } else {
             let tr = TheirTurnReferee::new(
                 allocator,
@@ -304,29 +311,29 @@ impl RefereeByTurn {
                 agg_sig_me_additional_data,
                 state_number,
             )?;
-            (RefereeByTurn::TheirTurn(Rc::new(tr.0)), tr.1)
+            (Referee::TheirTurn(Rc::new(tr.0)), tr.1)
         };
         Ok((turn, puzzle_hash))
     }
 
     fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         match self {
-            RefereeByTurn::MyTurn(t) => t.args_for_this_coin(),
-            RefereeByTurn::TheirTurn(t) => t.args_for_this_coin(),
+            Referee::MyTurn(t) => t.args_for_this_coin(),
+            Referee::TheirTurn(t) => t.args_for_this_coin(),
         }
     }
 
     fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         match self {
-            RefereeByTurn::MyTurn(t) => t.spend_this_coin(),
-            RefereeByTurn::TheirTurn(t) => t.spend_this_coin(),
+            Referee::MyTurn(t) => t.spend_this_coin(),
+            Referee::TheirTurn(t) => t.spend_this_coin(),
         }
     }
 
     fn fixed(&self) -> Rc<RMFixed> {
         match self {
-            RefereeByTurn::MyTurn(t) => t.fixed.clone(),
-            RefereeByTurn::TheirTurn(t) => t.fixed.clone(),
+            Referee::MyTurn(t) => t.fixed.clone(),
+            Referee::TheirTurn(t) => t.fixed.clone(),
         }
     }
 
@@ -497,8 +504,8 @@ impl RefereeByTurn {
         &self,
     ) -> Result<(&Program, ValidationProgram), Error> {
         match self {
-            RefereeByTurn::MyTurn(t) => t.get_validation_program_for_their_move(),
-            RefereeByTurn::TheirTurn(_) => {
+            Referee::MyTurn(t) => t.get_validation_program_for_their_move(),
+            Referee::TheirTurn(_) => {
                 todo!();
             }
         }
@@ -510,27 +517,27 @@ impl RefereeByTurn {
         evidence: Evidence,
     ) -> Result<ValidatorResult, Error> {
         match self {
-            RefereeByTurn::MyTurn(t) => {
+            Referee::MyTurn(t) => {
                 t.run_validator_for_their_move(allocator, t.get_game_state(), evidence)
             }
-            RefereeByTurn::TheirTurn(_) => {
+            Referee::TheirTurn(_) => {
                 todo!();
             }
         }
     }
 
-    fn generate_ancestor_list(&self, ref_list: &mut Vec<Rc<RefereeByTurn>>) {
+    fn generate_ancestor_list(&self, ref_list: &mut Vec<Rc<Referee>>) {
         match self {
-            RefereeByTurn::MyTurn(t) => {
+            Referee::MyTurn(t) => {
                 if let Some(p) = t.parent.as_ref() {
-                    let their_turn = RefereeByTurn::TheirTurn(p.clone());
+                    let their_turn = Referee::TheirTurn(p.clone());
                     ref_list.push(Rc::new(their_turn.clone()));
                     their_turn.generate_ancestor_list(ref_list);
                 }
             }
-            RefereeByTurn::TheirTurn(t) => {
+            Referee::TheirTurn(t) => {
                 if let Some(p) = t.parent.as_ref() {
-                    let my_turn = RefereeByTurn::MyTurn(p.clone());
+                    let my_turn = Referee::MyTurn(p.clone());
                     ref_list.push(Rc::new(my_turn.clone()));
                     my_turn.generate_ancestor_list(ref_list);
                 }
@@ -539,23 +546,23 @@ impl RefereeByTurn {
     }
 }
 
-impl RefereeInterface for RefereeByTurn {
+impl RefereeInterface for Referee {
     fn version(&self) -> usize {
         0
     }
 
     fn is_my_turn(&self) -> bool {
-        matches!(self, RefereeByTurn::MyTurn(_))
+        matches!(self, Referee::MyTurn(_))
     }
 
     fn processing_my_turn(&self) -> bool {
-        matches!(self, RefereeByTurn::TheirTurn(_))
+        matches!(self, Referee::TheirTurn(_))
     }
 
     fn state_number(&self) -> usize {
         match self {
-            RefereeByTurn::MyTurn(t) => t.state_number(),
-            RefereeByTurn::TheirTurn(t) => t.state_number(),
+            Referee::MyTurn(t) => t.state_number(),
+            Referee::TheirTurn(t) => t.state_number(),
         }
     }
 
@@ -590,10 +597,10 @@ impl RefereeInterface for RefereeByTurn {
         state_number: usize,
     ) -> Result<(Rc<dyn RefereeInterface>, GameMoveWireData), Error> {
         let (replacement, result) = match self {
-            RefereeByTurn::MyTurn(t) => {
+            Referee::MyTurn(t) => {
                 t.my_turn_make_move(allocator, readable_move, new_entropy, state_number)?
             }
-            RefereeByTurn::TheirTurn(_) => {
+            Referee::TheirTurn(_) => {
                 todo!();
             }
         };
@@ -606,8 +613,8 @@ impl RefereeInterface for RefereeByTurn {
         message: &[u8],
     ) -> Result<ReadableMove, Error> {
         match self {
-            RefereeByTurn::MyTurn(t) => t.receive_readable(allocator, message),
-            RefereeByTurn::TheirTurn(t) => t.receive_readable(allocator, message),
+            Referee::MyTurn(t) => t.receive_readable(allocator, message),
+            Referee::TheirTurn(t) => t.receive_readable(allocator, message),
         }
     }
 
@@ -618,12 +625,10 @@ impl RefereeInterface for RefereeByTurn {
         on_chain: bool,
     ) -> Result<RefereeOnChainTransaction, Error> {
         match self {
-            RefereeByTurn::MyTurn(_) => {
+            Referee::MyTurn(_) => {
                 todo!();
             }
-            RefereeByTurn::TheirTurn(t) => {
-                t.get_transaction_for_move(allocator, coin_string, on_chain)
-            }
+            Referee::TheirTurn(t) => t.get_transaction_for_move(allocator, coin_string, on_chain),
         }
     }
 
@@ -635,16 +640,16 @@ impl RefereeInterface for RefereeByTurn {
         coin: Option<&CoinString>,
     ) -> Result<(Option<Rc<dyn RefereeInterface>>, TheirTurnMoveResult), Error> {
         let (new_self, result) = match self {
-            RefereeByTurn::MyTurn(_) => {
+            Referee::MyTurn(_) => {
                 todo!();
             }
-            RefereeByTurn::TheirTurn(t) => {
+            Referee::TheirTurn(t) => {
                 t.their_turn_move_off_chain(allocator, details, state_number, coin)?
             }
         };
 
         let result_referee: Option<Rc<dyn RefereeInterface>> = new_self.map(|r| {
-            let rc: Rc<dyn RefereeInterface> = Rc::new(RefereeByTurn::MyTurn(Rc::new(r)));
+            let rc: Rc<dyn RefereeInterface> = Rc::new(Referee::MyTurn(Rc::new(r)));
             rc
         });
         Ok((result_referee, result))
@@ -661,10 +666,10 @@ impl RefereeInterface for RefereeByTurn {
             // We could be called on to fast forward the most recent transaction
             // we ourselves took.  check_their_turn_coin_spent will return an
             // error if it was asked to do a non-fast-forward their turn spend.
-            RefereeByTurn::MyTurn(t) => t
+            Referee::MyTurn(t) => t
                 .check_their_turn_coin_spent(allocator, coin_string, conditions, state_number)
                 .map(|spend| (None, spend)),
-            RefereeByTurn::TheirTurn(t) => {
+            Referee::TheirTurn(t) => {
                 let (new_self, result) = t.their_turn_coin_spent(
                     t.clone(),
                     allocator,
@@ -897,5 +902,3 @@ impl RefereeInterface for RefereeByTurn {
         RefereeSerializeContainer::V0(self.clone())
     }
 }
-
-pub type RefereeMaker = RefereeByTurn;

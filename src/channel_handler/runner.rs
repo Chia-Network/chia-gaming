@@ -3,16 +3,12 @@ use rand::Rng;
 use std::rc::Rc;
 
 use crate::channel_handler::{
-    ChannelCoinSpendInfo, ChannelHandler, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, HandshakeResult,
+    ChannelCoinSpendInfo, ChannelHandler, ChannelHandlerEnv, ChannelHandlerInitiationResult,
+    ChannelHandlerPrivateKeys, HandshakeResult,
 };
-use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
-use crate::common::load_clvm::read_hex_puzzle;
-use crate::common::standard_coin::{
-    get_standard_coin_puzzle, private_to_public_key, puzzle_for_pk,
-};
+use crate::common::standard_coin::{private_to_public_key, puzzle_for_pk};
 use crate::common::types::{
-    AllocEncoder, Amount, CoinID, Error, GameID, Hash, Puzzle, PuzzleHash, Sha256tree, Timeout,
+    Amount, CoinID, Error, GameID, PublicKey, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
 
 pub struct ChannelHandlerParty {
@@ -29,13 +25,35 @@ impl ChannelHandlerParty {
         private_keys: ChannelHandlerPrivateKeys,
         referee: Rc<Puzzle>,
         ref_puzzle_hash: PuzzleHash,
-        data: &ChannelHandlerInitiationData,
+        launcher_coin_id: CoinID,
+        we_start_with_potato: bool,
+        their_channel_pubkey: PublicKey,
+        their_unroll_pubkey: PublicKey,
+        their_referee_puzzle_hash: PuzzleHash,
+        their_reward_puzzle_hash: PuzzleHash,
+        my_contribution: Amount,
+        their_contribution: Amount,
+        unroll_advance_timeout: Timeout,
+        reward_puzzle_hash: PuzzleHash,
     ) -> Result<ChannelHandlerParty, Error> {
-        let (ch, init_data) = ChannelHandler::new(env, private_keys, data)?;
+        let (ch, init_data) = ChannelHandler::new(
+            env,
+            private_keys,
+            launcher_coin_id,
+            we_start_with_potato,
+            their_channel_pubkey,
+            their_unroll_pubkey,
+            their_referee_puzzle_hash,
+            their_reward_puzzle_hash,
+            my_contribution.clone(),
+            their_contribution,
+            unroll_advance_timeout,
+            reward_puzzle_hash,
+        )?;
         Ok(ChannelHandlerParty {
             ch,
             init_data,
-            contribution: data.my_contribution.clone(),
+            contribution: my_contribution,
             referee,
             ref_puzzle_hash,
         })
@@ -73,29 +91,21 @@ impl ChannelHandlerGame {
 
         let make_party =
             |env: &mut ChannelHandlerEnv<R>, id: usize| -> Result<ChannelHandlerParty, Error> {
-                let data = ChannelHandlerInitiationData {
-                    launcher_coin_id: launcher_coin_id.clone(),
-                    we_start_with_potato: id == 1,
-                    their_channel_pubkey: private_to_public_key(
-                        &private_keys[id ^ 1].my_channel_coin_private_key,
-                    ),
-                    their_unroll_pubkey: private_to_public_key(
-                        &private_keys[id ^ 1].my_unroll_coin_private_key,
-                    ),
-                    their_referee_puzzle_hash: referees[id ^ 1].1.clone(),
-                    my_contribution: contributions[id].clone(),
-                    their_contribution: contributions[id ^ 1].clone(),
-                    unroll_advance_timeout: unroll_advance_timeout.clone(),
-                    reward_puzzle_hash: referees[id ^ 1].1.clone(),
-                    their_reward_puzzle_hash: referees[id ^ 1].1.clone(),
-                };
-
                 ChannelHandlerParty::new(
                     env,
                     private_keys[id].clone(),
                     referees[id].0.clone(),
                     referees[id].1.clone(),
-                    &data,
+                    launcher_coin_id.clone(),
+                    id == 1,
+                    private_to_public_key(&private_keys[id ^ 1].my_channel_coin_private_key),
+                    private_to_public_key(&private_keys[id ^ 1].my_unroll_coin_private_key),
+                    referees[id ^ 1].1.clone(),
+                    referees[id ^ 1].1.clone(),
+                    contributions[id].clone(),
+                    contributions[id ^ 1].clone(),
+                    unroll_advance_timeout.clone(),
+                    referees[id ^ 1].1.clone(),
                 )
             };
 
@@ -153,32 +163,4 @@ impl ChannelHandlerGame {
             "get channel handler spend when not able to unroll".to_string(),
         ))
     }
-}
-
-pub fn channel_handler_env<'a, R: Rng>(
-    allocator: &'a mut AllocEncoder,
-    rng: &'a mut R,
-) -> Result<ChannelHandlerEnv<'a, R>, Error> {
-    let referee_coin_puzzle = read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex")?;
-    let referee_coin_puzzle_hash: PuzzleHash = referee_coin_puzzle.sha256tree(allocator);
-    let referee_coin_puzzle_v1 = read_hex_puzzle(allocator, "clsp/referee/onchain/referee-v1.hex")?;
-    let referee_coin_puzzle_hash_v1: PuzzleHash = referee_coin_puzzle_v1.sha256tree(allocator);
-    let unroll_puzzle = read_hex_puzzle(
-        allocator,
-        "clsp/unroll/unroll_puzzle_state_channel_unrolling.hex",
-    )?;
-    let unroll_metapuzzle = read_hex_puzzle(allocator, "clsp/unroll/unroll_meta_puzzle.hex")?;
-    let standard_puzzle = get_standard_coin_puzzle(allocator)?;
-    Ok(ChannelHandlerEnv {
-        allocator,
-        rng,
-        referee_coin_puzzle,
-        referee_coin_puzzle_hash,
-        referee_coin_puzzle_v1,
-        referee_coin_puzzle_hash_v1,
-        unroll_metapuzzle,
-        unroll_puzzle,
-        standard_puzzle,
-        agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
-    })
 }

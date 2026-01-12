@@ -49,6 +49,14 @@ impl CoinString {
             .map(|a| (parent_id, puzzle_hash, Amount::new(a)))
     }
 
+    pub fn amount(&self) -> Option<Amount> {
+        if let Some((_, _, amt)) = self.to_parts() {
+            Some(amt)
+        } else {
+            None
+        }
+    }
+
     pub fn to_coin_id(&self) -> CoinID {
         CoinID(Hash32::new(&self.0))
     }
