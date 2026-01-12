@@ -18,8 +18,10 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, GameID, Hash, Program, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
+#[cfg(feature = "sim-tests")]
 use crate::test_support::game::{ChannelHandlerGame, DEFAULT_UNROLL_TIME_LOCK};
 
+#[cfg(feature = "sim-tests")]
 #[test]
 fn test_smoke_can_initiate_channel_handler() {
     let mut allocator = AllocEncoder::new();
@@ -84,6 +86,7 @@ fn test_smoke_can_initiate_channel_handler() {
         .expect("should give counter transaction");
 }
 
+#[cfg(feature = "sim-tests")]
 #[test]
 fn test_smoke_can_start_game() {
     let mut allocator = AllocEncoder::new();
