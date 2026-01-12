@@ -9,7 +9,7 @@ use clvmr::{run_program, NodePtr};
 use log::debug;
 
 use crate::channel_handler::game::Game;
-use crate::channel_handler::runner::ChannelHandlerGame;
+
 use crate::channel_handler::types::{ChannelHandlerEnv, ReadableMove};
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_synthetic_public_key, standard_solution_partial, ChiaIdentity,
@@ -20,7 +20,9 @@ use crate::common::types::{
 };
 use crate::shutdown::get_conditions_with_channel_handler;
 use crate::simulator::Simulator;
-use crate::test_support::game::{new_channel_handler_game, GameAction, GameActionResult};
+use crate::test_support::game::{
+    new_channel_handler_game, ChannelHandlerGame, GameAction, GameActionResult,
+};
 
 #[derive(Debug, Clone)]
 pub enum OnChainState {

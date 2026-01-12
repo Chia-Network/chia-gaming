@@ -1,4 +1,17 @@
+#[cfg(feature = "sim-tests")]
+use crate::channel_handler::runner::ChannelHandlerParty;
+use crate::channel_handler::types::ChannelCoinSpendInfo;
+use crate::channel_handler::types::ChannelHandlerPrivateKeys;
+#[cfg(feature = "sim-tests")]
+use crate::channel_handler::types::HandshakeResult;
+use crate::common::standard_coin::puzzle_for_pk;
+use crate::common::types::CoinID;
+#[cfg(feature = "sim-tests")]
+use crate::common::types::GameID;
 use crate::common::types::Hash;
+use crate::common::types::Puzzle;
+use crate::common::types::PuzzleHash;
+use crate::common::types::Sha256tree;
 use crate::common::types::Timeout;
 #[cfg(feature = "sim-tests")]
 use crate::shutdown::ShutdownConditions;
@@ -16,7 +29,6 @@ lazy_static! {
 }
 
 use crate::channel_handler::game::Game;
-use crate::channel_handler::runner::ChannelHandlerGame;
 use crate::channel_handler::types::{ChannelHandlerEnv, ReadableMove, StartGameResult};
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_synthetic_public_key, ChiaIdentity,
@@ -25,6 +37,113 @@ use crate::common::types::{Amount, CoinString, Error, IntoErr};
 
 #[cfg(feature = "sim-tests")]
 use crate::simulator::Simulator;
+
+#[cfg(feature = "sim-tests")]
+pub struct ChannelHandlerGame {
+    pub game_id: GameID,
+    pub players: [ChannelHandlerParty; 2],
+    pub handshake_result: [Option<HandshakeResult>; 2],
+}
+
+#[cfg(feature = "sim-tests")]
+impl ChannelHandlerGame {
+    pub fn new<R: Rng>(
+        env: &mut ChannelHandlerEnv<R>,
+        game_id: GameID,
+        launcher_coin_id: &CoinID,
+        contributions: &[Amount; 2],
+        unroll_advance_timeout: Timeout,
+    ) -> Result<ChannelHandlerGame, Error> {
+        let private_keys: [ChannelHandlerPrivateKeys; 2] = env.rng.gen();
+
+        let make_ref_info = |env: &mut ChannelHandlerEnv<R>,
+                             id: usize|
+         -> Result<(Rc<Puzzle>, PuzzleHash), Error> {
+            let ref_key = private_to_public_key(&private_keys[id].my_referee_private_key);
+            let referee = puzzle_for_pk(env.allocator, &ref_key)?;
+            let ref_puzzle_hash = referee.sha256tree(env.allocator);
+            Ok((Rc::new(referee), ref_puzzle_hash))
+        };
+
+        let ref1 = make_ref_info(env, 0)?;
+        let ref2 = make_ref_info(env, 1)?;
+        let referees = [ref1, ref2];
+
+        let make_party =
+            |env: &mut ChannelHandlerEnv<R>, id: usize| -> Result<ChannelHandlerParty, Error> {
+                ChannelHandlerParty::new(
+                    env,
+                    private_keys[id].clone(),
+                    referees[id].0.clone(),
+                    referees[id].1.clone(),
+                    launcher_coin_id.clone(),
+                    id == 1,
+                    private_to_public_key(&private_keys[id ^ 1].my_channel_coin_private_key),
+                    private_to_public_key(&private_keys[id ^ 1].my_unroll_coin_private_key),
+                    referees[id ^ 1].1.clone(),
+                    referees[id ^ 1].1.clone(),
+                    contributions[id].clone(),
+                    contributions[id ^ 1].clone(),
+                    unroll_advance_timeout.clone(),
+                    referees[id ^ 1].1.clone(),
+                )
+            };
+
+        let player1 = make_party(env, 0)?;
+        let player2 = make_party(env, 1)?;
+
+        Ok(ChannelHandlerGame {
+            game_id,
+            players: [player1, player2],
+            handshake_result: [None, None],
+        })
+    }
+
+    pub fn player(&mut self, who: usize) -> &mut ChannelHandlerParty {
+        &mut self.players[who]
+    }
+
+    pub fn finish_handshake<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        who: usize,
+    ) -> Result<(), Error> {
+        let channel_coin_0_aggsig = self.players[who ^ 1]
+            .init_data
+            .my_initial_channel_half_signature_peer
+            .clone();
+        let handshake_result = self.players[who]
+            .ch
+            .finish_handshake(env, &channel_coin_0_aggsig)?;
+        self.handshake_result[0] = Some(handshake_result.clone());
+        self.handshake_result[1] = Some(handshake_result);
+        Ok(())
+    }
+
+    pub fn update_channel_coin_after_receive(
+        &mut self,
+        player: usize,
+        spend: &ChannelCoinSpendInfo,
+    ) -> Result<(), Error> {
+        if let Some(r) = &mut self.handshake_result[player] {
+            debug!("UPDATE CHANNEL COIN AFTER RECEIVE");
+            r.spend = spend.clone();
+            return Ok(());
+        }
+
+        Err(Error::StrErr("not fully running".to_string()))
+    }
+
+    pub fn get_channel_coin_spend(&self, who: usize) -> Result<HandshakeResult, Error> {
+        if let Some(r) = &self.handshake_result[who] {
+            return Ok(r.clone());
+        }
+
+        Err(Error::StrErr(
+            "get channel handler spend when not able to unroll".to_string(),
+        ))
+    }
+}
 
 #[derive(Clone)]
 #[cfg(any(test, feature = "sim-tests"))]
