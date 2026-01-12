@@ -45,6 +45,7 @@ pub struct ChannelHandlerGame {
     pub handshake_result: [Option<HandshakeResult>; 2],
 }
 
+#[cfg(feature = "sim-tests")]
 impl ChannelHandlerGame {
     pub fn new<R: Rng>(
         env: &mut ChannelHandlerEnv<R>,
