@@ -1,29 +1,11 @@
-import {
-  ContentCopy,
-  Close,
-  CheckCircle,
-  QrCode2,
-  Smartphone,
-} from '@mui/icons-material';
-import {
-  Box,
-  Button,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  TextField,
-  Typography,
-  CircularProgress,
-  Alert,
-  IconButton,
-  useTheme,
-  useMediaQuery,
-  Fade,
-  Paper,
-} from '@mui/material';
 import QRCode from 'qrcode';
 import { useEffect, useState } from 'react';
+import { Dialog, DialogClose, DialogContent, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
+import { Alert, AlertDescription, AlertTitle } from './ui/alert';
+import { Button } from './button';
+import { Close } from '@radix-ui/react-dialog';
+import { CheckCircle, Copy, QrCode, Smartphone } from 'lucide-react';
+import { motion } from 'framer-motion';
 
 interface QRCodeModalProps {
   open: boolean;
@@ -37,9 +19,11 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string>('');
 
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const isDark = document.documentElement.classList.contains("dark");
 
+  const fg = isDark ? "#FFFFFF" : "#000000";   // foreground
+  const bg = isDark ? "#121212" : "#FFFFFF";   // background
+  const isMobile = window.innerWidth < 640 ? 250 : 300;
   useEffect(() => {
     if (uri && open) {
       setIsGenerating(true);
@@ -49,8 +33,8 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
         width: isMobile ? 250 : 300,
         margin: 2,
         color: {
-          dark: theme.palette.mode === 'dark' ? '#FFFFFF' : '#000000',
-          light: theme.palette.mode === 'dark' ? '#121212' : '#FFFFFF',
+          dark: fg,   // foreground (data)
+          light: bg,
         },
         errorCorrectionLevel: 'M',
       })
@@ -64,7 +48,7 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
           setIsGenerating(false);
         });
     }
-  }, [uri, open, isMobile, theme.palette.mode]);
+  }, [uri, open]);
 
   const copyToClipboard = async () => {
     if (!uri) return;
@@ -85,203 +69,145 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
   };
 
   return (
-    <Dialog
-      open={open}
-      onClose={handleClose}
-      maxWidth='sm'
-      fullWidth
-      fullScreen={isMobile}
-      PaperProps={{
-        sx: {
-          borderRadius: isMobile ? 0 : 2,
-          background:
-            theme.palette.mode === 'dark'
-              ? 'linear-gradient(145deg, #1a1a1a 0%, #2d2d2d 100%)'
-              : 'linear-gradient(145deg, #ffffff 0%, #f8f9fa 100%)',
-          boxShadow:
-            theme.palette.mode === 'dark'
-              ? '0 8px 32px rgba(0, 0, 0, 0.4)'
-              : '0 8px 32px rgba(0, 0, 0, 0.1)',
-        },
-      }}
-    >
-      <DialogTitle
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          pb: 1,
-          background:
-            theme.palette.mode === 'dark'
-              ? 'linear-gradient(90deg, #1a1a1a 0%, #2d2d2d 100%)'
-              : 'linear-gradient(90deg, #f8f9fa 0%, #ffffff 100%)',
-          borderBottom: `1px solid ${theme.palette.divider}`,
-        }}
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent
+        className={"w-full max-w-full rounded-none p-0 pt-16 md:max-w-xl md:rounded-2xl border border-canvas-border bg-canvas-bg shadow-xl overflow-hidden"}
       >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <QrCode2 sx={{ color: theme.palette.primary.main }} />
-          <Typography variant='h6' component='div'>
-            Connect to Chia Wallet
-          </Typography>
-        </Box>
-        <IconButton onClick={handleClose} size='small'>
-          <Close />
-        </IconButton>
-      </DialogTitle>
+        {/* HEADER */}
+        <DialogHeader className="
+                flex flex-row items-center justify-between
+                px-4 py-3 border-b border-canvas-line
+                bg-canvas-bg-subtle
+              "
+        >
+          <div className="flex items-center gap-2">
+            <QrCode className="text-primary-text" />
+            <DialogTitle className="text-lg font-semibold text-canvas-text-contrast">
+              Connect to Chia Wallet
+            </DialogTitle>
+          </div>
 
-      <DialogContent sx={{ p: 3 }}>
-        <Box sx={{ textAlign: 'center' }}>
+          <DialogClose asChild>
+            <button className="p-1 rounded hover:bg-canvas-bg-hover transition">
+              <Close className="w-5 h-5 text-canvas-text" />
+            </button>
+          </DialogClose>
+        </DialogHeader>
+
+        {/* BODY */}
+        <div className="p-6 text-center">
           {/* Instructions */}
-          <Box sx={{ mb: 3 }}>
-            <Typography variant='h6' sx={{ mb: 1, fontWeight: 600 }}>
+          <div className="mb-6">
+            <h3 className="text-lg font-semibold mb-1 text-canvas-text-contrast">
               Scan QR Code
-            </Typography>
-            <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
+            </h3>
+            <p className="text-sm mb-3 text-canvas-text">
               Open your Chia wallet and scan this QR code to connect securely
-            </Typography>
+            </p>
 
-            {/* Mobile hint */}
             {isMobile && (
-              <Alert
-                icon={<Smartphone />}
-                severity='info'
-                sx={{ mb: 2, textAlign: 'left' }}
-              >
-                On mobile, you can also copy the connection URI below
+              <Alert className="text-left mb-4 bg-info-bg border-info-border">
+                <Smartphone className="w-4 h-4 text-info-text" />
+                <AlertTitle>Mobile</AlertTitle>
+                <AlertDescription>
+                  On mobile, you can also copy the connection URI below
+                </AlertDescription>
               </Alert>
             )}
-          </Box>
+          </div>
 
-          {/* QR Code */}
-          <Paper
-            elevation={3}
-            sx={{
-              p: 3,
-              mb: 3,
-              display: 'inline-block',
-              background: '#ffffff',
-              borderRadius: 2,
-              border: `2px solid ${theme.palette.divider}`,
-            }}
+          {/* QR CODE */}
+          <div
+            className="
+          w-full max-w-[220px] mx-auto p-4 mb-6 rounded-xl border-2 border-canvas-border bg-white shadow-md
+
+        "
           >
             {isGenerating ? (
-              <Box
-                sx={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  gap: 2,
-                  minHeight: isMobile ? 250 : 300,
-                  justifyContent: 'center',
-                }}
-              >
-                <CircularProgress size={40} />
-                <Typography variant='body2' color='text.secondary'>
+              <div className="flex flex-col items-center gap-3 min-h-[300px] justify-center">
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                  className="
+                            w-10 h-10
+                            rounded-full
+                            border-4 border-primary-bg
+                            border-t-transparent border-b-transparent border-l-transparent
+                          "
+                />
+                <p className="text-sm text-secondary-text">
                   Generating QR Code...
-                </Typography>
-              </Box>
+                </p>
+              </div>
             ) : error ? (
-              <Box
-                sx={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  gap: 2,
-                  minHeight: isMobile ? 250 : 300,
-                  justifyContent: 'center',
-                }}
-              >
-                <Typography variant='body2' color='error'>
+              <div className="flex flex-col items-center gap-3 min-h-[300px] justify-center">
+                <p className="text-sm text-alert-text">
                   {error}
-                </Typography>
-                <Button
-                  variant='outlined'
-                  onClick={() => window.location.reload()}
-                  size='small'
-                >
+                </p>
+                <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
                   Retry
                 </Button>
-              </Box>
+              </div>
             ) : (
-              <Fade in={!!qrCodeDataUrl} timeout={500}>
-                <img
-                  src={qrCodeDataUrl}
-                  alt='WalletConnect QR Code'
-                  style={{
-                    maxWidth: '100%',
-                    height: 'auto',
-                    borderRadius: 8,
-                  }}
-                />
-              </Fade>
+              <img
+                src={qrCodeDataUrl}
+                className="w-full max-w-[200px] mx-auto h-auto rounded-md transition-opacity"
+              />
             )}
-          </Paper>
+          </div>
 
-          {/* Connection URI */}
-          <Box sx={{ mb: 2 }}>
-            <Typography variant='subtitle2' sx={{ mb: 1, fontWeight: 600 }}>
+          {/* URI TEXTFIELD */}
+          <div className="mb-6 text-left">
+            <p className="text-sm font-semibold mb-1 text-canvas-text-contrast">
               Connection URI
-            </Typography>
-            <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
+            </p>
+            <p className="text-xs mb-2 text-canvas-text">
               Or copy this URI to connect manually:
-            </Typography>
+            </p>
 
-            <TextField
-              fullWidth
-              multiline
-              rows={isMobile ? 4 : 3}
-              value={uri || ''}
-              variant='outlined'
-              size='small'
+            <textarea
+              readOnly
               aria-label='wallet-connect-uri'
-              InputProps={{
-                readOnly: true,
-                sx: {
-                  fontFamily: 'monospace',
-                  fontSize: '0.875rem',
-                },
-              }}
-              sx={{
-                mb: 2,
-                '& .MuiOutlinedInput-root': {
-                  backgroundColor:
-                    theme.palette.mode === 'dark'
-                      ? 'rgba(255, 255, 255, 0.05)'
-                      : 'rgba(0, 0, 0, 0.02)',
-                },
-              }}
+              value={uri || ""}
+              rows={isMobile ? 4 : 3}
+              className="
+            w-full text-sm font-mono rounded-md p-2 border
+            border-canvas-border bg-canvas-bg-subtle
+            text-canvas-text resize-none
+          "
             />
-          </Box>
+          </div>
 
-          {/* Success message */}
+          {/* COPY SUCCESS */}
           {copied && (
-            <Fade in={copied} timeout={300}>
-              <Alert icon={<CheckCircle />} severity='success' sx={{ mb: 2 }}>
-                URI copied to clipboard!
-              </Alert>
-            </Fade>
+            <Alert className="mb-2 bg-success-bg border-success-border">
+              <CheckCircle className="w-4 h-4 text-success-text" />
+              <AlertDescription>URI copied to clipboard!</AlertDescription>
+            </Alert>
           )}
-        </Box>
-      </DialogContent>
+        </div>
 
-      <DialogActions sx={{ p: 3, pt: 0 }}>
-        <Button
-          onClick={copyToClipboard}
-          variant='outlined'
-          startIcon={<ContentCopy />}
-          disabled={!uri}
-          sx={{ minWidth: 120 }}
-        >
-          Copy URI
-        </Button>
-        <Button
-          onClick={handleClose}
-          variant='contained'
-          sx={{ minWidth: 100 }}
-        >
-          Close
-        </Button>
-      </DialogActions>
+        {/* FOOTER */}
+        <DialogFooter className="flex flex-row items-center justify-end gap-2 p-4">
+
+          <Button
+            variant="outline"
+            onClick={copyToClipboard}
+            disabled={!uri}
+            className="min-w-[120px] border-primary-border text-primary-text"
+          >
+            <Copy className="w-4 h-4 mr-1" />
+            Copy URI
+          </Button>
+
+          <DialogClose asChild>
+            <Button className="min-w-[100px] bg-primary-bg text-primary-text-contrast hover:bg-primary-bg-hover">
+              Close
+            </Button>
+          </DialogClose>
+        </DialogFooter>
+      </DialogContent>
     </Dialog>
+
   );
 }

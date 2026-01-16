@@ -1,6 +1,4 @@
 import { Box, Typography, CircularProgress } from '@mui/material';
-import { LocalActivity } from '@mui/icons-material';
-
 const WalletStatus = () => {
   return (
     <Box

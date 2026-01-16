@@ -1,14 +1,13 @@
-import { Box, Button, Typography } from '@mui/material';
-
 import { useWasmBlob } from '../hooks/useWasmBlob';
 import { getSearchParams, generateOrRetrieveUniqueId } from '../util';
-
-
 import WaitingScreen from './WaitingScreen';
 import Calpoker from '../features/calPoker';
 import GameLog from './GameLog';
 import { useEffect } from 'react';
 import installThemeSyncListener from '../utils/themeSyncListener';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import { Separator } from './ui/separator';
+import { Box, Typography } from '@mui/material';
 
 export interface GameParams {
   params: any;
