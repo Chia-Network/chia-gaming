@@ -311,16 +311,16 @@ impl<'a, 'b: 'a, R: Rng> SimulatedPeerSystem<'a, 'b, R> {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn handshake<'a, R: Rng + 'a>(
-    rng: &'a mut R,
-    allocator: &'a mut AllocEncoder,
+pub fn handshake<R: Rng>(
+    rng: &mut R,
+    allocator: &mut AllocEncoder,
     _amount: Amount,
-    coinset_adapter: &'a mut FullCoinSetAdapter,
-    identities: &'a [ChiaIdentity; 2],
-    peers: &'a mut [PotatoHandler; 2],
-    pipes: &'a mut [SimulatedPeer; 2],
+    coinset_adapter: &mut FullCoinSetAdapter,
+    identities: &[ChiaIdentity; 2],
+    peers: &mut [PotatoHandler; 2],
+    pipes: &mut [SimulatedPeer; 2],
     parent_coins: &[CoinString],
-    simulator: &'a mut Simulator,
+    simulator: &mut Simulator,
 ) -> Result<(), Error> {
     let mut i = 0;
     let mut steps = 0;
