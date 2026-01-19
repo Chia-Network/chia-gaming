@@ -3,7 +3,7 @@ import { Button } from '../../components/button';
 
 import { CalpokerOutcome, OutcomeLogLine } from '../../types/ChiaGaming';
 import GameLog from '../../components/GameLog';
-import CaliforniaPoker from '../californiaPoker';
+import CaliforniaPoker from './components';
 import { Info, LogOut, X } from 'lucide-react';
 import { Alert } from '../../components/ui/alert';
 import { cn } from '../../lib/utils';

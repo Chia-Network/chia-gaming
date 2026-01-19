@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { HandDisplayProps } from '../../../types/californiaPoker';
+import { HandDisplayProps } from '../../../../types/californiaPoker';
 import { GAME_STATES } from '../constants/constants';
 import Card from './Card';
 

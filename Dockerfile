@@ -1,4 +1,4 @@
-FROM node:20.18.1 AS stage1
+FROM node:20.19.0 AS stage1
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN apt-get update -y && \
     apt-get install -y libc6 && \
