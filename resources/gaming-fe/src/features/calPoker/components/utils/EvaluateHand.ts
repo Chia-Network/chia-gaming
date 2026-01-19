@@ -1,4 +1,4 @@
-import { CardValueSuit } from "../../../types/californiaPoker";
+import { CardValueSuit } from "../../../../types/californiaPoker";
 import { HAND_RANKINGS } from "../constants/constants";
 
 function evaluateHand(hand: CardValueSuit[]) {

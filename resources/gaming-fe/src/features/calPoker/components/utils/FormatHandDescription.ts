@@ -1,4 +1,4 @@
-import { FormatHandProps } from "../../../types/californiaPoker";
+import { FormatHandProps } from "../../../../types/californiaPoker";
 
 function valueToDisplayName(value: number): string {
   const displayNames: Record<number, string> = {

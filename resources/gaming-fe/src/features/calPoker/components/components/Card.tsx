@@ -1,4 +1,4 @@
-import { CardRenderProps } from "../../../types/californiaPoker";
+import { CardRenderProps } from "../../../../types/californiaPoker";
 import { SUIT_COLORS } from "../constants/constants";
 import CardContent from "./CardContent";
 

@@ -7,8 +7,8 @@ import {
   FormatHandProps,
   MovingCardData,
   SwappingCards,
-} from '../../types/californiaPoker';
-import { Button, } from '../../components/button';
+} from '../../../types/californiaPoker';
+import { Button, } from '../../../components/button';
 // Constants
 import {
   ANIMATION_DELAY,
@@ -29,9 +29,9 @@ import {
   makeDescription,
 } from './utils';
 import { HandDisplay, MovingCard } from './components';
-import { CalpokerOutcome, OutcomeHandType, suitNames } from '../../types/ChiaGaming';
-import { SuitName } from '../../types/californiaPoker/CardValueSuit';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { CalpokerOutcome, OutcomeHandType, suitNames } from '../../../types/ChiaGaming';
+import { SuitName } from '../../../types/californiaPoker/CardValueSuit';
+import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { WalletIcon } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import GameBottomBar from './components/GameBottomBar';
