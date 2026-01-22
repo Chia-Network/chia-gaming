@@ -354,14 +354,13 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         Ok(())
     }
 
-    fn coin_timeout_reached<'a, G, R>(
+    fn coin_timeout_reached<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
         coin_id: &CoinString,
     ) -> Result<(), Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
-        R: Rng + 'a,
     {
         if let Some(mut game_def) = self.game_map.remove(coin_id) {
             let initial_potato = self.player_ch.is_initial_potato();
@@ -449,10 +448,12 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         Ok(())
     }
 
-    fn next_action<'a, G, R>(&mut self, penv: &mut dyn PeerEnv<'a, G, R>) -> Result<(), Error>
+    fn next_action<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+    ) -> Result<(), Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
-        R: Rng + 'a,
     {
         if let Some(action) = self.game_action_queue.pop_front() {
             self.do_on_chain_action(penv, action)?;
@@ -676,14 +677,13 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         }
     }
 
-    fn shut_down<'a, G, R>(
+    fn shut_down<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
         conditions: Rc<dyn ShutdownConditions>,
     ) -> Result<bool, Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
-        R: Rng + 'a,
     {
         let (_env, system_interface) = penv.env();
         if !self.no_live_games() {

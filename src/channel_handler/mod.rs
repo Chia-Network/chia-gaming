@@ -524,12 +524,12 @@ impl ChannelHandler {
         })
     }
 
-    fn compute_game_coin_unroll_data<'a>(
-        &'a self,
+    fn compute_game_coin_unroll_data(
+        &self,
         unroll_coin: Option<&CoinID>,
         skip_game: &[GameID],
         skip_coin_id: Option<&GameID>,
-        games: &'a [LiveGame],
+        games: &[LiveGame],
     ) -> Result<Vec<OnChainGameCoin>, Error> {
         // It's ok to not have a proper coin id here when we only want
         // the puzzle hashes and amounts.
@@ -2188,9 +2188,10 @@ impl ChannelHandler {
         target_puzzle_hash: &PuzzleHash,
     ) -> Result<SpendRewardResult, Error> {
         let mut total_amount = Amount::default();
-        let mut exploded_coins = Vec::new();
-        let referee_pk = private_to_public_key(&self.referee_private_key());
-        let referee_puzzle_hash = puzzle_hash_for_pk(env.allocator, &referee_pk)?;
+        let mut exploded_coins = Vec::with_capacity(coins.len());
+        let my_referee_public_key =
+            private_to_public_key(&self.private_keys.my_referee_private_key);
+        let referee_puzzle_hash = puzzle_hash_for_pk(env.allocator, &my_referee_public_key)?;
 
         for c in coins.iter() {
             let (_parent, ph, amount) = c.get_coin_string_parts()?;
@@ -2204,14 +2205,12 @@ impl ChannelHandler {
             });
         }
 
-        let mut coins_with_solutions = Vec::default();
+        let mut coins_with_solutions = Vec::with_capacity(exploded_coins.len());
         let default_hidden_puzzle_hash = Hash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH);
         let synthetic_referee_private_key = calculate_synthetic_secret_key(
             &self.private_keys.my_referee_private_key,
             &default_hidden_puzzle_hash,
         )?;
-        let my_referee_public_key =
-            private_to_public_key(&self.private_keys.my_referee_private_key);
         let puzzle = puzzle_for_pk(env.allocator, &my_referee_public_key)?;
 
         for (i, coin) in exploded_coins.iter().enumerate() {
@@ -2292,16 +2291,16 @@ impl ChannelHandler {
         coin_id: &CoinString,
         conditions: &[CoinCondition],
     ) -> Result<Option<SpendBundle>, Error> {
-        let referee_private_key = self.referee_private_key();
-        let referee_public_key = private_to_public_key(&referee_private_key);
+        let referee_public_key = private_to_public_key(&self.private_keys.my_referee_private_key);
         let referee_puzzle_hash = puzzle_hash_for_pk(env.allocator, &referee_public_key)?;
+        let parent_coin_id = coin_id.to_coin_id();
 
         let pay_to_me: Vec<CoinString> = conditions
             .iter()
             .filter_map(|c| {
                 if let CoinCondition::CreateCoin(ph, amt) = c {
                     if ph == &referee_puzzle_hash && amt > &Amount::default() {
-                        return Some(CoinString::from_parts(&coin_id.to_coin_id(), ph, amt));
+                        return Some(CoinString::from_parts(&parent_coin_id, ph, amt));
                     }
                 }
 
@@ -2324,10 +2323,11 @@ impl ChannelHandler {
     }
 
     pub fn get_game_state_id<R: Rng>(&self, env: &mut ChannelHandlerEnv<R>) -> Result<Hash, Error> {
-        let mut bytes: Vec<u8> = vec![];
+        // Each puzzle hash is typically 32 bytes; pre-allocate to avoid repeated growth.
+        let mut bytes: Vec<u8> = Vec::with_capacity(self.live_games.len() * 32);
         for l in self.live_games.iter() {
-            let mut v = l.current_puzzle_hash(env.allocator)?.bytes().to_vec();
-            bytes.append(&mut v);
+            let ph = l.current_puzzle_hash(env.allocator)?;
+            bytes.extend_from_slice(ph.bytes());
         }
         Ok(Sha256Input::Bytes(&bytes).hash())
     }
