@@ -24,8 +24,7 @@ jobs:
   frontend_test:
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false
-    timeout-minutes: 20
+      fail-fast: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -91,6 +90,7 @@ jobs:
           docker image prune -f
 
       - name: Run headless test
+        timeout-minutes: 20
         env:
           DETECT_CHROMEDRIVER_VERSION: "true"
           FIREFOX_HEADLESS: "true"
