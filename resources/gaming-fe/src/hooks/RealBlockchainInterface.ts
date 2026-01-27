@@ -226,6 +226,9 @@ export const REAL_BLOCKCHAIN_ID = blockchainDataEmitter.addUpstream(
   realBlockchainInfo.getObservable(),
 );
 
+let lastRecvAddress = "";
+let logRecvAddress = true;
+
 export function connectRealBlockchain(baseUrl: string) {
   blockchainConnector.getOutbound().subscribe({
     next: async (evt: BlockchainOutboundRequest) => {
@@ -238,12 +241,15 @@ export function connectRealBlockchain(baseUrl: string) {
           const currentAddress = await rpc.getCurrentAddress({
             walletId: 1,
           });
-          console.log('currentAddress', currentAddress);
+          if (currentAddress !== lastRecvAddress) {
+            console.log('walletconnect recv currentAddress (initialSpend=true):', currentAddress);
+            lastRecvAddress = currentAddress;
+          }
           const fromPuzzleHash = toHexString(
             bech32.decode(currentAddress).data as any,
           );
           const result = await rpc.sendTransaction({
-            walletId: 1, // XXX
+            walletId: 1,
             amount: initialSpend.amount,
             fee: 0,
             address: bech32.encode(
@@ -255,7 +261,7 @@ export function connectRealBlockchain(baseUrl: string) {
           });
 
           let resultCoin = undefined;
-          console.log('full spend result', result);
+          console.log('walletconnect recv spend result:', result);
           if (result.transaction) {
             result.transaction.additions.forEach((c) => {
               console.log('look at coin', initialSpend.target, c);
@@ -326,7 +332,10 @@ export function connectRealBlockchain(baseUrl: string) {
             walletId: 1,
           })
           .then((address) => {
-            console.log('currentAddress', address);
+            if (address !== lastRecvAddress) {
+              console.log('walletconnect recv currentAddress:', address);
+              lastRecvAddress = address;
+            }
             const puzzleHash = toHexString(bech32.decode(address).data as any);
             const addressData = { address, puzzleHash };
 

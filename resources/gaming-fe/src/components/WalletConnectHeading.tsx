@@ -42,7 +42,7 @@ const WalletConnectHeading = (_args: any) => {
   const [haveClient, setHaveClient] = useState(false);
   const [haveSession, setHaveSession] = useState(false);
   const [sessions, setSessions] = useState(0);
-  const [_address, setAddress] = useState();
+  const [recvAddress, setRecvAddress] = useState();
   const [balance, setBalance] = useState<number | undefined>();
   const [haveBlock, setHaveBlock] = useState(false);
 
@@ -88,13 +88,20 @@ const WalletConnectHeading = (_args: any) => {
     haveClient: setHaveClient,
     haveSession: setHaveSession,
     sessions: setSessions,
-    address: setAddress,
+    address: setRecvAddress,
   };
 
   function requestBalance() {
     blockchainConnector.getOutbound().next({
-      requestId: -1,
+      requestId: -2,
       getBalance: true,
+    });
+  }
+
+  function requestRecvAddress() {
+    blockchainConnector.getOutbound().next({
+      requestId: -1,
+      getAddress: true,
     });
   }
 
@@ -111,6 +118,7 @@ const WalletConnectHeading = (_args: any) => {
           });
           connectRealBlockchain('https://api.coinset.org');
           requestBalance();
+          requestRecvAddress();
         }
 
         const keys = Object.keys(evt);
@@ -166,7 +174,10 @@ const WalletConnectHeading = (_args: any) => {
           setBalance(evt.getBalance);
           setTimeout(requestBalance, 2000);
         }
-
+        if (evt.getAddress) {
+          setRecvAddress(evt.getRecvAddress);
+          setTimeout(requestRecvAddress, 2000);
+        }
         const subframe = document.getElementById('subframe');
         if (subframe) {
           (subframe as any).contentWindow.postMessage(
@@ -176,7 +187,10 @@ const WalletConnectHeading = (_args: any) => {
             window.location.origin,
           );
         } else {
-          throw new Error('blockchain reply to no subframe');
+          // TODO: Two cases:
+          // 1. we don't have the subframe until we get the first block
+          // 2. Do throw in other cases
+          // throw new Error('blockchain reply to no subframe');
         }
       },
     });
@@ -186,6 +200,7 @@ const WalletConnectHeading = (_args: any) => {
         if (!haveBlock) {
           setHaveBlock(true);
           requestBalance();
+          requestRecvAddress();
         }
         const subframe = document.getElementById('subframe');
         if (subframe) {
@@ -196,7 +211,10 @@ const WalletConnectHeading = (_args: any) => {
             '*',
           );
         } else {
-          throw new Error('blockchain reply to no subframe');
+          // TODO: Two cases:
+          // 1. we don't have the subframe until we get the first block
+          // 2. Do throw in other cases
+          // throw new Error('blockchain reply to no subframe');
         }
       },
     });
@@ -228,6 +246,7 @@ const WalletConnectHeading = (_args: any) => {
           uniqueId,
         });
         requestBalance();
+        requestRecvAddress();
       });
   }, []);
 
@@ -438,7 +457,7 @@ const WalletConnectHeading = (_args: any) => {
                     color: 'var(--color-canvas-solid)',
                   }}
                 >
-                  Bal: {balance} XCH
+                  Bal: {balance} mojos
                 </span>
               )}
 
