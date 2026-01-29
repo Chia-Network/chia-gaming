@@ -58,6 +58,9 @@ pub struct ChannelHandlerMoveResult {
     pub spend_info: ChannelCoinSpendInfo,
     pub state_number: usize,
     pub readable_their_move: Rc<Program>,
+    // AK_MH Best case, we can find a code path in run_calpoker_test_with_action_list
+    // that returns a ChannelHandlerMoveResult
+    // message is the raw clvm blob that contains the "handler" output
     pub message: Vec<u8>,
     pub mover_share: Amount,
 }
