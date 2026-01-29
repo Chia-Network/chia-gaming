@@ -5,14 +5,14 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/t
 
 export interface WalletBadgeProps {
   sessionConnected: 'connected' | 'simulator' | 'disconnected';
-  fakeAddress?: string;
-  synced?: boolean;
+  synced: boolean;
+  fakeAddress: string;
 }
 
 const WalletBadge: FC<{
   sessionConnected: 'connected' | 'simulator' | 'disconnected';
-  fakeAddress?: string;
-  synced?: boolean;
+  synced: boolean;
+  fakeAddress: string;
 }> = ({ sessionConnected, fakeAddress, synced }) => {
   let bgColor = '';
   let textColor = '';

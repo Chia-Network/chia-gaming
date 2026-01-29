@@ -219,6 +219,7 @@ const WalletConnectHeading = (_args: any) => {
           setHaveBlock(true);
           requestBalance();
           requestRecvAddress();
+          requestSyncStatus();
         }
         const subframe = document.getElementById('subframe');
         if (subframe) {
@@ -265,6 +266,7 @@ const WalletConnectHeading = (_args: any) => {
         });
         requestBalance();
         requestRecvAddress();
+        requestSyncStatus();
       });
   }, []);
 
@@ -456,8 +458,8 @@ const WalletConnectHeading = (_args: any) => {
                 <WalletBadge
                   {...({
                     sessionConnected,
-                    fakeAddress,
                     synced,
+                    fakeAddress,
                   } as any)}
                 />
               </div>
