@@ -1,13 +1,19 @@
 
+import type { FC } from 'react';
 import { Copy } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 
-interface WalletBadgeProps {
+export interface WalletBadgeProps {
   sessionConnected: 'connected' | 'simulator' | 'disconnected';
-  fakeAddress?: string;
+  synced: boolean;
+  fakeAddress: string;
 }
 
-const WalletBadge = ({ sessionConnected, fakeAddress }: WalletBadgeProps) => {
+const WalletBadge: FC<{
+  sessionConnected: 'connected' | 'simulator' | 'disconnected';
+  synced: boolean;
+  fakeAddress: string;
+}> = ({ sessionConnected, fakeAddress, synced }) => {
   let bgColor = '';
   let textColor = '';
   let borderColor = '';
@@ -18,7 +24,7 @@ const WalletBadge = ({ sessionConnected, fakeAddress }: WalletBadgeProps) => {
       bgColor = 'var(--color-success-bg)';
       textColor = 'var(--color-success-text)';
       borderColor = 'var(--color-success-border)';
-      label = 'Connected';
+      label = synced === false ? 'Syncing...' : 'Connected';
       break;
     case 'simulator':
       bgColor = 'var(--color-warning-bg)';
