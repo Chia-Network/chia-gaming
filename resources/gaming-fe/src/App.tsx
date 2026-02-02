@@ -5,8 +5,13 @@ import Game from './components/Game';
 import WalletConnectHeading from './components/WalletConnectHeading';
 import { blockchainDataEmitter } from './hooks/BlockchainInfo';
 import { getSaveList, loadSave } from './hooks/save';
-import { getGameSelection, getSearchParams, generateOrRetrieveUniqueId } from './util';
+import {
+  getGameSelection,
+  getSearchParams,
+  generateOrRetrieveUniqueId,
+} from './util';
 import GameRedirectPopup from './components/GameRedirectPopup';
+import { Loader2 } from 'lucide-react';
 
 const App = () => {
   const uniqueId = generateOrRetrieveUniqueId();
@@ -16,7 +21,8 @@ const App = () => {
   let useIframeUrl = 'about:blank';
   // const saveList = getSaveList();
   const saveList: string[] = []; // Disable save / reload
-  const shouldRedirectToLobby = saveList.length == 0 && !params.lobby && !params.iStarted;
+  const shouldRedirectToLobby =
+    saveList.length == 0 && !params.lobby && !params.iStarted;
   if (saveList.length > 0) {
     const decodedSave = loadSave(saveList[0]);
     useParams = decodedSave.searchParams;
@@ -61,7 +67,7 @@ const App = () => {
   // in that scenario.
   useEffect(() => {
     if (shouldRedirectToLobby) {
-      fetch("/urls")
+      fetch('/urls')
         .then((res) => res.json())
         .then((urls) => {
           const baseUrl = urls.tracker;
@@ -81,9 +87,6 @@ const App = () => {
     }
   }, []);
   // no dependency on params so URL stays the same
-
-
-
 
   // Keep iframe in sync with the parent theme (CSS variables and dark class).
   // If the iframe is same-origin we copy the CSS custom properties and `dark` class
@@ -105,7 +108,9 @@ const App = () => {
     }
 
     async function syncThemeToIframe() {
-      const iframe = document.getElementById('subframe') as HTMLIFrameElement | null;
+      const iframe = document.getElementById(
+        'subframe',
+      ) as HTMLIFrameElement | null;
       if (!iframe) return;
 
       const payload = buildVarsPayload();
@@ -131,7 +136,10 @@ const App = () => {
 
       // Cross-origin fallback: send theme data via postMessage
       try {
-        iframe.contentWindow?.postMessage({ type: 'theme-sync', vars: payload, dark: isDark }, '*');
+        iframe.contentWindow?.postMessage(
+          { type: 'theme-sync', vars: payload, dark: isDark },
+          '*',
+        );
       } catch (e) {
         // ignore
       }
@@ -142,7 +150,9 @@ const App = () => {
       syncThemeToIframe();
     }
 
-    const iframeEl = document.getElementById('subframe') as HTMLIFrameElement | null;
+    const iframeEl = document.getElementById(
+      'subframe',
+    ) as HTMLIFrameElement | null;
     iframeEl?.addEventListener('load', onLoad);
 
     // Respond to explicit requests from iframes that may have attached their
@@ -165,7 +175,10 @@ const App = () => {
     observer = new MutationObserver(() => {
       syncThemeToIframe();
     });
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class'],
+    });
 
     // initial sync (in case iframe already loaded)
     setTimeout(syncThemeToIframe, 150);
@@ -178,14 +191,16 @@ const App = () => {
   }, [iframeUrl]);
 
   const handleAccept = () => {
-    if (pendingGameUrl) { setIframeUrl(pendingGameUrl) };
+    if (pendingGameUrl) {
+      setIframeUrl(pendingGameUrl);
+    }
     setShowPopup(false);
   };
 
   const handleCancel = () => {
     setShowPopup(false);
     // Redirect to lobby
-    window.location.href = "/?lobby=1";
+    window.location.href = '/?lobby=1';
   };
 
   if (params.gallery) {
@@ -197,7 +212,7 @@ const App = () => {
   }
 
   const wcHeading = (
-    <div className="flex shrink-0 h-12 w-full">
+    <div className='flex shrink-0 h-12 w-full'>
       <WalletConnectHeading />
     </div>
   );
@@ -205,22 +220,23 @@ const App = () => {
   const pre_lobby_status = (
     <div
       /*className="flex flex-col relative w-screen h-screen"*/
-      className="w-full flex-1 border-0 m-0 p-0"
+      className='w-full flex-1 border-0 m-0 p-0'
       style={{
         backgroundColor: 'var(--color-canvas-bg-subtle)',
-        display: 'flex',          // Enables flexbox
-        alignItems: 'center',     // Centers children vertically
+        display: 'flex', // Enables flexbox
+        alignItems: 'center', // Centers children vertically
         justifyContent: 'center', // Optional: centers children horizontally as well
-        height: '100vh',          // Optional: ensures the container takes up the full viewport height
+        height: '100vh', // Optional: ensures the container takes up the full viewport height
       }}
     >
+      <Loader2 className='h-8 w-8 animate-spin text-primary mb-4' />
       Waiting for peak from coinset.org ...
     </div>
   );
 
   if (!havePeak) {
     return (
-      <div className="flex flex-col relative w-screen h-screen bg-canvas-bg-subtle" >
+      <div className='flex flex-col relative w-screen h-screen bg-canvas-bg-subtle'>
         {wcHeading}
         {pre_lobby_status}
       </div>
@@ -228,24 +244,23 @@ const App = () => {
   }
 
   return (
-    <div className="flex flex-col relative w-screen h-screen bg-canvas-bg-subtle" >
+    <div className='flex flex-col relative w-screen h-screen bg-canvas-bg-subtle'>
       {wcHeading}
-      <div className="relative z-0 w-full flex-1 bg-canvas-bg-subtle">
+      <div className='relative z-0 w-full flex-1 bg-canvas-bg-subtle'>
         <iframe
           id='subframe'
-          className="w-full h-full border-0 m-0 md:py-0 py-6 bg-canvas-bg-subtle"
+          className='w-full h-full border-0 m-0 md:py-0 py-6 bg-canvas-bg-subtle'
           src={iframeUrl}
           allow={`clipboard-write self ${iframeAllowed}`}
         ></iframe>
       </div>
       <GameRedirectPopup
         open={showPopup}
-        gameName={params.game}          // "calpoker"
-        message="You have been invited to join this game."
+        gameName={params.game} // "calpoker"
+        message='You have been invited to join this game.'
         onAccept={handleAccept}
         onCancel={handleCancel}
       />
-
     </div>
   );
 };

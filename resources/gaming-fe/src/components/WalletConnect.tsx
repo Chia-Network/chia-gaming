@@ -1,4 +1,4 @@
-import { Info } from 'lucide-react';
+import { Info, Loader2 } from 'lucide-react';
 import {
   StartConnectResult,
   walletConnectState,
@@ -32,10 +32,11 @@ export const WalletConnectDialog: React.FC<ShowWalletConnectState> = ({
       <QRCodeModal open={showQRModal} uri={connectionUri} onClose={dismiss} />
 
       {!initialized ? (
-        <div className='flex flex-col gap-2 sm:gap-3'>
+        <div className='flex flex-col items-center gap-2 sm:gap-3'>
           <h5 className='text-[1.2rem] sm:text-[1.5rem] font-semibold'>
             Initializing WalletConnect...
           </h5>
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
           <p className='mt-2 text-base'>
             Please wait while we set up the connection.
           </p>
