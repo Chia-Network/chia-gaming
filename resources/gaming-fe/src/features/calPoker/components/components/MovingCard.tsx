@@ -1,4 +1,4 @@
-import { MovingCardProps } from "../../../types/californiaPoker";
+import { MovingCardProps } from "../../../../types/californiaPoker";
 import { SUIT_COLORS } from "../constants/constants";
 import CardContent from "./CardContent";
 

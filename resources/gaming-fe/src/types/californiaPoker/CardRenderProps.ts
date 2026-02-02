@@ -1,4 +1,4 @@
-import { CardValueSuit } from "./CardValueSuit";
+import { CardValueSuit } from './CardValueSuit';
 
 interface CardRenderProps {
   id: string;
@@ -9,6 +9,7 @@ interface CardRenderProps {
   isBeingSwapped: boolean;
   cardId: string;
   isInBestHand: boolean | undefined;
-};
+  area: string;
+}
 
 export type { CardRenderProps };

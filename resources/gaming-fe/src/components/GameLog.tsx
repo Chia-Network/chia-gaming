@@ -6,7 +6,8 @@ import {
   suitNames,
 } from '../types/ChiaGaming';
 import { ExpandMore } from '@mui/icons-material';
-import { RANK_SYMBOLS } from '../features/californiaPoker/constants/constants';
+import { RANK_SYMBOLS } from '../features/calPoker/components/constants/constants';
+
 
 interface GameLogProps {
   log: OutcomeLogLine[];
@@ -41,8 +42,8 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
         key={`${idPrefix}-${index}`}
         id={`${idPrefix}-${index}`}
         className={`
-    inline-flex items-center justify-center ml-1 px-3 py-1
-    rounded-sm border text-center whitespace-nowrap min-w-[30px]
+    inline-flex items-center flex-col justify-center ml-1 px-3 py-1
+    rounded-sm border text-center whitespace-nowrap min-w-7.5
     ${selected ? 'font-semibold bg-canvas-border' : 'font-medium bg-canvas-light'}
     border-canvas-border
   `}

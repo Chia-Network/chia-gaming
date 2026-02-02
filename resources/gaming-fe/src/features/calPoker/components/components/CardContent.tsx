@@ -1,4 +1,4 @@
-import { CardContentProps } from '../../../types/californiaPoker';
+import { CardContentProps } from '../../../../types/californiaPoker';
 import { RANK_SYMBOLS } from '../constants/constants';
 
 function CardContent(content: CardContentProps) {

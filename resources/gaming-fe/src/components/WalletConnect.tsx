@@ -74,8 +74,8 @@ export const WalletConnectDialog: React.FC<ShowWalletConnectState> = ({
             </Button>
           </div>
 
-          <div className='bg-(--color-info-bg-subtle) rounded-lg p-4 flex gap-2 mt-3 text-(--color-info-text-contrast)'>
-            <div className='p-1 bg-(--color-info-bg) rounded-full shrink-0 flex items-center justify-center h-fit'>
+          <div className='bg-(--color-info-bg-subtle) z-10 rounded-lg p-4 flex gap-2 mt-3 text-(--color-info-text-contrast)'>
+            <div className='p-1 bg-(--color-info-bg)  rounded-full shrink-0 flex items-center justify-center h-fit'>
               <Info
                 style={{ color: 'var(--color-info-solid)', fontSize: '1.25rem' }}
               />

@@ -220,7 +220,7 @@ const App = () => {
   const pre_lobby_status = (
     <div
       /*className="flex flex-col relative w-screen h-screen"*/
-      className='w-full flex-1 border-0 m-0 p-0'
+      className='w-full flex-1 border-0 m-0 p-0 flex flex-col items-center justify-center text-center gap-3'
       style={{
         backgroundColor: 'var(--color-canvas-bg-subtle)',
         display: 'flex', // Enables flexbox
@@ -229,7 +229,7 @@ const App = () => {
         height: '100vh', // Optional: ensures the container takes up the full viewport height
       }}
     >
-      <Loader2 className='h-8 w-8 animate-spin text-primary mb-4' />
+      <Loader2 className='h-6 w-6 z-0 animate-spin text-primary mb-4' />
       Waiting for peak from coinset.org ...
     </div>
   );
