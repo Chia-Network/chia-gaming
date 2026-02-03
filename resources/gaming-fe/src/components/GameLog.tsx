@@ -8,7 +8,6 @@ import {
 import { ExpandMore } from '@mui/icons-material';
 import { RANK_SYMBOLS } from '../features/calPoker/components/constants/constants';
 
-
 interface GameLogProps {
   log: OutcomeLogLine[];
 }
@@ -42,8 +41,8 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
         key={`${idPrefix}-${index}`}
         id={`${idPrefix}-${index}`}
         className={`
-    inline-flex items-center flex-col justify-center ml-1 px-3 py-1
-    rounded-sm border text-center whitespace-nowrap min-w-7.5
+    inline-flex items-center justify-center ml-1 px-3 py-1
+    rounded-sm border text-center whitespace-nowrap min-w-[30px]
     ${selected ? 'font-semibold bg-canvas-border' : 'font-medium bg-canvas-light'}
     border-canvas-border
   `}
@@ -157,7 +156,7 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
 
                       <ExpandMore
                         data-testid={`log-expand-button-${index}`}
-                        className={`ml-1 flex-shrink-0 transform transition-transform duration-200 ${
+                        className={`ml-1 shrink-0 transform transition-transform duration-200 ${
                           isExpanded ? 'rotate-180' : 'rotate-0'
                         } text-canvas-muted`}
                       />
@@ -167,7 +166,7 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                     {isExpanded && (
                       <div className='pt-2 border-t border-canvas-border flex flex-col gap-2'>
                         {/* You Section */}
-                        <div data-testid={`log-entry-me-${index}`}>
+                        <div data-testid={`log-entry-my-hand-${index}`}>
                           <p className='text-xs font-bold text-canvas-solid mb-1 uppercase tracking-wide'>
                             Your Hand
                           </p>

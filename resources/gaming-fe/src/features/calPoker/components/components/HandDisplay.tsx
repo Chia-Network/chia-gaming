@@ -107,7 +107,7 @@ function HandDisplay(props: HandDisplayProps) {
       <div className='relative'>
         {gameState === GAME_STATES.FINAL && (isWinner || isTie) && (
           <div
-            className={`absolute z-1200 -top-5 ${
+            className={`absolute z-200 -top-5 ${
               isWinner
                 ? 'bg-success-solid text-success-on-success'
                 : 'bg-canvas-solid text-canvas-on-canvas'
@@ -199,10 +199,11 @@ function HandDisplay(props: HandDisplayProps) {
                             h-full
                             justify-center
                             grid-cols-3
-                            md:grid-cols-4
-                            lg:grid-cols-
+                            md:grid-cols-8
+                            lg:grid-cols-8
                             xl:grid-cols-8
-                            grid-cols-2-xs'
+                            grid-cols-2-xs
+                          '
             >
               {cards.map((card: any, idx: number) => {
                 const originalIndex = cards.findIndex(

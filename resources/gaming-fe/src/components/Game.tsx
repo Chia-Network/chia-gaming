@@ -115,88 +115,30 @@ const Game: React.FC<GameParams> = ({ params }) => {
 
   if (gameConnectionState.stateIdentifier === 'shutdown') {
     return (
-      <Box
-        p={4}
-        sx={{
-          maxWidth: 'auto',
-          margin: '0 auto',
-          minHeight: '100vh',
-          display: 'flex',
-          flexDirection: 'column',
-        }}
-      >
-        {/* Action Button */}
+      <Box p={4}>
+        <Typography variant='h4' align='center' aria-label='shutdown'>
+          {`Cal Poker - shutdown succeeded`}
+        </Typography>
+        <Box>
+          {gameConnectionState.stateDetail.map((c: string) => (
+            <Typography variant='h5' align='center'>
+              {c}
+            </Typography>
+          ))}
+          <Box>
+            {gameConnectionState.stateDetail.map((c: string) => (
+              <Typography variant='h5' align='center'>
+                {c}
+              </Typography>
+            ))}
+            <GameLog log={log} />
+          </Box>
+        </Box>
         <Box display='flex' justifyContent='end' sx={{ pt: 3 }}>
           <Button variant='surface' color='primary' onClick={handleCreateClick}>
             Create New Room
           </Button>
         </Box>
-        {/* Header Section */}
-        <Box
-          sx={{
-            textAlign: 'center',
-            mb: 4,
-            pb: 3,
-            // borderBottom: '2px solid',
-            // borderColor: 'divider',
-          }}
-        >
-          <Typography
-            variant='h4'
-            align='center'
-            aria-label='shutdown'
-            sx={{
-              fontWeight: 600,
-              color: 'text.primary',
-              mb: 2,
-            }}
-          >
-            Cal Poker - Shutdown Succeeded
-          </Typography>
-
-          {/* State Details */}
-          {gameConnectionState.stateDetail.length > 0 && (
-            <Box sx={{ mt: 2 }}>
-              {gameConnectionState.stateDetail.map(
-                (c: string, index: number) => (
-                  <Typography
-                    key={index}
-                    variant='body1'
-                    align='center'
-                    sx={{
-                      color: 'text.secondary',
-                      mb: 0.5,
-                      fontSize: '0.95rem',
-                    }}
-                  >
-                    {c}
-                  </Typography>
-                ),
-              )}
-            </Box>
-          )}
-        </Box>
-
-        {/* Game Log Section */}
-        <Box
-          sx={{
-            maxWidth: '800px',
-            mb: 4,
-            display: 'flex',
-            justifyContent: 'center',
-            alignSelf: 'center',
-            // flexGrow: 1,
-            width: '100%',
-            // bgcolor: 'background.paper',
-            borderRadius: 2,
-            overflow: 'scroll',
-            boxShadow: 1,
-          }}
-        >
-          <GameLog log={log} />
-        </Box>
-
-        {/* Create Room Dialog */}
         <CreateRoomDialog
           dialogOpen={dialogOpen}
           closeDialog={() => setDialogOpen(false)}

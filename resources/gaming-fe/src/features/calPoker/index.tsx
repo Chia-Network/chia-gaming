@@ -152,6 +152,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
               myWinOutcome={myWinOutcome}
               banner={banner}
               balanceDisplay={balanceDisplay}
+              stopPlaying={stopPlaying}
             />
           </div>
 

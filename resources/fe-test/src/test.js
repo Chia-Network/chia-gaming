@@ -95,7 +95,7 @@ async function clickMakeMove(driver, who, label) {
   console.log(`click make move ${who}, ${label}`);
   await wait(driver, 5.0);
   const makeMoveButton = await driver.wait(
-    until.elementLocated(byExactText(label))
+    until.elementLocated(byExactText(label)),
   );
 
   console.log("have enabled, clicking button");
@@ -109,16 +109,16 @@ async function clickPopupButton(driver, buttonText) {
     try {
       const popup = await driver.wait(
         until.elementLocated(By.css("div.fixed.inset-0.z-50")),
-        8000
+        8000,
       );
       const button = await popup.findElement(
-        By.xpath(`.//button[normalize-space(text())='${buttonText}']`)
+        By.xpath(`.//button[normalize-space(text())='${buttonText}']`),
       );
       await driver.wait(until.elementIsVisible(button), 3000);
       await driver.wait(until.elementIsEnabled(button), 3000);
       await driver.executeScript(
         'arguments[0].scrollIntoView({block:"center"});',
-        button
+        button,
       );
       await driver
         .actions({ async: true })
@@ -132,16 +132,16 @@ async function clickPopupButton(driver, buttonText) {
       await driver.switchTo().defaultContent();
       const popup = await driver.wait(
         until.elementLocated(By.css("div.fixed.inset-0.z-50")),
-        8000
+        8000,
       );
       const button = await popup.findElement(
-        By.xpath(`.//button[normalize-space(text())='${buttonText}']`)
+        By.xpath(`.//button[normalize-space(text())='${buttonText}']`),
       );
       await driver.wait(until.elementIsVisible(button), 3000);
       await driver.wait(until.elementIsEnabled(button), 3000);
       await driver.executeScript(
         'arguments[0].scrollIntoView({block:"center"});',
-        button
+        button,
       );
       await driver
         .actions({ async: true })
@@ -190,7 +190,7 @@ async function firefox_start_and_first_move(selectWallet, driver, baseUrl) {
   console.log("Clicked Accept & Join");
   console.log("Wait for handshake on bob side");
   await driver.wait(
-    until.elementLocated(byAttribute("aria-label", "waiting-state"))
+    until.elementLocated(byAttribute("aria-label", "waiting-state")),
   );
 
   console.log("Wait for the make move button");
@@ -255,13 +255,13 @@ async function getCardText(driver, card) {
 
 async function clickFourCards(driver, who, picks) {
   await driver.wait(
-    until.elementLocated(byAttribute("data-card-id", `player-0`))
+    until.elementLocated(byAttribute("data-card-id", `player-0`)),
   );
   const resultCards = [];
 
   for (let i = 0; i < 8; i++) {
     const card = await driver.wait(
-      until.elementLocated(byAttribute("data-card-id", `player-${i}`))
+      until.elementLocated(byAttribute("data-card-id", `player-${i}`)),
     );
     const cardText = await getCardText(driver, card);
     resultCards.push(cardText[0]);
@@ -271,7 +271,7 @@ async function clickFourCards(driver, who, picks) {
     if (picks & (1 << i)) {
       await wait(driver, 1.0);
       const card = await driver.wait(
-        until.elementLocated(byAttribute("data-card-id", `player-${i}`))
+        until.elementLocated(byAttribute("data-card-id", `player-${i}`)),
       );
       console.log(`click card ${who} ${i}`);
       await card.click();
@@ -298,35 +298,35 @@ async function gotShutdown(driver) {
 async function initiateGame(driver, gameTotal, eachHand) {
   console.log("waiting for generate button");
   let generateRoomButton = await driver.wait(
-    until.elementLocated(byAttribute("aria-label", "generate-room"))
+    until.elementLocated(byAttribute("aria-label", "generate-room")),
   );
   await generateRoomButton.click();
 
   // Choose game
   let gameId = await driver.wait(
     until.elementLocated(byAttribute("aria-label", "game-id")),
-    10000
+    10000,
   );
   await gameId.click();
   let choice = await waitForNonError(
     driver,
     () =>
       driver.wait(
-        until.elementLocated(byAttribute("data-testid", "choose-calpoker"))
+        until.elementLocated(byAttribute("data-testid", "choose-calpoker")),
       ),
     () => true,
-    1.0
+    1.0,
   );
   console.log("choice element", choice);
   await choice.click();
 
   let wager = await driver.wait(
     until.elementLocated(byAttribute("aria-label", "game-wager", "//input")),
-    1000
+    1000,
   );
   let perHand = await driver.wait(
     until.elementLocated(byAttribute("aria-label", "per-hand", "//input")),
-    1000
+    1000,
   );
 
   await wager.sendKeys("200");
@@ -340,29 +340,29 @@ async function initiateGame(driver, gameTotal, eachHand) {
 
   let createButton = await driver.wait(
     until.elementLocated(byExactText("Create")),
-    1000
+    1000,
   );
   console.log("click create");
   await createButton.click();
 
   // The button now has the aria-label on the button element itself.
   let copyButton = await driver.wait(
-    until.elementLocated(byAttribute("aria-label", "ContentCopyIcon"))
+    until.elementLocated(byAttribute("aria-label", "ContentCopyIcon")),
   );
   await driver.executeScript(
     'arguments[0].scrollIntoView({block: "center", inline: "center"});',
-    copyButton
+    copyButton,
   );
   try {
     await copyButton.click();
   } catch (e1) {
     try {
       const ancestorButton = await copyButton.findElement(
-        By.xpath('ancestor::button | ancestor::div[@role="button"]')
+        By.xpath('ancestor::button | ancestor::div[@role="button"]'),
       );
       await driver.executeScript(
         'arguments[0].scrollIntoView({block: "center", inline: "center"});',
-        ancestorButton
+        ancestorButton,
       );
       await ancestorButton.click();
     } catch (e2) {
@@ -374,7 +374,7 @@ async function initiateGame(driver, gameTotal, eachHand) {
 
   // Check that we got a url.
   let partnerUrlSpan = await driver.wait(
-    until.elementLocated(byAttribute("aria-label", "partner-target-url"))
+    until.elementLocated(byAttribute("aria-label", "partner-target-url")),
   );
   console.log("partner url", partnerUrlSpan);
   let partnerUrl = await partnerUrlSpan.getAttribute("textContent");
@@ -398,7 +398,7 @@ async function getCards(driver, label) {
   console.log("getCards", label);
 
   const hand = await driver.wait(
-    until.elementLocated(byAttribute("data-testid", label))
+    until.elementLocated(byAttribute("data-testid", label)),
   );
   console.log("foundHand", hand);
 
@@ -410,7 +410,7 @@ async function verifyCardsWithLog(driver, cards) {
 
   await driver.executeScript("window.scroll(0, 0);");
   const gameLogExpandButton = await driver.wait(
-    until.elementLocated(byAttribute("data-testid", "log-expand-button-0"))
+    until.elementLocated(byAttribute("data-testid", "log-expand-button-0")),
   );
   console.log("gonna click the game log heading");
   await gameLogExpandButton.click();
@@ -443,11 +443,11 @@ async function verifyCardsWithLog(driver, cards) {
   // Check the outcome cards against the hand description.
   const myLogEntryDesc = await getHandDescription(
     driver,
-    "my-used-hand-0-description"
+    "my-used-hand-0-description",
   );
   const theirLogEntryDesc = await getHandDescription(
     driver,
-    "opponent-used-hand-0-description"
+    "opponent-used-hand-0-description",
   );
 
   function checkUsedVsFinal(used, final) {
@@ -491,6 +491,61 @@ describe("Out of money test", function () {
   const driver = driver1;
   const ffdriver = driver2;
 
+  async function clickPlayAnotherHand(driver, playerName) {
+    try {
+      // Wait for the dialog to appear
+      let playAgainButton = await waitForNonError(
+        driver,
+        () =>
+          driver.wait(
+            until.elementLocated(
+              By.xpath("//button[contains(., 'Play Another Hand')]"),
+            ),
+            5000,
+          ),
+        (elt) => waitEnabled(driver, elt),
+        1.0,
+      );
+
+      console.log(`${playerName} clicking Play Another Hand button`);
+      await playAgainButton.click();
+
+      // Wait a bit for the dialog to close
+      await driver.sleep(500);
+    } catch (error) {
+      console.error(
+        `Error clicking Play Another Hand for ${playerName}:`,
+        error,
+      );
+      throw error;
+    }
+  }
+  async function clickEndSession(driver, playerName) {
+    try {
+      // Wait for the dialog End Session button using its unique data-testid
+      let endSessionButton = await waitForNonError(
+        driver,
+        () =>
+          driver.wait(
+            until.elementLocated(
+              byAttribute("data-testid", "end-session-dialog-button"),
+            ),
+            10000,
+          ),
+        (elt) => waitEnabled(driver, elt),
+        1.0,
+      );
+
+      console.log(`${playerName} clicking End Session button in dialog`);
+      await endSessionButton.click();
+
+      // Wait a bit for the dialog to close
+      await driver.sleep(10000);
+    } catch (error) {
+      console.error(`Error clicking End Session for ${playerName}:`, error);
+      throw error;
+    }
+  }
   async function testOneGameEconomicResult(selectWallet) {
     // Load the login page
     await driver.get(baseUrl);
@@ -521,7 +576,7 @@ describe("Out of money test", function () {
     // 2. re-enter iframe
     const iframe = await driver.wait(
       until.elementLocated(By.css('iframe[src*="view=game"]')),
-      20000
+      20000,
     );
     await driver.switchTo().frame(iframe);
 
@@ -530,10 +585,10 @@ describe("Out of money test", function () {
       driver,
       () =>
         driver.wait(
-          until.elementLocated(byAttribute("data-testid", "stop-playing"))
+          until.elementLocated(byAttribute("data-testid", "stop-playing")),
         ),
       (elt) => waitEnabled(driver, elt),
-      1.0
+      1.0,
     );
     await stopButton.click();
 
@@ -543,7 +598,7 @@ describe("Out of money test", function () {
     await gotShutdown(driver);
   }
 
- async function testTwoGamesAndShutdown(selectWallet) {
+  async function testTwoGamesAndShutdown(selectWallet) {
     // Load the login page
     await driver.get(baseUrl);
 
@@ -580,44 +635,54 @@ describe("Out of money test", function () {
     console.log("wait for alice make move button");
     await clickMakeMove(driver, "alice", "Start Game");
 
-    let allBobCards = await clickFourCards(ffdriver, 'bob', 0xaa);
+    let allBobCards = await clickFourCards(ffdriver, "bob", 0xaa);
 
-    console.log('selecting alice cards');
-    let allAliceCards = await clickFourCards(driver, 'alice', 0x55);
+    console.log("selecting alice cards");
+    let allAliceCards = await clickFourCards(driver, "alice", 0x55);
 
-    console.log('bob cards', allBobCards);
-    console.log('alice cards', allAliceCards);
+    console.log("bob cards", allBobCards);
+    console.log("alice cards", allAliceCards);
 
     console.log("first game complete");
 
-    await firefox_press_button_second_game(ffdriver);
+    // Handle EndGameDialog for both players
+    console.log("handling end game dialog for bob");
+    await clickPlayAnotherHand(ffdriver, "bob");
+    console.log("handling end game dialog for alice");
+    await clickPlayAnotherHand(driver, "alice");
 
-    console.log('check alice cards');
+    // await firefox_press_button_second_game(ffdriver);
+
+    console.log("check alice cards");
     await verifyCardsWithLog(driver, allAliceCards);
-
-    console.log('check bob cards');
+    console.log("check bob cards");
     await verifyCardsWithLog(ffdriver, allBobCards);
 
-    console.log('alice random number (2)');
-    await clickMakeMove(driver, 'alice', "Start New Game");
+    console.log("alice random number (2)");
+    // await clickMakeMove(driver, "alice", "Start New Game");
 
-    await clickFourCards(ffdriver, 'bob', 0xaa);
+    await clickFourCards(ffdriver, "bob", 0xaa);
 
-    console.log('selecting alice cards (2)');
-    await clickFourCards(driver, 'alice', 0x55);
+    console.log("selecting alice cards (2)");
+    await clickFourCards(driver, "alice", 0x55);
 
     console.log("stop the game (2)");
-    await driver.executeScript('window.scroll(0, 0);');
-    let stopButton = await waitForNonError(
-      driver,
-      () =>
-      driver.wait(
-        until.elementLocated(byAttribute("data-testid", "stop-playing")),
-      ),
-      (elt) => waitEnabled(driver, elt),
-      1.0,
-    );
-    await stopButton.click();
+
+    // Handle EndGameDialog for both players again
+    console.log("handling end game dialog for alice (2) - End Session");
+    await clickEndSession(driver, "alice");
+
+    // await driver.executeScript("window.scroll(0, 0);");
+    // let stopButton = await waitForNonError(
+    //   driver,
+    //   () =>
+    //     driver.wait(
+    //       until.elementLocated(byAttribute("data-testid", "stop-playing")),
+    //     ),
+    //   (elt) => waitEnabled(driver, elt),
+    //   1.0,
+    // );
+    // await stopButton.click();
 
     const logEntries = [];
     let expectedPost1 = preBalance1 + 200;
@@ -649,14 +714,13 @@ describe("Out of money test", function () {
     const postBalance1 = await getBalance(driver, address1.puzzleHash);
     const postBalance2 = await getBalance(ffdriver, address2.puzzleHash);
 
-    console.log("balance1", preBalance1, postBalance1);
-    console.log("balance2", preBalance2, postBalance2);
+    console.log("balance1", preBalance1, postBalance1, expectedPost1);
+    console.log("balance2", preBalance2, postBalance2, expectedPost2);
 
     if (postBalance1 != expectedPost1 || postBalance2 != expectedPost2) {
       throw new Error("Failed expected balance check");
     }
   }
-
 
   async function testRunOutOfMoney(selectWallet) {
     // Load the login page
@@ -734,10 +798,10 @@ describe("Out of money test", function () {
       driver,
       () =>
         driver.wait(
-          until.elementLocated(byAttribute("data-testid", "stop-playing"))
+          until.elementLocated(byAttribute("data-testid", "stop-playing")),
         ),
       (elt) => waitEnabled(driver, elt),
-      1.0
+      1.0,
     );
     await stopButton.click();
 
@@ -774,6 +838,6 @@ describe("Out of money test", function () {
 
       await testTwoGamesAndShutdown(selectWalletConnect);
     },
-    1 * 60 * 60 * 1000
+    1 * 60 * 60 * 1000,
   );
 });
