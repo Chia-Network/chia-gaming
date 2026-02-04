@@ -13,6 +13,7 @@ export enum ChiaMethod {
   SignMessageByAddress = 'chia_signMessageByAddress',
   VerifySignature = 'chia_verifySignature',
   GetNextAddress = 'chia_getNextAddress',
+  GetFeeEstimate = 'chia_getFeeEstimate',
   GetSyncStatus = 'chia_getSyncStatus',
   GetAllOffers = 'chia_getAllOffers',
   GetOffersCount = 'chia_getOffersCount',

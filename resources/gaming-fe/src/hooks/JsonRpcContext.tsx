@@ -39,6 +39,7 @@ import {
   GetCurrentAddressRequest,
   GetCurrentAddressResponse,
 } from '../types/rpc/GetCurrentAddress';
+import { GetFeeEstimateRequest, GetFeeEstimateResponse } from '../types/rpc/GetFeeEstimate';
 import {
   GetNextAddressRequest,
   GetNextAddressResponse,
@@ -320,6 +321,13 @@ async function getWalletAddresses(data: GetWalletAddressesRequest) {
   );
 }
 
+async function getFeeEstimate(data: GetFeeEstimateRequest) {
+  return await request<GetFeeEstimateResponse>(
+    ChiaMethod.GetFeeEstimate,
+    data,
+  );
+}
+
 // Offers
 
 async function getAllOffers(data: GetAllOffersRequest) {
@@ -454,6 +462,7 @@ export const rpc = {
   getNextAddress,
   getSyncStatus,
   getWalletAddresses,
+  getFeeEstimate,
 
   // Offers
   getAllOffers,

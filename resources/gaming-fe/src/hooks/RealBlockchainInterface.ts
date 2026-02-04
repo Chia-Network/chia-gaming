@@ -236,6 +236,8 @@ export function connectRealBlockchain(baseUrl: string) {
       let transaction = evt.transaction;
       let getAddress = evt.getAddress;
       let getBalance = evt.getBalance;
+      let getFee = evt.getFee;
+
       if (initialSpend) {
         try {
           const currentAddress = await rpc.getCurrentAddress({
@@ -332,18 +334,25 @@ export function connectRealBlockchain(baseUrl: string) {
             walletId: 1,
           })
           .then((address) => {
-            if (address !== lastRecvAddress) {
-              console.log('walletconnect recv currentAddress:', address);
-              lastRecvAddress = address;
-            }
-            const puzzleHash = toHexString(bech32.decode(address).data as any);
-            const addressData = { address, puzzleHash };
+              if (address !== lastRecvAddress) {
+                console.log('walletconnect recv currentAddress:', address);
+                lastRecvAddress = address;
+              }
+              const puzzleHash = toHexString(bech32.decode(address).data as any);
+              const addressData = { address, puzzleHash };
 
-          blockchainConnector.replyEmitter({
-            responseId: evt.requestId,
-	    getAddress: addressData
-	  });
-        });
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+        getAddress: addressData
+      });
+    });
+    } else if (getFee) {
+        rpc.getFeeEstimate({}).then((feeResult: number) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              getFee: feeResult
+      });
+    });
       } else if (getBalance) {
         rpc.getWalletBalance({
           walletId: 1
