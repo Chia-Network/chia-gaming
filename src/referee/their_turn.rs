@@ -652,7 +652,7 @@ impl TheirTurnReferee {
             args.game_move.basic.move_made.len()
                 <= self.args_for_this_coin().game_move.basic.max_move_size
         );
-        let result = handler.call_their_turn_driver(
+        let result = handler.call_their_turn_handler(
             allocator,
             &TheirTurnInputs {
                 amount: self.fixed.amount.clone(),

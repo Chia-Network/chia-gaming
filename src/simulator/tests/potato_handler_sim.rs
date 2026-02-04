@@ -37,7 +37,7 @@ use crate::shutdown::BasicShutdownConditions;
 use crate::simulator::Simulator;
 use crate::test_support::calpoker::{calpoker_ran_all_the_moves_predicate, prefix_test_moves};
 use crate::test_support::debug_game::{
-    make_debug_games, BareDebugGameDriver, DebugGameCurry, DebugGameMoveInfo,
+    make_debug_games, BareDebugGameHandler, DebugGameCurry, DebugGameMoveInfo,
 };
 use crate::test_support::game::GameAction;
 use crate::test_support::peer::potato_handler::run_move;
@@ -1009,7 +1009,7 @@ pub struct DebugGameSimSetup {
     pub private_keys: [ChannelHandlerPrivateKeys; 2],
     pub identities: [ChiaIdentity; 2],
     #[allow(dead_code)]
-    pub debug_games: [BareDebugGameDriver; 2],
+    pub debug_games: [BareDebugGameHandler; 2],
     #[allow(dead_code)]
     pub game_moves: Vec<DebugGameMoveInfo>,
     pub game_actions: Vec<GameAction>,

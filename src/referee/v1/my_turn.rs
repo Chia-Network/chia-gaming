@@ -473,7 +473,7 @@ impl MyTurnReferee {
 
         debug!("my turn state {:?}", self.state);
         debug!("entropy {state_number} {new_entropy:?}");
-        let mut result = Rc::new(game_handler.call_my_turn_driver(
+        let mut result = Rc::new(game_handler.call_my_turn_handler(
             allocator,
             &MyTurnInputs {
                 readable_new_move: readable_move.clone(),
@@ -557,7 +557,7 @@ impl MyTurnReferee {
         );
 
         let new_self = self.accept_this_move(
-            result.waiting_driver.clone(),
+            result.waiting_handler.clone(),
             new_state_following_my_move,
             state_to_update,
             args.clone(),

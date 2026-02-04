@@ -154,7 +154,7 @@ impl PartialOrd for RawCalpokerHandValue {
 //
 // Things we need as input
 //
-// Available by message, alice driver b and bob driver c.
+// Available by message, alice handler b and bob handler c.
 //
 // pub my_initial_cards: Vec<u8>,
 // pub opponent_initial_cards: Vec<u8>,

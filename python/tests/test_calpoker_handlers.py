@@ -168,14 +168,12 @@ class TheirTurnHandlerArgs:
 
 @dataclass
 class TheirTurnHandlerResult:
-    kind: int
     readable_move: Program
     evidence_list: Program
     my_turn_handler: Program
     message: bytes
 
-    def __init__(self, kind, readable_move, evidence_list, my_turn_handler=None, message=None):
-        self.kind = kind
+    def __init__(self, readable_move, evidence_list, my_turn_handler=None, message=None):
         self.readable_move = readable_move
         self.evidence_list = evidence_list
         self.my_turn_handler = my_turn_handler
@@ -184,7 +182,26 @@ class TheirTurnHandlerResult:
 def call_their_turn_handler(handler, args: TheirTurnHandlerArgs, step=None):
     "Waiter handler"
     ret = handler.run(args.as_clvm())
-    return TheirTurnHandlerResult(*ret.as_python())
+    ret_list = list(ret.as_python())
+    if len(ret_list) < 2:
+        raise ValueError(f"bad handler result: {ret_list}")
+    offset = 0
+    if isinstance(ret_list[0], int) and ret_list[0] == MoveCode.MAKE_MOVE.value:
+        offset = 1
+    if len(ret_list) == offset + 2:
+        return TheirTurnHandlerResult(ret_list[offset], ret_list[offset + 1])
+    if len(ret_list) == offset + 3:
+        return TheirTurnHandlerResult(
+            ret_list[offset],
+            ret_list[offset + 1],
+            ret_list[offset + 2],
+        )
+    return TheirTurnHandlerResult(
+        ret_list[offset],
+        ret_list[offset + 1],
+        ret_list[offset + 2],
+        ret_list[offset + 3],
+    )
 
 
 # my turn: alice a,c,e # we have the current game state locally in "my_turn" handlers
@@ -506,9 +523,6 @@ class Player:
             )
             validator_results.append(validator_result)
             dbg_assert_eq(MoveCode(int.from_bytes(expected_validator_result, byteorder="big")), validator_result.move_code)
-
-        if test_type != TestType.CHECK_FOR_ALICE_TRIES_TO_CHEAT:
-            dbg_assert_eq (expected_validator_result, their_turn_result.kind)
 
         have_normalized_move = Program.to(their_turn_result.readable_move).as_python()
         expected_normalized_move = Program.to(expected_readable_move).as_python()

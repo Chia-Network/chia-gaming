@@ -378,7 +378,7 @@ impl Referee {
         evidence: Evidence,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
         // Probably readable_info overlaps solution.
-        // Moving driver in that context is the signature.
+        // Moving handler in that context is the signature.
         // My reward coin string is the coin that we'll make
         // after the transaction below has been spent so its
         // parent is the coin id of that coin.

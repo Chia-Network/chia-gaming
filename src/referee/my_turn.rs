@@ -329,7 +329,7 @@ impl MyTurnReferee {
 
         debug!("my turn state {:?}", self.state);
         debug!("entropy {state_number} {new_entropy:?}");
-        let result = Rc::new(game_handler.call_my_turn_driver(
+        let result = Rc::new(game_handler.call_my_turn_handler(
             allocator,
             &MyTurnInputs {
                 readable_new_move: readable_move.clone(),
@@ -359,7 +359,7 @@ impl MyTurnReferee {
         );
 
         let new_self = self.accept_this_move(
-            &result.waiting_driver,
+            &result.waiting_handler,
             args.clone(),
             ref_puzzle_args.clone(),
             result.clone(),
@@ -638,7 +638,7 @@ impl MyTurnReferee {
         evidence: Evidence,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
         // Probably readable_info overlaps solution.
-        // Moving driver in that context is the signature.
+        // Moving handler in that context is the signature.
         // My reward coin string is the coin that we'll make
         // after the transaction below has been spent so its
         // parent is the coin id of that coin.
