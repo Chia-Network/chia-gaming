@@ -19,10 +19,35 @@
 (import games.calpoker-v1.onchain.make_cards exposing make_cards)
 (import games.calpoker-v1.onchain.arrange_cards exposing get_final_cards_in_canonical_order)
 
-; initial_mover_handler initial_waiter_handler whether_paired required_size_factor
-; initial_max_move_size initial_validator initial_validator_hash
-; initial_state initial_mover_share_proportion
-(defun calpoker_template 0 (li calpoker_alice_handler_a calpoker_bob_handler_a 0 200 32 pokera pokera_hash 0 100))
+; proposal factory takes readable returns ((my_contribution their_contribution [(size whether_we_go_first
+;   initial_validator_hash initial_move initial_max_move_size initial_state
+;   initial_mover_share)]) [initial_handler inital_validator])
+; The first return value creates the data sent over the wire, the send has data which correlates 1:1 with
+; items in the first list and contains info necessary locally to play and display the game
+(defun calpoker_make_proposal (bet_size)
+    (li
+        (li
+            bet_size
+            bet_size
+            (li
+                (li (* 2 bet_size) 1 pokera_hash 0 32 0 0)
+            )
+        )
+        (li
+            (li calpoker_alice_driver_a pokera)
+        )
+    )
+)
+
+; proposal parser takes (their_contribution my_contribution [(size whether_they_go_first initial_validator_hash initial_move
+;   initial_max_move_size initial_state initial_mover_share)])
+;   returns (readable [(initial_validator initial_handler)]) or error
+; The return value readable goes to the presentation layer and the other value is to enable gameplay
+(defun calpoker_parser (@ args (bet_size))
+    (assert (deep= args (f (calpoker_make_proposal (li (li bet_size)))))
+        (li bet_size (li (li pokera calpoker_bob_driver_a)))
+    )
+)
 
 ; state is empty
 ; local_move is nil
@@ -225,9 +250,9 @@
     )
 )
 
-; pre_state is (alice_commit bob_seed)
-; move is Alice's reveal of her card generating seed and her commit to which cards she's picking
-; state is (alice_commit alice_cards bob_cards)
+; TODO pull bob_seed out of state instead of currying it in here
+; state is alice's commit and bob's seed
+; move is alice's reveal of her card generating seed and her commit to which cards she's picking
 ; expecting a message revealing Alice's seed which results in local display once verified
 ; return readable is (alice_cards bob_cards)
 (defun calpoker_bob_handler_c (amount pre_state (alice_commit alice_cards bob_cards) move validation_program_hash split)
@@ -269,9 +294,22 @@
 
 ; pre_state is (bob_discards alice_cards bob_cards alice_commit)
 ; move is alice_salted_discards
-; state is (bob_discards alice_cards bob_cards alice_final_cards bob_final_cards alice_hand_value)
-(defun calpoker_bob_handler_e (amount pre_state (bob_discards alice_cards bob_cards alice_final_cards
-        bob_final_cards alice_hand_value) move validation_program_hash split)
+; either fraud proves or accepts split
+(defun calpoker_bob_driver_e (
+        amount
+        (@ state (
+            bob_discards
+            alice_cards
+            bob_cards
+            alice_final_cards
+            bob_final_cards
+            alice_hand_value
+            )
+        )
+        move
+        validation_program_hash
+        split
+        )
     (assign
         alice_discards (substr move 16 17)
         alice_selects (substr move 17 (strlen move))
