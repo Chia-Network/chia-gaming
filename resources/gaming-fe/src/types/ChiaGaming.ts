@@ -375,6 +375,16 @@ export class ExternalBlockchainInterface {
       },
     ).then((f) => f.json());
   }
+
+  getFeeEstimate(): Promise<number> {
+    return fetch(
+      `${this.baseUrl}/get_fee_estimate?user=${this.token}`,
+      {
+        body: '',
+        method: 'POST'
+      },
+    ).then((f) => f.json());
+  }
 }
 
 function select_cards_using_bits<T>(card: T[], mask: number): T[][] {
