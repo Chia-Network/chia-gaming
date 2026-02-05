@@ -917,14 +917,11 @@ mod gaming_wasm {
         } else {
             None
         };
-        let game_started = if let Some(gs) = &idle_result.game_started {
-            Some(JsGameStarted {
-                game_ids: gs.game_ids.iter().map(game_id_to_string).collect(),
-                failed: gs.failed.as_ref().map(|f| format!("{:?}", f)),
-            })
-        } else {
-            None
-        };
+
+        let game_started = idle_result.game_started.as_ref().map(|gs| JsGameStarted {
+            game_ids: gs.game_ids.iter().map(game_id_to_string).collect(),
+            failed: gs.failed.as_ref().map(|f| format!("{:?}", f)),
+        });
 
         serde_wasm_bindgen::to_value(&JsIdleResult {
             continue_on: idle_result.continue_on,
@@ -1018,7 +1015,7 @@ mod gaming_wasm {
             return hex::decode(hex_no_prefix).into_js();
         }
 
-        return hex::decode(hex).into_js();
+        hex::decode(hex).into_js()
     }
 
     #[wasm_bindgen]
