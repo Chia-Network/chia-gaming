@@ -15,11 +15,9 @@
 (import std.deep_compare)
 (import std.print)
 (import games.calpoker-v1.handcalc exposing handcalc)
-(import games.calpoker-v1.onchain.onehandcalc exposing onehandcalc)
-(import games.calpoker-v1.game_codes)
 (import games.calpoker-v1.onchain.make_card exposing make_card)
 (import games.calpoker-v1.onchain.make_cards exposing make_cards)
-(import games.calpoker-v1.onchain.arrange_cards exposing split_cards get_final_cards_in_canonical_order)
+(import games.calpoker-v1.onchain.arrange_cards exposing get_final_cards_in_canonical_order)
 
 ; initial_mover_handler initial_waiter_handler whether_paired required_size_factor
 ; initial_max_move_size initial_validator initial_validator_hash
@@ -35,10 +33,10 @@
         image (sha256 preimage)
         (list
             "calpoker_alice_handler_a"
-            image ; ??? come back for arg shape xxx
-            pokera ; will be used to evaluate this move.
+            image
+            pokera
             pokera_hash
-            pokerb ; will be used to evaluate bob's move.
+            pokerb
             pokerb_hash
             48
             0
@@ -50,9 +48,13 @@
 ; state is alice's commit
 ; move is bob's seed
 ; immediately sends a message giving Alice's seed
-(defun calpoker_alice_handler_b (PREIMAGE amount state_unused move validation_info_hash split)
-    (list (make_cards_readable (sha256 PREIMAGE move amount)) ()
-          (curry calpoker_alice_handler_c PREIMAGE) PREIMAGE)
+(defun calpoker_alice_handler_b (PREIMAGE amount state move validation_info_hash split)
+    (list
+        (make_cards_readable (sha256 PREIMAGE move amount))
+        0
+        (curry calpoker_alice_handler_c PREIMAGE)
+        PREIMAGE
+    )
 )
 
 (defun single-byte (raw-indices)
@@ -65,17 +67,8 @@
     )
 )
 
-(defun bitify (mylist)
-    (single-byte
-        (if (not mylist)
-            0
-            (logior (f mylist) (lsh (bitify (r mylist)) 1))
-        )
-    )
-)
-
-; state is alice's commit and bob's seed
-; move is alice's reveal of her card generating seed and her commit to which cards she's picking
+; state is Alice's commit and Bob's seed
+; move is Alice's reveal of her card generating seed and her commit to which cards she's picking
 (defun calpoker_alice_handler_c (PREIMAGE my_discards amount split entropy)
     (assign
         salt (substr entropy 0 16)
@@ -110,20 +103,17 @@
 ; We have composed cards as sublists but need them as pairs.
 (defun card_list_to_pair ((rank suit)) (c rank suit))
 
-; state is the cards for both players and alice's card pick commitment
+; state is the cards for both players and Alice's card pick commitment
 ; move is Bob's discards
 ; should immediately respond with a move revealing discards and selecting best cards and final split
 (defun calpoker_alice_handler_d (MY_SALT MY_PICKS amount
-            (@ state (bob_discards alice_cards bob_cards my_commit)) move validation_program_hash split)
+            (alice_discards alice_cards bob_cards my_commit) move validation_program_hash split)
     (assign
         (my_all_cards_indices bob_all_cards_indices) (get_final_cards_in_canonical_order
             alice_cards MY_PICKS bob_cards move) ;alice_cards alice_picks bob_cards bob_picks
 
-        (my_all_cards . bob_all_cards)
-            (c
-               (map make_card (print "make card alice" my_all_cards_indices))
-               (map make_card (print "make card bob" bob_all_cards_indices))
-            )
+        my_all_cards (map make_card (print "make card alice" my_all_cards_indices))
+        bob_all_cards (map make_card (print "make card bob" bob_all_cards_indices))
 
         (my_hand_value my_selects) (handcalc (map card_list_to_pair (print "my all cards" my_all_cards)))
         (bob_hand_value bob_selects) (handcalc (map card_list_to_pair (print "bob all cards" bob_all_cards)))
@@ -141,7 +131,7 @@
                 bob_hand_value
                 win_result
             )
-            ()
+            0
             (curry calpoker_alice_handler_e (concat MY_SALT MY_PICKS (single-byte (indices_to_bitfield my_selects))) split)
         )
     )
@@ -157,18 +147,18 @@
         NEXT_MOVE
         pokere
         pokere_hash
-        ()
-        ()
+        0
+        0
         0
         SPLIT
-        ()
+        0
     )
 )
 
 ; state is empty
 ; move is alice commit to a salted word
 (defun calpoker_bob_handler_a (amount state move validation_program_hash split)
-    (list 0 () calpoker_bob_handler_b)
+    (list 0 0 calpoker_bob_handler_b)
 )
 
 ; state is alice_commit
@@ -203,25 +193,14 @@
 ; expecting a message revealing Alice's seed which results in local display once verified
 (defun calpoker_bob_handler_c (amount (alice_commit bob_seed) move validation_program_hash split)
     (assign
-        (alice_cards bob_cards)
-        (make_cards (sha256 (substr move 0 16) bob_seed amount))
-
-        readable_bob_cards
-        (make_readable_card_descriptions bob_cards)
+        (alice_cards bob_cards) (make_cards (sha256 (substr move 0 16) bob_seed amount))
 
         (list
-            (list (make_readable_card_descriptions alice_cards) readable_bob_cards)
-            ()
+            (list (make_readable_card_descriptions alice_cards)
+                (make_readable_card_descriptions bob_cards))
+            0
             calpoker_bob_handler_d
         )
-    )
-)
-
-(defun slashable (amount validater state move new_validation_hash split evidence)
-    (assign
-        (returnval . exception) (run validater (list 0 (list move new_validation_hash split 0 0 0 amount)
-                state 0 0 0 evidence))
-        (not exception)
     )
 )
 
@@ -247,22 +226,9 @@
 
 ; state is (Bob's discards (alice_cards bob_cards) alice_commit)
 ; move is alice_salted_discards
-; either fraud proves or accepts split
-(defun calpoker_bob_handler_e
-    (amount
-     (@ state
-        (bob_discards
-         alice_cards
-         bob_cards
-         alice_final_cards
-         bob_final_cards
-         alice_hand_value
-         )
-        )
-     move
-     validation_program_hash
-     split
-     )
+(defun calpoker_bob_handler_e (amount (bob_discards alice_cards bob_cards
+        alice_final_cards bob_final_cards alice_hand_value) move
+        validation_program_hash split)
     (assign
         alice_discards (substr move 16 17)
         alice_selects (substr move 17 (strlen move))
