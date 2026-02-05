@@ -243,7 +243,7 @@ mod gaming_wasm {
             config: SynchronousGameCradleConfig {
                 game_types,
                 have_potato: jsconfig.have_potato,
-                identity: identity,
+                identity,
                 channel_timeout: Timeout::new(jsconfig.channel_timeout as u64),
                 unroll_timeout: Timeout::new(jsconfig.unroll_timeout as u64),
                 my_contribution: jsconfig.my_contribution.amt.clone(),
@@ -308,7 +308,7 @@ mod gaming_wasm {
         let id = get_next_id();
         insert_rng(id, rng);
         debug!("create_rng: {id}");
-        return Ok(id);
+        Ok(id);
     }
 
     pub fn with_rng<F, T>(cid: i32, f: F) -> Result<T, JsValue>
@@ -357,7 +357,7 @@ mod gaming_wasm {
         let cradle = serde_wasm_bindgen::from_value::<JsCradle>(json.clone()).into_js()?;
         let new_id = get_next_id();
         insert_cradle(new_id, cradle);
-        return Ok(new_id);
+        Ok(new_id);
     }
 
     fn with_game<F, T>(cid: i32, f: F) -> Result<T, JsValue>
@@ -472,7 +472,7 @@ mod gaming_wasm {
         }
 
         Ok(CoinsetSpendBundle {
-            aggregated_signature: format!("0x{}", hex::encode(&aggsig.bytes())),
+            aggregated_signature: format!("0x{}", hex::encode(aggsig.bytes())),
             coin_spends,
         })
     }
@@ -597,7 +597,7 @@ mod gaming_wasm {
             Ok(cradle
                 .cradle
                 .get_game_state_id(&mut cradle.allocator, &mut cradle.rng.0)?
-                .map(|h| hex::encode(&h.bytes())))
+                .map(|h| hex::encode(h.bytes())))
         })
     }
 
@@ -768,7 +768,7 @@ mod gaming_wasm {
             call_javascript_from_collection(&self.callbacks, "shutdown_complete", |args_array| {
                 args_array.set(
                     0,
-                    coin.map(|c| JsValue::from_str(&hex::encode(&c.to_bytes())))
+                    coin.map(|c| JsValue::from_str(&hex::encode(c.to_bytes())))
                         .unwrap_or_else(|| JsValue::NULL.clone()),
                 );
                 Ok(())
@@ -1013,12 +1013,12 @@ mod gaming_wasm {
         }
     }
 
-    fn check_for_hex(hex_with_prefix: &str) -> Result<Vec<u8>, JsValue> {
-        if hex_with_prefix.starts_with("0x") {
-            return hex::decode(&hex_with_prefix[2..]).into_js();
+    fn check_for_hex(hex: &str) -> Result<Vec<u8>, JsValue> {
+        if let Some(hex_no_prefix) = hex_with_prefix.strip_prefix("0x") {
+            return hex::decode(hex_no_prefix).into_js();
         }
 
-        return hex::decode(hex_with_prefix).into_js();
+        hex::decode(hex).into_js();
     }
 
     #[wasm_bindgen]
