@@ -1,20 +1,28 @@
 use std::rc::Rc;
 
+#[cfg(feature = "sim-tests")]
 use log::debug;
+#[cfg(feature = "sim-tests")]
 use rand::prelude::*;
+#[cfg(feature = "sim-tests")]
 use rand_chacha::ChaCha8Rng;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
 
 use crate::channel_handler::game::Game;
 use crate::channel_handler::types::ReadableMove;
-use crate::common::types::Amount;
+#[cfg(feature = "sim-tests")]
+use crate::common::types::{Amount, Hash};
 use crate::common::types::{AllocEncoder, Program, Sha256Input};
-use crate::common::types::{Error, GameID, Hash};
+use crate::common::types::{Error, GameID};
+#[cfg(feature = "sim-tests")]
 use crate::games::calpoker::decode_calpoker_readable;
+#[cfg(feature = "sim-tests")]
 use crate::games::calpoker::{CalpokerHandValue, RawCalpokerHandValue};
+#[cfg(feature = "sim-tests")]
 use crate::games::calpoker::{CalpokerResult, WinDirectionUser};
 use crate::peer_container::SynchronousGameCradle;
+#[cfg(feature = "sim-tests")]
 use crate::shutdown::BasicShutdownConditions;
 use crate::test_support::game::GameAction;
 #[cfg(feature = "sim-tests")]
