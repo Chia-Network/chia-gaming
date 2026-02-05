@@ -81,26 +81,25 @@ mod sim_tests {
             let ref2 = make_ref_info(env, 1)?;
             let referees = [ref1, ref2];
 
-            let make_party = |env: &mut ChannelHandlerEnv<R>,
-                              id: usize|
-             -> Result<ChannelHandlerParty, Error> {
-                ChannelHandlerParty::new(
-                    env,
-                    private_keys[id].clone(),
-                    referees[id].0.clone(),
-                    referees[id].1.clone(),
-                    launcher_coin_id.clone(),
-                    id == 1,
-                    private_to_public_key(&private_keys[id ^ 1].my_channel_coin_private_key),
-                    private_to_public_key(&private_keys[id ^ 1].my_unroll_coin_private_key),
-                    referees[id ^ 1].1.clone(),
-                    referees[id ^ 1].1.clone(),
-                    contributions[id].clone(),
-                    contributions[id ^ 1].clone(),
-                    unroll_advance_timeout.clone(),
-                    referees[id ^ 1].1.clone(),
-                )
-            };
+            let make_party =
+                |env: &mut ChannelHandlerEnv<R>, id: usize| -> Result<ChannelHandlerParty, Error> {
+                    ChannelHandlerParty::new(
+                        env,
+                        private_keys[id].clone(),
+                        referees[id].0.clone(),
+                        referees[id].1.clone(),
+                        launcher_coin_id.clone(),
+                        id == 1,
+                        private_to_public_key(&private_keys[id ^ 1].my_channel_coin_private_key),
+                        private_to_public_key(&private_keys[id ^ 1].my_unroll_coin_private_key),
+                        referees[id ^ 1].1.clone(),
+                        referees[id ^ 1].1.clone(),
+                        contributions[id].clone(),
+                        contributions[id ^ 1].clone(),
+                        unroll_advance_timeout.clone(),
+                        referees[id ^ 1].1.clone(),
+                    )
+                };
 
             let player1 = make_party(env, 0)?;
             let player2 = make_party(env, 1)?;

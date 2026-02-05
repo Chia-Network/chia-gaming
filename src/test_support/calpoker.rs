@@ -83,8 +83,8 @@ mod sim_tests {
 
     use crate::common::types::{Amount, Hash};
     use crate::games::calpoker::decode_calpoker_readable;
-    use crate::games::calpoker::{CalpokerHandValue, CalpokerResult, RawCalpokerHandValue};
     use crate::games::calpoker::WinDirectionUser;
+    use crate::games::calpoker::{CalpokerHandValue, CalpokerResult, RawCalpokerHandValue};
     use crate::shutdown::BasicShutdownConditions;
     use crate::simulator::tests::potato_handler_sim::{
         run_calpoker_container_with_action_list,
@@ -233,9 +233,7 @@ mod sim_tests {
                         raw_bob_picks: 205,
                         raw_alice_picks: 185,
                         alice_hand_result: CalpokerHandValue::TwoPair(4, 2, 12),
-                        alice_hand_value: RawCalpokerHandValue::SimpleList(vec![
-                            2, 2, 1, 4, 2, 12
-                        ]),
+                        alice_hand_value: RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 4, 2, 12]),
                         bob_hand_result: CalpokerHandValue::Pair(3, vec![3, 14, 13, 11]),
                         bob_hand_value: RawCalpokerHandValue::SimpleList(vec![
                             2, 1, 1, 1, 3, 14, 13, 11
@@ -257,8 +255,9 @@ mod sim_tests {
             let mut moves = prefix_test_moves(&mut allocator, false).to_vec();
             moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
             moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
-            let game_outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
-                .expect("should work");
+            let game_outcome =
+                run_calpoker_container_with_action_list(&mut allocator, &moves, false)
+                    .expect("should work");
             let game_results = game_run_outcome_to_move_results(&game_outcome);
             let bob_clvm_data = extract_info_from_game(&game_results);
             assert_ne!(bob_clvm_data.to_program().to_hex(), "80");
@@ -271,8 +270,9 @@ mod sim_tests {
             let mut moves = prefix_test_moves(&mut allocator, true).to_vec();
             moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
             moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
-            let game_outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, true)
-                .expect("should work");
+            let game_outcome =
+                run_calpoker_container_with_action_list(&mut allocator, &moves, true)
+                    .expect("should work");
             let game_results = game_run_outcome_to_move_results(&game_outcome);
             let bob_clvm_data = extract_info_from_game(&game_results);
             assert_ne!(bob_clvm_data.to_program().to_hex(), "80");
@@ -312,8 +312,8 @@ mod sim_tests {
                 let mut on_chain_moves_2: Vec<GameAction> =
                     moves.into_iter().take(1).map(|x| x.lose()).collect();
                 on_chain_moves_2.push(GameAction::GoOnChain(true as usize));
-                let test3 = run_calpoker_play_test(&mut allocator, &on_chain_moves_2)
-                    .expect("should work");
+                let test3 =
+                    run_calpoker_play_test(&mut allocator, &on_chain_moves_2).expect("should work");
                 debug!("play_result {test3:?}");
             },
         ));
@@ -325,8 +325,8 @@ mod sim_tests {
                 let mut on_chain_moves_2: Vec<GameAction> =
                     moves.into_iter().take(1).map(|x| x.lose()).collect();
                 on_chain_moves_2.push(GameAction::GoOnChain(true as usize));
-                let test3 = run_calpoker_play_test(&mut allocator, &on_chain_moves_2)
-                    .expect("should work");
+                let test3 =
+                    run_calpoker_play_test(&mut allocator, &on_chain_moves_2).expect("should work");
                 debug!("play_result {test3:?}");
             },
         ));
