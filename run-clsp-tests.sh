@@ -10,13 +10,15 @@ if ! which uv; then
   exit 1
 fi
 
-cd ~/chia-gaming/python
-uv venv
+cd ./python
+if [ ! -d ./venv ]; then
+  uv venv
+fi
 source .venv/bin/activate
 uv pip install .
 cd tests
 
-uv run compute_hashes.py
-uv run ./test_calpoker_validation.py
-uv run ./test_calpoker_handlers.py
+uv run python3 compute_hashes.py
+uv run python3 ./test_calpoker_validation.py
+uv run python3 ./test_calpoker_handlers.py
 
