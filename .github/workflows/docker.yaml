@@ -49,7 +49,7 @@ jobs:
           images: |
             ghcr.io/chia-network/chia/dev
           tags: |
-            type=raw,value=${{ github.event.inputs.sha }}
+            type=raw,value=${{ github.sha }}
 
       - name: Set Job Env
         uses: Chia-Network/actions/setjobenv@main
@@ -92,7 +92,8 @@ jobs:
           push: true
           build-args: |
             "COMMIT=${{ github.sha }}"
-          tags: ${{ steps.meta.outputs.tags }}
+          # tags: ${{ steps.meta.outputs.tags }}
+          tags: chia-network/chia-gaming-dev:latest
           labels: ${{ steps.meta.outputs.labels }}
 
 
