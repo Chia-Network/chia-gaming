@@ -107,7 +107,7 @@
 ; move is Bob's discards
 ; should immediately respond with a move revealing discards and selecting best cards and final split
 (defun calpoker_alice_handler_d (MY_SALT MY_PICKS amount
-            (alice_discards alice_cards bob_cards my_commit) move validation_program_hash split)
+            (my_commit alice_cards bob_cards) move validation_program_hash split)
     (assign
         (my_all_cards_indices bob_all_cards_indices) (get_final_cards_in_canonical_order
             alice_cards MY_PICKS bob_cards move) ;alice_cards alice_picks bob_cards bob_picks
