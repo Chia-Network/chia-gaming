@@ -42,7 +42,7 @@
             pokerb_hash
             48
             0
-            (curry calpoker_alice_handler_b preimage image)
+            (curry calpoker_alice_handler_b preimage)
         )
     )
 )
@@ -50,9 +50,9 @@
 ; state is alice's commit
 ; move is bob's seed
 ; immediately sends a message giving Alice's seed
-(defun calpoker_alice_handler_b (PREIMAGE IMAGE amount state_unused move validation_info_hash split)
+(defun calpoker_alice_handler_b (PREIMAGE amount state_unused move validation_info_hash split)
     (list (make_cards_readable (sha256 PREIMAGE move amount)) ()
-          (curry calpoker_alice_handler_c PREIMAGE move) PREIMAGE)
+          (curry calpoker_alice_handler_c PREIMAGE) PREIMAGE)
 )
 
 (defun single-byte (raw-indices)
@@ -76,10 +76,8 @@
 
 ; state is alice's commit and bob's seed
 ; move is alice's reveal of her card generating seed and her commit to which cards she's picking
-(defun calpoker_alice_handler_c (PREIMAGE BOB_SEED local_move amount split entropy)
+(defun calpoker_alice_handler_c (PREIMAGE my_discards amount split entropy)
     (assign
-        cards (make_cards (sha256 PREIMAGE BOB_SEED amount))
-        my_discards local_move
         salt (substr entropy 0 16)
         new_commit (sha256 (concat salt my_discards))
         (list
@@ -153,16 +151,16 @@
 ;    (alice_discards alice_card_selections alice_cards bob_cards alice_final_cards bob_final_cards)
 ; run after e.clsp
 ; alice makes a nil move to message bob who won
-(defun calpoker_alice_handler_e (next_move split)
+(defun calpoker_alice_handler_e (NEXT_MOVE SPLIT)
     (list
         "calpoker_alice_handler_e"
-        next_move
+        NEXT_MOVE
         pokere
         pokere_hash
         ()
         ()
         0
-        split
+        SPLIT
         ()
     )
 )
@@ -170,12 +168,12 @@
 ; state is empty
 ; move is alice commit to a salted word
 (defun calpoker_bob_handler_a (amount state move validation_program_hash split)
-    (list 0 () (curry calpoker_bob_handler_b move))
+    (list 0 () calpoker_bob_handler_b)
 )
 
 ; state is alice_commit
 ; move is bob_seed
-(defun calpoker_bob_handler_b (@ args (ALICE_COMMIT local_move amount split entropy))
+(defun calpoker_bob_handler_b (local_move amount split entropy)
     (assign
         seed (substr entropy 0 16)
         (list
@@ -187,7 +185,7 @@
             pokerc_hash
             48
             0
-            (curry calpoker_bob_handler_c seed)
+            calpoker_bob_handler_c
             parse_message
         )
     )
@@ -203,10 +201,10 @@
 ; state is alice's commit and bob's seed
 ; move is alice's reveal of her card generating seed and her commit to which cards she's picking
 ; expecting a message revealing Alice's seed which results in local display once verified
-(defun calpoker_bob_handler_c (BOB_SEED amount state move validation_program_hash split)
+(defun calpoker_bob_handler_c (amount (alice_commit bob_seed) move validation_program_hash split)
     (assign
         (alice_cards bob_cards)
-        (make_cards (sha256 (substr move 0 16) BOB_SEED amount))
+        (make_cards (sha256 (substr move 0 16) bob_seed amount))
 
         readable_bob_cards
         (make_readable_card_descriptions bob_cards)
@@ -214,11 +212,7 @@
         (list
             (list (make_readable_card_descriptions alice_cards) readable_bob_cards)
             ()
-            (curry calpoker_bob_handler_d
-                   alice_cards
-                   bob_cards
-                   (substr move 16 (strlen move))
-            )
+            calpoker_bob_handler_d
         )
     )
 )
@@ -233,7 +227,7 @@
 
 ; state is ((alice_cards bob_cards) alice_pick_commitment)
 ; move is Bob's discards
-(defun calpoker_bob_handler_d (ALICE_CARDS BOB_CARDS ALICE_COMMIT_2 local_move amount)
+(defun calpoker_bob_handler_d (local_move amount)
     (assign
         my_move local_move
         (list
