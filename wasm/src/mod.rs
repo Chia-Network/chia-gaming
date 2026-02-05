@@ -24,15 +24,16 @@ mod gaming_wasm {
 
     use chia_gaming::common::types;
     use chia_gaming::common::types::{
-        chia_dialect, Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinsetSpendBundle,
-        CoinsetSpendRecord, CoinsetCoin, CoinString, GameID, GameType, Hash, IntoErr, PrivateKey, Program, PublicKey,
-        PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout, convert_coinset_org_spend_to_spend, map_m
+        chia_dialect, convert_coinset_org_spend_to_spend, map_m, Aggsig, AllocEncoder, Amount,
+        CoinCondition, CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle,
+        CoinsetSpendRecord, GameID, GameType, Hash, IntoErr, PrivateKey, Program, PublicKey,
+        PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
     };
     use chia_gaming::peer_container::{
         GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
     };
-    use chia_gaming::potato_handler::types::{GameFactory, ToLocalUI};
     use chia_gaming::potato_handler::start::GameStart;
+    use chia_gaming::potato_handler::types::{GameFactory, ToLocalUI};
     use chia_gaming::shutdown::BasicShutdownConditions;
 
     #[cfg(target_arch = "wasm32")]
@@ -247,7 +248,9 @@ mod gaming_wasm {
                 unroll_timeout: Timeout::new(jsconfig.unroll_timeout as u64),
                 my_contribution: jsconfig.my_contribution.amt.clone(),
                 their_contribution: jsconfig.their_contribution.amt.clone(),
-                reward_puzzle_hash: PuzzleHash::from_hash(Hash::from_slice(&reward_puzzle_hash_bytes)),
+                reward_puzzle_hash: PuzzleHash::from_hash(Hash::from_slice(
+                    &reward_puzzle_hash_bytes,
+                )),
             },
             rng_id: jsconfig.rng_id,
         })
@@ -515,7 +518,8 @@ mod gaming_wasm {
 
     #[wasm_bindgen]
     pub fn start_games(cid: i32, initiator: bool, game: JsValue) -> Result<Vec<String>, JsValue> {
-        let js_game_start = serde_wasm_bindgen::from_value::<JsGameStart>(game.clone()).into_js()?;
+        let js_game_start =
+            serde_wasm_bindgen::from_value::<JsGameStart>(game.clone()).into_js()?;
         let res = with_game(cid, move |cradle: &mut JsCradle| {
             let game_start = GameStart {
                 game_id: cradle.cradle.next_game_id()?,
@@ -524,7 +528,9 @@ mod gaming_wasm {
                 amount: Amount::new(js_game_start.amount),
                 my_contribution: Amount::new(js_game_start.my_contribution),
                 my_turn: js_game_start.my_turn,
-                parameters: Program::from_bytes(&hex::decode(&js_game_start.parameters).into_gen()?),
+                parameters: Program::from_bytes(
+                    &hex::decode(&js_game_start.parameters).into_gen()?,
+                ),
             };
             cradle.cradle.start_games(
                 &mut cradle.allocator,
@@ -588,7 +594,10 @@ mod gaming_wasm {
     #[wasm_bindgen]
     pub fn get_game_state_id(cid: i32) -> Result<Option<String>, JsValue> {
         with_game(cid, move |cradle: &mut JsCradle| {
-            Ok(cradle.cradle.get_game_state_id(&mut cradle.allocator, &mut cradle.rng.0)?.map(|h| hex::encode(&h.bytes())))
+            Ok(cradle
+                .cradle
+                .get_game_state_id(&mut cradle.allocator, &mut cradle.rng.0)?
+                .map(|h| hex::encode(&h.bytes())))
         })
     }
 
@@ -746,9 +755,7 @@ mod gaming_wasm {
             })
         }
 
-        fn shutdown_started(
-            &mut self
-        ) -> Result<(), chia_gaming::common::types::Error> {
+        fn shutdown_started(&mut self) -> Result<(), chia_gaming::common::types::Error> {
             call_javascript_from_collection(&self.callbacks, "shutdown_started", |_args_array| {
                 Ok(())
             })
@@ -768,7 +775,10 @@ mod gaming_wasm {
             })
         }
 
-        fn going_on_chain(&mut self, got_error: bool) -> Result<(), chia_gaming::common::types::Error> {
+        fn going_on_chain(
+            &mut self,
+            got_error: bool,
+        ) -> Result<(), chia_gaming::common::types::Error> {
             call_javascript_from_collection(&self.callbacks, "going_on_chain", |args_array| {
                 args_array.set(0, JsValue::from_bool(got_error));
                 Ok(())
@@ -943,9 +953,7 @@ mod gaming_wasm {
 
     #[wasm_bindgen]
     pub fn cradle_amount(cid: i32) -> Result<JsValue, JsValue> {
-        let amount = with_game(cid, move |cradle: &mut JsCradle| {
-            Ok(cradle.cradle.amount())
-        })?;
+        let amount = with_game(cid, move |cradle: &mut JsCradle| Ok(cradle.cradle.amount()))?;
         serde_wasm_bindgen::to_value(&JsAmount { amt: amount }).into_js()
     }
 
@@ -1027,10 +1035,20 @@ mod gaming_wasm {
             puzzle_hash,
             amount,
             puzzle_reveal,
-            solution
-        ).into_js()?;
-        let puzzle_reveal_node = converted_spend.bundle.puzzle.to_program().to_nodeptr(&mut allocator).into_js()?;
-        let solution_node = converted_spend.bundle.solution.to_nodeptr(&mut allocator).into_js()?;
+            solution,
+        )
+        .into_js()?;
+        let puzzle_reveal_node = converted_spend
+            .bundle
+            .puzzle
+            .to_program()
+            .to_nodeptr(&mut allocator)
+            .into_js()?;
+        let solution_node = converted_spend
+            .bundle
+            .solution
+            .to_nodeptr(&mut allocator)
+            .into_js()?;
         let coin_string = &converted_spend.coin;
         let parent_of_created = coin_string.to_coin_id();
         let run_output = run_program(
@@ -1127,5 +1145,4 @@ mod gaming_wasm {
         let hashed = hex::encode(Sha256Input::Bytes(bytes_str.as_bytes()).hash().bytes());
         serde_wasm_bindgen::to_value(&hashed).into_js()
     }
-
 }
