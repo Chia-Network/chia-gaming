@@ -308,7 +308,7 @@ mod gaming_wasm {
         let id = get_next_id();
         insert_rng(id, rng);
         debug!("create_rng: {id}");
-        Ok(id);
+        Ok(id)
     }
 
     pub fn with_rng<F, T>(cid: i32, f: F) -> Result<T, JsValue>
@@ -357,7 +357,7 @@ mod gaming_wasm {
         let cradle = serde_wasm_bindgen::from_value::<JsCradle>(json.clone()).into_js()?;
         let new_id = get_next_id();
         insert_cradle(new_id, cradle);
-        Ok(new_id);
+        Ok(new_id)
     }
 
     fn with_game<F, T>(cid: i32, f: F) -> Result<T, JsValue>
@@ -1014,11 +1014,11 @@ mod gaming_wasm {
     }
 
     fn check_for_hex(hex: &str) -> Result<Vec<u8>, JsValue> {
-        if let Some(hex_no_prefix) = hex_with_prefix.strip_prefix("0x") {
+        if let Some(hex_no_prefix) = hex.strip_prefix("0x") {
             return hex::decode(hex_no_prefix).into_js();
         }
 
-        hex::decode(hex).into_js();
+        return hex::decode(hex).into_js();
     }
 
     #[wasm_bindgen]
