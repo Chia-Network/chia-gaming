@@ -11,9 +11,9 @@ use clvm_traits::{ClvmEncoder, ToClvm};
 
 use crate::channel_handler::game::Game;
 use crate::channel_handler::types::ReadableMove;
+use crate::common::types::{AllocEncoder, Program, Sha256Input};
 #[cfg(feature = "sim-tests")]
 use crate::common::types::{Amount, Hash};
-use crate::common::types::{AllocEncoder, Program, Sha256Input};
 use crate::common::types::{Error, GameID};
 #[cfg(feature = "sim-tests")]
 use crate::games::calpoker::decode_calpoker_readable;
