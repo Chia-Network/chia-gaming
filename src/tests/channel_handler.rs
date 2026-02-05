@@ -1,23 +1,26 @@
+#[cfg(feature = "sim-tests")]
 use std::rc::Rc;
 
+#[cfg(feature = "sim-tests")]
+use crate::channel_handler::game_handler::GameHandler;
+#[cfg(feature = "sim-tests")]
+use clvm_traits::ToClvm;
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
-use clvm_traits::ToClvm;
-
-use crate::channel_handler::game_handler::GameHandler;
-
 use crate::channel_handler::types::{
-    read_unroll_metapuzzle, read_unroll_puzzle, ChannelHandlerEnv, GameStartInfo, UnrollCoin,
-    UnrollCoinConditionInputs, ValidationProgram,
+    read_unroll_metapuzzle, read_unroll_puzzle, ChannelHandlerEnv, UnrollCoin,
+    UnrollCoinConditionInputs,
 };
+#[cfg(feature = "sim-tests")]
+use crate::channel_handler::types::{GameStartInfo, ValidationProgram};
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{
     get_standard_coin_puzzle, private_to_public_key, puzzle_hash_for_pk,
 };
-use crate::common::types::{
-    AllocEncoder, Amount, CoinID, GameID, Hash, Program, Puzzle, PuzzleHash, Sha256tree, Timeout,
-};
+use crate::common::types::{AllocEncoder, Amount, Hash, Puzzle, Sha256tree};
+#[cfg(feature = "sim-tests")]
+use crate::common::types::{CoinID, GameID, Program, PuzzleHash, Timeout};
 #[cfg(feature = "sim-tests")]
 use crate::test_support::game::{ChannelHandlerGame, DEFAULT_UNROLL_TIME_LOCK};
 

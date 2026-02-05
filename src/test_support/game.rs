@@ -1,38 +1,50 @@
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::runner::ChannelHandlerParty;
+#[cfg(feature = "sim-tests")]
 use crate::channel_handler::types::ChannelCoinSpendInfo;
+#[cfg(feature = "sim-tests")]
 use crate::channel_handler::types::ChannelHandlerPrivateKeys;
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::types::HandshakeResult;
+#[cfg(feature = "sim-tests")]
 use crate::common::standard_coin::puzzle_for_pk;
+#[cfg(feature = "sim-tests")]
 use crate::common::types::CoinID;
 #[cfg(feature = "sim-tests")]
 use crate::common::types::GameID;
+#[cfg(feature = "sim-tests")]
 use crate::common::types::Hash;
+#[cfg(feature = "sim-tests")]
 use crate::common::types::Puzzle;
+#[cfg(feature = "sim-tests")]
 use crate::common::types::PuzzleHash;
+#[cfg(feature = "sim-tests")]
 use crate::common::types::Sha256tree;
-use crate::common::types::Timeout;
 #[cfg(feature = "sim-tests")]
 use crate::shutdown::ShutdownConditions;
 #[cfg(feature = "sim-tests")]
+use log::debug;
+#[cfg(feature = "sim-tests")]
+use rand::prelude::*;
+#[cfg(feature = "sim-tests")]
 use std::rc::Rc;
 
+use crate::common::types::Timeout;
 use lazy_static::lazy_static;
-
-use rand::prelude::*;
-
-use log::debug;
 
 lazy_static! {
     pub static ref DEFAULT_UNROLL_TIME_LOCK: Timeout = Timeout::new(5);
 }
-
+#[cfg(feature = "sim-tests")]
 use crate::channel_handler::game::Game;
-use crate::channel_handler::types::{ChannelHandlerEnv, ReadableMove, StartGameResult};
+use crate::channel_handler::types::ReadableMove;
+#[cfg(feature = "sim-tests")]
+use crate::channel_handler::types::{ChannelHandlerEnv, StartGameResult};
+#[cfg(feature = "sim-tests")]
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_synthetic_public_key, ChiaIdentity,
 };
+#[cfg(feature = "sim-tests")]
 use crate::common::types::{Amount, CoinString, Error, IntoErr};
 
 #[cfg(feature = "sim-tests")]
