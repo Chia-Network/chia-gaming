@@ -91,7 +91,7 @@ jobs:
           no-cache: true
           push: true
           build-args: |
-            "COMMIT=${{ github.event.inputs.sha }}"
+            "COMMIT=${{ github.sha }}"
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
