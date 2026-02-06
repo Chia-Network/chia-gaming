@@ -90,15 +90,17 @@ jobs:
           docker image prune -f
 
       - name: Run headless test
-        timeout-minutes: 20
-        max_attempts: 3
         env:
           DETECT_CHROMEDRIVER_VERSION: "true"
           FIREFOX_HEADLESS: "true"
-        run: |
-          sudo apt update
-          sudo apt-get install -qy xvfb libnss3-dev libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2t64
-          (cd resources/fe-test && xvfb-run -a ./test.sh)
+        uses: nick-fields/retry@v3
+        with:
+          max_attempts: 3
+          timeout-minutes: 20
+          command: |
+            sudo apt update
+            sudo apt-get install -qy xvfb libnss3-dev libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2t64
+            (cd resources/fe-test && xvfb-run -a ./test.sh)
 
       - name: Cleanup xvfb pidx
         run: |
