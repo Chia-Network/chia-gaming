@@ -1,5 +1,5 @@
-import { CardValueSuit } from "../../../types/californiaPoker";
-import { SuitName } from "../../../types/californiaPoker/CardValueSuit";
+import { CardValueSuit } from "../../../../types/californiaPoker";
+import { SuitName } from "../../../../types/californiaPoker/CardValueSuit";
 
 function sortHand(hand: CardValueSuit[]): CardValueSuit[] {
   return [...hand].sort((a, b) => {

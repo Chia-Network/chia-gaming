@@ -1,4 +1,4 @@
-import { Info } from 'lucide-react';
+import { Info, Loader2 } from 'lucide-react';
 import {
   StartConnectResult,
   walletConnectState,
@@ -32,10 +32,11 @@ export const WalletConnectDialog: React.FC<ShowWalletConnectState> = ({
       <QRCodeModal open={showQRModal} uri={connectionUri} onClose={dismiss} />
 
       {!initialized ? (
-        <div className='flex flex-col gap-2 sm:gap-3'>
+        <div className='flex flex-col items-center gap-2 sm:gap-3'>
           <h5 className='text-[1.2rem] sm:text-[1.5rem] font-semibold'>
             Initializing WalletConnect...
           </h5>
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
           <p className='mt-2 text-base'>
             Please wait while we set up the connection.
           </p>
@@ -73,8 +74,8 @@ export const WalletConnectDialog: React.FC<ShowWalletConnectState> = ({
             </Button>
           </div>
 
-          <div className='bg-(--color-info-bg-subtle) rounded-lg p-4 flex gap-2 mt-3 text-(--color-info-text-contrast)'>
-            <div className='p-1 bg-(--color-info-bg) rounded-full shrink-0 flex items-center justify-center h-fit'>
+          <div className='bg-(--color-info-bg-subtle) z-10 rounded-lg p-4 flex gap-2 mt-3 text-(--color-info-text-contrast)'>
+            <div className='p-1 bg-(--color-info-bg)  rounded-full shrink-0 flex items-center justify-center h-fit'>
               <Info
                 style={{ color: 'var(--color-info-solid)', fontSize: '1.25rem' }}
               />
