@@ -86,7 +86,7 @@ print_dict(bob_data)
 # Validators now produce all game state
 # handcalc is called off-chain. It is a heavy operation. We then pass that info on
 
-# handler_args = (new_move, amount, last_mover_share, last_max_move_size, entropy)
+# handler_args = (new_move, amount, state, last_mover_share, entropy)
 # Program.to(our_data["handler_program"]).run()
 
 @dataclass
@@ -135,10 +135,10 @@ class MyTurnHandlerResult:
         self.their_turn_handler = their_turn_handler
         self.message_parser = message_parser
 
-def call_my_turn_handler(handler: Program, local_move, amount, split, entropy):
+def call_my_turn_handler(handler: Program, local_move, amount, state, split, entropy):
     "Mover handler"
     print(f"Running handler {handler.get_tree_hash()}")
-    raw_args = Program.to([local_move, amount, split, entropy])
+    raw_args = Program.to([local_move, amount, state, split, entropy])
     print(f"raw args {raw_args}")
     ret = handler.run(raw_args)
     # x = BaseException(ret)
@@ -205,7 +205,7 @@ def call_their_turn_handler(handler, args: TheirTurnHandlerArgs, step=None):
 
 
 # my turn: alice a,c,e # we have the current game state locally in "my_turn" handlers
-# (local_move amount split entropy)
+# (local_move amount state split entropy)
 
 # their turn: bob a,c,e == (alice b,d)
 # (amount (@ state (bob_discards alice_selects alice_cards bob_cards alice_hand_value)) move validation_program_hash split)
@@ -399,6 +399,7 @@ class Player:
             Program.to(self.my_turn_handler),
             move.input_move_to_our_turn,
             self.amount,
+            self.state.state,
             self.state.mover_share,
             move.entropy,
         )

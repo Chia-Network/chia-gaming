@@ -15,7 +15,7 @@ use crate::channel_handler::v1::game_handler::{
 
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
-    AllocEncoder, Amount, Error, Hash, Program, Puzzle, PuzzleHash, Sha256tree,
+    AllocEncoder, Amount, Error, Hash, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree,
 };
 use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RMFixed};
 use crate::referee::v1::their_turn::{TheirTurnReferee, TheirTurnRefereeGameState};
@@ -471,6 +471,14 @@ impl MyTurnReferee {
 
         let args = self.spend_this_coin();
 
+        let state_to_update = match self.state.borrow() {
+            MyTurnRefereeGameState::Initial { initial_state, .. } => initial_state.clone(),
+            MyTurnRefereeGameState::AfterTheirTurn {
+                state_after_their_turn,
+                ..
+            } => state_after_their_turn.clone(),
+        };
+
         debug!("my turn state {:?}", self.state);
         debug!("entropy {state_number} {new_entropy:?}");
         let mut result = Rc::new(game_handler.call_my_turn_handler(
@@ -480,6 +488,7 @@ impl MyTurnReferee {
                 amount: self.fixed.amount.clone(),
                 last_mover_share: args.game_move.basic.mover_share.clone(),
                 entropy: new_entropy.clone(),
+                state: ProgramRef::new(state_to_update.clone()),
             },
         )?);
 
@@ -493,14 +502,6 @@ impl MyTurnReferee {
         }
 
         debug!("my turn result {result:?}");
-
-        let state_to_update = match self.state.borrow() {
-            MyTurnRefereeGameState::Initial { initial_state, .. } => initial_state.clone(),
-            MyTurnRefereeGameState::AfterTheirTurn {
-                state_after_their_turn,
-                ..
-            } => state_after_their_turn.clone(),
-        };
 
         debug!("my turn start with state {state_to_update:?}");
         debug!(

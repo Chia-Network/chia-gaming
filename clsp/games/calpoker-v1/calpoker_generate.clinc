@@ -27,7 +27,7 @@
 ; state is empty
 ; local_move is nil
 ; makes a move using entropy
-(defun calpoker_alice_handler_a (local_move amount split entropy)
+(defun calpoker_alice_handler_a (local_move amount state split entropy)
     (assign
         preimage (substr entropy 0 16)
         image (sha256 preimage)
@@ -69,7 +69,7 @@
 
 ; state is (alice_commit bob_seed)
 ; move is Alice's reveal of her card generating seed and her commit to which cards she's picking
-(defun calpoker_alice_handler_c (PREIMAGE my_discards amount split entropy)
+(defun calpoker_alice_handler_c (PREIMAGE my_discards amount state split entropy)
     (assign
         salt (substr entropy 0 16)
         new_commit (sha256 (concat salt my_discards))
@@ -141,7 +141,7 @@
 ;    (alice_discards alice_card_selections alice_cards bob_cards alice_final_cards bob_final_cards)
 ; run after e.clsp
 ; Alice makes a nil move to message Bob who won
-(defun calpoker_alice_handler_e (NEXT_MOVE SPLIT)
+(defun calpoker_alice_handler_e (NEXT_MOVE SPLIT local_move amount state last_mover_share entropy)
     (list
         "calpoker_alice_handler_e"
         NEXT_MOVE
@@ -163,7 +163,7 @@
 
 ; state is alice_commit
 ; move is bob_seed
-(defun calpoker_bob_handler_b (local_move amount split entropy)
+(defun calpoker_bob_handler_b (local_move amount state split entropy)
     (list
         "calpoker_bob_handler_b"
         (substr entropy 0 16)
@@ -198,7 +198,7 @@
 
 ; state is ((alice_cards bob_cards) alice_pick_commitment)
 ; move is Bob's discards
-(defun calpoker_bob_handler_d (my_move amount)
+(defun calpoker_bob_handler_d (my_move amount state split entropy)
     (list
         "calpoker_bob_handler_d"
         my_move
@@ -231,6 +231,7 @@
                 (print "compare result" (deep_compare (print "split was" split) (print "amt div 2" (/ amount 2))))
             )
             (list (indices_to_bitfield bob_selects))
+            0
         )
     )
 )

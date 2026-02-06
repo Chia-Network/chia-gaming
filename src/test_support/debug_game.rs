@@ -261,6 +261,7 @@ impl BareDebugGameHandler {
                 entropy: self.rng[self.move_count].clone(),
                 amount: self.start.amount.clone(),
                 last_mover_share: self.mover_share.clone(),
+                state: self.state.clone(),
             },
         )?;
 

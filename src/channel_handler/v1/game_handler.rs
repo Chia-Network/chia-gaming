@@ -21,7 +21,7 @@ use crate::referee::types::GameMoveDetails;
 
 // How to call the clvm program in this object:
 //
-// My turn handler takes (readable_new_move amount last_state last_move last_mover_share entropy) and returns
+// My turn handler takes (readable_new_move amount state last_mover_share entropy) and returns
 //       (waiting_handler move validation_program validation_program_hash state max_move_size mover_share
 //       message_parser)
 // Message parser takes (message amount state move mover_share) and returns error or readable_info
@@ -52,6 +52,7 @@ pub struct MyTurnInputs {
 
     pub amount: Amount,
     pub last_mover_share: Amount,
+    pub state: ProgramRef,
 }
 
 #[derive(Clone, Debug)]
@@ -169,8 +170,8 @@ impl GameHandler {
             (
                 inputs.amount.clone(),
                 (
-                    inputs.last_mover_share.clone(),
-                    (inputs.entropy.clone(), ()),
+                    inputs.state.clone(),
+                    (inputs.last_mover_share.clone(), (inputs.entropy.clone(), ())),
                 ),
             ),
         )
