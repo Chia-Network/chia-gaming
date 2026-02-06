@@ -6,7 +6,7 @@ import {
   suitNames,
 } from '../types/ChiaGaming';
 import { ExpandMore } from '@mui/icons-material';
-import { RANK_SYMBOLS } from '../features/californiaPoker/constants/constants';
+import { RANK_SYMBOLS } from '../features/calPoker/components/constants/constants';
 
 interface GameLogProps {
   log: OutcomeLogLine[];

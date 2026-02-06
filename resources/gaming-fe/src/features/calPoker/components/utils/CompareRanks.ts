@@ -1,4 +1,4 @@
-import { FormatHandProps } from "../../../types/californiaPoker";
+import { FormatHandProps } from "../../../../types/californiaPoker";
 
 const compareRanks = (rank1: FormatHandProps, rank2: FormatHandProps) => {
   if (rank1.score !== rank2.score) {
