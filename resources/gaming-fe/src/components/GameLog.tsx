@@ -156,7 +156,7 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
 
                       <ExpandMore
                         data-testid={`log-expand-button-${index}`}
-                        className={`ml-1 shrink-0 transform transition-transform duration-200 ${
+                        className={`ml-1 flex-shrink-0 transform transition-transform duration-200 ${
                           isExpanded ? 'rotate-180' : 'rotate-0'
                         } text-canvas-muted`}
                       />
@@ -166,7 +166,7 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                     {isExpanded && (
                       <div className='pt-2 border-t border-canvas-border flex flex-col gap-2'>
                         {/* You Section */}
-                        <div data-testid={`log-entry-my-hand-${index}`}>
+                        <div data-testid={`log-entry-me-${index}`}>
                           <p className='text-xs font-bold text-canvas-solid mb-1 uppercase tracking-wide'>
                             Your Hand
                           </p>

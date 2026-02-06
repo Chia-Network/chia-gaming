@@ -527,9 +527,7 @@ describe("Out of money test", function () {
         driver,
         () =>
           driver.wait(
-            until.elementLocated(
-              byAttribute("data-testid", "end-session-dialog-button"),
-            ),
+            until.elementLocated(byAttribute("data-testid", "stop-playing")),
             10000,
           ),
         (elt) => waitEnabled(driver, elt),
@@ -569,28 +567,9 @@ describe("Out of money test", function () {
 
     console.log("selecting alice cards");
     await clickFourCards(driver, "alice", 0x55);
-
+    driver.sleep(5000);
     console.log("stop the game");
-    await driver.switchTo().defaultContent();
-
-    // 2. re-enter iframe
-    const iframe = await driver.wait(
-      until.elementLocated(By.css('iframe[src*="view=game"]')),
-      20000,
-    );
-    await driver.switchTo().frame(iframe);
-
-    // 3. locate button INSIDE iframe
-    let stopButton = await waitForNonError(
-      driver,
-      () =>
-        driver.wait(
-          until.elementLocated(byAttribute("data-testid", "stop-playing")),
-        ),
-      (elt) => waitEnabled(driver, elt),
-      1.0,
-    );
-    await stopButton.click();
+    await clickEndSession(driver, "alice");
 
     console.log("awaiting shutdown");
 
@@ -793,17 +772,11 @@ describe("Out of money test", function () {
     await wait(driver, 5.0);
 
     console.log("stop the game");
-    await driver.executeScript("window.scroll(0, 0);");
-    let stopButton = await waitForNonError(
-      driver,
-      () =>
-        driver.wait(
-          until.elementLocated(byAttribute("data-testid", "stop-playing")),
-        ),
-      (elt) => waitEnabled(driver, elt),
-      1.0,
+
+    const button = await driver.findElement(
+      By.css('[data-testid="stop-playing"]'),
     );
-    await stopButton.click();
+    await driver.executeScript("arguments[0].click();", button);
 
     console.log("awaiting shutdown");
 
