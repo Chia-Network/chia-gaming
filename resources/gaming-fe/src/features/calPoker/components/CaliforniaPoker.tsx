@@ -4,45 +4,43 @@ import {
   BestHandType,
   CaliforniapokerProps,
   CardValueSuit,
-  FormatHandProps,
   MovingCardData,
   SwappingCards,
-} from '../../types/californiaPoker';
-import { Button, } from '../../components/button';
+} from '../../../types/californiaPoker';
 // Constants
 import {
-  ANIMATION_DELAY,
   BUTTON_ACTIVE,
   BUTTON_BASE,
   GAME_STATES,
-  RANK_SYMBOLS,
   SWAP_ANIMATION_DURATION,
 } from './constants/constants';
 
 // Utils
-import {
-  calculateMovingCards,
-  compareRanks,
-  evaluateHand,
-  formatHandDescription,
-  getCombinations,
-  makeDescription,
-} from './utils';
+import { formatHandDescription, makeDescription } from './utils';
 import { HandDisplay, MovingCard } from './components';
-import { CalpokerOutcome, OutcomeHandType, suitNames } from '../../types/ChiaGaming';
-import { SuitName } from '../../types/californiaPoker/CardValueSuit';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import {
+  CalpokerOutcome,
+  OutcomeHandType,
+  suitNames,
+} from '../../../types/ChiaGaming';
+import { SuitName } from '../../../types/californiaPoker/CardValueSuit';
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from '../../../components/ui/card';
 import { WalletIcon } from 'lucide-react';
-import { cn } from '@/src/lib/utils';
-import GameBottomBar from './components/GameBottomBar';
 
+import GameBottomBar from './components/GameBottomBar';
+import { cn } from '../../../lib/utils';
+import { EndGameDialog } from './components/AnotherHandPopup';
 
 function translateTopline(topline: string | undefined): string | null {
   if (!topline) return null;
-  const res = { 'win': 'player', 'lose': 'ai' }[topline];
+  const res = { win: 'player', lose: 'ai' }[topline];
   return res ? res : 'tie';
 }
-
 
 // Main Component
 const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
@@ -59,6 +57,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   myWinOutcome,
   banner,
   balanceDisplay,
+  stopPlaying,
 }) => {
   const isPlayerAlice = playerNumber === 1;
   const [gameState, setGameState] = useState(GAME_STATES.INITIAL);
@@ -75,13 +74,21 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     balanceDisplay.match(/(\d+)\s*vs\s*(\d+)/i) || [];
   const [playerCards, setPlayerCards] = useState<CardValueSuit[]>([]);
   const [opponentCards, setOpponentCards] = useState<CardValueSuit[]>([]);
-  const [rememberedOutcome, setRememberedOutcome] = useState<CalpokerOutcome | undefined>(undefined);
-  const [rememberedCards, setRememberedCards] = useState<CardValueSuit[][]>([playerCards, opponentCards]);
+  const [rememberedOutcome, setRememberedOutcome] = useState<
+    CalpokerOutcome | undefined
+  >(undefined);
+  const [rememberedCards, setRememberedCards] = useState<CardValueSuit[][]>([
+    playerCards,
+    opponentCards,
+  ]);
   const [rememberedCardSelections, setRememberedCardSelections] = useState(0);
   const [playerDisplayText, setPlayerDisplayText] = useState<string>('');
   const [opponentDisplayText, setOpponentDisplayText] = useState<string>('');
 
-  const cvsFromCard: (card: number[], index: number) => CardValueSuit = ([rank, suit], index) => ({
+  const cvsFromCard: (card: number[], index: number) => CardValueSuit = (
+    [rank, suit],
+    index,
+  ) => ({
     rank,
     suit: suitMap[suit],
     originalIndex: index,
@@ -95,10 +102,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     setPlayerCards(mappedPlayer);
     setOpponentCards(mappedOpponent);
     if (mappedPlayer.length && mappedOpponent.length) {
-      const newRemCards = [
-        mappedPlayer,
-        mappedOpponent
-      ];
+      const newRemCards = [mappedPlayer, mappedOpponent];
       console.log('setRememberedCards', newRemCards);
       setRememberedCards(newRemCards);
     }
@@ -109,7 +113,11 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
 
   useEffect(() => {
     const haveOutcome = outcome ? outcome : rememberedOutcome;
-    if (outcome && moveNumber === 0 && gameState === GAME_STATES.AWAITING_SWAP) {
+    if (
+      outcome &&
+      moveNumber === 0 &&
+      gameState === GAME_STATES.AWAITING_SWAP
+    ) {
       console.log('outcome is', JSON.stringify(outcome));
       swapCards(outcome);
     }
@@ -134,6 +142,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     setPlayerSelected([]);
     setWinner(null);
   };
+  const [showEndDialog, setShowEndDialog] = useState(false);
   const NewGame = () => {
     console.log('starting again');
     doHandleMakeMove();
@@ -176,21 +185,19 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     }
   };
 
-
-
   const isDisabled =
-  !isPlayerTurn ||
-  (moveNumber === 0
-    ? false
-    : moveNumber === 1
-      ? !(
-          (gameState === GAME_STATES.SELECTING &&
-            playerSelected.length === 4) ||
-          gameState === GAME_STATES.SWAPPING
-        )
-      : true);
+    !isPlayerTurn ||
+    (moveNumber === 0
+      ? false
+      : moveNumber === 1
+        ? !(
+            (gameState === GAME_STATES.SELECTING &&
+              playerSelected.length === 4) ||
+            gameState === GAME_STATES.SWAPPING
+          )
+        : true);
 
-const isActive = !isDisabled; // single source of truth
+  const isActive = !isDisabled; // single source of truth
   // ---------- TEXT ----------
   let buttonText = '';
 
@@ -243,7 +250,7 @@ const isActive = !isDisabled; // single source of truth
     playerSwapIndices.forEach((swapIndex, i) => {
       // Choose a target ai index — prefer aligned index if exists, otherwise reuse swapIndex
       const aiIndex = aiSwapIndices[i];
-      usedPlayerCards |= (1 << swapIndex);
+      usedPlayerCards |= 1 << swapIndex;
 
       const mySource = document.querySelector(
         `[data-card-id="${myPrefix}-${swapIndex}"]`,
@@ -265,7 +272,7 @@ const isActive = !isDisabled; // single source of truth
           endY: oppRect.top,
           width: myRect.width,
           height: myRect.height,
-          direction: 'playerToAi'
+          direction: 'playerToAi',
         });
       }
     });
@@ -273,7 +280,7 @@ const isActive = !isDisabled; // single source of truth
     // Opponent -> Player animations
     aiSwapIndices.forEach((swapIndex, i) => {
       const playerIndex = playerSwapIndices[i];
-      usedAiCards |= (1 << swapIndex);
+      usedAiCards |= 1 << swapIndex;
 
       const oppSource = document.querySelector(
         `[data-card-id="${oppPrefix}-${swapIndex}"]`,
@@ -295,12 +302,17 @@ const isActive = !isDisabled; // single source of truth
           endY: myRect.top,
           width: oppRect.width,
           height: oppRect.height,
-          direction: 'aiToPlayer'
+          direction: 'aiToPlayer',
         });
       }
     });
 
-    const selfCardAnimate = (myPrefix: string, usedMask: number, card: CardValueSuit, i: number) => {
+    const selfCardAnimate = (
+      myPrefix: string,
+      usedMask: number,
+      card: CardValueSuit,
+      i: number,
+    ) => {
       if (usedMask & (1 << i)) {
         return;
       }
@@ -319,18 +331,20 @@ const isActive = !isDisabled; // single source of truth
           endY: myRect.top,
           width: myRect.width,
           height: myRect.height,
-          direction: 'payerToAi'
+          direction: 'payerToAi',
         });
       }
     };
 
-    playerCards.forEach((card, i) => selfCardAnimate(myPrefix, usedPlayerCards, card, i));
-    opponentCards.forEach((card, i) => selfCardAnimate(oppPrefix, usedAiCards, card, i));
+    playerCards.forEach((card, i) =>
+      selfCardAnimate(myPrefix, usedPlayerCards, card, i),
+    );
+    opponentCards.forEach((card, i) =>
+      selfCardAnimate(oppPrefix, usedAiCards, card, i),
+    );
 
     return movingCardData;
   };
-
-
 
   const swapCards = (rememberedOutcome: CalpokerOutcome) => {
     const liveWinner = translateTopline(rememberedOutcome.my_win_outcome);
@@ -338,8 +352,12 @@ const isActive = !isDisabled; // single source of truth
     setWinner(liveWinner);
     setGameState(GAME_STATES.SWAPPING);
 
-    const playerSelected = isPlayerAlice ? rememberedOutcome.alice_discards : rememberedOutcome.bob_discards;
-    const aiSelected = isPlayerAlice ? rememberedOutcome.bob_discards : rememberedOutcome.alice_discards;
+    const playerSelected = isPlayerAlice
+      ? rememberedOutcome.alice_discards
+      : rememberedOutcome.bob_discards;
+    const aiSelected = isPlayerAlice
+      ? rememberedOutcome.bob_discards
+      : rememberedOutcome.alice_discards;
 
     // Find the targets to which we'll swap cards, namely the opponent discards.
     const playerSwapIndices: number[] = [];
@@ -359,7 +377,7 @@ const isActive = !isDisabled; // single source of truth
       playerSwapIndices,
       aiSwapIndices,
       rememberedCards[0],
-      rememberedCards[1]
+      rememberedCards[1],
     );
     setMovingCards(movingCardData);
     console.log('moving cards', movingCardData);
@@ -396,7 +414,7 @@ const isActive = !isDisabled; // single source of truth
           rank,
           suit: suitMap[suit],
           originalIndex: idx,
-        })
+        }),
       );
 
       const opponentBestCards: CardValueSuit[] = lastLog.opponentHand.map(
@@ -404,14 +422,27 @@ const isActive = !isDisabled; // single source of truth
           rank,
           suit: suitMap[suit],
           originalIndex: idx,
-        })
+        }),
       );
 
-      setPlayerBestHand({ cards: playerBestCards, rank: { name: '', score: 0, tiebreakers: [] } });
-      setAiBestHand({ cards: opponentBestCards, rank: { name: '', score: 0, tiebreakers: [] } });
+      setPlayerBestHand({
+        cards: playerBestCards,
+        rank: { name: '', score: 0, tiebreakers: [] },
+      });
+      setAiBestHand({
+        cards: opponentBestCards,
+        rank: { name: '', score: 0, tiebreakers: [] },
+      });
 
-
-      console.log('done swapping', log.length - 1, log, newPlayer, newOpponent, playerBestCards, opponentBestCards);
+      console.log(
+        'done swapping',
+        log.length - 1,
+        log,
+        newPlayer,
+        newOpponent,
+        playerBestCards,
+        opponentBestCards,
+      );
 
       setMovingCards([]);
       setShowSwapAnimation(false);
@@ -419,14 +450,17 @@ const isActive = !isDisabled; // single source of truth
       setPlayerDisplayText(makeDescription(log[0].myHandDescription));
       setOpponentDisplayText(makeDescription(log[0].opponentHandDescription));
     }, SWAP_ANIMATION_DURATION);
-
   };
 
   useEffect(() => {
     dealCards();
   }, []);
 
-
+  useEffect(() => {
+    if (gameState === GAME_STATES.FINAL) {
+      setShowEndDialog(true);
+    }
+  }, [gameState]);
   return (
     <div className='flex flex-col w-full h-full overflow-hidden text-canvas-text'>
       <div className='flex-1 relative h-full overflow-y-auto overflow-x-hidden'>
@@ -443,20 +477,18 @@ const isActive = !isDisabled; // single source of truth
 
         {gameState !== GAME_STATES.INITIAL && (
           <div className='flex flex-col gap-4 h-full flex-1 min-h-0'>
-
             <Card className='flex flex-col py-0 min-h-[260px] w-full flex-1 lg:flex-[0_0_43%] border border-canvas-line shadow-md overflow-hidden'>
               {/* Make Card relative so absolute div is positioned relative to it */}
               <CardHeader className='relative p-0 w-full flex-row flex justify-center items-center'>
-                <CardTitle className="w-full pl-4 py-1 text-base flex-col sm:flex-row flex items-start gap-2">
-
+                <CardTitle className='w-full pl-4 py-1 text-base flex-col sm:flex-row flex items-start gap-2'>
                   {/* Opponent Title */}
-                  <span className="text-base font-semibold text-alert-text">
+                  <span className='text-base font-semibold text-alert-text'>
                     Opponent Hand
                   </span>
 
                   {/* Dull Hand Description */}
                   {opponentDisplayText && (
-                    <span className="text-canvas-text">
+                    <span className='text-canvas-text'>
                       ({opponentDisplayText})
                     </span>
                   )}
@@ -465,23 +497,23 @@ const isActive = !isDisabled; // single source of truth
                   {winner && !showSwapAnimation && (
                     <span
                       className={cn(
-                        "px-2 py-0.5 rounded-md text-xs font-medium",
-                        winner === "ai"
-                          ? "bg-success-solid text-success-on-success"
-                          : "bg-alert-solid text-alert-on-alert"
+                        'px-2 py-0.5 rounded-md text-xs font-medium',
+                        winner === 'ai'
+                          ? 'bg-success-solid text-success-on-success'
+                          : 'bg-alert-solid text-alert-on-alert',
                       )}
                     >
-                      {winner === "ai" ? "Winner" : "Loser"}
+                      {winner === 'ai' ? 'Winner' : 'Loser'}
                     </span>
                   )}
-
                 </CardTitle>
-
 
                 <div className='flex justify-end'>
                   <div className=' flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-2 py-2 shadow-sm bg-canvas-bg'>
                     <WalletIcon size='19.6px' />
-                    <span className='ml-2 font-bold text-sm text-canvas-text-contrast'>{opponentBalance}</span>
+                    <span className='ml-2 font-bold text-sm text-canvas-text-contrast'>
+                      {opponentBalance}
+                    </span>
                   </div>
                 </div>
               </CardHeader>
@@ -489,7 +521,9 @@ const isActive = !isDisabled; // single source of truth
                 <div className='flex-1 h-full mt-4 flex items-center justify-center p-2'>
                   <HandDisplay
                     title=''
-                    cards={opponentCards.length ? opponentCards : rememberedCards[1]}
+                    cards={
+                      opponentCards.length ? opponentCards : rememberedCards[1]
+                    }
                     playerNumber={playerNumber == 1 ? 2 : 1}
                     area='ai'
                     winner={winner}
@@ -505,21 +539,17 @@ const isActive = !isDisabled; // single source of truth
               </CardContent>
             </Card>
 
-
-
-
             <Card className='flex flex-col py-0 w-full flex-1 lg:flex-[0_0_43%] border border-canvas-line shadow-md overflow-hidden'>
               <CardHeader className='relative p-0 w-full flex-row flex justify-center items-center'>
-                <CardTitle className="w-full pl-4 py-1 text-base  flex-col sm:flex-row  flex items-start gap-2">
-
+                <CardTitle className='w-full pl-4 py-1 text-base  flex-col sm:flex-row  flex items-start gap-2'>
                   {/* Player Title */}
-                  <span className="font-semibold text-success-text">
+                  <span className='font-semibold text-success-text'>
                     Your Hand
                   </span>
 
                   {/* Dull Hand Description */}
                   {playerDisplayText && (
-                    <span className="text-canvas-text">
+                    <span className='text-canvas-text'>
                       ({playerDisplayText})
                     </span>
                   )}
@@ -528,23 +558,23 @@ const isActive = !isDisabled; // single source of truth
                   {winner && !showSwapAnimation && (
                     <span
                       className={cn(
-                        "px-2 py-0.5 rounded-md  text-xs font-medium",
-                        winner === "player"
-                          ? "bg-success-solid text-success-on-success"
-                          : "bg-alert-solid text-alert-on-alert"
+                        'px-2 py-0.5 rounded-md  text-xs font-medium',
+                        winner === 'player'
+                          ? 'bg-success-solid text-success-on-success'
+                          : 'bg-alert-solid text-alert-on-alert',
                       )}
                     >
-                      {winner === "player" ? "Winner" : "Loser"}
+                      {winner === 'player' ? 'Winner' : 'Loser'}
                     </span>
                   )}
-
                 </CardTitle>
-
 
                 <div className='flex justify-end'>
                   <div className=' flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-2 py-2 shadow-sm bg-canvas-bg'>
                     <WalletIcon size='19.6px' />
-                    <span className='ml-2 font-bold text-sm text-canvas-text-contrast'>{playerBalance}</span>
+                    <span className='ml-2 font-bold text-sm text-canvas-text-contrast'>
+                      {playerBalance}
+                    </span>
                   </div>
                 </div>
               </CardHeader>
@@ -552,7 +582,9 @@ const isActive = !isDisabled; // single source of truth
                 <div className='flex-1 mt-4 h-full flex items-center justify-center p-2'>
                   <HandDisplay
                     title=''
-                    cards={playerCards.length ? playerCards : rememberedCards[0]}
+                    cards={
+                      playerCards.length ? playerCards : rememberedCards[0]
+                    }
                     playerNumber={playerNumber}
                     area='player'
                     winner={winner}
@@ -569,7 +601,6 @@ const isActive = !isDisabled; // single source of truth
               </CardContent>
             </Card>
 
-
             {/* ACTION BAR */}
             <GameBottomBar
               isPlayerTurn={isPlayerTurn}
@@ -584,17 +615,24 @@ const isActive = !isDisabled; // single source of truth
           </div>
         )}
       </div>
-
+      <EndGameDialog
+        open={showEndDialog}
+        onOpenChange={setShowEndDialog}
+        onPlayAgain={() => {
+          setShowEndDialog(false);
+          NewGame(); // your existing restart logic
+        }}
+        onEndSession={stopPlaying} // same handler as your destructive button
+        disableEndSession={moveNumber !== 0}
+      />
       {/* Animations */}
-      {
-        movingCards.map((cardData) => (
-          <MovingCard
-            key={cardData.id}
-            cardData={cardData}
-            showAnimation={showSwapAnimation}
-          />
-        ))
-      }
+      {movingCards.map((cardData) => (
+        <MovingCard
+          key={cardData.id}
+          cardData={cardData}
+          showAnimation={showSwapAnimation}
+        />
+      ))}
 
       <style>{`
     .animate-move {
@@ -605,7 +643,7 @@ const isActive = !isDisabled; // single source of truth
       to { left: var(--end-x); top: var(--end-y); }
     }
   `}</style>
-    </div >
+    </div>
   );
 };
 

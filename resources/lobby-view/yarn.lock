@@ -5311,7 +5311,7 @@ __metadata:
 
 "chia-gaming-lobby-connection@file:../lobby-connection::locator=chia-gaming-lobby-view%40workspace%3A.":
   version: 0.0.1
-  resolution: "chia-gaming-lobby-connection@file:../lobby-connection#../lobby-connection::hash=96dfd7&locator=chia-gaming-lobby-view%40workspace%3A."
+  resolution: "chia-gaming-lobby-connection@file:../lobby-connection#../lobby-connection::hash=1a40af&locator=chia-gaming-lobby-view%40workspace%3A."
   dependencies:
     "@types/express": ^5.0.5
     "@types/minimist": ^1.2.5
@@ -5328,7 +5328,7 @@ __metadata:
   peerDependencies:
     "@types/react": 19.2.0
     react: 19.2.0
-  checksum: 3bf6c70931c7ac75b5c782a6c32fce8909cda63cfb15f52cfde1032673fec9b7178b171e9c0df48bcaffe40e641463ade65d7f5db5a2c4bccb501336b947b06e
+  checksum: d522f9f9694d2a5b7eba5329e5fa32e03787b50459c35f3e3fcb864bb864c47167097d39521fc23c564170dc8546b873e3738a24f882b1ddc9b2730bdcb6fd99
   languageName: node
   linkType: hard
 
