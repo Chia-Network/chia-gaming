@@ -502,6 +502,7 @@ impl BareDebugGameHandler {
         let (state, tt_result) = match validator_response {
             StateUpdateResult::MoveOk(state) => {
                 debug!("debug their move: new state {state:?}");
+                let pre_state_node = self.state.to_nodeptr(allocator)?;
                 let state_node = state.to_clvm(allocator).into_gen()?;
                 (
                     state.clone(),
@@ -509,6 +510,7 @@ impl BareDebugGameHandler {
                         allocator,
                         &TheirTurnInputs {
                             amount: self.start.amount.clone(),
+                            pre_state: pre_state_node,
                             state: state_node,
                             last_move: &move_to_check,
                             last_mover_share: inputs.mover_share.clone(),

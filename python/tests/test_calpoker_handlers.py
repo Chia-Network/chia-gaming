@@ -149,6 +149,7 @@ def call_my_turn_handler(handler: Program, local_move, amount, state, split, ent
 @dataclass
 class TheirTurnHandlerArgs:
     amount: int
+    pre_state: Program
     state: Program
     move: bytes
     validation_program_hash: bytes32
@@ -158,6 +159,7 @@ class TheirTurnHandlerArgs:
         return Program.to(
             [
                 self.amount,
+                self.pre_state,
                 self.state,
                 self.move,
                 self.validation_program_hash,
@@ -208,7 +210,7 @@ def call_their_turn_handler(handler, args: TheirTurnHandlerArgs, step=None):
 # (local_move amount state split entropy)
 
 # their turn: bob a,c,e == (alice b,d)
-# (amount (@ state (bob_discards alice_selects alice_cards bob_cards alice_hand_value)) move validation_program_hash split)
+# (amount pre_state (@ state (bob_discards alice_selects alice_cards bob_cards alice_hand_value)) move validation_program_hash split)
 
 # a.clsp will be run by both Alice & Bob: this implies Bob ha a special case during his first move
 
@@ -492,6 +494,7 @@ class Player:
             Program.to(self.their_turn_handler),
             TheirTurnHandlerArgs(
                 self.amount,
+                previous_state,
                 self.state.state,
                 move_bytes,
                 self.their_turn_validation_program_hash,

@@ -48,7 +48,7 @@
 ; state is (alice_commit bob_seed)
 ; move is Bob's seed
 ; immediately sends a message giving Alice's seed
-(defun calpoker_alice_handler_b (PREIMAGE amount state move validation_info_hash split)
+(defun calpoker_alice_handler_b (PREIMAGE amount pre_state state move validation_info_hash split)
     (list
         (make_cards_readable (sha256 PREIMAGE move amount))
         0
@@ -106,7 +106,7 @@
 ; state is (bob_discards alice_cards bob_cards alice_commit)
 ; move is Bob's discards
 ; should get an immediatel call back with a nil move
-(defun calpoker_alice_handler_d (MY_SALT MY_PICKS amount
+(defun calpoker_alice_handler_d (MY_SALT MY_PICKS amount pre_state
             (bob_discards alice_cards bob_cards my_commit) move validation_program_hash split)
     (assign
         (my_all_cards_indices bob_all_cards_indices) (get_final_cards_in_canonical_order
@@ -157,7 +157,7 @@
 
 ; state is alice_commit
 ; move is Alice commit to a salted word
-(defun calpoker_bob_handler_a (amount state move validation_program_hash split)
+(defun calpoker_bob_handler_a (amount pre_state state move validation_program_hash split)
     (list 0 0 calpoker_bob_handler_b)
 )
 
@@ -188,7 +188,7 @@
 ; state is (alice_commit alice_cards bob_cards)
 ; move is Alice's reveal of her card generating seed and her commit to which cards she's picking
 ; expecting a message revealing Alice's seed which results in local display once verified
-(defun calpoker_bob_handler_c (amount (alice_commit alice_cards bob_cards) move validation_program_hash split)
+(defun calpoker_bob_handler_c (amount pre_state (alice_commit alice_cards bob_cards) move validation_program_hash split)
     (list
         (list (make_readable_card_descriptions alice_cards) (make_readable_card_descriptions bob_cards))
         0
@@ -215,7 +215,7 @@
 
 ; state is (bob_discards alice_cards bob_cards alice_final_cards bob_final_cards alice_hand_value)
 ; move is alice_salted_discards
-(defun calpoker_bob_handler_e (amount (bob_discards alice_cards bob_cards alice_final_cards
+(defun calpoker_bob_handler_e (amount pre_state (bob_discards alice_cards bob_cards alice_final_cards
         bob_final_cards alice_hand_value) move validation_program_hash split)
     (assign
         alice_discards (substr move 16 17)

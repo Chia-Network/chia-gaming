@@ -26,7 +26,7 @@ use crate::referee::types::GameMoveDetails;
 //       message_parser)
 // Message parser takes (message amount state move mover_share) and returns error or readable_info
 //
-// their turn handler takes (amount last_state last_move last_mover_share
+// their turn handler takes (amount pre_state state last_move last_mover_share
 //       new_move new_validation_info_hash new_max_move_size new_mover_share) and returns
 //       (readable_info evidence_list moving_handler message_optional) or
 //       (SLASH evidence)
@@ -72,6 +72,7 @@ pub struct MyTurnResult {
 
 pub struct TheirTurnInputs<'a> {
     pub amount: Amount,
+    pub pre_state: NodePtr,
     pub state: NodePtr,
 
     /// Only needs a couple things from last move.
@@ -283,18 +284,21 @@ impl GameHandler {
         let handler_args = (
             inputs.amount.clone(),
             (
-                Node(inputs.state),
+                Node(inputs.pre_state),
                 (
-                    Node(
-                        allocator
-                            .encode_atom(clvm_traits::Atom::Borrowed(
-                                &inputs.new_move.basic.move_made,
-                            ))
-                            .into_gen()?,
-                    ),
+                    Node(inputs.state),
                     (
-                        inputs.new_move.validation_info_hash.clone(),
-                        (inputs.new_move.basic.mover_share.clone(), ()),
+                        Node(
+                            allocator
+                                .encode_atom(clvm_traits::Atom::Borrowed(
+                                    &inputs.new_move.basic.move_made,
+                                ))
+                                .into_gen()?,
+                        ),
+                        (
+                            inputs.new_move.validation_info_hash.clone(),
+                            (inputs.new_move.basic.mover_share.clone(), ()),
+                        ),
                     ),
                 ),
             ),

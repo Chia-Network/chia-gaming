@@ -490,6 +490,7 @@ impl TheirTurnReferee {
         let puzzle_args = self.spend_this_coin();
         let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
         let (state, validation_program) = self.get_validation_program_for_their_move()?;
+        let pre_state_nodeptr = state.to_nodeptr(allocator)?;
         debug!(
             "running state update program {:?}",
             validation_program.to_program()
@@ -534,6 +535,7 @@ impl TheirTurnReferee {
             allocator,
             &TheirTurnInputs {
                 amount: self.fixed.amount.clone(),
+                pre_state: pre_state_nodeptr,
                 state: state_nodeptr,
 
                 last_move: &details.basic.move_made,
