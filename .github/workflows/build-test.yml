@@ -110,6 +110,7 @@ jobs:
 
       - name: Run rust tests and simulator tests
         run: |
+          export RUST_BACKTRACE=1
           # We need chia-blockchain so we can run the blockchain simulator
           python -m pip install setuptools==75.0.0
           python -m pip install chiavdf==1.1.12 chia-blockchain==2.5.5-rc3
