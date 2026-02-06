@@ -1,4 +1,3 @@
-
 import { useCallback, useState, useEffect } from 'react';
 import { Button } from './button';
 import { blockchainConnector } from '../hooks/BlockchainConnector';
@@ -12,7 +11,6 @@ import useDebug from '../hooks/useDebug';
 import { walletConnectState } from '../hooks/useWalletConnect';
 import { BLOCKCHAIN_SERVICE_URL } from '../settings';
 import { generateOrRetrieveUniqueId } from '../util';
-
 
 import Debug from './Debug';
 import { WalletConnectDialog, doConnectWallet } from './WalletConnect';
@@ -42,7 +40,7 @@ const WalletConnectHeading = (_args: any) => {
   const [haveClient, setHaveClient] = useState(false);
   const [haveSession, setHaveSession] = useState(false);
   const [sessions, setSessions] = useState(0);
-  const [_address, setAddress] = useState();
+  const [recvAddress, setRecvAddress] = useState();
   const [balance, setBalance] = useState<number | undefined>();
   const [haveBlock, setHaveBlock] = useState(false);
 
@@ -65,12 +63,12 @@ const WalletConnectHeading = (_args: any) => {
       document.documentElement.classList.add('dark');
       try {
         localStorage.setItem('theme', 'dark');
-      } catch (e) { }
+      } catch (e) {}
     } else {
       document.documentElement.classList.remove('dark');
       try {
         localStorage.setItem('theme', 'light');
-      } catch (e) { }
+      } catch (e) {}
     }
   }, [isDark]);
 
@@ -88,13 +86,20 @@ const WalletConnectHeading = (_args: any) => {
     haveClient: setHaveClient,
     haveSession: setHaveSession,
     sessions: setSessions,
-    address: setAddress,
+    address: setRecvAddress,
   };
 
   function requestBalance() {
     blockchainConnector.getOutbound().next({
-      requestId: -1,
+      requestId: -2,
       getBalance: true,
+    });
+  }
+
+  function requestRecvAddress() {
+    blockchainConnector.getOutbound().next({
+      requestId: -1,
+      getAddress: true,
     });
   }
 
@@ -111,6 +116,7 @@ const WalletConnectHeading = (_args: any) => {
           });
           connectRealBlockchain('https://api.coinset.org');
           requestBalance();
+          requestRecvAddress();
         }
 
         const keys = Object.keys(evt);
@@ -166,7 +172,10 @@ const WalletConnectHeading = (_args: any) => {
           setBalance(evt.getBalance);
           setTimeout(requestBalance, 2000);
         }
-
+        if (evt.getAddress) {
+          setRecvAddress(evt.getRecvAddress);
+          setTimeout(requestRecvAddress, 2000);
+        }
         const subframe = document.getElementById('subframe');
         if (subframe) {
           (subframe as any).contentWindow.postMessage(
@@ -176,7 +185,10 @@ const WalletConnectHeading = (_args: any) => {
             window.location.origin,
           );
         } else {
-          throw new Error('blockchain reply to no subframe');
+          // TODO: Two cases:
+          // 1. we don't have the subframe until we get the first block
+          // 2. Do throw in other cases
+          // throw new Error('blockchain reply to no subframe');
         }
       },
     });
@@ -186,6 +198,7 @@ const WalletConnectHeading = (_args: any) => {
         if (!haveBlock) {
           setHaveBlock(true);
           requestBalance();
+          requestRecvAddress();
         }
         const subframe = document.getElementById('subframe');
         if (subframe) {
@@ -196,7 +209,10 @@ const WalletConnectHeading = (_args: any) => {
             '*',
           );
         } else {
-          throw new Error('blockchain reply to no subframe');
+          // TODO: Two cases:
+          // 1. we don't have the subframe until we get the first block
+          // 2. Do throw in other cases
+          // throw new Error('blockchain reply to no subframe');
         }
       },
     });
@@ -228,6 +244,7 @@ const WalletConnectHeading = (_args: any) => {
           uniqueId,
         });
         requestBalance();
+        requestRecvAddress();
       });
   }, []);
 
@@ -245,7 +262,7 @@ const WalletConnectHeading = (_args: any) => {
 
   const onWalletDismiss = useCallback(() => {
     // toggleExpanded();
-    setShowQRModal(false)
+    setShowQRModal(false);
   }, []);
 
   const sessionConnected = connected
@@ -255,9 +272,9 @@ const WalletConnectHeading = (_args: any) => {
       : 'disconnected';
 
   const ifSession = (
-    <div className="flex flex-col justify-center items-center w-full h-full mt-12 sm:mt-16 md:mt-20 px-1.5 sm:px-2 md:px-4 py-3 sm:py-4 md:py-6 gap-2 sm:gap-3">
+    <div className='flex flex-col justify-center items-center w-full h-full mt-12 sm:mt-16 md:mt-20 px-1.5 sm:px-2 md:px-4 py-3 sm:py-4 md:py-6 gap-2 sm:gap-3'>
       {/* Simulator Button */}
-      <div className="w-[90%] sm:w-3/4 md:w-1/2 flex justify-center items-center">
+      <div className='w-[90%] sm:w-3/4 md:w-1/2 flex justify-center items-center'>
         <Button
           variant='solid'
           onClick={handleConnectSimulator}
@@ -269,16 +286,16 @@ const WalletConnectHeading = (_args: any) => {
       </div>
 
       {/* Divider with OR */}
-      <div className="flex items-center justify-center w-[90%] sm:w-3/4 md:w-[45%] my-2 sm:my-3 gap-1">
-        <div className="flex-1 border-t border-canvas-border" />
-        <span className="text-canvas-text font-medium whitespace-nowrap text-[0.85rem] sm:text-[0.95rem]">
+      <div className='flex items-center justify-center w-[90%] sm:w-3/4 md:w-[45%] my-2 sm:my-3 gap-1'>
+        <div className='flex-1 border-t border-canvas-border' />
+        <span className='text-canvas-text font-medium whitespace-nowrap text-[0.85rem] sm:text-[0.95rem]'>
           OR
         </span>
-        <div className="flex-1 border-t border-canvas-border" />
+        <div className='flex-1 border-t border-canvas-border' />
       </div>
 
       {/* WalletConnect Dialog */}
-      <div className="w-[90%] sm:w-3/4 md:w-1/2 flex justify-center items-center">
+      <div className='w-[90%] sm:w-3/4 md:w-1/2 flex justify-center items-center'>
         <WalletConnectDialog
           initialized={initialized}
           haveClient={haveClient}
@@ -291,10 +308,9 @@ const WalletConnectHeading = (_args: any) => {
         />
       </div>
     </div>
-
   );
 
-  const ifExpanded = expanded ?
+  const ifExpanded = expanded ? (
     <div
       style={{
         display: 'flex',
@@ -308,7 +324,10 @@ const WalletConnectHeading = (_args: any) => {
       }}
     >
       {ifSession}
-    </div> : <div style={{ display: 'none' }} />;
+    </div>
+  ) : (
+    <div style={{ display: 'none' }} />
+  );
 
   const balanceDisplay =
     balance !== undefined ? <div>- Balance {balance}</div> : <div />;
@@ -346,14 +365,14 @@ const WalletConnectHeading = (_args: any) => {
           }}
         >
           {/* LEFT: Title */}
-          <div className="flex items-end gap-1 min-w-auto">
+          <div className='flex items-end gap-1 min-w-auto'>
             <img
-              src="/images/chia_logo.png"
-              alt="Chia Logo"
-              className="max-w-24 h-auto rounded-md transition-opacity"
+              src='/images/chia_logo.png'
+              alt='Chia Logo'
+              className='max-w-24 h-auto rounded-md transition-opacity'
             />
             <span
-              className="font-semibold whitespace-nowrap "
+              className='font-semibold whitespace-nowrap '
               style={{
                 fontSize:
                   window.innerWidth < 640
@@ -368,14 +387,19 @@ const WalletConnectHeading = (_args: any) => {
             </span>
           </div>
 
-
           {/* CENTER: Debug Status (hidden on mobile) */}
           <div className='hidden md:flex'>
             {walletConnectState.getSession() && (
               <div className='flex gap-2'>
                 <button
                   className='border border-gray-300 px-2 py-1 rounded hover:bg-gray-100'
-                  onClick={() => walletConnectState.disconnect()}
+                  onClick={async () => {
+                    try {
+                      await walletConnectState.disconnect();
+                    } finally {
+                      window.location.reload();
+                    }
+                  }}
                 >
                   Unlink Wallet
                 </button>
@@ -394,10 +418,11 @@ const WalletConnectHeading = (_args: any) => {
 
           {/* RIGHT: WalletConnect + Balance */}
           <div
-            className={`flex items-center gap-1.5 sm:gap-2 md:gap-3 ${window.innerWidth < 640
-              ? 'justify-between w-full'
-              : 'justify-end w-auto'
-              }`}
+            className={`flex items-center gap-1.5 sm:gap-2 md:gap-3 ${
+              window.innerWidth < 640
+                ? 'justify-between w-full'
+                : 'justify-end w-auto'
+            }`}
           >
             {/* WalletConnect Status */}
             <div className='flex items-center gap-1 min-w-auto'>
@@ -438,16 +463,15 @@ const WalletConnectHeading = (_args: any) => {
                     color: 'var(--color-canvas-solid)',
                   }}
                 >
-                  Bal: {balance} XCH
+                  Bal: {balance} mojos
                 </span>
               )}
 
               <button
                 onClick={toggleTheme}
-                className={`p-1 border border-(--color-canvas-border) rounded ${isDark
-                  ? 'text-warning-solid'
-                  : 'text-canvas-text'
-                  } hover:bg-canvas-bg-hover`}
+                className={`p-1 border border-(--color-canvas-border) rounded ${
+                  isDark ? 'text-warning-solid' : 'text-canvas-text'
+                } hover:bg-canvas-bg-hover`}
               >
                 <Sun size={16} />
               </button>

@@ -198,19 +198,39 @@ interface _JsonRpc {
   ) => Promise<GetNftWalletsWithDidsResponse>;
 }
 
+let walletBalanceLogCount = 0;
+const maxWalletBalanceLogCount = 1;
+
+let addressLogCount = 0;
+const maxAddressBalanceLogCount = 1;
+
 async function request<T>(method: ChiaMethod, data: any): Promise<T> {
   if (!walletConnectState.getClient())
     throw new Error('WalletConnect is not initialized');
   if (!walletConnectState.getSession())
     throw new Error('Session is not connected');
 
-  console.warn(
-    'walletconnect send request:',
-    method,
-    data,
-    walletConnectState.getSession()!.topic,
-    walletConnectState.getChainId(),
-  );
+  // DEBUG START
+  if (method === 'chia_getWalletBalance') {
+    walletBalanceLogCount += 1;
+  } else if (method === 'chia_getCurrentAddress') {
+    addressLogCount += 1;
+  }
+
+  if (
+    (! ['chia_getWalletBalance', 'chia_getCurrentAddress'].includes(method)) ||
+    (method === 'chia_getWalletBalance' && walletBalanceLogCount < maxWalletBalanceLogCount) ||
+    (method === 'chia_getCurrentAddress' && addressLogCount < maxAddressBalanceLogCount)
+  ) {
+    console.warn(
+      'walletconnect send request:',
+      method,
+      data,
+      walletConnectState.getSession()!.topic,
+      walletConnectState.getChainId(),
+    );
+    }
+  // DEBUG END
 
   const address = walletConnectState.getAddress();
   if (!address) {

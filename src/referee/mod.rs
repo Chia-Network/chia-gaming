@@ -43,10 +43,10 @@ pub enum RefereeSerializeContainer {
 }
 
 impl RefereeSerializeContainer {
-    fn to_rc(&self) -> Rc<dyn RefereeInterface> {
+    fn into_rc(self) -> Rc<dyn RefereeInterface> {
         match self {
-            RefereeSerializeContainer::V0(v0) => Rc::new(v0.clone()),
-            RefereeSerializeContainer::V1(v1) => Rc::new(v1.clone()),
+            RefereeSerializeContainer::V0(v0) => Rc::new(v0),
+            RefereeSerializeContainer::V1(v1) => Rc::new(v1),
         }
     }
 }
@@ -70,7 +70,7 @@ where
     D: Deserializer<'de>,
 {
     let to_check = RefereeSerializeContainer::deserialize(deserializer)?;
-    Ok(to_check.to_rc())
+    Ok(to_check.into_rc())
 }
 
 pub fn deserialize_referee_option<'de, D>(
@@ -80,7 +80,7 @@ where
     D: Deserializer<'de>,
 {
     let to_check = Option::<RefereeSerializeContainer>::deserialize(deserializer)?;
-    Ok(to_check.map(|v| v.to_rc()))
+    Ok(to_check.map(|v| v.into_rc()))
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -530,15 +530,15 @@ impl Referee {
         match self {
             Referee::MyTurn(t) => {
                 if let Some(p) = t.parent.as_ref() {
-                    let their_turn = Referee::TheirTurn(p.clone());
-                    ref_list.push(Rc::new(their_turn.clone()));
+                    let their_turn = Rc::new(Referee::TheirTurn(p.clone()));
+                    ref_list.push(their_turn.clone());
                     their_turn.generate_ancestor_list(ref_list);
                 }
             }
             Referee::TheirTurn(t) => {
                 if let Some(p) = t.parent.as_ref() {
-                    let my_turn = Referee::MyTurn(p.clone());
-                    ref_list.push(Rc::new(my_turn.clone()));
+                    let my_turn = Rc::new(Referee::MyTurn(p.clone()));
+                    ref_list.push(my_turn.clone());
                     my_turn.generate_ancestor_list(ref_list);
                 }
             }

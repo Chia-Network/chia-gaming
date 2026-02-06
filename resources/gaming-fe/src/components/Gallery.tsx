@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
 
 import { ErrorBoundary } from './ErrorBoundary';
-import CaliforniaPoker from '../features/californiaPoker';
+
 import { QRCodeModal } from './QRCodeModal';
 import WaitingScreen from './WaitingScreen';
 import { WalletConnectDialog } from './WalletConnect';
 import WalletConnectHeading from './WalletConnectHeading';
 import Calpoker from '../features/calPoker';
 import {
+  CaliforniaPoker,
   OpponentSection,
   PlayerSection,
   PlayingCard,

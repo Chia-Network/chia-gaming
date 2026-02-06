@@ -374,7 +374,8 @@ pub trait PacketSender {
 pub trait PeerEnv<'inputs, G, R>
 where
     G: ToLocalUI + WalletSpendInterface + BootstrapTowardWallet + PacketSender,
-    R: Rng,
+    G: 'inputs,
+    R: Rng + 'inputs,
 {
     fn env(&mut self) -> (&mut ChannelHandlerEnv<'inputs, R>, &mut G);
 }
@@ -517,19 +518,20 @@ pub trait PotatoHandlerImpl {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
 
-    fn coin_timeout_reached<'a, G, R>(
+    fn coin_timeout_reached<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
         coin_id: &CoinString,
     ) -> Result<(), Error>
     where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
-        R: Rng + 'a;
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
 
-    fn next_action<'a, G, R>(&mut self, penv: &mut dyn PeerEnv<'a, G, R>) -> Result<(), Error>
+    fn next_action<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+    ) -> Result<(), Error>
     where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
-        R: Rng + 'a;
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
 
     fn do_on_chain_move<'a, G, R: Rng + 'a>(
         &mut self,
@@ -550,12 +552,11 @@ pub trait PotatoHandlerImpl {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
 
-    fn shut_down<'a, G, R>(
+    fn shut_down<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
         conditions: Rc<dyn ShutdownConditions>,
     ) -> Result<bool, Error>
     where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
-        R: Rng + 'a;
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
 }

@@ -1,4 +1,4 @@
-import { CardValueSuit } from "../../../types/californiaPoker";
+import { CardValueSuit } from "../../../../types/californiaPoker";
 import evaluateStraightPotential from "./EvaluateStraightPotential";
 
 const scoreKeepCombination = (cards: CardValueSuit[]) => {

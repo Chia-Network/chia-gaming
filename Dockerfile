@@ -1,4 +1,4 @@
-FROM node:20.18.1 AS stage1
+FROM node:20.19.0 AS stage1
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN apt-get update -y && \
     apt-get install -y libc6 && \
@@ -45,7 +45,7 @@ RUN --mount=type=tmpfs,dst=/tmp/rust \
 
 # Lobby connection - needed by other builds
 COPY resources/lobby-connection/ /app/lobby-connection/
-RUN mkdir -p /preinst && cd /app/lobby-connection && yarn install && yarn build && yarn install --production && mv /app/lobby-connection /preinst
+RUN mkdir -p /preinst && cd /app/lobby-connection && yarn install && rm -rf $(yarn cache dir) && yarn build && yarn install --production && rm -rf $(yarn cache dir) && mv /app/lobby-connection /preinst
 
 # Stage front-end / UI / UX into the container
 COPY resources/gaming-fe/package.json resources/gaming-fe/yarn.lock /preinst/game/
@@ -59,12 +59,14 @@ COPY resources/lobby-service/package.json resources/lobby-service/yarn.lock /pre
 # walletconnect automation
 COPY resources/wc-stub/package.json resources/wc-stub/yarn.lock /preinst/wc/
 
+# Build
 RUN --mount=type=tmpfs,dst=/app \
   mkdir -p /app/game/ && \
   cp -r /preinst/lobby-connection /app/lobby-connection && \
   cp -r /preinst/game/* /app/game/ && \
   ls -l /app && ls -l /app/lobby-connection && ls -l /preinst/lobby-connection && \
   cd /app/game && yarn install && \
+  rm -rf $(yarn cache dir) && \
   mv /app/game/node_modules /preinst/game/ && \
   mv /app/game/package.json /preinst/game/ 
 
@@ -73,6 +75,7 @@ RUN --mount=type=tmpfs,dst=/app \
   cp -r /preinst/lobby-connection /app/lobby-connection && \
   cp -r /preinst/lobby-view/* /app/lobby-view/ && \
   cd /app/lobby-view && yarn install && \
+  rm -rf $(yarn cache dir) && \
   mv /app/lobby-view/node_modules /preinst/lobby-view && \
   mv /app/lobby-view/package.json /preinst/lobby-view
 
@@ -80,6 +83,7 @@ RUN --mount=type=tmpfs,dst=/app \
   mkdir -p /app/lobby-service/ && \
   cp -r /preinst/lobby-service/* /app/lobby-service/ && \
   cd /app/lobby-service && yarn install && \
+  rm -rf $(yarn cache dir) && \
   mv /app/lobby-service/node_modules /preinst/lobby-service && \
   mv /app/lobby-service/package.json /preinst/lobby-service
 
@@ -87,6 +91,7 @@ RUN --mount=type=tmpfs,dst=/app \
   mkdir -p /app/wc/ && \
   cp -r /preinst/wc/* /app/wc/ && \
   cd /app/wc && yarn install && \
+  rm -rf $(yarn cache dir) && \
   mv /app/wc/node_modules /preinst/wc && \
   mv /app/wc/package.json /preinst/wc
 
@@ -146,8 +151,9 @@ RUN cd /app/lobby-service && yarn run build
 COPY resources/wc-stub/src /app/wc/src/
 COPY resources/wc-stub/tsconfig.json /app/wc/
 RUN cd /app/wc && yarn run build
+# rm -rf $(yarn cache dir)
 
-#CI FROM node:20.18.1
+#CI FROM node:20.19.0
 #CI RUN apt-get update -y && \
 #CI     apt-get install -y libc6 && \
 #CI     apt-get install -y python3 python3-dev python3-pip python3-venv curl nginx && \

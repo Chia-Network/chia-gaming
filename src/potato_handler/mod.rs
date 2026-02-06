@@ -321,10 +321,10 @@ impl PotatoHandler {
 
     pub fn get_reward_puzzle_hash<'a, G, R: Rng + 'a>(
         &self,
-        penv: &'a mut dyn PeerEnv<'a, G, R>,
+        penv: &mut dyn PeerEnv<'a, G, R>,
     ) -> Result<PuzzleHash, Error>
     where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         let player_ch = self.channel_handler()?;
         let (env, _) = penv.env();
@@ -333,11 +333,11 @@ impl PotatoHandler {
 
     pub fn start<'a, G, R: Rng + 'a>(
         &mut self,
-        penv: &'a mut dyn PeerEnv<'a, G, R>,
+        penv: &mut dyn PeerEnv<'a, G, R>,
         parent_coin: CoinString,
     ) -> Result<(), Error>
     where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         let (env, system_interface) = penv.env();
         let channel_public_key =
@@ -646,7 +646,7 @@ impl PotatoHandler {
             self.my_start_queue.len()
         );
         if let Some(desc) = self.my_start_queue.pop_front() {
-            let mut dehydrated_games = Vec::new();
+            let mut dehydrated_games = Vec::with_capacity(desc.their_games.len());
 
             let sigs = {
                 let ch = self.channel_handler_mut()?;
@@ -927,7 +927,8 @@ impl PotatoHandler {
         let convert_info_list = |allocator: &mut AllocEncoder,
                                  my_info_list: &[NodePtr]|
          -> Result<Vec<Rc<dyn GameStartInfoInterface>>, Error> {
-            let mut result_start_info: Vec<Rc<dyn GameStartInfoInterface>> = Vec::new();
+            let mut result_start_info: Vec<Rc<dyn GameStartInfoInterface>> =
+                Vec::with_capacity(my_info_list.len());
             for (i, node) in my_info_list.iter().enumerate() {
                 let new_game = GameStartInfo::from_clvm(allocator, *node)?;
                 // Timeout and game_id are supplied here.
@@ -1092,7 +1093,7 @@ impl PotatoHandler {
         let ch = self.channel_handler_mut()?;
         let spend_info = {
             let (env, system_interface) = penv.env();
-            let mut rehydrated_games = Vec::new();
+            let mut rehydrated_games = Vec::with_capacity(games.len());
             for game in games.iter() {
                 debug!("their game {:?} {:?}", game.0.game_id(), game);
                 rehydrated_games.push(game.0.clone());
@@ -1972,7 +1973,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         game: &GameStart,
     ) -> Result<Vec<GameID>, Error>
     where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+        G: 'a,
         R: 'a,
     {
         if !matches!(self.handshake_state, HandshakeState::Finished(_)) {

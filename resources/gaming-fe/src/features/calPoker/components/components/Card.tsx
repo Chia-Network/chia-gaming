@@ -1,6 +1,6 @@
-import { CardRenderProps } from "../../../types/californiaPoker";
-import { SUIT_COLORS } from "../constants/constants";
-import CardContent from "./CardContent";
+import { CardRenderProps } from '../../../../types/californiaPoker';
+import { SUIT_COLORS } from '../constants/constants';
+import CardContent from './CardContent';
 
 function Card(props: CardRenderProps) {
   const {
@@ -12,19 +12,23 @@ function Card(props: CardRenderProps) {
     isBeingSwapped = false,
     cardId,
     isInBestHand = false,
+    area,
   } = props;
 
   const getCardClasses = () => {
-  if (isBeingSwapped) {
-    return 'border-canvas-border bg-canvas-bg-subtle cursor-default';
-  }
+    if (isBeingSwapped) {
+      return 'border-canvas-border bg-canvas-bg-subtle cursor-default';
+    }
 
-  if (isInBestHand || isSelected) {
-    return 'border-primary-solid bg-primary-bg cursor-pointer';
-  }
+    if (isInBestHand || isSelected) {
+      return 'border-primary-solid bg-primary-bg cursor-pointer';
+    }
 
-  return 'border-canvas-border hover:border-primary-solid bg-canvas-bg-hover cursor-pointer';
-};
+    if (area === 'ai') {
+      return 'border-canvas-border bg-canvas-bg-subtle cursor-not-allowed';
+    }
+    return 'border-canvas-border hover:border-primary-solid bg-canvas-bg-hover cursor-pointer';
+  };
 
   const colorClass = SUIT_COLORS[card.suit] || '#000000';
 

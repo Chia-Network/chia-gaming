@@ -1,4 +1,4 @@
-import { CardValueSuit } from "../../../types/californiaPoker";
+import { CardValueSuit } from "../../../../types/californiaPoker";
 import { RANKS, SUITS } from "../constants/constants";
 
 function createDeck(): CardValueSuit[] {

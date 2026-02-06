@@ -80,10 +80,15 @@ class WalletState {
 
     this.client = signClient;
     const sessions = signClient.session.getAll();
+    console.log(`WalletConnect sessions: ${sessions.length}`);
 
     if (sessions.length > 0) {
       const session = sessions[0];
       const address = session.namespaces.chia.accounts[0].split(':')[2];
+      console.log(`WalletConnect address fingerprint: ${address}`);
+      console.log(`WalletConnect account info: ${session.namespaces.chia.accounts[0]}`);
+      console.log(session.namespaces.chia);
+
       this.isConnected = true;
       this.address = address;
       this.session = session;

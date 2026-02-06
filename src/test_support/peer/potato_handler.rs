@@ -305,12 +305,7 @@ pub fn run_move<'a, P, R: Rng>(
     who: usize,
 ) -> Result<bool, Error>
 where
-    P: ToLocalUI
-        + BootstrapTowardWallet
-        + WalletSpendInterface
-        + PacketSender
-        + MessagePeerQueue
-        + 'a,
+    P: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + MessagePeerQueue,
 {
     // assert!(pipe[who ^ 1].message_pipe().queue.len() < 2);
     let msg = if let Some(msg) = pipe[who ^ 1].message_pipe().queue.pop_front() {
@@ -329,20 +324,15 @@ where
     Ok(true)
 }
 
-pub fn quiesce<'a, P, R: Rng + 'a>(
-    rng: &'a mut R,
-    allocator: &'a mut AllocEncoder,
+pub fn quiesce<P, R: Rng>(
+    rng: &mut R,
+    allocator: &mut AllocEncoder,
     amount: Amount,
-    peers: &'a mut [PotatoHandler; 2],
-    pipes: &'a mut [P; 2],
+    peers: &mut [PotatoHandler; 2],
+    pipes: &mut [P; 2],
 ) -> Result<(), Error>
 where
-    P: ToLocalUI
-        + BootstrapTowardWallet
-        + WalletSpendInterface
-        + PacketSender
-        + MessagePeerQueue
-        + 'a,
+    P: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + MessagePeerQueue,
 {
     loop {
         let mut msgs = 0;
@@ -363,20 +353,15 @@ fn get_channel_coin_for_peer(p: &PotatoHandler) -> Result<CoinString, Error> {
     Ok(channel_handler.state_channel_coin().clone())
 }
 
-pub fn handshake<'a, P, R: Rng + 'a>(
-    rng: &'a mut R,
-    allocator: &'a mut AllocEncoder,
+pub fn handshake<P, R: Rng>(
+    rng: &mut R,
+    allocator: &mut AllocEncoder,
     amount: Amount,
-    peers: &'a mut [PotatoHandler; 2],
-    pipes: &'a mut [P; 2],
+    peers: &mut [PotatoHandler; 2],
+    pipes: &mut [P; 2],
 ) -> Result<(), Error>
 where
-    P: ToLocalUI
-        + BootstrapTowardWallet
-        + WalletSpendInterface
-        + PacketSender
-        + MessagePeerQueue
-        + 'a,
+    P: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + MessagePeerQueue,
 {
     let mut i = 0;
 
