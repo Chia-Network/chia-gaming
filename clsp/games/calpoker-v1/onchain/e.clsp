@@ -17,7 +17,7 @@
 (import std.print)
 
 ; Bob challenging
-; state is (Bob's discards (alice_cards bob_cards) alice_commit)
+; state is (bob_discards alice_cards bob_cards alice_commit)
 ; move is alice_salted_discards and alice's selections
 ; evidence is Bob's card selections
 
@@ -101,8 +101,7 @@
             (if_any_fail
                 (= (sha256 alice_salted_discards) alice_commit)
                 (if (not (print "bob_card_selections scope 1:" bob_card_selections))
-                    ;; Assert we aren't running on chain
-                    (if WAITER_PUZZLE_HASH (x "On-chain, nil evidence") 1)
+                    1
                     (does_alice_claim_small_enough alice_hand_value (print "should not get here right?" bob_card_selections)
                         bob_final_cards MOVER_SHARE AMOUNT)
                 )
@@ -111,17 +110,19 @@
 
                 ;; selections of both sides, value of both sides
                 ; (alice hand - 5 cards) (bob hand - 5 cards) alice_hand_value bob_hand_value
-                (list MAKE_MOVE 0
-                    (li
-                        bob_discards
-                        alice_cards
-                        bob_cards
-                        alice_final_cards
-                        bob_final_cards
-                        alice_hand_value
+                (assert (not WAITER_PUZZLE_HASH)
+                    (list MAKE_MOVE 0
+                        (li
+                            bob_discards
+                            alice_cards
+                            bob_cards
+                            alice_final_cards
+                            bob_final_cards
+                            alice_hand_value
+                        )
+                        0
+                        "E move"
                     )
-                    0
-                    "E move"
                 )
                 ;(list MAKE_MOVE 0 (li bob_discards alice_card_selections (indices_to_bitfield alice_cards)
                 ;    bob_cards alice_hand_value alice_final_cards bob_final_cards MOVER_SHARE) 0 "E move")
