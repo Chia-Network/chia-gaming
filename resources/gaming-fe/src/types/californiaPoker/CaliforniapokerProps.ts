@@ -1,8 +1,8 @@
-import { CalpokerOutcome, OutcomeLogLine } from "../ChiaGaming";
+import { CalpokerOutcome, OutcomeLogLine } from '../ChiaGaming';
 
 export interface CaliforniapokerProps {
   outcome: CalpokerOutcome | undefined;
-  log: OutcomeLogLine[]
+  log: OutcomeLogLine[];
   moveNumber: number;
   iStarted: boolean;
   isPlayerTurn: boolean;
@@ -12,7 +12,8 @@ export interface CaliforniapokerProps {
   cardSelections: number;
   setCardSelections: (n: number) => void;
   handleMakeMove: (hex: string) => void;
-  myWinOutcome: "win" | "lose" | "tie" | undefined;
+  myWinOutcome: 'win' | 'lose' | 'tie' | undefined;
   banner: string;
   balanceDisplay: string;
+  stopPlaying: () => void;
 }

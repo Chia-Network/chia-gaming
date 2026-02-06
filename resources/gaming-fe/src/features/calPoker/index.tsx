@@ -3,10 +3,11 @@ import { Button } from '../../components/button';
 
 import { CalpokerOutcome, OutcomeLogLine } from '../../types/ChiaGaming';
 import GameLog from '../../components/GameLog';
-import CaliforniaPoker from '../californiaPoker';
+
 import { Info, LogOut, X } from 'lucide-react';
 import { Alert } from '../../components/ui/alert';
 import { cn } from '../../lib/utils';
+import { CaliforniaPoker } from './components';
 
 export interface CalpokerProps {
   outcome: CalpokerOutcome | undefined;
@@ -151,6 +152,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
               myWinOutcome={myWinOutcome}
               banner={banner}
               balanceDisplay={balanceDisplay}
+              stopPlaying={stopPlaying}
             />
           </div>
 

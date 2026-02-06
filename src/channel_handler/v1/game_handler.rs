@@ -409,7 +409,8 @@ impl GameHandler {
         } else {
             Ok(TheirTurnResult::MakeMove(
                 game_handler::GameHandler::HandlerV1(GameHandler::my_handler_from_nodeptr(
-                    allocator, pl[offset + 2],
+                    allocator,
+                    pl[offset + 2],
                 )?),
                 message_data,
                 their_turn_move_data,

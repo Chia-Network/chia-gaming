@@ -1,5 +1,6 @@
+import { Button } from '@/src/components/button';
 import React from 'react';
-import { Button } from '../../button';
+
 
 interface CreateRoomDialogProps {
   dialogOpen: boolean;
