@@ -53,23 +53,17 @@
             (onehandcalc
                 (map
                     list-to-pair
-                    (pull_out_cards
-                         (print (list "bob_card_selections inside does_alice_claim_small_enough scope 3:" (@ 3)) bob_card_selections)
-                         bob_final_cards
-                    )
+                    (pull_out_cards bob_card_selections bob_final_cards)
                 )
             )
-        result (print "alice v bob result" (list_compare alice_hand_value bob_hand_value))
-        x (print "result " result)
-        (>= (print "MOVER_SHARE" mover_share)
-            (print "value compared to mover share"
+        result (list_compare alice_hand_value bob_hand_value)
+        (>= mover_share
             (if (not result)
                 (/ amount 2)
                 (if (= result 1)
                     0
                     amount
                 )
-            )
             )
         )
     )
@@ -93,23 +87,19 @@
             alice_discards (substr MOVE 16 17)
             alice_card_selections (substr MOVE 17 18)
 
-            (alice_final_cards bob_final_cards) (print "these should be indices" (get_final_cards_in_canonical_order (print "alice pre picks cards" alice_cards) alice_discards (print "bob pre picks cards" bob_cards) bob_discards))
-            alice_hand_value
-                (print "alice onehandcalc" (onehandcalc
-                    (print "pull out cards alice" (map list-to-pair (pull_out_cards (print "alice card selections" alice_card_selections) (print "alice final cards" alice_final_cards))))
-                ))
+            (alice_final_cards bob_final_cards) (get_final_cards_in_canonical_order
+                alice_cards alice_discards bob_cards bob_discards)
+            alice_hand_value (onehandcalc (map list-to-pair (pull_out_cards
+                alice_card_selections alice_final_cards)))
             (if_any_fail
                 (= (sha256 alice_salted_discards) alice_commit)
-                (if (not (print "bob_card_selections scope 1:" bob_card_selections))
+                (if (not bob_card_selections)
                     1
-                    (does_alice_claim_small_enough alice_hand_value (print "should not get here right?" bob_card_selections)
+                    (does_alice_claim_small_enough alice_hand_value bob_card_selections
                         bob_final_cards MOVER_SHARE AMOUNT)
                 )
                 (list SLASH () "E slash")
-                ; e.g. (() () (85 -8 2 (r 8 15 24 26 27 41 42) (a 2 1 14 8 12) (q 6 15 25 26 41 49 50) (x 14 24 27 38 42 48 51) ()) () "E move")
 
-                ;; selections of both sides, value of both sides
-                ; (alice hand - 5 cards) (bob hand - 5 cards) alice_hand_value bob_hand_value
                 (assert (not WAITER_PUZZLE_HASH)
                     (list MAKE_MOVE 0
                         (li
@@ -124,8 +114,6 @@
                         "E move"
                     )
                 )
-                ;(list MAKE_MOVE 0 (li bob_discards alice_card_selections (indices_to_bitfield alice_cards)
-                ;    bob_cards alice_hand_value alice_final_cards bob_final_cards MOVER_SHARE) 0 "E move")
             )
         )
     )
