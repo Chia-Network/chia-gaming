@@ -26,14 +26,12 @@
 
 ; state is empty
 ; local_move is nil
-; makes a move using entropy
 (defun calpoker_alice_handler_a (local_move amount state split entropy)
     (assign
         preimage (substr entropy 0 16)
-        image (sha256 preimage)
         (list
             "calpoker_alice_handler_a"
-            image
+            (sha256 preimage)
             pokera
             pokera_hash
             pokerb
@@ -45,8 +43,9 @@
     )
 )
 
-; state is (alice_commit bob_seed)
+; pre_state is alice_commit
 ; move is Bob's seed
+; state is (alice_commit bob_seed)
 ; immediately sends a message giving Alice's seed
 (defun calpoker_alice_handler_b (PREIMAGE amount pre_state state move validation_info_hash split)
     (list
@@ -67,6 +66,7 @@
     )
 )
 
+; TODO make my_discards be a list of cards
 ; state is (alice_commit bob_seed)
 ; move is Alice's reveal of her card generating seed and her commit to which cards she's picking
 (defun calpoker_alice_handler_c (PREIMAGE my_discards amount state split entropy)
@@ -103,25 +103,28 @@
 ; We have composed cards as sublists but need them as pairs.
 (defun card_list_to_pair ((rank suit)) (c rank suit))
 
-; state is (bob_discards alice_cards bob_cards alice_commit)
+; TODO make the returned readable be (bob_discards_as_cards my_hand_cards my_hand_value
+;   bob_hand_cards bob_hand_value win_result)
+; pre_state is (alce_cards bob_cards alice_commit)
 ; move is Bob's discards
-; should get an immediatel call back with a nil move
+; state is (bob_discards alice_cards bob_cards alice_commit)
+; should get an immediate call back with a nil move
 (defun calpoker_alice_handler_d (MY_SALT MY_PICKS amount pre_state
             (bob_discards alice_cards bob_cards my_commit) move validation_program_hash split)
     (assign
         (my_all_cards_indices bob_all_cards_indices) (get_final_cards_in_canonical_order
             alice_cards MY_PICKS bob_cards move) ;alice_cards alice_picks bob_cards bob_picks
 
-        my_all_cards (map make_card (print "make card alice" my_all_cards_indices))
-        bob_all_cards (map make_card (print "make card bob" bob_all_cards_indices))
+        my_all_cards (map make_card my_all_cards_indices)
+        bob_all_cards (map make_card bob_all_cards_indices)
 
-        (my_hand_value my_selects) (handcalc (map card_list_to_pair (print "my all cards" my_all_cards)))
-        (bob_hand_value bob_selects) (handcalc (map card_list_to_pair (print "bob all cards" bob_all_cards)))
+        (my_hand_value my_selects) (handcalc (map card_list_to_pair my_all_cards))
+        (bob_hand_value bob_selects) (handcalc (map card_list_to_pair bob_all_cards))
         ;; win_result is 1 if my_hand_value is greater than bob_hand_value
         win_result (list_compare my_hand_value bob_hand_value)
         ;; split is captured in a their turn handler below so it's the opposite of what
         ;; this turn would specify.
-        split (if (= win_result 1) 0 (= win_result 0) (lsh amount -1) amount)
+        split (* (- 1 win_result) (/ amount 2))
         (list
             (list
                 move
@@ -137,10 +140,8 @@
     )
 )
 
-; output of e.clsp:
-;    (alice_discards alice_card_selections alice_cards bob_cards alice_final_cards bob_final_cards)
-; run after e.clsp
-; Alice makes a nil move to message Bob who won
+; state is (alice_discards alice_card_selections alice_cards bob_cards alice_final_cards bob_final_cards)
+; Alice makes a nil move to end the game
 (defun calpoker_alice_handler_e (NEXT_MOVE SPLIT local_move amount state last_mover_share entropy)
     (list
         "calpoker_alice_handler_e"
@@ -155,12 +156,14 @@
     )
 )
 
+; pre_state is nil
+; move is Alice commit
 ; state is alice_commit
-; move is Alice commit to a salted word
 (defun calpoker_bob_handler_a (amount pre_state state move validation_program_hash split)
     (list 0 0 calpoker_bob_handler_b)
 )
 
+; local_move is nil
 ; state is alice_commit
 ; move is bob_seed
 (defun calpoker_bob_handler_b (local_move amount state split entropy)
@@ -178,6 +181,7 @@
     )
 )
 
+; returns (alice_cards_readable bob_cards_readable)
 (defun parse_message (message (alice_commit bob_seed) amount)
     (assert
         (= (sha256 message) alice_commit)
@@ -185,9 +189,11 @@
     )
 )
 
-; state is (alice_commit alice_cards bob_cards)
+; pre_state is (alice_commit bob_seed)
 ; move is Alice's reveal of her card generating seed and her commit to which cards she's picking
+; state is (alice_commit alice_cards bob_cards)
 ; expecting a message revealing Alice's seed which results in local display once verified
+; return readable is (alice_cards bob_cards)
 (defun calpoker_bob_handler_c (amount pre_state (alice_commit alice_cards bob_cards) move validation_program_hash split)
     (list
         (list (make_readable_card_descriptions alice_cards) (make_readable_card_descriptions bob_cards))
@@ -196,7 +202,9 @@
     )
 )
 
-; state is ((alice_cards bob_cards) alice_pick_commitment)
+; TODO make my_move be a list of cards
+; my_move is a bitfield of cards to swap
+; state is (alice_commit alice_cards bob_cards)
 ; move is Bob's discards
 (defun calpoker_bob_handler_d (my_move amount state split entropy)
     (list
@@ -213,8 +221,11 @@
     )
 )
 
-; state is (bob_discards alice_cards bob_cards alice_final_cards bob_final_cards alice_hand_value)
+; TODO make the return readable of this be (alice_discards_as_cards alice_hand_cards
+;   alice_hand_value bob_hand_cards bob_hand_value win_result)
+; pre_state is (bob_discards alice_cards bob_cards alice_commit)
 ; move is alice_salted_discards
+; state is (bob_discards alice_cards bob_cards alice_final_cards bob_final_cards alice_hand_value)
 (defun calpoker_bob_handler_e (amount pre_state (bob_discards alice_cards bob_cards alice_final_cards
         bob_final_cards alice_hand_value) move validation_program_hash split)
     (assign
@@ -223,12 +234,12 @@
         (bob_hand_value bob_selects) (handcalc (map card_list_to_pair (map make_card bob_final_cards)))
         (list
             (list
-                (print "alice discards" alice_discards)
-                (print "alice selects" alice_selects)
-                (print "bob selects" (indices_to_bitfield bob_selects))
-                (print "alice hand value" alice_hand_value)
-                (print "bob hand value" bob_hand_value)
-                (print "compare result" (deep_compare (print "split was" split) (print "amt div 2" (/ amount 2))))
+                alice_discards
+                alice_selects
+                (indices_to_bitfield bob_selects)
+                alice_hand_value
+                bob_hand_value
+                (deep_compare split (/ amount 2))
             )
             (list (indices_to_bitfield bob_selects))
             0

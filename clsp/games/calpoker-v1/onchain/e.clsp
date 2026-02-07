@@ -87,6 +87,7 @@
             alice_discards (substr MOVE 16 17)
             alice_card_selections (substr MOVE 17 18)
 
+            ; TODO simplify this and return nil readable
             (alice_final_cards bob_final_cards) (get_final_cards_in_canonical_order
                 alice_cards alice_discards bob_cards bob_discards)
             alice_hand_value (onehandcalc (map list-to-pair (pull_out_cards
