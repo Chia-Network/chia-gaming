@@ -6,8 +6,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CHIA_BLOCKCHAIN_VERSION: 2.5.5-rc3 #2.5.7
-  CHIAVDF_VERSION: 1.1.12
+  CHIA_BLOCKCHAIN_VERSION: 2.5.5-rc3 # 2.5.7
+  CHIAVDF_VERSION: ">=1.1.10" # 1.1.12
   MATURIN_VERSION: 1.9.2
   UV_VERSION: 0.7.9
   GRCOV_VERSION: 0.8.1
@@ -107,10 +107,10 @@ jobs:
         with:
           components: "clippy, rustfmt"
 
-      - name: Set up Python ${{ matrix.python.name }}
+      - name: Set up Python 3.12 # ${{ matrix.python.name }}
         uses: Chia-Network/actions/setup-python@main
         with:
-          python-version: ${{ matrix.python.action }}
+          python-version: 3.12 # ${{ matrix.python.action }}
 
       - uses: chia-network/actions/create-venv@main
         id: create-venv
