@@ -6,8 +6,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CHIA_BLOCKCHAIN_VERSION: 2.5.5-rc3 # 2.5.7
-  CHIAVDF_VERSION: ">=1.1.10" # 1.1.12
+  CHIA_BLOCKCHAIN_VERSION: 2.5.5-rc3 # 2.5.7  
   MATURIN_VERSION: 1.9.2
   UV_VERSION: 0.7.9
   GRCOV_VERSION: 0.8.1
@@ -120,7 +119,6 @@ jobs:
         run: |
           # We need chia-blockchain so we can run the blockchain simulator
           python -m pip install setuptools==75.0.0
-          # python -m pip install chiavdf==$CHIAVDF_VERSION 
           python -m pip install chia-blockchain==$CHIA_BLOCKCHAIN_VERSION
           # Try tests without sim-tests to ensure we're tracking build failures in that
           # configuration.  Also it's a lot shorter.
@@ -190,7 +188,6 @@ jobs:
           export CARGO_TARGET_DIR=$(pwd)/target
           python -m venv venv
           source venv/bin/activate
-          pip install chiavdf==$CHIAVDF_VERSION
           pip install chia-blockchain==$CHIA_BLOCKCHAIN_VERSION
           python -m pip install maturin==$MATURIN_VERSION
           maturin build --features sim-tests
