@@ -6,7 +6,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CHIA_BLOCKCHAIN_VERSION: 2.5.7
+  CHIA_BLOCKCHAIN_VERSION: 2.5.5-rc3 #2.5.7
   CHIAVDF_VERSION: 1.1.12
   MATURIN_VERSION: 1.9.2
   UV_VERSION: 0.7.9
