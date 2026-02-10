@@ -119,7 +119,8 @@ jobs:
         run: |
           # We need chia-blockchain so we can run the blockchain simulator
           python -m pip install setuptools==75.0.0
-          python -m pip install chiavdf==$CHIAVDF_VERSION chia-blockchain==$CHIA_BLOCKCHAIN_VERSION
+          # python -m pip install chiavdf==$CHIAVDF_VERSION 
+          python -m pip install chia-blockchain==$CHIA_BLOCKCHAIN_VERSION
           # Try tests without sim-tests to ensure we're tracking build failures in that
           # configuration.  Also it's a lot shorter.
           cargo test
