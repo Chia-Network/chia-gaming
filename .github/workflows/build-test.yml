@@ -10,7 +10,7 @@ env:
   MATURIN_VERSION: 1.9.2
   UV_VERSION: 0.7.9
   GRCOV_VERSION: 0.8.1
-  MAC_PYTHON_TEST_VERSION: 3.10
+  MAC_PYTHON_TEST_VERSION: 3.12
 
 on:
   push:
@@ -36,7 +36,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-latest, ubuntu-latest, windows-latest]
-        python: ['3.10', 3.11, 3.12]
+        # chia_rs supports python 3.11, 3.12, 3.13
+        # https://github.com/Chia-Network/chia_rs/tree/main/wheel
+        # chia-blockchain supports python 3.10, 3.11, 3.12
+        # https://github.com/Chia-Network/chia-blockchain/tree/main/.github/workflows
+        python: [3.11, 3.12]
 
     steps:
     - name: Checkout code
