@@ -125,8 +125,6 @@
     )
 )
 
-; TODO make the returned readable be (bob_discards_as_cards my_hand_cards my_hand_value
-;   bob_hand_cards bob_hand_value win_result)
 ; pre_state is (alce_cards bob_cards alice_commit)
 ; move is Bob's discards
 ; state is (bob_discards alice_cards bob_cards alice_commit)
@@ -245,17 +243,15 @@
     )
 )
 
-; TODO make the return readable of this be (alice_discards_as_cards alice_hand_cards
-;   alice_hand_value bob_hand_cards bob_hand_value win_result)
 ; pre_state is (bob_discards alice_cards bob_cards alice_commit)
 ; move is alice_salted_discards
-; state is (bob_discards alice_cards bob_cards alice_final_cards bob_final_cards alice_hand_value)
+; state is (bob_discards alice_cards bob_cards alice_final_cards bob_final_cards alice_hand_value bob_hand_value)
 (defun calpoker_bob_handler_e (amount pre_state (bob_discards alice_cards bob_cards alice_final_cards
-        bob_final_cards alice_hand_value) move validation_program_hash split)
+        bob_final_cards alice_hand_value bob_hand_value) move validation_program_hash split)
     (assign
         alice_discards (substr move 16 17)
         alice_selects (substr move 17 (strlen move))
-        (bob_hand_value bob_selects) (handcalc bob_final_cards)
+        (tmp_hand_value bob_selects) (handcalc bob_final_cards)
         (list
             (list
                 alice_discards
