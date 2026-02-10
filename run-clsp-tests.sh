@@ -13,13 +13,17 @@ fi
 
 cd ./python
 UV_VENV_CLEAR=1 uv venv --python 3.12 --clear
+cargo build  # We need the .hex files
+
+
 PY_MINOR=$(.venv/bin/python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-if [[ ! "$PY_MINOR" =~ ^3\.(9|10|11|12)$ ]]; then
-  echo "Unsupported Python version in .venv: $PY_MINOR"
+if [[ ! "$PY_MINOR" =~ ^3\.(11|12|13)$ ]]; then
+  echo "Unsupported Python version for chia_rs in .venv: $PY_MINOR"
+  echo "See https://github.com/Chia-Network/chia_rs/tree/main/wheel"
   echo "Recreating venv with Python 3.12..."
   UV_VENV_CLEAR=1 uv venv --python 3.12 --clear
   PY_MINOR=$(.venv/bin/python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-  if [[ ! "$PY_MINOR" =~ ^3\.(9|10|11|12)$ ]]; then
+  if [[ ! "$PY_MINOR" =~ ^3\.(11|12|13)$ ]]; then
     echo "Still unsupported after recreate: $PY_MINOR"
     exit 1
   fi

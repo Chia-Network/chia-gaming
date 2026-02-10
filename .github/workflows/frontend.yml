@@ -90,11 +90,10 @@ jobs:
           docker image prune -f
 
       - name: Run headless test
-        timeout-minutes: 20
-        max_attempts: 3
         env:
           DETECT_CHROMEDRIVER_VERSION: "true"
           FIREFOX_HEADLESS: "true"
+        timeout-minutes: 20
         run: |
           sudo apt update
           sudo apt-get install -qy xvfb libnss3-dev libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2t64
@@ -145,11 +144,8 @@ jobs:
         if: env.RELEASE == 'true'
         run: |
           cd ${{ github.workspace }}/artifacts || exit 1
-          DIRS="chia-gaming-frontend chia-gaming-lobby"
-          for dir in $DIRS; do
-            echo "Creating zip for $dir..."
-            zip -r $dir.zip $dir
-          done <<< "$DIRS"
+          zip -r chia-gaming-frontend.zip chia-gaming-frontend
+          zip -r chia-gaming-lobby.zip chia-gaming-lobby
 
       - name: Upload Release Artifacts
         if: env.RELEASE == 'true'
