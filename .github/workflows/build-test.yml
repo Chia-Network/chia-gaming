@@ -11,6 +11,7 @@ env:
   MATURIN_VERSION: 1.9.2
   UV_VERSION: 0.7.9
   GRCOV_VERSION: 0.8.1
+  MAC_PYTHON_TEST_VERSION: 3.10
 
 on:
   push:
@@ -221,10 +222,10 @@ jobs:
       with:
         fetch-depth: 1
 
-    - name: Install python ${{ matrix.python.action }} on mac
+    - name: Install python on mac
       uses: Chia-Network/actions/setup-python@main
       with:
-        python-version: ${{ matrix.python.action }}
+        python-version: $MAC_PYTHON_TEST_VERSION
 
     - name: Set up rust on mac
       run: |
