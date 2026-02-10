@@ -48,8 +48,8 @@ export interface UseWasmBlobResult {
   playerHand: number[];
   opponentHand: number[];
   playerNumber: number;
-  cardSelections: number;
-  setCardSelections: (s: number) => void;
+  cardSelections: number[];
+  setCardSelections: (s: number[]) => void;
   outcome: CalpokerOutcome | undefined;
   lastOutcome: CalpokerOutcome | undefined;
   stopPlaying: () => void;
@@ -85,7 +85,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
   const [isPlayerTurn, setMyTurn] = useState<boolean>(false);
   const [moveNumber, setMoveNumber] = useState<number>(0);
   const [error, setRealError] = useState<string | undefined>(undefined);
-  const [cardSelections, setOurCardSelections] = useState<number>(0);
+  const [cardSelections, setOurCardSelections] = useState<number[]>([]);
   const amount = parseInt(searchParams.amount);
 
   const setSavedGame = (game: any) => {

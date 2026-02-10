@@ -19,8 +19,8 @@ export interface CalpokerProps {
   playerNumber: number;
   playerHand: number[];
   opponentHand: number[];
-  cardSelections: number;
-  setCardSelections: (n: number) => void;
+  cardSelections: number[];
+  setCardSelections: (n: number[]) => void;
   handleMakeMove: (hex: string) => void;
   stopPlaying: () => void;
   addressData: any;

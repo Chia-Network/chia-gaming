@@ -65,27 +65,6 @@
     )
 )
 
-; TODO make my_discards be a list of cards
-; state is (alice_commit bob_seed)
-; move is Alice's reveal of her card generating seed and her commit to which cards she's picking
-(defun calpoker_alice_handler_c (PREIMAGE my_discards amount state split entropy)
-    (assign
-        salt (substr entropy 0 16)
-        new_commit (sha256 (concat salt my_discards))
-        (list
-            "calpoker_alice_handler_c"
-            (concat PREIMAGE new_commit)
-            pokerc
-            pokerc_hash
-            pokerd
-            pokerd_hash
-            1
-            0
-            (curry calpoker_alice_handler_d salt my_discards)
-        )
-    )
-)
-
 (defun indices_to_bitfield_inner (mylist index)
     (if (not mylist)
         0
@@ -97,6 +76,53 @@
 
 (defun indices_to_bitfield (mylist)
     (single-byte (indices_to_bitfield_inner mylist 0))
+)
+
+(defun list_contains (item mylist)
+    (if (not mylist)
+        0
+        (= item (f mylist))
+        1
+        (list_contains item (r mylist))
+    )
+)
+
+(defun cards_to_indices_inner (cards selected index)
+    (if (not cards)
+        0
+        (if (list_contains (f cards) selected)
+            (c index (cards_to_indices_inner (r cards) selected (+ index 1)))
+            (cards_to_indices_inner (r cards) selected (+ index 1))
+        )
+    )
+)
+
+(defun cards_to_bitfield (selected cards)
+    (indices_to_bitfield (cards_to_indices_inner cards selected 0))
+)
+
+; my_discards is a list of cards
+; state is (alice_commit bob_seed)
+; move is Alice's reveal of her card generating seed and her commit to which cards she's picking
+(defun calpoker_alice_handler_c (PREIMAGE my_discards amount state split entropy)
+    (assign
+        (alice_commit bob_seed) state
+        (cardsa cardsb) (make_cards (sha256 PREIMAGE bob_seed amount))
+        my_discards_bitfield (cards_to_bitfield my_discards cardsa)
+        salt (substr entropy 0 16)
+        new_commit (sha256 (concat salt my_discards_bitfield))
+        (list
+            "calpoker_alice_handler_c"
+            (concat PREIMAGE new_commit)
+            pokerc
+            pokerc_hash
+            pokerd
+            pokerd_hash
+            1
+            0
+            (curry calpoker_alice_handler_d salt my_discards_bitfield)
+        )
+    )
 )
 
 ; TODO make the returned readable be (bob_discards_as_cards my_hand_cards my_hand_value
@@ -198,14 +224,16 @@
     )
 )
 
-; TODO make my_move be a list of cards
-; my_move is a bitfield of cards to swap
+; my_move is a list of cards
 ; state is (alice_commit alice_cards bob_cards)
 ; move is Bob's discards
 (defun calpoker_bob_handler_d (my_move amount state split entropy)
     (list
         "calpoker_bob_handler_d"
-        my_move
+        (assign
+            (alice_commit alice_cards bob_cards) state
+            (cards_to_bitfield my_move bob_cards)
+        )
         pokerd
         pokerd_hash
         pokere

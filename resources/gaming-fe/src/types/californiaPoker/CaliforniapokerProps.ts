@@ -9,8 +9,8 @@ export interface CaliforniapokerProps {
   playerNumber: number;
   playerHand: number[];
   opponentHand: number[];
-  cardSelections: number;
-  setCardSelections: (n: number) => void;
+  cardSelections: number[];
+  setCardSelections: (n: number[]) => void;
   handleMakeMove: (hex: string) => void;
   myWinOutcome: 'win' | 'lose' | 'tie' | undefined;
   banner: string;

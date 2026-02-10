@@ -82,7 +82,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     playerCards,
     opponentCards,
   ]);
-  const [rememberedCardSelections, setRememberedCardSelections] = useState(0);
   const [playerDisplayText, setPlayerDisplayText] = useState<string>('');
   const [opponentDisplayText, setOpponentDisplayText] = useState<string>('');
 
@@ -95,6 +94,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       rank,
       suit: suitMap[suit],
       originalIndex: index,
+      cardId,
     };
   };
 
@@ -128,7 +128,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   }, [outcome, gameState, moveNumber, rememberedOutcome]);
 
   // const [opponentCards, setAiHand] = useState<CardValueSuit[]>([]);
-  const [playerSelected, setPlayerSelected] = useState<number[]>([]);
   const [winner, setWinner] = useState<string | null>(null);
   const [playerBestHand, setPlayerBestHand] = useState<
     BestHandType | undefined
@@ -155,8 +154,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     setWinner(null);
     setRememberedOutcome(undefined);
     setMovingCards([]);
-    setCardSelections(0);
-    setPlayerSelected([]);
+    setCardSelections([]);
     setPlayerBestHand(undefined);
     setAiBestHand(undefined);
     setShowSwapAnimation(false);
@@ -165,27 +163,15 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     setSwappingCards({ player: [], ai: [] });
   };
 
-  const toggleCardSelection = (cardIndex: number) => {
+  const toggleCardSelection = (cardId: number) => {
     if (gameState !== GAME_STATES.SELECTING) return;
 
-    if (playerSelected.includes(cardIndex)) {
-      const newSelection = playerSelected.filter((i) => i !== cardIndex);
-      setPlayerSelected(newSelection);
-
-      // Update bitmask
-      let selections = cardSelections;
-      selections &= ~(1 << cardIndex); // clear bit
-      setCardSelections(selections);
-      setRememberedCardSelections(selections);
-    } else if (playerSelected.length < 4) {
-      const newSelection = [...playerSelected, cardIndex];
-      setPlayerSelected(newSelection);
-
-      // Update bitmask
-      let selections = cardSelections;
-      selections |= 1 << cardIndex; // set bit
-      setCardSelections(selections);
-      setRememberedCardSelections(selections);
+    if (cardSelections.includes(cardId)) {
+      const newSelection = cardSelections.filter((id) => id !== cardId);
+      setCardSelections(newSelection);
+    } else if (cardSelections.length < 4) {
+      const newSelection = [...cardSelections, cardId];
+      setCardSelections(newSelection);
     }
   };
 
@@ -196,7 +182,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       : moveNumber === 1
         ? !(
             (gameState === GAME_STATES.SELECTING &&
-              playerSelected.length === 4) ||
+              cardSelections.length === 4) ||
             gameState === GAME_STATES.SWAPPING
           )
         : true);
@@ -213,9 +199,9 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       buttonText = "Opponent's Move";
     } else {
       buttonText =
-        playerSelected.length === 4
+        cardSelections.length === 4
           ? 'Swap Cards'
-          : `Select 4 cards (${playerSelected.length}/4)`;
+          : `Select 4 cards (${cardSelections.length}/4)`;
     }
   } else {
     buttonText = 'Waiting for Opponent...';
@@ -224,7 +210,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const doHandleMakeMove = () => {
     const moveData = '80';
 
-    if (gameState === GAME_STATES.SELECTING && playerSelected.length > 0) {
+    if (gameState === GAME_STATES.SELECTING && cardSelections.length > 0) {
       setGameState(GAME_STATES.AWAITING_SWAP);
     }
 
@@ -407,7 +393,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       // Update UI
       setPlayerCards(newPlayer);
       setOpponentCards(newOpponent);
-      setPlayerSelected([]);
 
       // --- Best hands ---
       const lastLog = log[0];
@@ -587,7 +572,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                     winnerType='player'
                     bestHand={playerBestHand}
                     onCardClick={toggleCardSelection}
-                    selectedCards={playerSelected}
+                    selectedCards={cardSelections}
                     swappingCards={swappingCards.player}
                     showSwapAnimation={showSwapAnimation}
                     gameState={gameState}

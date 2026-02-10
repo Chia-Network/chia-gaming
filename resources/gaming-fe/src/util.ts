@@ -118,6 +118,11 @@ function clvm_length(atom: string): string {
   }
 }
 
+export function encode_clvm_list_of_bytes(values: number[]): string {
+  const clvms = values.map((value) => clvm_length(toHexString([value])));
+  return clvm_enlist(clvms);
+}
+
 function spend_to_clvm(spend: any): string {
   const spend_clvm = clvm_enlist([
     spend.puzzle,
