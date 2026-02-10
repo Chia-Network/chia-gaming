@@ -240,7 +240,8 @@ jobs:
 
     - name: Set up a venv for chia-blockchain on mac
       run: |
-        virtualenv python3 -m venv --python ${{ matrix.python.action }} test
+        python3 --version
+        python3 -m venv test
         source ./test/bin/activate
         python -m pip install chia-blockchain==$CHIA_BLOCKCHAIN_VERSION
 
