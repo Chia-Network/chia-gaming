@@ -13,6 +13,9 @@ fi
 
 cd ./python
 UV_VENV_CLEAR=1 uv venv --python 3.12 --clear
+cargo build  # We need the .hex files
+
+
 PY_MINOR=$(.venv/bin/python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
 if [[ ! "$PY_MINOR" =~ ^3\.(11|12|13)$ ]]; then
   echo "Unsupported Python version for chia_rs in .venv: $PY_MINOR"

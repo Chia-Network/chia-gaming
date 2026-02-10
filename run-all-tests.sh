@@ -8,6 +8,7 @@ err() {
 }
 trap err ERR
 
+cargo build
 cargo test
 ./run-clsp-tests.sh
 ./docker-sim-tests.sh
