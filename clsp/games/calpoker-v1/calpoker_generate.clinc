@@ -15,7 +15,6 @@
 (import std.deep_compare)
 (import std.print)
 (import games.calpoker-v1.handcalc exposing handcalc)
-(import games.calpoker-v1.onchain.make_card exposing make_card)
 (import games.calpoker-v1.onchain.make_cards exposing make_cards)
 (import games.calpoker-v1.onchain.arrange_cards exposing get_final_cards_in_canonical_order)
 
@@ -100,9 +99,6 @@
     (single-byte (indices_to_bitfield_inner mylist 0))
 )
 
-; We have composed cards as sublists but need them as pairs.
-(defun card_list_to_pair ((rank suit)) (c rank suit))
-
 ; TODO make the returned readable be (bob_discards_as_cards my_hand_cards my_hand_value
 ;   bob_hand_cards bob_hand_value win_result)
 ; pre_state is (alce_cards bob_cards alice_commit)
@@ -115,11 +111,11 @@
         (my_all_cards_indices bob_all_cards_indices) (get_final_cards_in_canonical_order
             alice_cards MY_PICKS bob_cards move) ;alice_cards alice_picks bob_cards bob_picks
 
-        my_all_cards (map make_card my_all_cards_indices)
-        bob_all_cards (map make_card bob_all_cards_indices)
+        my_all_cards my_all_cards_indices
+        bob_all_cards bob_all_cards_indices
 
-        (my_hand_value my_selects) (handcalc (map card_list_to_pair my_all_cards))
-        (bob_hand_value bob_selects) (handcalc (map card_list_to_pair bob_all_cards))
+        (my_hand_value my_selects) (handcalc my_all_cards)
+        (bob_hand_value bob_selects) (handcalc bob_all_cards)
         ;; win_result is 1 if my_hand_value is greater than bob_hand_value
         win_result (list_compare my_hand_value bob_hand_value)
         ;; split is captured in a their turn handler below so it's the opposite of what
@@ -231,7 +227,7 @@
     (assign
         alice_discards (substr move 16 17)
         alice_selects (substr move 17 (strlen move))
-        (bob_hand_value bob_selects) (handcalc (map card_list_to_pair (map make_card bob_final_cards)))
+        (bob_hand_value bob_selects) (handcalc bob_final_cards)
         (list
             (list
                 alice_discards

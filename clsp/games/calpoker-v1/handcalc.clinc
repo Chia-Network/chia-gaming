@@ -1,7 +1,7 @@
 
 ; ranks are 2-14 with 2 being two, 13 being king, and 14 being ace
 ; suits are 1-4 with no particular labelling
-; takes a list of cards (rank . suit) and returns
+; takes a list of cards in mod-52 form and returns
 ; (hand_quality indices_of_best_cards) with indices_best_cards in low to high order
 ; doesn't work for ten or more cards if there are multiple flushes
 ; all sorting is done highest to lowest
@@ -19,6 +19,13 @@
 (import std.print)
 (import games.calpoker-v1.onchain.onehandcalc)
 (import util.prepend_count)
+
+(defun mod52_to_pair (card_id)
+    (assign
+        (rank . suit) (divmod card_id 4)
+        (c (+ 2 rank) (+ 1 suit))
+    )
+)
 
 (defun pull_indices_inner (my_index indices cards)
     (if (not indices)
@@ -77,12 +84,13 @@
 
 (defun handcalc (cards)
     (assign
-        ranks_first (sort deep> (map_enumerate (lambda ((rank . suit) index) (li rank suit index)) cards))
+        cards_pairs (map mod52_to_pair cards)
+        ranks_first (sort deep> (map_enumerate (lambda ((rank . suit) index) (li rank suit index)) cards_pairs))
 
         group_candidate (map (lambda ((count rank suit index)) index) (truncate 5 (sort deep> (prepend_count ranks_first))))
         straight_candidate (straight_indices ranks_first)
 
-        suits_first (sort deep> (map_enumerate (lambda ((rank . suit) index) (li suit rank index)) cards))
+        suits_first (sort deep> (map_enumerate (lambda ((rank . suit) index) (li suit rank index)) cards_pairs))
         (@ suits_grouped ((first_count first_suit first_rank first_index))) (sort deep> (prepend_count suits_first))
         (flush_candidate straight_flush_candidate) (if (< first_count 5) (li 0 0)
             (li
@@ -93,7 +101,7 @@
 
         candidates (filtermap echo (li group_candidate straight_candidate flush_candidate straight_flush_candidate))
 
-        (quality indices_from_onehandcalc) (max deep< (map (lambda ((& cards) indices) (li (onehandcalc (pull_indices indices cards)) indices)) candidates))
+        (quality indices_from_onehandcalc) (max deep< (map (lambda ((& cards) indices) (li (onehandcalc (map mod52_to_pair (pull_indices indices cards))) indices)) candidates))
         (list quality (sort deep< indices_from_onehandcalc))
     )
 )

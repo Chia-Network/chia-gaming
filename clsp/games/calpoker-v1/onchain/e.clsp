@@ -2,7 +2,7 @@
 
 (import games.calpoker-v1.onchain.onehandcalc)
 (import games.calpoker-v1.onchain.arrange_cards)
-(import games.calpoker-v1.onchain.make_card)
+(import games.calpoker-v1.handcalc exposing mod52_to_pair)
 (import games.calpoker-v1.game_codes)
 (import std.list_compare)
 (import std.assert)
@@ -20,9 +20,6 @@
 ; state is (bob_discards alice_cards bob_cards alice_commit)
 ; move is alice_salted_discards and alice's selections
 ; evidence is Bob's card selections
-
-; TODO: move helper functions to another file
-(defun list-to-pair ((a b)) (c a b))
 
 (defun indices_to_bitfield_inner (mylist index)
     (if (not mylist)
@@ -52,7 +49,7 @@
         bob_hand_value
             (onehandcalc
                 (map
-                    list-to-pair
+                    mod52_to_pair
                     (pull_out_cards bob_card_selections bob_final_cards)
                 )
             )
@@ -90,7 +87,7 @@
             ; TODO simplify this and return nil readable
             (alice_final_cards bob_final_cards) (get_final_cards_in_canonical_order
                 alice_cards alice_discards bob_cards bob_discards)
-            alice_hand_value (onehandcalc (map list-to-pair (pull_out_cards
+            alice_hand_value (onehandcalc (map mod52_to_pair (pull_out_cards
                 alice_card_selections alice_final_cards)))
             (if_any_fail
                 (= (sha256 alice_salted_discards) alice_commit)
