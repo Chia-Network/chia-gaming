@@ -70,8 +70,8 @@ export class WasmBlobWrapper {
   moveNumber: number;
   qualifyingEvents: number;
   cardSelections: number;
-  playerHand: number[][];
-  opponentHand: number[][];
+  playerHand: number[];
+  opponentHand: number[];
   shutdownCalled: boolean;
   finished: boolean;
   reloading: boolean;
@@ -257,14 +257,12 @@ export class WasmBlobWrapper {
 
   updateCards(readable: any, result: any) {
     const card_lists = proper_list(readable).map((l: any) =>
-      proper_list(l).map((c: any) =>
-        proper_list(c).map((v: Uint8Array) => {
-          if (v.length > 0) {
-            return v[0];
-          }
-          return 0;
-        }),
-      ),
+      proper_list(l).map((v: Uint8Array) => {
+        if (v.length > 0) {
+          return v[0];
+        }
+        return 0;
+      }),
     );
     console.log('card_lists', card_lists);
     if (this.iStarted) {

@@ -1,11 +1,12 @@
 import { Paper, Typography } from '@mui/material';
-import { suitNames } from '../../../types/ChiaGaming';
+import { cardIdToRankSuit, suitNames } from '../../../types/ChiaGaming';
+import { RANK_SYMBOLS } from './constants/constants';
 
 
 interface PlayingCardProps {
   id: string;
   index: number;
-  cardValue: number[];
+  cardValue: number;
   isFaceDown?: boolean;
   selected: boolean;
   selectionColor?: string;
@@ -23,14 +24,15 @@ const PlayingCard = ({
   isFaceDown = false,
   iAmPlayer,
 }: PlayingCardProps) => {
-  const rank = cardValue.slice(0, -1);
-  const suit = suitNames[cardValue.slice(-1)[0] as any];
+  const { rank, suit } = cardIdToRankSuit(cardValue);
+  const suitName = suitNames[suit];
+  const rankDisplay = RANK_SYMBOLS[rank] ?? rank;
   const setSelectedCB = () => {
     const newSelected = !selected;
     setSelection(index, newSelected);
   };
 
-  const isRedSuit = suit === '♥' || suit === '♦';
+  const isRedSuit = suitName === '♥' || suitName === '♦';
   const suitColor = isRedSuit ? 'red' : 'black';
 
   const cardStyle = {
@@ -67,15 +69,15 @@ const PlayingCard = ({
       {!isFaceDown && (
         <>
           <Typography variant='body2' style={{ fontWeight: 'bold' }}>
-            {rank}
-            {suit}
+            {rankDisplay}
+            {suitName}
           </Typography>
           <Typography
             variant='body2'
             style={{ fontWeight: 'bold', transform: 'rotate(180deg)' }}
           >
-            {rank}
-            {suit}
+            {rankDisplay}
+            {suitName}
           </Typography>
         </>
       )}

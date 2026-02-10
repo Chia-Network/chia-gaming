@@ -7,7 +7,7 @@ import { popcount } from '../../../util';
 
 interface PlayerSectionProps {
   playerNumber: number;
-  playerHand: number[][];
+  playerHand: number[];
   isPlayerTurn: boolean;
   moveNumber: number;
   handleMakeMove: (move: any) => void;
@@ -61,7 +61,7 @@ const PlayerSection = ({
       <Typography variant='h6'>Your Hand:</Typography>
       <br />
       <Box display='flex' flexDirection='row' mb={2}>
-        {playerHand.map((card: number[], index) => (
+        {playerHand.map((card: number, index) => (
           <PlayingCard
             iAmPlayer
             id={`card-${playerNumber}-${card}`}

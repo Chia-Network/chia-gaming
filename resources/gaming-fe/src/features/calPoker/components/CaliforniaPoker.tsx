@@ -21,6 +21,7 @@ import { HandDisplay, MovingCard } from './components';
 import {
   CalpokerOutcome,
   OutcomeHandType,
+  cardIdToRankSuit,
   suitNames,
 } from '../../../types/ChiaGaming';
 import { SuitName } from '../../../types/californiaPoker/CardValueSuit';
@@ -85,14 +86,17 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const [playerDisplayText, setPlayerDisplayText] = useState<string>('');
   const [opponentDisplayText, setOpponentDisplayText] = useState<string>('');
 
-  const cvsFromCard: (card: number[], index: number) => CardValueSuit = (
-    [rank, suit],
+  const cvsFromCard: (cardId: number, index: number) => CardValueSuit = (
+    cardId,
     index,
-  ) => ({
-    rank,
-    suit: suitMap[suit],
-    originalIndex: index,
-  });
+  ) => {
+    const { rank, suit } = cardIdToRankSuit(cardId);
+    return {
+      rank,
+      suit: suitMap[suit],
+      originalIndex: index,
+    };
+  };
 
   // whenever playerHand or aiHand changes → convert into CardValueSuit[]
   useEffect(() => {
@@ -409,20 +413,12 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       const lastLog = log[0];
 
       // Convert hand arrays into CardValueSuit objects
-      const playerBestCards: CardValueSuit[] = lastLog.myHand.map(
-        ([rank, suit], idx) => ({
-          rank,
-          suit: suitMap[suit],
-          originalIndex: idx,
-        }),
+      const playerBestCards: CardValueSuit[] = lastLog.myHand.map((cardId, idx) =>
+        cvsFromCard(cardId, idx),
       );
 
-      const opponentBestCards: CardValueSuit[] = lastLog.opponentHand.map(
-        ([rank, suit], idx) => ({
-          rank,
-          suit: suitMap[suit],
-          originalIndex: idx,
-        }),
+      const opponentBestCards: CardValueSuit[] = lastLog.opponentHand.map((cardId, idx) =>
+        cvsFromCard(cardId, idx),
       );
 
       setPlayerBestHand({

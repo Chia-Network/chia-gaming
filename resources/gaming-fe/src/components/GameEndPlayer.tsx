@@ -16,7 +16,7 @@ const GameEndPlayer = ({
   outcome,
 }: GameEndPlayerProps) => {
   const iAmAlice = playerNumber === 2;
-  const playerHand: number[][] = iAmAlice
+  const playerHand: number[] = iAmAlice
     ? outcome.alice_cards
     : outcome.bob_cards;
   const who = iStarted !== iAmAlice ? 'Your' : 'Opponent';
@@ -42,7 +42,7 @@ const GameEndPlayer = ({
       <Typography variant='h6'>{`${who} Hand:`}</Typography>
       <br />
       <Box display='flex' flexDirection='row' mb={2}>
-        {playerHand.map((card: number[], index: number) => {
+        {playerHand.map((card: number, index: number) => {
           const id = `at-rest-${iStarted}-${card}`;
           const selectionColor =
             cardColors[card_color(outcome, !iStarted, card)];

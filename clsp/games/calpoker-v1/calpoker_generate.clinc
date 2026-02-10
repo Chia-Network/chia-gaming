@@ -250,15 +250,8 @@
 (defun make_cards_readable (seed)
     (assign
         (cardsa cardsb) (make_cards seed)
-        (list (map make_card_readable cardsa) (map make_card_readable cardsb))
+        (list cardsa cardsb)
     )
 )
 
-(defun make_readable_card_descriptions (cards) (map make_card_readable cards))
-
-(defun make_card_readable (val)
-    (assign
-        (rank . suit) (divmod val 4)
-        (list (+ 2 rank) (+ 1 suit))
-    )
-)
+(defun make_readable_card_descriptions (cards) cards)

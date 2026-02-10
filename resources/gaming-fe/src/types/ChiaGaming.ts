@@ -390,9 +390,9 @@ function select_cards_using_bits<T>(card: T[], mask: number): T[][] {
   return [result0, result1];
 }
 
-function card_matches(cards: number[][], card: number[]): boolean {
+function card_matches(cards: number[], card: number): boolean {
   for (const existingCard of cards) {
-    if (existingCard.toString() === card.toString()) {
+    if (existingCard === card) {
       return true;
     }
   }
@@ -403,7 +403,7 @@ function card_matches(cards: number[][], card: number[]): boolean {
 export function card_color(
   outcome: CalpokerOutcome,
   iAmAlice: boolean,
-  card: number[],
+  card: number,
 ): 'my-used' | 'my-final' | 'their-used' | 'their-final' {
   const my_used_cards = iAmAlice
     ? outcome.alice_used_cards
@@ -426,12 +426,12 @@ export function card_color(
   return 'their-final';
 }
 
-function compare_card(a: number[], b: number[]): number {
-  const aval = a[0];
-  const bval = b[0];
-  const rankdiff = aval - bval;
+function compare_card(a: number, b: number): number {
+  const aRankSuit = cardIdToRankSuit(a);
+  const bRankSuit = cardIdToRankSuit(b);
+  const rankdiff = aRankSuit.rank - bRankSuit.rank;
   if (rankdiff === 0) {
-    return a[1] - b[1];
+    return aRankSuit.suit - bRankSuit.suit;
   }
   return rankdiff;
 }
@@ -454,20 +454,20 @@ export class CalpokerOutcome {
   win_direction: number;
   my_win_outcome: 'win' | 'lose' | 'tie';
 
-  alice_cards: number[][];
-  bob_cards: number[][];
+  alice_cards: number[];
+  bob_cards: number[];
 
-  alice_final_hand: number[][];
-  bob_final_hand: number[][];
+  alice_final_hand: number[];
+  bob_final_hand: number[];
 
-  alice_used_cards: number[][];
-  bob_used_cards: number[][];
+  alice_used_cards: number[];
+  bob_used_cards: number[];
 
   constructor(
     iStarted: boolean,
     myDiscards: number,
-    alice_cards: number[][],
-    bob_cards: number[][],
+    alice_cards: number[],
+    bob_cards: number[],
     readable: any,
   ) {
     const result_list = proper_list(readable);
@@ -644,22 +644,28 @@ export interface OutcomeHandType {
 
 export interface OutcomeLogLine {
   topLineOutcome: 'win' | 'lose' | 'tie';
-  myStartHand: number[][];
-  opponentStartHand: number[][];
-  myFinalHand: number[][];
-  opponentFinalHand: number[][];
+  myStartHand: number[];
+  opponentStartHand: number[];
+  myFinalHand: number[];
+  opponentFinalHand: number[];
   myPicks: number;
   opponentPicks: number;
   mySelects: number;
   opponentSelects: number;
   myHandDescription: OutcomeHandType;
   opponentHandDescription: OutcomeHandType;
-  myHand: number[][];
-  opponentHand: number[][];
+  myHand: number[];
+  opponentHand: number[];
 }
 
 // Must match features/californiaPoker/constants/constants.ts:SUITS
 export const suitNames = ['Q', '♠', '♥', '♦', '♣'];
+
+export function cardIdToRankSuit(cardId: number): { rank: number; suit: number } {
+  const rank = Math.floor(cardId / 4) + 2;
+  const suit = (cardId % 4) + 1;
+  return { rank, suit };
+}
 
 function aget<T>(handValue: T[], choice: number, def: T): T {
   if (choice > handValue.length || choice < 0) {
@@ -680,7 +686,7 @@ function rget<T>(array: T[], start: number, end: number, def: T): T[] {
 
 export function handValueToDescription(
   handValue: number[],
-  myCards: number[][],
+  myCards: number[],
 ): OutcomeHandType {
   const handType = rget(handValue, 0, 3, 0);
 
@@ -689,7 +695,7 @@ export function handValueToDescription(
       return {
         name: 'Flush',
         rank: false,
-        values: [aget(myCards, 0, [0, 0])[1]],
+        values: [cardIdToRankSuit(aget(myCards, 0, 0)).suit],
       };
 
     case '3,1,2':

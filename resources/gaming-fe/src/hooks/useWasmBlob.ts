@@ -45,8 +45,8 @@ export interface UseWasmBlobResult {
   iStarted: boolean;
   moveNumber: number;
   handleMakeMove: (hex: string) => void;
-  playerHand: number[][];
-  opponentHand: number[][];
+  playerHand: number[];
+  opponentHand: number[];
   playerNumber: number;
   cardSelections: number;
   setCardSelections: (s: number) => void;
@@ -74,8 +74,8 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
       address: '',
       puzzleHash: '',
     });
-  const [playerHand, setPlayerHand] = useState<number[][]>([]);
-  const [opponentHand, setOpponentHand] = useState<number[][]>([]);
+  const [playerHand, setPlayerHand] = useState<number[]>([]);
+  const [opponentHand, setOpponentHand] = useState<number[]>([]);
   const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(
     undefined,
   );
