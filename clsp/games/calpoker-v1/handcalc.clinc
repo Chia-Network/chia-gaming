@@ -17,15 +17,8 @@
 (import std.sort)
 (import std.deep_compare)
 (import std.print)
-(import games.calpoker-v1.onchain.onehandcalc)
+(import games.calpoker-v1.onchain.onehandcalc exposing onehandcalc mod52_to_pair)
 (import util.prepend_count)
-
-(defun mod52_to_pair (card_id)
-    (assign
-        (rank . suit) (divmod card_id 4)
-        (c (+ 2 rank) (+ 1 suit))
-    )
-)
 
 (defun pull_indices_inner (my_index indices cards)
     (if (not indices)

@@ -218,44 +218,50 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   };
 
   //
-  // playerSwapIndices are the sources of the swapped cards from the player and targets of the opponent.
-  // aiSwapIndices are the sources of the swapped cards from the opponent and targets of the player.
+  // playerSwapCardIds are the player cards given to the opponent.
+  // aiSwapCardIds are the opponent cards given to the player.
   // playerCards and opponentCards are the local card data.
   //
   const calculateMovingCards = (
-    playerSwapIndices: number[],
-    aiSwapIndices: number[],
+    playerSwapCardIds: number[],
+    aiSwapCardIds: number[],
     playerCards: CardValueSuit[],
     opponentCards: CardValueSuit[],
   ): MovingCardData[] => {
     const movingCardData: MovingCardData[] = [];
-    let usedPlayerCards: number = 0;
-    let usedAiCards: number = 0;
+    const usedPlayerCards = new Set<number>();
+    const usedAiCards = new Set<number>();
 
     // Prefixes for DOM selectors (myPrefix = viewer's hand in DOM)
     const myPrefix = 'player';
     const oppPrefix = 'ai';
 
     // Player -> Opponent animations
-    playerSwapIndices.forEach((swapIndex, i) => {
-      // Choose a target ai index — prefer aligned index if exists, otherwise reuse swapIndex
-      const aiIndex = aiSwapIndices[i];
-      usedPlayerCards |= 1 << swapIndex;
+    playerSwapCardIds.forEach((swapCardId, i) => {
+      const aiCardId = aiSwapCardIds[i];
+      if (aiCardId === undefined) {
+        return;
+      }
+      usedPlayerCards.add(swapCardId);
 
       const mySource = document.querySelector(
-        `[data-card-id="${myPrefix}-${swapIndex}"]`,
+        `[data-card-id="${myPrefix}-${swapCardId}"]`,
       );
       const oppTarget = document.querySelector(
-        `[data-card-id="${oppPrefix}-${aiIndex}"]`,
+        `[data-card-id="${oppPrefix}-${aiCardId}"]`,
       );
 
       if (mySource && oppTarget) {
         const myRect = (mySource as Element).getBoundingClientRect();
         const oppRect = (oppTarget as Element).getBoundingClientRect();
 
+        const card = playerCards.find((c) => c.cardId === swapCardId);
+        if (!card) {
+          return;
+        }
         movingCardData.push({
-          id: `${myPrefix}-to-${oppPrefix}-${swapIndex}`,
-          card: playerCards[swapIndex],
+          id: `${myPrefix}-to-${oppPrefix}-${swapCardId}`,
+          card,
           startX: myRect.left,
           startY: myRect.top,
           endX: oppRect.left,
@@ -268,24 +274,31 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     });
 
     // Opponent -> Player animations
-    aiSwapIndices.forEach((swapIndex, i) => {
-      const playerIndex = playerSwapIndices[i];
-      usedAiCards |= 1 << swapIndex;
+    aiSwapCardIds.forEach((swapCardId, i) => {
+      const playerCardId = playerSwapCardIds[i];
+      if (playerCardId === undefined) {
+        return;
+      }
+      usedAiCards.add(swapCardId);
 
       const oppSource = document.querySelector(
-        `[data-card-id="${oppPrefix}-${swapIndex}"]`,
+        `[data-card-id="${oppPrefix}-${swapCardId}"]`,
       );
       const myTarget = document.querySelector(
-        `[data-card-id="${myPrefix}-${playerIndex}"]`,
+        `[data-card-id="${myPrefix}-${playerCardId}"]`,
       );
 
       if (oppSource && myTarget) {
         const oppRect = (oppSource as Element).getBoundingClientRect();
         const myRect = (myTarget as Element).getBoundingClientRect();
 
+        const card = opponentCards.find((c) => c.cardId === swapCardId);
+        if (!card) {
+          return;
+        }
         movingCardData.push({
-          id: `${oppPrefix}-to-${myPrefix}-${swapIndex}`,
-          card: opponentCards[swapIndex],
+          id: `${oppPrefix}-to-${myPrefix}-${swapCardId}`,
+          card,
           startX: oppRect.left,
           startY: oppRect.top,
           endX: myRect.left,
@@ -299,21 +312,24 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
 
     const selfCardAnimate = (
       myPrefix: string,
-      usedMask: number,
+      usedCards: Set<number>,
       card: CardValueSuit,
       i: number,
     ) => {
-      if (usedMask & (1 << i)) {
+      if (card.cardId === undefined) {
+        return;
+      }
+      if (usedCards.has(card.cardId)) {
         return;
       }
       // source = dest
       const source = document.querySelector(
-        `[data-card-id="${myPrefix}-${i}"]`,
+        `[data-card-id="${myPrefix}-${card.cardId}"]`,
       );
       if (source) {
         const myRect = (source as Element).getBoundingClientRect();
         movingCardData.push({
-          id: `${myPrefix}-to-${myPrefix}-${i}`,
+          id: `${myPrefix}-to-${myPrefix}-${card.cardId}`,
           card,
           startX: myRect.left,
           startY: myRect.top,
@@ -349,23 +365,22 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       ? rememberedOutcome.bob_discards
       : rememberedOutcome.alice_discards;
 
-    // Find the targets to which we'll swap cards, namely the opponent discards.
-    const playerSwapIndices: number[] = [];
-    const aiSwapIndices: number[] = [];
-    for (let i = 0; i < 8; i++) {
-      if (aiSelected & (1 << i)) {
-        playerSwapIndices.push(i);
-      }
-      if (playerSelected & (1 << i)) {
-        aiSwapIndices.push(i);
-      }
-    }
+    const playerSwapCardIds: number[] = rememberedCards[0]
+      .filter((card) => (aiSelected & (1 << (card.originalIndex ?? 0))) !== 0)
+      .map((card) => card.cardId)
+      .filter((cardId): cardId is number => cardId !== undefined);
+    const aiSwapCardIds: number[] = rememberedCards[1]
+      .filter(
+        (card) => (playerSelected & (1 << (card.originalIndex ?? 0))) !== 0,
+      )
+      .map((card) => card.cardId)
+      .filter((cardId): cardId is number => cardId !== undefined);
 
     setSwappingCards({ player: rememberedCards[0], ai: rememberedCards[1] });
-    console.log('calculate moving cards', playerSwapIndices, aiSwapIndices);
+    console.log('calculate moving cards', playerSwapCardIds, aiSwapCardIds);
     const movingCardData = calculateMovingCards(
-      playerSwapIndices,
-      aiSwapIndices,
+      playerSwapCardIds,
+      aiSwapCardIds,
       rememberedCards[0],
       rememberedCards[1],
     );
@@ -379,9 +394,17 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       const newOpponent = [...opponentCards];
 
       // Apply exact card swaps based on animation index mapping
-      for (let i = 0; i < playerSwapIndices.length; i++) {
-        const pIndex = playerSwapIndices[i];
-        const aiIndex = aiSwapIndices[i];
+      for (let i = 0; i < playerSwapCardIds.length; i++) {
+        const pCardId = playerSwapCardIds[i];
+        const aiCardId = aiSwapCardIds[i];
+        if (pCardId === undefined || aiCardId === undefined) {
+          continue;
+        }
+        const pIndex = newPlayer.findIndex((c) => c.cardId === pCardId);
+        const aiIndex = newOpponent.findIndex((c) => c.cardId === aiCardId);
+        if (pIndex === -1 || aiIndex === -1) {
+          continue;
+        }
 
         // Player gives card to AI
         newOpponent[aiIndex] = playerCards[pIndex];
