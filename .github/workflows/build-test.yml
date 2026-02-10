@@ -196,6 +196,7 @@ jobs:
           grcov . --binary-path target -s . --branch --ignore-not-existing --ignore='*/.cargo/*' --ignore='*/tests/*' -o rust_cov.info
           python -c 'with open("rust_cov.info") as f: lines = [l for l in f if not (l.startswith("DA:") and int(l.split(",")[1].strip()) >= 2**63)]; open("lcov.info", "w").writelines(lines)'
       - name: Upload to Coveralls
+        needs: [coverage]
         uses: coverallsapp/github-action@v2
         if: always()
         env:
