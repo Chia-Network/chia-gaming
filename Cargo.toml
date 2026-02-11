@@ -1,3 +1,4 @@
+workspace = { members = ["wasm"] }
 [package]
 name = "chia_gaming"
 version = "0.1.0"
