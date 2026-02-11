@@ -99,7 +99,6 @@
                             alice_final_cards
                             bob_final_cards
                             alice_hand_value
-                            bob_hand_value
                         )
                         0
                         "E move"

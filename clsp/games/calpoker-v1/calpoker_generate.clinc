@@ -245,13 +245,13 @@
 
 ; pre_state is (bob_discards alice_cards bob_cards alice_commit)
 ; move is alice_salted_discards
-; state is (bob_discards alice_cards bob_cards alice_final_cards bob_final_cards alice_hand_value bob_hand_value)
+; state is (bob_discards alice_cards bob_cards alice_final_cards bob_final_cards alice_hand_value)
 (defun calpoker_bob_handler_e (amount pre_state (bob_discards alice_cards bob_cards alice_final_cards
-        bob_final_cards alice_hand_value bob_hand_value) move validation_program_hash split)
+        bob_final_cards alice_hand_value) move validation_program_hash split)
     (assign
         alice_discards (substr move 16 17)
         alice_selects (substr move 17 (strlen move))
-        (tmp_hand_value bob_selects) (handcalc bob_final_cards)
+        (bob_hand_value bob_selects) (handcalc bob_final_cards)
         (list
             (list
                 alice_discards
