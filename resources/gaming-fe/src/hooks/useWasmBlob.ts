@@ -203,8 +203,8 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
   );
 
   const setCardSelections = useCallback(
-    (mask: number) => {
-      gameObject?.setCardSelections(mask);
+    (selections: number[]) => {
+      gameObject?.setCardSelections(selections);
     },
     [gameObject],
   );

@@ -142,7 +142,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
 
   const dealCards = () => {
     setGameState(GAME_STATES.SELECTING);
-    setPlayerSelected([]);
+    setCardSelections([]);
     setWinner(null);
   };
   const [showEndDialog, setShowEndDialog] = useState(false);

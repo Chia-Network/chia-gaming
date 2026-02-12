@@ -1,6 +1,8 @@
 use std::rc::Rc;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
+use num_bigint::{BigInt, ToBigInt};
+use num_traits::ToPrimitive;
 
 use crate::channel_handler::game::Game;
 use crate::channel_handler::types::ReadableMove;
@@ -17,23 +19,113 @@ pub fn load_calpoker(allocator: &mut AllocEncoder, game_id: GameID) -> Result<Ga
     )
 }
 
+fn mergein(outer: &[usize], inner: &[usize], offset: usize) -> Vec<usize> {
+    if inner.is_empty() {
+        outer.to_vec()
+    } else {
+        let first = inner[0] + offset;
+        let mut res = Vec::new();
+        if outer.is_empty() {
+            res.push(first);
+            res.extend(mergein(&[], &inner[1..], offset));
+        } else if outer[0] <= first {
+            res.push(outer[0]);
+            res.extend(mergein(&outer[1..], inner, offset + 1));
+        } else {
+            res.push(first);
+            res.extend(mergein(outer, &inner[1..], offset));
+        }
+        res
+    }
+}
+
+fn mergeover(outer: &[usize], inner: &[usize], offset: usize) -> Vec<usize> {
+    if inner.is_empty() {
+        vec![]
+    } else {
+        let first = inner[0] + offset;
+        let mut res = Vec::new();
+        if outer.is_empty() {
+            res.push(first);
+            res.extend(mergeover(&[], &inner[1..], offset));
+        } else if outer[0] <= first {
+            return mergeover(&outer[1..], inner, offset + 1);
+        } else {
+            res.push(first);
+            res.extend(mergeover(outer, &inner[1..], offset));
+        }
+        res
+    }
+}
+
+fn choose(numcards: usize, numchoose: usize, randomness: BigInt) -> (Vec<usize>, BigInt) {
+    if numchoose == 1 {
+        let divisor = numcards.to_bigint().expect("numcards bigint");
+        let new_randomness = randomness.clone() / divisor.clone();
+        let card = (randomness % divisor).to_usize().expect("card index fits usize");
+        (vec![card], new_randomness)
+    } else {
+        let half = numchoose >> 1;
+        let (cards1, new_randomness2) = choose(numcards, half, randomness);
+        let (cards2, new_randomness3) = choose(numcards - half, numchoose - half, new_randomness2);
+        (mergein(&cards1, &cards2, 0), new_randomness3)
+    }
+}
+
+fn make_v1_hands(alice_word: &[u8], bob_word: &[u8], amount: u64) -> (Vec<usize>, Vec<usize>) {
+    let mut amount_bytes = amount.to_bigint().expect("amount bigint").to_bytes_be().1;
+    if amount_bytes == [0] {
+        amount_bytes = vec![];
+    }
+    if !amount_bytes.is_empty() && (amount_bytes[0] & 0x80) != 0 {
+        amount_bytes.insert(0, 0);
+    }
+
+    let rand_input = Sha256Input::Array(vec![
+        Sha256Input::Bytes(&alice_word[..16]),
+        Sha256Input::Bytes(&bob_word[..16]),
+        Sha256Input::Bytes(&amount_bytes),
+    ])
+    .hash();
+    let randomness = BigInt::from_signed_bytes_be(rand_input.bytes());
+    let (handa, newrandomness) = choose(52, 8, randomness);
+    let (handb, _) = choose(44, 8, newrandomness);
+    (handa.clone(), mergeover(&handa, &handb, 0))
+}
+
+fn select_by_bitfield(cards: &[usize], bitfield: u8) -> Vec<usize> {
+    cards
+        .iter()
+        .enumerate()
+        .filter_map(|(i, c)| {
+            if (bitfield as usize) & (1 << i) != 0 {
+                Some(*c)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 pub fn prefix_test_moves(allocator: &mut AllocEncoder, v1: bool) -> [GameAction; 5] {
     let alice_word = b"0alice6789abcdef";
+    let bob_seed = b"0bob456789abcdef";
     let alice_word_hash = Sha256Input::Bytes(alice_word)
         .hash()
         .to_clvm(allocator)
         .expect("should work");
     let bob_word = allocator
-        .encode_atom(clvm_traits::Atom::Borrowed(b"0bob456789abcdef"))
+        .encode_atom(clvm_traits::Atom::Borrowed(bob_seed))
         .expect("should work");
+    let (alice_cards, bob_cards) = make_v1_hands(alice_word, bob_seed, 200);
     let alice_picks = if v1 {
-        allocator.encode_atom(clvm_traits::Atom::Borrowed(&[0x55]))
+        select_by_bitfield(&alice_cards, 0x55).to_clvm(allocator)
     } else {
         [0, 1, 0, 1, 0, 1, 0, 1].to_clvm(allocator)
     }
     .expect("should work");
     let bob_picks = if v1 {
-        allocator.encode_atom(clvm_traits::Atom::Borrowed(&[0xaa]))
+        select_by_bitfield(&bob_cards, 0xaa).to_clvm(allocator)
     } else {
         [1, 0, 1, 0, 1, 0, 1, 0].to_clvm(allocator)
     }
