@@ -181,6 +181,7 @@ mod sim_tests {
         res.push(("test_play_calpoker_happy_path_v0", &|| {
             let mut allocator = AllocEncoder::new();
             let moves = prefix_test_moves(&mut allocator, false).to_vec();
+            debug!("running moves {moves:?}");
             run_calpoker_container_with_action_list_with_success_predicate(
                 &mut allocator,
                 &moves,
@@ -193,6 +194,7 @@ mod sim_tests {
         res.push(("test_play_calpoker_happy_path", &|| {
             let mut allocator = AllocEncoder::new();
             let moves = prefix_test_moves(&mut allocator, true).to_vec();
+            debug!("running moves {moves:?}");
             run_calpoker_container_with_action_list_with_success_predicate(
                 &mut allocator,
                 &moves,

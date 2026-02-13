@@ -538,8 +538,12 @@ struct PushTxRequest {
 }
 
 #[handler]
-async fn push_tx(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    let spend_decoded: PushTxRequest = req.extract().await.report_err()?;
+async fn push_tx(
+    req: &mut Request,
+    response: &mut Response,
+    salvo_depot: &mut Depot,
+) -> Result<(), String> {
+    let spend_decoded: PushTxRequest = req.extract(salvo_depot).await.report_err()?;
     pass_on_request(
         req,
         response,
