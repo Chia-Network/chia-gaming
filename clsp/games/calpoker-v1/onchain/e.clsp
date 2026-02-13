@@ -44,6 +44,28 @@
     (single-byte (indices_to_bitfield_inner mylist 0))
 )
 
+(defun does_alice_claim_small_enough (alice_hand_value bob_card_selections bob_final_cards mover_share amount)
+    (assign
+        bob_hand_value
+            (onehandcalc
+                (map
+                    mod52_to_pair
+                    (pull_out_cards bob_card_selections bob_final_cards)
+                )
+            )
+        result (list_compare alice_hand_value bob_hand_value)
+        (>= mover_share
+            (if (not result)
+                (/ amount 2)
+                (if (= result 1)
+                    0
+                    amount
+                )
+            )
+        )
+    )
+)
+
 (export (mod_hash
     (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
         MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
@@ -55,7 +77,7 @@
             ;; Common subexpression: (substr MOVE 16 17) == alice_card_selections
             (not (= (popcount (substr MOVE 17 18)) 5))
         )
-        (list SLASH () "E slash wrong MOVE size" MOVE)
+        (list SLASH () "E slash invalid final move shape (need len=18, discards_popcount=4, selects_popcount=5)" MOVE)
 
         (assign
             alice_salted_discards (substr MOVE 0 17)
@@ -66,43 +88,32 @@
                 alice_cards alice_discards bob_cards bob_discards)
             alice_hand_value (onehandcalc (map mod52_to_pair (pull_out_cards
                 alice_card_selections alice_final_cards)))
-            bob_hand_value
-                (onehandcalc
-                    (map
-                        mod52_to_pair
-                        (pull_out_cards bob_card_selections bob_final_cards)
-                    )
-                )
-            result (list_compare alice_hand_value bob_hand_value)
             (if_any_fail
                 (= (sha256 alice_salted_discards) alice_commit)
                 (if (not bob_card_selections)
-                    1
-                    (>= MOVER_SHARE
-                        (if (not result)
-                            (/ AMOUNT 2)
-                            (if (= result 1)
-                                0
-                                AMOUNT
-                            )
-                        )
+                    ;; nil evidence is only valid for off-chain local validation
+                    (if WAITER_PUZZLE_HASH (x "On-chain, nil evidence") 1)
+                    (does_alice_claim_small_enough
+                        alice_hand_value
+                        bob_card_selections
+                        bob_final_cards
+                        MOVER_SHARE
+                        AMOUNT
                     )
                 )
                 (list SLASH () "E slash")
 
-                (assert (not WAITER_PUZZLE_HASH)
-                    (list MAKE_MOVE 0
-                        (li
-                            bob_discards
-                            alice_cards
-                            bob_cards
-                            alice_final_cards
-                            bob_final_cards
-                            alice_hand_value
-                        )
-                        0
-                        "E move"
+                (list MAKE_MOVE 0
+                    (li
+                        bob_discards
+                        alice_cards
+                        bob_cards
+                        alice_final_cards
+                        bob_final_cards
+                        alice_hand_value
                     )
+                    0
+                    "E move"
                 )
             )
         )

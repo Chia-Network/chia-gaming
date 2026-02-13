@@ -524,7 +524,6 @@ fn run_game_container_with_action_list_with_success_predicate(
     let mut move_number = 0;
     debug!("DEBUG: RNG {:?}", rng);
     // debug!("DEBUG: KEYS {:?}", private_keys);
-    debug!("DEBUG: moves_input {:?}", moves_input);
     // Coinset adapter for each side.
     let game_type_map = poker_collection(allocator);
 
@@ -615,6 +614,9 @@ fn run_game_container_with_action_list_with_success_predicate(
                 GameAction::Shutdown(_, _) | GameAction::WaitBlocks(_, _)
             )
     };
+    let has_explicit_go_on_chain = moves_input
+        .iter()
+        .any(|m| matches!(m, GameAction::GoOnChain(_)));
 
     while !matches!(ending, Some(0)) {
         num_steps += 1;
@@ -639,7 +641,11 @@ fn run_game_container_with_action_list_with_success_predicate(
         debug!("local_uis[0].finished {:?}", local_uis[0].game_finished);
         debug!("local_uis[1].finished {:?}", local_uis[0].game_finished);
 
-        assert!(num_steps < 200);
+        assert!(
+            num_steps < 200,
+            "simulation stalled: num_steps={num_steps} move_number={move_number} can_move={can_move} next_action={:?} explicit_go_on_chain={has_explicit_go_on_chain}",
+            moves_input.get(move_number)
+        );
 
         if matches!(wait_blocks, Some((0, _))) {
             wait_blocks = None;
@@ -665,6 +671,13 @@ fn run_game_container_with_action_list_with_success_predicate(
 
         for i in 0..=1 {
             if local_uis[i].go_on_chain {
+                if !has_explicit_go_on_chain {
+                    panic!(
+                        "unexpected off-chain->on-chain transition in non-on-chain test: player={i} move_number={move_number} got_error={} next_action={:?}",
+                        local_uis[i].got_error,
+                        moves_input.get(move_number)
+                    );
+                }
                 // Perform on chain move.
                 // Turn off the flag to go on chain.
                 local_uis[i].go_on_chain = false;
@@ -717,9 +730,22 @@ fn run_game_container_with_action_list_with_success_predicate(
                     // Most of the time, the timeout is coalesced because the spends are equivalent
                     // and take place on the same block.  If we insert delays, we might see an
                     // attempt to spend the same coin and that's fine.
+                    let is_expected_reorg_or_race = included_result.code == 3
+                        && (matches!(included_result.e, Some(5))
+                            || (matches!(included_result.e, Some(8))
+                                && tx
+                                    .name
+                                    .as_deref()
+                                    .map(|n| n.contains("accept transaction"))
+                                    .unwrap_or(false)));
+                    let include_ok = included_result.code == 1 || is_expected_reorg_or_race;
                     assert!(
-                        included_result.code == 1
-                            || (included_result.code == 3 && matches!(included_result.e, Some(5)))
+                        include_ok,
+                        "tx include failed: move_number={move_number} tx_name={:?} code={} e={:?} diagnostic={:?}",
+                        tx.name,
+                        included_result.code,
+                        included_result.e,
+                        included_result.diagnostic
                     );
                 }
 

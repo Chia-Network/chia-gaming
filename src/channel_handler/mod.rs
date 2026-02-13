@@ -1075,9 +1075,32 @@ impl ChannelHandler {
             Some(&coin_string),
         )?;
 
+        let (result_kind, message_len, slash_evidence_len, mover_share_dbg) =
+            match &their_move_result.original {
+                TheirTurnResult::FinalMove(move_data) => (
+                    "FinalMove",
+                    0usize,
+                    move_data.slash_evidence.len(),
+                    format!("{:?}", move_data.mover_share),
+                ),
+                TheirTurnResult::MakeMove(_, message, move_data) => (
+                    "MakeMove",
+                    message.len(),
+                    move_data.slash_evidence.len(),
+                    format!("{:?}", move_data.mover_share),
+                ),
+                TheirTurnResult::Slash(_evidence) => {
+                    ("Slash", 0usize, 0usize, "<n/a>".to_string())
+                }
+            };
         debug!(
-            "{} their_move_result {their_move_result:?}",
-            self.unroll.coin.started_with_potato
+            "{} their_move_result kind={} unroll_ph={:?} message_len={} slash_evidence_len={} mover_share={}",
+            self.unroll.coin.started_with_potato,
+            result_kind,
+            their_move_result.puzzle_hash_for_unroll,
+            message_len,
+            slash_evidence_len,
+            mover_share_dbg
         );
         debug!(
             "{} my share after their move {:?}",

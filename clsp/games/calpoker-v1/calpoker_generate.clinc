@@ -13,6 +13,7 @@
 (import std.relops)
 (import std.list_compare)
 (import std.deep_compare)
+(import std.popcount)
 (import std.print)
 (import games.calpoker-v1.handcalc exposing handcalc)
 (import games.calpoker-v1.onchain.make_cards exposing make_cards)
@@ -111,16 +112,23 @@
         my_discards_bitfield (cards_to_bitfield my_discards cardsa)
         salt (substr entropy 0 16)
         new_commit (sha256 (concat salt my_discards_bitfield))
-        (list
-            "calpoker_alice_handler_c"
-            (concat PREIMAGE new_commit)
-            pokerc
-            pokerc_hash
-            pokerd
-            pokerd_hash
-            1
-            0
-            (curry calpoker_alice_handler_d salt my_discards_bitfield)
+        (if (= (popcount my_discards_bitfield) 4)
+            (list
+                "calpoker_alice_handler_c"
+                (concat PREIMAGE new_commit)
+                pokerc
+                pokerc_hash
+                pokerd
+                pokerd_hash
+                1
+                0
+                (curry calpoker_alice_handler_d salt my_discards_bitfield)
+            )
+            (x (list
+                "v1 alice_handler_c bad discard selection"
+                "bitfield" my_discards_bitfield
+                "popcount" (popcount my_discards_bitfield)
+            ))
         )
     )
 )
@@ -140,22 +148,28 @@
 
         (my_hand_value my_selects) (handcalc my_all_cards)
         (bob_hand_value bob_selects) (handcalc bob_all_cards)
+        my_selects_bitfield (indices_to_bitfield my_selects)
+        bob_selects_bitfield (indices_to_bitfield bob_selects)
         ;; win_result is 1 if my_hand_value is greater than bob_hand_value
         win_result (list_compare my_hand_value bob_hand_value)
         ;; split is captured in a their turn handler below so it's the opposite of what
         ;; this turn would specify.
         split (* (- 1 win_result) (/ amount 2))
-        (list
+        (assert
+            (= (popcount MY_PICKS) 4)
+            (= (popcount my_selects_bitfield) 5)
             (list
-                move
-                (indices_to_bitfield my_selects)
-                (indices_to_bitfield bob_selects)
-                my_hand_value
-                bob_hand_value
-                win_result
+                (list
+                    move
+                    my_selects_bitfield
+                    bob_selects_bitfield
+                    my_hand_value
+                    bob_hand_value
+                    win_result
+                )
+                0
+                (curry calpoker_alice_handler_e (concat MY_SALT MY_PICKS (single-byte my_selects_bitfield)) split)
             )
-            0
-            (curry calpoker_alice_handler_e (concat MY_SALT MY_PICKS (single-byte (indices_to_bitfield my_selects))) split)
         )
     )
 )
@@ -180,6 +194,8 @@
 ; move is Alice commit
 ; state is alice_commit
 (defun calpoker_bob_handler_a (amount pre_state state move validation_program_hash split)
+    ; Legacy-tagged "make move" shape expected by v1 parser:
+    ; compact form: (0 readable_info next_handler)
     (list 0 0 calpoker_bob_handler_b)
 )
 
@@ -226,20 +242,28 @@
 ; state is (alice_commit alice_cards bob_cards)
 ; move is Bob's discards
 (defun calpoker_bob_handler_d (my_move amount state split entropy)
-    (list
-        "calpoker_bob_handler_d"
-        (assign
-            (alice_commit alice_cards bob_cards) state
-            (cards_to_bitfield my_move bob_cards)
+    (assign
+        (alice_commit alice_cards bob_cards) state
+        my_discards_bitfield (cards_to_bitfield my_move bob_cards)
+        (list
+            "calpoker_bob_handler_d"
+            (if (= (popcount my_discards_bitfield) 4)
+                my_discards_bitfield
+                (x (list
+                    "v1 bob_handler_d bad discard selection"
+                    "bitfield" my_discards_bitfield
+                    "popcount" (popcount my_discards_bitfield)
+                ))
+            )
+            pokerd
+            pokerd_hash
+            pokere
+            pokere_hash
+            18
+            0
+            calpoker_bob_handler_e
+            0
         )
-        pokerd
-        pokerd_hash
-        pokere
-        pokere_hash
-        18
-        0
-        calpoker_bob_handler_e
-        0
     )
 )
 
@@ -252,17 +276,22 @@
         alice_discards (substr move 16 17)
         alice_selects (substr move 17 (strlen move))
         (bob_hand_value bob_selects) (handcalc bob_final_cards)
-        (list
+        (assert
+            (= (strlen move) 18)
+            (= (popcount alice_discards) 4)
+            (= (popcount alice_selects) 5)
             (list
-                alice_discards
-                alice_selects
-                (indices_to_bitfield bob_selects)
-                alice_hand_value
-                bob_hand_value
-                (deep_compare split (/ amount 2))
+                (list
+                    alice_discards
+                    alice_selects
+                    (indices_to_bitfield bob_selects)
+                    alice_hand_value
+                    bob_hand_value
+                    (deep_compare split (/ amount 2))
+                )
+                (list (indices_to_bitfield bob_selects))
+                ()
             )
-            (list (indices_to_bitfield bob_selects))
-            0
         )
     )
 )
