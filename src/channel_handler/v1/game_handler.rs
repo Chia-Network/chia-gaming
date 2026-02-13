@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::utils::proper_list;
 use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
-use clvmr::reduction::EvalErr;
 use clvmr::run_program;
 use clvmr::NodePtr;
 
@@ -184,9 +183,9 @@ impl GameHandler {
         );
         let run_result = run_code(allocator, handler_node, handler_args, false);
 
-        if let Err(Error::ClvmErr(EvalErr(x, ty))) = &run_result {
-            let dis = Program::from_nodeptr(allocator, *x)?;
-            debug!("error {ty} from clvm during my turn handler: {dis:?}");
+        if let Err(Error::ClvmErr(e)) = &run_result {
+            let dis = Program::from_nodeptr(allocator, e.node_ptr())?;
+            debug!("error {e:#?} from clvm during my turn handler: {dis:?}");
         }
 
         let run_result = run_result?;
@@ -315,10 +314,10 @@ impl GameHandler {
             get_their_turn_debug_flag(inputs),
         );
 
-        if let Err(Error::ClvmErr(EvalErr(n, desc))) = &run_result_e {
+        if let Err(Error::ClvmErr(e)) = &run_result_e {
             debug!(
-                "error {desc} from their turn handler: {:?}",
-                Program::from_nodeptr(allocator, *n)
+                "error {e:#?} from their turn handler: {:?}",
+                Program::from_nodeptr(allocator, e.node_ptr())
             );
         }
 
