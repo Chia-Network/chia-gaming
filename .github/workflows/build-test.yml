@@ -59,7 +59,7 @@ jobs:
 
     - name: Set up rust
       # See also rust-toolchain.toml
-      uses: dtolnay/rust-toolchain@$master
+      uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ env.RUST_VERSION }}
         components: "clippy, rustfmt"
