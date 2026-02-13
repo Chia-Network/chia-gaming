@@ -1,5 +1,5 @@
 use clvm_traits::ToClvmError;
-use clvmr::reduction::EvalErr;
+use clvmr::error::EvalErr;
 use serde::{Deserialize, Serialize, Serializer};
 use std::io;
 

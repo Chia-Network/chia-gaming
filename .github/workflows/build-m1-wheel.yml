@@ -1,0 +1,99 @@
+name: Build M1 Wheels
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    tags:
+      - "**"
+  pull_request:
+    branches:
+      - "**"
+env:
+  MAC_PYTHON_VERSION: 3.12  # "3.10"
+  CHIA_BLOCKCHAIN_VERSION: 2.5.5-rc3 # 2.5.7
+  # MATURIN_VERSION: 1.9.2
+
+concurrency:
+  group: ${{ github.ref }}-${{ github.workflow }}-${{ github.event_name }}--${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/heads/long_lived/')) && github.sha || '' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build_wheels:
+    name: Build wheel on Mac M1
+    runs-on: [macos-13-arm64]
+    strategy:
+      fail-fast: false
+
+    steps:
+      - uses: Chia-Network/actions/clean-workspace@main
+
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install python
+        uses: Chia-Network/actions/setup-python@main
+        with:
+          python-version: ${{ env.MAC_PYTHON_VERSION }}
+
+      - name: Set up rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rust.sh
+          sh rust.sh -y
+
+      - name: Build m1 wheels
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "13.0"
+        run: |
+          python3 -m venv venv
+          . ./venv/bin/activate
+          export PATH=~/.cargo/bin:$PATH
+          pip install maturin # python -m pip install maturin==$MATURIN_VERSION
+          maturin --version
+          python -m pip install chia-blockchain==$CHIA_BLOCKCHAIN_VERSION
+          maturin build --features sim-tests
+
+      - name: Install wheel
+        run: |
+          . ./venv/bin/activate
+          ls ./target/wheels/
+          echo Installing wheels... `find . -name \*.whl`
+          pip install `find . -name \*.whl` #pip install ./target/wheels/*.whl
+
+      - name: Run tests on mac
+        run: |
+          echo "PWD=$(pwd)"
+          source ./venv/bin/activate
+          cargo test # "+stable" flag is not supported here yet
+          python -c "from chia_gaming import chia_gaming; chia_gaming.run_simulation_tests()"
+
+      # - name: Upload artifacts
+      #   uses: actions/upload-artifact@v5
+      #   with:
+      #     name: wheels
+      #     path: ./target/wheels/
+
+      - name: Upload Release Artifacts on mac
+        if: env.RELEASE == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          FILES=$(find ${{ github.workspace }}/artifacts -type f -name 'chia-game-deploy*.zip')
+          while IFS= read -r file; do
+            gh release upload \
+              $RELEASE_TAG \
+              $file
+          done <<< "$FILES"
+
+          gh release upload \
+            $RELEASE_TAG \
+            artifacts/installer-chia-exporter*/*.deb
+
+
