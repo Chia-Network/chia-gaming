@@ -40,7 +40,7 @@
             pokerb_hash
             48
             0
-            (curry calpoker_alice_handler_b preimage)
+            (curry calpoker_alice_handler_b preimage image)
         )
     )
 )

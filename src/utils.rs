@@ -1,5 +1,5 @@
 use clvmr::allocator::SExp;
-use clvmr::reduction::EvalErr;
+use clvmr::error::EvalErr;
 use clvmr::{Allocator, NodePtr};
 use num_bigint::BigInt;
 
@@ -63,7 +63,7 @@ pub fn enlist(allocator: &mut Allocator, vec: &[NodePtr]) -> Result<NodePtr, Eva
 pub fn first(allocator: &Allocator, sexp: NodePtr) -> Result<NodePtr, EvalErr> {
     match allocator.sexp(sexp) {
         SExp::Pair(f, _) => Ok(f),
-        _ => Err(EvalErr(sexp, "first of non-cons".to_string())),
+        _ => Err(EvalErr::InvalidOpArg(sexp, "first of non-cons".to_string())),
     }
 }
 
