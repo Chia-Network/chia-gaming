@@ -10,7 +10,6 @@ env:
   MATURIN_VERSION: 1.9.2
   UV_VERSION: 0.7.9
   GRCOV_VERSION: 0.8.1
-  MAC_PYTHON_TEST_VERSION: 3.12
   RUST_VERSION: stable
 
 on:
@@ -212,72 +211,3 @@ jobs:
           COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
         with:
           path-to-lcov: './lcov.info'
-
-  # m1 mac
-  build_wheels:
-    name: Build wheel on Mac M1
-    needs: [unit_tests]
-    runs-on: [MacOS, ARM64]
-    strategy:
-      fail-fast: false
-
-    steps:
-    - uses: Chia-Network/actions/clean-workspace@main
-
-    - name: Checkout code on mac
-      uses: actions/checkout@v3
-      with:
-        fetch-depth: 1
-
-    - name: Install python on mac
-      uses: Chia-Network/actions/setup-python@main
-      with:
-        python-version: $MAC_PYTHON_TEST_VERSION
-
-    - name: Set up rust on mac
-      run: |
-        curl https://static.rust-lang.org/rustup/dist/aarch64-apple-darwin/rustup-init.sha256 | awk '{print $1 " *rustup-init"}' > checksum.txt
-        curl -O https://static.rust-lang.org/rustup/dist/aarch64-apple-darwin/rustup-init
-        cat checksum.txt
-        shasum -a 256 -c checksum.txt
-
-    - name: Install rust on mac
-      run: |
-        chmod +x rustup-init
-        ./rustup-init -y || (echo "Rust is already installed. Exiting..." && exit 2)
-        rm rustup-init checksum.txt
-        echo 'export PATH=$HOME/.cargo/bin:$PATH' >> $HOME/.profile
-
-    - name: Set up a venv for chia-blockchain on mac
-      run: |
-        python3 --version
-        python3 -m venv test
-        source ./test/bin/activate
-        python -m pip install chia-blockchain==$CHIA_BLOCKCHAIN_VERSION
-
-    - name: Run tests on mac
-      run: |
-        echo "PWD=$(pwd)"
-        source ./test/bin/activate
-        # "+stable" flag is not supported here yet
-        cargo test
-        python -m pip install maturin==$MATURIN_VERSION
-        maturin build --features sim-tests
-        pip install `find . -name \*.whl`
-        python -c "from chia_gaming import chia_gaming; chia_gaming.run_simulation_tests()"
-
-    - name: Upload Release Artifacts on mac
-      if: env.RELEASE == 'true'
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        FILES=$(find ${{ github.workspace }}/artifacts -type f -name 'chia-game-deploy*.zip')
-        while IFS= read -r file; do
-          gh release upload \
-            $RELEASE_TAG \
-            $file
-        done <<< "$FILES"
-
-        gh release upload \
-          $RELEASE_TAG \
-          artifacts/installer-chia-exporter*/*.deb
