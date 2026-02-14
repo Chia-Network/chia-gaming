@@ -316,7 +316,7 @@ impl GameRunner {
     fn spend(&mut self, blob: &str) -> StringWithError {
         let spend_program = Program::from_hex(blob)?;
         let spend_node = spend_program.to_nodeptr(&mut self.allocator)?;
-        let spend_bundle = SpendBundle::from_clvm(self.allocator, spend_node)?;
+        let spend_bundle = SpendBundle::from_clvm(&self.allocator, spend_node)?;
         debug!("spend with bundle {spend_bundle:?}");
         self.spend_list_of_spends(&spend_bundle.spends)
     }
