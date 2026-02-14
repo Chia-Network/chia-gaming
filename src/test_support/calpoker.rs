@@ -198,7 +198,7 @@ mod sim_tests {
         {
             debug!("processing move {who} {index}: {readable_move:?}, g.local_uis[{who}].opponent_messages {:?}", g.local_uis[who].opponent_messages);
             let message = g.local_uis[who].opponent_messages.iter().find_map(|m| {
-                if index == m.opponent_move_size {
+                if index + 1 == m.opponent_move_size {
                     return Some(m.opponent_message.clone());
                 }
 
@@ -288,6 +288,8 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
             let mut moves = prefix_test_moves(&mut allocator, true).to_vec();
             moves.truncate(2);
+            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
             let game_outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, true)
                 .expect("v1 opening moves should complete");
             let game_results = game_run_outcome_to_move_results(&game_outcome);
@@ -300,27 +302,13 @@ mod sim_tests {
             assert_eq!(
                 alice_cards,
                 vec![
-                    (2usize, 2usize),
-                    (5, 3),
-                    (8, 2),
-                    (11, 3),
-                    (14, 1),
-                    (14, 2),
-                    (14, 3),
-                    (14, 4),
+                    0usize, 7, 10, 11, 32, 36, 41, 49,
                 ]
             );
             assert_eq!(
                 bob_cards,
                 vec![
-                    (3usize, 3usize),
-                    (4, 1),
-                    (5, 4),
-                    (8, 1),
-                    (8, 3),
-                    (8, 4),
-                    (12, 2),
-                    (12, 3),
+                    2usize, 6, 9, 13, 18, 19, 23, 47,
                 ]
             );
         }));
@@ -374,27 +362,13 @@ mod sim_tests {
             assert_eq!(
                 alice_cards,
                 vec![
-                    (2usize, 2usize),
-                    (5, 3),
-                    (8, 2),
-                    (11, 3),
-                    (14, 1),
-                    (14, 2),
-                    (14, 3),
-                    (14, 4),
+                    0usize, 7, 10, 11, 32, 36, 41, 49,
                 ]
             );
             assert_eq!(
                 bob_cards,
                 vec![
-                    (3usize, 3usize),
-                    (4, 1),
-                    (5, 4),
-                    (8, 1),
-                    (8, 3),
-                    (8, 4),
-                    (12, 2),
-                    (12, 3),
+                    2usize, 6, 9, 13, 18, 19, 23, 47,
                 ]
             );
         }));

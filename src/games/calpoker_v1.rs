@@ -28,6 +28,8 @@ pub enum WinDirectionUser {
 }
 
 pub type Card = (usize, usize);
+pub type Mod52Card = usize;
+pub type ReadableCardList = Vec<Mod52Card>;
 
 #[derive(Eq, PartialEq, Debug, Serialize, Deserialize)]
 pub enum RawCalpokerHandValue {
@@ -182,33 +184,26 @@ pub struct CalpokerResult {
     pub bob_final_hand: Vec<Card>,
 }
 
-pub fn convert_cards(allocator: &mut AllocEncoder, card_list: NodePtr) -> Vec<(usize, usize)> {
+pub fn convert_cards(allocator: &mut AllocEncoder, card_list: NodePtr) -> ReadableCardList {
     if let Some(cards_nodeptrs) = proper_list(allocator.allocator(), card_list, true) {
         return cards_nodeptrs
             .iter()
             .filter_map(|elt| {
-                proper_list(allocator.allocator(), *elt, true).map(|card| {
-                    let rank: usize = atom_from_clvm(allocator, card[0])
-                        .and_then(|a| usize_from_atom(&a))
-                        .unwrap_or_default();
-                    let suit: usize = atom_from_clvm(allocator, card[1])
-                        .and_then(|a| usize_from_atom(&a))
-                        .unwrap_or_default();
-                    (rank, suit)
-                })
+                atom_from_clvm(allocator, *elt)
+                    .and_then(|a| usize_from_atom(&a))
+                    .filter(|n| *n < 52)
             })
             .collect();
     }
-
     Vec::new()
 }
 
-pub type CardList = Vec<(usize, usize)>;
+pub type CardList = Vec<Card>;
 
 pub fn decode_readable_card_choices(
     allocator: &mut AllocEncoder,
     opponent_readable_move: ReadableMove,
-) -> Result<(CardList, CardList), Error> {
+) -> Result<(ReadableCardList, ReadableCardList), Error> {
     let opponent_nodeptr = opponent_readable_move.to_nodeptr(allocator)?;
     if let Some(cardlist) = proper_list(allocator.allocator(), opponent_nodeptr, true) {
         let tmp: Vec<_> = cardlist

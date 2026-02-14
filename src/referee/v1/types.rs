@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
 use clvmr::allocator::NodePtr;
-use clvmr::reduction::EvalErr;
 use clvmr::run_program;
 
 use log::debug;
@@ -373,10 +372,10 @@ impl InternalStateUpdateArgs {
             0,
         )
         .into_gen();
-        if let Err(Error::ClvmErr(EvalErr(n, e))) = &raw_result_p {
+        if let Err(Error::ClvmErr(e)) = &raw_result_p {
             debug!(
-                "validator error {e} {:?}",
-                Program::from_nodeptr(allocator, *n)
+                "validator error {e:#?} {:?}",
+                Program::from_nodeptr(allocator, e.node_ptr())
             );
         }
         let raw_result = raw_result_p?;

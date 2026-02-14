@@ -1,5 +1,6 @@
 FROM node:20.19.0 AS stage1
 ENV PATH="/root/.cargo/bin:${PATH}"
+ENV RUSTUP_PERMIT_COPY_RENAME=1
 RUN apt-get update -y && \
     apt-get install -y libc6 && \
     apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential nginx && \
@@ -31,6 +32,10 @@ COPY wasm/Cargo.toml wasm/Cargo.lock /app/rust/wasm/
 
 # Pre-build
 RUN --mount=type=tmpfs,dst=/tmp/rust \
+	--mount=type=cache,target=/root/.cargo/registry \
+	--mount=type=cache,target=/root/.cargo/git \
+	--mount=type=cache,target=/tmp/rust/target \
+	--mount=type=cache,target=/root/.cache \
 	(cd /app/rust && tar cf - .) | (cd /tmp/rust && tar xvf -) && \
 	mkdir -p /tmp/rust/wasm && (cd /app/rust/wasm && tar cf - .) | (cd /tmp/rust/wasm && tar xf -) && \
 	cd /tmp/rust && \
@@ -113,6 +118,11 @@ RUN touch /app/rust/wasm/src/mod.rs
 
 # Build
 RUN --mount=type=tmpfs,dst=/tmp/rust \
+	--mount=type=cache,target=/root/.cargo/registry \
+	--mount=type=cache,target=/root/.cargo/git \
+	--mount=type=cache,target=/tmp/rust/target \
+	--mount=type=cache,target=/tmp/rust/wasm/target \
+	--mount=type=cache,target=/root/.cache \
 	(cd /app/rust/ && tar cvf - .) | (cd /tmp/rust && tar xf -) && \
 	cd /tmp/rust && \
 	rm -rf `find . -name \*.whl` && \

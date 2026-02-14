@@ -8,7 +8,6 @@ from enum import Enum
 
 from chialisp import start_clvm_program
 
-from calpoker import Card
 from chia_gaming.clvm_types.program import Program
 from chia_gaming.util.sized_bytes import bytes32
 from chia_gaming.clvm_types.load_clvm_hex import load_clvm_hex
@@ -227,6 +226,19 @@ def refactor_me(test_inputs: Dict):
     pass
 
 
+def normalize_mod52_move(v):
+    if isinstance(v, list):
+        return [normalize_mod52_move(x) for x in v]
+    if isinstance(v, bytes):
+        return int.from_bytes(v, byteorder="big") if len(v) > 0 else 0
+    return v
+
+
+def selected_cards_from_bitfield(bitfield_atom, hand_mod52):
+    mask = int.from_bytes(bitfield_atom, byteorder="big") if isinstance(bitfield_atom, bytes) else int(bitfield_atom)
+    return [card_id for idx, card_id in enumerate(hand_mod52) if (mask >> idx) & 1]
+
+
 class TestType(Enum):
     NORMAL = 0
     MUTATE_D_OUTPUT = 1
@@ -249,33 +261,34 @@ def get_happy_path(test_inputs: Dict, do_evil: bool) -> TestCaseSequence[Handler
     bob_good_selections = bitfield_to_byte(test_inputs["bob_good_selections"])
     e_move = alice_discards_salt + alice_discards_byte + alice_good_selections
 
-    # All 8 cards initially shown to each player (pre discards and picks)
+    # All 8 cards initially shown to each player (pre discards and picks),
+    # represented directly as hard-coded mod52 card ids.
     alice_all_cards = [
-        Card(rank=2, suit=2),
-        Card(rank=5, suit=3),
-        Card(rank=8, suit=2),
-        Card(rank=11, suit=3),
-        Card(rank=14, suit=1),
-        Card(rank=14, suit=2),
-        Card(rank=14, suit=3),
-        Card(rank=14, suit=4),
+        1,   # (2,2)
+        14,  # (5,3)
+        25,  # (8,2)
+        38,  # (11,3)
+        48,  # (14,1)
+        49,  # (14,2)
+        50,  # (14,3)
+        51,  # (14,4)
     ]
     bob_all_cards = [
-        Card(rank=3, suit=3),
-        Card(rank=4, suit=1),
-        Card(rank=5, suit=4),
-        Card(rank=8, suit=1),
-        Card(rank=8, suit=3),
-        Card(rank=8, suit=4),
-        Card(rank=12, suit=2),
-        Card(rank=12, suit=3),
+        6,   # (3,3)
+        8,   # (4,1)
+        15,  # (5,4)
+        24,  # (8,1)
+        26,  # (8,3)
+        27,  # (8,4)
+        41,  # (12,2)
+        42,  # (12,3)
     ]
+    alice_discard_cards = selected_cards_from_bitfield(alice_discards_byte, alice_all_cards)
+    bob_discard_cards = selected_cards_from_bitfield(bob_discards_byte, bob_all_cards)
 
     alice_hand_value = test_inputs["alice_hand_rating"]
     bob_hand_value = test_inputs["bob_hand_rating"]
 
-    alice_all_cards = [card.as_list() for card in alice_all_cards]
-    bob_all_cards = [card.as_list() for card in bob_all_cards]
     d_results = [
         bob_discards_byte,
         alice_good_selections,
@@ -310,11 +323,11 @@ def get_happy_path(test_inputs: Dict, do_evil: bool) -> TestCaseSequence[Handler
             TestType.NORMAL,
             # Allow bob to choose cards early before Alice
             # Otherwise, Alice could choose her cards before bob could start choosing
-            Program.fromhex("ffffff02ff0280ffff05ff0380ffff08ff0280ffff0bff0380ffff0eff0180ffff0eff0280ffff0eff0380ffff0eff048080ffffff03ff0380ffff04ff0180ffff05ff0480ffff08ff0180ffff08ff0380ffff08ff0480ffff0cff0280ffff0cff03808080")
+            Program.to([alice_all_cards, bob_all_cards])
             # Program.to(0),
         ),
         HandlerMove(
-            alice_discards_byte,
+            alice_discard_cards,
             entropy_data[0].seed,
             good_c_move,
             0,
@@ -323,7 +336,7 @@ def get_happy_path(test_inputs: Dict, do_evil: bool) -> TestCaseSequence[Handler
             Program.to(0),
         ),
         HandlerMove(
-            bob_discards_byte,
+            bob_discard_cards,
             entropy_data[0].bob_seed,
             bob_discards_byte,
             0,
@@ -528,8 +541,12 @@ class Player:
             validator_results.append(validator_result)
             dbg_assert_eq(MoveCode(int.from_bytes(expected_validator_result, byteorder="big")), validator_result.move_code)
 
-        have_normalized_move = Program.to(their_turn_result.readable_move).as_python()
-        expected_normalized_move = Program.to(expected_readable_move).as_python()
+        have_normalized_move = normalize_mod52_move(
+            Program.to(their_turn_result.readable_move).as_python()
+        )
+        expected_normalized_move = normalize_mod52_move(
+            Program.to(expected_readable_move).as_python()
+        )
         if test_type == TestType.CHECK_FOR_ALICE_TRIES_TO_CHEAT:
             # We expect a slash
             if are_any_slash(validator_results):

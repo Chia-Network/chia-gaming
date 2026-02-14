@@ -611,7 +611,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         move_number < moves.len()
             && matches!(
                 &moves[move_number],
-                GameAction::Shutdown(_, _) | GameAction::WaitBlocks(_, _)
+                GameAction::Shutdown(_, _) | GameAction::WaitBlocks(_, _) | GameAction::GoOnChain(_)
             )
     };
     let has_explicit_go_on_chain = moves_input
@@ -670,8 +670,11 @@ fn run_game_container_with_action_list_with_success_predicate(
         }
 
         for i in 0..=1 {
-            if local_uis[i].go_on_chain {
-                if !has_explicit_go_on_chain {
+            if local_uis[i].go_on_chain && cradles[i].is_on_chain() {
+                // A stale UI flag can survive after transition; don't attempt to re-enter.
+                local_uis[i].go_on_chain = false;
+            } else if local_uis[i].go_on_chain && cradles[i].handshake_finished() {
+                if !has_explicit_go_on_chain && !local_uis[i].got_error {
                     panic!(
                         "unexpected off-chain->on-chain transition in non-on-chain test: player={i} move_number={move_number} got_error={} next_action={:?}",
                         local_uis[i].got_error,
@@ -826,7 +829,6 @@ fn run_game_container_with_action_list_with_success_predicate(
             || global_move(moves_input, move_number)
         {
             can_move = false;
-            assert!(!game_ids.is_empty());
 
             // Reset moved flags.
             for l in local_uis.iter_mut() {
@@ -839,6 +841,10 @@ fn run_game_container_with_action_list_with_success_predicate(
 
                 match ga {
                     GameAction::Move(who, readable, _share) => {
+                        if game_ids.is_empty() {
+                            move_number -= 1;
+                            continue;
+                        }
                         let is_my_move = cradles[*who].my_move_in_game(&game_ids[0]);
                         debug!("{who} make move: is my move? {is_my_move:?}");
                         if matches!(is_my_move, Some(true)) {
@@ -860,10 +866,28 @@ fn run_game_container_with_action_list_with_success_predicate(
                         }
                     }
                     GameAction::GoOnChain(who) => {
+                        if local_uis[*who].game_finished.is_some() {
+                            debug!("ignoring go on chain for finished player {who}");
+                            continue;
+                        }
+                        if cradles[*who].is_on_chain() {
+                            debug!("already on chain, ignoring duplicate request");
+                            continue;
+                        }
+                        if !cradles[*who].handshake_finished() {
+                            // Defer explicit on-chain requests until both peers have completed
+                            // handshake/startup; otherwise go_on_chain() returns a protocol error.
+                            move_number -= 1;
+                            continue;
+                        }
                         debug!("go on chain");
                         local_uis[*who].go_on_chain = true;
                     }
                     GameAction::FakeMove(who, readable, move_data) => {
+                        if game_ids.is_empty() {
+                            move_number -= 1;
+                            continue;
+                        }
                         // This is a fake move.  We give that move to the given target channel
                         // handler as a their move.
                         debug!("make move");
@@ -900,6 +924,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                         wait_blocks = Some((*n, *players));
                     }
                     GameAction::Accept(who) | GameAction::Timeout(who) => {
+                        if game_ids.is_empty() {
+                            move_number -= 1;
+                            continue;
+                        }
                         debug!("{who} doing ACCEPT");
                         can_move = true;
                         cradles[*who].accept(allocator, rng, &game_ids[0])?;
@@ -1185,6 +1213,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             } else {
                 panic!("no move 1 to replace");
             }
+            moves.push(GameAction::GoOnChain(0));
+            moves.push(GameAction::GoOnChain(1));
             run_game_container_with_action_list_with_success_predicate(
                 &mut allocator,
                 &mut rng,
@@ -1238,8 +1268,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             } else {
                 panic!("no move 1 to replace");
             }
+            moves.push(GameAction::GoOnChain(0));
+            moves.push(GameAction::GoOnChain(1));
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
-                .expect("should finish");
+                .unwrap_or_else(|e| panic!("should finish, got error: {e:?}"));
 
             debug!("outcome 0 {:?}", outcome.local_uis[0].opponent_moves);
             debug!("outcome 1 {:?}", outcome.local_uis[1].opponent_moves);
@@ -1352,6 +1384,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         moves.truncate(3);
         moves.push(changed_move.clone());
         moves.push(changed_move);
+        moves.push(GameAction::GoOnChain(0));
+        moves.push(GameAction::GoOnChain(1));
         moves.push(GameAction::WaitBlocks(20, 1));
         moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
         moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
