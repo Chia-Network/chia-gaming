@@ -230,7 +230,7 @@ pub trait ToLocalUI {
     }
     fn opponent_moved(
         &mut self,
-        allocator: &mut AllocEncoder,
+        allocator: &AllocEncoder,
         id: &GameID,
         state_number: usize,
         readable: ReadableMove,
@@ -241,7 +241,7 @@ pub trait ToLocalUI {
     }
     fn game_message(
         &mut self,
-        allocator: &mut AllocEncoder,
+        allocator: &AllocEncoder,
         id: &GameID,
         readable: ReadableMove,
     ) -> Result<(), Error>;

@@ -182,12 +182,12 @@ pub struct CalpokerResult {
     pub bob_final_hand: Vec<Card>,
 }
 
-pub fn convert_cards(allocator: &mut AllocEncoder, card_list: NodePtr) -> Vec<(usize, usize)> {
-    if let Some(cards_nodeptrs) = proper_list(allocator.allocator(), card_list, true) {
+pub fn convert_cards(allocator: &AllocEncoder, card_list: NodePtr) -> Vec<(usize, usize)> {
+    if let Some(cards_nodeptrs) = proper_list(allocator.allocator_ref(), card_list, true) {
         return cards_nodeptrs
             .iter()
             .filter_map(|elt| {
-                proper_list(allocator.allocator(), *elt, true).map(|card| {
+                proper_list(allocator.allocator_ref(), *elt, true).map(|card| {
                     let rank: usize = atom_from_clvm(allocator, card[0])
                         .and_then(|a| usize_from_atom(&a))
                         .unwrap_or_default();

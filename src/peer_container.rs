@@ -467,7 +467,7 @@ impl ToLocalUI for SynchronousGameCradleState {
 
     fn opponent_moved(
         &mut self,
-        _allocator: &mut AllocEncoder,
+        _allocator: &AllocEncoder,
         id: &GameID,
         state_number: usize,
         readable: ReadableMove,
@@ -484,7 +484,7 @@ impl ToLocalUI for SynchronousGameCradleState {
     }
     fn game_message(
         &mut self,
-        _allocator: &mut AllocEncoder,
+        _allocator: &AllocEncoder,
         id: &GameID,
         readable: ReadableMove,
     ) -> Result<(), Error> {

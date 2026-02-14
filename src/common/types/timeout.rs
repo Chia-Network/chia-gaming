@@ -20,7 +20,7 @@ impl Timeout {
         self.0
     }
 
-    pub fn from_clvm(allocator: &mut AllocEncoder, clvm: NodePtr) -> Result<Self, Error> {
+    pub fn from_clvm(allocator: &AllocEncoder, clvm: NodePtr) -> Result<Self, Error> {
         if let Some(amt) = atom_from_clvm(allocator, clvm).and_then(|a| u64_from_atom(&a)) {
             Ok(Timeout::new(amt))
         } else {

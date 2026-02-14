@@ -27,8 +27,8 @@ impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Spend {
 }
 
 impl Spend {
-    pub fn from_clvm(allocator: &mut AllocEncoder, data: NodePtr) -> Result<Spend, Error> {
-        let lst = if let Some(lst) = proper_list(allocator.allocator(), data, true) {
+    pub fn from_clvm(allocator: &AllocEncoder, data: NodePtr) -> Result<Spend, Error> {
+        let lst = if let Some(lst) = proper_list(allocator.allocator_ref(), data, true) {
             lst
         } else {
             return Err(Error::StrErr("not list".to_string()));
@@ -70,8 +70,8 @@ impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for CoinSpend {
 }
 
 impl CoinSpend {
-    pub fn from_clvm(allocator: &mut AllocEncoder, data: NodePtr) -> Result<CoinSpend, Error> {
-        let lst = if let Some(lst) = proper_list(allocator.allocator(), data, true) {
+    pub fn from_clvm(allocator: &AllocEncoder, data: NodePtr) -> Result<CoinSpend, Error> {
+        let lst = if let Some(lst) = proper_list(allocator.allocator_ref(), data, true) {
             lst
         } else {
             return Err(Error::StrErr("bad list".to_string()));
@@ -122,8 +122,8 @@ impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for SpendBundle {
 }
 
 impl SpendBundle {
-    pub fn from_clvm(allocator: &mut AllocEncoder, data: NodePtr) -> Result<SpendBundle, Error> {
-        let lst = if let Some(lst) = proper_list(allocator.allocator(), data, true) {
+    pub fn from_clvm(allocator: &AllocEncoder, data: NodePtr) -> Result<SpendBundle, Error> {
+        let lst = if let Some(lst) = proper_list(allocator.allocator_ref(), data, true) {
             lst
         } else {
             return Err(Error::StrErr("bad list".to_string()));

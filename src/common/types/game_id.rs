@@ -15,7 +15,7 @@ impl GameID {
         GameID(s)
     }
 
-    pub fn from_clvm(allocator: &mut AllocEncoder, clvm: NodePtr) -> Result<Self, Error> {
+    pub fn from_clvm(allocator: &AllocEncoder, clvm: NodePtr) -> Result<Self, Error> {
         if let Some(atom) = atom_from_clvm(allocator, clvm) {
             Ok(GameID::new(atom.to_vec()))
         } else {

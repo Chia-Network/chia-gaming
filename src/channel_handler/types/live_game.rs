@@ -117,7 +117,7 @@ impl LiveGame {
 
     pub fn check_their_turn_for_slash(
         &self,
-        allocator: &mut AllocEncoder,
+        allocator: &AllocEncoder,
         evidence: Evidence,
         coin_string: &CoinString,
     ) -> Result<Option<TheirTurnCoinSpentResult>, Error> {
