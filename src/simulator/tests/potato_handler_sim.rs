@@ -1319,7 +1319,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let changed_move = GameAction::Move(
             1,
             ReadableMove::from_program(Rc::new(
-                Program::from_nodeptr(&mut allocator, move_3_node).expect("good"),
+                Program::from_nodeptr(allocator, move_3_node).expect("good"),
             )),
             true,
         );
