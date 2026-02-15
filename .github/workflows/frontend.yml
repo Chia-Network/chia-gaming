@@ -36,7 +36,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20.19.0
-
+      - name: Build the chialisp .hex files
+        run: |
+          cargo build
       - name: Smoke test docker image
         run: |
             set -e -x

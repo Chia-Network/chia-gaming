@@ -152,11 +152,16 @@ jobs:
         run: |
           pip install uv==$UV_VERSION
 
+      - name: Build the chialisp .hex files
+        run: |
+          cargo build
+
       - name: install chia_gaming into .venv
         run: |
           cd python
           uv venv
           uv pip install -e .
+
       - name: calpoker_onchain_tests
         run: |
           cd python
