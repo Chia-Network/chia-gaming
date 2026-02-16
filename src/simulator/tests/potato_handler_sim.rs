@@ -844,10 +844,10 @@ fn run_game_container_with_action_list_with_success_predicate(
 
                 match ga {
                     GameAction::Move(who, readable, _share) => {
-                        if game_ids.is_empty() {
-                            move_number -= 1;
-                            continue;
-                        }
+                        assert!(
+                            !game_ids.is_empty(),
+                            "Move({who}) at move_number={move_number} but game_ids is empty"
+                        );
                         let is_my_move = cradles[*who].my_move_in_game(&game_ids[0]);
                         debug!("{who} make move: is my move? {is_my_move:?}");
                         if matches!(is_my_move, Some(true)) {
@@ -888,10 +888,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                         local_uis[*who].go_on_chain = true;
                     }
                     GameAction::FakeMove(who, readable, move_data) => {
-                        if game_ids.is_empty() {
-                            move_number -= 1;
-                            continue;
-                        }
+                        assert!(
+                            !game_ids.is_empty(),
+                            "FakeMove({who}) at move_number={move_number} but game_ids is empty"
+                        );
                         // This is a fake move.  We give that move to the given target channel
                         // handler as a their move.
                         debug!("make move");
@@ -928,10 +928,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                         wait_blocks = Some((*n, *players));
                     }
                     GameAction::Accept(who) | GameAction::Timeout(who) => {
-                        if game_ids.is_empty() {
-                            move_number -= 1;
-                            continue;
-                        }
+                        assert!(
+                            !game_ids.is_empty(),
+                            "Accept/Timeout({who}) at move_number={move_number} but game_ids is empty"
+                        );
                         debug!("{who} doing ACCEPT");
                         can_move = true;
                         cradles[*who].accept(allocator, rng, &game_ids[0])?;
