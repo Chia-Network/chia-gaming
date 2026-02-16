@@ -671,8 +671,11 @@ fn run_game_container_with_action_list_with_success_predicate(
 
         for i in 0..=1 {
             if local_uis[i].go_on_chain && cradles[i].is_on_chain() {
-                // A stale UI flag can survive after transition; don't attempt to re-enter.
-                local_uis[i].go_on_chain = false;
+                panic!(
+                    "go_on_chain requested for player {i} but already on chain: move_number={move_number} got_error={} next_action={:?}",
+                    local_uis[i].got_error,
+                    moves_input.get(move_number)
+                );
             } else if local_uis[i].go_on_chain && cradles[i].handshake_finished() {
                 if !has_explicit_go_on_chain && !local_uis[i].got_error {
                     panic!(
@@ -871,8 +874,9 @@ fn run_game_container_with_action_list_with_success_predicate(
                             continue;
                         }
                         if cradles[*who].is_on_chain() {
-                            debug!("already on chain, ignoring duplicate request");
-                            continue;
+                            panic!(
+                                "GameAction::GoOnChain({who}) but player is already on chain: move_number={move_number}",
+                            );
                         }
                         if !cradles[*who].handshake_finished() {
                             // Defer explicit on-chain requests until both peers have completed
@@ -1213,9 +1217,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             } else {
                 panic!("no move 1 to replace");
             }
-            moves.push(GameAction::GoOnChain(0));
-            moves.push(GameAction::GoOnChain(1));
-            run_game_container_with_action_list_with_success_predicate(
+            // No explicit GoOnChain needed: the fake move error forces player 0
+            // on chain, and player 1 detects the channel coin spend and follows.
+            let outcome = run_game_container_with_action_list_with_success_predicate(
                 &mut allocator,
                 &mut rng,
                 private_keys,
@@ -1226,6 +1230,18 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
                 Some(&|_, cradles| cradles[0].is_on_chain() && cradles[1].is_on_chain()),
             )
             .expect("should finish");
+            assert!(
+                outcome.local_uis[0].got_error,
+                "player 0 should have been forced on chain by the fake move error"
+            );
+            assert!(
+                outcome.cradles[0].is_on_chain(),
+                "player 0 should be on chain"
+            );
+            assert!(
+                outcome.cradles[1].is_on_chain(),
+                "player 1 should have followed on chain after detecting the channel coin spend"
+            );
         },
     ));
 
@@ -1268,10 +1284,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             } else {
                 panic!("no move 1 to replace");
             }
-            moves.push(GameAction::GoOnChain(0));
-            moves.push(GameAction::GoOnChain(1));
+            // No explicit GoOnChain needed: the fake move error forces player 0
+            // on chain, and player 1 detects the channel coin spend and follows.
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
                 .unwrap_or_else(|e| panic!("should finish, got error: {e:?}"));
+            // The fake move should have forced player 0 on chain via error detection.
+            // By the time shutdown completes, the state has progressed past OnChain to
+            // Completed, so we check got_error rather than is_on_chain().
+            assert!(
+                outcome.local_uis[0].got_error,
+                "player 0 should have been forced on chain by the fake move error"
+            );
 
             debug!("outcome 0 {:?}", outcome.local_uis[0].opponent_moves);
             debug!("outcome 1 {:?}", outcome.local_uis[1].opponent_moves);
@@ -1384,8 +1407,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         moves.truncate(3);
         moves.push(changed_move.clone());
         moves.push(changed_move);
-        moves.push(GameAction::GoOnChain(0));
-        moves.push(GameAction::GoOnChain(1));
+        // No explicit GoOnChain needed: the cheating move (5 cards) forces
+        // player 0 on chain via error detection, and player 1 follows by
+        // detecting the channel coin spend.
         moves.push(GameAction::WaitBlocks(20, 1));
         moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
         moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
@@ -1393,6 +1417,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
             .expect("should finish");
 
+        // The cheating move should have forced player 0 on chain via error detection.
+        // By the time shutdown completes, the state has progressed past OnChain to
+        // Completed, so we check got_error rather than is_on_chain().
+        assert!(
+            outcome.local_uis[0].got_error,
+            "player 0 should have been forced on chain by the cheating move"
+        );
         let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
         // p1 (index 0) won the money because p2 (index 1) cheated by choosing 5 cards.
         assert_eq!(p1_balance, p2_balance + 200);
