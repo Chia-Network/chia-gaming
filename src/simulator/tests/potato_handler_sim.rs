@@ -736,15 +736,9 @@ fn run_game_container_with_action_list_with_success_predicate(
                     // Most of the time, the timeout is coalesced because the spends are equivalent
                     // and take place on the same block.  If we insert delays, we might see an
                     // attempt to spend the same coin and that's fine.
-                    let is_expected_reorg_or_race = included_result.code == 3
-                        && (matches!(included_result.e, Some(5))
-                            || (matches!(included_result.e, Some(8))
-                                && tx
-                                    .name
-                                    .as_deref()
-                                    .map(|n| n.contains("accept transaction"))
-                                    .unwrap_or(false)));
-                    let include_ok = included_result.code == 1 || is_expected_reorg_or_race;
+                    let is_expected_double_spend =
+                        included_result.code == 3 && matches!(included_result.e, Some(5));
+                    let include_ok = included_result.code == 1 || is_expected_double_spend;
                     assert!(
                         include_ok,
                         "tx include failed: move_number={move_number} tx_name={:?} code={} e={:?} diagnostic={:?}",
@@ -869,10 +863,11 @@ fn run_game_container_with_action_list_with_success_predicate(
                         }
                     }
                     GameAction::GoOnChain(who) => {
-                        if local_uis[*who].game_finished.is_some() {
-                            debug!("ignoring go on chain for finished player {who}");
-                            continue;
-                        }
+                        assert!(
+                            local_uis[*who].game_finished.is_none(),
+                            "GameAction::GoOnChain({who}) but game is already finished: move_number={move_number} finished={:?}",
+                            local_uis[*who].game_finished
+                        );
                         if cradles[*who].is_on_chain() {
                             panic!(
                                 "GameAction::GoOnChain({who}) but player is already on chain: move_number={move_number}",
