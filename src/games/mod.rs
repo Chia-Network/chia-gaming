@@ -16,9 +16,14 @@ pub fn poker_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, Game
         "clsp/games/calpoker-v0/calpoker_include_calpoker_factory.hex",
     )
     .expect("should load");
-    let calpoker_factory_v1 = read_hex_puzzle(
+    let calpoker_make_proposal = read_hex_puzzle(
         allocator,
-        "clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex",
+        "clsp/games/calpoker-v1/calpoker_include_calpoker_make_proposal.hex",
+    )
+    .expect("should load");
+    let calpoker_parser = read_hex_puzzle(
+        allocator,
+        "clsp/games/calpoker-v1/calpoker_include_calpoker_parser.hex",
     )
     .expect("should load");
     let debug_game_raw =
@@ -36,13 +41,15 @@ pub fn poker_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, Game
         GameFactory {
             version: 0,
             program: calpoker_factory.to_program(),
+            parser_program: None,
         },
     );
     game_type_map.insert(
         GameType(b"ca1poker".to_vec()),
         GameFactory {
             version: 1,
-            program: calpoker_factory_v1.to_program(),
+            program: calpoker_make_proposal.to_program(),
+            parser_program: Some(calpoker_parser.to_program()),
         },
     );
     game_type_map.insert(
@@ -50,6 +57,7 @@ pub fn poker_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, Game
         GameFactory {
             version: 1,
             program: debug_game.into(),
+            parser_program: None,
         },
     );
     game_type_map

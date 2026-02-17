@@ -16,6 +16,14 @@ use crate::common::types::{
     GameID, Hash, IntoErr, Node, Program, Puzzle, Timeout,
 };
 
+struct ProposalGameSpec {
+    initial_validation_program_hash: Hash,
+    initial_move: Vec<u8>,
+    initial_max_move_size: usize,
+    initial_state: Rc<Program>,
+    initial_mover_share: u64,
+}
+
 #[derive(Clone)]
 pub struct GameStart {
     pub id: GameID,
@@ -124,6 +132,183 @@ pub struct Game {
 }
 
 impl Game {
+    /// Run calpoker_make_proposal(bet_size) and parse the result into
+    /// (wire_data, handler, validator, game_spec fields).
+    fn run_make_proposal(
+        allocator: &mut AllocEncoder,
+        proposal_program: Puzzle,
+        bet_size: &Amount,
+    ) -> Result<(NodePtr, GameHandler, NodePtr, ProposalGameSpec), Error> {
+        let args = (bet_size.clone(), ()).to_clvm(allocator).into_gen()?;
+        let proposal_clvm = proposal_program.to_clvm(allocator).into_gen()?;
+        debug!("running make_proposal bet_size={bet_size:?}");
+        let result = run_program(
+            allocator.allocator(),
+            &chia_dialect(),
+            proposal_clvm,
+            args,
+            0,
+        )
+        .into_gen()
+        .map_err(|e| Error::StrErr(format!("make_proposal failed: bet_size={bet_size:?} error={e:?}")))?
+        .1;
+
+        // Result is (wire_data local_data)
+        // wire_data = (bet_size bet_size ((amount we_go_first vh im mms is ms)))
+        // local_data = ((handler validator))
+        let result_list = proper_list(allocator.allocator(), result, true)
+            .ok_or_else(|| Error::StrErr("make_proposal didn't return a list".to_string()))?;
+        if result_list.len() < 2 {
+            return Err(Error::StrErr(format!(
+                "make_proposal returned {} elements, expected 2",
+                result_list.len()
+            )));
+        }
+        let wire_data = result_list[0];
+        let local_data = result_list[1];
+
+        // Parse wire_data to extract game_spec: (bet bet ((amount we_go_first vh im mms is ms)))
+        let wire_list = proper_list(allocator.allocator(), wire_data, true)
+            .ok_or_else(|| Error::StrErr("wire_data not a list".to_string()))?;
+        if wire_list.len() < 3 {
+            return Err(Error::StrErr("wire_data too short".to_string()));
+        }
+        let game_spec_wrapper = proper_list(allocator.allocator(), wire_list[2], true)
+            .ok_or_else(|| Error::StrErr("wire_data[2] not a list".to_string()))?;
+        if game_spec_wrapper.is_empty() {
+            return Err(Error::StrErr("game_spec wrapper is empty".to_string()));
+        }
+        let game_spec_list = proper_list(allocator.allocator(), game_spec_wrapper[0], true)
+            .ok_or_else(|| Error::StrErr("game_spec not a list".to_string()))?;
+        if game_spec_list.len() < 7 {
+            return Err(Error::StrErr(format!(
+                "game_spec has {} elements, expected 7",
+                game_spec_list.len()
+            )));
+        }
+
+        let spec = ProposalGameSpec {
+            // game_spec_list[0] is amount (= 2 * bet_size), game_spec_list[1] is we_go_first
+            initial_validation_program_hash: Hash::from_nodeptr(allocator, game_spec_list[2])?,
+            initial_move: atom_from_clvm(allocator, game_spec_list[3]).unwrap_or_default(),
+            initial_max_move_size: atom_from_clvm(allocator, game_spec_list[4])
+                .and_then(|a| usize_from_atom(&a))
+                .ok_or_else(|| Error::StrErr("bad max_move_size in game_spec".to_string()))?,
+            initial_state: Rc::new(Program::from_nodeptr(allocator, game_spec_list[5])?),
+            initial_mover_share: atom_from_clvm(allocator, game_spec_list[6])
+                .and_then(|a| u64_from_atom(&a))
+                .ok_or_else(|| Error::StrErr("bad mover_share in game_spec".to_string()))?,
+        };
+
+        // Parse local_data = ((handler validator))
+        let local_list = proper_list(allocator.allocator(), local_data, true)
+            .ok_or_else(|| Error::StrErr("local_data not a list".to_string()))?;
+        if local_list.is_empty() {
+            return Err(Error::StrErr("local_data is empty".to_string()));
+        }
+        let handler_info = proper_list(allocator.allocator(), local_list[0], true)
+            .ok_or_else(|| Error::StrErr("handler_info not a list".to_string()))?;
+        if handler_info.len() < 2 {
+            return Err(Error::StrErr("handler_info too short".to_string()));
+        }
+        let handler = GameHandler::my_handler_from_nodeptr(allocator, handler_info[0])?;
+        let validator_node = handler_info[1];
+
+        debug!(
+            "make_proposal: vh={} max_move_size={} mover_share={}",
+            hex::encode(spec.initial_validation_program_hash.bytes()),
+            spec.initial_max_move_size,
+            spec.initial_mover_share,
+        );
+
+        Ok((wire_data, handler, validator_node, spec))
+    }
+
+    /// Run calpoker_parser(wire_data) and extract handler + validator.
+    fn run_parser(
+        allocator: &mut AllocEncoder,
+        parser_program: Puzzle,
+        wire_data: NodePtr,
+    ) -> Result<(GameHandler, NodePtr), Error> {
+        let parser_clvm = parser_program.to_clvm(allocator).into_gen()?;
+        debug!("running parser");
+        // Parser expects wire_data as its environment (spread args)
+        let result = run_program(
+            allocator.allocator(),
+            &chia_dialect(),
+            parser_clvm,
+            wire_data,
+            0,
+        )
+        .into_gen()
+        .map_err(|e| Error::StrErr(format!("parser failed: error={e:?}")))?
+        .1;
+
+        // Result is (readable ((validator handler)))
+        let result_list = proper_list(allocator.allocator(), result, true)
+            .ok_or_else(|| Error::StrErr("parser didn't return a list".to_string()))?;
+        if result_list.len() < 2 {
+            return Err(Error::StrErr(format!(
+                "parser returned {} elements, expected 2",
+                result_list.len()
+            )));
+        }
+        let handler_wrapper = proper_list(allocator.allocator(), result_list[1], true)
+            .ok_or_else(|| Error::StrErr("parser handler_wrapper not a list".to_string()))?;
+        if handler_wrapper.is_empty() {
+            return Err(Error::StrErr("parser handler_wrapper is empty".to_string()));
+        }
+        let handler_info = proper_list(allocator.allocator(), handler_wrapper[0], true)
+            .ok_or_else(|| Error::StrErr("parser handler_info not a list".to_string()))?;
+        if handler_info.len() < 2 {
+            return Err(Error::StrErr("parser handler_info too short".to_string()));
+        }
+        // Parser returns (validator handler) in handler_info
+        let validator_node = handler_info[0];
+        let handler = GameHandler::their_handler_from_nodeptr(allocator, handler_info[1])?;
+
+        debug!("parser: got handler and validator");
+
+        Ok((handler, validator_node))
+    }
+
+    pub fn new_from_proposal(
+        allocator: &mut AllocEncoder,
+        as_alice: bool,
+        game_id: &GameID,
+        proposal_program: Puzzle,
+        parser_program: Option<Puzzle>,
+        my_contribution: &Amount,
+    ) -> Result<Game, Error> {
+        let (wire_data, alice_handler, alice_validator_node, spec) =
+            Self::run_make_proposal(allocator, proposal_program, my_contribution)?;
+
+        let (handler, validator_node) = if as_alice {
+            (alice_handler, alice_validator_node)
+        } else {
+            let parser = parser_program
+                .ok_or_else(|| Error::StrErr("no parser program for responder".to_string()))?;
+            Self::run_parser(allocator, parser, wire_data)?
+        };
+
+        let validation_prog = Rc::new(Program::from_nodeptr(allocator, validator_node)?);
+        let initial_validation_program =
+            StateUpdateProgram::new_hash(validation_prog, "initial", spec.initial_validation_program_hash.clone());
+
+        let start = GameStart {
+            id: game_id.clone(),
+            initial_mover_handler: handler,
+            initial_validation_program,
+            initial_validation_program_hash: spec.initial_validation_program_hash,
+            initial_state: spec.initial_state,
+            initial_move: spec.initial_move,
+            initial_max_move_size: spec.initial_max_move_size,
+            initial_mover_share: spec.initial_mover_share,
+        };
+
+        Ok(Game { starts: vec![start] })
+    }
+
     pub fn new_program(
         allocator: &mut AllocEncoder,
         as_alice: bool,
@@ -136,7 +321,6 @@ impl Game {
         let args = (as_alice, args_program.clone())
             .to_clvm(allocator)
             .into_gen()?;
-        // let args_program = Program::from_nodeptr(allocator, args)?;
 
         let poker_generator_clvm = poker_generator.to_clvm(allocator).into_gen()?;
         debug!(

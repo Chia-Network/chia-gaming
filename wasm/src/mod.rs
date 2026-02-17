@@ -207,6 +207,7 @@ mod gaming_wasm {
             GameFactory {
                 version: js_factory.version as usize,
                 program: Program::from_bytes(&byte_data).into(),
+                parser_program: None,
             },
         ))
     }

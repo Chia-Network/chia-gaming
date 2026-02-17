@@ -463,6 +463,10 @@ impl std::fmt::Debug for GameAction {
 pub struct GameFactory {
     pub version: usize,
     pub program: Rc<Program>,
+    /// For v1 games: the parser program used by the responder.
+    /// The `program` field holds the proposal (make_proposal) program.
+    #[serde(default)]
+    pub parser_program: Option<Rc<Program>>,
 }
 
 #[derive(Serialize, Deserialize)]

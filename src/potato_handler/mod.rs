@@ -392,7 +392,7 @@ impl PotatoHandler {
 
         if let HandshakeState::Finished(hs) = &mut self.handshake_state {
             let (env, _) = penv.env();
-            debug!("hs spend is {:?}", hs.spend);
+            debug!("hs spend num_spends={}", hs.spend.spends.len());
             let channel_coin_puzzle = puzzle_for_synthetic_public_key(
                 env.allocator,
                 &env.standard_puzzle,
@@ -406,7 +406,7 @@ impl PotatoHandler {
                     puzzle: channel_coin_puzzle,
                 },
             }];
-            debug!("updated spend to {:?}", hs.spend.spends[0]);
+            debug!("updated spend for channel coin");
         }
 
         Ok(())
@@ -423,7 +423,7 @@ impl PotatoHandler {
         let timeout = self.channel_timeout.clone();
         let ch = self.channel_handler_mut()?;
 
-        debug!("msg {msg_envelope:?}");
+        debug!("received peer message");
         match msg_envelope.borrow() {
             PeerMessage::Nil(n) => {
                 debug!("about to receive empty potato");
@@ -952,64 +952,116 @@ impl PotatoHandler {
         penv: &mut dyn PeerEnv<'a, G, R>,
         i_initiated: bool,
         game_start: &GameStart,
-        program: Rc<Program>,
-        params: Rc<Program>,
+        proposal_program: Rc<Program>,
+        parser_program: Option<Rc<Program>>,
     ) -> Result<GameStartInfoPair, Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         let (env, _) = penv.env();
         let their_contribution = game_start.amount.clone() - game_start.my_contribution.clone();
-        let program_run_args = (
-            game_start.my_contribution.clone(),
-            (their_contribution.clone(), (params.clone(), ())),
-        )
-            .to_clvm(env.allocator)
-            .into_gen()?;
-        let params_prog = Rc::new(Program::from_nodeptr(env.allocator, program_run_args)?);
-        let alice_game = v1::game::Game::new_program(
-            env.allocator,
-            i_initiated,
-            &game_start.game_id,
-            program.clone().into(),
-            params_prog.clone(),
-        )?;
-        let alice_result: Vec<Rc<dyn GameStartInfoInterface>> = alice_game
-            .starts
-            .iter()
-            .map(|g| {
-                let rc: Rc<dyn GameStartInfoInterface> = Rc::new(g.game_start(
-                    &game_start.game_id,
-                    &game_start.amount,
-                    &game_start.timeout,
-                    &game_start.my_contribution,
-                    &their_contribution,
-                ));
-                rc
-            })
-            .collect();
-        let bob_game = v1::game::Game::new_program(
-            env.allocator,
-            !i_initiated,
-            &game_start.game_id,
-            program.into(),
-            params_prog,
-        )?;
-        let bob_result: Vec<Rc<dyn GameStartInfoInterface>> = bob_game
-            .starts
-            .iter()
-            .map(|g| {
-                let rc: Rc<dyn GameStartInfoInterface> = Rc::new(g.game_start(
-                    &game_start.game_id,
-                    &game_start.amount,
-                    &game_start.timeout,
-                    &their_contribution,
-                    &game_start.my_contribution,
-                ));
-                rc
-            })
-            .collect();
-        Ok((alice_result, bob_result))
+
+        if let Some(parser_prog) = parser_program {
+            // New proposal/parser path (calpoker v1)
+            let parser_puzzle: Puzzle = parser_prog.into();
+            let alice_game = v1::game::Game::new_from_proposal(
+                env.allocator,
+                i_initiated,
+                &game_start.game_id,
+                proposal_program.clone().into(),
+                Some(parser_puzzle.clone()),
+                &game_start.my_contribution,
+            )?;
+            let alice_result: Vec<Rc<dyn GameStartInfoInterface>> = alice_game
+                .starts
+                .iter()
+                .map(|g| {
+                    let rc: Rc<dyn GameStartInfoInterface> = Rc::new(g.game_start(
+                        &game_start.game_id,
+                        &game_start.amount,
+                        &game_start.timeout,
+                        &game_start.my_contribution,
+                        &their_contribution,
+                    ));
+                    rc
+                })
+                .collect();
+            let bob_game = v1::game::Game::new_from_proposal(
+                env.allocator,
+                !i_initiated,
+                &game_start.game_id,
+                proposal_program.into(),
+                Some(parser_puzzle),
+                &game_start.my_contribution,
+            )?;
+            let bob_result: Vec<Rc<dyn GameStartInfoInterface>> = bob_game
+                .starts
+                .iter()
+                .map(|g| {
+                    let rc: Rc<dyn GameStartInfoInterface> = Rc::new(g.game_start(
+                        &game_start.game_id,
+                        &game_start.amount,
+                        &game_start.timeout,
+                        &their_contribution,
+                        &game_start.my_contribution,
+                    ));
+                    rc
+                })
+                .collect();
+            Ok((alice_result, bob_result))
+        } else {
+            // Old factory path (debug game)
+            let program_run_args = (
+                game_start.my_contribution.clone(),
+                (their_contribution.clone(), (Rc::new(game_start.parameters.clone()), ())),
+            )
+                .to_clvm(env.allocator)
+                .into_gen()?;
+            let params_prog = Rc::new(Program::from_nodeptr(env.allocator, program_run_args)?);
+            let alice_game = v1::game::Game::new_program(
+                env.allocator,
+                i_initiated,
+                &game_start.game_id,
+                proposal_program.clone().into(),
+                params_prog.clone(),
+            )?;
+            let alice_result: Vec<Rc<dyn GameStartInfoInterface>> = alice_game
+                .starts
+                .iter()
+                .map(|g| {
+                    let rc: Rc<dyn GameStartInfoInterface> = Rc::new(g.game_start(
+                        &game_start.game_id,
+                        &game_start.amount,
+                        &game_start.timeout,
+                        &game_start.my_contribution,
+                        &their_contribution,
+                    ));
+                    rc
+                })
+                .collect();
+            let bob_game = v1::game::Game::new_program(
+                env.allocator,
+                !i_initiated,
+                &game_start.game_id,
+                proposal_program.into(),
+                params_prog,
+            )?;
+            let bob_result: Vec<Rc<dyn GameStartInfoInterface>> = bob_game
+                .starts
+                .iter()
+                .map(|g| {
+                    let rc: Rc<dyn GameStartInfoInterface> = Rc::new(g.game_start(
+                        &game_start.game_id,
+                        &game_start.amount,
+                        &game_start.timeout,
+                        &their_contribution,
+                        &game_start.my_contribution,
+                    ));
+                    rc
+                })
+                .collect();
+            Ok((alice_result, bob_result))
+        }
     }
 
     fn get_games_by_start_type<'a, G, R: Rng + 'a>(
@@ -1042,13 +1094,12 @@ impl PotatoHandler {
 
             self.start_version_0(penv, i_initiated, game_start, starter_clvm, params_clvm)
         } else {
-            let params = Rc::new(game_start.parameters.clone());
             self.start_version_1(
                 penv,
                 i_initiated,
                 game_start,
                 starter.program.clone(),
-                params,
+                starter.parser_program.clone(),
             )
         }
     }

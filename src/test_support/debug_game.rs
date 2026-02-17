@@ -460,7 +460,7 @@ impl BareDebugGameHandler {
         let previous_validation_info_hash = self
             .get_validation_info(allocator, 1)
             .map(|v| v.hash().clone());
-        debug!("validation_program {:?}", vprog.to_program());
+        debug!("validation_program hash={:?}", vprog.hash());
         self.generic_run_state_update(
             allocator,
             vprog,
@@ -486,7 +486,7 @@ impl BareDebugGameHandler {
             .map(|v| v.hash().clone());
         let evidence = Evidence::nil()?;
         debug!("my mover share {:?}", self.mover_share);
-        debug!("validation program {:?}", vprog.to_program());
+        debug!("validation program hash={:?}", vprog.hash());
 
         self.last_validation_data
             .push_back((vprog.clone(), self.state.clone()));

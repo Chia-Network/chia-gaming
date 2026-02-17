@@ -1,59 +1,6 @@
 (include *standard-cl-23*)
 
-(import std.and)
-(import std.assert)
 (import games.calpoker-v1.calpoker_generate exposing calpoker_make_proposal calpoker_parser)
 
 (export calpoker_make_proposal)
 (export calpoker_parser)
-
-; calpoker_factory preserves the existing interface so the Rust game-start code
-; does not need to change.  Internally it derives all game parameters from
-; calpoker_make_proposal (for the initiator) and calpoker_parser (for the
-; responder) instead of the old calpoker_template.
-;
-; Factory output is a list containing one 11-element game-start tuple:
-;   (amount my_turn handler my_contribution their_contribution
-;    validator validator_hash initial_state initial_move max_move_size mover_share)
-
-(defun calpoker_factory (i_am_initiator my_contribution their_contribution params)
-    (assign
-        bet_size my_contribution
-
-        ; calpoker_make_proposal returns (wire_data local_data)
-        ;   wire_data  = (my_contrib their_contrib ((size we_go_first vh im mms is ims)))
-        ;   local_data = ((handler validator))
-        (wire local_data) (calpoker_make_proposal bet_size)
-        (_ _ (game_spec)) wire
-        (size we_go_first validator_hash initial_move max_move_size initial_state mover_share) game_spec
-
-        (assert
-            (= my_contribution their_contribution)
-
-            (if i_am_initiator
-                ;; Initiator: use alice handler/validator from make_proposal local data
-                (assign
-                    (handler_info) local_data
-                    (handler validator) handler_info
-                    (list (list
-                        size we_go_first handler my_contribution their_contribution
-                        validator validator_hash initial_state initial_move max_move_size mover_share
-                    ))
-                )
-
-                ;; Responder: call calpoker_parser with wire data spread
-                (assign
-                    (_ parser_local) (calpoker_parser (f wire) (f (r wire)) (f (r (r wire))))
-                    (parser_handler_info) parser_local
-                    (validator handler) parser_handler_info
-                    (list (list
-                        size () handler their_contribution my_contribution
-                        validator validator_hash initial_state initial_move max_move_size mover_share
-                    ))
-                )
-            )
-        )
-    )
-)
-
-(export calpoker_factory)

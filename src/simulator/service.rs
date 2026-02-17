@@ -317,7 +317,7 @@ impl GameRunner {
         let spend_program = Program::from_hex(blob)?;
         let spend_node = spend_program.to_nodeptr(&mut self.allocator)?;
         let spend_bundle = SpendBundle::from_clvm(&mut self.allocator, spend_node)?;
-        debug!("spend with bundle {spend_bundle:?}");
+        debug!("spend with bundle: {} spends", spend_bundle.spends.len());
         self.spend_list_of_spends(&spend_bundle.spends)
     }
 
@@ -371,7 +371,7 @@ impl GameRunner {
         });
         let value = serde_json::to_value(&spends).into_gen()?;
         let serialized = serde_json::to_string(&value).into_gen()?;
-        debug!("block spends for height {height} {serialized:?}");
+        debug!("block spends for height {height}: {} bytes", serialized.len());
         Ok(serialized)
     }
 }

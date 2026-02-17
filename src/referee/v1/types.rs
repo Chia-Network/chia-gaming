@@ -443,7 +443,7 @@ impl OnChainRefereeMoveData {
     ) -> Result<OnChainRefereeMove, Error> {
         let args_for_ph_node = self.after_args.to_clvm(allocator).into_gen()?;
         let args_for_ph_prog = Program::from_nodeptr(allocator, args_for_ph_node)?;
-        debug!("args for new puzzle hash {args_for_ph_prog:?}");
+        debug!("args for new puzzle hash: {} bytes", args_for_ph_prog.to_hex().len() / 2);
         let new_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &fixed.referee_coin_puzzle_hash,
