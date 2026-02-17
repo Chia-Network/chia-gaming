@@ -15,9 +15,9 @@ use crate::channel_handler::game_handler::TheirTurnResult;
 use crate::channel_handler::types::{
     Evidence, HasStateUpdateProgram, ReadableMove, StateUpdateProgram, ValidationInfo,
 };
-use crate::channel_handler::v1::game::Game;
-use crate::channel_handler::v1::game_handler::{GameHandler, MyTurnInputs, TheirTurnInputs};
-use crate::channel_handler::v1::game_start_info::GameStartInfo;
+use crate::channel_handler::game::Game;
+use crate::channel_handler::game_handler::{GameHandler, MyTurnInputs, TheirTurnInputs};
+use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::standard_coin::ChiaIdentity;
 #[cfg(test)]
@@ -27,7 +27,7 @@ use crate::common::types::{
     Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
 use crate::referee::types::{GameMoveDetails, GameMoveStateInfo};
-use crate::referee::v1::types::{
+use crate::referee::types::{
     InternalStateUpdateArgs, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
 };
 #[cfg(test)]
@@ -371,7 +371,7 @@ impl BareDebugGameHandler {
                         basic: GameMoveStateInfo {
                             move_made: move_to_check.to_vec(),
                             mover_share: mover_share.clone(),
-                            max_move_size: self.max_move_size, // unused in v1
+                            max_move_size: self.max_move_size,
                         },
                         validation_info_hash: ValidationInfo::new_state_update(
                             allocator,
@@ -533,7 +533,7 @@ impl BareDebugGameHandler {
 
         match tt_result {
             TheirTurnResult::MakeMove(new_handler, _message, tt_data) => {
-                self.handler = new_handler.v1();
+                self.handler = new_handler.clone();
                 for evidence in tt_data.slash_evidence.iter() {
                     let validator_response = self.generic_run_state_update(
                         allocator,
@@ -550,7 +550,7 @@ impl BareDebugGameHandler {
                     }
                 }
                 self.move_count += 1;
-                self.handler = new_handler.v1();
+                self.handler = new_handler.clone();
                 self.mover_share = tt_data.mover_share.clone();
                 self.last_validation_data
                     .push_back((vprog.clone(), self.state.clone()));
@@ -605,7 +605,7 @@ pub fn make_debug_games(
 ) -> Result<[BareDebugGameHandler; 2], Error> {
     let rng_seq0: Vec<Hash> = (0..50).map(|_| rng.gen()).collect();
     let gid = GameID::default();
-    let referee_coin = read_hex_puzzle(allocator, "clsp/referee/onchain/referee-v1.hex")?;
+    let referee_coin = read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex")?;
     let ref_coin_hash = referee_coin.sha256tree(allocator);
     BareDebugGameHandler::new(
         allocator,

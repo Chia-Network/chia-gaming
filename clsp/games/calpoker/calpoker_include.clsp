@@ -1,0 +1,6 @@
+(include *standard-cl-23*)
+
+(import games.calpoker.calpoker_generate exposing calpoker_make_proposal calpoker_parser)
+
+(export calpoker_make_proposal)
+(export calpoker_parser)

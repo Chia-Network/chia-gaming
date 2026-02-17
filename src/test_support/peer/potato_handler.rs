@@ -506,7 +506,7 @@ fn test_peer_smoke() {
                     game_id: game_id.clone(),
                     amount: Amount::new(200),
                     my_contribution: Amount::new(100),
-                    game_type: GameType(b"calpoker".to_vec()),
+                    game_type: GameType(b"ca1poker".to_vec()),
                     timeout: Timeout::new(10),
                     my_turn: true,
                     parameters: nil.clone(),
@@ -522,7 +522,7 @@ fn test_peer_smoke() {
                     game_id,
                     amount: Amount::new(200),
                     my_contribution: Amount::new(100),
-                    game_type: GameType(b"calpoker".to_vec()),
+                    game_type: GameType(b"ca1poker".to_vec()),
                     timeout: Timeout::new(10),
                     my_turn: false,
                     parameters: nil,
@@ -545,7 +545,7 @@ fn test_peer_smoke() {
     assert!(pipe_sender[0].message_pipe.queue.is_empty());
     assert!(pipe_sender[1].message_pipe.queue.is_empty());
 
-    let moves = prefix_test_moves(&mut allocator, false);
+    let moves = prefix_test_moves(&mut allocator);
 
     for this_move in moves.iter() {
         let (who, what) = if let GameAction::Move(who, what, _) = this_move {

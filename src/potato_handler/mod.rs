@@ -15,7 +15,7 @@ use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, GameStartInfo,
     GameStartInfoInterface, PotatoSignatures, ReadableMove, StartGameResult,
 };
-use crate::channel_handler::v1;
+use crate::channel_handler::game;
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
@@ -764,10 +764,7 @@ impl PotatoHandler {
 
                 Ok(true)
             }
-            Some(GameAction::RedoMoveV0(_game_id, _coin, _new_ph, _transaction)) => {
-                Err(Error::StrErr("redo move when not on chain".to_string()))
-            }
-            Some(GameAction::RedoMoveV1(_game_id, _coin, _new_ph, _transaction, _)) => {
+            Some(GameAction::RedoMove(_coin, _new_ph, _transaction, _, _)) => {
                 Err(Error::StrErr("redo move when not on chain".to_string()))
             }
             Some(GameAction::RedoAccept(_, _, _, _)) => {
@@ -962,9 +959,9 @@ impl PotatoHandler {
         let their_contribution = game_start.amount.clone() - game_start.my_contribution.clone();
 
         if let Some(parser_prog) = parser_program {
-            // New proposal/parser path (calpoker v1)
+            // New proposal/parser path
             let parser_puzzle: Puzzle = parser_prog.into();
-            let alice_game = v1::game::Game::new_from_proposal(
+            let alice_game = game::Game::new_from_proposal(
                 env.allocator,
                 i_initiated,
                 &game_start.game_id,
@@ -986,7 +983,7 @@ impl PotatoHandler {
                     rc
                 })
                 .collect();
-            let bob_game = v1::game::Game::new_from_proposal(
+            let bob_game = game::Game::new_from_proposal(
                 env.allocator,
                 !i_initiated,
                 &game_start.game_id,
@@ -1018,7 +1015,7 @@ impl PotatoHandler {
                 .to_clvm(env.allocator)
                 .into_gen()?;
             let params_prog = Rc::new(Program::from_nodeptr(env.allocator, program_run_args)?);
-            let alice_game = v1::game::Game::new_program(
+            let alice_game = game::Game::new_program(
                 env.allocator,
                 i_initiated,
                 &game_start.game_id,
@@ -1039,7 +1036,7 @@ impl PotatoHandler {
                     rc
                 })
                 .collect();
-            let bob_game = v1::game::Game::new_program(
+            let bob_game = game::Game::new_program(
                 env.allocator,
                 !i_initiated,
                 &game_start.game_id,
@@ -1598,65 +1595,6 @@ impl PotatoHandler {
         Ok(false)
     }
 
-    // Do work needed to set us up in on chain state waiting for the spend of the channel
-    // coin as specified.
-    fn setup_for_on_chain_waiting_for_unroll<'a, G, R: Rng + 'a>(
-        &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
-        spend: Box<HandshakeStepWithSpend>,
-    ) -> Result<(), Error>
-    where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
-    {
-        let (env, _) = penv.env();
-        let player_ch = self.channel_handler()?;
-        let run_puzzle = spend.spend.spends[0]
-            .bundle
-            .puzzle
-            .to_program()
-            .to_nodeptr(env.allocator)?;
-        let run_args = spend.spend.spends[0]
-            .bundle
-            .solution
-            .to_nodeptr(env.allocator)?;
-        let puzzle_result = run_program(
-            env.allocator.allocator(),
-            &chia_dialect(),
-            run_puzzle,
-            run_args,
-            0,
-        )
-        .into_gen()?;
-        let condition_list = CoinCondition::from_nodeptr(env.allocator, puzzle_result.1);
-        let unroll_result = if let Some(unroll_coin) = condition_list
-            .iter()
-            .filter_map(|cond| {
-                if let CoinCondition::CreateCoin(ph, amt) = cond {
-                    if *amt > Amount::default() {
-                        let coin_id = CoinString::from_parts(
-                            &player_ch.state_channel_coin().to_coin_id(),
-                            ph,
-                            amt,
-                        );
-                        debug!("spend to unroll coin {coin_id:?}");
-                        return Some(coin_id);
-                    }
-                }
-
-                None
-            })
-            .next()
-        {
-            unroll_coin.clone()
-        } else {
-            return Err(Error::StrErr("no unroll coin created".to_string()));
-        };
-
-        self.handshake_state = HandshakeState::OnChainTransition(unroll_result.clone(), spend);
-
-        Ok(())
-    }
-
     pub fn do_channel_spend_to_unroll<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
@@ -1665,33 +1603,42 @@ impl PotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
-        let (env, system_interface) = penv.env();
-
         {
             let player_ch = self.channel_handler_mut()?;
             player_ch.set_initiated_on_chain();
         }
 
-        let player_ch = self.channel_handler()?;
-        debug!("GO ON CHAIN: initiated {}", player_ch.is_initial_potato());
-        // Channel coin
-        let finished_unroll_coin = player_ch.get_finished_unroll_coin();
+        let unroll_coin;
+        {
+            let (env, system_interface) = penv.env();
+            let player_ch = self.channel_handler()?;
+            debug!("GO ON CHAIN: initiated {}", player_ch.is_initial_potato());
 
-        // For debugging: get internal idea of what's signed.
-        let unroll_puzzle_solution = finished_unroll_coin
-            .coin
-            .get_internal_conditions_for_unroll_coin_spend()?;
-        let unroll_puzzle_solution_hash = unroll_puzzle_solution.sha256tree(env.allocator);
-        let aggregate_unroll_signature = finished_unroll_coin.coin.get_unroll_coin_signature()?
-            + finished_unroll_coin
-                .signatures
-                .my_unroll_half_signature_peer
-                .clone();
+            // Submit the "create channel" tx to ensure the channel coin exists
+            // on-chain.  This is a no-op if the coin was already created during
+            // the handshake.
+            system_interface.spend_transaction_and_add_fee(&spend.spend)?;
 
-        debug!("{} CHANNEL: AGGREGATE UNROLL hash {unroll_puzzle_solution_hash:?} {aggregate_unroll_signature:?}", player_ch.is_initial_potato());
+            // Construct and submit the channel coin spend that creates the
+            // unroll coin.  The channel handler holds both halves of the
+            // aggregate signature (ours from state_channel.bundle, theirs from
+            // get_finished_unroll_coin().signatures).
+            let channel_spend_bundle =
+                player_ch.get_channel_coin_spend_to_unroll_bundle(env)?;
+            debug!(
+                "submitting channel coin spend to unroll: {:?}",
+                channel_spend_bundle.spends[0].coin
+            );
+            system_interface.spend_transaction_and_add_fee(&channel_spend_bundle)?;
 
-        system_interface.spend_transaction_and_add_fee(&spend.spend)?;
-        self.setup_for_on_chain_waiting_for_unroll(penv, spend)
+            // Compute the expected unroll coin that the channel coin spend
+            // will create.
+            unroll_coin = player_ch.compute_expected_unroll_coin(env)?;
+            debug!("expected unroll coin: {unroll_coin:?}");
+        }
+
+        self.handshake_state = HandshakeState::OnChainTransition(unroll_coin, spend);
+        Ok(())
     }
 
     pub fn do_unroll_spend_to_games<'a, G, R: Rng + 'a>(

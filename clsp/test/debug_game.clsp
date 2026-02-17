@@ -6,7 +6,7 @@
 (import std.curry)
 (import std.print)
 (import std.relops)
-(import games.calpoker-v0.game_codes)
+(import games.game_codes)
 
 ; See RefereePuzzleArgs::to_clvm
 (defmac STATE_PACK ()

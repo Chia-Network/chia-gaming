@@ -1,9 +1,9 @@
 
-(import games.calpoker-v1.onchain.a exposing (program as pokera) (program_hash as pokera_hash))
-(import games.calpoker-v1.onchain.b exposing (program as pokerb) (program_hash as pokerb_hash))
-(import games.calpoker-v1.onchain.c exposing (program as pokerc) (program_hash as pokerc_hash))
-(import games.calpoker-v1.onchain.d exposing (program as pokerd) (program_hash as pokerd_hash))
-(import games.calpoker-v1.onchain.e exposing (program as pokere) (program_hash as pokere_hash))
+(import games.calpoker.onchain.a exposing (program as pokera) (program_hash as pokera_hash))
+(import games.calpoker.onchain.b exposing (program as pokerb) (program_hash as pokerb_hash))
+(import games.calpoker.onchain.c exposing (program as pokerc) (program_hash as pokerc_hash))
+(import games.calpoker.onchain.d exposing (program as pokerd) (program_hash as pokerd_hash))
+(import games.calpoker.onchain.e exposing (program as pokere) (program_hash as pokere_hash))
 
 (import std.li)
 (import std.curry)
@@ -15,9 +15,9 @@
 (import std.deep_compare)
 (import std.popcount)
 (import std.print)
-(import games.calpoker-v1.handcalc exposing handcalc)
-(import games.calpoker-v1.onchain.make_cards exposing make_cards)
-(import games.calpoker-v1.onchain.arrange_cards exposing get_final_cards_in_canonical_order)
+(import games.calpoker.handcalc exposing handcalc)
+(import games.calpoker.onchain.make_cards exposing make_cards)
+(import games.calpoker.onchain.arrange_cards exposing get_final_cards_in_canonical_order)
 
 ; proposal factory takes readable returns ((my_contribution their_contribution [(size whether_we_go_first
 ;   initial_validator_hash initial_move initial_max_move_size initial_state
@@ -150,7 +150,7 @@
                 (curry calpoker_alice_handler_d salt my_discards_bitfield)
             )
             (x (list
-                "v1 alice_handler_c bad discard selection"
+                "alice_handler_c bad discard selection"
                 "bitfield" my_discards_bitfield
                 "popcount" (popcount my_discards_bitfield)
             ))
@@ -219,7 +219,7 @@
 ; move is Alice commit
 ; state is alice_commit
 (defun calpoker_bob_handler_a (amount pre_state state move validation_program_hash split)
-    ; Legacy-tagged "make move" shape expected by v1 parser:
+    ; Legacy-tagged "make move" shape expected by parser:
     ; compact form: (0 readable_info next_handler)
     (list 0 0 calpoker_bob_handler_b)
 )
@@ -275,7 +275,7 @@
             (if (= (popcount my_discards_bitfield) 4)
                 my_discards_bitfield
                 (x (list
-                    "v1 bob_handler_d bad discard selection"
+                    "bob_handler_d bad discard selection"
                     "bitfield" my_discards_bitfield
                     "popcount" (popcount my_discards_bitfield)
                 ))

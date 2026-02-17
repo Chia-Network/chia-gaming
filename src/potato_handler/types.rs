@@ -9,7 +9,7 @@ use crate::channel_handler::types::{
     ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartFailed, GameStartInfo,
     GameStartInfoInterface, MoveResult, PotatoMoveCachedData, PotatoSignatures, ReadableMove,
 };
-use crate::channel_handler::v1;
+use crate::channel_handler::game_start_info;
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinString, Error, GameID, GameType, Hash, Program, ProgramRef,
@@ -327,7 +327,7 @@ impl<'de> Deserialize<'de> for GSI {
         if let Ok(gsi) = bson::from_bson::<GameStartInfo>(bson_data.clone()) {
             return Ok(GSI(Rc::new(gsi)));
         }
-        let gsi: v1::game_start_info::GameStartInfo = bson::from_bson(bson_data).unwrap(); // deal with error
+        let gsi: game_start_info::GameStartInfo = bson::from_bson(bson_data).unwrap(); // deal with error
         Ok(GSI(Rc::new(gsi)))
     }
 }
@@ -413,13 +413,7 @@ impl<'de> Deserialize<'de> for ShutdownActionHolder {
 #[derive(Serialize, Deserialize)]
 pub enum GameAction {
     Move(GameID, ReadableMove, Hash),
-    RedoMoveV0(
-        GameID,
-        CoinString,
-        PuzzleHash,
-        Box<RefereeOnChainTransaction>,
-    ),
-    RedoMoveV1(
+    RedoMove(
         CoinString,
         PuzzleHash,
         Box<RefereeOnChainTransaction>,
@@ -442,11 +436,8 @@ impl std::fmt::Debug for GameAction {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
             GameAction::Move(gi, rm, h) => write!(formatter, "Move({gi:?},{rm:?},{h:?})"),
-            GameAction::RedoMoveV0(gi, cs, ph, rt) => {
-                write!(formatter, "RedoMoveV0({gi:?},{cs:?},{ph:?},{rt:?})")
-            }
-            GameAction::RedoMoveV1(cs, ph, rt, md, amt) => {
-                write!(formatter, "RedoMoveV1({cs:?},{ph:?},{rt:?},{md:?},{amt:?})")
+            GameAction::RedoMove(cs, ph, rt, md, amt) => {
+                write!(formatter, "RedoMove({cs:?},{ph:?},{rt:?},{md:?},{amt:?})")
             }
             GameAction::RedoAccept(gi, cs, ph, rt) => {
                 write!(formatter, "RedoAccept({gi:?},{cs:?},{ph:?},{rt:?})")
@@ -463,7 +454,7 @@ impl std::fmt::Debug for GameAction {
 pub struct GameFactory {
     pub version: usize,
     pub program: Rc<Program>,
-    /// For v1 games: the parser program used by the responder.
+    /// The parser program used by the responder.
     /// The `program` field holds the proposal (make_proposal) program.
     #[serde(default)]
     pub parser_program: Option<Rc<Program>>,

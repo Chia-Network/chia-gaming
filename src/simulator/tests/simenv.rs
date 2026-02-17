@@ -15,8 +15,8 @@ use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_synthetic_public_key, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    chia_dialect, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, Hash, IntoErr,
-    PrivateKey, PuzzleHash, Sha256tree, Spend,
+    chia_dialect, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash,
+    IntoErr, PrivateKey, PuzzleHash, Sha256tree, Spend,
 };
 use crate::shutdown::get_conditions_with_channel_handler;
 use crate::simulator::Simulator;
@@ -42,7 +42,9 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
     pub fn new(
         allocator: &'a mut AllocEncoder,
         rng: &'a mut R,
-        game: &Game,
+        game_id: &GameID,
+        alice_game: &Game,
+        bob_game: &Game,
         contributions: &[Amount; 2],
     ) -> Result<Self, Error> {
         // Generate keys and puzzle hashes.
@@ -59,7 +61,9 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         let (parties, coin) = new_channel_handler_game(
             &simulator,
             &mut env,
-            game,
+            game_id,
+            alice_game,
+            bob_game,
             &identities,
             contributions.clone(),
         )?;

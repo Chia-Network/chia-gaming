@@ -6,11 +6,10 @@ use clvmr::allocator::NodePtr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::game_handler::GameHandler as OldGH;
+use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::types::{
     GameStartInfoInterface, GameStartInfoInterfaceND, StateUpdateProgram, ValidationOrUpdateProgram,
 };
-use crate::channel_handler::v1::game_handler::GameHandler;
 use crate::common::types::{
     atom_from_clvm, usize_from_atom, AllocEncoder, Amount, Error, GameID, Hash, Program,
     ProgramRef, Timeout,
@@ -46,8 +45,8 @@ impl GameStartInfoInterfaceND for GameStartInfo {
     fn amount(&self) -> &Amount {
         &self.amount
     }
-    fn game_handler(&self) -> OldGH {
-        OldGH::HandlerV1(self.game_handler.clone())
+    fn game_handler(&self) -> GameHandler {
+        self.game_handler.clone()
     }
 
     fn my_contribution_this_game(&self) -> &Amount {

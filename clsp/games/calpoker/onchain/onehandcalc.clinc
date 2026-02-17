@@ -17,7 +17,7 @@
 (import std.relops)
 (import std.isthere)
 (import std.atomsort)
-(import games.calpoker-v1.onchain.flatten_card)
+(import games.calpoker.onchain.flatten_card)
 
 (defun mod52_to_pair (card_id)
     (assign

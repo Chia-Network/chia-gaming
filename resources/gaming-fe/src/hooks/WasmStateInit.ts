@@ -99,8 +99,7 @@ observable.subscribe({
       'clsp/unroll/unroll_meta_puzzle.hex',
       'clsp/unroll/unroll_puzzle_state_channel_unrolling.hex',
       'clsp/referee/onchain/referee.hex',
-      'clsp/referee/onchain/referee-v1.hex',
-      'clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex',
+      'clsp/games/calpoker/calpoker_include_calpoker_factory.hex',
     ];
     this.wasmConnection = cg;
     await this.loadPresets(presetFiles);
@@ -243,7 +242,7 @@ observable.subscribe({
 
   async loadCalpoker(): Promise<string> {
     return this.fetchHex(
-      'clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex',
+      'clsp/games/calpoker/calpoker_include_calpoker_factory.hex',
     );
 
     /* TODO
@@ -320,6 +319,6 @@ observable.subscribe({
 
 export function loadCalpoker(fetchHex: (filename: string) => Promise<string> ): any {
   return fetchHex(
-    'clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex',
+    'clsp/games/calpoker/calpoker_include_calpoker_factory.hex',
   );
 }
