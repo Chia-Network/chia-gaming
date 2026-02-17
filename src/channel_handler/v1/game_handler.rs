@@ -194,8 +194,14 @@ impl GameHandler {
         let run_result = run_code(allocator, handler_node, handler_args, false);
 
         if let Err(Error::ClvmErr(e)) = &run_result {
-            let dis = Program::from_nodeptr(allocator, e.node_ptr())?;
-            debug!("error {e:#?} from clvm during my turn handler: {dis:?}");
+            let failing_hex = Node(e.node_ptr()).to_hex(allocator)?;
+            let failing_prefix = &failing_hex[..failing_hex.len().min(96)];
+            debug!(
+                "error {e:?} from clvm during my turn handler: node_len={} node_prefix={}{}",
+                failing_hex.len(),
+                failing_prefix,
+                if failing_hex.len() > failing_prefix.len() { "..." } else { "" }
+            );
         }
 
         let run_result = run_result?;
@@ -314,9 +320,10 @@ impl GameHandler {
             .into_gen()?;
 
         let handler_node = self.get_their_turn_handler(allocator)?;
-        debug!("call their turn handler: is_my_turn={}", self.is_my_turn());
+        let handler_hex_len = Node(handler_node).to_hex(allocator).map(|h| h.len()).unwrap_or(0);
         debug!(
-            "call their turn structured: move_len={} move_hex={} pre_state_len={} state_len={} pre_state={:?} state={:?}",
+            "their-turn handler: handler_hex_len={} move_len={} move_hex={} pre_state_len={} state_len={} amount={:?} mover_share={:?}",
+            handler_hex_len,
             inputs.new_move.basic.move_made.len(),
             hex::encode(&inputs.new_move.basic.move_made),
             proper_list(allocator.allocator(), inputs.pre_state, true)
@@ -325,8 +332,8 @@ impl GameHandler {
             proper_list(allocator.allocator(), inputs.state, true)
                 .map(|v| v.len())
                 .unwrap_or(0),
-            Program::from_nodeptr(allocator, inputs.pre_state)?,
-            Program::from_nodeptr(allocator, inputs.state)?,
+            inputs.amount,
+            inputs.new_move.basic.mover_share,
         );
 
         let run_result_e = run_code(

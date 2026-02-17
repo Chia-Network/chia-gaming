@@ -34,7 +34,7 @@
             )
         )
         (li
-            (li calpoker_alice_driver_a pokera)
+            (li calpoker_alice_handler_a pokera)
         )
     )
 )
@@ -44,8 +44,8 @@
 ;   returns (readable [(initial_validator initial_handler)]) or error
 ; The return value readable goes to the presentation layer and the other value is to enable gameplay
 (defun calpoker_parser (@ args (bet_size))
-    (assert (deep= args (f (calpoker_make_proposal (li (li bet_size)))))
-        (li bet_size (li (li pokera calpoker_bob_driver_a)))
+    (assert (deep= args (f (calpoker_make_proposal bet_size)))
+        (li bet_size (li (li pokera calpoker_bob_handler_a)))
     )
 )
 
@@ -295,8 +295,9 @@
 ; pre_state is (bob_discards alice_cards bob_cards alice_commit)
 ; move is alice_salted_discards
 ; either fraud proves or accepts split
-(defun calpoker_bob_driver_e (
+(defun calpoker_bob_handler_e (
         amount
+        pre_state
         (@ state (
             bob_discards
             alice_cards

@@ -13,7 +13,7 @@ use crate::channel_handler::v1::game_start_info::GameStartInfo;
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
-    GameID, Hash, IntoErr, Program, Puzzle, Timeout,
+    GameID, Hash, IntoErr, Node, Program, Puzzle, Timeout,
 };
 
 #[derive(Clone)]
@@ -41,8 +41,21 @@ impl GameStart {
             )));
         }
 
+        let amount_atom = atom_from_clvm(allocator, template_list[0]);
         let is_my_turn = non_nil(allocator.allocator(), template_list[1]);
-        debug!("is_my_turn {is_my_turn}");
+        let handler_hex_len = Node(template_list[2]).to_hex(allocator).map(|h| h.len()).unwrap_or(0);
+        let vh_hex = atom_from_clvm(allocator, template_list[6]).map(|a| hex::encode(&a)).unwrap_or_default();
+        debug!(
+            "GameStart: amount={:?} is_my_turn={} handler_hex_len={} vh={} state={:?} move={:?} max_move_size={:?} mover_share={:?}",
+            amount_atom.as_ref().map(|a| u64_from_atom(a)),
+            is_my_turn,
+            handler_hex_len,
+            vh_hex,
+            Program::from_nodeptr(allocator, template_list[7]).ok(),
+            atom_from_clvm(allocator, template_list[8]).map(hex::encode),
+            atom_from_clvm(allocator, template_list[9]).and_then(|a| usize_from_atom(&a)),
+            atom_from_clvm(allocator, template_list[10]).and_then(|a| u64_from_atom(&a)),
+        );
         let initial_mover_handler = if is_my_turn {
             GameHandler::my_handler_from_nodeptr(allocator, template_list[2])?
         } else {
@@ -126,39 +139,52 @@ impl Game {
         // let args_program = Program::from_nodeptr(allocator, args)?;
 
         let poker_generator_clvm = poker_generator.to_clvm(allocator).into_gen()?;
-        debug!("running start program {poker_generator:?}");
-        debug!("running start args {args_program:?}");
-        let template_clvm = run_program(
+        debug!(
+            "running factory as_alice={as_alice} args={args_program:?}"
+        );
+        let template_clvm = match run_program(
             allocator.allocator(),
             &chia_dialect(),
             poker_generator_clvm,
             args,
             0,
         )
-        .into_gen()?
-        .1;
-        let template_list_prog = Program::from_nodeptr(allocator, template_clvm)?;
-        debug!("game template_list {template_list_prog:?}");
-        let game_list = if let Some(lst) = proper_list(allocator.allocator(), template_clvm, true) {
+        .into_gen()
+        {
+            Ok(r) => r.1,
+            Err(e) => {
+                return Err(Error::StrErr(format!(
+                    "factory run failed: as_alice={as_alice} args={args_program:?} error={e:?}"
+                )));
+            }
+        };
+        let template_list = if let Some(lst) = proper_list(allocator.allocator(), template_clvm, true) {
             lst
         } else {
             return Err(Error::StrErr(
                 "poker program didn't return a list".to_string(),
             ));
         };
-
-        if game_list.is_empty() {
+        debug!(
+            "factory returned as_alice={as_alice} num_games={} first_game_len={}",
+            template_list.len(),
+            template_list.first()
+                .and_then(|g| proper_list(allocator.allocator(), *g, true))
+                .map(|l| l.len())
+                .unwrap_or(0),
+        );
+        if template_list.is_empty() {
             return Err(Error::StrErr("not even one game returned".to_string()));
         }
 
-        for game in game_list.iter() {
-            let template_list = if let Some(lst) = proper_list(allocator.allocator(), *game, true) {
+        for game in template_list.iter() {
+            let game_fields = if let Some(lst) = proper_list(allocator.allocator(), *game, true) {
                 lst
             } else {
                 return Err(Error::StrErr("bad template list".to_string()));
             };
 
-            starts.push(GameStart::new(allocator, game_id, &template_list)?);
+            starts.push(GameStart::new(allocator, game_id, &game_fields)?);
         }
 
         Ok(Game { starts })

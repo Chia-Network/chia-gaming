@@ -652,11 +652,11 @@ impl PotatoHandler {
                 let ch = self.channel_handler_mut()?;
                 let (env, system_interface) = penv.env();
                 for game in desc.their_games.iter() {
-                    debug!("their game {:?}", game);
+                    debug!("their game id={:?}", game.0.game_id());
                     dehydrated_games.push(game.clone());
                 }
                 for game in desc.my_games.iter() {
-                    debug!("using game {:?}", game);
+                    debug!("using game id={:?}", game.0.game_id());
                 }
 
                 let unwrapped_games: Vec<Rc<dyn GameStartInfoInterface>> =
@@ -680,7 +680,7 @@ impl PotatoHandler {
                 }
             };
 
-            debug!("dehydrated_games {dehydrated_games:?}");
+            debug!("dehydrated_games count={}", dehydrated_games.len());
             self.have_potato = PotatoState::Absent;
             let (_, system_interface) = penv.env();
             system_interface.send_message(&PeerMessage::StartGames(*sigs, dehydrated_games))?;
@@ -1022,7 +1022,7 @@ impl PotatoHandler {
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         debug!("Starting game with game type {:?}", game_start.game_type);
-        debug!("Game types {:?}", self.game_types);
+        debug!("Known game types: {:?}", self.game_types.keys().collect::<Vec<_>>());
         let starter = if let Some(starter) = self.game_types.get(&game_start.game_type) {
             starter
         } else {
@@ -1095,7 +1095,7 @@ impl PotatoHandler {
             let (env, system_interface) = penv.env();
             let mut rehydrated_games = Vec::with_capacity(games.len());
             for game in games.iter() {
-                debug!("their game {:?} {:?}", game.0.game_id(), game);
+                debug!("their game id={:?}", game.0.game_id());
                 rehydrated_games.push(game.0.clone());
             }
             let (game_ids, spend_info) =
