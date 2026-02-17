@@ -21725,17 +21725,17 @@
 
   // dist/js/index.js
   var import_jsx_runtime10 = __toESM(require_jsx_runtime(), 1);
-  var import_react6 = __toESM(require_react(), 1);
+  var import_react7 = __toESM(require_react(), 1);
   var import_client = __toESM(require_client(), 1);
 
   // dist/js/lobby.js
   var import_jsx_runtime9 = __toESM(require_jsx_runtime(), 1);
-  var import_react5 = __toESM(require_react(), 1);
+  var import_react6 = __toESM(require_react(), 1);
 
   // node_modules/chia-gaming-lobby-connection/dist/index.js
   var import_react = __toESM(require_react());
 
-  // node_modules/engine.io-parser/build/esm/commons.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-parser/build/esm/commons.js
   var PACKET_TYPES = /* @__PURE__ */ Object.create(null);
   PACKET_TYPES["open"] = "0";
   PACKET_TYPES["close"] = "1";
@@ -21750,7 +21750,7 @@
   });
   var ERROR_PACKET = { type: "error", data: "parser error" };
 
-  // node_modules/engine.io-parser/build/esm/encodePacket.browser.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-parser/build/esm/encodePacket.browser.js
   var withNativeBlob = typeof Blob === "function" || typeof Blob !== "undefined" && Object.prototype.toString.call(Blob) === "[object BlobConstructor]";
   var withNativeArrayBuffer = typeof ArrayBuffer === "function";
   var isView = (obj) => {
@@ -21804,7 +21804,7 @@
     });
   }
 
-  // node_modules/engine.io-parser/build/esm/contrib/base64-arraybuffer.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-parser/build/esm/contrib/base64-arraybuffer.js
   var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   var lookup = typeof Uint8Array === "undefined" ? [] : new Uint8Array(256);
   for (let i = 0; i < chars.length; i++) {
@@ -21831,7 +21831,7 @@
     return arraybuffer;
   };
 
-  // node_modules/engine.io-parser/build/esm/decodePacket.browser.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-parser/build/esm/decodePacket.browser.js
   var withNativeArrayBuffer2 = typeof ArrayBuffer === "function";
   var decodePacket = (encodedPacket, binaryType) => {
     if (typeof encodedPacket !== "string") {
@@ -21884,7 +21884,7 @@
     }
   };
 
-  // node_modules/engine.io-parser/build/esm/index.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-parser/build/esm/index.js
   var SEPARATOR = String.fromCharCode(30);
   var encodePayload = (packets, callback) => {
     const length = packets.length;
@@ -22026,7 +22026,7 @@
   }
   var protocol = 4;
 
-  // node_modules/@socket.io/component-emitter/lib/esm/index.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/@socket.io/component-emitter/lib/esm/index.js
   function Emitter(obj) {
     if (obj) return mixin(obj);
   }
@@ -22098,7 +22098,7 @@
     return !!this.listeners(event).length;
   };
 
-  // node_modules/engine.io-client/build/esm/globals.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/globals.js
   var nextTick = (() => {
     const isPromiseAvailable = typeof Promise === "function" && typeof Promise.resolve === "function";
     if (isPromiseAvailable) {
@@ -22120,7 +22120,7 @@
   function createCookieJar() {
   }
 
-  // node_modules/engine.io-client/build/esm/util.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/util.js
   function pick(obj, ...attr) {
     return attr.reduce((acc, k) => {
       if (obj.hasOwnProperty(k)) {
@@ -22168,7 +22168,7 @@
     return Date.now().toString(36).substring(3) + Math.random().toString(36).substring(2, 5);
   }
 
-  // node_modules/engine.io-client/build/esm/contrib/parseqs.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/contrib/parseqs.js
   function encode(obj) {
     let str = "";
     for (let i in obj) {
@@ -22190,7 +22190,7 @@
     return qry;
   }
 
-  // node_modules/engine.io-client/build/esm/transport.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/transport.js
   var TransportError = class extends Error {
     constructor(reason, description, context) {
       super(reason);
@@ -22321,7 +22321,7 @@
     }
   };
 
-  // node_modules/engine.io-client/build/esm/transports/polling.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/transports/polling.js
   var Polling = class extends Transport {
     constructor() {
       super(...arguments);
@@ -22453,7 +22453,7 @@
     }
   };
 
-  // node_modules/engine.io-client/build/esm/contrib/has-cors.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/contrib/has-cors.js
   var value = false;
   try {
     value = typeof XMLHttpRequest !== "undefined" && "withCredentials" in new XMLHttpRequest();
@@ -22461,7 +22461,7 @@
   }
   var hasCORS = value;
 
-  // node_modules/engine.io-client/build/esm/transports/polling-xhr.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/transports/polling-xhr.js
   function empty() {
   }
   var BaseXHR = class extends Polling {
@@ -22702,7 +22702,7 @@
     }
   }
 
-  // node_modules/engine.io-client/build/esm/transports/websocket.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/transports/websocket.js
   var isReactNative = typeof navigator !== "undefined" && typeof navigator.product === "string" && navigator.product.toLowerCase() === "reactnative";
   var BaseWS = class extends Transport {
     get name() {
@@ -22796,7 +22796,7 @@
     }
   };
 
-  // node_modules/engine.io-client/build/esm/transports/webtransport.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/transports/webtransport.js
   var WT = class extends Transport {
     get name() {
       return "webtransport";
@@ -22859,14 +22859,14 @@
     }
   };
 
-  // node_modules/engine.io-client/build/esm/transports/index.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/transports/index.js
   var transports = {
     websocket: WS,
     webtransport: WT,
     polling: XHR
   };
 
-  // node_modules/engine.io-client/build/esm/contrib/parseuri.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/contrib/parseuri.js
   var re = /^(?:(?![^:@\/?#]+:[^:@\/]*@)(http|https|ws|wss):\/\/)?((?:(([^:@\/?#]*)(?::([^:@\/?#]*))?)?@)?((?:[a-f0-9]{0,4}:){2,7}[a-f0-9]{0,4}|[^:\/?#]*)(?::(\d*))?)(((\/(?:[^?#](?![^?#\/]*\.[^?#\/.]+(?:[?#]|$)))*\/?)?([^?#\/]*))(?:\?([^#]*))?(?:#(.*))?)/;
   var parts = [
     "source",
@@ -22926,7 +22926,7 @@
     return data;
   }
 
-  // node_modules/engine.io-client/build/esm/socket.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/socket.js
   var withEventListeners = typeof addEventListener === "function" && typeof removeEventListener === "function";
   var OFFLINE_EVENT_LISTENERS = [];
   if (withEventListeners) {
@@ -23493,10 +23493,10 @@
     }
   };
 
-  // node_modules/engine.io-client/build/esm/index.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/index.js
   var protocol2 = Socket.protocol;
 
-  // node_modules/socket.io-client/build/esm/url.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/socket.io-client/build/esm/url.js
   function url(uri, path = "", loc) {
     let obj = uri;
     loc = loc || typeof location !== "undefined" && location;
@@ -23534,7 +23534,7 @@
     return obj;
   }
 
-  // node_modules/socket.io-parser/build/esm/index.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/socket.io-parser/build/esm/index.js
   var esm_exports = {};
   __export(esm_exports, {
     Decoder: () => Decoder,
@@ -23543,7 +23543,7 @@
     protocol: () => protocol3
   });
 
-  // node_modules/socket.io-parser/build/esm/is-binary.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/socket.io-parser/build/esm/is-binary.js
   var withNativeArrayBuffer3 = typeof ArrayBuffer === "function";
   var isView2 = (obj) => {
     return typeof ArrayBuffer.isView === "function" ? ArrayBuffer.isView(obj) : obj.buffer instanceof ArrayBuffer;
@@ -23580,7 +23580,7 @@
     return false;
   }
 
-  // node_modules/socket.io-parser/build/esm/binary.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/socket.io-parser/build/esm/binary.js
   function deconstructPacket(packet) {
     const buffers = [];
     const packetData = packet.data;
@@ -23642,7 +23642,7 @@
     return data;
   }
 
-  // node_modules/socket.io-parser/build/esm/index.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/socket.io-parser/build/esm/index.js
   var RESERVED_EVENTS = [
     "connect",
     "connect_error",
@@ -23898,7 +23898,7 @@
     }
   };
 
-  // node_modules/socket.io-client/build/esm/on.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/socket.io-client/build/esm/on.js
   function on(obj, ev, fn) {
     obj.on(ev, fn);
     return function subDestroy() {
@@ -23906,7 +23906,7 @@
     };
   }
 
-  // node_modules/socket.io-client/build/esm/socket.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/socket.io-client/build/esm/socket.js
   var RESERVED_EVENTS2 = Object.freeze({
     connect: 1,
     connect_error: 1,
@@ -24680,7 +24680,7 @@
     }
   };
 
-  // node_modules/socket.io-client/build/esm/contrib/backo2.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/socket.io-client/build/esm/contrib/backo2.js
   function Backoff(opts) {
     opts = opts || {};
     this.ms = opts.min || 100;
@@ -24711,7 +24711,7 @@
     this.jitter = jitter;
   };
 
-  // node_modules/socket.io-client/build/esm/manager.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/socket.io-client/build/esm/manager.js
   var Manager = class extends Emitter {
     constructor(uri, opts) {
       var _a;
@@ -25061,7 +25061,7 @@
     }
   };
 
-  // node_modules/socket.io-client/build/esm/index.js
+  // node_modules/chia-gaming-lobby-connection/node_modules/socket.io-client/build/esm/index.js
   var cache = {};
   function lookup2(uri, opts) {
     if (typeof uri === "object") {
@@ -25913,10 +25913,12 @@
 
   // dist/js/features/lobbyComponents/CreateRoomDialog.js
   var import_jsx_runtime7 = __toESM(require_jsx_runtime(), 1);
+  var import_react5 = __toESM(require_react(), 1);
   var CreateRoomDialog = ({ dialogOpen, closeDialog, gameChoice, setGameChoice, lobbyGames, wagerInput, setWagerInput, perHandInput, setPerHandInput, wagerValidationError, handleCreate }) => {
     if (!dialogOpen)
       return null;
-    return (0, import_jsx_runtime7.jsx)("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-canvas-bg-subtle/75", onClick: closeDialog, children: (0, import_jsx_runtime7.jsxs)("div", { className: "bg-canvas-bg-subtle text-canvas-text shadow-2xl rounded-lg w-full max-w-lg p-6", onClick: (e) => e.stopPropagation(), children: [(0, import_jsx_runtime7.jsx)("h2", { className: "text-xl font-bold mb-4", children: "Create a Room" }), (0, import_jsx_runtime7.jsxs)("div", { className: "mb-4", children: [(0, import_jsx_runtime7.jsx)("label", { className: "block mb-1 font-medium", children: "Game" }), (0, import_jsx_runtime7.jsx)("div", { className: dialogOpen ? "block" : "hidden", children: (0, import_jsx_runtime7.jsx)("select", { value: gameChoice, "aria-label": "game-id", onChange: (e) => setGameChoice(e.target.value), className: "w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded", children: lobbyGames.map((g) => (0, import_jsx_runtime7.jsx)("option", { value: g.game, "data-testid": `choose-${g.game}`, children: g.game }, g.game)) }) })] }), wagerValidationError && (0, import_jsx_runtime7.jsx)("div", { className: "mb-1 text-secondary-solid", children: wagerValidationError }), (0, import_jsx_runtime7.jsxs)("div", { className: "mb-4", children: [(0, import_jsx_runtime7.jsx)("label", { className: "block mb-1 font-medium", children: "Wager (mojo)" }), (0, import_jsx_runtime7.jsx)("input", { type: "number", "aria-label": "game-wager", value: wagerInput, onChange: (e) => setWagerInput(e.target.value), placeholder: "Buy-in (minimum 100 mojos)", className: "w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded" })] }), wagerValidationError && (0, import_jsx_runtime7.jsx)("p", { style: { color: "#FF6F00", marginBottom: 1 }, children: "    " + wagerValidationError }), (0, import_jsx_runtime7.jsxs)("div", { className: "mb-4", children: [(0, import_jsx_runtime7.jsx)("label", { className: "block mb-1 font-medium", children: "Each hand (mojo)" }), (0, import_jsx_runtime7.jsx)("input", { type: "number", "aria-label": "per-hand", value: perHandInput, onChange: (e) => setPerHandInput(e.target.value), placeholder: "Enter per hand", className: "w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded" })] }), (0, import_jsx_runtime7.jsxs)("div", { className: "flex justify-end gap-2 mt-4", children: [(0, import_jsx_runtime7.jsx)(ButtonMemoized, { variant: "outline", color: "secondary", onClick: closeDialog, children: "Cancel" }), (0, import_jsx_runtime7.jsx)(ButtonMemoized, { variant: "solid", color: "secondary", onClick: handleCreate, className: "px-4 py-2 bg-secondary-solid text-canvas-bg rounded hover:bg-secondary-solid/90", children: "Create" })] })] }) });
+    const [isFocused, setIsFocused] = (0, import_react5.useState)(false);
+    return (0, import_jsx_runtime7.jsx)("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-canvas-bg-subtle/75", onClick: closeDialog, children: (0, import_jsx_runtime7.jsxs)("div", { className: "bg-canvas-bg-subtle text-canvas-text shadow-2xl rounded-lg w-full max-w-lg p-6", onClick: (e) => e.stopPropagation(), children: [(0, import_jsx_runtime7.jsx)("h2", { className: "text-xl font-bold mb-4", children: "Create a Room" }), (0, import_jsx_runtime7.jsxs)("div", { className: "mb-4", children: [(0, import_jsx_runtime7.jsx)("label", { className: "block mb-1 font-medium", children: "Game" }), (0, import_jsx_runtime7.jsx)("div", { className: dialogOpen ? "block" : "hidden", children: (0, import_jsx_runtime7.jsx)("select", { value: gameChoice, "aria-label": "game-id", onChange: (e) => setGameChoice(e.target.value), className: "w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded", children: lobbyGames.map((g) => (0, import_jsx_runtime7.jsx)("option", { value: g.game, "data-testid": `choose-${g.game}`, children: g.game }, g.game)) }) })] }), wagerValidationError && (0, import_jsx_runtime7.jsx)("div", { className: "mb-1 text-secondary-solid", children: wagerValidationError }), (0, import_jsx_runtime7.jsxs)("div", { className: "mb-4", children: [(0, import_jsx_runtime7.jsx)("label", { className: "block mb-1 font-medium", children: "Wager (mojo)" }), (0, import_jsx_runtime7.jsx)("input", { type: "number", "aria-label": "game-wager", value: wagerInput, onChange: (e) => setWagerInput(e.target.value), onFocus: () => setIsFocused(true), onBlur: () => setIsFocused(false), placeholder: isFocused ? "" : "Buy-in (minimum 100 mojos)", className: "w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded" })] }), wagerValidationError && (0, import_jsx_runtime7.jsx)("p", { style: { color: "#FF6F00", marginBottom: 1 }, children: "    " + wagerValidationError }), (0, import_jsx_runtime7.jsxs)("div", { className: "mb-4", children: [(0, import_jsx_runtime7.jsx)("label", { className: "block mb-1 font-medium", children: "Each hand (mojo)" }), (0, import_jsx_runtime7.jsx)("input", { type: "number", "aria-label": "per-hand", value: perHandInput, onChange: (e) => setPerHandInput(e.target.value), placeholder: "Enter per hand", className: "w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded" })] }), (0, import_jsx_runtime7.jsxs)("div", { className: "flex justify-end gap-2 mt-4", children: [(0, import_jsx_runtime7.jsx)(ButtonMemoized, { variant: "outline", color: "secondary", onClick: closeDialog, children: "Cancel" }), (0, import_jsx_runtime7.jsx)(ButtonMemoized, { variant: "solid", color: "secondary", onClick: handleCreate, className: "px-4 py-2 bg-secondary-solid text-canvas-bg rounded hover:bg-secondary-solid/90", children: "Create" })] })] }) });
   };
   var CreateRoomDialog_default = CreateRoomDialog;
 
@@ -25931,7 +25933,7 @@
 
   // dist/js/lobby.js
   var LobbyScreen = () => {
-    const [myAlias, setMyAlias] = (0, import_react5.useState)(generateOrRetrieveAlias());
+    const [myAlias, setMyAlias] = (0, import_react6.useState)(generateOrRetrieveAlias());
     const params = getSearchParams();
     const fragment = getFragmentParams();
     const uniqueId = params.uniqueId;
@@ -25939,20 +25941,20 @@
       console.warn(`from tryJoinRoom, navigate ${newUrl}`);
       window.location.href = newUrl;
     });
-    const [chatInput, setChatInput] = (0, import_react5.useState)("");
-    const [dialogOpen, setDialogOpen] = (0, import_react5.useState)(false);
-    const [gameChoice, setGameChoice] = (0, import_react5.useState)(lobbyGames[0]?.game || "");
-    const [wagerInput, setWagerInputPrimitive] = (0, import_react5.useState)("");
-    const [wagerValidationError, setWagerValidationError] = (0, import_react5.useState)("");
-    const [perHandInput, setPerHandInput] = (0, import_react5.useState)("");
-    const [editingAlias, setEditingAlias] = (0, import_react5.useState)(false);
-    const [gotoUrl, setGotoUrl] = (0, import_react5.useState)("");
-    const [urlDialogOpen, setUrlDialogOpen] = (0, import_react5.useState)(false);
-    const [secureUrl, setSecureUrl] = (0, import_react5.useState)("");
-    const [splitPct, setSplitPct] = (0, import_react5.useState)(50);
-    const rightColumnRef = (0, import_react5.useRef)(null);
-    const messagesRef = (0, import_react5.useRef)(null);
-    const setWagerInput = (0, import_react5.useCallback)((newWagerInput) => {
+    const [chatInput, setChatInput] = (0, import_react6.useState)("");
+    const [dialogOpen, setDialogOpen] = (0, import_react6.useState)(false);
+    const [gameChoice, setGameChoice] = (0, import_react6.useState)(lobbyGames[0]?.game || "");
+    const [wagerInput, setWagerInputPrimitive] = (0, import_react6.useState)("");
+    const [wagerValidationError, setWagerValidationError] = (0, import_react6.useState)("");
+    const [perHandInput, setPerHandInput] = (0, import_react6.useState)("");
+    const [editingAlias, setEditingAlias] = (0, import_react6.useState)(false);
+    const [gotoUrl, setGotoUrl] = (0, import_react6.useState)("");
+    const [urlDialogOpen, setUrlDialogOpen] = (0, import_react6.useState)(false);
+    const [secureUrl, setSecureUrl] = (0, import_react6.useState)("");
+    const [splitPct, setSplitPct] = (0, import_react6.useState)(50);
+    const rightColumnRef = (0, import_react6.useRef)(null);
+    const messagesRef = (0, import_react6.useRef)(null);
+    const setWagerInput = (0, import_react6.useCallback)((newWagerInput) => {
       setWagerInputPrimitive(newWagerInput);
       try {
         const newWagerInputInteger = parseInt(newWagerInput);
@@ -25976,13 +25978,13 @@
       }
       return true;
     };
-    (0, import_react5.useEffect)(() => {
+    (0, import_react6.useEffect)(() => {
       if (messagesRef.current) {
         const el = messagesRef.current;
         el.scrollTop = el.scrollHeight;
       }
     }, [messages]);
-    (0, import_react5.useEffect)(() => {
+    (0, import_react6.useEffect)(() => {
       let dragging = false;
       const onMove = (clientY) => {
         if (!rightColumnRef.current)
@@ -26056,7 +26058,7 @@
       setUrlDialogOpen(false);
       closeDialog();
     };
-    (0, import_react5.useEffect)(() => {
+    (0, import_react6.useEffect)(() => {
       if (fragment.token)
         joinRoom(fragment.token);
     }, [fragment, joinRoom]);
@@ -26070,7 +26072,7 @@
       const player = players.find((p) => p.id === id);
       return player ? player.alias : `Unknown Player (${id})`;
     }
-    (0, import_react5.useEffect)(() => {
+    (0, import_react6.useEffect)(() => {
       if (lobbyGames.length > 0 && !gameChoice) {
         setGameChoice(lobbyGames[0].game);
       }
@@ -26083,7 +26085,7 @@
   // dist/js/index.js
   var container = document.getElementById("root");
   var root = (0, import_client.createRoot)(container);
-  root.render((0, import_jsx_runtime10.jsx)(import_react6.default.StrictMode, { children: (0, import_jsx_runtime10.jsx)(lobby_default, {}) }));
+  root.render((0, import_jsx_runtime10.jsx)(import_react7.default.StrictMode, { children: (0, import_jsx_runtime10.jsx)(lobby_default, {}) }));
 })();
 /*! Bundled license information:
 
