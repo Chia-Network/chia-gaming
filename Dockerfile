@@ -22,7 +22,6 @@ RUN apt-get update -y && \
     sh -c "echo > /app/rust/wasm/src/mod.rs"
 
 WORKDIR /app
-ADD clsp /app/clsp
 
 # Setup to pre-build the dependencies
 COPY rust-toolchain.toml Cargo.toml Cargo.lock /app/rust/
@@ -48,10 +47,17 @@ RUN --mount=type=tmpfs,dst=/tmp/rust \
   rm -rf /tmp/rust/wasm/node-pkg /tmp/rust/wasm/pkg && \
 	(cd /tmp/rust && tar cvf - .) | (cd /app/rust && tar xf -)
 
-# Lobby connection - needed by other builds
+# Lobby connection - pre-install deps (only invalidated by package.json/yarn.lock changes)
+COPY resources/lobby-connection/package.json resources/lobby-connection/yarn.lock /preinst/lobby-connection/
+RUN --mount=type=cache,target=/usr/local/share/.cache/yarn \
+  cd /preinst/lobby-connection && yarn install
+
+# Lobby connection - build (invalidated by source changes, but deps are cached above)
 COPY resources/lobby-connection/ /app/lobby-connection/
 RUN --mount=type=cache,target=/usr/local/share/.cache/yarn \
-  mkdir -p /preinst && cd /app/lobby-connection && yarn install && yarn build && yarn install --production && mv /app/lobby-connection /preinst
+  cp -r /preinst/lobby-connection/node_modules /app/lobby-connection/ && \
+  cd /app/lobby-connection && yarn build && yarn install --production && \
+  rm -rf /preinst/lobby-connection && mv /app/lobby-connection /preinst
 
 # Stage front-end / UI / UX into the container
 COPY resources/gaming-fe/package.json resources/gaming-fe/yarn.lock /preinst/game/
@@ -110,6 +116,8 @@ RUN mkdir -p /app/game/ && mkdir -p /app/wc/ && mkdir -p /app/lobby-service/ && 
   ln -s /preinst/lobby-view/package.json /app/lobby-view && \
   ln -s /preinst/wc/node_modules /app/wc && \
   ln -s /preinst/wc/package.json /app/wc
+
+ADD clsp /app/clsp
 
 ADD src /app/rust/src
 RUN touch /app/rust/src/lib.rs

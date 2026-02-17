@@ -27,9 +27,8 @@ pub enum WinDirectionUser {
     Bob,
 }
 
-pub type Card = (usize, usize);
-pub type Mod52Card = usize;
-pub type ReadableCardList = Vec<Mod52Card>;
+pub type Card = usize;
+pub type CardList = Vec<Card>;
 
 #[derive(Eq, PartialEq, Debug, Serialize, Deserialize)]
 pub enum RawCalpokerHandValue {
@@ -180,11 +179,11 @@ pub struct CalpokerResult {
     // Synthesized
     //
     pub win_direction: Option<WinDirectionUser>,
-    pub alice_final_hand: Vec<Card>,
-    pub bob_final_hand: Vec<Card>,
+    pub alice_final_hand: CardList,
+    pub bob_final_hand: CardList,
 }
 
-pub fn convert_cards(allocator: &mut AllocEncoder, card_list: NodePtr) -> ReadableCardList {
+pub fn convert_cards(allocator: &mut AllocEncoder, card_list: NodePtr) -> CardList {
     if let Some(cards_nodeptrs) = proper_list(allocator.allocator(), card_list, true) {
         return cards_nodeptrs
             .iter()
@@ -198,12 +197,10 @@ pub fn convert_cards(allocator: &mut AllocEncoder, card_list: NodePtr) -> Readab
     Vec::new()
 }
 
-pub type CardList = Vec<Card>;
-
 pub fn decode_readable_card_choices(
     allocator: &mut AllocEncoder,
     opponent_readable_move: ReadableMove,
-) -> Result<(ReadableCardList, ReadableCardList), Error> {
+) -> Result<(CardList, CardList), Error> {
     let opponent_nodeptr = opponent_readable_move.to_nodeptr(allocator)?;
     if let Some(cardlist) = proper_list(allocator.allocator(), opponent_nodeptr, true) {
         let tmp: Vec<_> = cardlist
@@ -256,12 +253,10 @@ pub fn decode_hand_result(
     Ok(RawCalpokerHandValue::SimpleList(result_list))
 }
 
-type IndexAndCard = (usize, (usize, usize));
-
 pub fn select_cards_using_bits(cardlist: &[Card], selections: usize) -> (CardList, CardList) {
-    let (p1, p2): (Vec<IndexAndCard>, Vec<IndexAndCard>) = cardlist
+    let (p1, p2): (Vec<(usize, Card)>, Vec<(usize, Card)>) = cardlist
         .iter()
-        .cloned()
+        .copied()
         .enumerate()
         .partition(|(i, _c)| (selections & (1 << i)) != 0);
     (
@@ -270,21 +265,20 @@ pub fn select_cards_using_bits(cardlist: &[Card], selections: usize) -> (CardLis
     )
 }
 
-pub fn card_to_clvm(allocator: &mut AllocEncoder, card: &Card) -> Result<NodePtr, Error> {
-    [card.0, card.1].to_clvm(allocator).into_gen()
-}
-
 pub fn card_list_to_clvm(
     allocator: &mut AllocEncoder,
     cards: &[Card],
 ) -> Result<Vec<NodePtr>, Error> {
-    map_m(&mut |card: &Card| card_to_clvm(allocator, card), cards)
+    map_m(
+        &mut |card: &Card| card.to_clvm(allocator).into_gen(),
+        cards,
+    )
 }
 
 pub fn card_list_from_clvm(
     allocator: &mut AllocEncoder,
     nodeptr: NodePtr,
-) -> Result<Vec<Card>, Error> {
+) -> Result<CardList, Error> {
     let main_list = if let Some(p) = proper_list(allocator.allocator(), nodeptr, true) {
         p
     } else {
@@ -292,19 +286,9 @@ pub fn card_list_from_clvm(
     };
     map_m(
         &mut |card_node: &NodePtr| {
-            let card_list = if let Some(c) = proper_list(allocator.allocator(), *card_node, true) {
-                c
-            } else {
-                return Err(Error::StrErr("improper card in list".to_string()));
-            };
-            Ok((
-                atom_from_clvm(allocator, card_list[0])
-                    .and_then(|a| usize_from_atom(&a))
-                    .unwrap_or_default(),
-                atom_from_clvm(allocator, card_list[1])
-                    .and_then(|a| usize_from_atom(&a))
-                    .unwrap_or_default(),
-            ))
+            atom_from_clvm(allocator, *card_node)
+                .and_then(|a| usize_from_atom(&a))
+                .ok_or_else(|| Error::StrErr("bad card atom".to_string()))
         },
         &main_list,
     )
@@ -478,26 +462,9 @@ fn test_decode_calpoker_readable() {
         .to_clvm(&mut allocator)
         .expect("should work");
 
-    let alice_initial_cards = &[
-        (2, 2),
-        (5, 3),
-        (8, 2),
-        (11, 3),
-        (14, 1),
-        (14, 2),
-        (14, 3),
-        (14, 4),
-    ];
-    let bob_initial_cards = &[
-        (3, 3),
-        (4, 1),
-        (5, 4),
-        (8, 1),
-        (8, 3),
-        (8, 4),
-        (12, 2),
-        (12, 3),
-    ];
+    // mod-52 card IDs: cardId = (rank - 2) * 4 + (suit - 1)
+    let alice_initial_cards: &[Card] = &[1, 14, 25, 38, 48, 49, 50, 51];
+    let bob_initial_cards: &[Card] = &[6, 8, 15, 24, 26, 27, 41, 42];
 
     let (alice_final_cards, bob_final_cards) = get_final_cards_in_canonical_order(
         &mut allocator,
@@ -521,9 +488,8 @@ fn test_decode_calpoker_readable() {
     )
     .expect("should work");
 
-    let alicev = RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 14, 8, 12]); // Alice hand value
-
-    let bobv = RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 14, 8, 12]); // Bob hand value same
+    let alicev = RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 14, 8, 12]);
+    let bobv = RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 14, 8, 12]);
     assert_eq!(
         decoded,
         CalpokerResult {
@@ -569,26 +535,8 @@ fn test_decode_calpoker_readable_outcome_matches() {
         .to_clvm(&mut allocator)
         .expect("should work");
 
-    let alice_initial_cards = &[
-        (2, 2),
-        (5, 3),
-        (8, 2),
-        (11, 3),
-        (14, 1),
-        (14, 2),
-        (14, 3),
-        (14, 4),
-    ];
-    let bob_initial_cards = &[
-        (3, 3),
-        (4, 1),
-        (5, 4),
-        (8, 1),
-        (8, 3),
-        (8, 4),
-        (12, 2),
-        (12, 3),
-    ];
+    let alice_initial_cards: &[Card] = &[1, 14, 25, 38, 48, 49, 50, 51];
+    let bob_initial_cards: &[Card] = &[6, 8, 15, 24, 26, 27, 41, 42];
 
     let (alice_final_cards, bob_final_cards) = get_final_cards_in_canonical_order(
         &mut allocator,
@@ -612,9 +560,8 @@ fn test_decode_calpoker_readable_outcome_matches() {
     )
     .expect("should work");
 
-    let alicev = RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 14, 8, 12]); // Alice hand value
-
-    let bobv = RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 14, 8, 12]); // Bob hand value same
+    let alicev = RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 14, 8, 12]);
+    let bobv = RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 14, 8, 12]);
     assert_eq!(
         decoded,
         CalpokerResult {

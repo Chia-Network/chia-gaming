@@ -141,6 +141,10 @@ mod sim_tests {
     use crate::games::calpoker::WinDirectionUser;
     use crate::games::calpoker::{CalpokerHandValue, CalpokerResult, RawCalpokerHandValue};
     use crate::games::calpoker_v1::decode_readable_card_choices as decode_v1_readable_card_choices;
+    use crate::games::calpoker_v1::{
+        decode_calpoker_readable as decode_calpoker_readable_v1,
+        RawCalpokerHandValue as RawCalpokerHandValueV1,
+    };
     use crate::shutdown::BasicShutdownConditions;
     use crate::simulator::tests::potato_handler_sim::{
         run_calpoker_container_with_action_list,
@@ -440,6 +444,63 @@ mod sim_tests {
                 panic!("{:?}", game_action_results);
             };
         }));
+        res.push(("test_verify_endgame_data_v1", &|| {
+            let mut allocator = AllocEncoder::new();
+            let mut moves = prefix_test_moves(&mut allocator, true).to_vec();
+            moves.push(GameAction::Accept(1));
+            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            let game_outcome =
+                run_calpoker_container_with_action_list(&mut allocator, &moves, true)
+                    .expect("v1 game should complete");
+            let game_results = game_run_outcome_to_move_results(&game_outcome);
+            debug!("v1 endgame game_results count={}", game_results.len());
+
+            // Extract initial cards from the message payload (revealed after move 2).
+            let revealed_cards = extract_info_from_messages(&game_results)
+                .expect("expected v1 revealed message payload");
+            let (alice_mod52, bob_mod52) =
+                decode_v1_readable_card_choices(&mut allocator, revealed_cards)
+                    .expect("should decode v1 revealed cards");
+            assert_eq!(alice_mod52, vec![0, 7, 10, 11, 32, 36, 41, 49]);
+            assert_eq!(bob_mod52, vec![2, 6, 9, 13, 18, 19, 23, 47]);
+
+            // The last game result has the readable outcome from the final move.
+            let last_result = &game_results[game_results.len() - 1];
+            if let GameActionResult::MoveResult(readable_data, _, _, _) = last_result {
+                let readable_node = readable_data
+                    .to_nodeptr(&mut allocator)
+                    .expect("failed to convert to nodeptr");
+                // Bob is player 1 (not alice), his discard bitfield is 0xaa.
+                let decoded = decode_calpoker_readable_v1(
+                    &mut allocator,
+                    readable_node,
+                    false, // i_am_alice = false (this is bob's perspective)
+                    0xaa,  // bob's discards bitfield
+                    &alice_mod52,
+                    &bob_mod52,
+                )
+                .expect("should decode v1 readable");
+                debug!("v1 decoded outcome: {decoded:?}");
+
+                // Verify structural integrity: we got valid hand values and a win direction.
+                assert!(
+                    decoded.alice_hand_value != RawCalpokerHandValueV1::SimpleList(vec![]),
+                    "alice hand value should not be empty"
+                );
+                assert!(
+                    decoded.bob_hand_value != RawCalpokerHandValueV1::SimpleList(vec![]),
+                    "bob hand value should not be empty"
+                );
+                assert!(
+                    decoded.win_direction.is_some(),
+                    "there should be a winner (not a tie with these seeds)"
+                );
+                assert_eq!(decoded.alice_final_hand.len(), 5, "alice should have 5-card hand");
+                assert_eq!(decoded.bob_final_hand.len(), 5, "bob should have 5-card hand");
+            } else {
+                panic!("expected MoveResult for final game action, got: {:?}", last_result);
+            }
+        }));
         res.push(("test_verify_bob_message_v0", &|| {
             // Ensure the bytes being passed on are structured correctly
             // Verify message decoding
@@ -594,6 +655,19 @@ mod sim_tests {
             debug!("running moves {moves:?}");
             let _game_action_results =
                 run_calpoker_play_test(&mut allocator, &moves).expect("should work");
+        }));
+        res.push(("test_play_calpoker_end_game_reward_v1", &|| {
+            let mut allocator = AllocEncoder::new();
+
+            let mut moves = prefix_test_moves(&mut allocator, true).to_vec();
+            moves.push(GameAction::Accept(1));
+            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+
+            debug!("running moves {moves:?}");
+            let game_outcome =
+                run_calpoker_container_with_action_list(&mut allocator, &moves, true)
+                    .expect("v1 end game reward should work");
+            assert_stayed_off_chain(&game_outcome, "test_play_calpoker_end_game_reward_v1");
         }));
         res
     }
