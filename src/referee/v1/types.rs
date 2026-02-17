@@ -398,7 +398,8 @@ impl InternalStateUpdateArgs {
 
         // Targeted decode for calpoker v1 final validator (onchain/e):
         // move bytes = 16-byte salt || 1-byte alice_discards || 1-byte alice_selects
-        if validation_program_mod_hash_hex == "f61d57ac1299dc30c6d29861cba1db58eb202a936ea9ab571aeda37d3c2cbb66"
+        if validation_program_mod_hash_hex
+            == "f61d57ac1299dc30c6d29861cba1db58eb202a936ea9ab571aeda37d3c2cbb66"
         {
             let move_bytes = &self.referee_args.game_move.basic.move_made;
             let move_hex = hex::encode(move_bytes);

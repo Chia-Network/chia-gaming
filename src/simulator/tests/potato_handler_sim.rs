@@ -611,7 +611,9 @@ fn run_game_container_with_action_list_with_success_predicate(
         move_number < moves.len()
             && matches!(
                 &moves[move_number],
-                GameAction::Shutdown(_, _) | GameAction::WaitBlocks(_, _) | GameAction::GoOnChain(_)
+                GameAction::Shutdown(_, _)
+                    | GameAction::WaitBlocks(_, _)
+                    | GameAction::GoOnChain(_)
             )
     };
     let has_explicit_go_on_chain = moves_input

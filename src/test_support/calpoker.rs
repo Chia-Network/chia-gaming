@@ -47,7 +47,8 @@ pub fn prefix_test_moves(allocator: &mut AllocEncoder, v1: bool) -> Vec<GameActi
     // alice=0x55 => positions [0,2,4,6], bob=0xaa => positions [1,3,5,7].
     let alice_v1_discards = vec![0usize, 10, 32, 41];
     let bob_v1_discards = vec![6usize, 13, 19, 47];
-    let _alice_v1_discards_bitfield = selected_cards_to_bitfield(&alice_v1_hand, &alice_v1_discards);
+    let _alice_v1_discards_bitfield =
+        selected_cards_to_bitfield(&alice_v1_hand, &alice_v1_discards);
     let _bob_v1_discards_bitfield = selected_cards_to_bitfield(&bob_v1_hand, &bob_v1_discards);
     if v1 {
         assert_eq!(_alice_v1_discards_bitfield, 0b0101_0101);
@@ -169,7 +170,9 @@ mod sim_tests {
         simenv.play_game(moves)
     }
 
-    fn extract_info_from_messages(game_results: &[GameActionResult]) -> Result<ReadableMove, Error> {
+    fn extract_info_from_messages(
+        game_results: &[GameActionResult],
+    ) -> Result<ReadableMove, Error> {
         game_results
             .iter()
             .find_map(|x| {
@@ -215,7 +218,6 @@ mod sim_tests {
 
         output
     }
-
 
     fn assert_stayed_off_chain(outcome: &GameRunOutcome, test_name: &str) {
         for (who, ui) in outcome.local_uis.iter().enumerate() {
@@ -277,9 +279,7 @@ mod sim_tests {
                     assert_stayed_off_chain(&outcome, "test_play_calpoker_happy_path_v1");
                 }
                 Err(e) => {
-                panic!(
-                    "v1 happy path failed; scripted moves={moves:?}; error={e:?}",
-                );
+                    panic!("v1 happy path failed; scripted moves={moves:?}; error={e:?}",);
                 }
             }
         }));
@@ -290,8 +290,9 @@ mod sim_tests {
             moves.truncate(2);
             moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
             moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
-            let game_outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, true)
-                .expect("v1 opening moves should complete");
+            let game_outcome =
+                run_calpoker_container_with_action_list(&mut allocator, &moves, true)
+                    .expect("v1 opening moves should complete");
             let game_results = game_run_outcome_to_move_results(&game_outcome);
             let revealed_cards = extract_info_from_messages(&game_results)
                 .expect("expected v1 revealed message payload");
@@ -299,18 +300,8 @@ mod sim_tests {
                 decode_v1_readable_card_choices(&mut allocator, revealed_cards)
                     .expect("should decode v1 revealed cards");
 
-            assert_eq!(
-                alice_cards,
-                vec![
-                    0usize, 7, 10, 11, 32, 36, 41, 49,
-                ]
-            );
-            assert_eq!(
-                bob_cards,
-                vec![
-                    2usize, 6, 9, 13, 18, 19, 23, 47,
-                ]
-            );
+            assert_eq!(alice_cards, vec![0usize, 7, 10, 11, 32, 36, 41, 49,]);
+            assert_eq!(bob_cards, vec![2usize, 6, 9, 13, 18, 19, 23, 47,]);
         }));
         res.push(("test_v1_opening_parity_with_main_vectors", &|| {
             let mut allocator = AllocEncoder::new();
@@ -334,14 +325,20 @@ mod sim_tests {
             match &moves[0] {
                 GameAction::Move(player, readable_move, _) => {
                     assert_eq!(*player, 0, "opening move 1 should be Alice");
-                    assert_eq!(readable_move.to_program().to_hex(), expected_alice_commit.to_hex());
+                    assert_eq!(
+                        readable_move.to_program().to_hex(),
+                        expected_alice_commit.to_hex()
+                    );
                 }
                 other => panic!("unexpected opening action #1: {other:?}"),
             }
             match &moves[1] {
                 GameAction::Move(player, readable_move, _) => {
                     assert_eq!(*player, 1, "opening move 2 should be Bob");
-                    assert_eq!(readable_move.to_program().to_hex(), expected_bob_seed.to_hex());
+                    assert_eq!(
+                        readable_move.to_program().to_hex(),
+                        expected_bob_seed.to_hex()
+                    );
                 }
                 other => panic!("unexpected opening action #2: {other:?}"),
             }
@@ -359,18 +356,8 @@ mod sim_tests {
                 decode_v1_readable_card_choices(&mut allocator, revealed_cards)
                     .expect("should decode v1 revealed cards");
 
-            assert_eq!(
-                alice_cards,
-                vec![
-                    0usize, 7, 10, 11, 32, 36, 41, 49,
-                ]
-            );
-            assert_eq!(
-                bob_cards,
-                vec![
-                    2usize, 6, 9, 13, 18, 19, 23, 47,
-                ]
-            );
+            assert_eq!(alice_cards, vec![0usize, 7, 10, 11, 32, 36, 41, 49,]);
+            assert_eq!(bob_cards, vec![2usize, 6, 9, 13, 18, 19, 23, 47,]);
         }));
         res.push(("test_v1_discard_to_bitfield_parity_with_main", &|| {
             // Preserve parity with historical main vectors where v1 discards were represented as 0x55 and 0xaa.
@@ -390,7 +377,10 @@ mod sim_tests {
 
             let alice_bits = selected_cards_to_bitfield(&alice_hand, &alice_discards);
             let bob_bits = selected_cards_to_bitfield(&bob_hand, &bob_discards);
-            assert_eq!(alice_bits, 0x55, "alice discards should map to bitfield 0x55");
+            assert_eq!(
+                alice_bits, 0x55,
+                "alice discards should map to bitfield 0x55"
+            );
             assert_eq!(bob_bits, 0xaa, "bob discards should map to bitfield 0xaa");
         }));
 

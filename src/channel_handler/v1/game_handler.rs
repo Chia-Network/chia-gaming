@@ -171,7 +171,10 @@ impl GameHandler {
                 inputs.amount.clone(),
                 (
                     inputs.state.clone(),
-                    (inputs.last_mover_share.clone(), (inputs.entropy.clone(), ())),
+                    (
+                        inputs.last_mover_share.clone(),
+                        (inputs.entropy.clone(), ()),
+                    ),
                 ),
             ),
         )

@@ -1089,9 +1089,7 @@ impl ChannelHandler {
                     move_data.slash_evidence.len(),
                     format!("{:?}", move_data.mover_share),
                 ),
-                TheirTurnResult::Slash(_evidence) => {
-                    ("Slash", 0usize, 0usize, "<n/a>".to_string())
-                }
+                TheirTurnResult::Slash(_evidence) => ("Slash", 0usize, 0usize, "<n/a>".to_string()),
             };
         debug!(
             "{} their_move_result kind={} unroll_ph={:?} message_len={} slash_evidence_len={} mover_share={}",
