@@ -33,7 +33,7 @@ export async function configGameObject(
   gameObject: WasmBlobWrapper,
   iStarted: boolean,
   wasmStateInit: WasmStateInit,
-  calpokerHex: string,
+  calpokerHexes: {proposalHex: string, parserHex: string},
   blockchain:InternalBlockchainInterface,
   uniqueId: string,
   amount: number,
@@ -47,7 +47,7 @@ export async function configGameObject(
   let identity = wasmConnection.chia_identity(rngId);
   let address = await blockchain.getAddress();
   gameObject.setBlockchainAddress(address);
-  let cradle = wasmStateInit.createGame(calpokerHex, rngId, wasmConnection, identity.private_key, iStarted, amount, amount, address.puzzleHash);
+  let cradle = wasmStateInit.createGame(calpokerHexes.proposalHex, calpokerHexes.parserHex, rngId, wasmConnection, identity.private_key, iStarted, amount, amount, address.puzzleHash);
   gameObject.setGameCradle(cradle);
   let coin = await wasmStateInit.createStartCoin(blockchain, uniqueId, identity, amount, wasmConnection);
   gameObject.activateSpend(coin.coinString);
@@ -128,12 +128,12 @@ export function getBlobSingleton(
       };
       const newSession = async () => {
         startNewSession();
-        let calpokerHex = await loadCalpoker(fetchHex);
+        let calpokerHexes = await loadCalpoker(fetchHex);
         await configGameObject(
           blobSingleton,
           iStarted,
           wasmStateInit,
-          calpokerHex,
+          calpokerHexes,
           blockchain,
           uniqueId,
           amount

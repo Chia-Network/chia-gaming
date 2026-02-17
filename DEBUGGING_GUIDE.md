@@ -21,7 +21,8 @@ All simulation tests run inside Docker via:
 ### Waiting for test processes to finish
 
 The `docker-sim-tests.sh` command can take anywhere from 15 seconds (single test)
-to 7+ minutes (full suite). **You must wait for it to complete.** Typical durations:
+to 7+ minutes (full suite). `run-all-tests.sh` runs everything and takes ~7–8
+minutes. **You must wait for it to complete.** Typical durations:
 
 | Scope | Typical time |
 |-------|-------------|
@@ -30,20 +31,45 @@ to 7+ minutes (full suite). **You must wait for it to complete.** Typical durati
 | Single piss_off_peer test | 15–60s |
 | `test_play_calpoker_on_chain` (5 tests) | ~55s |
 | `piss_off_peer` (5 tests, slash disabled) | ~55s |
-| Full suite (`''`) | 5–8 minutes |
+| Docker sim full suite (`''`) | 5–8 minutes |
+| `run-all-tests.sh` (everything) | ~7–8 minutes |
 
-When running via the Shell tool, set `block_until_ms` generously — at least
-600000 (10 min) for any test run. Use `time` in front of the command so
-you can see actual elapsed time in the output.
+#### How to run long commands with the Shell tool
 
-**Never use hard-coded sleep timeouts to poll** for process completion.
-Pipe the command directly and wait for it to finish:
+The Shell tool's `block_until_ms` parameter controls how long to wait for a
+command to finish before backgrounding it. **Set this high enough to cover the
+expected runtime** so the command completes inline and you get the exit code and
+output immediately. Add buffer since `block_until_ms` includes shell startup
+time.
 
-```bash
-time ./docker-sim-tests.sh test_name 2>&1 | grep -E '...'
+**Good: Set `block_until_ms` to cover expected runtime**
+
+```
+Shell(command="./run-all-tests.sh 2>&1", block_until_ms=600000)
 ```
 
-The pipe to grep/tail finishes when the process finishes. No polling needed.
+This blocks until the command finishes (up to 10 minutes), then returns the exit
+code and output directly. No polling needed.
+
+**Bad: `block_until_ms: 0` then sleep-and-poll**
+
+Setting `block_until_ms: 0` immediately backgrounds the command, forcing you
+into a loop of `sleep` + read terminal file to check for completion. This wastes
+tokens, is unreliable, and can miss output.
+
+**Bad: Piping through `tail` in a backgrounded command**
+
+If a command gets backgrounded (either via `block_until_ms: 0` or by exceeding
+the timeout), piping through `tail -N` is unreliable — `tail` buffers all
+input until the upstream process closes, so the terminal file will show no
+output until the very end, and may not capture the final flush at all.
+
+#### Reading large output after completion
+
+When the output is very large (e.g. debug-level test logs), the Shell tool
+writes it to a file and returns the path. Use `Read` with a negative offset
+to see the tail, or `Grep` to search for specific patterns like
+`test result:`, `FAILED`, `error[`, or `Tests OK`.
 
 ### Reading test output — avoiding token waste
 

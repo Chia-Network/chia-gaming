@@ -202,8 +202,8 @@ async function initWasmBlobWrapper(
     peer_conn,
   );
 
-  let calpokerHex = await loadCalpoker(fetchHex);
-  configGameObject(gameObject, iStarted, wasmStateInit, calpokerHex, blockchain, uniqueId, amount);
+  let calpokerHexes = await loadCalpoker(fetchHex);
+  configGameObject(gameObject, iStarted, wasmStateInit, calpokerHexes, blockchain, uniqueId, amount);
 
   console.log("initWasmBlobWrapper end");
   return gameObject;

@@ -33,40 +33,67 @@ Test off-chain chialisp.
 """
 
 # See also calpoker_generate.clinc
-calpoker_factory = load_clvm_hex(
-    calpoker_clsp_dir / "calpoker_include_calpoker_factory.hex"
+# make_proposal returns: ((bet bet ((amount we_go_first vh im mms is ms))) ((handler validator)))
+# parser takes wire_data, returns: (readable ((validator handler)))
+calpoker_make_proposal = load_clvm_hex(
+    calpoker_clsp_dir / "calpoker_include_calpoker_make_proposal.hex"
+)
+calpoker_parser_prog = load_clvm_hex(
+    calpoker_clsp_dir / "calpoker_include_calpoker_parser.hex"
 )
 
-# (i_am_initiator my_contribution their_contribution params)
+BET_SIZE = 100
+AMOUNT = 2 * BET_SIZE
 
-I_AM_INITIATOR = 1  # I am "Alice"
-calpoker_factory_alice = calpoker_factory.run([I_AM_INITIATOR, 100, 100, None])
-calpoker_handler_alice_data = Program.to(calpoker_factory_alice).as_python()
-our_info = calpoker_handler_alice_data[0]
-calpoker_factory_bob = calpoker_factory.run([not I_AM_INITIATOR, 100, 100, None])
-calpoker_handler_bob_data = Program.to(calpoker_factory_bob).as_python()
-bob_info = calpoker_handler_bob_data[0]
+# Run make_proposal to get wire_data and alice's local_data
+proposal_result = Program.to(calpoker_make_proposal.run([BET_SIZE]))
+proposal_list = list(proposal_result.as_python())
+wire_data_raw = proposal_list[0]
+local_data_raw = proposal_list[1]
 
-# handlers = None
-# data: 2-5, 7,8
-# programs: list elements 0 & 1
-dataf = {
-    0: "amount",
-    1: "is_my_turn",
-    2: "handler_program",
-    3: "my_contribution",
-    4: "their_contribution",
-    5: "initial_validation_program",
-    6: "initial_validation_program_hash",  # first validation program hash
-    7: "initial_state",
-    8: "initial_move",
-    9: "initial_max_move_size",
-    10: "initial_mover_share",
+# wire_data = (bet_size bet_size ((amount we_go_first vh im mms is ms)))
+# Extract game spec from wire_data
+wire_data_program = Program.to(wire_data_raw)
+game_specs_wrapper = list(Program.to(wire_data_raw).as_python())
+game_spec = list(Program.to(game_specs_wrapper[2][0]).as_python())
+# game_spec = [amount, we_go_first, vh, im, mms, is, ms]
+
+# local_data = ((handler validator))
+alice_handler_validator = list(Program.to(local_data_raw[0]).as_python())
+alice_handler = alice_handler_validator[0]
+alice_validator = alice_handler_validator[1]
+
+# Run parser to get bob's handler and validator
+parser_result = Program.to(calpoker_parser_prog.run(wire_data_program))
+parser_list = list(parser_result.as_python())
+# parser returns (readable ((validator handler)))
+bob_handler_validator = list(Program.to(parser_list[1][0]).as_python())
+bob_validator = bob_handler_validator[0]
+bob_handler = bob_handler_validator[1]
+
+# Build our_data and bob_data dicts to match what the rest of the test expects
+our_data = {
+    "amount": AMOUNT,
+    "is_my_turn": True,
+    "handler_program": alice_handler,
+    "initial_validation_program": alice_validator,
+    "initial_validation_program_hash": game_spec[2],  # vh
+    "initial_state": game_spec[5],  # is (initial_state)
+    "initial_move": game_spec[3],  # im (initial_move)
+    "initial_max_move_size": game_spec[4],  # mms
+    "initial_mover_share": game_spec[6],  # ms
 }
-
-# our_data = [x for i,x in enumerate(our_info) if i in [2,3,4,6,7]]
-our_data = {name: our_info[index] for index, name in dataf.items()}
-bob_data = {name: bob_info[index] for index, name in dataf.items()}
+bob_data = {
+    "amount": AMOUNT,
+    "is_my_turn": False,
+    "handler_program": bob_handler,
+    "initial_validation_program": bob_validator,
+    "initial_validation_program_hash": game_spec[2],  # vh (same initial validator)
+    "initial_state": game_spec[5],  # is
+    "initial_move": game_spec[3],  # im
+    "initial_max_move_size": game_spec[4],  # mms
+    "initial_mover_share": game_spec[6],  # ms
+}
 
 def print_dict(d):
     for k, v in d.items():

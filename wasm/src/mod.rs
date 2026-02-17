@@ -175,6 +175,8 @@ mod gaming_wasm {
     struct JsGameFactory {
         version: i32,
         hex: String,
+        #[serde(default)]
+        parser_hex: Option<String>,
     }
 
     #[derive(Serialize, Deserialize, Default, Debug)]
@@ -202,12 +204,18 @@ mod gaming_wasm {
     ) -> Result<(GameType, GameFactory), JsValue> {
         let name_data = GameType(name.bytes().collect());
         let byte_data = hex::decode(&js_factory.hex).into_js()?;
+        let parser_program = if let Some(ref parser_hex) = js_factory.parser_hex {
+            let parser_bytes = hex::decode(parser_hex).into_js()?;
+            Some(Program::from_bytes(&parser_bytes).into())
+        } else {
+            None
+        };
         Ok((
             name_data,
             GameFactory {
                 version: js_factory.version as usize,
                 program: Program::from_bytes(&byte_data).into(),
-                parser_program: None,
+                parser_program,
             },
         ))
     }
