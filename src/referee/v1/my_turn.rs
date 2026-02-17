@@ -15,7 +15,7 @@ use crate::channel_handler::v1::game_handler::{
 
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
-    AllocEncoder, Amount, Error, Hash, Program, Puzzle, PuzzleHash, Sha256tree,
+    AllocEncoder, Amount, Error, Hash, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree,
 };
 use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RMFixed};
 use crate::referee::v1::their_turn::{TheirTurnReferee, TheirTurnRefereeGameState};
@@ -471,15 +471,43 @@ impl MyTurnReferee {
 
         let args = self.spend_this_coin();
 
-        debug!("my turn state {:?}", self.state);
+        let state_to_update = match self.state.borrow() {
+            MyTurnRefereeGameState::Initial { initial_state, .. } => initial_state.clone(),
+            MyTurnRefereeGameState::AfterTheirTurn {
+                state_after_their_turn,
+                ..
+            } => state_after_their_turn.clone(),
+        };
+
+        let handler_kind = |h: &GameHandler| match h {
+            GameHandler::MyTurnHandler(_) => "my_turn",
+            GameHandler::TheirTurnHandler(_) => "their_turn",
+        };
+        let state_variant = match self.state.as_ref() {
+            MyTurnRefereeGameState::Initial { game_handler, .. } => {
+                format!("Initial(handler={})", handler_kind(game_handler))
+            }
+            MyTurnRefereeGameState::AfterTheirTurn { game_handler, .. } => format!(
+                "AfterTheirTurn(handler={})",
+                game_handler
+                    .as_ref()
+                    .map(handler_kind)
+                    .unwrap_or("none/final")
+            ),
+        };
+        debug!(
+            "my turn state {state_variant} state_hash={:?}",
+            state_to_update.sha256tree(allocator)
+        );
         debug!("entropy {state_number} {new_entropy:?}");
-        let mut result = Rc::new(game_handler.call_my_turn_driver(
+        let mut result = Rc::new(game_handler.call_my_turn_handler(
             allocator,
             &MyTurnInputs {
                 readable_new_move: readable_move.clone(),
                 amount: self.fixed.amount.clone(),
                 last_mover_share: args.game_move.basic.mover_share.clone(),
                 entropy: new_entropy.clone(),
+                state: ProgramRef::new(state_to_update.clone()),
             },
         )?);
 
@@ -492,20 +520,28 @@ impl MyTurnReferee {
             });
         }
 
-        debug!("my turn result {result:?}");
-
-        let state_to_update = match self.state.borrow() {
-            MyTurnRefereeGameState::Initial { initial_state, .. } => initial_state.clone(),
-            MyTurnRefereeGameState::AfterTheirTurn {
-                state_after_their_turn,
-                ..
-            } => state_after_their_turn.clone(),
-        };
-
-        debug!("my turn start with state {state_to_update:?}");
         debug!(
-            "about to call my validator for my move with move bytes {:?}",
-            result.move_bytes
+            "my turn result name={} move_len={} max_move_size={} mover_share={:?} waiting_handler_is_my_turn={} has_message_parser={}",
+            result.name,
+            result.move_bytes.len(),
+            result.max_move_size,
+            result.mover_share,
+            result.waiting_handler.is_my_turn(),
+            result.message_parser.is_some()
+        );
+
+        let state_hex = state_to_update.to_hex();
+        let state_prefix = &state_hex[..state_hex.len().min(96)];
+        debug!(
+            "my turn start state hash={:?} len={} prefix={}",
+            state_to_update.sha256tree(allocator),
+            state_hex.len(),
+            state_prefix
+        );
+        debug!(
+            "about to call my validator for my move bytes len={} prefix={}",
+            result.move_bytes.len(),
+            hex::encode(&result.move_bytes[..result.move_bytes.len().min(16)])
         );
         let puzzle_args = self.spend_this_coin();
         let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
@@ -537,9 +573,12 @@ impl MyTurnReferee {
             },
             ..ref_puzzle_args.clone()
         });
+        let validator_prog = rc_puzzle_args.validation_program.to_program();
+        let validator_hex = validator_prog.to_hex();
         debug!(
-            "running validator program {:?}",
-            rc_puzzle_args.validation_program.to_program()
+            "running validator program hash={:?} len={}",
+            rc_puzzle_args.validation_program.sha256tree(allocator),
+            validator_hex.len()
         );
         let new_state_following_my_move = self.run_validator_for_my_move(
             allocator,
@@ -557,7 +596,7 @@ impl MyTurnReferee {
         );
 
         let new_self = self.accept_this_move(
-            result.waiting_driver.clone(),
+            result.waiting_handler.clone(),
             new_state_following_my_move,
             state_to_update,
             args.clone(),

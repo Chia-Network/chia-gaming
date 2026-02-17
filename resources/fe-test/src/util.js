@@ -4,8 +4,8 @@ const HALF_SECOND = 500;
 const WAIT_ITERATIONS = 100;
 const ADDRESS_RETRIES = 30;
 
-async function wait(driver, secs) {
-  const actions = driver.actions({ async: true });
+async function wait(handler, secs) {
+  const actions = handler.actions({ async: true });
   await actions.pause(secs * 1000).perform();
 }
 
@@ -48,8 +48,8 @@ async function sendEnter(element) {
   await element.sendKeys(Key.ENTER);
 }
 
-async function waitEnabled(driver, element) {
-  const actions = driver.actions({ async: true });
+async function waitEnabled(handler, element) {
+  const actions = handler.actions({ async: true });
   for (var i = 0; i < WAIT_ITERATIONS; i++) {
     const enabled = await element.isEnabled();
     if (enabled) {
@@ -64,8 +64,8 @@ async function waitEnabled(driver, element) {
 /// waitAriaDisabledState:
 ///     pass desired_state="enabled" to wait for an element to become enabled.
 ///     pass desired_state != "enabled" to wait for an element to become disabled.
-async function waitAriaDisabledState(driver, element, desired_state) {
-  const actions = driver.actions({ async: true });
+async function waitAriaDisabledState(handler, element, desired_state) {
+  const actions = handler.actions({ async: true });
   for (let i = 0; i < WAIT_ITERATIONS; i++) {
     const shouldExit = await element.getAttribute("aria-disabled");
     if (desired_state == "enabled") {
@@ -82,22 +82,22 @@ async function waitAriaDisabledState(driver, element, desired_state) {
   throw new Error("failed to wait for enabled element");
 }
 
-async function waitAriaEnabled(driver, element) {
-  return await waitAriaDisabledState(driver, element, "enabled");
+async function waitAriaEnabled(handler, element) {
+  return await waitAriaDisabledState(handler, element, "enabled");
 }
 
-async function waitAriaDisabled(driver, element) {
-  return await waitAriaDisabledState(driver, element, "disabled");
+async function waitAriaDisabled(handler, element) {
+  return await waitAriaDisabledState(handler, element, "disabled");
 }
 
-async function selectSimulator(driver) {
-  const simulatorButton = await driver.wait(
+async function selectSimulator(handler) {
+  const simulatorButton = await handler.wait(
     until.elementLocated(byAttribute("aria-label", "select-simulator")),
   );
   await simulatorButton.click();
 }
 
-async function waitForNonError(driver, select, extra, time) {
+async function waitForNonError(handler, select, extra, time) {
   let stopButton = null;
   for (var i = 0; i < WAIT_ITERATIONS; i++) {
     try {
@@ -108,7 +108,7 @@ async function waitForNonError(driver, select, extra, time) {
       console.log("waiting for stop button got stale ref", i, e);
       stopButton = null;
     }
-    await wait(driver, time);
+    await wait(handler, time);
   }
   if (!stopButton) {
     throw new Error(`could not select an element in ${WAIT_ITERATIONS}`);
@@ -116,15 +116,15 @@ async function waitForNonError(driver, select, extra, time) {
   return stopButton;
 }
 
-async function selectWalletConnect(driver) {
-  const linkWalletButton = await driver.wait(
+async function selectWalletConnect(handler) {
+  const linkWalletButton = await handler.wait(
     until.elementLocated(byExactText("Link Wallet")),
   );
   await linkWalletButton.click();
 
-  await wait(driver, 5.0);
+  await wait(handler, 5.0);
 
-  const wcUriBox = await driver.wait(
+  const wcUriBox = await handler.wait(
     until.elementLocated(
       byAttribute("aria-label", "wallet-connect-uri", "//textarea"),
     ),
@@ -145,16 +145,16 @@ async function selectWalletConnect(driver) {
   }).then((res) => res.json());
 
   await waitForNonError(
-    driver,
-    () => driver.wait(until.elementLocated(byAttribute("id", "subframe"))),
+    handler,
+    () => handler.wait(until.elementLocated(byAttribute("id", "subframe"))),
     (elt) => {},
     5.0,
   );
 }
 
-async function retrieveAddress(driver) {
+async function retrieveAddress(handler) {
   for (let i = 0; i < ADDRESS_RETRIES; i++) {
-    const addressElt = await driver.wait(
+    const addressElt = await handler.wait(
       until.elementLocated(byAttribute("id", "blockchain-address")),
     );
     const text = await addressElt.getAttribute("textContent");
@@ -164,14 +164,14 @@ async function retrieveAddress(driver) {
         return decoded;
       }
     } catch (e) {
-      await wait(driver, 1.0);
+      await wait(handler, 1.0);
     }
   }
 
   throw new Error("Too many retries getting blockchain address");
 }
 
-async function getBalance(driver, puzzleHash) {
+async function getBalance(handler, puzzleHash) {
   return await fetch(`http://localhost:5800/get_balance?user=${puzzleHash}`, {
     method: "POST",
   }).then((res) => res.json());
@@ -271,8 +271,8 @@ function checkHandValueDescriptionVsHand(handType, finalCards) {
   return true;
 }
 
-async function getHandDescription(driver, label) {
-  const element = await driver.wait(until.elementLocated(byAttribute('aria-label', label)));
+async function getHandDescription(handler, label) {
+  const element = await handler.wait(until.elementLocated(byAttribute('aria-label', label)));
   const handDescription = await element.getAttribute('data-hand-description');
   return JSON.parse(handDescription);
 }
@@ -326,8 +326,8 @@ function checkCardsInLog(handDescription, cards) {
   }
 }
 
-async function sendControlChar(driver, char) {
-  const actions = driver.actions({ async: true });
+async function sendControlChar(handler, char) {
+  const actions = handler.actions({ async: true });
   if (os.platform() === "darwin") {
     await actions
       .pause(2000)
@@ -347,12 +347,12 @@ async function sendControlChar(driver, char) {
   }
 }
 
-async function sendControlA(driver) {
-  await sendControlChar(driver, "a");
+async function sendControlA(handler) {
+  await sendControlChar(handler, "a");
 }
 
-async function sendControlM(driver) {
-  await sendControlChar(driver, "m");
+async function sendControlM(handler) {
+  await sendControlChar(handler, "m");
 }
 
 module.exports = {

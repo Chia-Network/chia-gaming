@@ -2,7 +2,7 @@ import { TradeRecord } from '../TradeRecord';
 
 export interface CreateOfferForIdsRequest {
   offer: any;
-  driverDict: any;
+  handlerDict: any;
   validateOnly?: boolean;
   disableJSONFormatting?: boolean;
 }

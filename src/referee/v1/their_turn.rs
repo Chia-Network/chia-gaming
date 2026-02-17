@@ -490,6 +490,7 @@ impl TheirTurnReferee {
         let puzzle_args = self.spend_this_coin();
         let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
         let (state, validation_program) = self.get_validation_program_for_their_move()?;
+        let pre_state_nodeptr = state.to_nodeptr(allocator)?;
         debug!(
             "running state update program {:?}",
             validation_program.to_program()
@@ -530,10 +531,11 @@ impl TheirTurnReferee {
         let state_nodeptr = new_state.to_nodeptr(allocator)?;
         let (_old_state, validation_program) = self.get_validation_program_for_their_move()?;
         let validation_program_hash = validation_program.sha256tree(allocator).hash().clone();
-        let result = handler.call_their_turn_driver(
+        let result = handler.call_their_turn_handler(
             allocator,
             &TheirTurnInputs {
                 amount: self.fixed.amount.clone(),
+                pre_state: pre_state_nodeptr,
                 state: state_nodeptr,
 
                 last_move: &details.basic.move_made,
@@ -836,7 +838,7 @@ impl TheirTurnReferee {
         )?;
 
         // Probably readable_info overlaps solution.
-        // Moving driver in that context is the signature.
+        // Moving handler in that context is the signature.
         // My reward coin string is the coin that we'll make
         // after the transaction below has been spent so its
         // parent is the coin id of that coin.

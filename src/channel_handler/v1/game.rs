@@ -44,9 +44,9 @@ impl GameStart {
         let is_my_turn = non_nil(allocator.allocator(), template_list[1]);
         debug!("is_my_turn {is_my_turn}");
         let initial_mover_handler = if is_my_turn {
-            GameHandler::my_driver_from_nodeptr(allocator, template_list[2])?
+            GameHandler::my_handler_from_nodeptr(allocator, template_list[2])?
         } else {
-            GameHandler::their_driver_from_nodeptr(allocator, template_list[2])?
+            GameHandler::their_handler_from_nodeptr(allocator, template_list[2])?
         };
 
         let validation_prog = Rc::new(Program::from_nodeptr(allocator, template_list[5])?);

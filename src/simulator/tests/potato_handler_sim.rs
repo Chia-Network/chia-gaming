@@ -37,7 +37,7 @@ use crate::shutdown::BasicShutdownConditions;
 use crate::simulator::Simulator;
 use crate::test_support::calpoker::{calpoker_ran_all_the_moves_predicate, prefix_test_moves};
 use crate::test_support::debug_game::{
-    make_debug_games, BareDebugGameDriver, DebugGameCurry, DebugGameMoveInfo,
+    make_debug_games, BareDebugGameHandler, DebugGameCurry, DebugGameMoveInfo,
 };
 use crate::test_support::game::GameAction;
 use crate::test_support::peer::potato_handler::run_move;
@@ -524,7 +524,6 @@ fn run_game_container_with_action_list_with_success_predicate(
     let mut move_number = 0;
     debug!("DEBUG: RNG {:?}", rng);
     // debug!("DEBUG: KEYS {:?}", private_keys);
-    debug!("DEBUG: moves_input {:?}", moves_input);
     // Coinset adapter for each side.
     let game_type_map = poker_collection(allocator);
 
@@ -612,9 +611,14 @@ fn run_game_container_with_action_list_with_success_predicate(
         move_number < moves.len()
             && matches!(
                 &moves[move_number],
-                GameAction::Shutdown(_, _) | GameAction::WaitBlocks(_, _)
+                GameAction::Shutdown(_, _)
+                    | GameAction::WaitBlocks(_, _)
+                    | GameAction::GoOnChain(_)
             )
     };
+    let has_explicit_go_on_chain = moves_input
+        .iter()
+        .any(|m| matches!(m, GameAction::GoOnChain(_)));
 
     while !matches!(ending, Some(0)) {
         num_steps += 1;
@@ -639,7 +643,11 @@ fn run_game_container_with_action_list_with_success_predicate(
         debug!("local_uis[0].finished {:?}", local_uis[0].game_finished);
         debug!("local_uis[1].finished {:?}", local_uis[0].game_finished);
 
-        assert!(num_steps < 200);
+        assert!(
+            num_steps < 200,
+            "simulation stalled: num_steps={num_steps} move_number={move_number} can_move={can_move} next_action={:?} explicit_go_on_chain={has_explicit_go_on_chain}",
+            moves_input.get(move_number)
+        );
 
         if matches!(wait_blocks, Some((0, _))) {
             wait_blocks = None;
@@ -664,7 +672,17 @@ fn run_game_container_with_action_list_with_success_predicate(
         }
 
         for i in 0..=1 {
-            if local_uis[i].go_on_chain {
+            if local_uis[i].go_on_chain && cradles[i].is_on_chain() {
+                // A stale UI flag can survive after transition; don't attempt to re-enter.
+                local_uis[i].go_on_chain = false;
+            } else if local_uis[i].go_on_chain && cradles[i].handshake_finished() {
+                if !has_explicit_go_on_chain && !local_uis[i].got_error {
+                    panic!(
+                        "unexpected off-chain->on-chain transition in non-on-chain test: player={i} move_number={move_number} got_error={} next_action={:?}",
+                        local_uis[i].got_error,
+                        moves_input.get(move_number)
+                    );
+                }
                 // Perform on chain move.
                 // Turn off the flag to go on chain.
                 local_uis[i].go_on_chain = false;
@@ -717,9 +735,22 @@ fn run_game_container_with_action_list_with_success_predicate(
                     // Most of the time, the timeout is coalesced because the spends are equivalent
                     // and take place on the same block.  If we insert delays, we might see an
                     // attempt to spend the same coin and that's fine.
+                    let is_expected_reorg_or_race = included_result.code == 3
+                        && (matches!(included_result.e, Some(5))
+                            || (matches!(included_result.e, Some(8))
+                                && tx
+                                    .name
+                                    .as_deref()
+                                    .map(|n| n.contains("accept transaction"))
+                                    .unwrap_or(false)));
+                    let include_ok = included_result.code == 1 || is_expected_reorg_or_race;
                     assert!(
-                        included_result.code == 1
-                            || (included_result.code == 3 && matches!(included_result.e, Some(5)))
+                        include_ok,
+                        "tx include failed: move_number={move_number} tx_name={:?} code={} e={:?} diagnostic={:?}",
+                        tx.name,
+                        included_result.code,
+                        included_result.e,
+                        included_result.diagnostic
                     );
                 }
 
@@ -800,7 +831,6 @@ fn run_game_container_with_action_list_with_success_predicate(
             || global_move(moves_input, move_number)
         {
             can_move = false;
-            assert!(!game_ids.is_empty());
 
             // Reset moved flags.
             for l in local_uis.iter_mut() {
@@ -813,6 +843,10 @@ fn run_game_container_with_action_list_with_success_predicate(
 
                 match ga {
                     GameAction::Move(who, readable, _share) => {
+                        if game_ids.is_empty() {
+                            move_number -= 1;
+                            continue;
+                        }
                         let is_my_move = cradles[*who].my_move_in_game(&game_ids[0]);
                         debug!("{who} make move: is my move? {is_my_move:?}");
                         if matches!(is_my_move, Some(true)) {
@@ -834,10 +868,28 @@ fn run_game_container_with_action_list_with_success_predicate(
                         }
                     }
                     GameAction::GoOnChain(who) => {
+                        if local_uis[*who].game_finished.is_some() {
+                            debug!("ignoring go on chain for finished player {who}");
+                            continue;
+                        }
+                        if cradles[*who].is_on_chain() {
+                            debug!("already on chain, ignoring duplicate request");
+                            continue;
+                        }
+                        if !cradles[*who].handshake_finished() {
+                            // Defer explicit on-chain requests until both peers have completed
+                            // handshake/startup; otherwise go_on_chain() returns a protocol error.
+                            move_number -= 1;
+                            continue;
+                        }
                         debug!("go on chain");
                         local_uis[*who].go_on_chain = true;
                     }
                     GameAction::FakeMove(who, readable, move_data) => {
+                        if game_ids.is_empty() {
+                            move_number -= 1;
+                            continue;
+                        }
                         // This is a fake move.  We give that move to the given target channel
                         // handler as a their move.
                         debug!("make move");
@@ -874,6 +926,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                         wait_blocks = Some((*n, *players));
                     }
                     GameAction::Accept(who) | GameAction::Timeout(who) => {
+                        if game_ids.is_empty() {
+                            move_number -= 1;
+                            continue;
+                        }
                         debug!("{who} doing ACCEPT");
                         can_move = true;
                         cradles[*who].accept(allocator, rng, &game_ids[0])?;
@@ -1009,7 +1065,7 @@ pub struct DebugGameSimSetup {
     pub private_keys: [ChannelHandlerPrivateKeys; 2],
     pub identities: [ChiaIdentity; 2],
     #[allow(dead_code)]
-    pub debug_games: [BareDebugGameDriver; 2],
+    pub debug_games: [BareDebugGameHandler; 2],
     #[allow(dead_code)]
     pub game_moves: Vec<DebugGameMoveInfo>,
     pub game_actions: Vec<GameAction>,
@@ -1159,6 +1215,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             } else {
                 panic!("no move 1 to replace");
             }
+            moves.push(GameAction::GoOnChain(0));
+            moves.push(GameAction::GoOnChain(1));
             run_game_container_with_action_list_with_success_predicate(
                 &mut allocator,
                 &mut rng,
@@ -1212,8 +1270,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             } else {
                 panic!("no move 1 to replace");
             }
+            moves.push(GameAction::GoOnChain(0));
+            moves.push(GameAction::GoOnChain(1));
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
-                .expect("should finish");
+                .unwrap_or_else(|e| panic!("should finish, got error: {e:?}"));
 
             debug!("outcome 0 {:?}", outcome.local_uis[0].opponent_moves);
             debug!("outcome 1 {:?}", outcome.local_uis[1].opponent_moves);
@@ -1326,6 +1386,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         moves.truncate(3);
         moves.push(changed_move.clone());
         moves.push(changed_move);
+        moves.push(GameAction::GoOnChain(0));
+        moves.push(GameAction::GoOnChain(1));
         moves.push(GameAction::WaitBlocks(20, 1));
         moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
         moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));

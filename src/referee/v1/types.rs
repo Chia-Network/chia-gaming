@@ -334,6 +334,7 @@ impl InternalStateUpdateArgs {
         );
         let validation_program_mod_hash = self.validation_program.hash();
         debug!("<X> validation_program_mod_hash {validation_program_mod_hash:?}");
+        let validation_program_mod_hash_hex = hex::encode(validation_program_mod_hash.bytes());
         let predicted_info_hash = ValidationInfo::new_state_update(
             allocator,
             self.validation_program.clone(),
@@ -345,10 +346,24 @@ impl InternalStateUpdateArgs {
             allocator,
             PuzzleHash::from_hash(validation_program_mod_hash.clone()),
         )?;
-        let validator_full_args = Program::from_nodeptr(allocator, validator_full_args_node)?;
 
-        debug!("validator program {:?}", self.validation_program);
-        debug!("validator args {:?}", validator_full_args);
+        let validator_args_hex = Node(validator_full_args_node).to_hex(allocator)?;
+        let validator_args_prefix = if validator_args_hex.len() > 96 {
+            &validator_args_hex[..96]
+        } else {
+            &validator_args_hex
+        };
+        debug!("validator program hash={validation_program_mod_hash:?}");
+        debug!(
+            "validator args len={} prefix={}{}",
+            validator_args_hex.len(),
+            validator_args_prefix,
+            if validator_args_hex.len() > validator_args_prefix.len() {
+                "..."
+            } else {
+                ""
+            }
+        );
         let raw_result_p = run_program(
             allocator.allocator(),
             &chia_dialect(),
@@ -364,8 +379,42 @@ impl InternalStateUpdateArgs {
             );
         }
         let raw_result = raw_result_p?;
-        let pres = Program::from_nodeptr(allocator, raw_result.1)?;
-        debug!("validator result {pres:?}");
+        let validator_result_hex = Node(raw_result.1).to_hex(allocator)?;
+        let validator_result_prefix = if validator_result_hex.len() > 96 {
+            &validator_result_hex[..96]
+        } else {
+            &validator_result_hex
+        };
+        debug!(
+            "validator result len={} prefix={}{}",
+            validator_result_hex.len(),
+            validator_result_prefix,
+            if validator_result_hex.len() > validator_result_prefix.len() {
+                "..."
+            } else {
+                ""
+            }
+        );
+
+        // Targeted decode for calpoker v1 final validator (onchain/e):
+        // move bytes = 16-byte salt || 1-byte alice_discards || 1-byte alice_selects
+        if validation_program_mod_hash_hex
+            == "f61d57ac1299dc30c6d29861cba1db58eb202a936ea9ab571aeda37d3c2cbb66"
+        {
+            let move_bytes = &self.referee_args.game_move.basic.move_made;
+            let move_hex = hex::encode(move_bytes);
+            let maybe_discards = move_bytes.get(16).copied();
+            let maybe_selects = move_bytes.get(17).copied();
+            debug!(
+                "v1/e move decode: len={} hex={} discards={:?} discards_popcount={:?} selects={:?} selects_popcount={:?}",
+                move_bytes.len(),
+                move_hex,
+                maybe_discards.map(|b| format!("{b:02x}")),
+                maybe_discards.map(|b| b.count_ones()),
+                maybe_selects.map(|b| format!("{b:02x}")),
+                maybe_selects.map(|b| b.count_ones()),
+            );
+        }
 
         StateUpdateResult::from_nodeptr(allocator, raw_result.1)
     }

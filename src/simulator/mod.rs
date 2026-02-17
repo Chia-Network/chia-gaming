@@ -188,7 +188,12 @@ impl Default for Simulator {
                 height: RefCell::new(0),
             })
         })
-        .expect("should work")
+        .unwrap_or_else(|err| {
+            Python::with_gil(|py| {
+                err.print(py);
+            });
+            panic!("Simulator initialization failed: {err}");
+        })
     }
 }
 
@@ -616,7 +621,14 @@ impl Simulator {
 #[pyfunction]
 #[pyo3(signature = (choices = Vec::new()))]
 fn run_simulation_tests(choices: Vec<String>) {
-    std::panic::set_hook(Box::new(|_| {
+    std::panic::set_hook(Box::new(|panic_info| {
+        if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+            eprintln!("panic payload: {s}");
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            eprintln!("panic payload: {s}");
+        } else {
+            eprintln!("panic payload: <non-string>");
+        }
         let trace = Backtrace::capture();
         eprintln!("{trace}");
     }));
@@ -636,7 +648,13 @@ fn run_simulation_tests(choices: Vec<String>) {
             }
         }
     }) {
-        eprintln!("panic: {e:?}");
+        if let Some(s) = e.downcast_ref::<&str>() {
+            eprintln!("panic: {s}");
+        } else if let Some(s) = e.downcast_ref::<String>() {
+            eprintln!("panic: {s}");
+        } else {
+            eprintln!("panic: <non-string payload>");
+        }
         std::process::exit(1);
     }
 }

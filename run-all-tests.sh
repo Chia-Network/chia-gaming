@@ -8,7 +8,7 @@ err() {
 }
 trap err ERR
 
-cargo build
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$(pwd)/target}"
 cargo test
 ./run-clsp-tests.sh
 ./docker-sim-tests.sh

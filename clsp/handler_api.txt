@@ -1,0 +1,66 @@
+Handler API (v1)
+===============
+
+Scope
+-----
+This describes the calling convention and return shapes for off-chain
+"handler" functions used by the game framework. It is not game-specific.
+
+
+Handler parameters
+------------------
+There are two kinds of handlers:
+
+1) My-turn handler (local move + entropy)
+   (curried_args... local_move amount split entropy)
+
+   - local_move: UI input for this turn (may be nil)
+   - amount: total game amount
+   - split: current mover share
+   - entropy: 32-byte random input for this turn
+
+2) Their-turn handler (opponent move + state)
+   (curried_args... amount state move validation_program_hash split)
+
+   - state: on-chain state from the previous validator
+   - move: opponent move bytes
+   - validation_program_hash: hash of current validator
+   - split: mover share
+
+
+Return values
+-------------
+
+My-turn return:
+  (
+    label
+    move
+    current_validator
+    current_validator_hash
+    next_validator
+    next_validator_hash
+    next_max_move_size
+    next_split
+    next_handler
+    message_parser_optional  ; single value or empty
+  )
+
+Notes:
+  - label is for UI/debug.
+  - message_parser_optional, when present, is a single value that consumes
+    messages sent out-of-band by the opponent. It runs on the receiver's side.
+
+
+Their-turn return:
+  (
+    readable_move
+    evidence_list
+    next_handler_optional  ; single value or empty
+    message_optional  ; single value or empty
+  )
+
+Notes:
+  - evidence_list is a list of fraud proofs; they may or may not validate.
+  - next_handler_optional is empty on a final move.
+  - message_optional, when present, is a single value sent out-of-band to the opponent
+    and must match the receiver's message_parser expectations.

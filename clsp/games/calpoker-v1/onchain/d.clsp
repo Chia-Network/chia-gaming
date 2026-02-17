@@ -17,17 +17,12 @@
 
 (export (mod_hash
     (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
-        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+        bob_discards MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
         (@ state (alice_commit alice_cards bob_cards)) previous_validation_program mover_puzzle solution evidence)
-    (assign
-        bob_discards (print (list "state at move D start was" state) MOVE)
-        old_state (list alice_commit alice_cards bob_cards)
-        new_state (list bob_discards alice_cards bob_cards alice_commit)
-        (if_any_fail
-            (= (strlen bob_discards) 1)
-            (= (popcount bob_discards) 4)
-            (list SLASH () "D" old_state bob_discards MAX_MOVE_SIZE)
-            (list MAKE_MOVE ehash (print "output state from move D was" new_state) 18 "D")
-        )
+    (if_any_fail
+        (= (strlen bob_discards) 1)
+        (= (popcount bob_discards) 4)
+        (list SLASH () "D" bob_discards MAX_MOVE_SIZE)
+        (list MAKE_MOVE ehash (list bob_discards alice_cards bob_cards alice_commit) 18 "D")
     )
 )

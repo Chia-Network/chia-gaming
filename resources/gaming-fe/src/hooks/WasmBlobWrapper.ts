@@ -14,7 +14,7 @@ import {
   spend_bundle_to_clvm,
   decode_sexp_hex,
   proper_list,
-  popcount,
+  encode_clvm_list_of_bytes,
   empty,
 } from '../util';
 
@@ -69,9 +69,9 @@ export class WasmBlobWrapper {
   myTurn: boolean;
   moveNumber: number;
   qualifyingEvents: number;
-  cardSelections: number;
-  playerHand: number[][];
-  opponentHand: number[][];
+  cardSelections: number[];
+  playerHand: number[];
+  opponentHand: number[];
   shutdownCalled: boolean;
   finished: boolean;
   reloading: boolean;
@@ -111,7 +111,7 @@ export class WasmBlobWrapper {
     this.storedMessages = [];
     this.moveNumber = 0;
     this.messageQueue = [];
-    this.cardSelections = 0;
+    this.cardSelections = [];
     this.playerHand = [];
     this.opponentHand = [];
     this.shutdownCalled = false;
@@ -257,14 +257,12 @@ export class WasmBlobWrapper {
 
   updateCards(readable: any, result: any) {
     const card_lists = proper_list(readable).map((l: any) =>
-      proper_list(l).map((c: any) =>
-        proper_list(c).map((v: Uint8Array) => {
-          if (v.length > 0) {
-            return v[0];
-          }
-          return 0;
-        }),
-      ),
+      proper_list(l).map((v: Uint8Array) => {
+        if (v.length > 0) {
+          return v[0];
+        }
+        return 0;
+      }),
     );
     console.log('card_lists', card_lists);
     if (this.iStarted) {
@@ -280,10 +278,24 @@ export class WasmBlobWrapper {
     }
   }
 
+  selectedCardsToBitfield(selectedCards: number[], hand: number[]): number {
+    let bitfield = 0;
+    hand.forEach((cardId, index) => {
+      if (selectedCards.includes(cardId)) {
+        bitfield |= 1 << index;
+      }
+    });
+    return bitfield;
+  }
+
   finalOutcome(readable: any, result: any) {
+    const myDiscardsBitfield = this.selectedCardsToBitfield(
+      this.cardSelections,
+      this.playerHand,
+    );
     this.gameOutcome = new CalpokerOutcome(
       this.iStarted,
-      this.cardSelections,
+      myDiscardsBitfield,
       this.iStarted ? this.opponentHand : this.playerHand,
       this.iStarted ? this.playerHand : this.opponentHand,
       readable,
@@ -477,12 +489,12 @@ export class WasmBlobWrapper {
         console.log('got accept', this.iStarted);
 
         this.myTurn = false;
-        this.cardSelections = 0;
+      this.cardSelections = [];
         this.moveNumber = 0;
         this.playerHand = [];
         this.opponentHand = [];
 
-        result.setCardSelections = 0;
+        result.setCardSelections = [];
         result.setMoveNumber = 0;
         result.setPlayerHand = [];
         result.setOpponentHand = [];
@@ -610,12 +622,12 @@ export class WasmBlobWrapper {
         };
       });
     } else if (this.moveNumber === 1) {
-      if (popcount(this.cardSelections) != 4) {
+      if (this.cardSelections.length != 4) {
         return empty();
       }
       this.moveNumber += 1;
       const entropy = this.generateEntropy();
-      const encoded = (this.cardSelections | 0x8100).toString(16);
+      const encoded = encode_clvm_list_of_bytes(this.cardSelections);
       this.cradle?.make_move_entropy(this.gameIds[0], encoded, entropy);
       return empty().then(() => {
         return {
@@ -646,11 +658,11 @@ export class WasmBlobWrapper {
     this.pushEvent({ move });
   }
 
-  setCardSelections(mask: number) {
+  setCardSelections(mask: number[]) {
     this.pushEvent({ setCardSelections: mask });
   }
 
-  internalSetCardSelections(mask: number): any {
+  internalSetCardSelections(mask: number[]): any {
     const result = { setCardSelections: mask };
     this.cardSelections = mask;
     return empty().then(() => result);
