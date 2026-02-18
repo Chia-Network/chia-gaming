@@ -299,7 +299,7 @@ impl RefereeInterface for Referee {
 
     fn suitable_redo(
         &self,
-        _allocator: &mut AllocEncoder,
+        _allocator: &AllocEncoder,
         _coin: &CoinString,
         _ph: &PuzzleHash,
     ) -> Result<bool, Error> {
@@ -740,7 +740,7 @@ impl RefereeInterface for Referee {
 
     fn check_their_turn_for_slash(
         &self,
-        _allocator: &mut AllocEncoder,
+        _allocator: &AllocEncoder,
         _evidence: Evidence,
         _coin_string: &CoinString,
     ) -> Result<Option<TheirTurnCoinSpentResult>, Error> {

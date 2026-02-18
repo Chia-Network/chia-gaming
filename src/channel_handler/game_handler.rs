@@ -116,7 +116,7 @@ impl GameHandler {
     }
 
     pub fn their_driver_from_nodeptr(
-        allocator: &mut AllocEncoder,
+        allocator: &AllocEncoder,
         n: NodePtr,
     ) -> Result<GameHandler, Error> {
         Ok(GameHandler::TheirTurnHandler(
@@ -124,7 +124,7 @@ impl GameHandler {
         ))
     }
     pub fn my_driver_from_nodeptr(
-        allocator: &mut AllocEncoder,
+        allocator: &AllocEncoder,
         n: NodePtr,
     ) -> Result<GameHandler, Error> {
         Ok(GameHandler::MyTurnHandler(
@@ -411,7 +411,7 @@ pub struct MessageInputs {
 pub struct MessageHandler(pub Program);
 
 impl MessageHandler {
-    pub fn from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<Self, Error> {
+    pub fn from_nodeptr(allocator: &AllocEncoder, n: NodePtr) -> Result<Self, Error> {
         Ok(MessageHandler(Program::from_nodeptr(allocator, n)?))
     }
     pub fn run(

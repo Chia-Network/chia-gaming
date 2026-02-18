@@ -111,7 +111,7 @@ pub trait RefereeInterface {
 
     fn suitable_redo(
         &self,
-        allocator: &mut AllocEncoder,
+        allocator: &AllocEncoder,
         coin: &CoinString,
         ph: &PuzzleHash,
     ) -> Result<bool, Error>;
@@ -165,7 +165,7 @@ pub trait RefereeInterface {
 
     fn check_their_turn_for_slash(
         &self,
-        allocator: &mut AllocEncoder,
+        allocator: &AllocEncoder,
         evidence: Evidence,
         coin_string: &CoinString,
     ) -> Result<Option<TheirTurnCoinSpentResult>, Error>;
@@ -576,11 +576,12 @@ impl RefereeInterface for Referee {
 
     fn suitable_redo(
         &self,
-        allocator: &mut AllocEncoder,
+        _allocator: &AllocEncoder,
         _coin: &CoinString,
         ph: &PuzzleHash,
     ) -> Result<bool, Error> {
-        let outcome = self.outcome_referee_puzzle_hash(allocator)?;
+        let mut allocator = AllocEncoder::new();
+        let outcome = self.outcome_referee_puzzle_hash(&mut allocator)?;
         Ok(outcome != *ph && !self.is_my_turn())
     }
 
@@ -772,36 +773,38 @@ impl RefereeInterface for Referee {
 
     fn check_their_turn_for_slash(
         &self,
-        allocator: &mut AllocEncoder,
+        _allocator: &AllocEncoder,
         evidence: Evidence,
         coin_string: &CoinString,
     ) -> Result<Option<TheirTurnCoinSpentResult>, Error> {
+        let mut allocator = AllocEncoder::new();
         let puzzle_args = self.spend_this_coin();
         let new_puzzle = curry_referee_puzzle(
-            allocator,
+            &mut allocator,
             &self.fixed().referee_coin_puzzle,
             &self.fixed().referee_coin_puzzle_hash,
             &puzzle_args,
         )?;
 
         let new_puzzle_hash = curry_referee_puzzle_hash(
-            allocator,
+            &mut allocator,
             &self.fixed().referee_coin_puzzle_hash,
             &puzzle_args,
         )?;
         // my_inner_solution maker is just in charge of making aggsigs from
         // conditions.
         debug!("run validator for their move");
-        let full_slash_result = self.run_validator_for_their_move(allocator, evidence.clone())?;
+        let full_slash_result =
+            self.run_validator_for_their_move(&mut allocator, evidence.clone())?;
         match full_slash_result {
             ValidatorResult::Slash(_slash) => {
                 // result is NodePtr containing solution and aggsig.
                 // The aggsig for the nil slash is the same as the slash
                 // below, having been created for the reward coin by using
                 // the standard solution signer.
-                let slash_spend = self.make_slash_spend(allocator, coin_string)?;
+                let slash_spend = self.make_slash_spend(&mut allocator, coin_string)?;
                 self.make_slash_for_their_turn(
-                    allocator,
+                    &mut allocator,
                     coin_string,
                     new_puzzle,
                     &new_puzzle_hash,

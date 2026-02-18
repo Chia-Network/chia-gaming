@@ -316,7 +316,7 @@ impl GameRunner {
     fn spend(&mut self, blob: &str) -> StringWithError {
         let spend_program = Program::from_hex(blob)?;
         let spend_node = spend_program.to_nodeptr(&mut self.allocator)?;
-        let spend_bundle = SpendBundle::from_clvm(&mut self.allocator, spend_node)?;
+        let spend_bundle = SpendBundle::from_clvm(&self.allocator, spend_node)?;
         debug!("spend with bundle {spend_bundle:?}");
         self.spend_list_of_spends(&spend_bundle.spends)
     }
@@ -410,11 +410,7 @@ async fn index_css(response: &mut Response) -> Result<(), String> {
     get_file("resources/web/index.css", "text/css", response)
 }
 
-fn pass_on_request(
-    req: &mut Request,
-    response: &mut Response,
-    wr: WebRequest,
-) -> Result<(), String> {
+fn pass_on_request(req: &Request, response: &mut Response, wr: WebRequest) -> Result<(), String> {
     debug!("pass on request {wr:?}");
 
     let locked = ONE_REQUEST.lock().unwrap();
@@ -442,7 +438,7 @@ async fn get_current_peak(req: &mut Request, response: &mut Response) -> Result<
     pass_on_request(req, response, WebRequest::GetCurrentPeak)
 }
 
-fn get_arg_string(req: &mut Request, name: &str) -> Result<String, Error> {
+fn get_arg_string(req: &Request, name: &str) -> Result<String, Error> {
     let uri_string = req.uri().to_string();
     let want_string = format!("{name}=");
     if let Some(found_eq) = uri_string.find(&want_string) {
@@ -457,7 +453,7 @@ fn get_arg_string(req: &mut Request, name: &str) -> Result<String, Error> {
     Err(Error::StrErr("no argument".to_string()))
 }
 
-fn get_arg_integer(req: &mut Request, name: &str) -> Result<u64, Error> {
+fn get_arg_integer(req: &Request, name: &str) -> Result<u64, Error> {
     let arg = get_arg_string(req, name)?;
     arg.parse::<u64>()
         .map_err(|_e| Error::StrErr(format!("{name} is not an integer")))
@@ -551,7 +547,7 @@ async fn push_tx(
     )
 }
 
-fn cors_origin(req: &mut Request, response: &mut Response) -> Result<(), String> {
+fn cors_origin(req: &Request, response: &mut Response) -> Result<(), String> {
     let origin_header: Option<String> = req.header("Origin");
     if let Some(origin) = origin_header {
         response
