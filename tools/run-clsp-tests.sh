@@ -1,5 +1,10 @@
 #!/bin/bash -x
 
+set -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
+
 find . -name '*.hex' | xargs rm
 cargo test chialisp
 
@@ -11,7 +16,7 @@ if ! which uv; then
   exit 1
 fi
 
-cd ./python
+cd "$REPO_ROOT/python"
 UV_VENV_CLEAR=1 uv venv --python 3.12 --clear
 cargo build  # We need the .hex files
 
