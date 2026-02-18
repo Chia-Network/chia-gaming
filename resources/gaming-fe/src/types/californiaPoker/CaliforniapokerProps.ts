@@ -7,10 +7,10 @@ export interface CaliforniapokerProps {
   iStarted: boolean;
   isPlayerTurn: boolean;
   playerNumber: number;
-  playerHand: number[][];
-  opponentHand: number[][];
-  cardSelections: number;
-  setCardSelections: (n: number) => void;
+  playerHand: number[];
+  opponentHand: number[];
+  cardSelections: number[];
+  setCardSelections: (n: number[]) => void;
   handleMakeMove: (hex: string) => void;
   myWinOutcome: 'win' | 'lose' | 'tie' | undefined;
   banner: string;

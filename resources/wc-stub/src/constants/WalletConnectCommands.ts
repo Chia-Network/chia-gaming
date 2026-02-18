@@ -386,7 +386,7 @@ const walletConnectCommands: WalletConnectCommand[] = [
       },
       {
         name: WalletConnectCommandParamName.DRIVER_DICT,
-        label: 'Driver Dict',
+        label: 'Handler Dict',
         type: 'object',
       },
       {

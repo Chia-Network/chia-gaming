@@ -581,31 +581,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 let current_coin = get_current_coin(&game_id)?;
                 self.do_on_chain_move(penv, &current_coin, game_id, readable_move, hash)
             }
-            GameAction::RedoMoveV0(_game_id, coin, new_ph, tx) => {
-                let (_env, system_interface) = penv.env();
-                self.have_potato = PotatoState::Absent;
-                system_interface.spend_transaction_and_add_fee(&SpendBundle {
-                    name: Some("redo move".to_string()),
-                    spends: vec![CoinSpend {
-                        coin: coin.clone(),
-                        bundle: tx.bundle.clone(),
-                    }],
-                })?;
-                let amt = if let Some((_, _, amt)) = coin.to_parts() {
-                    amt
-                } else {
-                    return Err(Error::StrErr("bad coin".to_string()));
-                };
-
-                let new_coin = CoinString::from_parts(&coin.to_coin_id(), &new_ph, &amt);
-                system_interface.register_coin(
-                    &new_coin,
-                    &self.channel_timeout,
-                    Some("post redo game coin"),
-                )?;
-                Ok(())
-            }
-            GameAction::RedoMoveV1(coin, new_ph, tx, _move_data, amt) => {
+            GameAction::RedoMove(coin, new_ph, tx, _move_data, amt) => {
                 let (_, system_interface) = penv.env();
                 self.have_potato = PotatoState::Absent;
 
@@ -617,10 +593,10 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     }],
                 })?;
                 let new_coin = CoinString::from_parts(&coin.to_coin_id(), &new_ph, &amt);
-                debug!("the v1 redo move was for puzzle hash {new_ph:?}");
-                debug!("the v1 redo move turned into {new_coin:?}");
+                debug!("the redo move was for puzzle hash {new_ph:?}");
+                debug!("the redo move turned into {new_coin:?}");
                 debug!(
-                    "the v1 redo move turned into id {:?}",
+                    "the redo move turned into id {:?}",
                     new_coin.to_coin_id()
                 );
 

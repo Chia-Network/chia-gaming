@@ -1,5 +1,6 @@
 FROM node:20.19.0 AS stage1
 ENV PATH="/root/.cargo/bin:${PATH}"
+ENV RUSTUP_PERMIT_COPY_RENAME=1
 RUN apt-get update -y && \
     apt-get install -y libc6 && \
     apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential nginx && \
@@ -21,7 +22,6 @@ RUN apt-get update -y && \
     sh -c "echo > /app/rust/wasm/src/mod.rs"
 
 WORKDIR /app
-ADD clsp /app/clsp
 
 # Setup to pre-build the dependencies
 COPY rust-toolchain.toml Cargo.toml Cargo.lock /app/rust/
@@ -31,6 +31,10 @@ COPY wasm/Cargo.toml wasm/Cargo.lock /app/rust/wasm/
 
 # Pre-build
 RUN --mount=type=tmpfs,dst=/tmp/rust \
+	--mount=type=cache,target=/root/.cargo/registry \
+	--mount=type=cache,target=/root/.cargo/git \
+	--mount=type=cache,target=/tmp/rust/target \
+	--mount=type=cache,target=/root/.cache \
 	(cd /app/rust && tar cf - .) | (cd /tmp/rust && tar xvf -) && \
 	mkdir -p /tmp/rust/wasm && (cd /app/rust/wasm && tar cf - .) | (cd /tmp/rust/wasm && tar xf -) && \
 	cd /tmp/rust && \
@@ -43,9 +47,17 @@ RUN --mount=type=tmpfs,dst=/tmp/rust \
   rm -rf /tmp/rust/wasm/node-pkg /tmp/rust/wasm/pkg && \
 	(cd /tmp/rust && tar cvf - .) | (cd /app/rust && tar xf -)
 
-# Lobby connection - needed by other builds
+# Lobby connection - pre-install deps (only invalidated by package.json/yarn.lock changes)
+COPY resources/lobby-connection/package.json resources/lobby-connection/yarn.lock /preinst/lobby-connection/
+RUN --mount=type=cache,target=/usr/local/share/.cache/yarn \
+  cd /preinst/lobby-connection && yarn install
+
+# Lobby connection - build (invalidated by source changes, but deps are cached above)
 COPY resources/lobby-connection/ /app/lobby-connection/
-RUN mkdir -p /preinst && cd /app/lobby-connection && yarn install && rm -rf $(yarn cache dir) && yarn build && yarn install --production && rm -rf $(yarn cache dir) && mv /app/lobby-connection /preinst
+RUN --mount=type=cache,target=/usr/local/share/.cache/yarn \
+  cp -r /preinst/lobby-connection/node_modules /app/lobby-connection/ && \
+  cd /app/lobby-connection && yarn build && yarn install --production && \
+  rm -rf /preinst/lobby-connection && mv /app/lobby-connection /preinst
 
 # Stage front-end / UI / UX into the container
 COPY resources/gaming-fe/package.json resources/gaming-fe/yarn.lock /preinst/game/
@@ -61,37 +73,37 @@ COPY resources/wc-stub/package.json resources/wc-stub/yarn.lock /preinst/wc/
 
 # Build
 RUN --mount=type=tmpfs,dst=/app \
+  --mount=type=cache,target=/usr/local/share/.cache/yarn \
   mkdir -p /app/game/ && \
   cp -r /preinst/lobby-connection /app/lobby-connection && \
   cp -r /preinst/game/* /app/game/ && \
   ls -l /app && ls -l /app/lobby-connection && ls -l /preinst/lobby-connection && \
   cd /app/game && yarn install && \
-  rm -rf $(yarn cache dir) && \
   mv /app/game/node_modules /preinst/game/ && \
   mv /app/game/package.json /preinst/game/ 
 
 RUN --mount=type=tmpfs,dst=/app \
+  --mount=type=cache,target=/usr/local/share/.cache/yarn \
   mkdir -p /app/lobby-view/ && \
   cp -r /preinst/lobby-connection /app/lobby-connection && \
   cp -r /preinst/lobby-view/* /app/lobby-view/ && \
   cd /app/lobby-view && yarn install && \
-  rm -rf $(yarn cache dir) && \
   mv /app/lobby-view/node_modules /preinst/lobby-view && \
   mv /app/lobby-view/package.json /preinst/lobby-view
 
 RUN --mount=type=tmpfs,dst=/app \
+  --mount=type=cache,target=/usr/local/share/.cache/yarn \
   mkdir -p /app/lobby-service/ && \
   cp -r /preinst/lobby-service/* /app/lobby-service/ && \
   cd /app/lobby-service && yarn install && \
-  rm -rf $(yarn cache dir) && \
   mv /app/lobby-service/node_modules /preinst/lobby-service && \
   mv /app/lobby-service/package.json /preinst/lobby-service
 
 RUN --mount=type=tmpfs,dst=/app \
+  --mount=type=cache,target=/usr/local/share/.cache/yarn \
   mkdir -p /app/wc/ && \
   cp -r /preinst/wc/* /app/wc/ && \
   cd /app/wc && yarn install && \
-  rm -rf $(yarn cache dir) && \
   mv /app/wc/node_modules /preinst/wc && \
   mv /app/wc/package.json /preinst/wc
 
@@ -105,6 +117,8 @@ RUN mkdir -p /app/game/ && mkdir -p /app/wc/ && mkdir -p /app/lobby-service/ && 
   ln -s /preinst/wc/node_modules /app/wc && \
   ln -s /preinst/wc/package.json /app/wc
 
+ADD clsp /app/clsp
+
 ADD src /app/rust/src
 RUN touch /app/rust/src/lib.rs
 
@@ -113,6 +127,11 @@ RUN touch /app/rust/wasm/src/mod.rs
 
 # Build
 RUN --mount=type=tmpfs,dst=/tmp/rust \
+	--mount=type=cache,target=/root/.cargo/registry \
+	--mount=type=cache,target=/root/.cargo/git \
+	--mount=type=cache,target=/tmp/rust/target \
+	--mount=type=cache,target=/tmp/rust/wasm/target \
+	--mount=type=cache,target=/root/.cache \
 	(cd /app/rust/ && tar cvf - .) | (cd /tmp/rust && tar xf -) && \
 	cd /tmp/rust && \
 	rm -rf `find . -name \*.whl` && \

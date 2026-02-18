@@ -45,11 +45,11 @@ export interface UseWasmBlobResult {
   iStarted: boolean;
   moveNumber: number;
   handleMakeMove: (hex: string) => void;
-  playerHand: number[][];
-  opponentHand: number[][];
+  playerHand: number[];
+  opponentHand: number[];
   playerNumber: number;
-  cardSelections: number;
-  setCardSelections: (s: number) => void;
+  cardSelections: number[];
+  setCardSelections: (s: number[]) => void;
   outcome: CalpokerOutcome | undefined;
   lastOutcome: CalpokerOutcome | undefined;
   stopPlaying: () => void;
@@ -74,8 +74,8 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
       address: '',
       puzzleHash: '',
     });
-  const [playerHand, setPlayerHand] = useState<number[][]>([]);
-  const [opponentHand, setOpponentHand] = useState<number[][]>([]);
+  const [playerHand, setPlayerHand] = useState<number[]>([]);
+  const [opponentHand, setOpponentHand] = useState<number[]>([]);
   const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(
     undefined,
   );
@@ -85,7 +85,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
   const [isPlayerTurn, setMyTurn] = useState<boolean>(false);
   const [moveNumber, setMoveNumber] = useState<number>(0);
   const [error, setRealError] = useState<string | undefined>(undefined);
-  const [cardSelections, setOurCardSelections] = useState<number>(0);
+  const [cardSelections, setOurCardSelections] = useState<number[]>([]);
   const amount = parseInt(searchParams.amount);
 
   const setSavedGame = (game: any) => {
@@ -203,8 +203,8 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
   );
 
   const setCardSelections = useCallback(
-    (mask: number) => {
-      gameObject?.setCardSelections(mask);
+    (selections: number[]) => {
+      gameObject?.setCardSelections(selections);
     },
     [gameObject],
   );

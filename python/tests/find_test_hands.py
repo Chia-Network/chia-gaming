@@ -203,7 +203,7 @@ def selected_cards_by_index(cards, indicies):
 def poker_selected_cards(cards, indicies) -> Hand:
     assert len(cards) == 8
     dbg_assert_eq(len(indicies), 5)
-    """The local game driver code will choose the best hand for us"""
+    """The local game handler code will choose the best hand for us"""
     hand = selected_cards_by_index(cards, indicies).selected
     assert len(hand) == 5
     return Hand(hand)

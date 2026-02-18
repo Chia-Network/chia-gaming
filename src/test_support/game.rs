@@ -37,8 +37,8 @@ mod sim_tests {
     use crate::channel_handler::game::Game;
     use crate::channel_handler::runner::ChannelHandlerParty;
     use crate::channel_handler::types::{
-        ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerPrivateKeys, HandshakeResult,
-        StartGameResult,
+        ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerPrivateKeys,
+        GameStartInfoInterface, HandshakeResult, StartGameResult,
     };
     use crate::common::standard_coin::{
         private_to_public_key, puzzle_for_pk, puzzle_hash_for_synthetic_public_key, ChiaIdentity,
@@ -213,7 +213,9 @@ mod sim_tests {
     pub fn new_channel_handler_game<R: Rng>(
         simulator: &Simulator,
         env: &mut ChannelHandlerEnv<R>,
-        game: &Game,
+        game_id: &GameID,
+        alice_game: &Game,
+        bob_game: &Game,
         identities: &[ChiaIdentity; 2],
         contributions: [Amount; 2],
     ) -> Result<(ChannelHandlerGame, CoinString), Error> {
@@ -260,7 +262,7 @@ mod sim_tests {
 
         let mut party = ChannelHandlerGame::new(
             env,
-            game.id.clone(),
+            game_id.clone(),
             &u2.to_coin_id(),
             &contributions.clone(),
             (*DEFAULT_UNROLL_TIME_LOCK).clone(),
@@ -295,10 +297,16 @@ mod sim_tests {
 
         let timeout = Timeout::new(10);
 
-        let (our_game_start, their_game_start) = game.symmetric_game_starts(
-            &game.id,
-            &contributions[0].clone(),
-            &contributions[1].clone(),
+        let our_game_start = alice_game.game_start(
+            game_id,
+            &contributions[0],
+            &contributions[1],
+            &timeout,
+        );
+        let their_game_start = bob_game.game_start(
+            game_id,
+            &contributions[1],
+            &contributions[0],
             &timeout,
         );
 
@@ -313,10 +321,13 @@ mod sim_tests {
         let spend2 = party.player(0).ch.received_empty_potato(env, &sigs2)?;
         party.update_channel_coin_after_receive(0, &spend2)?;
 
+        let our_start: Rc<dyn GameStartInfoInterface> = Rc::new(our_game_start);
+        let their_start: Rc<dyn GameStartInfoInterface> = Rc::new(their_game_start);
+
         let StartGameResult::Success(start_potato) = party
             .player(0)
             .ch
-            .send_potato_start_game(env, &[our_game_start])?
+            .send_potato_start_game(env, &[our_start])?
         else {
             return Err(Error::StrErr("game start failed in test".to_string()));
         };
@@ -324,7 +335,7 @@ mod sim_tests {
         let (_, solidified_state) = party.player(1).ch.received_potato_start_game(
             env,
             &start_potato,
-            &[their_game_start],
+            &[their_start],
         )?;
         party.update_channel_coin_after_receive(1, &solidified_state)?;
 

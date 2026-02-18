@@ -1,0 +1,153 @@
+Handler API
+===========
+
+Scope
+-----
+This describes the calling convention and return shapes for off-chain
+"handler" functions used by the game framework. Handlers are chialisp
+programs that drive the game logic on each player's side. They are not
+game-specific — calpoker is one implementation.
+
+
+Proposal / Parser
+-----------------
+Games are created via a proposal/parser handshake:
+
+Proposal factory: (bet_size) -> (wire_data local_data)
+
+  wire_data = (my_contribution their_contribution
+               [(amount we_go_first initial_validator_hash
+                 initial_move initial_max_move_size initial_state
+                 initial_mover_share)])
+
+  local_data = [(initial_handler initial_validator)]
+
+Parser: (wire_data) -> (readable [(initial_validator initial_handler)]) or error
+
+  The parser receives the wire_data from the proposer, validates it,
+  and returns the initial handler/validator pair for the responder.
+
+See calpoker_make_proposal and calpoker_parser in calpoker_generate.clinc.
+
+
+Handler parameters
+------------------
+There are two kinds of handlers:
+
+1) My-turn handler (I am making a move)
+   (curried_args... local_move amount state mover_share entropy)
+
+   - local_move: UI input for this turn (may be nil for automatic moves)
+   - amount: total game amount
+   - state: on-chain state from the previous validator
+   - mover_share: current mover's share if timeout occurs
+   - entropy: 32-byte random input for this turn
+
+2) Their-turn handler (opponent just moved)
+   (curried_args... amount pre_state state move validation_info_hash mover_share)
+
+   - amount: total game amount
+   - pre_state: on-chain state BEFORE the opponent's move
+   - state: on-chain state AFTER the opponent's move
+   - move: opponent's move bytes
+   - validation_info_hash: hash of the validation program + state
+   - mover_share: opponent's share claim
+
+
+Return values
+-------------
+
+My-turn return (success, 10 elements):
+  (
+    label                          ; string, for UI/debug
+    move                           ; bytes, the move to send on-chain
+    outgoing_validator             ; program, validates THIS move
+    outgoing_validator_hash        ; hash of outgoing_validator
+    incoming_validator             ; program, validates opponent's NEXT move
+    incoming_validator_hash        ; hash of incoming_validator
+    max_move_size                  ; int, max bytes the opponent may send
+    mover_share                    ; int, our share if opponent times out
+    their_turn_handler             ; program, handler for opponent's turn
+    message_parser                 ; program or nil (see Message Parser below)
+  )
+
+  "outgoing" = validates the move we just produced (our move).
+  "incoming" = validates the move the opponent will produce next.
+  The their_turn_handler receives the opponent's response.
+  message_parser, when non-nil, can parse out-of-band messages from
+  the opponent (see below).
+
+My-turn return (rejection, 2 elements):
+  (error_tag message_bytes)
+
+  Returned when the handler rejects the local_move input (e.g. invalid
+  discard selection). The Rust side raises GameMoveRejected.
+
+My-turn return (error):
+  (x ...)
+
+  A CLVM raise — the handler crashed. The Rust side raises ClvmErr.
+
+
+Their-turn return (normal move, 3-4 elements):
+  (
+    readable_move                  ; clvm value, UI-displayable result
+    evidence_list                  ; list of fraud proofs (may be empty/nil)
+    next_handler                   ; my-turn handler, or nil if game over
+    message                        ; bytes, optional out-of-band message
+  )
+
+  - If next_handler is nil or absent, this is a final move (game over).
+  - If next_handler is present, the game continues with our turn.
+  - evidence_list contains potential slash evidence. Each item can be
+    submitted as evidence in an on-chain slash spend. They may or may
+    not actually validate — the on-chain referee decides.
+  - message is optional (element may be absent). When present, it is
+    sent out-of-band to the opponent and parsed by their message_parser.
+
+Their-turn return (slash, 2 elements):
+  (2 evidence)
+
+  Type tag 2 means the opponent's move is provably fraudulent.
+  evidence is submitted for an on-chain slash.
+
+Their-turn return (legacy compact, 3 elements):
+  (0 readable_info next_handler)
+
+  Type tag 0 with 3 elements. A backward-compatible shorthand for a
+  normal move with no evidence and no message. Used by some handlers
+  (e.g. calpoker_bob_handler_a).
+
+
+Message Parser
+--------------
+An optional program returned by a my-turn handler. It runs on the
+receiver's side to parse out-of-band messages from the opponent.
+
+Parameters:
+  (message state amount)
+
+  - message: raw bytes sent by the opponent
+  - state: current on-chain state (e.g. (alice_commit bob_seed))
+  - amount: total game amount
+
+Returns:
+  readable_info (any clvm value for UI display), or raises on error.
+
+Example: in calpoker, after Bob sends his seed (step b), Alice sends
+her preimage as an out-of-band message. Bob's parse_message verifies
+sha256(preimage) == alice_commit, then returns the derived cards for
+display.
+
+
+Notes on validators vs handlers
+--------------------------------
+Validators (a.clsp through e.clsp) run ON-CHAIN to enforce rules.
+Handlers run OFF-CHAIN to produce moves and interpret opponent moves.
+
+A handler returns two validators per move:
+  - outgoing_validator: used on-chain to validate the move we just made
+  - incoming_validator: used on-chain to validate the opponent's reply
+
+The outgoing_validator_hash must match what the previous incoming_validator
+specified, creating a chain of validated state transitions.

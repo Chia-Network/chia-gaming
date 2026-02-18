@@ -289,15 +289,15 @@ export default class Wallet extends Service {
   async createOfferForIds(args: {
     offer: { [key: string]: number | BigNumber };
     fee: number | BigNumber;
-    driverDict: any;
+    handlerDict: any;
     validateOnly?: boolean;
     disableJSONFormatting?: boolean;
     maxTime?: number;
   }) {
-    const { disableJSONFormatting, driverDict, ...restArgs } = args;
+    const { disableJSONFormatting, handlerDict, ...restArgs } = args;
     return this.command<{ offer: string; tradeRecord: TradeRecord }>(
       'create_offer_for_ids',
-      { driver_dict: driverDict, ...restArgs },
+      { handler_dict: handlerDict, ...restArgs },
       false,
       undefined,
       disableJSONFormatting,

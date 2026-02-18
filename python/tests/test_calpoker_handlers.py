@@ -8,7 +8,6 @@ from enum import Enum
 
 from chialisp import start_clvm_program
 
-from calpoker import Card
 from chia_gaming.clvm_types.program import Program
 from chia_gaming.util.sized_bytes import bytes32
 from chia_gaming.clvm_types.load_clvm_hex import load_clvm_hex
@@ -34,40 +33,67 @@ Test off-chain chialisp.
 """
 
 # See also calpoker_generate.clinc
-calpoker_factory = load_clvm_hex(
-    calpoker_clsp_dir / "calpoker_include_calpoker_factory.hex"
+# make_proposal returns: ((bet bet ((amount we_go_first vh im mms is ms))) ((handler validator)))
+# parser takes wire_data, returns: (readable ((validator handler)))
+calpoker_make_proposal = load_clvm_hex(
+    calpoker_clsp_dir / "calpoker_include_calpoker_make_proposal.hex"
+)
+calpoker_parser_prog = load_clvm_hex(
+    calpoker_clsp_dir / "calpoker_include_calpoker_parser.hex"
 )
 
-# (i_am_initiator my_contribution their_contribution params)
+BET_SIZE = 100
+AMOUNT = 2 * BET_SIZE
 
-I_AM_INITIATOR = 1  # I am "Alice"
-calpoker_factory_alice = calpoker_factory.run([I_AM_INITIATOR, 100, 100, None])
-calpoker_handler_alice_data = Program.to(calpoker_factory_alice).as_python()
-our_info = calpoker_handler_alice_data[0]
-calpoker_factory_bob = calpoker_factory.run([not I_AM_INITIATOR, 100, 100, None])
-calpoker_handler_bob_data = Program.to(calpoker_factory_bob).as_python()
-bob_info = calpoker_handler_bob_data[0]
+# Run make_proposal to get wire_data and alice's local_data
+proposal_result = Program.to(calpoker_make_proposal.run([BET_SIZE]))
+proposal_list = list(proposal_result.as_python())
+wire_data_raw = proposal_list[0]
+local_data_raw = proposal_list[1]
 
-# handlers = None
-# data: 2-5, 7,8
-# programs: list elements 0 & 1
-dataf = {
-    0: "amount",
-    1: "is_my_turn",
-    2: "handler_program",
-    3: "my_contribution",
-    4: "their_contribution",
-    5: "initial_validation_program",
-    6: "initial_validation_program_hash",  # first validation program hash
-    7: "initial_state",
-    8: "initial_move",
-    9: "initial_max_move_size",
-    10: "initial_mover_share",
+# wire_data = (bet_size bet_size ((amount we_go_first vh im mms is ms)))
+# Extract game spec from wire_data
+wire_data_program = Program.to(wire_data_raw)
+game_specs_wrapper = list(Program.to(wire_data_raw).as_python())
+game_spec = list(Program.to(game_specs_wrapper[2][0]).as_python())
+# game_spec = [amount, we_go_first, vh, im, mms, is, ms]
+
+# local_data = ((handler validator))
+alice_handler_validator = list(Program.to(local_data_raw[0]).as_python())
+alice_handler = alice_handler_validator[0]
+alice_validator = alice_handler_validator[1]
+
+# Run parser to get bob's handler and validator
+parser_result = Program.to(calpoker_parser_prog.run(wire_data_program))
+parser_list = list(parser_result.as_python())
+# parser returns (readable ((validator handler)))
+bob_handler_validator = list(Program.to(parser_list[1][0]).as_python())
+bob_validator = bob_handler_validator[0]
+bob_handler = bob_handler_validator[1]
+
+# Build our_data and bob_data dicts to match what the rest of the test expects
+our_data = {
+    "amount": AMOUNT,
+    "is_my_turn": True,
+    "handler_program": alice_handler,
+    "initial_validation_program": alice_validator,
+    "initial_validation_program_hash": game_spec[2],  # vh
+    "initial_state": game_spec[5],  # is (initial_state)
+    "initial_move": game_spec[3],  # im (initial_move)
+    "initial_max_move_size": game_spec[4],  # mms
+    "initial_mover_share": game_spec[6],  # ms
 }
-
-# our_data = [x for i,x in enumerate(our_info) if i in [2,3,4,6,7]]
-our_data = {name: our_info[index] for index, name in dataf.items()}
-bob_data = {name: bob_info[index] for index, name in dataf.items()}
+bob_data = {
+    "amount": AMOUNT,
+    "is_my_turn": False,
+    "handler_program": bob_handler,
+    "initial_validation_program": bob_validator,
+    "initial_validation_program_hash": game_spec[2],  # vh (same initial validator)
+    "initial_state": game_spec[5],  # is
+    "initial_move": game_spec[3],  # im
+    "initial_max_move_size": game_spec[4],  # mms
+    "initial_mover_share": game_spec[6],  # ms
+}
 
 def print_dict(d):
     for k, v in d.items():
@@ -86,7 +112,7 @@ print_dict(bob_data)
 # Validators now produce all game state
 # handcalc is called off-chain. It is a heavy operation. We then pass that info on
 
-# handler_args = (new_move, amount, last_mover_share, last_max_move_size, entropy)
+# handler_args = (new_move, amount, state, last_mover_share, entropy)
 # Program.to(our_data["handler_program"]).run()
 
 @dataclass
@@ -135,10 +161,10 @@ class MyTurnHandlerResult:
         self.their_turn_handler = their_turn_handler
         self.message_parser = message_parser
 
-def call_my_turn_handler(handler: Program, local_move, amount, split, entropy):
+def call_my_turn_handler(handler: Program, local_move, amount, state, split, entropy):
     "Mover handler"
     print(f"Running handler {handler.get_tree_hash()}")
-    raw_args = Program.to([local_move, amount, split, entropy])
+    raw_args = Program.to([local_move, amount, state, split, entropy])
     print(f"raw args {raw_args}")
     ret = handler.run(raw_args)
     # x = BaseException(ret)
@@ -149,6 +175,7 @@ def call_my_turn_handler(handler: Program, local_move, amount, split, entropy):
 @dataclass
 class TheirTurnHandlerArgs:
     amount: int
+    pre_state: Program
     state: Program
     move: bytes
     validation_program_hash: bytes32
@@ -158,6 +185,7 @@ class TheirTurnHandlerArgs:
         return Program.to(
             [
                 self.amount,
+                self.pre_state,
                 self.state,
                 self.move,
                 self.validation_program_hash,
@@ -168,14 +196,12 @@ class TheirTurnHandlerArgs:
 
 @dataclass
 class TheirTurnHandlerResult:
-    kind: int
     readable_move: Program
     evidence_list: Program
     my_turn_handler: Program
     message: bytes
 
-    def __init__(self, kind, readable_move, evidence_list, my_turn_handler=None, message=None):
-        self.kind = kind
+    def __init__(self, readable_move, evidence_list, my_turn_handler=None, message=None):
         self.readable_move = readable_move
         self.evidence_list = evidence_list
         self.my_turn_handler = my_turn_handler
@@ -184,14 +210,33 @@ class TheirTurnHandlerResult:
 def call_their_turn_handler(handler, args: TheirTurnHandlerArgs, step=None):
     "Waiter handler"
     ret = handler.run(args.as_clvm())
-    return TheirTurnHandlerResult(*ret.as_python())
+    ret_list = list(ret.as_python())
+    if len(ret_list) < 2:
+        raise ValueError(f"bad handler result: {ret_list}")
+    offset = 0
+    if isinstance(ret_list[0], int) and ret_list[0] == MoveCode.MAKE_MOVE.value:
+        offset = 1
+    if len(ret_list) == offset + 2:
+        return TheirTurnHandlerResult(ret_list[offset], ret_list[offset + 1])
+    if len(ret_list) == offset + 3:
+        return TheirTurnHandlerResult(
+            ret_list[offset],
+            ret_list[offset + 1],
+            ret_list[offset + 2],
+        )
+    return TheirTurnHandlerResult(
+        ret_list[offset],
+        ret_list[offset + 1],
+        ret_list[offset + 2],
+        ret_list[offset + 3],
+    )
 
 
 # my turn: alice a,c,e # we have the current game state locally in "my_turn" handlers
-# (local_move amount split entropy)
+# (local_move amount state split entropy)
 
 # their turn: bob a,c,e == (alice b,d)
-# (amount (@ state (bob_discards alice_selects alice_cards bob_cards alice_hand_value)) move validation_program_hash split)
+# (amount pre_state (@ state (bob_discards alice_selects alice_cards bob_cards alice_hand_value)) move validation_program_hash split)
 
 # a.clsp will be run by both Alice & Bob: this implies Bob ha a special case during his first move
 
@@ -206,6 +251,19 @@ def print_step():
 
 def refactor_me(test_inputs: Dict):
     pass
+
+
+def normalize_mod52_move(v):
+    if isinstance(v, list):
+        return [normalize_mod52_move(x) for x in v]
+    if isinstance(v, bytes):
+        return int.from_bytes(v, byteorder="big") if len(v) > 0 else 0
+    return v
+
+
+def selected_cards_from_bitfield(bitfield_atom, hand_mod52):
+    mask = int.from_bytes(bitfield_atom, byteorder="big") if isinstance(bitfield_atom, bytes) else int(bitfield_atom)
+    return [card_id for idx, card_id in enumerate(hand_mod52) if (mask >> idx) & 1]
 
 
 class TestType(Enum):
@@ -230,33 +288,34 @@ def get_happy_path(test_inputs: Dict, do_evil: bool) -> TestCaseSequence[Handler
     bob_good_selections = bitfield_to_byte(test_inputs["bob_good_selections"])
     e_move = alice_discards_salt + alice_discards_byte + alice_good_selections
 
-    # All 8 cards initially shown to each player (pre discards and picks)
+    # All 8 cards initially shown to each player (pre discards and picks),
+    # represented directly as hard-coded mod52 card ids.
     alice_all_cards = [
-        Card(rank=2, suit=2),
-        Card(rank=5, suit=3),
-        Card(rank=8, suit=2),
-        Card(rank=11, suit=3),
-        Card(rank=14, suit=1),
-        Card(rank=14, suit=2),
-        Card(rank=14, suit=3),
-        Card(rank=14, suit=4),
+        1,   # (2,2)
+        14,  # (5,3)
+        25,  # (8,2)
+        38,  # (11,3)
+        48,  # (14,1)
+        49,  # (14,2)
+        50,  # (14,3)
+        51,  # (14,4)
     ]
     bob_all_cards = [
-        Card(rank=3, suit=3),
-        Card(rank=4, suit=1),
-        Card(rank=5, suit=4),
-        Card(rank=8, suit=1),
-        Card(rank=8, suit=3),
-        Card(rank=8, suit=4),
-        Card(rank=12, suit=2),
-        Card(rank=12, suit=3),
+        6,   # (3,3)
+        8,   # (4,1)
+        15,  # (5,4)
+        24,  # (8,1)
+        26,  # (8,3)
+        27,  # (8,4)
+        41,  # (12,2)
+        42,  # (12,3)
     ]
+    alice_discard_cards = selected_cards_from_bitfield(alice_discards_byte, alice_all_cards)
+    bob_discard_cards = selected_cards_from_bitfield(bob_discards_byte, bob_all_cards)
 
     alice_hand_value = test_inputs["alice_hand_rating"]
     bob_hand_value = test_inputs["bob_hand_rating"]
 
-    alice_all_cards = [card.as_list() for card in alice_all_cards]
-    bob_all_cards = [card.as_list() for card in bob_all_cards]
     d_results = [
         bob_discards_byte,
         alice_good_selections,
@@ -291,11 +350,11 @@ def get_happy_path(test_inputs: Dict, do_evil: bool) -> TestCaseSequence[Handler
             TestType.NORMAL,
             # Allow bob to choose cards early before Alice
             # Otherwise, Alice could choose her cards before bob could start choosing
-            Program.fromhex("ffffff02ff0280ffff05ff0380ffff08ff0280ffff0bff0380ffff0eff0180ffff0eff0280ffff0eff0380ffff0eff048080ffffff03ff0380ffff04ff0180ffff05ff0480ffff08ff0180ffff08ff0380ffff08ff0480ffff0cff0280ffff0cff03808080")
+            Program.to([alice_all_cards, bob_all_cards])
             # Program.to(0),
         ),
         HandlerMove(
-            alice_discards_byte,
+            alice_discard_cards,
             entropy_data[0].seed,
             good_c_move,
             0,
@@ -304,7 +363,7 @@ def get_happy_path(test_inputs: Dict, do_evil: bool) -> TestCaseSequence[Handler
             Program.to(0),
         ),
         HandlerMove(
-            bob_discards_byte,
+            bob_discard_cards,
             entropy_data[0].bob_seed,
             bob_discards_byte,
             0,
@@ -382,6 +441,7 @@ class Player:
             Program.to(self.my_turn_handler),
             move.input_move_to_our_turn,
             self.amount,
+            self.state.state,
             self.state.mover_share,
             move.entropy,
         )
@@ -474,6 +534,7 @@ class Player:
             Program.to(self.their_turn_handler),
             TheirTurnHandlerArgs(
                 self.amount,
+                previous_state,
                 self.state.state,
                 move_bytes,
                 self.their_turn_validation_program_hash,
@@ -507,11 +568,12 @@ class Player:
             validator_results.append(validator_result)
             dbg_assert_eq(MoveCode(int.from_bytes(expected_validator_result, byteorder="big")), validator_result.move_code)
 
-        if test_type != TestType.CHECK_FOR_ALICE_TRIES_TO_CHEAT:
-            dbg_assert_eq (expected_validator_result, their_turn_result.kind)
-
-        have_normalized_move = Program.to(their_turn_result.readable_move).as_python()
-        expected_normalized_move = Program.to(expected_readable_move).as_python()
+        have_normalized_move = normalize_mod52_move(
+            Program.to(their_turn_result.readable_move).as_python()
+        )
+        expected_normalized_move = normalize_mod52_move(
+            Program.to(expected_readable_move).as_python()
+        )
         if test_type == TestType.CHECK_FOR_ALICE_TRIES_TO_CHEAT:
             # We expect a slash
             if are_any_slash(validator_results):

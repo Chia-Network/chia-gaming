@@ -54,8 +54,8 @@ exec = "0.3.1"
 
 [build-dependencies]
 chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "308eb9ca1ba27913c8c0ab033dfc922a10b0f3c4" }
-#clvm_tools_rs = { git = "https://github.com/Chia-Network/chialisp.git", rev = "783b8bef4856928086865538fc3de34fe437e3a1" }
-clvmr = { version = "=0.16.2", features = ["pre-eval"] }
+clvm_tools_rs = { git = "https://github.com/Chia-Network/chialisp.git", rev = "783b8bef4856928086865538fc3de34fe437e3a1" }
+clvmr = { version = "=0.12.1" }
 colored = "3.0.0"
 serde = "1.0.228"
 toml = "0.8.14"

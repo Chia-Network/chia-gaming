@@ -6,7 +6,7 @@
 (import std.curry)
 (import std.print)
 (import std.relops)
-(import games.calpoker-v0.game_codes)
+(import games.game_codes)
 
 ; See RefereePuzzleArgs::to_clvm
 (defmac STATE_PACK ()
@@ -143,7 +143,7 @@
 ;; Make a value be at least one byte.
 (defun byteify (n) (i n n 0x00))
 
-(defun myturn ((CURRY_PACK) local_move amount split entropy)
+(defun myturn ((CURRY_PACK) local_move amount state last_mover_share entropy)
   ;; local move is a list of slashable and mover share
   (if (not (print (list "Curry pack:" curry-args) local_move))
       ;; () local move should make us emit a local slash so we can try that.
@@ -185,6 +185,7 @@
 (defun theirturn
     ((CURRY_PACK)
      amount
+     pre_state
      (@ state (count smove mshare))
      move
      validation_program_hash

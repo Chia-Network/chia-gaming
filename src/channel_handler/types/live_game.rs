@@ -189,6 +189,14 @@ impl LiveGame {
         let referee_puzzle_hash = self.referee_maker.on_chain_referee_puzzle_hash(allocator)?;
 
         debug!("live game: current state is {referee_puzzle_hash:?} want {want_ph:?}");
+        debug!(
+            "SET_STATE_FOR_COIN: on_chain_hash={:?} last_ref_ph={:?} want={:?} match_on_chain={} match_last={}",
+            referee_puzzle_hash,
+            self.last_referee_puzzle_hash,
+            want_ph,
+            referee_puzzle_hash == *want_ph,
+            self.last_referee_puzzle_hash == *want_ph
+        );
         let result =
             self.referee_maker
                 .rewind(allocator, self.referee_maker.clone(), coin, want_ph)?;
@@ -196,15 +204,24 @@ impl LiveGame {
             self.referee_maker = new_ref.clone();
             self.rewind_outcome = Some(result.clone());
             self.last_referee_puzzle_hash = self.outcome_puzzle_hash(allocator)?;
+            debug!(
+                "SET_STATE_FOR_COIN: rewound, new last_ref_ph={:?}",
+                self.last_referee_puzzle_hash
+            );
             return Ok(result);
         }
 
         if referee_puzzle_hash == *want_ph {
             self.rewind_outcome = Some(result.clone());
             self.last_referee_puzzle_hash = self.outcome_puzzle_hash(allocator)?;
+            debug!(
+                "SET_STATE_FOR_COIN: matched on_chain, new last_ref_ph={:?}",
+                self.last_referee_puzzle_hash
+            );
             return Ok(result);
         }
 
+        debug!("SET_STATE_FOR_COIN: NO MATCH FOUND");
         Ok(result)
     }
 

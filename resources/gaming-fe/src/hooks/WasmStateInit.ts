@@ -99,8 +99,8 @@ observable.subscribe({
       'clsp/unroll/unroll_meta_puzzle.hex',
       'clsp/unroll/unroll_puzzle_state_channel_unrolling.hex',
       'clsp/referee/onchain/referee.hex',
-      'clsp/referee/onchain/referee-v1.hex',
-      'clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex',
+      'clsp/games/calpoker/calpoker_include_calpoker_make_proposal.hex',
+      'clsp/games/calpoker/calpoker_include_calpoker_parser.hex',
     ];
     this.wasmConnection = cg;
     await this.loadPresets(presetFiles);
@@ -241,26 +241,17 @@ observable.subscribe({
     return {coinString: coin, blockchainInboundAddressResult: address};
   }
 
-  async loadCalpoker(): Promise<string> {
-    return this.fetchHex(
-      'clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex',
-    );
-
-    /* TODO
-    .then((calpoker_hex) => {
-      this.calpokerHex = calpoker_hex;
-      return {
-        setGameConnectionState: {
-          stateIdentifier: 'starting',
-          stateDetail: ['loaded calpoker'],
-        },
-      };
-    });
-    */
+  async loadCalpoker(): Promise<{proposalHex: string, parserHex: string}> {
+    const [proposalHex, parserHex] = await Promise.all([
+      this.fetchHex('clsp/games/calpoker/calpoker_include_calpoker_make_proposal.hex'),
+      this.fetchHex('clsp/games/calpoker/calpoker_include_calpoker_parser.hex'),
+    ]);
+    return { proposalHex, parserHex };
   }
 
   createGame(
     calpokerHex: string,
+    calpokerParserHex: string,
     rngId: number,
     wasm: WasmConnection,
     private_key: string,
@@ -275,6 +266,7 @@ observable.subscribe({
         calpoker: {
           version: 1,
           hex: calpokerHex,
+          parser_hex: calpokerParserHex,
         },
       },
       timeout: 100,
@@ -318,8 +310,10 @@ observable.subscribe({
   }
 }
 
-export function loadCalpoker(fetchHex: (filename: string) => Promise<string> ): any {
-  return fetchHex(
-    'clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex',
-  );
+export async function loadCalpoker(fetchHex: (filename: string) => Promise<string> ): Promise<{proposalHex: string, parserHex: string}> {
+  const [proposalHex, parserHex] = await Promise.all([
+    fetchHex('clsp/games/calpoker/calpoker_include_calpoker_make_proposal.hex'),
+    fetchHex('clsp/games/calpoker/calpoker_include_calpoker_parser.hex'),
+  ]);
+  return { proposalHex, parserHex };
 }

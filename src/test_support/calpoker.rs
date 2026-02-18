@@ -2,72 +2,83 @@ use std::rc::Rc;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
 
-use crate::channel_handler::game::Game;
 use crate::channel_handler::types::ReadableMove;
-use crate::common::types::{AllocEncoder, Program, Sha256Input};
-use crate::common::types::{Error, GameID};
+use crate::common::types::{AllocEncoder, Error, Program, Sha256Input};
 use crate::peer_container::SynchronousGameCradle;
 use crate::test_support::game::GameAction;
 
-pub fn load_calpoker(allocator: &mut AllocEncoder, game_id: GameID) -> Result<Game, Error> {
-    Game::new(
-        allocator,
-        game_id,
-        "clsp/games/calpoker-v0/calpoker_include_calpoker_template.hex",
-    )
+fn selected_cards_to_bitfield(hand: &[usize], selected: &[usize]) -> u8 {
+    hand.iter().enumerate().fold(0u8, |acc, (idx, card)| {
+        if selected.contains(card) {
+            acc | (1u8 << idx)
+        } else {
+            acc
+        }
+    })
 }
 
-pub fn prefix_test_moves(allocator: &mut AllocEncoder, v1: bool) -> [GameAction; 5] {
+pub fn prefix_test_moves(allocator: &mut AllocEncoder) -> Vec<GameAction> {
     let alice_word = b"0alice6789abcdef";
+    let bob_seed = b"0bob456789abcdef";
     let alice_word_hash = Sha256Input::Bytes(alice_word)
         .hash()
         .to_clvm(allocator)
         .expect("should work");
     let bob_word = allocator
-        .encode_atom(clvm_traits::Atom::Borrowed(b"0bob456789abcdef"))
+        .encode_atom(clvm_traits::Atom::Borrowed(bob_seed))
         .expect("should work");
-    let alice_picks = if v1 {
-        allocator.encode_atom(clvm_traits::Atom::Borrowed(&[0x55]))
-    } else {
-        [0, 1, 0, 1, 0, 1, 0, 1].to_clvm(allocator)
-    }
-    .expect("should work");
-    let bob_picks = if v1 {
-        allocator.encode_atom(clvm_traits::Atom::Borrowed(&[0xaa]))
-    } else {
-        [1, 0, 1, 0, 1, 0, 1, 0].to_clvm(allocator)
-    }
-    .expect("should work");
-    let win_move_200 = 200.to_clvm(allocator).expect("should work");
-
-    let mut readable_moves = Vec::new();
-    for move_node in [
-        &alice_word_hash,
-        &bob_word,
-        &alice_picks,
-        &bob_picks,
-        &win_move_200,
-    ]
-    .into_iter()
-    {
-        readable_moves.push(ReadableMove::from_program(Rc::new(
-            Program::from_nodeptr(allocator, *move_node).expect("good"),
-        )));
-    }
-
-    [
-        GameAction::Move(0, readable_moves[0].clone(), true),
-        GameAction::Move(1, readable_moves[1].clone(), true),
-        // Alice's reveal of her card generating seed and her commit to which
-        // cards she's picking.
-        GameAction::Move(0, readable_moves[2].clone(), true),
-        GameAction::Move(1, readable_moves[3].clone(), true),
-        // Move is a declared split.
-        GameAction::Move(0, readable_moves[4].clone(), true),
+    let nil_move = Program::from_hex("80").expect("should build nil move");
+    // Golden fixture: choose exact card IDs, then derive bitfield by hand order.
+    // Runtime fixture hands observed in the current deterministic path.
+    let alice_hand: [usize; 8] = [0, 7, 10, 11, 32, 36, 41, 49];
+    let bob_hand: [usize; 8] = [2, 6, 9, 13, 18, 19, 23, 47];
+    // alice=0x55 => positions [0,2,4,6], bob=0xaa => positions [1,3,5,7].
+    let alice_discards = vec![0usize, 10, 32, 41];
+    let bob_discards = vec![6usize, 13, 19, 47];
+    assert_eq!(selected_cards_to_bitfield(&alice_hand, &alice_discards), 0b0101_0101);
+    assert_eq!(selected_cards_to_bitfield(&bob_hand, &bob_discards), 0b1010_1010);
+    let alice_picks = alice_discards.to_clvm(allocator).expect("should work");
+    let bob_picks = bob_discards.to_clvm(allocator).expect("should work");
+    vec![
+        GameAction::Move(
+            0,
+            ReadableMove::from_program(Rc::new(
+                Program::from_nodeptr(allocator, alice_word_hash).expect("good"),
+            )),
+            true,
+        ),
+        GameAction::Move(
+            1,
+            ReadableMove::from_program(Rc::new(
+                Program::from_nodeptr(allocator, bob_word).expect("good"),
+            )),
+            true,
+        ),
+        // Alice's reveal of her card generating seed and her commit to discards.
+        GameAction::Move(
+            0,
+            ReadableMove::from_program(Rc::new(
+                Program::from_nodeptr(allocator, alice_picks).expect("good"),
+            )),
+            true,
+        ),
+        GameAction::Move(
+            1,
+            ReadableMove::from_program(Rc::new(
+                Program::from_nodeptr(allocator, bob_picks).expect("good"),
+            )),
+            true,
+        ),
+        // Final move: local input can be nil (just a UX trigger).
+        // handler_e ignores local_move and emits curried NEXT_MOVE = salt+discards+selects
+        // handler_e also emits the precomputed SPLIT from handler_d
+        GameAction::Move(
+            0,
+            ReadableMove::from_program(Rc::new(nil_move)),
+            true,
+        ),
     ]
 }
-
-// TODO: Add a bit of infra: helper fnctions for testing move results, and GameRunOutcome
 
 #[allow(clippy::type_complexity)]
 pub fn calpoker_ran_all_the_moves_predicate(
@@ -81,51 +92,31 @@ pub fn calpoker_ran_all_the_moves_predicate(
 mod sim_tests {
     use super::*;
 
-    use crate::common::types::{Amount, Hash};
-    use crate::games::calpoker::decode_calpoker_readable;
-    use crate::games::calpoker::WinDirectionUser;
-    use crate::games::calpoker::{CalpokerHandValue, CalpokerResult, RawCalpokerHandValue};
+    use crate::common::types::Hash;
+    use crate::games::calpoker::decode_readable_card_choices;
+    use crate::games::calpoker::{
+        decode_calpoker_readable,
+        RawCalpokerHandValue as RawCalpokerHandValueV1,
+    };
     use crate::shutdown::BasicShutdownConditions;
     use crate::simulator::tests::potato_handler_sim::{
         run_calpoker_container_with_action_list,
         run_calpoker_container_with_action_list_with_success_predicate, GameRunOutcome,
     };
-    use crate::simulator::tests::simenv::SimulatorEnvironment;
     use crate::test_support::game::GameActionResult;
     use log::debug;
-    use rand::prelude::*;
-    use rand_chacha::ChaCha8Rng;
 
-    fn run_calpoker_play_test(
-        allocator: &mut AllocEncoder,
-        moves: &[GameAction],
-    ) -> Result<Vec<GameActionResult>, Error> {
-        let seed: [u8; 32] = [0; 32];
-        let mut rng = ChaCha8Rng::from_seed(seed);
-        let game_id_data: Hash = rng.gen();
-        let game_id = GameID::new(game_id_data.bytes().to_vec());
-        let calpoker = load_calpoker(allocator, game_id).expect("should load");
-        let contributions = [Amount::new(100), Amount::new(100)];
-
-        let mut simenv = SimulatorEnvironment::new(allocator, &mut rng, &calpoker, &contributions)
-            .expect("should get a sim env");
-
-        simenv.play_game(moves)
-    }
-
-    fn extract_info_from_game(game_results: &[GameActionResult]) -> ReadableMove {
+    fn extract_info_from_messages(game_results: &[GameActionResult]) -> Result<ReadableMove, Error> {
         game_results
             .iter()
             .find_map(|x| {
                 if let GameActionResult::MoveResult(_, _, Some(clvm_data), _) = x {
-                    // Alice: message_bytes
-                    // Bob: entropy
                     Some(clvm_data.clone())
                 } else {
                     None
                 }
             })
-            .unwrap()
+            .ok_or_else(|| Error::StrErr("no message payload found in game results".to_string()))
     }
 
     fn game_run_outcome_to_move_results(g: &GameRunOutcome) -> Vec<GameActionResult> {
@@ -144,7 +135,7 @@ mod sim_tests {
         {
             debug!("processing move {who} {index}: {readable_move:?}, g.local_uis[{who}].opponent_messages {:?}", g.local_uis[who].opponent_messages);
             let message = g.local_uis[who].opponent_messages.iter().find_map(|m| {
-                if index == m.opponent_move_size {
+                if index + 1 == m.opponent_move_size {
                     return Some(m.opponent_message.clone());
                 }
 
@@ -162,279 +153,282 @@ mod sim_tests {
         output
     }
 
+
+    fn assert_stayed_off_chain(outcome: &GameRunOutcome, test_name: &str) {
+        for (who, ui) in outcome.local_uis.iter().enumerate() {
+            assert!(
+                !ui.go_on_chain,
+                "{test_name}: player {who} unexpectedly entered on-chain mode; got_error={} finished={:?}",
+                ui.got_error,
+                ui.game_finished
+            );
+            assert!(
+                !ui.got_error,
+                "{test_name}: player {who} reported an on-chain/error transition; go_on_chain={} finished={:?}",
+                ui.go_on_chain,
+                ui.game_finished
+            );
+        }
+    }
+
     pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let mut res: Vec<(&'static str, &'static dyn Fn())> = Vec::new();
-        res.push(("test_load_calpoker", &|| {
-            let mut allocator = AllocEncoder::new();
-            let seed: [u8; 32] = [0; 32];
-            let mut rng = ChaCha8Rng::from_seed(seed);
-            let game_id_data: Hash = rng.gen();
-            let game_id = GameID::new(game_id_data.bytes().to_vec());
-            let calpoker = load_calpoker(&mut allocator, game_id).expect("should load");
-            let contributions = [Amount::new(100), Amount::new(100)];
-
-            let _simenv =
-                SimulatorEnvironment::new(&mut allocator, &mut rng, &calpoker, &contributions)
-                    .expect("should get a sim env");
-        }));
-
-        res.push(("test_play_calpoker_happy_path_v0", &|| {
-            let mut allocator = AllocEncoder::new();
-            let moves = prefix_test_moves(&mut allocator, false).to_vec();
-            run_calpoker_container_with_action_list_with_success_predicate(
-                &mut allocator,
-                &moves,
-                false,
-                Some(&calpoker_ran_all_the_moves_predicate(moves.len())),
-            )
-            .expect("test");
-        }));
 
         res.push(("test_play_calpoker_happy_path", &|| {
             let mut allocator = AllocEncoder::new();
-            let moves = prefix_test_moves(&mut allocator, true).to_vec();
-            run_calpoker_container_with_action_list_with_success_predicate(
+            let moves = prefix_test_moves(&mut allocator).to_vec();
+            let result = run_calpoker_container_with_action_list_with_success_predicate(
                 &mut allocator,
                 &moves,
-                true,
                 Some(&calpoker_ran_all_the_moves_predicate(moves.len())),
-            )
-            .expect("this is a test");
+            );
+            match result {
+                Ok(outcome) => {
+                    assert_stayed_off_chain(&outcome, "test_play_calpoker_happy_path");
+                }
+                Err(e) => {
+                    panic!("happy path failed; scripted moves={moves:?}; error={e:?}");
+                }
+            }
         }));
 
-        res.push(("test_verify_endgame_data_v0", &|| {
+        res.push(("test_fixture_revealed_hands_match", &|| {
             let mut allocator = AllocEncoder::new();
-            let moves = prefix_test_moves(&mut allocator, false);
-            let game_action_results =
-                run_calpoker_play_test(&mut allocator, &moves).expect("should work");
-            debug!("play_result {game_action_results:?}");
-            if let GameActionResult::MoveResult(penultimate_game_data, _, _, _) =
-                game_action_results[game_action_results.len() - 1].clone()
-            {
-                let is_bob_move: bool = true;
-                let readable_node = penultimate_game_data
+            let mut moves = prefix_test_moves(&mut allocator).to_vec();
+            moves.truncate(2);
+            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+            let game_outcome =
+                run_calpoker_container_with_action_list(&mut allocator, &moves)
+                    .expect("opening moves should complete");
+            let game_results = game_run_outcome_to_move_results(&game_outcome);
+            let revealed_cards = extract_info_from_messages(&game_results)
+                .expect("expected revealed message payload");
+            let (alice_cards, bob_cards) =
+                decode_readable_card_choices(&mut allocator, revealed_cards)
+                    .expect("should decode revealed cards");
+
+            assert_eq!(alice_cards, vec![0usize, 7, 10, 11, 32, 36, 41, 49]);
+            assert_eq!(bob_cards, vec![2usize, 6, 9, 13, 18, 19, 23, 47]);
+        }));
+
+        res.push(("test_opening_parity_with_main_vectors", &|| {
+            let mut allocator = AllocEncoder::new();
+            let moves = prefix_test_moves(&mut allocator).to_vec();
+            assert!(moves.len() >= 2, "expected at least two opening moves");
+
+            let expected_alice_commit = {
+                let n = Sha256Input::Bytes(b"0alice6789abcdef")
+                    .hash()
+                    .to_clvm(&mut allocator)
+                    .expect("should build alice commit");
+                Program::from_nodeptr(&mut allocator, n).expect("should build alice commit program")
+            };
+            let expected_bob_seed = {
+                let n = allocator
+                    .encode_atom(clvm_traits::Atom::Borrowed(b"0bob456789abcdef"))
+                    .expect("should build bob seed atom");
+                Program::from_nodeptr(&mut allocator, n).expect("should build bob seed program")
+            };
+
+            match &moves[0] {
+                GameAction::Move(player, readable_move, _) => {
+                    assert_eq!(*player, 0, "opening move 1 should be Alice");
+                    assert_eq!(readable_move.to_program().to_hex(), expected_alice_commit.to_hex());
+                }
+                other => panic!("unexpected opening action #1: {other:?}"),
+            }
+            match &moves[1] {
+                GameAction::Move(player, readable_move, _) => {
+                    assert_eq!(*player, 1, "opening move 2 should be Bob");
+                    assert_eq!(readable_move.to_program().to_hex(), expected_bob_seed.to_hex());
+                }
+                other => panic!("unexpected opening action #2: {other:?}"),
+            }
+
+            let mut opening_moves = moves[..2].to_vec();
+            opening_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            opening_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+            let game_outcome =
+                run_calpoker_container_with_action_list(&mut allocator, &opening_moves)
+                    .expect("opening moves should complete");
+            let game_results = game_run_outcome_to_move_results(&game_outcome);
+            let revealed_cards = extract_info_from_messages(&game_results)
+                .expect("expected revealed message payload");
+            let (alice_cards, bob_cards) =
+                decode_readable_card_choices(&mut allocator, revealed_cards)
+                    .expect("should decode revealed cards");
+
+            assert_eq!(alice_cards, vec![0usize, 7, 10, 11, 32, 36, 41, 49]);
+            assert_eq!(bob_cards, vec![2usize, 6, 9, 13, 18, 19, 23, 47]);
+        }));
+
+        res.push(("test_discard_to_bitfield_parity_with_main", &|| {
+            let alice_hand: [usize; 8] = [0, 7, 10, 11, 32, 36, 41, 49];
+            let bob_hand: [usize; 8] = [2, 6, 9, 13, 18, 19, 23, 47];
+            let alice_discards = [0usize, 10, 32, 41];
+            let bob_discards = [6usize, 13, 19, 47];
+
+            assert!(alice_discards.iter().all(|c| alice_hand.contains(c)));
+            assert!(bob_discards.iter().all(|c| bob_hand.contains(c)));
+
+            let alice_bits = selected_cards_to_bitfield(&alice_hand, &alice_discards);
+            let bob_bits = selected_cards_to_bitfield(&bob_hand, &bob_discards);
+            assert_eq!(alice_bits, 0x55, "alice discards should map to bitfield 0x55");
+            assert_eq!(bob_bits, 0xaa, "bob discards should map to bitfield 0xaa");
+        }));
+
+        res.push(("test_verify_endgame_data", &|| {
+            let mut allocator = AllocEncoder::new();
+            let mut moves = prefix_test_moves(&mut allocator).to_vec();
+            moves.push(GameAction::Accept(1));
+            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            let game_outcome =
+                run_calpoker_container_with_action_list(&mut allocator, &moves)
+                    .expect("game should complete");
+            let game_results = game_run_outcome_to_move_results(&game_outcome);
+            debug!("endgame game_results count={}", game_results.len());
+
+            let revealed_cards = extract_info_from_messages(&game_results)
+                .expect("expected revealed message payload");
+            let (alice_mod52, bob_mod52) =
+                decode_readable_card_choices(&mut allocator, revealed_cards)
+                    .expect("should decode revealed cards");
+            assert_eq!(alice_mod52, vec![0, 7, 10, 11, 32, 36, 41, 49]);
+            assert_eq!(bob_mod52, vec![2, 6, 9, 13, 18, 19, 23, 47]);
+
+            let last_result = &game_results[game_results.len() - 1];
+            if let GameActionResult::MoveResult(readable_data, _, _, _) = last_result {
+                let readable_node = readable_data
                     .to_nodeptr(&mut allocator)
-                    .expect("failed to convert to nodepointer");
+                    .expect("failed to convert to nodeptr");
                 let decoded = decode_calpoker_readable(
                     &mut allocator,
                     readable_node,
-                    Amount::new(200),
-                    is_bob_move,
+                    false,
+                    0xaa,
+                    &alice_mod52,
+                    &bob_mod52,
                 )
-                .expect("should work");
-                // decoded is a description of Alice's result, from Bob's point of view
-                // Bob won this game
-                // Bob should get a reward coin for 200
-                // Alice should get 0
-                assert_eq!(
-                    decoded,
-                    CalpokerResult {
-                        raw_alice_selects: 170, // me.raw_selects
-                        raw_bob_picks: 205,
-                        raw_alice_picks: 185,
-                        alice_hand_result: CalpokerHandValue::TwoPair(4, 2, 12),
-                        alice_hand_value: RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 4, 2, 12]),
-                        bob_hand_result: CalpokerHandValue::Pair(3, vec![3, 14, 13, 11]),
-                        bob_hand_value: RawCalpokerHandValue::SimpleList(vec![
-                            2, 1, 1, 1, 3, 14, 13, 11
-                        ]),
-                        your_share: 200,
-                        game_amount: 200,
-                        raw_win_direction: 1,
-                        win_direction: Some(WinDirectionUser::Alice),
-                    }
-                );
-            } else {
-                panic!("{:?}", game_action_results);
-            };
-        }));
-        res.push(("test_verify_bob_message_v0", &|| {
-            // Ensure the bytes being passed on are structured correctly
-            // Verify message decoding
-            let mut allocator = AllocEncoder::new();
-            let mut moves = prefix_test_moves(&mut allocator, false).to_vec();
-            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
-            let game_outcome =
-                run_calpoker_container_with_action_list(&mut allocator, &moves, false)
-                    .expect("should work");
-            let game_results = game_run_outcome_to_move_results(&game_outcome);
-            let bob_clvm_data = extract_info_from_game(&game_results);
-            assert_ne!(bob_clvm_data.to_program().to_hex(), "80");
-            debug!("play_result {game_results:?}");
-        }));
-        res.push(("test_verify_bob_message", &|| {
-            // Ensure the bytes being passed on are structured correctly
-            // Verify message decoding
-            let mut allocator = AllocEncoder::new();
-            let mut moves = prefix_test_moves(&mut allocator, true).to_vec();
-            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
-            let game_outcome =
-                run_calpoker_container_with_action_list(&mut allocator, &moves, true)
-                    .expect("should work");
-            let game_results = game_run_outcome_to_move_results(&game_outcome);
-            let bob_clvm_data = extract_info_from_game(&game_results);
-            assert_ne!(bob_clvm_data.to_program().to_hex(), "80");
-            debug!("play_result {game_results:?}");
-        }));
-        res.push(("test_play_calpoker_on_chain_after_1_move_p1_v0", &|| {
-            let mut allocator = AllocEncoder::new();
+                .expect("should decode readable");
+                debug!("decoded outcome: {decoded:?}");
 
-            // Make a prototype go on chain scenario by starting with move 1.
-            // The second player receives the move, and then observes the first player
-            // going on chain.
-            let moves = prefix_test_moves(&mut allocator, false);
-            let mut on_chain_moves_1: Vec<GameAction> = moves.into_iter().take(1).collect();
-            on_chain_moves_1.push(GameAction::GoOnChain(true as usize));
-            let test2 =
-                run_calpoker_play_test(&mut allocator, &on_chain_moves_1).expect("should work");
-            debug!("play_result {test2:?}");
+                assert!(
+                    decoded.alice_hand_value != RawCalpokerHandValueV1::SimpleList(vec![]),
+                    "alice hand value should not be empty"
+                );
+                assert!(
+                    decoded.bob_hand_value != RawCalpokerHandValueV1::SimpleList(vec![]),
+                    "bob hand value should not be empty"
+                );
+                assert!(
+                    decoded.win_direction.is_some(),
+                    "there should be a winner (not a tie with these seeds)"
+                );
+                assert_eq!(decoded.alice_final_hand.len(), 5, "alice should have 5-card hand");
+                assert_eq!(decoded.bob_final_hand.len(), 5, "bob should have 5-card hand");
+            } else {
+                panic!("expected MoveResult for final game action, got: {:?}", last_result);
+            }
         }));
+
+        res.push(("test_verify_bob_message", &|| {
+            let mut allocator = AllocEncoder::new();
+            let mut moves = prefix_test_moves(&mut allocator).to_vec();
+            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+            let game_outcome =
+                run_calpoker_container_with_action_list(&mut allocator, &moves)
+                    .expect("should work");
+            let game_results = game_run_outcome_to_move_results(&game_outcome);
+            let bob_clvm_data =
+                extract_info_from_messages(&game_results).expect("expected message payload");
+            assert_ne!(bob_clvm_data.to_program().to_hex(), "80");
+            debug!("play_result {game_results:?}");
+        }));
+
         res.push(("test_play_calpoker_on_chain_after_1_move_p1", &|| {
             let mut allocator = AllocEncoder::new();
+            let moves = prefix_test_moves(&mut allocator);
+            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(1).collect();
+            on_chain_moves.push(GameAction::GoOnChain(true as usize));
+            on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            on_chain_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+            let outcome =
+                run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
+                    .expect("should work");
+            debug!("play_result {:?}", outcome.local_uis);
+        }));
 
-            // Make a prototype go on chain scenario by starting with move 1.
-            // The second player receives the move, and then observes the first player
-            // going on chain.
-            let moves = prefix_test_moves(&mut allocator, true);
-            let mut on_chain_moves_1: Vec<GameAction> = moves.into_iter().take(1).collect();
-            on_chain_moves_1.push(GameAction::GoOnChain(true as usize));
-            let test2 =
-                run_calpoker_play_test(&mut allocator, &on_chain_moves_1).expect("should work");
-            debug!("play_result {test2:?}");
-        }));
-        res.push((
-            "test_play_calpoker_on_chain_after_1_move_p0_lost_message_v0",
-            &|| {
-                let mut allocator = AllocEncoder::new();
-                let moves = prefix_test_moves(&mut allocator, false);
-                let mut on_chain_moves_2: Vec<GameAction> =
-                    moves.into_iter().take(1).map(|x| x.lose()).collect();
-                on_chain_moves_2.push(GameAction::GoOnChain(true as usize));
-                let test3 =
-                    run_calpoker_play_test(&mut allocator, &on_chain_moves_2).expect("should work");
-                debug!("play_result {test3:?}");
-            },
-        ));
-        res.push((
-            "test_play_calpoker_on_chain_after_1_move_p0_lost_message",
-            &|| {
-                let mut allocator = AllocEncoder::new();
-                let moves = prefix_test_moves(&mut allocator, true);
-                let mut on_chain_moves_2: Vec<GameAction> =
-                    moves.into_iter().take(1).map(|x| x.lose()).collect();
-                on_chain_moves_2.push(GameAction::GoOnChain(true as usize));
-                let test3 =
-                    run_calpoker_play_test(&mut allocator, &on_chain_moves_2).expect("should work");
-                debug!("play_result {test3:?}");
-            },
-        ));
-        res.push(("test_play_calpoker_on_chain_after_1_move_p0_v0", &|| {
+        res.push(("test_play_calpoker_on_chain_after_1_move_p0_lost_message", &|| {
             let mut allocator = AllocEncoder::new();
-            let moves = prefix_test_moves(&mut allocator, false);
-            let mut on_chain_moves_2: Vec<GameAction> = moves.into_iter().take(1).collect();
-            on_chain_moves_2.push(GameAction::GoOnChain(true as usize));
-            let test3 =
-                run_calpoker_play_test(&mut allocator, &on_chain_moves_2).expect("should work");
-            debug!("play_result {test3:?}");
+            let moves = prefix_test_moves(&mut allocator);
+            let mut on_chain_moves: Vec<GameAction> =
+                moves.into_iter().take(1).map(|x| x.lose()).collect();
+            on_chain_moves.push(GameAction::GoOnChain(true as usize));
+            on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            on_chain_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+            let outcome =
+                run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
+                    .expect("should work");
+            debug!("play_result {:?}", outcome.local_uis);
         }));
+
         res.push(("test_play_calpoker_on_chain_after_1_move_p0", &|| {
             let mut allocator = AllocEncoder::new();
-            let moves = prefix_test_moves(&mut allocator, true);
-            let mut on_chain_moves_2: Vec<GameAction> = moves.into_iter().take(1).collect();
-            on_chain_moves_2.push(GameAction::GoOnChain(true as usize));
-            let test3 =
-                run_calpoker_play_test(&mut allocator, &on_chain_moves_2).expect("should work");
-            debug!("play_result {test3:?}");
+            let moves = prefix_test_moves(&mut allocator);
+            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(1).collect();
+            on_chain_moves.push(GameAction::GoOnChain(true as usize));
+            on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            on_chain_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+            let outcome =
+                run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
+                    .expect("should work");
+            debug!("play_result {:?}", outcome.local_uis);
         }));
-        res.push(("test_play_calpoker_on_chain_after_2_moves_p0_v0", &|| {
-            let mut allocator = AllocEncoder::new();
-            let moves = prefix_test_moves(&mut allocator, false);
-            // Alice moves, then bob, then bob spends the channel coin.
-            let mut on_chain_moves_3: Vec<GameAction> = moves.into_iter().take(2).collect();
-            on_chain_moves_3.push(GameAction::GoOnChain(false as usize));
-            let test4 =
-                run_calpoker_play_test(&mut allocator, &on_chain_moves_3).expect("should work");
-            debug!("play_result {test4:?}");
-        }));
+
         res.push(("test_play_calpoker_on_chain_after_2_moves_p0", &|| {
             let mut allocator = AllocEncoder::new();
-            let moves = prefix_test_moves(&mut allocator, true);
-            // Alice moves, then bob, then bob spends the channel coin.
-            let mut on_chain_moves_3: Vec<GameAction> = moves.into_iter().take(2).collect();
-            on_chain_moves_3.push(GameAction::GoOnChain(false as usize));
-            let test4 =
-                run_calpoker_play_test(&mut allocator, &on_chain_moves_3).expect("should work");
-            debug!("play_result {test4:?}");
+            let moves = prefix_test_moves(&mut allocator);
+            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(2).collect();
+            on_chain_moves.push(GameAction::GoOnChain(false as usize));
+            on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            on_chain_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+            let outcome =
+                run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
+                    .expect("should work");
+            debug!("play_result {:?}", outcome.local_uis);
         }));
-        res.push(("test_play_calpoker_on_chain_after_2_moves_p1_v0", &|| {
-            let mut allocator = AllocEncoder::new();
-            let moves = prefix_test_moves(&mut allocator, false);
-            // Alice moves, then bob, then bob spends the channel coin.
-            let mut on_chain_moves_3: Vec<GameAction> = moves.into_iter().take(2).collect();
-            on_chain_moves_3.push(GameAction::GoOnChain(true as usize));
-            let test4 = run_calpoker_play_test(&mut allocator, &on_chain_moves_3);
-            assert!(test4.is_err());
-            assert!(format!("{:?}", test4).contains("from the past"));
-            debug!("play_result {test4:?}");
-        }));
+
         res.push(("test_play_calpoker_on_chain_after_2_moves_p1", &|| {
             let mut allocator = AllocEncoder::new();
-            let moves = prefix_test_moves(&mut allocator, true);
-            // Alice moves, then bob, then bob spends the channel coin.
-            let mut on_chain_moves_3: Vec<GameAction> = moves.into_iter().take(2).collect();
-            on_chain_moves_3.push(GameAction::GoOnChain(true as usize));
-            let test4 = run_calpoker_play_test(&mut allocator, &on_chain_moves_3);
-            assert!(test4.is_err());
-            assert!(format!("{:?}", test4).contains("from the past"));
-            debug!("play_result {test4:?}");
+            let moves = prefix_test_moves(&mut allocator);
+            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(2).collect();
+            on_chain_moves.push(GameAction::GoOnChain(true as usize));
+            on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            on_chain_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+            let outcome =
+                run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
+                    .expect("should work");
+            debug!("play_result {:?}", outcome.local_uis);
         }));
-        res.push(("test_play_calpoker_end_game_reward_v0", &|| {
-            let mut allocator = AllocEncoder::new();
 
-            let mut moves = prefix_test_moves(&mut allocator, false).to_vec();
+        res.push(("test_play_calpoker_end_game_reward", &|| {
+            let mut allocator = AllocEncoder::new();
+            let mut moves = prefix_test_moves(&mut allocator).to_vec();
             moves.push(GameAction::Accept(1));
             moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
 
             debug!("running moves {moves:?}");
-            let _game_action_results =
-                run_calpoker_play_test(&mut allocator, &moves).expect("should work");
+            let game_outcome =
+                run_calpoker_container_with_action_list(&mut allocator, &moves)
+                    .expect("end game reward should work");
+            assert_stayed_off_chain(&game_outcome, "test_play_calpoker_end_game_reward");
         }));
+
         res
     }
 }
 
 #[cfg(feature = "sim-tests")]
 pub use sim_tests::test_funs;
-
-// Bram: slashing tests
-//
-// I think this is a decent list of slashing tests: Alice attempts to give
-// herself too much with honest cards and Bob successfully slashes with honest
-// cards. Alice attempts to give herself too much with bad cards and Bob
-// successfully slashes with honest cards. Alice gives herself an honest amount
-// and Bob fails to slash with honest cards. Alice gives herself an honest
-// amount and Bob fails to slash with bad cards. That's four tests which should
-// be run each with the Alice wins, Bob wins, and tie scenarios with the caveat
-// that Alice can't 'cheat' when she's already supposed to win everything and
-// Bob can't cheat when he's supposed to win everything. We can fuzz to find the
-// three hands then inspect manually to sanity check the hand evals and find bad
-// cards
-//
-// Test that we can't move off chain when validation puzzle hash is nil.
-//
-// Move without receive
-//
-// Also have to test forcing an out of date version on chain which requires some behavior which the code can't be prompted to do
-//
-// About game creation:
-//
-// give game parameters to factory.
-// start game info: parameters should be included here as well
-//
-// factory produces initial move, initial share etc.
-//
-// Pass parameters over the wire instead of outputs to game factory.
-//
-// Pass game handler its own mod hash.
