@@ -1,4 +1,4 @@
-import { Subject } from 'rxjs';
+import { Subject, Subscription } from 'rxjs';
 // @ts-ignore
 import bech32_module from 'bech32-buffer';
 // @ts-ignore
@@ -24,16 +24,28 @@ import { blockchainDataEmitter } from './BlockchainInfo';
 const bech32: any = (bech32_module ? bech32_module : bech32_buffer);
 
 function requestBlockData(forWho: any, block_number: number): Promise<any> {
+  if (forWho.deleted) {
+    return Promise.resolve();
+  }
   return fetch(`${forWho.baseUrl}/get_block_data?block=${block_number}`, {
     method: 'POST',
   })
     .then((res) => res.json())
     .then((res) => {
+      if (forWho.deleted) {
+        return;
+      }
       if (res === null) {
-        return new Promise((_resolve, _reject) => {
-          setTimeout(() => {
-            requestBlockData(forWho, block_number);
+        return new Promise((resolve, _reject) => {
+          const handle = setTimeout(() => {
+            forWho.timeoutHandles.delete(handle);
+            if (forWho.deleted) {
+              resolve(undefined);
+              return;
+            }
+            requestBlockData(forWho, block_number).then(resolve);
           }, 100);
+          forWho.timeoutHandles.add(handle);
         });
       }
       const converted_res: WatchReport = {
@@ -56,6 +68,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   blockEmitter: (b: BlockchainReport) => void;
   observable: Subject<BlockchainReport>;
   upstream: ExternalBlockchainInterface;
+  timeoutHandles: Set<ReturnType<typeof setTimeout>>;
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
@@ -68,6 +81,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     this.upstream = new ExternalBlockchainInterface(baseUrl);
     this.observable = new Subject();
     this.blockEmitter = (b) => this.observable.next(b);
+    this.timeoutHandles = new Set();
   }
 
   async getAddress() {
@@ -75,15 +89,22 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   startMonitoring(uniqueId: string) {
+    this.deleted = false;
     console.log('startMonitoring', uniqueId);
 
     return this.upstream.getOrRequestToken(uniqueId).then((puzzleHash) => {
+      if (this.deleted) {
+        return;
+      }
       const address = bech32.encode('xch', toUint8(puzzleHash), 'bech32m');
       this.addressData = { address, puzzleHash };
 
       fetch(`${this.baseUrl}/get_peak`, { method: 'POST' })
         .then((res) => res.json())
         .then((peak) => {
+          if (this.deleted) {
+            return;
+          }
           this.setNewPeak(peak);
         });
     });
@@ -109,7 +130,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
 
   async kickEvent() {
     // console.log('full node: kickEvent');
-    while (this.incomingEvents.length) {
+    while (!this.deleted && this.incomingEvents.length) {
       // console.log('incoming events', this.incomingEvents.length);
       this.handlingEvent = true;
       try {
@@ -125,6 +146,9 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async pushEvent(evt: any) {
+    if (this.deleted) {
+      return;
+    }
     this.incomingEvents.push(evt);
     if (!this.handlingEvent) {
       await this.kickEvent();
@@ -132,6 +156,9 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async handleEvent(event: any) {
+    if (this.deleted) {
+      return;
+    }
     if (event.setNewPeak) {
       this.internalSetNewPeak(event.setNewPeak);
     } else if (event.deliverBlock) {
@@ -143,12 +170,18 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async internalNextBlock() {
+    if (this.deleted) {
+      return;
+    }
     if (this.at_block > this.max_block) {
       return fetch(`${this.baseUrl}/wait_block`, {
         method: 'POST',
       })
         .then((res) => res.json())
         .then((res) => {
+          if (this.deleted) {
+            return;
+          }
           // console.log('wait_block returned', res);
           this.setNewPeak(res);
         });
@@ -158,6 +191,9 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async internalSetNewPeak(peak: number) {
+    if (this.deleted) {
+      return;
+    }
     if (this.max_block === 0) {
       this.max_block = peak;
       this.at_block = peak;
@@ -169,14 +205,23 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   setNewPeak(peak: number) {
+    if (this.deleted) {
+      return;
+    }
     this.pushEvent({ setNewPeak: peak });
   }
 
   deliverBlock(block_number: number, block_data: any[]) {
+    if (this.deleted) {
+      return;
+    }
     this.pushEvent({ deliverBlock: { block_number, block_data } });
   }
 
   internalDeliverBlock(block_number: number, block_data: any[]) {
+    if (this.deleted) {
+      return;
+    }
     // console.log('fake::internalDeliverBlock', block_number, block_data);
     this.at_block += 1;
     this.blockEmitter({
@@ -210,6 +255,13 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   getBalance(): Promise<number> {
     return this.upstream.getBalance();
   }
+
+  close() {
+    this.deleted = true;
+    this.incomingEvents = [];
+    this.timeoutHandles.forEach((handle) => clearTimeout(handle));
+    this.timeoutHandles.clear();
+  }
 }
 
 export const fakeBlockchainInfo = new FakeBlockchainInterface(
@@ -219,8 +271,13 @@ export const FAKE_BLOCKCHAIN_ID = blockchainDataEmitter.addUpstream(
   fakeBlockchainInfo.getObservable(),
 );
 
+let outboundSubscription: Subscription | undefined;
+
 export function connectSimulatorBlockchain() {
-  blockchainConnector.getOutbound().subscribe({
+  if (outboundSubscription) {
+    return outboundSubscription;
+  }
+  outboundSubscription = blockchainConnector.getOutbound().subscribe({
     next: (evt: BlockchainOutboundRequest) => {
       let initialSpend = evt.initialSpend;
       let transaction = evt.transaction;
@@ -280,6 +337,15 @@ export function connectSimulatorBlockchain() {
       }
     },
   });
+  return outboundSubscription;
+}
+
+export function disconnectSimulatorBlockchain() {
+  if (outboundSubscription) {
+    outboundSubscription.unsubscribe();
+    outboundSubscription = undefined;
+  }
+  fakeBlockchainInfo.close();
 }
 
 // Set up to receive information about which blockchain system to use.

@@ -84,6 +84,7 @@ export class WasmBlobWrapper {
   blockchain: InternalBlockchainInterface;
   uiUpdates: any;
   currentSave: string | undefined;
+  timeoutHandles: ReturnType<typeof setTimeout>[];
 
   constructor(
     blockchain: InternalBlockchainInterface,
@@ -123,6 +124,7 @@ export class WasmBlobWrapper {
     this.doInternalLoadWasm = doInternalLoadWasm;
     this.blockchain = blockchain;
     this.uiUpdates = {};
+    this.timeoutHandles = [];
     this.rxjsMessageSingleton = new Subject<any>();
     this.rxjsEmitter = {
       next: (settings: any) => {
@@ -136,6 +138,18 @@ export class WasmBlobWrapper {
   }
 
   setReloading() { this.reloading = true; }
+
+  cleanup() {
+    this.finished = true;
+    this.shutdownCalled = true;
+    this.messageQueue = [];
+    this.storedMessages = [];
+    this.gameIds = [];
+
+    this.timeoutHandles.forEach((handle) => clearTimeout(handle));
+    this.timeoutHandles = [];
+    this.rxjsMessageSingleton.complete();
+  }
 
   systemState(): number { return this.qualifyingEvents; }
 
@@ -506,9 +520,10 @@ export class WasmBlobWrapper {
         };
 
         result.setMyTurn = false;
-        setTimeout(() => {
+        const handle = setTimeout(() => {
           this.pushEvent({ startGame: true });
         }, 2000);
+        this.timeoutHandles.push(handle);
       },
     });
 
