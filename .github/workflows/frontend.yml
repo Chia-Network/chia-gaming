@@ -36,26 +36,28 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20.19.0
-
+      - name: Build the chialisp .hex files
+        run: |
+          cargo build
       - name: Smoke test docker image
         run: |
             set -e -x
-        
+
             cleanup_container() {
               docker kill chia-gaming-test 2>/dev/null || true
               docker rm   chia-gaming-test 2>/dev/null || true
             }
-        
+
             cleanup_container
             trap cleanup_container EXIT
-        
+
             mv Dockerfile Dockerfile.non-ci
             sed -e 's/#CI //g' < Dockerfile.non-ci > Dockerfile
             docker build --platform linux/amd64 --progress=plain -t chia-gaming-test .
-        
+
             docker run --name chia-gaming-test --network=host -t chia-gaming-test &
             docker image prune -f
-        
+
             cd resources/fe-test
             ./wait-for-it.sh localhost:5800
             curl -d '' http://localhost:5800/wait_block | grep -E '[0-9]+'
