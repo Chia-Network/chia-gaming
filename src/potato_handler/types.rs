@@ -15,6 +15,7 @@ use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinString, Error, GameID, GameType, Hash, Program, ProgramRef,
     PuzzleHash, SpendBundle, Timeout,
 };
+use crate::potato_handler::effects::Effect;
 use crate::potato_handler::handshake::{HandshakeA, HandshakeB};
 use crate::potato_handler::start::GameStart;
 use crate::referee::types::RefereeOnChainTransaction;
@@ -35,10 +36,7 @@ pub enum ConditionWaitKind {
 /// to not take place in the potato handler.  The injected wallet bootstrap
 /// dependency must be stateful enough that it can cope with receiving a partly
 /// funded offer spend bundle and fully fund it if needed.
-pub trait BootstrapTowardGame<
-    G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
-    R: Rng,
->
+pub trait BootstrapTowardGame
 {
     /// Gives a partly signed offer to the wallet bootstrap.
     ///
@@ -76,14 +74,11 @@ pub trait BootstrapTowardGame<
     ///
     /// Only alice sends this spend bundle in message E, but only after receiving
     /// message D.
-    fn channel_offer<'a>(
+    fn channel_offer<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
         bundle: SpendBundle,
-    ) -> Result<(), Error>
-    where
-        R: 'a,
-        G: 'a;
+    ) -> Result<Option<Effect>, Error>;
 
     /// Gives the fully signed offer to the wallet bootstrap.
     /// Causes bob to send this spend bundle down the wire to the other peer.
@@ -104,14 +99,11 @@ pub trait BootstrapTowardGame<
     ///
     /// Both alice and bob, upon knowing the full channel coin id, use the more
     /// general wallet interface to register for notifications of the channel coin.
-    fn channel_transaction_completion<'a>(
+    fn channel_transaction_completion<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
         bundle: &SpendBundle,
-    ) -> Result<(), Error>
-    where
-        R: 'a,
-        G: 'a;
+    ) -> Result<Option<Effect>, Error>;
 }
 
 /// Async interface implemented by Peer to receive notifications about wallet
@@ -152,44 +144,29 @@ pub trait BootstrapTowardWallet {
 }
 
 /// Spend wallet receiver
-pub trait SpendWalletReceiver<
-    G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
-    R: Rng,
->
+pub trait SpendWalletReceiver
 {
-    fn coin_created<'a>(
+    fn coin_created<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
         coin_id: &CoinString,
-    ) -> Result<(), Error>
-    where
-        G: 'a,
-        R: 'a;
-    fn coin_spent<'a>(
+    ) -> Result<Option<Effect>, Error>;
+    fn coin_spent<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
         coin_id: &CoinString,
-    ) -> Result<(), Error>
-    where
-        G: 'a,
-        R: 'a;
-    fn coin_timeout_reached<'a>(
+    ) -> Result<Vec<Effect>, Error>;
+    fn coin_timeout_reached<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
         coin_id: &CoinString,
-    ) -> Result<(), Error>
-    where
-        G: 'a,
-        R: 'a;
-    fn coin_puzzle_and_solution<'a>(
+    ) -> Result<Vec<Effect>, Error>;
+    fn coin_puzzle_and_solution<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(), Error>
-    where
-        G: 'a,
-        R: 'a;
+    ) -> Result<Vec<Effect>, Error>;
 }
 
 /// Unroll time wallet interface.
@@ -255,10 +232,7 @@ pub trait ToLocalUI {
     fn going_on_chain(&mut self, got_error: bool) -> Result<(), Error>;
 }
 
-pub trait FromLocalUI<
-    G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
-    R: Rng,
->
+pub trait FromLocalUI
 {
     /// Start games requires queueing so that we handle them one at a time only
     /// when the previous start game.
@@ -270,40 +244,32 @@ pub trait FromLocalUI<
     /// General flow:
     ///
     /// Have queues of games we're starting and other side is starting.
-    fn start_games<'a>(
+    fn start_games<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
         i_initiated: bool,
         game: &GameStart,
-    ) -> Result<Vec<GameID>, Error>
-    where
-        G: 'a,
-        R: 'a;
+    ) -> Result<(Vec<GameID>, Vec<Effect>), Error>;
 
-    fn make_move<'a>(
+    fn make_move<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
         id: &GameID,
         readable: &ReadableMove,
         new_entropy: Hash,
-    ) -> Result<(), Error>
-    where
-        G: 'a,
-        R: 'a;
+    ) -> Result<Vec<Effect>, Error>;
 
-    fn accept<'a>(&mut self, penv: &mut dyn PeerEnv<'a, G, R>, id: &GameID) -> Result<(), Error>
-    where
-        G: 'a,
-        R: 'a;
-
-    fn shut_down<'a>(
+    fn accept<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
+        id: &GameID,
+    ) -> Result<Vec<Effect>, Error>;
+
+    fn shut_down<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
         condition: Rc<dyn ShutdownConditions>,
-    ) -> Result<(), Error>
-    where
-        G: 'a,
-        R: 'a;
+    ) -> Result<Vec<Effect>, Error>;
 }
 
 #[derive(Debug, Clone)]
@@ -369,15 +335,6 @@ impl PeerMessage {
 
 pub trait PacketSender {
     fn send_message(&mut self, msg: &PeerMessage) -> Result<(), Error>;
-}
-
-pub trait PeerEnv<'inputs, G, R>
-where
-    G: ToLocalUI + WalletSpendInterface + BootstrapTowardWallet + PacketSender,
-    G: 'inputs,
-    R: Rng + 'inputs,
-{
-    fn env(&mut self) -> (&mut ChannelHandlerEnv<'inputs, R>, &mut G);
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -488,70 +445,52 @@ pub trait PotatoHandlerImpl {
 
     fn my_move_in_game(&self, game_id: &GameID) -> Option<bool>;
 
-    fn get_game_state_id<'a, G, R: Rng + 'a>(
+    fn get_game_state_id<R: Rng>(
         &self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
-    ) -> Result<Option<Hash>, Error>
-    where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
+        env: &mut ChannelHandlerEnv<'_, R>,
+    ) -> Result<Option<Hash>, Error>;
 
-    fn check_game_coin_spent<'a, G, R: Rng + 'a>(
+    fn check_game_coin_spent(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
         coin_id: &CoinString,
-    ) -> Result<bool, Error>
-    where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
+    ) -> Result<(bool, Option<Effect>), Error>;
 
-    fn handle_game_coin_spent<'a, G, R: Rng + 'a>(
+    fn handle_game_coin_spent<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
         coin_id: &CoinString,
         puzzle: &Program,
         solution: &Program,
-    ) -> Result<(), Error>
-    where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
+    ) -> Result<Vec<Effect>, Error>;
 
-    fn coin_timeout_reached<'a, G, R: Rng + 'a>(
+    fn coin_timeout_reached<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
         coin_id: &CoinString,
-    ) -> Result<(), Error>
-    where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
+    ) -> Result<Vec<Effect>, Error>;
 
-    fn next_action<'a, G, R: Rng + 'a>(
+    fn next_action<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
-    ) -> Result<(), Error>
-    where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
+        env: &mut ChannelHandlerEnv<'_, R>,
+    ) -> Result<Vec<Effect>, Error>;
 
-    fn do_on_chain_move<'a, G, R: Rng + 'a>(
+    fn do_on_chain_move<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
         current_coin: &CoinString,
         game_id: GameID,
         readable_move: ReadableMove,
         entropy: Hash,
-    ) -> Result<(), Error>
-    where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
+    ) -> Result<Vec<Effect>, Error>;
 
-    fn do_on_chain_action<'a, G, R: Rng + 'a>(
+    fn do_on_chain_action<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
         action: GameAction,
-    ) -> Result<(), Error>
-    where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
+    ) -> Result<Vec<Effect>, Error>;
 
-    fn shut_down<'a, G, R: Rng + 'a>(
+    fn shut_down(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
         conditions: Rc<dyn ShutdownConditions>,
-    ) -> Result<bool, Error>
-    where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
+    ) -> Result<(bool, Option<Effect>), Error>;
 }

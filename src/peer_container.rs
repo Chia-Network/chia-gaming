@@ -21,8 +21,9 @@ use crate::common::types::{
     PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
 use crate::potato_handler::start::GameStart;
+use crate::potato_handler::effects::{apply_effects, Effect};
 use crate::potato_handler::types::{
-    BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameFactory, PacketSender, PeerEnv,
+    BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameFactory, PacketSender,
     PeerMessage, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
 use crate::potato_handler::PotatoHandler;
@@ -531,48 +532,30 @@ impl ToLocalUI for SynchronousGameCradleState {
     }
 }
 
-struct SynchronousGamePeerEnv<'a, R: Rng> {
-    env: &'a mut ChannelHandlerEnv<'a, R>,
-    system_interface: &'a mut SynchronousGameCradleState,
-}
-
-impl<'a, R: Rng> PeerEnv<'a, SynchronousGameCradleState, R> for SynchronousGamePeerEnv<'a, R> {
-    fn env(
-        &mut self,
-    ) -> (
-        &mut ChannelHandlerEnv<'a, R>,
-        &mut SynchronousGameCradleState,
-    ) {
-        (self.env, self.system_interface)
-    }
-}
-
-pub fn report_coin_changes_to_peer<'a, G, R: Rng + 'a>(
-    penv: &mut dyn PeerEnv<'a, G, R>,
+pub fn report_coin_changes_to_peer<R: Rng>(
+    env: &mut ChannelHandlerEnv<'_, R>,
     peer: &mut PotatoHandler,
     watch_report: &WatchReport,
-) -> Result<(), Error>
-where
-    G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
-{
+) -> Result<Vec<Effect>, Error> {
+    let mut effects = Vec::new();
     for t in watch_report.timed_out.iter() {
         debug!("reporting coin timeout: {t:?}");
-        peer.coin_timeout_reached(penv, t)?;
+        effects.extend(peer.coin_timeout_reached(env, t)?);
     }
 
     // Report deleted coins
     for d in watch_report.deleted_watched.iter() {
         debug!("reporting coin deletion: {d:?}");
-        peer.coin_spent(penv, d)?;
+        effects.extend(peer.coin_spent(env, d)?);
     }
 
     // Report created coins
     for c in watch_report.created_watched.iter() {
         debug!("reporting coin creation: {c:?}");
-        peer.coin_created(penv, c)?;
+        effects.extend(peer.coin_created(env, c)?);
     }
 
-    Ok(())
+    Ok(effects)
 }
 
 impl SynchronousGameCradle {
@@ -634,34 +617,33 @@ impl SynchronousGameCradle {
         .to_clvm(allocator)
         .into_gen()?;
 
-        let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-        let spend = standard_solution_partial(
-            env.allocator,
-            &self.state.identity.synthetic_private_key,
-            &parent.to_coin_id(),
-            conditions_clvm,
-            &self.state.identity.synthetic_public_key,
-            &env.agg_sig_me_additional_data,
-            false,
-        )?;
+        let reported_effects = {
+            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+            let spend = standard_solution_partial(
+                env.allocator,
+                &self.state.identity.synthetic_private_key,
+                &parent.to_coin_id(),
+                conditions_clvm,
+                &self.state.identity.synthetic_public_key,
+                &env.agg_sig_me_additional_data,
+                false,
+            )?;
 
-        let bundle = SpendBundle {
-            name: Some("create channel".to_string()),
-            spends: vec![CoinSpend {
-                coin: parent.clone(),
-                bundle: Spend {
-                    puzzle: self.state.identity.puzzle.clone(),
-                    solution: spend.solution.clone(),
-                    signature: spend.signature.clone(),
-                },
-            }],
-        };
+            let bundle = SpendBundle {
+                name: Some("create channel".to_string()),
+                spends: vec![CoinSpend {
+                    coin: parent.clone(),
+                    bundle: Spend {
+                        puzzle: self.state.identity.puzzle.clone(),
+                        solution: spend.solution.clone(),
+                        signature: spend.signature.clone(),
+                    },
+                }],
+            };
 
-        let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
-            env: &mut env,
-            system_interface: &mut self.state,
+            self.peer.channel_offer(&mut env, bundle)?
         };
-        self.peer.channel_offer(&mut penv, bundle)?;
+        apply_effects(reported_effects.into_iter().collect(), allocator, &mut self.state)?;
 
         Ok(true)
     }
@@ -680,46 +662,39 @@ impl SynchronousGameCradle {
 
         self.state.unfunded_offer = None;
 
-        let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-        let empty_conditions = ().to_clvm(env.allocator).into_gen()?;
-        let quoted_empty_conditions = empty_conditions.to_quoted_program(env.allocator)?;
-        let solution = solution_for_conditions(env.allocator, empty_conditions)?;
-        let quoted_empty_hash = quoted_empty_conditions.sha256tree(env.allocator);
+        let reported_effects = {
+            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+            let empty_conditions = ().to_clvm(env.allocator).into_gen()?;
+            let quoted_empty_conditions = empty_conditions.to_quoted_program(env.allocator)?;
+            let solution = solution_for_conditions(env.allocator, empty_conditions)?;
+            let quoted_empty_hash = quoted_empty_conditions.sha256tree(env.allocator);
 
-        let mut spends = unfunded_offer.clone();
-        assert!(!spends.spends.is_empty());
-        // Create no coins.  The target is already created in the partially funded
-        // transaction.
-        //
-        // XXX break this code out
-        let signature = sign_agg_sig_me(
-            &self.state.identity.synthetic_private_key,
-            quoted_empty_hash.bytes(),
-            &parent_coin.to_coin_id(),
-            &env.agg_sig_me_additional_data,
-        );
-        spends.spends.push(CoinSpend {
-            coin: parent_coin.clone(),
-            bundle: Spend {
-                puzzle: self.state.identity.puzzle.clone(),
-                solution: Program::from_nodeptr(env.allocator, solution)?.into(),
-                signature,
-            },
-        });
-        debug!("s1 {:?}", spends.spends[0]);
-        debug!("s2 {:?}", spends.spends[1]);
-        assert_eq!(spends.spends.len(), 2);
+            let mut spends = unfunded_offer.clone();
+            assert!(!spends.spends.is_empty());
+            let signature = sign_agg_sig_me(
+                &self.state.identity.synthetic_private_key,
+                quoted_empty_hash.bytes(),
+                &parent_coin.to_coin_id(),
+                &env.agg_sig_me_additional_data,
+            );
+            spends.spends.push(CoinSpend {
+                coin: parent_coin.clone(),
+                bundle: Spend {
+                    puzzle: self.state.identity.puzzle.clone(),
+                    solution: Program::from_nodeptr(env.allocator, solution)?.into(),
+                    signature,
+                },
+            });
+            debug!("s1 {:?}", spends.spends[0]);
+            debug!("s2 {:?}", spends.spends[1]);
+            assert_eq!(spends.spends.len(), 2);
 
-        self.state.outbound_transactions.push_back(spends);
+            self.state.outbound_transactions.push_back(spends);
 
-        {
-            let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
-                env: &mut env,
-                system_interface: &mut self.state,
-            };
             self.peer
-                .channel_transaction_completion(&mut penv, &unfunded_offer)?;
-        }
+                .channel_transaction_completion(&mut env, &unfunded_offer)?
+        };
+        apply_effects(reported_effects.into_iter().collect(), allocator, &mut self.state)?;
 
         Ok(true)
     }
@@ -808,12 +783,11 @@ impl GameCradle for SynchronousGameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
     ) -> Result<PuzzleHash, Error> {
-        let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-        let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
-            env: &mut env,
-            system_interface: &mut self.state,
+        let result = {
+            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+            self.peer.get_reward_puzzle_hash(&mut env)?
         };
-        self.peer.get_reward_puzzle_hash(&mut penv)
+        Ok(result)
     }
 
     fn get_game_state_id<R: Rng>(
@@ -821,12 +795,11 @@ impl GameCradle for SynchronousGameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
     ) -> Result<Option<Hash>, Error> {
-        let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-        let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
-            env: &mut env,
-            system_interface: &mut self.state,
+        let result = {
+            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+            self.peer.get_game_state_id(&mut env)?
         };
-        self.peer.get_game_state_id(&mut penv)
+        Ok(result)
     }
 
     fn opening_coin<R: Rng>(
@@ -841,12 +814,13 @@ impl GameCradle for SynchronousGameCradle {
             return Ok(());
         }
 
-        let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-        let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
-            env: &mut env,
-            system_interface: &mut self.state,
+        let start_effect = {
+            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+            self.peer.start(&mut env, coin)?
         };
-        self.peer.start(&mut penv, coin)?;
+        let mut effects = Vec::new();
+        effects.extend(start_effect);
+        apply_effects(effects, allocator, &mut self.state)?;
 
         Ok(())
     }
@@ -863,12 +837,12 @@ impl GameCradle for SynchronousGameCradle {
         i_initiated: bool,
         game: &GameStart,
     ) -> Result<Vec<GameID>, Error> {
-        let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-        let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
-            env: &mut env,
-            system_interface: &mut self.state,
+        let (result, reported_effects) = {
+            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+            self.peer.start_games(&mut env, i_initiated, game)?
         };
-        self.peer.start_games(&mut penv, i_initiated, game)
+        apply_effects(reported_effects, allocator, &mut self.state)?;
+        Ok(result)
     }
 
     fn identity(&self) -> ChiaIdentity {
@@ -884,14 +858,14 @@ impl GameCradle for SynchronousGameCradle {
         readable: Vec<u8>,
         new_entropy: Hash,
     ) -> Result<(), Error> {
-        let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-        let rehydrated_move = Rc::new(Program::from_bytes(&readable));
-        let readable = ReadableMove::from_program(rehydrated_move);
-        let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
-            env: &mut env,
-            system_interface: &mut self.state,
+        let reported_effects = {
+            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+            let rehydrated_move = Rc::new(Program::from_bytes(&readable));
+            let readable = ReadableMove::from_program(rehydrated_move);
+            self.peer.make_move(&mut env, id, &readable, new_entropy)?
         };
-        self.peer.make_move(&mut penv, id, &readable, new_entropy)
+        apply_effects(reported_effects, allocator, &mut self.state)?;
+        Ok(())
     }
 
     /// Signal accepting a game outcome.  Forwards to FromLocalUI::accept.
@@ -902,12 +876,12 @@ impl GameCradle for SynchronousGameCradle {
         rng: &mut R,
         id: &GameID,
     ) -> Result<(), Error> {
-        let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-        let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
-            env: &mut env,
-            system_interface: &mut self.state,
+        let reported_effects = {
+            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+            self.peer.accept(&mut env, id)?
         };
-        self.peer.accept(&mut penv, id)
+        apply_effects(reported_effects, allocator, &mut self.state)?;
+        Ok(())
     }
 
     /// Signal shutdown.  Forwards to FromLocalUI::shut_down.
@@ -917,13 +891,11 @@ impl GameCradle for SynchronousGameCradle {
         rng: &mut R,
         conditions: Rc<dyn ShutdownConditions>,
     ) -> Result<(), Error> {
-        // The conditions relate to spending the remaining money in the channel coin.
-        let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-        let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
-            env: &mut env,
-            system_interface: &mut self.state,
+        let reported_effects = {
+            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+            self.peer.shut_down(&mut env, conditions)?
         };
-        self.peer.shut_down(&mut penv, conditions)?;
+        apply_effects(reported_effects, allocator, &mut self.state)?;
         Ok(())
     }
 
@@ -937,12 +909,11 @@ impl GameCradle for SynchronousGameCradle {
     ) -> Result<(), Error> {
         self.state.current_height = height as u64;
         let filtered_report = self.filter_coin_report(self.state.current_height, report);
-        let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-        let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
-            env: &mut env,
-            system_interface: &mut self.state,
+        let reported_effects = {
+            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+            report_coin_changes_to_peer(&mut env, &mut self.peer, &filtered_report)?
         };
-        report_coin_changes_to_peer(&mut penv, &mut self.peer, &filtered_report)?;
+        apply_effects(reported_effects, allocator, &mut self.state)?;
         Ok(())
     }
 
@@ -1037,16 +1008,16 @@ impl GameCradle for SynchronousGameCradle {
             return Ok(Some(result));
         }
 
-        // If there's a message to deliver, deliver it and signal to continue.
         if let Some(msg) = self.state.inbound_messages.pop_front() {
-            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-            let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
-                env: &mut env,
-                system_interface: &mut self.state,
+            let recv_result = {
+                let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+                self.peer.received_message(&mut env, msg)
             };
-            // Try to receive a message.  If we get failure back, then a cheat was probably
-            // attempted so we need to go on chain.
-            match self.peer.received_message(&mut penv, msg) {
+            if let Ok(returned_effects) = recv_result.as_ref() {
+                apply_effects(returned_effects.clone(), allocator, &mut self.state)?;
+            }
+
+            match recv_result {
                 Ok(_) => {
                     result.continue_on = true;
                     return Ok(Some(result));
@@ -1054,7 +1025,6 @@ impl GameCradle for SynchronousGameCradle {
                 Err(e) => {
                     debug!("going on chain for error {e:?}");
                     result.receive_error = Some(e);
-                    // Go on chain.
                     local_ui.going_on_chain(true)?;
                     return Ok(Some(result));
                 }
@@ -1082,12 +1052,12 @@ impl GameCradle for SynchronousGameCradle {
         _local_ui: &mut dyn ToLocalUI,
         got_error: bool,
     ) -> Result<(), Error> {
-        let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-        let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
-            env: &mut env,
-            system_interface: &mut self.state,
+        let reported_effects = {
+            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+            self.peer.go_on_chain(&mut env, got_error)?
         };
-        self.peer.go_on_chain(&mut penv, got_error)
+        apply_effects(reported_effects, allocator, &mut self.state)?;
+        Ok(())
     }
 
     fn report_puzzle_and_solution<R: Rng>(
@@ -1097,12 +1067,12 @@ impl GameCradle for SynchronousGameCradle {
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(), Error> {
-        let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-        let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
-            env: &mut env,
-            system_interface: &mut self.state,
+        let reported_effects = {
+            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+            self.peer
+                .coin_puzzle_and_solution(&mut env, coin_id, puzzle_and_solution)?
         };
-        self.peer
-            .coin_puzzle_and_solution(&mut penv, coin_id, puzzle_and_solution)
+        apply_effects(reported_effects, allocator, &mut self.state)?;
+        Ok(())
     }
 }

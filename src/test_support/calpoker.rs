@@ -3,7 +3,7 @@ use std::rc::Rc;
 use clvm_traits::{ClvmEncoder, ToClvm};
 
 use crate::channel_handler::types::ReadableMove;
-use crate::common::types::{AllocEncoder, Error, Program, Sha256Input};
+use crate::common::types::{AllocEncoder, Program, Sha256Input};
 use crate::peer_container::SynchronousGameCradle;
 use crate::test_support::game::GameAction;
 
@@ -92,6 +92,7 @@ pub fn calpoker_ran_all_the_moves_predicate(
 mod sim_tests {
     use super::*;
 
+    use crate::common::types::Error;
     use crate::common::types::Hash;
     use crate::games::calpoker::decode_readable_card_choices;
     use crate::games::calpoker::{

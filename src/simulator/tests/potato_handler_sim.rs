@@ -28,8 +28,9 @@ use crate::peer_container::{
     MessagePipe, SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
 };
 use crate::potato_handler::start::GameStart;
+use crate::potato_handler::effects::{apply_effects, Effect};
 use crate::potato_handler::types::{
-    BootstrapTowardGame, BootstrapTowardWallet, PacketSender, PeerEnv, PeerMessage, ToLocalUI,
+    BootstrapTowardGame, BootstrapTowardWallet, PacketSender, PeerMessage, ToLocalUI,
     WalletSpendInterface,
 };
 use crate::potato_handler::PotatoHandler;
@@ -96,23 +97,65 @@ pub fn update_and_report_coins<'a, R: Rng>(
     let watch_report =
         coinset_adapter.make_report_from_coin_set_update(current_height as u64, &current_coins)?;
 
-    // Report timed out coins
     for who in 0..=1 {
-        let mut env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
-        let mut penv: SimulatedPeerSystem<'_, '_, R> =
-            SimulatedPeerSystem::new(&mut env, &mut pipes[who]);
-
-        report_coin_changes_to_peer(&mut penv, &mut peers[who], &watch_report)?;
+        {
+            let mut env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
+            let reported_effects = report_coin_changes_to_peer(&mut env, &mut peers[who], &watch_report)?;
+            apply_effects(reported_effects, allocator, &mut pipes[who])?;
+        }
     }
 
     Ok(watch_report)
 }
 
-struct SimulatedPeerSystem<'a, 'b: 'a, R: Rng> {
-    env: &'b mut ChannelHandlerEnv<'a, R>,
-    // identity: &'b ChiaIdentity,
-    peer: &'b mut SimulatedPeer,
-    // simulator: &'b mut Simulator,
+fn handle_received_channel_puzzle_hash<R: Rng>(
+    env: &mut ChannelHandlerEnv<'_, R>,
+    identity: &ChiaIdentity,
+    peer: &mut PotatoHandler,
+    parent: &CoinString,
+    channel_handler_puzzle_hash: &PuzzleHash,
+) -> Result<Vec<Effect>, Error> {
+    let ch = peer.channel_handler()?;
+    let channel_coin = ch.state_channel_coin();
+    let channel_coin_amt = if let Some((_, _, amt)) = channel_coin.to_parts() {
+        amt
+    } else {
+        return Err(Error::StrErr("no channel coin".to_string()));
+    };
+
+    let conditions_clvm = [(
+        CREATE_COIN,
+        (channel_handler_puzzle_hash.clone(), (channel_coin_amt, ())),
+    )]
+    .to_clvm(env.allocator)
+    .into_gen()?;
+
+    let spend = standard_solution_partial(
+        env.allocator,
+        &identity.synthetic_private_key,
+        &parent.to_coin_id(),
+        conditions_clvm,
+        &identity.synthetic_public_key,
+        &env.agg_sig_me_additional_data,
+        false,
+    )
+    .expect("ssp 1");
+
+    peer.channel_offer(
+        env,
+        SpendBundle {
+            name: None,
+            spends: vec![CoinSpend {
+                coin: parent.clone(),
+                bundle: Spend {
+                    puzzle: identity.puzzle.clone(),
+                    solution: spend.solution.clone(),
+                    signature: spend.signature.clone(),
+                },
+            }],
+        },
+    )
+    .map(|effect| effect.into_iter().collect())
 }
 
 impl PacketSender for SimulatedPeer {
@@ -242,74 +285,6 @@ impl ToLocalUI for SimulatedPeer {
     }
 }
 
-impl<'a, 'b: 'a, R> PeerEnv<'a, SimulatedPeer, R> for SimulatedPeerSystem<'a, 'b, R>
-where
-    R: Rng,
-{
-    fn env(&mut self) -> (&mut ChannelHandlerEnv<'a, R>, &mut SimulatedPeer) {
-        (&mut self.env, &mut self.peer)
-    }
-}
-
-impl<'a, 'b: 'a, R: Rng> SimulatedPeerSystem<'a, 'b, R> {
-    pub fn new(env: &'a mut ChannelHandlerEnv<'a, R>, peer: &'a mut SimulatedPeer) -> Self {
-        SimulatedPeerSystem {
-            env,
-            // identity,
-            peer,
-            // simulator,
-        }
-    }
-
-    pub fn test_handle_received_channel_puzzle_hash(
-        &mut self,
-        identity: &ChiaIdentity,
-        peer: &mut PotatoHandler,
-        parent: &CoinString,
-        channel_handler_puzzle_hash: &PuzzleHash,
-    ) -> Result<(), Error> {
-        let ch = peer.channel_handler()?;
-        let channel_coin = ch.state_channel_coin();
-        let channel_coin_amt = if let Some((_, _, amt)) = channel_coin.to_parts() {
-            amt
-        } else {
-            return Err(Error::StrErr("no channel coin".to_string()));
-        };
-
-        let conditions_clvm = [(
-            CREATE_COIN,
-            (channel_handler_puzzle_hash.clone(), (channel_coin_amt, ())),
-        )]
-        .to_clvm(self.env.allocator)
-        .into_gen()?;
-
-        let spend = standard_solution_partial(
-            self.env.allocator,
-            &identity.synthetic_private_key,
-            &parent.to_coin_id(),
-            conditions_clvm,
-            &identity.synthetic_public_key,
-            &self.env.agg_sig_me_additional_data,
-            false,
-        )
-        .expect("ssp 1");
-
-        peer.channel_offer(
-            self,
-            SpendBundle {
-                name: None,
-                spends: vec![CoinSpend {
-                    coin: parent.clone(),
-                    bundle: Spend {
-                        puzzle: identity.puzzle.clone(),
-                        solution: spend.solution.clone(),
-                        signature: spend.signature.clone(),
-                    },
-                }],
-            },
-        )
-    }
-}
 
 #[allow(clippy::too_many_arguments)]
 pub fn handshake<R: Rng>(
@@ -332,22 +307,22 @@ pub fn handshake<R: Rng>(
         assert!(steps < 50);
 
         debug!("handshake iterate {who}");
-        {
-            let mut env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
-            run_move(&mut env, Amount::new(200), pipes, &mut peers[who], who).expect("should send");
-        }
+        run_move(allocator, rng, Amount::new(200), pipes, &mut peers[who], who).expect("should send");
 
         if let Some(ph) = pipes[who].channel_puzzle_hash.clone() {
             debug!("puzzle hash");
             pipes[who].channel_puzzle_hash = None;
-            let mut env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
-            let mut penv = SimulatedPeerSystem::new(&mut env, &mut pipes[who]);
-            penv.test_handle_received_channel_puzzle_hash(
-                &identities[who],
-                &mut peers[who],
-                &parent_coins[who],
-                &ph,
-            )?;
+            let reported_effects = {
+                let mut env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
+                handle_received_channel_puzzle_hash(
+                    &mut env,
+                    &identities[who],
+                    &mut peers[who],
+                    &parent_coins[who],
+                    &ph,
+                )?
+            };
+            apply_effects(reported_effects, allocator, &mut pipes[who])?;
         }
 
         if let Some(u) = pipes[who].unfunded_offer.clone() {
@@ -356,11 +331,15 @@ pub fn handshake<R: Rng>(
                 identities[who].synthetic_private_key
             );
 
-            {
+            let reported_effects = {
                 let mut env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
-                let mut penv = SimulatedPeerSystem::new(&mut env, &mut pipes[who]);
-                peers[who].channel_transaction_completion(&mut penv, &u)?;
-            }
+                peers[who].channel_transaction_completion(&mut env, &u)?
+            };
+            apply_effects(
+                reported_effects.into_iter().collect(),
+                allocator,
+                &mut pipes[who],
+            )?;
 
             let env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
             let mut spends = u.clone();

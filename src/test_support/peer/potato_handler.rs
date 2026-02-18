@@ -23,8 +23,9 @@ use crate::peer_container::WalletBootstrapState;
 use crate::peer_container::{MessagePeerQueue, MessagePipe};
 #[cfg(test)]
 use crate::potato_handler::start::GameStart;
+use crate::potato_handler::effects::{apply_effects, Effect};
 use crate::potato_handler::types::{
-    BootstrapTowardGame, BootstrapTowardWallet, PacketSender, PeerEnv, PeerMessage,
+    BootstrapTowardGame, BootstrapTowardWallet, PacketSender, PeerMessage,
     SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
 #[cfg(test)]
@@ -214,112 +215,89 @@ impl ToLocalUI for Pipe {
     }
 }
 
-pub struct TestPeerEnv<'inputs, G, R>
-where
-    G: ToLocalUI + WalletSpendInterface + BootstrapTowardWallet + PacketSender,
-    R: Rng,
-{
-    pub env: &'inputs mut ChannelHandlerEnv<'inputs, R>,
+/// Helper for test handshake: build spend bundle and call peer.channel_offer.
+pub fn test_handle_received_channel_puzzle_hash<R: Rng>(
+    env: &mut ChannelHandlerEnv<'_, R>,
+    peer: &mut PotatoHandler,
+    parent: &CoinString,
+    channel_handler_puzzle_hash: &PuzzleHash,
+) -> Result<Vec<Effect>, Error> {
+    let standard_puzzle = env.standard_puzzle.clone();
+    let ch = peer.channel_handler()?;
+    let channel_coin = ch.state_channel_coin();
+    let channel_coin_amt = if let Some((_, _, amt)) = channel_coin.to_parts() {
+        amt
+    } else {
+        return Err(Error::StrErr("no channel coin".to_string()));
+    };
 
-    pub system_interface: &'inputs mut G,
+    let public_key = private_to_public_key(&ch.channel_private_key());
+    let conditions_clvm = [(
+        CREATE_COIN,
+        (channel_handler_puzzle_hash.clone(), (channel_coin_amt, ())),
+    )]
+    .to_clvm(env.allocator)
+    .into_gen()?;
+    let spend = standard_solution_partial(
+        env.allocator,
+        &ch.channel_private_key(),
+        &parent.to_coin_id(),
+        conditions_clvm,
+        &public_key,
+        &env.agg_sig_me_additional_data,
+        false,
+    )?;
+
+    peer.channel_offer(
+        env,
+        SpendBundle {
+            name: None,
+            spends: vec![CoinSpend {
+                coin: parent.clone(),
+                bundle: Spend {
+                    puzzle: standard_puzzle,
+                    solution: spend.solution.clone(),
+                    signature: spend.signature.clone(),
+                },
+            }],
+        },
+    )
+    .map(|effect| effect.into_iter().collect())
 }
 
-impl<'inputs, G, R> PeerEnv<'inputs, G, R> for TestPeerEnv<'inputs, G, R>
-where
-    G: ToLocalUI + WalletSpendInterface + BootstrapTowardWallet + PacketSender,
-    R: Rng,
-{
-    fn env(&mut self) -> (&mut ChannelHandlerEnv<'inputs, R>, &mut G) {
-        (self.env, self.system_interface)
-    }
+/// Helper for test handshake: call peer.channel_transaction_completion.
+pub fn test_handle_received_unfunded_offer<R: Rng>(
+    env: &mut ChannelHandlerEnv<'_, R>,
+    peer: &mut PotatoHandler,
+    unfunded_offer: &SpendBundle,
+) -> Result<Vec<Effect>, Error> {
+    peer.channel_transaction_completion(env, unfunded_offer)
+        .map(|effect| effect.into_iter().collect())
 }
 
-impl<'inputs, G, R> TestPeerEnv<'inputs, G, R>
-where
-    G: ToLocalUI + WalletSpendInterface + BootstrapTowardWallet + PacketSender,
-    R: Rng,
-{
-    pub fn test_handle_received_channel_puzzle_hash(
-        &mut self,
-        peer: &mut PotatoHandler,
-        parent: &CoinString,
-        channel_handler_puzzle_hash: &PuzzleHash,
-    ) -> Result<(), Error> {
-        let standard_puzzle = self.env.standard_puzzle.clone();
-        let ch = peer.channel_handler()?;
-        let channel_coin = ch.state_channel_coin();
-        let channel_coin_amt = if let Some((_, _, amt)) = channel_coin.to_parts() {
-            amt
-        } else {
-            return Err(Error::StrErr("no channel coin".to_string()));
-        };
-
-        let public_key = private_to_public_key(&ch.channel_private_key());
-        let conditions_clvm = [(
-            CREATE_COIN,
-            (channel_handler_puzzle_hash.clone(), (channel_coin_amt, ())),
-        )]
-        .to_clvm(self.env.allocator)
-        .into_gen()?;
-        let spend = standard_solution_partial(
-            self.env.allocator,
-            &ch.channel_private_key(),
-            &parent.to_coin_id(),
-            conditions_clvm,
-            &public_key,
-            &self.env.agg_sig_me_additional_data,
-            false,
-        )?;
-
-        peer.channel_offer(
-            self,
-            SpendBundle {
-                name: None,
-                spends: vec![CoinSpend {
-                    coin: parent.clone(),
-                    bundle: Spend {
-                        puzzle: standard_puzzle,
-                        solution: spend.solution.clone(),
-                        signature: spend.signature.clone(),
-                    },
-                }],
-            },
-        )
-    }
-
-    // XXX fund the offer when we hook up simulation.
-    pub fn test_handle_received_unfunded_offer(
-        &mut self,
-        peer: &mut PotatoHandler,
-        unfunded_offer: &SpendBundle,
-    ) -> Result<(), Error> {
-        peer.channel_transaction_completion(self, unfunded_offer)
-    }
-}
-
-pub fn run_move<'a, P, R: Rng>(
-    env: &'a mut ChannelHandlerEnv<'a, R>,
+pub fn run_move<P, R: Rng>(
+    allocator: &mut AllocEncoder,
+    rng: &mut R,
     _amount: Amount,
-    pipe: &'a mut [P; 2],
+    pipe: &mut [P; 2],
     peer: &mut PotatoHandler,
     who: usize,
 ) -> Result<bool, Error>
 where
     P: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + MessagePeerQueue,
 {
-    // assert!(pipe[who ^ 1].message_pipe().queue.len() < 2);
     let msg = if let Some(msg) = pipe[who ^ 1].message_pipe().queue.pop_front() {
         msg
     } else {
         return Ok(false);
     };
 
-    let mut penv: TestPeerEnv<P, R> = TestPeerEnv {
-        env,
-        system_interface: &mut pipe[who],
+    let returned_effects = {
+        let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+        peer.received_message(&mut env, msg)?
     };
 
-    peer.received_message(&mut penv, msg)?;
+    apply_effects(returned_effects, allocator, &mut pipe[who])?;
 
     Ok(true)
 }
@@ -337,8 +315,7 @@ where
     loop {
         let mut msgs = 0;
         for (who, peer) in peers.iter_mut().enumerate() {
-            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-            msgs += run_move(&mut env, amount.clone(), pipes, peer, who)? as usize;
+            msgs += run_move(allocator, rng, amount.clone(), pipes, peer, who)? as usize;
         }
         if msgs == 0 {
             break;
@@ -372,44 +349,41 @@ where
 
         let who = i % 2;
 
-        {
-            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-            run_move(&mut env, Amount::new(200), pipes, &mut peers[who], who).expect("should send");
-        }
+        run_move(allocator, rng, Amount::new(200), pipes, &mut peers[who], who).expect("should send");
 
         i += 1;
 
         {
+            let mut immediate_effects = Vec::new();
             let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-            let mut penv: TestPeerEnv<P, R> = TestPeerEnv {
-                env: &mut env,
-                system_interface: &mut pipes[who],
-            };
 
-            if let Some(ch) = penv.system_interface.get_channel_puzzle_hash() {
+            if let Some(ch) = pipes[who].get_channel_puzzle_hash() {
                 let parent =
                     CoinString::from_parts(&CoinID::default(), &PuzzleHash::default(), &amount);
-                penv.test_handle_received_channel_puzzle_hash(&mut peers[who], &parent, &ch)?;
-                penv.system_interface.set_channel_puzzle_hash(None);
+                let effects = test_handle_received_channel_puzzle_hash(
+                    &mut env,
+                    &mut peers[who],
+                    &parent,
+                    &ch,
+                )?;
+                immediate_effects.extend(effects);
+                pipes[who].set_channel_puzzle_hash(None);
             }
 
-            if let Some(ufo) = penv.system_interface.get_unfunded_offer() {
-                penv.test_handle_received_unfunded_offer(&mut peers[who], &ufo)?;
+            if let Some(ufo) = pipes[who].get_unfunded_offer() {
+                let effects = test_handle_received_unfunded_offer(&mut env, &mut peers[who], &ufo)?;
+                immediate_effects.extend(effects);
             }
+            drop(env);
+            apply_effects(immediate_effects, allocator, &mut pipes[who])?;
         }
 
         if (10..12).contains(&i) {
-            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-            // Ensure that we notify about the channel coin (fake here, but the notification
-            // is required).
-            let channel_coin = get_channel_coin_for_peer(&peers[who])?;
-
             {
-                let mut penv: TestPeerEnv<P, R> = TestPeerEnv {
-                    env: &mut env,
-                    system_interface: &mut pipes[who],
-                };
-                peers[who].coin_created(&mut penv, &channel_coin)?;
+                let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+                let channel_coin = get_channel_coin_for_peer(&peers[who])?;
+                let effects = peers[who].coin_created(&mut env, &channel_coin)?;
+                apply_effects(effects.into_iter().collect(), allocator, &mut pipes[who])?;
             }
         }
     }
@@ -461,13 +435,17 @@ fn test_peer_smoke() {
     let mut peers = [p1, p2];
 
     {
-        let mut env = ChannelHandlerEnv::new(&mut allocator, &mut rng).expect("should work");
-        let mut penv = TestPeerEnv {
-            env: &mut env,
-            system_interface: &mut pipe_sender[0],
+        let start_effect = {
+            let mut env = ChannelHandlerEnv::new(&mut allocator, &mut rng).expect("should work");
+            peers[0].start(&mut env, parent_coin).expect("should work")
         };
-        peers[0].start(&mut penv, parent_coin).expect("should work");
-    };
+        apply_effects(
+            start_effect.into_iter().collect(),
+            &mut allocator,
+            &mut pipe_sender[0],
+        )
+        .expect("should work");
+    }
 
     // Do handshake for peers.
     handshake(
@@ -490,45 +468,46 @@ fn test_peer_smoke() {
 
     // Start a game
     let game_ids = {
-        let mut env = ChannelHandlerEnv::new(&mut allocator, &mut rng).expect("should work");
-        let mut penv = TestPeerEnv {
-            env: &mut env,
-            system_interface: &mut pipe_sender[1],
+        let (game_ids, effects1, effects0) = {
+            let mut env = ChannelHandlerEnv::new(&mut allocator, &mut rng).expect("should work");
+
+            let nil = Program::from_hex("80").unwrap();
+            let game_id = peers[1].next_game_id().unwrap();
+            let (game_ids, effects1) = peers[1]
+                .start_games(
+                    &mut env,
+                    true,
+                    &GameStart {
+                        game_id: game_id.clone(),
+                        amount: Amount::new(200),
+                        my_contribution: Amount::new(100),
+                        game_type: GameType(b"ca1poker".to_vec()),
+                        timeout: Timeout::new(10),
+                        my_turn: true,
+                        parameters: nil.clone(),
+                    },
+                )
+                .expect("should run");
+
+            let (_other_game_ids, effects0) = peers[0]
+                .start_games(
+                    &mut env,
+                    false,
+                    &GameStart {
+                        game_id,
+                        amount: Amount::new(200),
+                        my_contribution: Amount::new(100),
+                        game_type: GameType(b"ca1poker".to_vec()),
+                        timeout: Timeout::new(10),
+                        my_turn: false,
+                        parameters: nil,
+                    },
+                )
+                .expect("should run");
+            (game_ids, effects1, effects0)
         };
-
-        let nil = Program::from_hex("80").unwrap();
-        let game_id = peers[1].next_game_id().unwrap();
-        let game_ids = peers[1]
-            .start_games(
-                &mut penv,
-                true,
-                &GameStart {
-                    game_id: game_id.clone(),
-                    amount: Amount::new(200),
-                    my_contribution: Amount::new(100),
-                    game_type: GameType(b"ca1poker".to_vec()),
-                    timeout: Timeout::new(10),
-                    my_turn: true,
-                    parameters: nil.clone(),
-                },
-            )
-            .expect("should run");
-
-        peers[0]
-            .start_games(
-                &mut penv,
-                false,
-                &GameStart {
-                    game_id,
-                    amount: Amount::new(200),
-                    my_contribution: Amount::new(100),
-                    game_type: GameType(b"ca1poker".to_vec()),
-                    timeout: Timeout::new(10),
-                    my_turn: false,
-                    parameters: nil,
-                },
-            )
-            .expect("should run");
+        apply_effects(effects1, &mut allocator, &mut pipe_sender[1]).expect("should work");
+        apply_effects(effects0, &mut allocator, &mut pipe_sender[0]).expect("should work");
 
         game_ids
     };
@@ -558,13 +537,10 @@ fn test_peer_smoke() {
             let entropy = rng.gen();
             let mut env = ChannelHandlerEnv::new(&mut allocator, &mut rng).expect("should work");
             let move_readable = what.clone();
-            let mut penv = TestPeerEnv {
-                env: &mut env,
-                system_interface: &mut pipe_sender[who ^ 1],
-            };
-            peers[who ^ 1]
-                .make_move(&mut penv, &game_ids[0], &move_readable, entropy)
+            let effects = peers[who ^ 1]
+                .make_move(&mut env, &game_ids[0], &move_readable, entropy)
                 .expect("should work");
+            apply_effects(effects, &mut allocator, &mut pipe_sender[who ^ 1]).expect("should work");
         }
 
         quiesce(
@@ -584,13 +560,10 @@ fn test_peer_smoke() {
 
     {
         let mut env = ChannelHandlerEnv::new(&mut allocator, &mut rng).expect("should work");
-        let mut penv = TestPeerEnv {
-            env: &mut env,
-            system_interface: &mut pipe_sender[have_potato],
-        };
-        peers[have_potato]
-            .accept(&mut penv, &game_ids[0])
+        let effects = peers[have_potato]
+            .accept(&mut env, &game_ids[0])
             .expect("should work");
+        apply_effects(effects, &mut allocator, &mut pipe_sender[have_potato]).expect("should work");
     }
 
     quiesce(
