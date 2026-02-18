@@ -14,8 +14,6 @@ commit-reveal randomness.
   potato protocol, and Calpoker work.
 - **[DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)** — How to build, run tests, read
   output, and debug failures.
-- **[DEV_SETUP.md](DEV_SETUP.md)** — Git signing and Rust toolchain setup.
-
 ## Quick Start
 
 ```bash
@@ -37,7 +35,7 @@ cargo test
 
 ### Prerequisites
 
-- **Rust** (nightly) — see [DEV_SETUP.md](DEV_SETUP.md)
+- **Rust** (nightly)
 - **Docker** with BuildKit — for simulation and integration tests
 - **Python 3.11–3.13** and **uv** — for chialisp/python tests
 

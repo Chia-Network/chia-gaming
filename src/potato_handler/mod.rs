@@ -231,6 +231,20 @@ impl PotatoHandler {
         matches!(self.handshake_state, HandshakeState::OnChain(_))
     }
 
+    pub fn enable_cheating_for_game(
+        &mut self,
+        game_id: &GameID,
+        make_move: &[u8],
+    ) -> Result<bool, Error> {
+        if let HandshakeState::OnChain(on_chain) = &mut self.handshake_state {
+            on_chain.enable_cheating_for_game(game_id, make_move)
+        } else {
+            Err(Error::StrErr(
+                "enable_cheating: game is not on chain".to_string(),
+            ))
+        }
+    }
+
     pub fn handshake_done(&self) -> bool {
         !matches!(
             self.handshake_state,

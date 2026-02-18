@@ -250,6 +250,14 @@ pub trait GameCradle {
         flags: u32,
     ) -> Result<Option<IdleResult>, Error>;
 
+    /// Enable cheating for a specific game (test support).
+    /// The next on-chain move for this game will use fake move bytes.
+    fn enable_cheating_for_game(
+        &mut self,
+        game_id: &GameID,
+        make_move: &[u8],
+    ) -> Result<bool, Error>;
+
     /// Check whether we're on chain.
     fn is_on_chain(&self) -> bool;
 
@@ -779,6 +787,14 @@ impl SynchronousGameCradle {
 }
 
 impl GameCradle for SynchronousGameCradle {
+    fn enable_cheating_for_game(
+        &mut self,
+        game_id: &GameID,
+        make_move: &[u8],
+    ) -> Result<bool, Error> {
+        self.peer.enable_cheating_for_game(game_id, make_move)
+    }
+
     fn is_on_chain(&self) -> bool {
         self.peer.is_on_chain()
     }

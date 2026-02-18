@@ -1848,6 +1848,15 @@ impl ChannelHandler {
         None
     }
 
+    pub fn enable_cheating_for_game(
+        &mut self,
+        game_id: &GameID,
+        make_move: &[u8],
+    ) -> Result<bool, Error> {
+        let game_idx = self.get_game_by_id(game_id)?;
+        Ok(self.live_games[game_idx].enable_cheating(make_move))
+    }
+
     pub fn on_chain_our_move<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,

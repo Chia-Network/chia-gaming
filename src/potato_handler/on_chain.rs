@@ -58,6 +58,15 @@ impl OnChainPotatoHandler {
         }
     }
 
+    pub fn enable_cheating_for_game(
+        &mut self,
+        game_id: &GameID,
+        make_move: &[u8],
+    ) -> Result<bool, Error> {
+        self.player_ch
+            .enable_cheating_for_game(game_id, make_move)
+    }
+
     fn no_live_games(&self) -> bool {
         self.game_map.is_empty()
             || self

@@ -612,7 +612,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         move_number < moves.len()
             && matches!(
                 &moves[move_number],
-                GameAction::Shutdown(_, _) | GameAction::WaitBlocks(_, _) | GameAction::GoOnChain(_)
+                GameAction::Shutdown(_, _) | GameAction::WaitBlocks(_, _) | GameAction::GoOnChain(_) | GameAction::EnableCheating(_, _)
             )
     };
     let has_explicit_go_on_chain = moves_input
@@ -921,6 +921,26 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 .append(&mut move_data.clone());
                             Ok(PeerMessage::Move(game_id.clone(), fake_move))
                         })?;
+                    }
+                    GameAction::EnableCheating(who, fake_move_bytes) => {
+                        assert!(
+                            !game_ids.is_empty(),
+                            "EnableCheating({who}) at move_number={move_number} but game_ids is empty"
+                        );
+                        if !cradles[*who].is_on_chain() {
+                            // Defer until the on-chain transition completes.
+                            move_number -= 1;
+                            continue;
+                        }
+                        debug!(
+                            "EnableCheating: player {who} enabling cheating with {} fake bytes",
+                            fake_move_bytes.len()
+                        );
+                        cradles[*who].enable_cheating_for_game(
+                            &game_ids[0],
+                            fake_move_bytes,
+                        )?;
+                        can_move = true;
                     }
                     GameAction::WaitBlocks(n, players) => {
                         wait_blocks = Some((*n, *players));
@@ -1410,8 +1430,35 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         },
     ));
 
-    // TODO: re-enable once on-chain slash logic is fixed (ClvmErr Raise).
-    // res.push(("sim_test_with_peer_container_piss_off_peer_slash", &|| { ... }));
+    res.push((
+        "sim_test_with_peer_container_piss_off_peer_slash",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+
+            // Play the full game off-chain, then go on-chain and cheat.
+            let mut moves = prefix_test_moves(&mut allocator).to_vec();
+            // One player goes on chain; the other follows automatically.
+            moves.push(GameAction::GoOnChain(0));
+            // Enable cheating on player 1 (Bob): the next on-chain move
+            // will use garbage bytes instead of the real handler output.
+            // This defers until Bob is actually on chain.
+            moves.push(GameAction::EnableCheating(1, vec![0xfa, 0x11]));
+            // Let both players process blocks so on-chain redo moves happen,
+            // Bob makes his cheating move, and Alice detects & slashes.
+            moves.push(GameAction::WaitBlocks(30, 0));
+            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+
+            let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
+                .expect("should finish");
+
+            let (p1_balance, p2_balance) =
+                get_balances_from_outcome(&outcome).expect("should work");
+            // Alice (player 0) should get all the money via slash because
+            // Bob (player 1) cheated.
+            assert_eq!(p1_balance, p2_balance + 200);
+        },
+    ));
 
     res.push(("test_referee_play_debug_game_alice_slash", &|| {
         let mut allocator = AllocEncoder::new();

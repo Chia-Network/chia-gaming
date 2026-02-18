@@ -167,6 +167,9 @@ mod sim_tests {
         Move(usize, ReadableMove, bool),
         /// Fake move, just calls receive on the indicated side.
         FakeMove(usize, ReadableMove, Vec<u8>),
+        /// Enable cheating: the next on-chain move for this player will use
+        /// fake move bytes instead of the real handler output.
+        EnableCheating(usize, Vec<u8>),
         /// Go on chain
         GoOnChain(usize),
         /// Wait a number of blocks
@@ -183,6 +186,9 @@ mod sim_tests {
                 GameAction::Timeout(t) => write!(formatter, "Timeout({t})"),
                 GameAction::Move(p, n, r) => write!(formatter, "Move({p},{n:?},{r})"),
                 GameAction::FakeMove(p, n, v) => write!(formatter, "FakeMove({p},{n:?},{v:?})"),
+                GameAction::EnableCheating(p, v) => {
+                    write!(formatter, "EnableCheating({p},{v:?})")
+                }
                 GameAction::GoOnChain(p) => write!(formatter, "GoOnChain({p})"),
                 GameAction::Accept(p) => write!(formatter, "Accept({p})"),
                 GameAction::WaitBlocks(n, p) => write!(formatter, "WaitBlocks({n},{p})"),
