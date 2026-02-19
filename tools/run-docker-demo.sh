@@ -1,5 +1,10 @@
 #!/bin/bash -x
 
+set -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
+
 docker kill chia-gaming-test
 pid_of_3002=$(lsof -i -n -P | grep LISTEN  | grep 3002 | head -1 | awk '{print $2}')
 
