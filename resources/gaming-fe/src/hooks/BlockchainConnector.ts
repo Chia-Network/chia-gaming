@@ -18,6 +18,8 @@ export interface BlockchainOutboundTransactionRequest {
 
 export type BlockchainOutboundAddressRequest = boolean;
 
+export type BlockchainOutboundFeeRequest = boolean;
+
 export type BlockchainOutboundBalanceRequest = boolean;
 
 export interface BlockchainOutboundRequest {
@@ -26,6 +28,7 @@ export interface BlockchainOutboundRequest {
   transaction?: BlockchainOutboundTransactionRequest;
   getAddress?: BlockchainOutboundAddressRequest;
   getBalance?: BlockchainOutboundBalanceRequest;
+  getFee?: BlockchainOutboundFeeRequest;
 }
 
 export interface BlockchainInboundReply {
@@ -34,6 +37,7 @@ export interface BlockchainInboundReply {
   transaction?: string;
   getAddress?: BlockchainInboundAddressResult;
   getBalance?: number;
+  getFee?: number;
   error?: string;
 }
 
