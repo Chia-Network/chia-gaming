@@ -41,6 +41,7 @@ const WalletConnectHeading = (_args: any) => {
   const [haveSession, setHaveSession] = useState(false);
   const [sessions, setSessions] = useState(0);
   const [recvAddress, setRecvAddress] = useState();
+  const [synced, setSynced] = useState(false);
   const [balance, setBalance] = useState<number | undefined>();
   const [haveBlock, setHaveBlock] = useState(false);
 
@@ -87,7 +88,15 @@ const WalletConnectHeading = (_args: any) => {
     haveSession: setHaveSession,
     sessions: setSessions,
     address: setRecvAddress,
+    synced: setSynced,
   };
+
+  function requestSyncStatus() {
+    blockchainConnector.getOutbound().next({
+      requestId: -3,
+      getSyncStatus: true,
+    });
+  }
 
   function requestBalance() {
     blockchainConnector.getOutbound().next({
@@ -107,6 +116,7 @@ const WalletConnectHeading = (_args: any) => {
     const subscription = walletConnectState.getObservable().subscribe({
       next: (evt: any) => {
         if (evt.stateName === 'connected') {
+          requestSyncStatus();
           toggleExpanded();
           setAlreadyConnected(true);
           console.log('doing connect real blockchain');
@@ -168,6 +178,14 @@ const WalletConnectHeading = (_args: any) => {
     // Ensure that replies go to the child frame.
     const bcSubscription = blockchainConnector.getInbound().subscribe({
       next: (evt: any) => {
+        // On any response, check the sync status
+        if (evt.getSyncStatus !== undefined) {
+          setSynced(!!evt.getSyncStatus);
+          // Keep polling while connected so the UI can flip to "Connected" once synced.
+          if (connected) {
+            setTimeout(requestSyncStatus, 5000);
+          }
+        }
         if (evt.getBalance) {
           setBalance(evt.getBalance);
           setTimeout(requestBalance, 2000);
@@ -199,6 +217,7 @@ const WalletConnectHeading = (_args: any) => {
           setHaveBlock(true);
           requestBalance();
           requestRecvAddress();
+          requestSyncStatus();
         }
         const subframe = document.getElementById('subframe');
         if (subframe) {
@@ -245,6 +264,7 @@ const WalletConnectHeading = (_args: any) => {
         });
         requestBalance();
         requestRecvAddress();
+        requestSyncStatus();
       });
   }, []);
 
@@ -442,8 +462,11 @@ const WalletConnectHeading = (_args: any) => {
               </span>
               <div>
                 <WalletBadge
-                  sessionConnected={sessionConnected}
-                  fakeAddress={fakeAddress}
+                  {...({
+                    sessionConnected,
+                    synced,
+                    fakeAddress,
+                  } as any)}
                 />
               </div>
             </div>
