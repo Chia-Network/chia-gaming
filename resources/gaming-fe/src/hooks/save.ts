@@ -1,7 +1,19 @@
+const STALE_SAVE_TIME_MS = 10 * 60 * 1000;
+
 export function getSaveList(): string[] {
   const result = localStorage.getItem('saveNames');
+  const currentTime = new Date().getTime();
   if (result) {
-    return result.split(',');
+    return result.split(',').filter((s) => {
+      const saveMillisecondDateStr = localStorage.getItem(`date-${s}`);
+      const saveMillisecondDate = saveMillisecondDateStr ? parseInt(saveMillisecondDateStr) : undefined;
+      const saveOk = !saveMillisecondDate || (saveMillisecondDate < currentTime - STALE_SAVE_TIME_MS);
+      if (!saveOk) {
+        localStorage.removeItem(`save-${s}`);
+        localStorage.removeItem(`date-${s}`);
+      }
+      return saveOk;
+    });
   }
   return [];
 }
@@ -22,10 +34,13 @@ export function saveGame(g: any): [string, any] | undefined {
   try {
     const saveList = getSaveList();
     if (saveList.length > 2) {
-      localStorage.removeItem(`save-${saveList.pop()}`);
+      const saveName = saveList.pop();
+      localStorage.removeItem(`save-${saveName}`);
+      localStorage.removeItem(`date-${saveName}`);
     }
     saveList.unshift(g.id);
     localStorage.setItem(`save-${g.id}`, JSON.stringify(g));
+    localStorage.setItem(`date-${g.id}`, new Date().getTime().toString());
     // We setSaveList last so the save is only included if everything worked.
     setSaveList(saveList);
     return undefined;
