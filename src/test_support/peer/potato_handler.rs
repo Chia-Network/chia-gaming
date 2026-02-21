@@ -199,10 +199,6 @@ impl ToLocalUI for Pipe {
     fn game_finished(&mut self, _id: &GameID, _my_share: Amount) -> Result<(), Error> {
         Ok(())
     }
-    fn game_cancelled(&mut self, _id: &GameID) -> Result<(), Error> {
-        todo!();
-    }
-
     fn shutdown_started(&mut self) -> Result<(), Error> {
         Ok(())
     }
@@ -262,7 +258,7 @@ pub fn test_handle_received_channel_puzzle_hash<R: Rng>(
             }],
         },
     )
-    .map(|effect| effect.into_iter().collect())
+    .map(|effect| effect.unwrap_or_default())
 }
 
 /// Helper for test handshake: call peer.channel_transaction_completion.
@@ -272,7 +268,7 @@ pub fn test_handle_received_unfunded_offer<R: Rng>(
     unfunded_offer: &SpendBundle,
 ) -> Result<Vec<Effect>, Error> {
     peer.channel_transaction_completion(env, unfunded_offer)
-        .map(|effect| effect.into_iter().collect())
+        .map(|effect| effect.unwrap_or_default())
 }
 
 pub fn run_move<P, R: Rng>(
@@ -383,7 +379,9 @@ where
                 let mut env = ChannelHandlerEnv::new(allocator, rng)?;
                 let channel_coin = get_channel_coin_for_peer(&peers[who])?;
                 let effects = peers[who].coin_created(&mut env, &channel_coin)?;
-                apply_effects(effects.into_iter().collect(), allocator, &mut pipes[who])?;
+                if let Some(effects) = effects {
+                    apply_effects(effects, allocator, &mut pipes[who])?;
+                }
             }
         }
     }

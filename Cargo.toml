@@ -13,7 +13,8 @@ homepage = "https://github.com/Chia-Network/chia-gaming/"
 repository = "https://github.com/Chia-Network/chia-gaming/"
 
 [features]
-sim-tests = ["dep:pyo3","dep:tokio","dep:salvo","dep:exec"]
+sim-tests = ["dep:tokio","dep:salvo","dep:exec"]
+py-bindings = ["sim-tests", "dep:pyo3"]
 used_linker = []
 
 [dependencies]

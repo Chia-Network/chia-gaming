@@ -308,6 +308,61 @@ and `outcome_referee_puzzle_hash()` and uses whichever matches.
   on-chain slash logic needs debugging. The chialisp slash validation program
   rejects the slash evidence.
 
+## ResyncMove-Induced Simulation Stalls
+
+When a game coin is spent with an `Expected` result carrying redo data,
+`handle_game_coin_spent` emits `Effect::ResyncMove`. The simulation loop
+responds by rewinding `move_number` to the last `GameAction::Move(...)` in the
+action list and setting `can_move = true`.
+
+**Stall pattern:** The rewound Move targets player X, but the on-chain state
+now expects player Y to move. `my_move_in_game` returns `false` or `None` for
+player X, the move is "put back" (`move_number -= 1`), and no other trigger
+advances `move_number`. The simulation burns through all 200 steps doing
+nothing.
+
+**How to diagnose:** Filter logs for `resync`:
+```bash
+RUST_LOG=debug cargo test --features sim-tests sim_tests -- --nocapture 2>&1 \
+  | rg "test_name" -A 5000 \
+  | rg "resync|SEND_POTATO|put move|stall"
+```
+
+**How to avoid in tests:** Ensure the going-on-chain player has no redo by
+making them the *receiver* of the last move before `GoOnChain`. See
+ARCHITECTURE.md "cached_last_action and the Redo Mechanism" for details.
+
+## Running Tests Locally (Without Docker)
+
+Tests can also be run directly with cargo:
+```bash
+RUST_LOG=info cargo test --features sim-tests sim_tests -- --nocapture
+```
+- Use `rg` (ripgrep) for filtering: pipe through `rg "pattern"` instead of `grep`.
+- A single on-chain test takes 30–60s locally; the full sim suite takes 3–8 min.
+- Each iteration of the simulation loop involves expensive CLVM evaluation, so
+  a 200-step stall can take 30–60 minutes before the assertion fires.
+
+### Always tee output to a file
+
+Test runs are expensive (minutes each). Always capture the full output so you
+can re-filter without re-running:
+
+```bash
+RUST_LOG=info cargo test --features sim-tests sim_tests -- --nocapture 2>&1 \
+  | tee /tmp/test-output.log \
+  | rg "RUNNING TEST|ok|panic|stall"
+```
+
+Then if the initial filter missed something:
+```bash
+rg "resync|SEND_POTATO" /tmp/test-output.log
+```
+
+**Never rely solely on `head` or a narrow `rg` filter without saving the full
+output.** Re-running a test suite just to try a different filter is a waste of
+5–60 minutes.
+
 ## Debugging Tips
 
 ### Process and output management

@@ -87,6 +87,15 @@ pub struct RewindResult {
     pub new_referee: Option<Rc<dyn RefereeInterface>>,
     pub transaction: Option<RefereeOnChainTransaction>,
     pub outcome_puzzle_hash: PuzzleHash,
+    /// The chronological successor of the matched ancestor (the state that
+    /// comes immediately after it in the game timeline). When a rewind lands
+    /// on a TheirTurn referee, this holds the next MyTurn referee so that an
+    /// Expected coin spend can properly advance the referee state.
+    #[serde(
+        serialize_with = "serialize_referee_option",
+        deserialize_with = "deserialize_referee_option"
+    )]
+    pub successor: Option<Rc<dyn RefereeInterface>>,
 }
 
 pub trait RefereeInterface {
@@ -524,9 +533,8 @@ impl RefereeInterface for Referee {
                 let my_outcome = self.outcome_referee_puzzle_hash(allocator)?;
                 debug!("{} my outcome {my_outcome:?}", self.is_my_turn());
 
-                if on_chain_ph == my_on_chain {
+                if on_chain_ph == my_on_chain && *ph == my_outcome {
                     debug!("repeat: my turn {:?}", self.is_my_turn());
-                    assert_eq!(*ph, my_outcome);
 
                     return Ok((
                         Some(Rc::new(self.clone())),
@@ -594,7 +602,7 @@ impl RefereeInterface for Referee {
     fn rewind(
         &self,
         allocator: &mut AllocEncoder,
-        _myself: Rc<dyn RefereeInterface>,
+        myself: Rc<dyn RefereeInterface>,
         coin: &CoinString,
         puzzle_hash: &PuzzleHash,
     ) -> Result<RewindResult, Error> {
@@ -616,6 +624,7 @@ impl RefereeInterface for Referee {
                 new_referee: None,
                 version: 1,
                 transaction: None,
+                successor: None,
             });
         }
 
@@ -627,6 +636,7 @@ impl RefereeInterface for Referee {
                 new_referee: None,
                 version: 1,
                 transaction: None,
+                successor: None,
             });
         }
 
@@ -682,7 +692,7 @@ impl RefereeInterface for Referee {
             old_end = Some(end_hash.clone());
         }
 
-        for old_referee in ancestors.iter() {
+        for (idx, old_referee) in ancestors.iter().enumerate() {
             let origin_puzzle_hash = old_referee.on_chain_referee_puzzle_hash(allocator)?;
             let destination_puzzle_hash = old_referee.outcome_referee_puzzle_hash(allocator)?;
 
@@ -699,6 +709,17 @@ impl RefereeInterface for Referee {
                 } else {
                     None
                 };
+                let successor: Option<Rc<dyn RefereeInterface>> = if idx > 0 {
+                    Some(ancestors[idx - 1].clone())
+                } else {
+                    Some(myself.clone())
+                };
+                debug!(
+                    "referee rewind: matched at idx={} successor is_my_turn={:?} state={:?}",
+                    idx,
+                    successor.as_ref().map(|s: &Rc<dyn RefereeInterface>| s.is_my_turn()),
+                    successor.as_ref().map(|s: &Rc<dyn RefereeInterface>| s.state_number()),
+                );
                 let to_return = old_referee.clone();
                 return Ok(RewindResult {
                     outcome_puzzle_hash: to_return.outcome_referee_puzzle_hash(allocator)?,
@@ -706,6 +727,7 @@ impl RefereeInterface for Referee {
                     new_referee: Some(to_return),
                     version: 1,
                     transaction,
+                    successor,
                 });
             }
         }
@@ -719,6 +741,7 @@ impl RefereeInterface for Referee {
             state_number: Some(self.state_number()),
             transaction: None,
             outcome_puzzle_hash: self.outcome_referee_puzzle_hash(allocator)?,
+            successor: None,
         })
     }
 

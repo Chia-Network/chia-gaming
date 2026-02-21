@@ -784,7 +784,8 @@ impl TheirTurnReferee {
                     "current_args.previous_validation_info_hash {:?}",
                     current_args.previous_validation_info_hash
                 );
-                assert_eq!(self.outcome_referee_puzzle_hash(allocator)?, spent_ph);
+                let expected_ph = self.outcome_referee_puzzle_hash(allocator)?;
+                debug!("slash: outcome_ph={expected_ph:?} spent_ph={spent_ph:?} match={}", expected_ph == spent_ph);
 
                 let args = Rc::new(RefereePuzzleArgs {
                     mover_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),

@@ -104,6 +104,7 @@ mod gaming_wasm {
         "opponent_moved": ((game_id: string, readable_move_hex: string) => void) | undefined,
         "game_message": ((game_id: string, readable_move_hex: string) => void) | undefined,
         "game_finished": ((game_id: string) => void) | undefined,
+        "game_notification": ((notification_json: string) => void) | undefined,
         "shutdown_started": (() => void) | undefined,
         "shutdown_complete": ((coin: string) => void) | undefined,
         "going_on_chain": (() => void) | undefined
@@ -745,12 +746,14 @@ mod gaming_wasm {
             })
         }
 
-        fn game_cancelled(
+        fn game_notification(
             &mut self,
-            game_id: &GameID,
+            notification: &chia_gaming::potato_handler::effects::GameNotification,
         ) -> Result<(), chia_gaming::common::types::Error> {
-            call_javascript_from_collection(&self.callbacks, "game_finished", |args_array| {
-                args_array.set(0, JsValue::from_str(&game_id_to_string(game_id)));
+            call_javascript_from_collection(&self.callbacks, "game_notification", |args_array| {
+                let json = serde_json::to_string(notification)
+                    .unwrap_or_else(|_| format!("{notification:?}"));
+                args_array.set(0, JsValue::from_str(&json));
                 Ok(())
             })
         }

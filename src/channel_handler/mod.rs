@@ -195,6 +195,10 @@ impl ChannelHandler {
         self.live_games.is_empty()
     }
 
+    pub fn live_game_ids(&self) -> Vec<GameID> {
+        self.live_games.iter().map(|g| g.game_id.clone()).collect()
+    }
+
     pub fn amount(&self, on_chain: bool) -> Amount {
         let allocated = self.my_allocated_balance.clone() + self.their_allocated_balance.clone();
 
@@ -1131,6 +1135,14 @@ impl ChannelHandler {
                 move_data.mover_share.clone(),
             ),
             TheirTurnResult::Slash(_) => {
+                debug!("{} slash detected, preserving cached_last_action for on-chain replay ({:?})",
+                    self.is_initial_potato(),
+                    self.cached_last_action.as_ref().map(|c| match c {
+                        CachedPotatoRegenerateLastHop::PotatoMoveHappening(d) => format!("MoveHappening(state={}, move={:?})", d.state_number, d.move_data),
+                        CachedPotatoRegenerateLastHop::PotatoAccept(_) => "Accept".to_string(),
+                        CachedPotatoRegenerateLastHop::PotatoCreatedGame(_, _, _) => "CreatedGame".to_string(),
+                    })
+                );
                 return Err(Error::StrErr(
                     "slash when off chain: go on chain".to_string(),
                 ));
@@ -1149,12 +1161,8 @@ impl ChannelHandler {
             ),
         )?;
 
-        // Needs to know their puzzle_hash_for_unroll so we can keep it to do
-        // the unroll spend.
-
-        // Check whether the unroll_puzzle_hash is right.
-        // Check whether the spend signed in the Move Result is valid by using
-        // the unroll puzzle hash that was given to us.
+        debug!("{} CLEAR_CACHE: received valid potato move, clearing cached_last_action",
+            self.is_initial_potato());
         self.cached_last_action = None;
 
         Ok(ChannelHandlerMoveResult {
@@ -1618,6 +1626,16 @@ impl ChannelHandler {
         &mut self,
         cache_update: Option<CachedPotatoRegenerateLastHop>,
     ) {
+        debug!(
+            "{} UPDATE_CACHE: state={} new={:?}",
+            self.is_initial_potato(),
+            self.current_state_number,
+            cache_update.as_ref().map(|c| match c {
+                CachedPotatoRegenerateLastHop::PotatoMoveHappening(d) => format!("MoveHappening(state={}, move={:?})", d.state_number, d.move_data),
+                CachedPotatoRegenerateLastHop::PotatoAccept(_) => "Accept".to_string(),
+                CachedPotatoRegenerateLastHop::PotatoCreatedGame(_, _, _) => "CreatedGame".to_string(),
+            })
+        );
         self.cached_last_action = cache_update;
     }
 
@@ -1788,6 +1806,8 @@ impl ChannelHandler {
                             our_turn: cached.live_game.is_my_turn(),
                             state_number: self.current_state_number,
                             accept: AcceptTransactionState::Waiting,
+                            pending_slash_amount: None,
+                            accepted: false,
                         },
                     );
                     continue;
@@ -1827,6 +1847,8 @@ impl ChannelHandler {
                             our_turn: live_game.is_my_turn(),
                             state_number: self.current_state_number,
                             accept: AcceptTransactionState::Waiting,
+                            pending_slash_amount: None,
+                            accepted: false,
                         },
                     );
                 }
@@ -1919,7 +1941,7 @@ impl ChannelHandler {
 
         Ok((
             last_puzzle_hash,
-            self.live_games[game_idx].outcome_puzzle_hash(env.allocator)?,
+            self.live_games[game_idx].current_puzzle_hash(env.allocator)?,
             self.current_state_number,
             move_result.details.clone(),
             tx,
@@ -2080,6 +2102,26 @@ impl ChannelHandler {
                             self.live_games[game_idx].get_amount(),
                         )));
                     }
+                }
+
+                // Only replay our cached move when the on-chain game coin
+                // is at the pre-move state (match_puzzle_hash).  If the coin
+                // has already advanced past it the cache is stale (e.g. the
+                // ack was lost due to a slash error on the return message).
+                let coin_matches = coin
+                    .to_parts()
+                    .map(|(_, ph, _)| ph == move_data.match_puzzle_hash)
+                    .unwrap_or(false);
+                if coin_matches && self.live_games[game_idx].is_my_turn() {
+                    debug!(
+                        "{} our turn on-chain with cached move, replaying as Move",
+                        self.is_initial_potato()
+                    );
+                    return Ok(Some(GameAction::Move(
+                        move_data.game_id.clone(),
+                        move_data.move_data.clone(),
+                        move_data.move_entropy.clone(),
+                    )));
                 }
 
                 Ok(None)

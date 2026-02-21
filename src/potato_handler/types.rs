@@ -12,8 +12,8 @@ use crate::channel_handler::types::{
 use crate::channel_handler::game_start_info;
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinString, Error, GameID, GameType, Hash, Program, ProgramRef,
-    PuzzleHash, SpendBundle, Timeout,
+    Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, Program,
+    ProgramRef, PuzzleHash, SpendBundle, Timeout,
 };
 use crate::potato_handler::effects::Effect;
 use crate::potato_handler::handshake::{HandshakeA, HandshakeB};
@@ -78,7 +78,7 @@ pub trait BootstrapTowardGame
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
         bundle: SpendBundle,
-    ) -> Result<Option<Effect>, Error>;
+    ) -> Result<Option<Vec<Effect>>, Error>;
 
     /// Gives the fully signed offer to the wallet bootstrap.
     /// Causes bob to send this spend bundle down the wire to the other peer.
@@ -103,7 +103,7 @@ pub trait BootstrapTowardGame
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
         bundle: &SpendBundle,
-    ) -> Result<Option<Effect>, Error>;
+    ) -> Result<Option<Vec<Effect>>, Error>;
 }
 
 /// Async interface implemented by Peer to receive notifications about wallet
@@ -150,7 +150,7 @@ pub trait SpendWalletReceiver
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
         coin_id: &CoinString,
-    ) -> Result<Option<Effect>, Error>;
+    ) -> Result<Option<Vec<Effect>>, Error>;
     fn coin_spent<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
@@ -225,8 +225,13 @@ pub trait ToLocalUI {
 
     fn game_start(&mut self, id: &[GameID], failed: Option<GameStartFailed>) -> Result<(), Error>;
     fn game_finished(&mut self, id: &GameID, mover_share: Amount) -> Result<(), Error>;
-    fn game_cancelled(&mut self, id: &GameID) -> Result<(), Error>;
+    fn game_notification(&mut self, _notification: &crate::potato_handler::effects::GameNotification) -> Result<(), Error> {
+        Ok(())
+    }
 
+    fn handshake_complete(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
     fn shutdown_started(&mut self) -> Result<(), Error>;
     fn shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error>;
     fn going_on_chain(&mut self, got_error: bool) -> Result<(), Error>;
@@ -317,6 +322,7 @@ pub enum PeerMessage {
     Message(GameID, Vec<u8>),
     Accept(GameID, Amount, PotatoSignatures),
     Shutdown(Aggsig, ProgramRef),
+    ShutdownComplete(CoinSpend),
     RequestPotato(()),
     StartGames(PotatoSignatures, Vec<GSI>),
 }

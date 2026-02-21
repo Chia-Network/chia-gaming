@@ -3,31 +3,27 @@ pub mod tests;
 
 use std::backtrace::Backtrace;
 use std::cell::RefCell;
+use std::collections::HashMap;
 
+use chia_bls::signature::aggregate_verify;
 use clvm_traits::{ClvmEncoder, ToClvm};
-use clvmr::allocator::NodePtr;
-
-use crate::utils::map_m;
-
-use indoc::indoc;
 use log::debug;
 
-use pyo3::exceptions::PyBaseException;
-use pyo3::ffi::c_str;
-use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyBytes, PyNone, PyTuple};
-
-use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN};
+use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
+use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
     agg_sig_me_message, sign_agg_sig_me, solution_for_conditions, standard_solution_partial,
     ChiaIdentity,
 };
+use crate::common::types::CoinCondition;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinID, CoinSpend, CoinString, ErrToError, Error,
-    GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, Spend,
-    ToQuotedProgram,
+    Aggsig, AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Error, GetCoinStringParts, Hash,
+    IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, ToQuotedProgram,
 };
 
+use crate::utils::map_m;
+
+#[cfg(feature = "py-bindings")]
 use crate::simulator::service::service_main;
 use crate::simulator::tests::potato_handler_sim::test_funs as potato_handler_sim_tests;
 use crate::simulator::tests::simenv::test_funs as simenv_tests;
@@ -42,163 +38,293 @@ pub struct IncludeTransactionResult {
     pub diagnostic: String,
 }
 
-// Allow simulator from rust.
+const POOL_REWARD_AMOUNT: u64 = 1_750_000_000_000;
+const FARMER_REWARD_AMOUNT: u64 = 250_000_000_000;
+
+#[derive(Debug, Clone)]
+struct CoinRecord {
+    coin: CoinString,
+    puzzle_hash: PuzzleHash,
+    amount: Amount,
+    created_height: u32,
+    spent_height: Option<u32>,
+    coinbase: bool,
+}
+
+struct PendingSpend {
+    removals: Vec<CoinID>,
+    additions: Vec<(CoinID, PuzzleHash, Amount)>,
+    puzzle_solutions: Vec<(CoinID, Program, Program)>,
+}
+
+struct SimulatorState {
+    coins: HashMap<CoinID, CoinRecord>,
+    mempool: Vec<PendingSpend>,
+    spent_puzzle_solutions: HashMap<CoinID, (Program, Program)>,
+    height: u32,
+}
+
 pub struct Simulator {
-    evloop: PyObject,
-    sim: PyObject,
-    client: PyObject,
-    guard: PyObject,
-    make_spend: PyObject,
-    chia_rs_coin: PyObject,
-    program: PyObject,
-    spend_bundle: PyObject,
-    g2_element: PyObject,
-    coin_as_list: PyObject,
-    height: RefCell<usize>,
+    state: RefCell<SimulatorState>,
 }
 
-impl ErrToError for PyErr {
-    fn into_gen(self) -> Error {
-        Error::StrErr(format!("{self:?}"))
-    }
-}
-
-impl From<Error> for pyo3::PyErr {
-    fn from(other: Error) -> Self {
-        Python::with_gil(|_py| -> pyo3::PyErr { PyBaseException::new_err(format!("{other:?}")) })
-    }
-}
-
-impl Drop for Simulator {
-    fn drop(&mut self) {
-        Python::with_gil(|py| -> PyResult<_> {
-            let none: Py<PyAny> = PyNone::get(py).to_owned().unbind().into();
-            let exit_task = self.guard.call_method1(
-                py,
-                "__aexit__",
-                (none.clone_ref(py), none.clone_ref(py), none.clone_ref(py)),
-            )?;
-            self.evloop
-                .call_method1(py, "run_until_complete", (exit_task,))?;
-            self.evloop.call_method0(py, "stop")?;
-            self.evloop.call_method0(py, "close")?;
-
-            self.evloop = none.clone_ref(py);
-            self.sim = none.clone_ref(py);
-            self.client = none.clone_ref(py);
-            self.guard = none.clone_ref(py);
-            self.make_spend = none.clone_ref(py);
-            self.chia_rs_coin = none.clone_ref(py);
-            self.program = none.clone_ref(py);
-            self.spend_bundle = none.clone_ref(py);
-            self.g2_element = none.clone_ref(py);
-            self.coin_as_list = none.clone_ref(py);
-            Ok(())
-        })
-        .expect("should shutdown");
-    }
-}
-
-fn extract_code(e: &str) -> Option<u32> {
-    if e == "None" {
-        return None;
+impl SimulatorState {
+    fn new() -> Self {
+        SimulatorState {
+            coins: HashMap::new(),
+            mempool: Vec::new(),
+            spent_puzzle_solutions: HashMap::new(),
+            height: 0,
+        }
     }
 
-    if let Some(p) = e.chars().position(|c| c == ':') {
-        return Some(
-            e[(p + 2)..(e.len() - 1)]
-                .parse::<u32>()
-                .expect("should parse"),
+    fn add_coin(&mut self, parent_id: &CoinID, puzzle_hash: &PuzzleHash, amount: &Amount, coinbase: bool) {
+        let coin = CoinString::from_parts(parent_id, puzzle_hash, amount);
+        let coin_id = coin.to_coin_id();
+        self.coins.insert(
+            coin_id,
+            CoinRecord {
+                coin,
+                puzzle_hash: puzzle_hash.clone(),
+                amount: amount.clone(),
+                created_height: self.height,
+                spent_height: None,
+                coinbase,
+            },
         );
     }
 
-    panic!("could not parse code");
-}
+    fn reward_parent_id(prefix: &[u8], height: u32) -> CoinID {
+        let h = Sha256Input::Array(vec![
+            Sha256Input::Bytes(prefix),
+            Sha256Input::Bytes(&height.to_be_bytes()),
+        ])
+        .hash();
+        CoinID::new(h)
+    }
 
-fn to_spend_result(py: Python<'_>, spend_res: PyObject) -> PyResult<IncludeTransactionResult> {
-    let (inclusion_status, err): (PyObject, PyObject) = spend_res.extract(py)?;
-    let status: u32 = inclusion_status.extract(py)?;
-    let e: String = err.call_method0(py, "__repr__")?.extract(py)?;
-    Ok(IncludeTransactionResult {
-        code: status,
-        e: extract_code(&e),
-        diagnostic: e,
-    })
+    fn farm_block_inner(&mut self, puzzle_hash: &PuzzleHash) {
+        let next_height = if self.coins.is_empty() && self.height == 0 {
+            0
+        } else {
+            self.height + 1
+        };
+
+        let pool_parent = Self::reward_parent_id(b"pool_reward", next_height);
+        let farmer_parent = Self::reward_parent_id(b"farmer_reward", next_height);
+
+        self.add_coin(&pool_parent, puzzle_hash, &Amount::new(POOL_REWARD_AMOUNT), true);
+        self.add_coin(&farmer_parent, puzzle_hash, &Amount::new(FARMER_REWARD_AMOUNT), true);
+
+        let pending: Vec<PendingSpend> = self.mempool.drain(..).collect();
+        for spend in pending {
+            for removal in &spend.removals {
+                if let Some(record) = self.coins.get_mut(removal) {
+                    record.spent_height = Some(next_height);
+                }
+            }
+            for (parent_id, ph, amt) in &spend.additions {
+                let coin = CoinString::from_parts(parent_id, ph, amt);
+                let coin_id = coin.to_coin_id();
+                self.coins.insert(
+                    coin_id,
+                    CoinRecord {
+                        coin,
+                        puzzle_hash: ph.clone(),
+                        amount: amt.clone(),
+                        created_height: next_height,
+                        spent_height: None,
+                        coinbase: false,
+                    },
+                );
+            }
+            for (coin_id, puzzle, solution) in spend.puzzle_solutions {
+                self.spent_puzzle_solutions.insert(coin_id, (puzzle, solution));
+            }
+        }
+
+        self.height = next_height;
+    }
 }
 
 impl Default for Simulator {
     fn default() -> Self {
-        // https://github.com/PyO3/pyo3/issues/1741
-        #[cfg(target_os = "macos")]
-        if let Ok(venv) = std::env::var("VIRTUAL_ENV") {
-            Python::with_gil(|py| -> PyResult<_> {
-                let version_info = py.version_info();
-                let sys = py.import("sys").unwrap();
-                let sys_path = sys.getattr("path").unwrap();
-                sys_path
-                    .call_method1(
-                        "insert",
-                        (
-                            0,
-                            format!(
-                                "{}/lib/python{}.{}/site-packages",
-                                venv, version_info.major, version_info.minor
-                            ),
-                        ),
-                    )
-                    .unwrap();
-                Ok(())
-            })
-            .unwrap();
+        let mut state = SimulatorState::new();
+        let zero_ph = PuzzleHash::from_hash(Hash::from_slice(&[0u8; 32]));
+        state.farm_block_inner(&zero_ph);
+        Simulator {
+            state: RefCell::new(state),
         }
-
-        Python::with_gil(|py| -> PyResult<_> {
-            let module = PyModule::from_code(
-                py,
-                c_str!(indoc! {"
-               import asyncio
-               from chia.types.coin_spend import make_spend
-               from chia_rs import Coin, G2Element
-               from chia.types.blockchain_format.program import Program
-               from chia.wallet.wallet_spend_bundle import WalletSpendBundle as SpendBundle
-               from chia.types.blockchain_format.coin import coin_as_list
-               from chia._tests.util.spend_sim import sim_and_client
-
-               def start():
-                   evloop = asyncio.new_event_loop()
-                   sac_gen = sim_and_client()
-                   (sim, client) = evloop.run_until_complete(sac_gen.__aenter__())
-                   return (evloop, sim, client, sac_gen, make_spend, Coin, Program, SpendBundle, G2Element, coin_as_list)
-            "}),
-                c_str!("tmod.py"),
-                c_str!("tmod"),
-            )?;
-            let evloop = module.call_method0("start")?;
-            Ok(Simulator {
-                evloop: evloop.get_item(0)?.extract()?,
-                sim: evloop.get_item(1)?.extract()?,
-                client: evloop.get_item(2)?.extract()?,
-                guard: evloop.get_item(3)?.extract()?,
-                make_spend: evloop.get_item(4)?.extract()?,
-                chia_rs_coin: evloop.get_item(5)?.extract()?,
-                program: evloop.get_item(6)?.extract()?,
-                spend_bundle: evloop.get_item(7)?.extract()?,
-                g2_element: evloop.get_item(8)?.extract()?,
-                coin_as_list: evloop.get_item(9)?.extract()?,
-                height: RefCell::new(0),
-            })
-        })
-        .unwrap_or_else(|err| {
-            Python::with_gil(|py| {
-                err.print(py);
-            });
-            panic!("Simulator initialization failed: {err}");
-        })
     }
 }
 
 impl Simulator {
-    /// Given a coin in our inventory, spend the coin to the target puzzle hash.
+    pub fn farm_block(&self, puzzle_hash: &PuzzleHash) {
+        self.state.borrow_mut().farm_block_inner(puzzle_hash);
+    }
+
+    pub fn get_current_height(&self) -> usize {
+        self.state.borrow().height as usize
+    }
+
+    pub fn get_all_coins(&self) -> Result<Vec<CoinString>, Error> {
+        let state = self.state.borrow();
+        Ok(state
+            .coins
+            .values()
+            .filter(|r| r.spent_height.is_none() && !r.coinbase)
+            .map(|r| r.coin.clone())
+            .collect())
+    }
+
+    pub fn get_my_coins(&self, puzzle_hash: &PuzzleHash) -> Result<Vec<CoinString>, Error> {
+        let state = self.state.borrow();
+        Ok(state
+            .coins
+            .values()
+            .filter(|r| r.spent_height.is_none() && &r.puzzle_hash == puzzle_hash)
+            .map(|r| r.coin.clone())
+            .collect())
+    }
+
+    pub fn get_puzzle_and_solution(
+        &self,
+        coin_id: &CoinID,
+    ) -> Result<Option<(Program, Program)>, Error> {
+        let state = self.state.borrow();
+        if let Some(record) = state.coins.get(coin_id) {
+            if record.spent_height.is_none() {
+                return Ok(None);
+            }
+        }
+        Ok(state
+            .spent_puzzle_solutions
+            .get(coin_id)
+            .cloned())
+    }
+
+    pub fn push_tx(
+        &self,
+        allocator: &mut AllocEncoder,
+        txs: &[CoinSpend],
+    ) -> Result<IncludeTransactionResult, Error> {
+        if txs.is_empty() {
+            return Ok(IncludeTransactionResult {
+                code: 3,
+                e: Some(1),
+                diagnostic: "Empty spend bundle".to_string(),
+            });
+        }
+
+        let state = self.state.borrow();
+        let mut removals = Vec::new();
+        let mut additions = Vec::new();
+        let mut puzzle_solutions = Vec::new();
+        let mut agg_sig_pairs: Vec<(chia_bls::PublicKey, Vec<u8>)> = Vec::new();
+        let mut aggregate_signature = Aggsig::default();
+
+        for (i, tx) in txs.iter().enumerate() {
+            let coin_id = tx.coin.to_coin_id();
+
+            let record = match state.coins.get(&coin_id) {
+                Some(r) => r,
+                None => {
+                    return Ok(IncludeTransactionResult {
+                        code: 3,
+                        e: Some(5),
+                        diagnostic: format!("Coin not found: {:?}", coin_id),
+                    });
+                }
+            };
+
+            if record.spent_height.is_some() {
+                return Ok(IncludeTransactionResult {
+                    code: 3,
+                    e: Some(5),
+                    diagnostic: format!("Coin already spent: {:?}", coin_id),
+                });
+            }
+
+            let puzzle_program: Program = (*tx.bundle.puzzle.to_program()).clone();
+            let solution_bytes = tx.bundle.solution.to_clvm(allocator).into_gen()?;
+            let solution_program =
+                Program::from_nodeptr(allocator, solution_bytes)?;
+
+            let conditions = match CoinCondition::from_puzzle_and_solution(
+                allocator,
+                &puzzle_program,
+                &solution_program,
+            ) {
+                Ok(c) => c,
+                Err(e) => {
+                    return Ok(IncludeTransactionResult {
+                        code: 3,
+                        e: Some(7),
+                        diagnostic: format!("CLVM execution error for coin {}: {:?}", i, e),
+                    });
+                }
+            };
+
+            for cond in &conditions {
+                match cond {
+                    CoinCondition::CreateCoin(ph, amt) => {
+                        additions.push((coin_id.clone(), ph.clone(), amt.clone()));
+                    }
+                    CoinCondition::AggSigMe(pk, msg) => {
+                        let full_msg = agg_sig_me_message(
+                            msg,
+                            &coin_id,
+                            &Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA),
+                        );
+                        agg_sig_pairs.push((pk.to_bls(), full_msg));
+                    }
+                    _ => {}
+                }
+            }
+
+            removals.push(coin_id.clone());
+            puzzle_solutions.push((
+                coin_id,
+                puzzle_program,
+                solution_program,
+            ));
+
+            if i == 0 {
+                aggregate_signature = tx.bundle.signature.clone();
+            } else {
+                aggregate_signature += tx.bundle.signature.clone();
+            }
+        }
+
+        drop(state);
+
+        if !agg_sig_pairs.is_empty() {
+            let pairs: Vec<(&chia_bls::PublicKey, &[u8])> = agg_sig_pairs
+                .iter()
+                .map(|(pk, msg)| (pk, msg.as_slice()))
+                .collect();
+            if !aggregate_verify(&aggregate_signature.to_bls(), pairs) {
+                return Ok(IncludeTransactionResult {
+                    code: 3,
+                    e: Some(10),
+                    diagnostic: "Aggregate signature verification failed".to_string(),
+                });
+            }
+        }
+
+        self.state.borrow_mut().mempool.push(PendingSpend {
+            removals,
+            additions,
+            puzzle_solutions,
+        });
+
+        Ok(IncludeTransactionResult {
+            code: 1,
+            e: None,
+            diagnostic: String::new(),
+        })
+    }
+
     pub fn spend_coin_to_puzzle_hash(
         &self,
         allocator: &mut AllocEncoder,
@@ -256,7 +382,7 @@ impl Simulator {
             },
         };
 
-        let status = self.push_tx(allocator, &[specific]).expect("should spend");
+        let status = self.push_tx(allocator, &[specific])?;
         if status.code == 3 {
             return Err(Error::StrErr("failed to spend coin".to_string()));
         }
@@ -267,239 +393,6 @@ impl Simulator {
             .collect())
     }
 
-    fn async_call<'a>(
-        &self,
-        py: Python<'a>,
-        name: &str,
-        args: Bound<'_, PyTuple>,
-    ) -> PyResult<PyObject> {
-        let coro = self.sim.call_method1(py, name, args)?;
-        let task = self
-            .evloop
-            .call_method1(py, "create_task", (coro.clone_ref(py),))?;
-        self.evloop
-            .call_method1(py, "run_until_complete", (task.clone_ref(py),))?;
-        let res = task.call_method0(py, "result")?;
-        Ok(res)
-    }
-
-    fn async_client<'a>(
-        &self,
-        py: Python<'a>,
-        name: &str,
-        args: Bound<'_, PyTuple>,
-    ) -> PyResult<PyObject> {
-        let task = self.client.call_method1(py, name, args)?;
-        let res = self
-            .evloop
-            .call_method1(py, "run_until_complete", (task,))?;
-        Ok(res)
-    }
-
-    pub fn farm_block(&self, puzzle_hash: &PuzzleHash) {
-        Python::with_gil(|py| -> PyResult<()> {
-            let puzzle_hash_bytes = PyBytes::new(py, puzzle_hash.bytes());
-            self.async_call(py, "farm_block", PyTuple::new(py, vec![puzzle_hash_bytes])?)?;
-            let old_height = *self.height.borrow();
-            self.height.replace(old_height + 1);
-            Ok(())
-        })
-        .expect("should farm")
-    }
-
-    pub fn get_current_height(&self) -> usize {
-        *self.height.borrow()
-    }
-
-    fn convert_coin_list_to_coin_strings(
-        &self,
-        _py: Python<'_>,
-        coins: &PyObject,
-    ) -> PyResult<Vec<CoinString>> {
-        Python::with_gil(|py| -> PyResult<_> {
-            let items: Vec<PyObject> = coins.extract(py)?;
-            let mut result_coins = Vec::new();
-            for i in items.iter() {
-                let coin_of_item: PyObject = if let Ok(res) = i.getattr(py, "coin") {
-                    res.extract(py)?
-                } else {
-                    i.extract(py)?
-                };
-                let as_list: Vec<PyObject> =
-                    self.coin_as_list.call1(py, (coin_of_item,))?.extract(py)?;
-                let parent_coin_info: &Bound<'_, PyBytes> = as_list[0].downcast_bound(py)?;
-                let parent_coin_info_slice: &[u8] = parent_coin_info.extract()?;
-                let puzzle_hash: &Bound<'_, PyBytes> = as_list[1].downcast_bound(py)?;
-                let puzzle_hash_slice: &[u8] = puzzle_hash.extract()?;
-                let amount: u64 = as_list[2].extract(py)?;
-                let parent_coin_hash = Hash::from_slice(parent_coin_info_slice);
-                let puzzle_hash = Hash::from_slice(puzzle_hash_slice);
-                let new_coin = CoinString::from_parts(
-                    &CoinID::new(parent_coin_hash),
-                    &PuzzleHash::from_hash(puzzle_hash),
-                    &Amount::new(amount),
-                );
-                result_coins.push(new_coin);
-            }
-            Ok(result_coins)
-        })
-    }
-
-    pub fn get_all_coins(&self) -> PyResult<Vec<CoinString>> {
-        Python::with_gil(|py| -> PyResult<_> {
-            let elements: Vec<Bound<'_, PyAny>> = Vec::new();
-            let coins = self.async_call(py, "all_non_reward_coins", PyTuple::new(py, elements)?)?;
-            self.convert_coin_list_to_coin_strings(py, &coins)
-        })
-    }
-
-    pub fn get_my_coins(&self, puzzle_hash: &PuzzleHash) -> PyResult<Vec<CoinString>> {
-        Python::with_gil(|py| -> PyResult<_> {
-            let hash_bytes = PyBytes::new(py, puzzle_hash.bytes());
-            let hash_bytes_object: Bound<'_, PyBytes> = hash_bytes.into_pyobject(py)?;
-            let false_object: Bound<'_, PyBool> = false.into_pyobject(py)?.to_owned();
-            let args_any: Vec<Bound<'_, PyAny>> =
-                vec![hash_bytes_object.into_any(), false_object.into_any()];
-            let coins = self.async_client(
-                py,
-                "get_coin_records_by_puzzle_hash",
-                PyTuple::new(py, args_any)?,
-            )?;
-            self.convert_coin_list_to_coin_strings(py, &coins)
-        })
-    }
-
-    pub fn get_puzzle_and_solution(
-        &self,
-        coin_id: &CoinID,
-    ) -> PyResult<Option<(Program, Program)>> {
-        Python::with_gil(|py| -> PyResult<_> {
-            let hash_bytes = PyBytes::new(py, coin_id.bytes());
-            let hash_bytes_object: Bound<'_, PyBytes> = hash_bytes.into_pyobject(py)?;
-            let record = self.async_client(
-                py,
-                "get_coin_record_by_name",
-                PyTuple::new(py, vec![hash_bytes_object.clone()])?,
-            )?;
-            let height_of_spend =
-                if let Ok(height_of_spend) = record.getattr(py, "spent_block_index") {
-                    height_of_spend
-                } else {
-                    return Ok(None);
-                };
-            let height_of_spend: Bound<'_, PyAny> = height_of_spend.into_pyobject(py)?;
-            let args_vec: Vec<Bound<'_, PyAny>> =
-                vec![hash_bytes_object.into_any(), height_of_spend];
-            let puzzle_and_solution =
-                self.async_client(py, "get_puzzle_and_solution", PyTuple::new(py, args_vec)?)?;
-            let puzzle_reveal: PyObject = puzzle_and_solution.getattr(py, "puzzle_reveal")?;
-            let solution: PyObject = puzzle_and_solution.getattr(py, "solution")?;
-
-            let puzzle_str: Vec<u8> = puzzle_reveal.call_method0(py, "__bytes__")?.extract(py)?;
-            let solution_str: Vec<u8> = solution.call_method0(py, "__bytes__")?.extract(py)?;
-            Ok(Some((
-                Program::from_bytes(&puzzle_str),
-                Program::from_bytes(&solution_str),
-            )))
-        })
-    }
-
-    pub fn g2_element(&self, aggsig: &Aggsig) -> PyResult<PyObject> {
-        Python::with_gil(|py| -> PyResult<_> {
-            let bytes = PyBytes::new(py, &aggsig.bytes());
-            self.g2_element
-                .call_method1(py, "from_bytes_unchecked", (bytes,))
-        })
-    }
-
-    pub fn make_coin(&self, coin_string: &CoinString) -> PyResult<PyObject> {
-        let (parent_id, puzzle_hash, amount) = coin_string.get_coin_string_parts()?;
-
-        Python::with_gil(|py| -> PyResult<_> {
-            let parent_parent_coin = PyBytes::new(py, parent_id.bytes());
-            let puzzle_hash_data = PyBytes::new(py, puzzle_hash.bytes());
-            let amt: u64 = amount.into();
-            self.chia_rs_coin
-                .call1(py, (parent_parent_coin, puzzle_hash_data, amt))
-        })
-    }
-
-    pub fn hex_to_program(&self, hex: &str) -> PyResult<PyObject> {
-        Python::with_gil(|py| -> PyResult<_> { self.program.call_method1(py, "fromhex", (hex,)) })
-    }
-
-    pub fn make_coin_spend(
-        &self,
-        py: Python<'_>,
-        allocator: &mut AllocEncoder,
-        parent_coin: &CoinString,
-        puzzle_reveal: Puzzle,
-        solution: NodePtr,
-    ) -> PyResult<PyObject> {
-        let coin = self.make_coin(parent_coin)?;
-        let puzzle_hex = puzzle_reveal.to_hex();
-        let puzzle_program = self.hex_to_program(&puzzle_hex)?;
-        let solution_hex = Node(solution)
-            .to_hex(allocator)
-            .map_err(|_| PyBaseException::new_err("failed hex conversion"))?;
-        let solution_program = self
-            .hex_to_program(&solution_hex)
-            .map_err(|_| PyBaseException::new_err("failed hex conversion"))?;
-        self.make_spend
-            .call1(py, (coin, puzzle_program, solution_program))
-    }
-
-    pub fn make_spend_bundle(
-        &self,
-        allocator: &mut AllocEncoder,
-        txs: &[CoinSpend],
-    ) -> PyResult<PyObject> {
-        Python::with_gil(|py| {
-            let mut spends = Vec::new();
-            if txs.is_empty() {
-                return Err(PyBaseException::new_err("some type error"));
-            }
-
-            let mut signature = txs[0].bundle.signature.clone();
-            for (i, tx) in txs.iter().enumerate() {
-                let spend_args = tx
-                    .bundle
-                    .solution
-                    .to_clvm(allocator)
-                    .map_err(|e| PyBaseException::new_err(format!("{e:?}")))?;
-                let spend = self.make_coin_spend(
-                    py,
-                    allocator,
-                    &tx.coin,
-                    tx.bundle.puzzle.clone(),
-                    spend_args,
-                )?;
-                spends.push(spend);
-                if i > 0 {
-                    signature += tx.bundle.signature.clone();
-                }
-            }
-            let py_signature = self.g2_element(&signature)?;
-            self.spend_bundle.call1(py, (spends, py_signature))
-        })
-    }
-
-    pub fn push_tx(
-        &self,
-        allocator: &mut AllocEncoder,
-        txs: &[CoinSpend],
-    ) -> PyResult<IncludeTransactionResult> {
-        let spend_bundle = self.make_spend_bundle(allocator, txs)?;
-        Python::with_gil(|py| {
-            let spend_res: PyObject = self
-                .async_client(py, "push_tx", PyTuple::new(py, vec![spend_bundle])?)?
-                .extract(py)?;
-            to_spend_result(py, spend_res)
-        })
-    }
-
-    /// Create a coin belonging to identity_target which currently belongs
-    /// to identity_source.  Return change to identity_source.
     pub fn transfer_coin_amount(
         &self,
         allocator: &mut AllocEncoder,
@@ -551,14 +444,13 @@ impl Simulator {
             },
             coin: source_coin.clone(),
         };
-        let included = self.push_tx(allocator, &[tx]).into_gen()?;
+        let included = self.push_tx(allocator, &[tx])?;
         if included.code != 1 {
             return Err(Error::StrErr(format!("failed to spend: {included:?}")));
         }
         Ok((first_coin, second_coin))
     }
 
-    /// Combine coins, spending to a specific puzzle hash
     pub fn combine_coins(
         &self,
         allocator: &mut AllocEncoder,
@@ -605,7 +497,7 @@ impl Simulator {
             });
         }
 
-        let included = self.push_tx(allocator, &spends).into_gen()?;
+        let included = self.push_tx(allocator, &spends)?;
         if included.code != 1 {
             return Err(Error::StrErr(format!("failed to spend: {included:?}")));
         }
@@ -618,9 +510,7 @@ impl Simulator {
     }
 }
 
-#[pyfunction]
-#[pyo3(signature = (choices = Vec::new()))]
-fn run_simulation_tests(choices: Vec<String>) {
+pub fn run_simulation_tests(choices: Vec<String>) {
     std::panic::set_hook(Box::new(|panic_info| {
         if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
             eprintln!("panic payload: {s}");
@@ -629,7 +519,7 @@ fn run_simulation_tests(choices: Vec<String>) {
         } else {
             eprintln!("panic payload: <non-string>");
         }
-        let trace = Backtrace::capture();
+        let trace = Backtrace::force_capture();
         eprintln!("{trace}");
     }));
     if let Err(e) = std::panic::catch_unwind(|| {
@@ -659,9 +549,36 @@ fn run_simulation_tests(choices: Vec<String>) {
     }
 }
 
-#[pymodule]
-fn chia_gaming(_py: Python, m: Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(run_simulation_tests, &m)?)?;
-    m.add_function(wrap_pyfunction!(service_main, &m)?)?;
-    Ok(())
+#[cfg(feature = "py-bindings")]
+mod python_bindings {
+    use super::*;
+    use pyo3::prelude::*;
+
+    #[pyfunction]
+    #[pyo3(signature = (choices = Vec::new()))]
+    fn run_simulation_tests_py(choices: Vec<String>) {
+        super::run_simulation_tests(choices);
+    }
+
+    #[pyfunction]
+    fn service_main_py() {
+        service_main();
+    }
+
+    #[pymodule]
+    pub fn chia_gaming(_py: Python, m: Bound<'_, PyModule>) -> PyResult<()> {
+        m.add_function(wrap_pyfunction!(run_simulation_tests_py, &m)?)?;
+        m.add_function(wrap_pyfunction!(service_main_py, &m)?)?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn sim_tests() {
+        run_simulation_tests(Vec::new());
+    }
 }

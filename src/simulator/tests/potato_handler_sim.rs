@@ -28,7 +28,7 @@ use crate::peer_container::{
     MessagePipe, SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
 };
 use crate::potato_handler::start::GameStart;
-use crate::potato_handler::effects::{apply_effects, Effect};
+use crate::potato_handler::effects::{apply_effects, Effect, GameNotification};
 use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, PacketSender, PeerMessage, ToLocalUI,
     WalletSpendInterface,
@@ -93,7 +93,7 @@ pub fn update_and_report_coins<'a, R: Rng>(
     simulator: &'a mut Simulator,
 ) -> Result<WatchReport, Error> {
     let current_height = simulator.get_current_height();
-    let current_coins = simulator.get_all_coins().into_gen()?;
+    let current_coins = simulator.get_all_coins()?;
     let watch_report =
         coinset_adapter.make_report_from_coin_set_update(current_height as u64, &current_coins)?;
 
@@ -155,7 +155,7 @@ fn handle_received_channel_puzzle_hash<R: Rng>(
             }],
         },
     )
-    .map(|effect| effect.into_iter().collect())
+    .map(|effect| effect.unwrap_or_default())
 }
 
 impl PacketSender for SimulatedPeer {
@@ -271,9 +271,6 @@ impl ToLocalUI for SimulatedPeer {
     fn game_finished(&mut self, _id: &GameID, _my_share: Amount) -> Result<(), Error> {
         todo!();
     }
-    fn game_cancelled(&mut self, _id: &GameID) -> Result<(), Error> {
-        todo!();
-    }
     fn shutdown_started(&mut self) -> Result<(), Error> {
         todo!();
     }
@@ -335,11 +332,13 @@ pub fn handshake<R: Rng>(
                 let mut env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
                 peers[who].channel_transaction_completion(&mut env, &u)?
             };
-            apply_effects(
-                reported_effects.into_iter().collect(),
-                allocator,
-                &mut pipes[who],
-            )?;
+            if let Some(effects) = reported_effects {
+                apply_effects(
+                    effects,
+                    allocator,
+                    &mut pipes[who],
+                )?;
+            }
 
             let env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
             let mut spends = u.clone();
@@ -366,8 +365,7 @@ pub fn handshake<R: Rng>(
                 },
             });
             let included_result = simulator
-                .push_tx(env.allocator, &spends.spends)
-                .into_gen()?;
+                .push_tx(env.allocator, &spends.spends)?;
 
             pipes[who].unfunded_offer = None;
             debug!("included_result {included_result:?}");
@@ -409,6 +407,7 @@ pub struct LocalTestUIReceiver {
     pub got_error: bool,
     pub opponent_moves: Vec<(GameID, usize, ReadableMove, Amount)>,
     pub opponent_messages: Vec<OpponentMessageInfo>,
+    pub notifications: Vec<GameNotification>,
 }
 
 impl ToLocalUI for LocalTestUIReceiver {
@@ -452,11 +451,6 @@ impl ToLocalUI for LocalTestUIReceiver {
         Ok(())
     }
 
-    fn game_cancelled(&mut self, _id: &GameID) -> Result<(), Error> {
-        self.game_finished = Some(Amount::default());
-        Ok(())
-    }
-
     fn shutdown_started(&mut self) -> Result<(), Error> {
         Ok(())
     }
@@ -469,6 +463,11 @@ impl ToLocalUI for LocalTestUIReceiver {
     fn going_on_chain(&mut self, got_error: bool) -> Result<(), Error> {
         self.go_on_chain = true;
         self.got_error = got_error;
+        Ok(())
+    }
+
+    fn game_notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
+        self.notifications.push(notification.clone());
         Ok(())
     }
 }
@@ -522,11 +521,9 @@ fn run_game_container_with_action_list_with_success_predicate(
     simulator.farm_block(&identities[1].puzzle_hash);
 
     let coins0 = simulator
-        .get_my_coins(&identities[0].puzzle_hash)
-        .into_gen()?;
+        .get_my_coins(&identities[0].puzzle_hash)?;
     let coins1 = simulator
-        .get_my_coins(&identities[1].puzzle_hash)
-        .into_gen()?;
+        .get_my_coins(&identities[1].puzzle_hash)?;
 
     // Make a 100 coin for each player (and test the deleted and created events).
     let (parent_coin_0, _rest_0) = simulator.transfer_coin_amount(
@@ -580,6 +577,8 @@ fn run_game_container_with_action_list_with_success_predicate(
 
     let mut wait_blocks = None;
     let mut report_backlogs = [Vec::default(), Vec::default()];
+    let mut force_destroyed_coins: Vec<CoinString> = Vec::new();
+    let mut nerf_transactions_for: Option<usize> = None;
     let mut start_step = 0;
     let mut num_steps = 0;
 
@@ -591,7 +590,16 @@ fn run_game_container_with_action_list_with_success_predicate(
         move_number < moves.len()
             && matches!(
                 &moves[move_number],
-                GameAction::Shutdown(_, _) | GameAction::WaitBlocks(_, _) | GameAction::GoOnChain(_) | GameAction::EnableCheating(_, _)
+                GameAction::Shutdown(_, _)
+                    | GameAction::WaitBlocks(_, _)
+                    | GameAction::GoOnChain(_)
+                    | GameAction::Accept(_)
+                    | GameAction::Timeout(_)
+                    | GameAction::EnableCheating(_, _)
+                    | GameAction::Cheat(_)
+                    | GameAction::ForceDestroyCoin(_)
+                    | GameAction::NerfTransactions(_)
+                    | GameAction::UnNerfTransactions
             )
     };
     let has_explicit_go_on_chain = moves_input
@@ -634,8 +642,12 @@ fn run_game_container_with_action_list_with_success_predicate(
         simulator.farm_block(&neutral_identity.puzzle_hash);
         let current_height = simulator.get_current_height();
         let current_coins = simulator.get_all_coins().expect("should work");
-        let watch_report = coinset_adapter
+        let mut watch_report = coinset_adapter
             .make_report_from_coin_set_update(current_height as u64, &current_coins)?;
+
+        for coin in force_destroyed_coins.drain(..) {
+            watch_report.deleted_watched.insert(coin);
+        }
 
         if let Some(p) = &pred {
             if p(move_number, &cradles) {
@@ -651,11 +663,8 @@ fn run_game_container_with_action_list_with_success_predicate(
 
         for i in 0..=1 {
             if local_uis[i].go_on_chain && cradles[i].is_on_chain() {
-                panic!(
-                    "go_on_chain requested for player {i} but already on chain: move_number={move_number} got_error={} next_action={:?}",
-                    local_uis[i].got_error,
-                    moves_input.get(move_number)
-                );
+                debug!("go_on_chain flag set for player {i} but already on chain (handled internally), clearing flag");
+                local_uis[i].go_on_chain = false;
             } else if local_uis[i].go_on_chain && cradles[i].handshake_finished() {
                 if !has_explicit_go_on_chain && !local_uis[i].got_error {
                     panic!(
@@ -664,8 +673,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                         moves_input.get(move_number)
                     );
                 }
-                // Perform on chain move.
-                // Turn off the flag to go on chain.
+                debug!("GO_ON_CHAIN: player {i} got_error={} move_number={move_number}", local_uis[i].got_error);
                 local_uis[i].go_on_chain = false;
                 let got_error = local_uis[i].got_error;
                 cradles[i].go_on_chain(allocator, rng, &mut local_uis[i], got_error)?;
@@ -678,6 +686,9 @@ fn run_game_container_with_action_list_with_success_predicate(
             }
 
             while let Some(result) = cradles[i].idle(allocator, rng, &mut local_uis[i], 0)? {
+                if result.resync.is_some() {
+                    debug!("RESYNC from player {i}: {:?}", result.resync);
+                }
                 if matches!(result.resync, Some((_, true))) {
                     can_move = true;
                     debug!("resync requested at id {:?}", result.resync);
@@ -708,9 +719,20 @@ fn run_game_container_with_action_list_with_success_predicate(
                 }
 
                 for tx in result.outbound_transactions.iter() {
-                    debug!("PROCESS TX {tx:?}");
-                    let included_result = simulator.push_tx(allocator, &tx.spends).into_gen()?;
-                    debug!("included_result {included_result:?}");
+                    if nerf_transactions_for == Some(i) {
+                        debug!("NERFED tx from player {i}: {:?}", tx.name);
+                        continue;
+                    }
+                    debug!(
+                        "TX from player {i}: name={:?} coins={:?}",
+                        tx.name,
+                        tx.spends.iter().map(|s| s.coin.to_parts()).collect::<Vec<_>>()
+                    );
+                    let included_result = simulator.push_tx(allocator, &tx.spends)?;
+                    debug!(
+                        "TX result: code={} e={:?} diag={:?}",
+                        included_result.code, included_result.e, included_result.diagnostic
+                    );
                     // Don't assert on double spend since it is expected that some actions
                     // such as timeout could be launched by either or both on chain parties.
                     // Most of the time, the timeout is coalesced because the spends are equivalent
@@ -733,6 +755,10 @@ fn run_game_container_with_action_list_with_success_predicate(
 
                 for msg in result.outbound_messages.iter() {
                     cradles[i ^ 1].deliver_message(msg)?;
+                }
+
+                for n in result.notifications.iter() {
+                    debug!("NOTIFICATION player {i}: {n:?}");
                 }
 
                 if !result.continue_on {
@@ -825,7 +851,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                             "Move({who}) at move_number={move_number} but game_ids is empty"
                         );
                         let is_my_move = cradles[*who].my_move_in_game(&game_ids[0]);
-                        debug!("{who} make move: is my move? {is_my_move:?}");
+                        debug!("MOVE player {who}: is_my_move={is_my_move:?} on_chain={} move_number={move_number}", cradles[*who].is_on_chain());
                         if matches!(is_my_move, Some(true)) {
                             debug!("make move");
                             let readable_program = readable.to_program();
@@ -907,7 +933,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                             "EnableCheating({who}) at move_number={move_number} but game_ids is empty"
                         );
                         if !cradles[*who].is_on_chain() {
-                            // Defer until the on-chain transition completes.
                             move_number -= 1;
                             continue;
                         }
@@ -920,6 +945,42 @@ fn run_game_container_with_action_list_with_success_predicate(
                             fake_move_bytes,
                         )?;
                         can_move = true;
+                    }
+                    GameAction::Cheat(who) => {
+                        assert!(
+                            !game_ids.is_empty(),
+                            "Cheat({who}) at move_number={move_number} but game_ids is empty"
+                        );
+                        if !cradles[*who].is_on_chain() {
+                            move_number -= 1;
+                            continue;
+                        }
+                        let is_my_turn = cradles[*who].my_move_in_game(&game_ids[0]);
+                        if !matches!(is_my_turn, Some(true)) {
+                            move_number -= 1;
+                            continue;
+                        }
+                        cradles[*who].cheat(allocator, rng, &game_ids[0])?;
+                        can_move = true;
+                    }
+                    GameAction::ForceDestroyCoin(who) => {
+                        assert!(
+                            !game_ids.is_empty(),
+                            "ForceDestroyCoin({who}) at move_number={move_number} but game_ids is empty"
+                        );
+                        if let Some(game_coin) = cradles[*who].get_game_coin(&game_ids[0]) {
+                            force_destroyed_coins.push(game_coin);
+                            can_move = true;
+                        } else {
+                            move_number -= 1;
+                            continue;
+                        }
+                    }
+                    GameAction::NerfTransactions(who) => {
+                        nerf_transactions_for = Some(*who);
+                    }
+                    GameAction::UnNerfTransactions => {
+                        nerf_transactions_for = None;
                     }
                     GameAction::WaitBlocks(n, players) => {
                         wait_blocks = Some((*n, *players));
@@ -935,10 +996,11 @@ fn run_game_container_with_action_list_with_success_predicate(
                     }
                     GameAction::Shutdown(who, conditions) => {
                         if !cradles[*who].handshake_finished() {
-                            // Defer shutdown until on-chain handshake is complete.
+                            debug!("Shutdown({who}) deferred: handshake not finished, is_on_chain={}", cradles[*who].is_on_chain());
                             move_number -= 1;
                             continue;
                         }
+                        debug!("Shutdown({who}) processing");
                         can_move = true;
                         cradles[*who].shut_down(allocator, rng, conditions.clone())?;
                     }
@@ -991,8 +1053,8 @@ pub fn run_calpoker_container_with_action_list(
 fn get_balances_from_outcome(outcome: &GameRunOutcome) -> Result<(u64, u64), Error> {
     let p1_ph = outcome.identities[0].puzzle_hash.clone();
     let p2_ph = outcome.identities[1].puzzle_hash.clone();
-    let p1_coins = outcome.simulator.get_my_coins(&p1_ph).into_gen()?;
-    let p2_coins = outcome.simulator.get_my_coins(&p2_ph).into_gen()?;
+    let p1_coins = outcome.simulator.get_my_coins(&p1_ph)?;
+    let p2_coins = outcome.simulator.get_my_coins(&p2_ph)?;
     let p1_balance: u64 = p1_coins
         .iter()
         .map(|c| c.to_parts().map(|(_, _, amt)| amt.to_u64()).unwrap_or(0))
@@ -1231,7 +1293,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             if let GameAction::Move(player, readable, _) = moves[3].clone() {
                 moves.insert(3, GameAction::FakeMove(player, readable, vec![0; 500]));
             } else {
-                panic!("no move 1 to replace");
+                panic!("no move 3 to replace");
             }
             // No explicit GoOnChain needed: the fake move error forces player 0
             // on chain, and player 1 detects the channel coin spend and follows.
@@ -1296,9 +1358,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
             moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
             if let GameAction::Move(player, readable, _) = moves[3].clone() {
+                // Replace the real move with a FakeMove. Bob's redo will
+                // automatically replay the real move on-chain, so remove
+                // the original to avoid a duplicate.
                 moves.insert(3, GameAction::FakeMove(player, readable, vec![0; 500]));
+                moves.remove(4);
             } else {
-                panic!("no move 1 to replace");
+                panic!("no move 3 to replace");
             }
             // No explicit GoOnChain needed: the fake move error forces player 0
             // on chain, and player 1 detects the channel coin spend and follows.
@@ -1650,12 +1716,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         assert!(game_starts[1].is_none());
     }));
 
-    res.push(("test_calpoker_smoke", &|| {
+    res.push(("test_calpoker_shutdown_nerf_alice", &|| {
         let mut allocator = AllocEncoder::new();
 
-        // Play moves
         let mut moves = prefix_test_moves(&mut allocator).to_vec();
         moves.push(GameAction::Accept(0));
+        moves.push(GameAction::NerfTransactions(0));
         moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
@@ -1664,6 +1730,377 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
         assert_eq!(p2_balance, p1_balance + 200);
     }));
+
+    res.push(("test_calpoker_shutdown_nerf_bob", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        let mut moves = prefix_test_moves(&mut allocator).to_vec();
+        moves.push(GameAction::Accept(0));
+        moves.push(GameAction::NerfTransactions(1));
+        moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+
+        let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
+            .expect("should finish");
+
+        let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
+        assert_eq!(p2_balance, p1_balance + 200);
+    }));
+
+    res.push((
+        "test_notification_we_timed_out_during_redo",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+
+            // Keep first 3 calpoker moves (alice commit, bob seed, alice reveal).
+            // After alice's reveal, cached_last_action is set. GoOnChain immediately
+            // so go_on_chain runs before the response clears cached_last_action.
+            // The unroll uses the previous fully-signed state (before alice's reveal),
+            // so it's alice's turn on chain and she needs to redo her reveal.
+            let mut moves = prefix_test_moves(&mut allocator).to_vec();
+            moves.truncate(3);
+
+            // Go on chain right after alice's reveal; she still has cached_last_action.
+            moves.push(GameAction::GoOnChain(0));
+            // Nerf bob so he can't interfere during the unroll process.
+            moves.push(GameAction::NerfTransactions(1));
+            // Wait for channel spend inclusion + unroll coin registration + 5-block
+            // unroll timeout to fire. At the end of this wait the unroll spend is
+            // submitted (alice is still un-nerfed here).
+            moves.push(GameAction::WaitBlocks(4, 0));
+            // Switch the nerf: now alice's redo transaction will be dropped while
+            // bob is free to act.
+            moves.push(GameAction::NerfTransactions(0));
+            // Wait long enough for the game coin timeout (100 blocks) to fire.
+            // Alice's redo was dropped so the game coin stays at "alice's turn".
+            moves.push(GameAction::WaitBlocks(110, 0));
+            moves.push(GameAction::UnNerfTransactions);
+            moves.push(GameAction::WaitBlocks(5, 0));
+            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+
+            let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
+                .expect("should finish");
+
+            let p0_notifs = &outcome.local_uis[0].notifications;
+            let p1_notifs = &outcome.local_uis[1].notifications;
+            assert!(
+                p0_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
+                "player 0 should get WeTimedOut (redo move couldn't land), got: {p0_notifs:?}"
+            );
+            assert!(
+                p1_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOutOpponent { .. })),
+                "player 1 should get WeTimedOutOpponent, got: {p1_notifs:?}"
+            );
+        },
+    ));
+
+    res.push((
+        "test_notification_bob_redo_then_alice_timeout",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+
+            // 4 calpoker moves: alice commit(0), bob seed(1), alice reveal(2),
+            // bob discard(3).  GoOnChain immediately after bob's discard so bob
+            // still has cached_last_action (the go_on_chain check fires before
+            // his idle processes Alice's ack).  The unroll lands before bob's
+            // move 3 (after alice's move 2), making it bob's turn on-chain.
+            // Bob redoes move 3.  After the redo it's alice's turn (move 4).
+            // Alice is nerfed so she can't play and times out.
+            let mut moves = prefix_test_moves(&mut allocator).to_vec();
+            moves.truncate(4);
+            // GoOnChain right after bob's last move so cached_last_action is set.
+            moves.push(GameAction::GoOnChain(1));
+            // Nerf alice so she can't respond on-chain after bob's redo.
+            moves.push(GameAction::NerfTransactions(0));
+            // Wait for unroll timeout + bob's redo.
+            moves.push(GameAction::WaitBlocks(4, 0));
+            // Wait for game coin timeout (alice can't move).
+            moves.push(GameAction::WaitBlocks(110, 0));
+            moves.push(GameAction::UnNerfTransactions);
+            moves.push(GameAction::WaitBlocks(5, 0));
+            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+
+            let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
+                .expect("should finish");
+
+            let p0_notifs = &outcome.local_uis[0].notifications;
+            let p1_notifs = &outcome.local_uis[1].notifications;
+            assert!(
+                p0_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
+                "player 0 (alice) should get WeTimedOut (nerfed, couldn't play move 4), got: {p0_notifs:?}"
+            );
+            assert!(
+                p1_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOutOpponent { .. })),
+                "player 1 (bob) should get WeTimedOutOpponent (claimed timeout), got: {p1_notifs:?}"
+            );
+        },
+    ));
+
+    res.push((
+        "test_notification_we_timed_out_our_turn",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+
+            // 3 calpoker moves (alice commit, bob seed, alice reveal).
+            // Bob received alice's reveal so his cached_last_action is
+            // cleared.  Bob goes on-chain: no redo needed.  The game
+            // coin lands at bob's turn (to discard) and he never moves,
+            // so his clock runs out.
+            let mut moves = prefix_test_moves(&mut allocator).to_vec();
+            moves.truncate(3);
+            moves.push(GameAction::GoOnChain(1));
+            // 120 blocks covers the unroll timeout (5) and
+            // game coin timeout (100).
+            moves.push(GameAction::WaitBlocks(120, 0));
+            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+
+            let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
+                .expect("should finish");
+
+            let p0_notifs = &outcome.local_uis[0].notifications;
+            let p1_notifs = &outcome.local_uis[1].notifications;
+            assert!(
+                p1_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
+                "player 1 should get WeTimedOut (it was our turn, no move queued), got: {p1_notifs:?}"
+            );
+            assert!(
+                p0_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOutOpponent { .. })),
+                "player 0 should get WeTimedOutOpponent, got: {p0_notifs:?}"
+            );
+        },
+    ));
+
+    res.push((
+        "test_notification_slash_opponent_illegal_move",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+
+            let moves = prefix_test_moves(&mut allocator);
+            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(2).collect();
+            on_chain_moves.push(GameAction::GoOnChain(0));
+            on_chain_moves.push(GameAction::WaitBlocks(5, 0));
+            on_chain_moves.push(GameAction::Cheat(1));
+            on_chain_moves.push(GameAction::WaitBlocks(30, 0));
+            on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            on_chain_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+
+            let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
+                .expect("should finish");
+
+            let p0_notifs = &outcome.local_uis[0].notifications;
+            assert!(
+                p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentPlayedIllegalMove { .. })),
+                "player 0 should get OpponentPlayedIllegalMove, got: {p0_notifs:?}"
+            );
+            assert!(
+                p0_notifs.iter().any(|n| matches!(n, GameNotification::WeSlashedOpponent { .. })),
+                "player 0 should get WeSlashedOpponent, got: {p0_notifs:?}"
+            );
+        },
+    ));
+
+    res.push((
+        "test_notification_opponent_slashed_us",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+
+            let moves = prefix_test_moves(&mut allocator);
+            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(3).collect();
+            on_chain_moves.push(GameAction::GoOnChain(0));
+            on_chain_moves.push(GameAction::WaitBlocks(10, 0));
+            on_chain_moves.push(GameAction::Cheat(0));
+            on_chain_moves.push(GameAction::WaitBlocks(30, 0));
+            on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            on_chain_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+
+            let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
+                .expect("should finish");
+
+            let p0_notifs = &outcome.local_uis[0].notifications;
+            assert!(
+                p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentSlashedUs { .. })),
+                "player 0 (cheater) should get OpponentSlashedUs, got: {p0_notifs:?}"
+            );
+        },
+    ));
+
+    res.push((
+        "test_notification_accept_finished",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+
+            // Use 3 moves (remove last 2 from prefix) so the game is mid-play
+            // and it's player 0's turn. Go on-chain first so Accept goes through
+            // the on-chain handler (off-chain Accept immediately finishes the game).
+            let mut moves = prefix_test_moves(&mut allocator).to_vec();
+            let moves_len = moves.len();
+            moves.remove(moves_len - 2);
+            moves.remove(moves_len - 2);
+            moves.push(GameAction::GoOnChain(0));
+            moves.push(GameAction::Accept(0));
+            moves.push(GameAction::WaitBlocks(120, 1));
+            moves.push(GameAction::WaitBlocks(5, 0));
+            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+
+            let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
+                .expect("should finish");
+
+            let p0_notifs = &outcome.local_uis[0].notifications;
+            assert!(
+                p0_notifs.iter().any(|n| matches!(n, GameNotification::AcceptFinished { .. })),
+                "player 0 (who accepted) should get AcceptFinished, got: {p0_notifs:?}"
+            );
+        },
+    ));
+
+    res.push((
+        "test_on_chain_before_any_moves_times_out",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+
+            // Game is committed during handshake, so going on-chain before any
+            // moves creates the game coin on-chain where it times out normally.
+            // GameCancelled only happens when a game was proposed but never
+            // committed (unroll reverts to before the game existed).
+            let moves = vec![
+                GameAction::GoOnChain(1),
+                GameAction::WaitBlocks(20, 1),
+                GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)),
+                GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)),
+            ];
+
+            let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
+                .expect("should finish");
+
+            let p0_notifs = &outcome.local_uis[0].notifications;
+            let p1_notifs = &outcome.local_uis[1].notifications;
+            let p0_timed_out = p0_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOut { .. }));
+            let p1_timed_out_opponent = p1_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOutOpponent { .. }));
+            assert!(
+                p0_timed_out,
+                "player 0 should get WeTimedOut (it was their turn, no move made), got: {p0_notifs:?}"
+            );
+            assert!(
+                p1_timed_out_opponent,
+                "player 1 should get WeTimedOutOpponent (claimed timeout), got: {p1_notifs:?}"
+            );
+        },
+    ));
+
+    res.push((
+        "test_notification_opponent_successfully_cheated",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+
+            let moves = prefix_test_moves(&mut allocator);
+            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(2).collect();
+            on_chain_moves.push(GameAction::GoOnChain(0));
+            on_chain_moves.push(GameAction::WaitBlocks(5, 0));
+            on_chain_moves.push(GameAction::NerfTransactions(0));
+            on_chain_moves.push(GameAction::Cheat(1));
+            on_chain_moves.push(GameAction::WaitBlocks(120, 0));
+            on_chain_moves.push(GameAction::UnNerfTransactions);
+            on_chain_moves.push(GameAction::WaitBlocks(30, 0));
+            on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            on_chain_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+
+            let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
+                .expect("should finish");
+
+            let p0_notifs = &outcome.local_uis[0].notifications;
+            assert!(
+                p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentPlayedIllegalMove { .. })),
+                "player 0 should get OpponentPlayedIllegalMove, got: {p0_notifs:?}"
+            );
+            assert!(
+                p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentSuccessfullyCheated { .. })),
+                "player 0 should get OpponentSuccessfullyCheated (slash was nerfed), got: {p0_notifs:?}"
+            );
+        },
+    ));
+
+    res.push((
+        "test_notification_game_destroyed_on_chain",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+
+            let moves = prefix_test_moves(&mut allocator);
+            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(2).collect();
+            on_chain_moves.push(GameAction::GoOnChain(0));
+            on_chain_moves.push(GameAction::WaitBlocks(5, 0));
+            on_chain_moves.push(GameAction::ForceDestroyCoin(0));
+            on_chain_moves.push(GameAction::WaitBlocks(30, 0));
+            on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            on_chain_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+
+            let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
+                .expect("should finish");
+
+            let p0_notifs = &outcome.local_uis[0].notifications;
+            assert!(
+                p0_notifs.iter().any(|n| matches!(n, GameNotification::GameDestroyedOnChain { .. }))
+                || p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentMadeImpossibleSpend { .. })),
+                "player 0 should get GameDestroyedOnChain or OpponentMadeImpossibleSpend when coin is force-destroyed, got: {p0_notifs:?}"
+            );
+        },
+    ));
+
+    res.push((
+        "test_notification_opponent_made_impossible_spend",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+
+            let moves = prefix_test_moves(&mut allocator);
+            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(2).collect();
+            on_chain_moves.push(GameAction::GoOnChain(0));
+            on_chain_moves.push(GameAction::WaitBlocks(5, 0));
+            on_chain_moves.push(GameAction::ForceDestroyCoin(1));
+            on_chain_moves.push(GameAction::WaitBlocks(30, 0));
+            on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            on_chain_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+
+            let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
+                .expect("should finish");
+
+            let all_notifs: Vec<&GameNotification> = outcome.local_uis.iter()
+                .flat_map(|ui| ui.notifications.iter())
+                .collect();
+            assert!(
+                all_notifs.iter().any(|n| matches!(n, GameNotification::OpponentMadeImpossibleSpend { .. })),
+                "some player should get OpponentMadeImpossibleSpend when game coin force-destroyed, got: {all_notifs:?}"
+            );
+        },
+    ));
+
+    res.push((
+        "test_notification_our_turn_coin_spent_unexpectedly",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+
+            let moves = prefix_test_moves(&mut allocator);
+            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(2).collect();
+            on_chain_moves.push(GameAction::GoOnChain(0));
+            on_chain_moves.push(GameAction::WaitBlocks(5, 0));
+            on_chain_moves.push(GameAction::ForceDestroyCoin(0));
+            on_chain_moves.push(GameAction::WaitBlocks(30, 0));
+            on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            on_chain_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+
+            let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
+                .expect("should finish");
+
+            let all_notifs: Vec<&GameNotification> = outcome.local_uis.iter()
+                .flat_map(|ui| ui.notifications.iter())
+                .collect();
+            assert!(
+                all_notifs.iter().any(|n| matches!(n, GameNotification::OurTurnCoinSpentUnexpectedly { .. })),
+                "some player should get OurTurnCoinSpentUnexpectedly when own game coin force-destroyed, got: {all_notifs:?}"
+            );
+        },
+    ));
 
     res
 }

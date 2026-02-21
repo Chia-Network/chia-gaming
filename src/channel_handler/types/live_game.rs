@@ -182,7 +182,26 @@ impl LiveGame {
         if let Some(r) = new_ref {
             self.referee_maker = r;
         }
-        self.last_referee_puzzle_hash = self.outcome_puzzle_hash(allocator)?;
+
+        // After an Expected spend, the referee may still be TheirTurn (the
+        // Expected shortcut returns self.clone()). If we have a successor
+        // from the rewind that is MyTurn, advance to it so that subsequent
+        // redo logic can operate on the correct referee state.
+        if matches!(res, TheirTurnCoinSpentResult::Expected(..)) && !self.referee_maker.is_my_turn() {
+            if let Some(rewind) = &self.rewind_outcome {
+                if let Some(successor) = &rewind.successor {
+                    if successor.is_my_turn() {
+                        debug!(
+                            "Expected spend on TheirTurn: advancing referee to successor state {}",
+                            successor.state_number()
+                        );
+                        self.referee_maker = successor.clone();
+                    }
+                }
+            }
+        }
+
+        self.last_referee_puzzle_hash = self.current_puzzle_hash(allocator)?;
         Ok(res)
     }
 
@@ -212,7 +231,7 @@ impl LiveGame {
         if let Some(new_ref) = result.new_referee.as_ref() {
             self.referee_maker = new_ref.clone();
             self.rewind_outcome = Some(result.clone());
-            self.last_referee_puzzle_hash = self.outcome_puzzle_hash(allocator)?;
+            self.last_referee_puzzle_hash = self.current_puzzle_hash(allocator)?;
             debug!(
                 "SET_STATE_FOR_COIN: rewound, new last_ref_ph={:?}",
                 self.last_referee_puzzle_hash
@@ -222,7 +241,7 @@ impl LiveGame {
 
         if referee_puzzle_hash == *want_ph {
             self.rewind_outcome = Some(result.clone());
-            self.last_referee_puzzle_hash = self.outcome_puzzle_hash(allocator)?;
+            self.last_referee_puzzle_hash = self.current_puzzle_hash(allocator)?;
             debug!(
                 "SET_STATE_FOR_COIN: matched on_chain, new last_ref_ph={:?}",
                 self.last_referee_puzzle_hash

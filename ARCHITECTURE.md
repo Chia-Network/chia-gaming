@@ -26,6 +26,10 @@ For debugging and testing operational guidance, see `DEBUGGING_GUIDE.md`.
   - [On-Chain Steps (a through e)](#on-chain-steps-a-through-e)
 - [Code Organization](#code-organization)
 - [Key Types](#key-types)
+- [Peer Disconnect Invariant](#peer-disconnect-invariant)
+- [cached_last_action and the Redo Mechanism](#cached_last_action-and-the-redo-mechanism)
+- [ResyncMove and the Simulation Loop](#resyncmove-and-the-simulation-loop)
+- [On-Chain Game State Tracking (our_turn)](#on-chain-game-state-tracking-our_turn)
 
 ---
 
@@ -440,3 +444,148 @@ if Alice misclaims the split.
 | `GameCradle` | `peer_container.rs` | Trait for synchronous game interaction (tests/UI) |
 | `ValidationInfo` | `channel_handler/types/validation_info.rs` | Game validation program + state |
 | `GameAction` | `potato_handler/types.rs` | Actions: `Move`, `Accept`, `GoOnChain`, `Shutdown`, etc. |
+| `SynchronousGameCradleState` | `peer_container.rs` | Per-peer mutable state: queues, flags, `peer_disconnected` |
+| `OnChainGameState` | `potato_handler/on_chain.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `accepted` |
+
+---
+
+## Peer Disconnect Invariant
+
+When a peer calls `go_on_chain`, its peer connection is **immediately severed**.
+No further peer messages are sent or received by that peer. The other peer is
+**not notified directly** — it only discovers the on-chain transition when it
+sees the channel coin being spent on the blockchain.
+
+This is enforced in `SynchronousGameCradleState`:
+
+- A `peer_disconnected: bool` flag is set to `true` at the start of
+  `GameCradle::go_on_chain`, before any on-chain logic runs.
+- `PacketSender::send_message` silently drops outbound messages when
+  `peer_disconnected` is true.
+- `GameCradle::deliver_message` silently drops inbound messages when
+  `peer_disconnected` is true.
+
+Messages that were already queued in `inbound_messages` before the flag was set
+will be popped by `idle()` and passed to `received_message`, but
+`process_incoming_message` hits the catch-all (handshake state is no longer
+`Finished`) and the message is buffered without being processed as a normal
+off-chain potato.
+
+**Key code:** `src/peer_container.rs` — `go_on_chain`, `send_message`,
+`deliver_message`
+
+---
+
+## cached_last_action and the Redo Mechanism
+
+### Lifecycle
+
+`cached_last_action` on the `ChannelHandler` stores the data for the most
+recent move that we sent but the opponent has not yet acknowledged:
+
+- **Set** in `update_cache_for_potato_send` — when we send a move, we cache it.
+- **Cleared** in `received_potato_move` (line ~1162 of `channel_handler/mod.rs`)
+  — when we receive *any* opponent move, the cache is cleared because the
+  opponent's move implicitly acknowledges receipt of ours (the potato changed
+  hands).
+- **Cleared** in `received_empty_potato` — when we receive an explicit
+  acknowledgment (empty potato pass).
+
+### Implications for Going On-Chain
+
+When `go_on_chain` is called:
+
+1. `set_state_for_coins` swaps `cached_last_action` into `did_rewind`.
+2. If `did_rewind` is `Some(...)`, the system replays the cached move on-chain
+   via `get_redo_action` → `RedoMove`.
+3. If `did_rewind` is `None`, no redo is needed — the on-chain state already
+   reflects all our moves.
+
+### When Redo Happens (and When It Doesn't)
+
+In normal operation, a player goes on-chain because their opponent stopped
+responding. The player's last move is unacknowledged — `cached_last_action` is
+set — so the redo mechanism replays it on-chain. This is the common case and
+the whole point of the redo machinery.
+
+A redo is **not** triggered only when the going-on-chain player was the
+**receiver** of the most recent move (which cleared their `cached_last_action`
+via `received_potato_move`). This scenario — going on-chain on your own turn
+with nothing pending — is less typical but matters for tests that want a
+straightforward timeout without redo complications.
+
+---
+
+## ResyncMove and the Simulation Loop
+
+### What ResyncMove Does
+
+`Effect::ResyncMove { id, state_number, is_my_turn }` is emitted by
+`OnChainPotatoHandler::handle_game_coin_spent` (in `on_chain.rs`) when a game
+coin is spent with an `Expected` result that carries redo data. It signals:
+"the on-chain game has been replayed to this state; the UI should adjust."
+
+It is the **only** place `ResyncMove` is emitted.
+
+### How the Simulation Handles It
+
+In the simulation loop (`run_calpoker_container_with_action_list`), when
+`result.resync` is `Some((_, true))` (i.e., it's our turn after the resync):
+
+1. `can_move` is set to `true`
+2. `move_number` is **rewound** to the last `GameAction::Move(...)` in the
+   action list
+
+This is intended to let the simulation replay moves on-chain. However, the
+rewound `Move` action specifies a particular player. If the on-chain state now
+has a **different** player's turn, `my_move_in_game` returns `Some(false)` or
+`None`, the move is "put back" (`move_number -= 1`), and the simulation stalls.
+
+### Stall Conditions
+
+A ResyncMove-induced stall occurs when:
+- The rewound `Move(player, ...)` targets a player who is NOT the current mover
+  on-chain
+- No other trigger (`opponent_moved`, `can_move`, `global_move`) fires to
+  advance `move_number` past the stuck `Move` action
+
+This is why **the going-on-chain player matters for tests**: if player A goes
+on-chain and has a redo, the ResyncMove fires with `is_my_turn` based on the
+post-redo state. If the rewound `Move` in the action list is for player B but
+the on-chain state expects player A, the simulation hangs.
+
+### Avoiding Resync Stalls in Tests
+
+- If the going-on-chain player has **no redo** (`cached_last_action` is `None`),
+  no `ResyncMove` is emitted and no rewind occurs.
+- To achieve no-redo: ensure the going-on-chain player **received** the last
+  move (clearing their cache) before `GoOnChain` fires. This means the last
+  `Move` action before `GoOnChain` should be from the **other** player.
+
+---
+
+## On-Chain Game State Tracking (our_turn)
+
+The `OnChainPotatoHandler` maintains a `game_map: HashMap<CoinString,
+OnChainGameState>` that tracks each game coin's state, including an `our_turn`
+flag.
+
+### How our_turn is Set
+
+- **Initial game coin** (from unroll): `our_turn = live_game.is_my_turn()` at
+  the time the unroll produces game coins (`set_state_for_coins`).
+- **After opponent's move** (`TheirSpend::Expected` or `TheirSpend::Moved`):
+  `our_turn = true` — the opponent just moved, so now it's our turn.
+
+### How our_turn Determines Timeout Notifications
+
+When `coin_timeout_reached` fires on a game coin:
+
+```
+if old_definition.our_turn →  GameNotification::WeTimedOut
+else                        →  GameNotification::WeTimedOutOpponent
+```
+
+So the notification depends entirely on `our_turn` in the `game_map` entry for
+the coin that timed out. Both players maintain independent `game_map`s, and
+both should have complementary values of `our_turn` for the same game coin.

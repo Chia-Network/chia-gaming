@@ -27,7 +27,7 @@ use crate::common::types::{
 };
 use crate::utils::proper_list;
 
-use crate::potato_handler::effects::Effect;
+use crate::potato_handler::effects::{Effect, GameNotification};
 use crate::potato_handler::on_chain::OnChainPotatoHandler;
 use crate::shutdown::{get_conditions_with_channel_handler, ShutdownConditions};
 
@@ -145,6 +145,7 @@ pub struct PotatoHandler {
     my_game_spends: HashSet<PuzzleHash>,
     incoming_messages: VecDeque<Rc<PeerMessage>>,
 
+    peer_wants_potato: bool,
 }
 
 fn init_game_id(parent_coin_string: &[u8]) -> Vec<u8> {
@@ -211,6 +212,7 @@ impl PotatoHandler {
             reward_puzzle_hash: phi.reward_puzzle_hash,
             my_game_spends: HashSet::default(),
             incoming_messages: VecDeque::default(),
+            peer_wants_potato: false,
         }
     }
 
@@ -245,6 +247,14 @@ impl PotatoHandler {
             Err(Error::StrErr(
                 "enable_cheating: game is not on chain".to_string(),
             ))
+        }
+    }
+
+    pub fn get_game_coin(&self, game_id: &GameID) -> Option<CoinString> {
+        if let HandshakeState::OnChain(on_chain) = &self.handshake_state {
+            on_chain.get_game_coin(game_id)
+        } else {
+            None
         }
     }
 
@@ -391,6 +401,17 @@ impl PotatoHandler {
         let (moved, move_effects) = self.have_potato_move(env)?;
         effects.extend(move_effects);
         if moved {
+            return Ok(effects);
+        }
+
+        if self.peer_wants_potato {
+            self.peer_wants_potato = false;
+            let nil_msg = {
+                let ch = self.channel_handler_mut()?;
+                ch.send_empty_potato(env)?
+            };
+            effects.push(Effect::SendMessage(PeerMessage::Nil(nil_msg)));
+            self.have_potato = PotatoState::Absent;
             return Ok(effects);
         }
 
@@ -543,15 +564,27 @@ impl PotatoHandler {
                     puzzle,
                     signature: full_spend.signature.clone(),
                 };
+                let coin_spend = CoinSpend {
+                    coin: coin.clone(),
+                    bundle: spend,
+                };
                 effects.push(Effect::SpendTransaction(SpendBundle {
                     name: Some("Create unroll".to_string()),
-                    spends: vec![CoinSpend {
-                        coin: coin.clone(),
-                        bundle: spend,
-                    }],
+                    spends: vec![coin_spend.clone()],
                 }));
 
+                effects.push(Effect::SendMessage(
+                    PeerMessage::ShutdownComplete(coin_spend),
+                ));
+
+                self.have_potato = PotatoState::Present;
                 self.handshake_state = HandshakeState::OnChainWaitingForUnrollSpend(coin.clone());
+            }
+            PeerMessage::ShutdownComplete(coin_spend) => {
+                effects.push(Effect::SpendTransaction(SpendBundle {
+                    name: Some("Create unroll".to_string()),
+                    spends: vec![coin_spend.clone()],
+                }));
             }
             _ => {
                 return Err(Error::StrErr(format!(
@@ -569,12 +602,12 @@ impl PotatoHandler {
         second_player_hs_info: HandshakeB,
         maybe_transaction: Option<SpendBundle>,
         ctor: F,
-    ) -> Result<Option<Effect>, Error>
+    ) -> Result<Vec<Effect>, Error>
     where
         F: FnOnce(&SpendBundle) -> Result<PeerMessage, Error>,
     {
         if let Some(spend) = maybe_transaction {
-            let effect = Effect::SendMessage(ctor(&spend)?);
+            let send_effect = Effect::SendMessage(ctor(&spend)?);
 
             self.handshake_state = HandshakeState::Finished(Box::new(HandshakeStepWithSpend {
                 info: HandshakeStepInfo {
@@ -584,17 +617,17 @@ impl PotatoHandler {
                 spend,
             }));
 
-            return Ok(Some(effect));
+            return Ok(vec![send_effect, Effect::HandshakeComplete]);
         }
 
-        Ok(None)
+        Ok(vec![])
     }
 
     pub fn try_complete_step_e(
         &mut self,
         first_player_hs_info: HandshakeA,
         second_player_hs_info: HandshakeB,
-    ) -> Result<Option<Effect>, Error> {
+    ) -> Result<Vec<Effect>, Error> {
         self.try_complete_step_body(
             first_player_hs_info,
             second_player_hs_info,
@@ -611,10 +644,10 @@ impl PotatoHandler {
         &mut self,
         first_player_hs_info: HandshakeA,
         second_player_hs_info: HandshakeB,
-    ) -> Result<Option<Effect>, Error> {
+    ) -> Result<Vec<Effect>, Error> {
         if self.waiting_to_start {
             debug!("waiting to start");
-            return Ok(None);
+            return Ok(vec![]);
         }
 
         debug!("starting");
@@ -828,13 +861,7 @@ impl PotatoHandler {
                 Ok((true, effects))
             }
             Some(GameAction::SendPotato) => {
-                let nil_msg = {
-                    let ch = self.channel_handler_mut()?;
-                    ch.send_empty_potato(env)?
-                };
-                effects.push(Effect::SendMessage(PeerMessage::Nil(nil_msg)));
-                self.have_potato = PotatoState::Absent;
-                Ok((false, effects))
+                unreachable!("SendPotato should not be queued");
             }
             None => Ok((false, effects)),
         }
@@ -1161,8 +1188,22 @@ impl PotatoHandler {
         let doc = bson::Document::from_reader(&mut msg.as_slice()).into_gen()?;
         let msg_envelope: PeerMessage = bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
         self.incoming_messages.push_back(Rc::new(msg_envelope));
-        let incoming_effects = self.process_incoming_message(env)?;
-        effects.extend(incoming_effects);
+        let incoming_result = self.process_incoming_message(env);
+        match incoming_result {
+            Ok(incoming_effects) => {
+                effects.extend(incoming_effects);
+            }
+            Err(e) => {
+                if matches!(self.handshake_state, HandshakeState::Finished(_)) {
+                    debug!("corrupted peer message detected, ignoring and going on chain: {e:?}");
+                    effects.push(Effect::GoingOnChain { got_error: true });
+                    effects.extend(self.go_on_chain(env, true)?);
+                    return Ok(effects);
+                } else {
+                    return Err(e);
+                }
+            }
+        }
         while let Some(action) = self.game_action_queue.pop_front() {
             let (continued, action_effects) = self.do_game_action(env, action)?;
             effects.extend(action_effects);
@@ -1294,8 +1335,7 @@ impl PotatoHandler {
 
                 effects.extend(self.pass_on_channel_handler_message(env, msg_envelope)?);
 
-                let effect = self.try_complete_step_e(first_player_hs, second_player_hs)?;
-                effects.extend(effect);
+                effects.extend(self.try_complete_step_e(first_player_hs, second_player_hs)?);
             }
 
             // potato progression
@@ -1385,8 +1425,7 @@ impl PotatoHandler {
                 self.handshake_state = HandshakeState::PostStepF(info.clone());
 
                 self.have_potato = PotatoState::Absent;
-                let effect = self.try_complete_step_f(first_player_hs, second_player_hs)?;
-                effects.extend(effect);
+                effects.extend(self.try_complete_step_f(first_player_hs, second_player_hs)?);
             }
 
             HandshakeState::Finished(_) => {
@@ -1397,12 +1436,15 @@ impl PotatoHandler {
                         effects.push(Effect::ReceivedChannelOffer(bundle.clone()));
                     }
                     PeerMessage::RequestPotato(_) => {
+                        self.peer_wants_potato = true;
                         if matches!(self.have_potato, PotatoState::Present) {
-                            let (_continued, action_effects) =
-                                self.do_game_action(env, GameAction::SendPotato)?;
-                            effects.extend(action_effects);
-                        } else {
-                            self.push_action(GameAction::SendPotato);
+                            let nil_msg = {
+                                let ch = self.channel_handler_mut()?;
+                                ch.send_empty_potato(env)?
+                            };
+                            effects.push(Effect::SendMessage(PeerMessage::Nil(nil_msg)));
+                            self.have_potato = PotatoState::Absent;
+                            self.peer_wants_potato = false;
                         }
                     }
                     PeerMessage::StartGames(sigs, g) => {
@@ -1413,6 +1455,15 @@ impl PotatoHandler {
                     }
                 }
 
+                return Ok(effects);
+            }
+
+            HandshakeState::OnChainWaitingForUnrollSpend(_) => {
+                if matches!(msg_envelope.borrow(), PeerMessage::ShutdownComplete(_)) {
+                    effects.extend(self.pass_on_channel_handler_message(env, msg_envelope)?);
+                    return Ok(effects);
+                }
+                self.incoming_messages.push_back(msg_envelope);
                 return Ok(effects);
             }
 
@@ -1660,7 +1711,8 @@ impl PotatoHandler {
 
         if matches!(
             &self.handshake_state,
-            HandshakeState::OnChainWaitingForUnrollConditions(_)
+            HandshakeState::OnChainTransition(_, _)
+                | HandshakeState::OnChainWaitingForUnrollConditions(_)
                 | HandshakeState::OnChainWaitingForUnrollSpend(_)
         ) {
             self.push_action(action);
@@ -1668,13 +1720,11 @@ impl PotatoHandler {
         }
 
         if matches!(self.handshake_state, HandshakeState::Finished(_)) {
-            debug!("potato handler enqueue game action in finished state: {action:?}");
             self.push_action(action);
 
             let (has_potato, effect) = self.send_potato_request_if_needed()?;
             effects.extend(effect);
             if !has_potato {
-                debug!("potato handler don't have potato");
                 return Ok((false, effects));
             }
 
@@ -1768,6 +1818,9 @@ impl PotatoHandler {
                 player_ch.is_initial_potato()
             );
 
+            let pre_game_ids: HashSet<GameID> =
+                player_ch.live_game_ids().into_iter().collect();
+
             let conditions =
                 CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
             let created_coins: Vec<PuzzleHash> = conditions
@@ -1786,7 +1839,17 @@ impl PotatoHandler {
             // We have a collection puzzle hash and amount pairs.  We need to match these to the
             // games in the channel handler.
             debug!("have unrolled coins {created_coins:?}");
-            player_ch.set_state_for_coins(env, unroll_coin, &created_coins)?
+            let game_map = player_ch.set_state_for_coins(env, unroll_coin, &created_coins)?;
+
+            let surviving_ids: HashSet<GameID> =
+                game_map.values().map(|def| def.game_id.clone()).collect();
+            for cancelled_id in pre_game_ids.difference(&surviving_ids) {
+                effects.push(Effect::Notification(GameNotification::GameCancelled {
+                    id: cancelled_id.clone(),
+                }));
+            }
+
+            game_map
         };
 
         for (_coin, def) in game_map.iter() {
@@ -1924,7 +1987,6 @@ impl FromLocalUI for PotatoHandler
         new_entropy: Hash,
     ) -> Result<Vec<Effect>, Error>
     {
-        debug!("potato handler make move {id:?} {readable:?}");
         let (_continued, effects) = self.do_game_action(
             env,
             GameAction::Move(id.clone(), readable.clone(), new_entropy),
@@ -1989,17 +2051,19 @@ impl BootstrapTowardGame for PotatoHandler
         &mut self,
         _env: &mut ChannelHandlerEnv<'_, R>,
         bundle: SpendBundle,
-    ) -> Result<Option<Effect>, Error>
+    ) -> Result<Option<Vec<Effect>>, Error>
     {
         self.channel_initiation_transaction = Some(bundle);
 
         debug!("channel offer: {:?}", self.handshake_state);
         if let HandshakeState::PostStepE(info) = &self.handshake_state {
-            let effect = self.try_complete_step_e(
+            let effects = self.try_complete_step_e(
                 info.first_player_hs_info.clone(),
                 info.second_player_hs_info.clone(),
             )?;
-            return Ok(effect);
+            if !effects.is_empty() {
+                return Ok(Some(effects));
+            }
         }
 
         Ok(None)
@@ -2009,16 +2073,18 @@ impl BootstrapTowardGame for PotatoHandler
         &mut self,
         _env: &mut ChannelHandlerEnv<'_, R>,
         bundle: &SpendBundle,
-    ) -> Result<Option<Effect>, Error>
+    ) -> Result<Option<Vec<Effect>>, Error>
     {
         self.channel_finished_transaction = Some(bundle.clone());
 
         if let HandshakeState::PostStepF(info) = &self.handshake_state {
-            let effect = self.try_complete_step_f(
+            let effects = self.try_complete_step_f(
                 info.first_player_hs_info.clone(),
                 info.second_player_hs_info.clone(),
             )?;
-            return Ok(effect);
+            if !effects.is_empty() {
+                return Ok(Some(effects));
+            }
         }
 
         Ok(None)
@@ -2031,7 +2097,7 @@ impl SpendWalletReceiver for PotatoHandler
         &mut self,
         _env: &mut ChannelHandlerEnv<'_, R>,
         coin: &CoinString,
-    ) -> Result<Option<Effect>, Error>
+    ) -> Result<Option<Vec<Effect>>, Error>
     {
         debug!("coin created: {coin:?}");
         if let HandshakeState::PostStepF(info) = &self.handshake_state {
@@ -2043,11 +2109,13 @@ impl SpendWalletReceiver for PotatoHandler
             debug!("checking created coin {coin:?} vs expected {channel_coin_created:?}");
             if channel_coin_created.is_some() {
                 self.waiting_to_start = false;
-                let effect = self.try_complete_step_f(
+                let effects = self.try_complete_step_f(
                     info.first_player_hs_info.clone(),
                     info.second_player_hs_info.clone(),
                 )?;
-                return Ok(effect);
+                if !effects.is_empty() {
+                    return Ok(Some(effects));
+                }
             }
         }
 
@@ -2115,12 +2183,25 @@ impl SpendWalletReceiver for PotatoHandler
     ) -> Result<Vec<Effect>, Error>
     {
         let mut effects = Vec::new();
-        if let (HandshakeState::OnChain(on_chain), Some((p, s))) =
-            (&mut self.handshake_state, puzzle_and_solution)
-        {
-            debug!("passing on game coin spend to on chain handler {coin_id:?}");
-            effects.extend(on_chain.handle_game_coin_spent(env, coin_id, p, s)?);
-            return Ok(effects);
+        if let HandshakeState::OnChain(on_chain) = &mut self.handshake_state {
+            if let Some((p, s)) = puzzle_and_solution {
+                debug!("passing on game coin spend to on chain handler {coin_id:?}");
+                effects.extend(on_chain.handle_game_coin_spent(env, coin_id, p, s)?);
+                return Ok(effects);
+            } else if let Some((game_id, our_turn)) = on_chain.remove_game_coin_info(coin_id) {
+                debug!("game coin {coin_id:?} spent with no puzzle/solution - our_turn={our_turn}");
+                let notification = if our_turn {
+                    GameNotification::OurTurnCoinSpentUnexpectedly { id: game_id.clone() }
+                } else {
+                    GameNotification::OpponentMadeImpossibleSpend { id: game_id.clone() }
+                };
+                effects.push(Effect::Notification(notification));
+                effects.push(Effect::GameFinished {
+                    id: game_id,
+                    mover_share: Amount::default(),
+                });
+                return Ok(effects);
+            }
         }
 
         if let Some((puzzle, solution)) = puzzle_and_solution {
@@ -2158,16 +2239,41 @@ impl SpendWalletReceiver for PotatoHandler
         match state_coin_id {
             Some(ConditionWaitKind::Channel(state_coin_id)) => {
                 if *coin_id == state_coin_id {
-                    let effect = self.handle_channel_coin_spent(env, coin_id, puzzle_and_solution)?;
-                    effects.extend(effect);
+                    match self.handle_channel_coin_spent(env, coin_id, puzzle_and_solution) {
+                        Ok(effect) => {
+                            effects.extend(effect);
+                        }
+                        Err(e) => {
+                            debug!("channel coin spent to non-unroll: {e:?}");
+                            if let Ok(player_ch) = self.channel_handler() {
+                                for id in player_ch.live_game_ids() {
+                                    effects.push(Effect::Notification(
+                                        GameNotification::GameDestroyedOnChain { id },
+                                    ));
+                                }
+                            }
+                        }
+                    }
                     return Ok(effects);
                 }
             }
             Some(ConditionWaitKind::Unroll(unroll_coin_id)) => {
                 if *coin_id == unroll_coin_id {
-                    let transition_effects =
-                        self.finish_on_chain_transition(env, coin_id, puzzle_and_solution)?;
-                    effects.extend(transition_effects);
+                    match self.finish_on_chain_transition(env, coin_id, puzzle_and_solution) {
+                        Ok(transition_effects) => {
+                            effects.extend(transition_effects);
+                        }
+                        Err(e) => {
+                            debug!("unroll coin spent with unexpected state: {e:?}");
+                            if let Ok(player_ch) = self.channel_handler() {
+                                for id in player_ch.live_game_ids() {
+                                    effects.push(Effect::Notification(
+                                        GameNotification::GameDestroyedOnChain { id },
+                                    ));
+                                }
+                            }
+                        }
+                    }
                     return Ok(effects);
                 }
             }

@@ -10,6 +10,7 @@ use std::time::Duration;
 use lazy_static::lazy_static;
 use log::debug;
 
+#[cfg(feature = "py-bindings")]
 use pyo3::Python;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
@@ -29,6 +30,7 @@ use crate::common::types::{
 };
 use crate::peer_container::{FullCoinSetAdapter, WatchReport};
 use crate::simulator::Simulator;
+#[cfg(feature = "py-bindings")]
 use pyo3::pyfunction;
 
 trait HttpError<V> {
@@ -164,7 +166,7 @@ impl GameRunner {
 
     fn chase_block(&mut self) -> Result<u64, Error> {
         let new_height = self.simulator.get_current_height() as u64;
-        let new_coins = self.simulator.get_all_coins().into_gen()?;
+        let new_coins = self.simulator.get_all_coins()?;
         let watch_report = self
             .coinset_adapter
             .make_report_from_coin_set_update(new_height, &new_coins)?;
@@ -209,8 +211,7 @@ impl GameRunner {
         if let Some(pk) = identity {
             for coin in self
                 .simulator
-                .get_my_coins(&pk.puzzle_hash)
-                .into_gen()?
+                .get_my_coins(&pk.puzzle_hash)?
                 .iter()
             {
                 if let Some((_, _, amt)) = coin.to_parts() {
@@ -277,8 +278,7 @@ impl GameRunner {
         if let Some(identity) = identity {
             let coins0 = self
                 .simulator
-                .get_my_coins(&identity.puzzle_hash)
-                .into_gen()?;
+                .get_my_coins(&identity.puzzle_hash)?;
             let coin_amt = Amount::new(amt);
             for c in coins0.iter() {
                 if let Some((_, _ph, amt)) = c.to_parts() {
@@ -304,8 +304,7 @@ impl GameRunner {
     fn spend_list_of_spends(&mut self, spends: &[CoinSpend]) -> StringWithError {
         let result = self
             .simulator
-            .push_tx(&mut self.allocator, spends)
-            .into_gen()?;
+            .push_tx(&mut self.allocator, spends)?;
         let e_res = result
             .e
             .map(|e| format!("{e}"))
@@ -680,7 +679,8 @@ fn service_main_inner() {
     })
 }
 
-#[pyfunction]
+#[cfg(feature = "py-bindings")]
+#[pyo3::pyfunction]
 pub fn service_main() {
     if let Err(e) = std::panic::catch_unwind(|| {
         Python::with_gil(|py| {
@@ -688,6 +688,16 @@ pub fn service_main() {
                 service_main_inner();
             })
         })
+    }) {
+        eprintln!("panic: {e:?}");
+        std::process::exit(1);
+    }
+}
+
+#[cfg(not(feature = "py-bindings"))]
+pub fn service_main() {
+    if let Err(e) = std::panic::catch_unwind(|| {
+        service_main_inner();
     }) {
         eprintln!("panic: {e:?}");
         std::process::exit(1);

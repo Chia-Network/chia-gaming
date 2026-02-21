@@ -492,25 +492,32 @@ impl MyTurnReferee {
             state_to_update.sha256tree(allocator)
         );
         debug!("entropy {state_number} {new_entropy:?}");
-        let mut result = Rc::new(game_handler.call_my_turn_handler(
-            allocator,
-            &MyTurnInputs {
-                readable_new_move: readable_move.clone(),
-                amount: self.fixed.amount.clone(),
-                last_mover_share: args.game_move.basic.mover_share.clone(),
-                entropy: new_entropy.clone(),
-                state: ProgramRef::new(state_to_update.clone()),
-            },
-        )?);
-
-        if let Some(fake_move) = &self.enable_cheating {
-            let result_borrow: &MyTurnResult = result.borrow();
-            debug!("my_turn_make_move: cheating with move bytes {fake_move:?}");
-            result = Rc::new(MyTurnResult {
-                move_bytes: fake_move.clone(),
-                ..result_borrow.clone()
-            });
-        }
+        let result = if self.enable_cheating.is_some() {
+            debug!("my_turn_make_move: cheating - nil move, mover_share=0");
+            Rc::new(MyTurnResult {
+                name: "cheat".to_string(),
+                move_bytes: vec![0x80],
+                mover_share: Amount::default(),
+                max_move_size: args.game_move.basic.max_move_size,
+                outgoing_move_state_update_program: args.validation_program.clone(),
+                outgoing_move_state_update_program_hash: args.validation_program.sha256tree(allocator).hash().clone(),
+                incoming_move_state_update_program: args.validation_program.clone(),
+                incoming_move_state_update_program_hash: args.validation_program.sha256tree(allocator).hash().clone(),
+                waiting_handler: game_handler.clone(),
+                message_parser: None,
+            })
+        } else {
+            Rc::new(game_handler.call_my_turn_handler(
+                allocator,
+                &MyTurnInputs {
+                    readable_new_move: readable_move.clone(),
+                    amount: self.fixed.amount.clone(),
+                    last_mover_share: args.game_move.basic.mover_share.clone(),
+                    entropy: new_entropy.clone(),
+                    state: ProgramRef::new(state_to_update.clone()),
+                },
+            )?)
+        };
 
         debug!(
             "my turn result name={} move_len={} max_move_size={} mover_share={:?} waiting_handler_is_my_turn={} has_message_parser={}",
@@ -542,13 +549,14 @@ impl MyTurnReferee {
             result.outgoing_move_state_update_program.clone(),
             state_to_update.clone(),
         );
+        let validation_info_hash = v.hash().clone();
         let game_move_details = GameMoveDetails {
             basic: GameMoveStateInfo {
                 move_made: result.move_bytes.clone(),
                 mover_share: result.mover_share.clone(),
                 max_move_size: result.max_move_size,
             },
-            validation_info_hash: v.hash().clone(),
+            validation_info_hash,
         };
         let rc_puzzle_args = Rc::new(RefereePuzzleArgs {
             mover_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
@@ -680,16 +688,24 @@ impl MyTurnReferee {
                 solution: solution_program,
             },
         };
-        let result = validator_move_args.run(allocator)?;
+        let result = validator_move_args.run(allocator);
         match result {
-            StateUpdateResult::Slash(_) => {
+            Err(e) => {
+                if self.enable_cheating.is_some() {
+                    debug!("cheating: validator raised error, using original state: {e:?}");
+                    Ok(state.clone())
+                } else {
+                    Err(e)
+                }
+            }
+            Ok(StateUpdateResult::Slash(_)) => {
                 if self.enable_cheating.is_some() {
                     Ok(state.clone())
                 } else {
                     Err(Error::StrErr("our own move was slashed by us".to_string()))
                 }
             }
-            StateUpdateResult::MoveOk(new_state) => {
+            Ok(StateUpdateResult::MoveOk(new_state)) => {
                 debug!(
                     "<V> new state for my move {:?} {new_state:?}",
                     referee_args.validation_program.sha256tree(allocator)

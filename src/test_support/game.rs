@@ -44,7 +44,7 @@ mod sim_tests {
         private_to_public_key, puzzle_for_pk, puzzle_hash_for_synthetic_public_key, ChiaIdentity,
     };
     use crate::common::types::{
-        Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, Puzzle, PuzzleHash, Sha256tree,
+        Amount, CoinID, CoinString, Error, GameID, Hash, Puzzle, PuzzleHash, Sha256tree,
     };
     use crate::shutdown::ShutdownConditions;
     use crate::simulator::Simulator;
@@ -170,6 +170,16 @@ mod sim_tests {
         /// Enable cheating: the next on-chain move for this player will use
         /// fake move bytes instead of the real handler output.
         EnableCheating(usize, Vec<u8>),
+        /// Cheat: assert on-chain + our turn, then submit a game-rule-violating
+        /// move (nil move, zero mover_share, junk validation hash).
+        Cheat(usize),
+        /// Force-destroy a game coin: inject a fake deletion into WatchReport
+        /// to test impossible spend / game destroyed notifications.
+        ForceDestroyCoin(usize),
+        /// Nerf (silently drop) all outbound transactions for a player.
+        NerfTransactions(usize),
+        /// Stop nerfing transactions.
+        UnNerfTransactions,
         /// Go on chain
         GoOnChain(usize),
         /// Wait a number of blocks
@@ -189,6 +199,10 @@ mod sim_tests {
                 GameAction::EnableCheating(p, v) => {
                     write!(formatter, "EnableCheating({p},{v:?})")
                 }
+                GameAction::Cheat(p) => write!(formatter, "Cheat({p})"),
+                GameAction::ForceDestroyCoin(p) => write!(formatter, "ForceDestroyCoin({p})"),
+                GameAction::NerfTransactions(p) => write!(formatter, "NerfTransactions({p})"),
+                GameAction::UnNerfTransactions => write!(formatter, "UnNerfTransactions"),
                 GameAction::GoOnChain(p) => write!(formatter, "GoOnChain({p})"),
                 GameAction::Accept(p) => write!(formatter, "Accept({p})"),
                 GameAction::WaitBlocks(n, p) => write!(formatter, "WaitBlocks({n},{p})"),
@@ -232,8 +246,7 @@ mod sim_tests {
 
         let get_sufficient_coins = |i: usize| -> Result<Vec<CoinString>, Error> {
             Ok(simulator
-                .get_my_coins(&identities[i].puzzle_hash)
-                .into_gen()?
+                .get_my_coins(&identities[i].puzzle_hash)?
                 .into_iter()
                 .filter(|c| {
                     if let Some((_, _, amt)) = c.to_parts() {

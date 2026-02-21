@@ -525,6 +525,9 @@ export class WasmBlobWrapper {
         }, 2000);
         this.timeoutHandles.push(handle);
       },
+      game_notification: (notification_json) => {
+        console.log('game_notification', notification_json);
+      },
     });
 
     if (!idle || this.finished) {

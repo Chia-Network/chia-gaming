@@ -21,7 +21,7 @@ use crate::common::types::{
     PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
 use crate::potato_handler::start::GameStart;
-use crate::potato_handler::effects::{apply_effects, Effect};
+use crate::potato_handler::effects::{apply_effects, Effect, GameNotification};
 use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameFactory, PacketSender,
     PeerMessage, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
@@ -163,12 +163,14 @@ pub struct IdleResult {
     pub finished: bool,
     pub shutdown_received: bool,
     pub handshake_done: bool,
+    pub handshake_complete: bool,
     pub outbound_transactions: VecDeque<SpendBundle>,
     pub coin_solution_requests: VecDeque<CoinString>,
     pub outbound_messages: VecDeque<Vec<u8>>,
     pub opponent_move: Option<(GameID, usize, ReadableMove)>,
     pub game_started: Option<GameStartRecord>,
     pub game_finished: Option<(GameID, Amount)>,
+    pub notifications: Vec<GameNotification>,
     pub receive_error: Option<Error>,
     pub action_queue: Vec<String>,
     pub incoming_messages: Vec<String>,
@@ -259,6 +261,16 @@ pub trait GameCradle {
         make_move: &[u8],
     ) -> Result<bool, Error>;
 
+    /// Cheat in a game: assert on-chain + our turn, then submit a move that
+    /// violates game rules (nil move, zero mover_share, junk validation hash).
+    /// The game handler is bypassed entirely. Test-only.
+    fn cheat<R: Rng>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+        game_id: &GameID,
+    ) -> Result<(), Error>;
+
     /// Check whether we're on chain.
     fn is_on_chain(&self) -> bool;
 
@@ -293,6 +305,9 @@ pub trait GameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
     ) -> Result<Option<Hash>, Error>;
+
+    /// Get the current on-chain coin for a game (if on-chain).
+    fn get_game_coin(&self, game_id: &GameID) -> Option<CoinString>;
 }
 
 #[derive(Serialize, Deserialize)]
@@ -316,14 +331,23 @@ struct SynchronousGameCradleState {
     game_messages: VecDeque<(GameID, ReadableMove)>,
     game_started: VecDeque<GameStartRecord>,
     game_finished: VecDeque<(GameID, Amount)>,
+    #[serde(skip)]
+    pending_notifications: VecDeque<GameNotification>,
+    handshake_complete: bool,
     shutdown_received: bool,
     finished: bool,
     shutdown: Option<CoinString>,
     identity: ChiaIdentity,
+    peer_disconnected: bool,
+    went_on_chain: Option<bool>,
 }
 
 impl PacketSender for SynchronousGameCradleState {
     fn send_message(&mut self, msg: &PeerMessage) -> Result<(), Error> {
+        if self.peer_disconnected {
+            debug!("peer disconnected: dropping outbound message {msg:?}");
+            return Ok(());
+        }
         let bson_doc = bson::to_bson(&msg).map_err(|e| Error::StrErr(format!("{e:?}")))?;
         let msg_data = bson::to_vec(&bson_doc).map_err(|e| Error::StrErr(format!("{e:?}")))?;
         self.outbound_messages.push_back(msg_data);
@@ -406,6 +430,8 @@ impl SynchronousGameCradle {
                 raw_game_messages: VecDeque::default(),
                 game_started: VecDeque::default(),
                 game_finished: VecDeque::default(),
+                pending_notifications: VecDeque::default(),
+                handshake_complete: false,
                 channel_puzzle_hash: None,
                 funding_coin: None,
                 unfunded_offer: None,
@@ -413,6 +439,8 @@ impl SynchronousGameCradle {
                 resync: None,
                 shutdown_received: false,
                 finished: false,
+                peer_disconnected: false,
+                went_on_chain: None,
             },
             peer: PotatoHandler::new(PotatoHandlerInit {
                 have_potato: config.have_potato,
@@ -511,10 +539,12 @@ impl ToLocalUI for SynchronousGameCradleState {
         self.game_finished.push_back((id.clone(), my_share));
         Ok(())
     }
-    fn game_cancelled(&mut self, id: &GameID) -> Result<(), Error> {
-        // XXX cancelled list
-        self.game_finished
-            .push_back((id.clone(), Amount::default()));
+    fn game_notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
+        self.pending_notifications.push_back(notification.clone());
+        Ok(())
+    }
+    fn handshake_complete(&mut self) -> Result<(), Error> {
+        self.handshake_complete = true;
         Ok(())
     }
     fn shutdown_started(&mut self) -> Result<(), Error> {
@@ -527,8 +557,10 @@ impl ToLocalUI for SynchronousGameCradleState {
         self.finished = true;
         Ok(())
     }
-    fn going_on_chain(&mut self, _got_error: bool) -> Result<(), Error> {
-        todo!();
+    fn going_on_chain(&mut self, got_error: bool) -> Result<(), Error> {
+        self.peer_disconnected = true;
+        self.went_on_chain = Some(got_error);
+        Ok(())
     }
 }
 
@@ -552,7 +584,7 @@ pub fn report_coin_changes_to_peer<R: Rng>(
     // Report created coins
     for c in watch_report.created_watched.iter() {
         debug!("reporting coin creation: {c:?}");
-        effects.extend(peer.coin_created(env, c)?);
+        effects.extend(peer.coin_created(env, c)?.into_iter().flatten());
     }
 
     Ok(effects)
@@ -643,7 +675,9 @@ impl SynchronousGameCradle {
 
             self.peer.channel_offer(&mut env, bundle)?
         };
-        apply_effects(reported_effects.into_iter().collect(), allocator, &mut self.state)?;
+        if let Some(effects) = reported_effects {
+            apply_effects(effects, allocator, &mut self.state)?;
+        }
 
         Ok(true)
     }
@@ -694,7 +728,9 @@ impl SynchronousGameCradle {
             self.peer
                 .channel_transaction_completion(&mut env, &unfunded_offer)?
         };
-        apply_effects(reported_effects.into_iter().collect(), allocator, &mut self.state)?;
+        if let Some(effects) = reported_effects {
+            apply_effects(effects, allocator, &mut self.state)?;
+        }
 
         Ok(true)
     }
@@ -770,6 +806,25 @@ impl GameCradle for SynchronousGameCradle {
         self.peer.enable_cheating_for_game(game_id, make_move)
     }
 
+    fn cheat<R: Rng>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+        game_id: &GameID,
+    ) -> Result<(), Error> {
+        assert!(
+            self.is_on_chain(),
+            "cheat() requires being on-chain"
+        );
+        assert!(
+            matches!(self.my_move_in_game(game_id), Some(true)),
+            "cheat() requires it to be our turn"
+        );
+        self.enable_cheating_for_game(game_id, &[0x80])?;
+        let entropy: Hash = rng.gen();
+        self.make_move(allocator, rng, game_id, vec![0x80], entropy)
+    }
+
     fn is_on_chain(&self) -> bool {
         self.peer.is_on_chain()
     }
@@ -800,6 +855,10 @@ impl GameCradle for SynchronousGameCradle {
             self.peer.get_game_state_id(&mut env)?
         };
         Ok(result)
+    }
+
+    fn get_game_coin(&self, game_id: &GameID) -> Option<CoinString> {
+        self.peer.get_game_coin(game_id)
     }
 
     fn opening_coin<R: Rng>(
@@ -919,6 +978,10 @@ impl GameCradle for SynchronousGameCradle {
 
     /// Deliver a message from the peer.
     fn deliver_message(&mut self, inbound_message: &[u8]) -> Result<(), Error> {
+        if self.state.peer_disconnected {
+            debug!("peer disconnected: dropping inbound message");
+            return Ok(());
+        }
         self.state
             .inbound_messages
             .push_back(inbound_message.to_vec());
@@ -956,6 +1019,10 @@ impl GameCradle for SynchronousGameCradle {
         }
 
         result.handshake_done = self.peer.handshake_done();
+        if self.state.handshake_complete {
+            result.handshake_complete = true;
+            self.state.handshake_complete = false;
+        }
 
         swap(
             &mut result.outbound_transactions,
@@ -977,6 +1044,11 @@ impl GameCradle for SynchronousGameCradle {
         swap(&mut result.resync, &mut self.state.resync);
 
         self.state.coin_solution_requests.clear();
+
+        while let Some(notification) = self.state.pending_notifications.pop_front() {
+            local_ui.game_notification(&notification)?;
+            result.notifications.push(notification);
+        }
 
         if let Some((id, state_number, msg)) = self.state.our_moves.pop_front() {
             local_ui.self_move(&id, state_number, &msg)?;
@@ -1017,6 +1089,10 @@ impl GameCradle for SynchronousGameCradle {
                 apply_effects(returned_effects.clone(), allocator, &mut self.state)?;
             }
 
+            if let Some(got_error) = self.state.went_on_chain.take() {
+                local_ui.going_on_chain(got_error)?;
+            }
+
             match recv_result {
                 Ok(_) => {
                     result.continue_on = true;
@@ -1052,6 +1128,7 @@ impl GameCradle for SynchronousGameCradle {
         _local_ui: &mut dyn ToLocalUI,
         got_error: bool,
     ) -> Result<(), Error> {
+        self.state.peer_disconnected = true;
         let reported_effects = {
             let mut env = ChannelHandlerEnv::new(allocator, rng)?;
             self.peer.go_on_chain(&mut env, got_error)?
