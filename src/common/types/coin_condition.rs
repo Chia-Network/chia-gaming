@@ -5,7 +5,9 @@ use clvmr::{run_program, ChiaDialect, NO_UNKNOWN_OPS};
 
 use crate::utils::proper_list;
 
-use crate::common::constants::{AGG_SIG_ME_ATOM, AGG_SIG_UNSAFE_ATOM, CREATE_COIN_ATOM, REM_ATOM};
+use crate::common::constants::{
+    AGG_SIG_ME_ATOM, AGG_SIG_UNSAFE_ATOM, ASSERT_HEIGHT_RELATIVE_ATOM, CREATE_COIN_ATOM, REM_ATOM,
+};
 
 use crate::common::types::{
     u64_from_atom, AllocEncoder, Amount, Error, Hash, IntoErr, Node, Program, PublicKey, PuzzleHash,
@@ -22,6 +24,7 @@ pub enum CoinCondition {
     #[allow(dead_code)]
     CreateCoin(PuzzleHash, Amount),
     Rem(Vec<Vec<u8>>),
+    AssertHeightRelative(u64),
 }
 
 fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<CoinCondition> {
@@ -62,6 +65,24 @@ fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<C
                     PuzzleHash::from_hash(Hash::from_slice(&atoms[1])),
                     Amount::new(amt),
                 ));
+            }
+        }
+    }
+
+    if exploded.len() == 2
+        && matches!(
+            (
+                allocator.allocator().sexp(exploded[0]),
+                allocator.allocator().sexp(exploded[1]),
+            ),
+            (SExp::Atom, SExp::Atom)
+        )
+    {
+        let op = allocator.allocator().atom(exploded[0]).to_vec();
+        let arg = allocator.allocator().atom(exploded[1]).to_vec();
+        if *op == ASSERT_HEIGHT_RELATIVE_ATOM {
+            if let Some(val) = u64_from_atom(&arg) {
+                return Some(CoinCondition::AssertHeightRelative(val));
             }
         }
     }

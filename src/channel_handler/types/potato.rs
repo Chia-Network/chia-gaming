@@ -2,6 +2,7 @@ use crate::channel_handler::types::{LiveGame, ReadableMove};
 use crate::channel_handler::ChannelCoinSpendInfo;
 use crate::common::types::{Aggsig, Amount, GameID, Hash, Program, PuzzleHash};
 use crate::referee::types::GameMoveDetails;
+use crate::referee::RefereeInterface;
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 
@@ -36,7 +37,7 @@ impl std::fmt::Debug for PotatoAcceptCachedData {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct PotatoMoveCachedData {
     pub state_number: usize,
     pub game_id: GameID,
@@ -45,6 +46,26 @@ pub struct PotatoMoveCachedData {
     pub move_data: ReadableMove,
     pub move_entropy: Hash,
     pub amount: Amount,
+    #[serde(skip)]
+    pub saved_post_move_referee: Option<Rc<dyn RefereeInterface>>,
+    #[serde(skip)]
+    pub saved_post_move_last_ph: Option<PuzzleHash>,
+}
+
+impl std::fmt::Debug for PotatoMoveCachedData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PotatoMoveCachedData")
+            .field("state_number", &self.state_number)
+            .field("game_id", &self.game_id)
+            .field("puzzle_hash", &self.puzzle_hash)
+            .field("match_puzzle_hash", &self.match_puzzle_hash)
+            .field("move_data", &self.move_data)
+            .field("move_entropy", &self.move_entropy)
+            .field("amount", &self.amount)
+            .field("saved_post_move_referee", &self.saved_post_move_referee.is_some())
+            .field("saved_post_move_last_ph", &self.saved_post_move_last_ph)
+            .finish()
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -7,18 +7,17 @@ use serde::{Deserialize, Serialize};
 use crate::channel_handler::types::Evidence;
 use crate::channel_handler::ReadableMove;
 use crate::common::types::{
-    AllocEncoder, Amount, CoinCondition, CoinString, Error, GameID, Hash, PuzzleHash,
+    AllocEncoder, Amount, CoinCondition, CoinString, Error, GameID, Hash, PuzzleHash, Timeout,
 };
 use crate::referee::types::{
     GameMoveDetails, GameMoveWireData, RefereeOnChainTransaction, TheirTurnCoinSpentResult,
     TheirTurnMoveResult,
 };
-use crate::referee::{deserialize_referee, serialize_referee, RefereeInterface, RewindResult};
+use crate::referee::{deserialize_referee, serialize_referee, RefereeInterface};
 
 #[derive(Serialize, Deserialize)]
 pub struct LiveGame {
     pub game_id: GameID,
-    pub rewind_outcome: Option<RewindResult>,
     pub last_referee_puzzle_hash: PuzzleHash,
     #[serde(
         serialize_with = "serialize_referee",
@@ -43,7 +42,6 @@ impl LiveGame {
             referee_maker,
             my_contribution,
             their_contribution,
-            rewind_outcome: None,
         }
     }
 
@@ -55,12 +53,25 @@ impl LiveGame {
         self.referee_maker.is_my_turn()
     }
 
+    pub fn get_game_timeout(&self) -> Timeout {
+        self.referee_maker.get_game_timeout()
+    }
+
     pub fn processing_my_turn(&self) -> bool {
         self.referee_maker.processing_my_turn()
     }
 
     pub fn last_puzzle_hash(&self) -> PuzzleHash {
         self.last_referee_puzzle_hash.clone()
+    }
+
+    pub fn save_referee_state(&self) -> (Rc<dyn RefereeInterface>, PuzzleHash) {
+        (self.referee_maker.clone(), self.last_referee_puzzle_hash.clone())
+    }
+
+    pub fn restore_referee_state(&mut self, referee: Rc<dyn RefereeInterface>, last_ph: PuzzleHash) {
+        self.referee_maker = referee;
+        self.last_referee_puzzle_hash = last_ph;
     }
 
     pub fn current_puzzle_hash(&self, allocator: &mut AllocEncoder) -> Result<PuzzleHash, Error> {
@@ -88,15 +99,19 @@ impl LiveGame {
         state_number: usize,
     ) -> Result<GameMoveWireData, Error> {
         // assert!(self.referee_maker.is_my_turn());
+        eprintln!("MAKE_MOVE: entropy={new_entropy:?} state_number={state_number} is_my_turn={}",
+            self.referee_maker.is_my_turn());
         let (new_ref, referee_result) = self.referee_maker.my_turn_make_move(
             allocator,
             readable_move,
             new_entropy.clone(),
             state_number,
         )?;
+        eprintln!("MAKE_MOVE: result ph_for_unroll={:?}", referee_result.puzzle_hash_for_unroll);
         self.referee_maker = new_ref;
-        self.last_referee_puzzle_hash = referee_result.puzzle_hash_for_unroll.clone();
-        debug!("MY MOVE: {:?}", self.last_referee_puzzle_hash);
+        self.last_referee_puzzle_hash =
+            self.referee_maker.outcome_referee_puzzle_hash(allocator)?;
+        debug!("MY MOVE: last_ref_ph={:?}", self.last_referee_puzzle_hash);
         Ok(referee_result)
     }
 
@@ -117,9 +132,10 @@ impl LiveGame {
         if let Some(r) = new_ref {
             self.referee_maker = r;
         }
-        if let Some(ph) = &their_move_result.puzzle_hash_for_unroll {
-            debug!("ACCEPT MOVE: {ph:?}");
-            self.last_referee_puzzle_hash = ph.clone();
+        if their_move_result.puzzle_hash_for_unroll.is_some() {
+            self.last_referee_puzzle_hash =
+                self.referee_maker.outcome_referee_puzzle_hash(allocator)?;
+            debug!("ACCEPT MOVE: last_ref_ph={:?}", self.last_referee_puzzle_hash);
         }
         Ok(their_move_result)
     }
@@ -132,10 +148,6 @@ impl LiveGame {
     ) -> Result<Option<TheirTurnCoinSpentResult>, Error> {
         self.referee_maker
             .check_their_turn_for_slash(allocator, evidence, coin_string)
-    }
-
-    pub fn get_rewind_outcome(&self) -> Option<&RewindResult> {
-        self.rewind_outcome.as_ref()
     }
 
     pub fn get_amount(&self) -> Amount {
@@ -172,6 +184,8 @@ impl LiveGame {
         conditions: &[CoinCondition],
         current_state: usize,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
+        let pre_ph = self.current_puzzle_hash(allocator)?;
+        let pre_last = self.last_referee_puzzle_hash.clone();
         // assert!(self.referee_maker.processing_my_turn());
         let (new_ref, res) = self.referee_maker.their_turn_coin_spent(
             allocator,
@@ -179,78 +193,21 @@ impl LiveGame {
             conditions,
             current_state,
         )?;
+        let got_new_ref = new_ref.is_some();
         if let Some(r) = new_ref {
             self.referee_maker = r;
         }
 
-        // After an Expected spend, the referee may still be TheirTurn (the
-        // Expected shortcut returns self.clone()). If we have a successor
-        // from the rewind that is MyTurn, advance to it so that subsequent
-        // redo logic can operate on the correct referee state.
-        if matches!(res, TheirTurnCoinSpentResult::Expected(..)) && !self.referee_maker.is_my_turn() {
-            if let Some(rewind) = &self.rewind_outcome {
-                if let Some(successor) = &rewind.successor {
-                    if successor.is_my_turn() {
-                        debug!(
-                            "Expected spend on TheirTurn: advancing referee to successor state {}",
-                            successor.state_number()
-                        );
-                        self.referee_maker = successor.clone();
-                    }
-                }
-            }
+        if let TheirTurnCoinSpentResult::Expected(_, ref expected_ph, _, _) = res {
+            self.last_referee_puzzle_hash = expected_ph.clone();
+        } else {
+            self.last_referee_puzzle_hash = self.current_puzzle_hash(allocator)?;
         }
-
-        self.last_referee_puzzle_hash = self.current_puzzle_hash(allocator)?;
-        Ok(res)
-    }
-
-    /// Regress the live game state to the state we know so that we can generate the puzzle
-    /// for that state.  We'll return the move needed to advance it fully.
-    pub fn set_state_for_coin(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        coin: &CoinString,
-        want_ph: &PuzzleHash,
-        _current_state: usize,
-    ) -> Result<RewindResult, Error> {
-        let referee_puzzle_hash = self.referee_maker.on_chain_referee_puzzle_hash(allocator)?;
-
-        debug!("live game: current state is {referee_puzzle_hash:?} want {want_ph:?}");
-        debug!(
-            "SET_STATE_FOR_COIN: on_chain_hash={:?} last_ref_ph={:?} want={:?} match_on_chain={} match_last={}",
-            referee_puzzle_hash,
-            self.last_referee_puzzle_hash,
-            want_ph,
-            referee_puzzle_hash == *want_ph,
-            self.last_referee_puzzle_hash == *want_ph
+        eprintln!(
+            "THEIR_TURN_COIN_SPENT: game={:?} pre_ph={pre_ph:?} pre_last={pre_last:?} got_new_ref={got_new_ref} result={:?} post_last={:?}",
+            self.game_id, std::mem::discriminant(&res), self.last_referee_puzzle_hash,
         );
-        let result =
-            self.referee_maker
-                .rewind(allocator, self.referee_maker.clone(), coin, want_ph)?;
-        if let Some(new_ref) = result.new_referee.as_ref() {
-            self.referee_maker = new_ref.clone();
-            self.rewind_outcome = Some(result.clone());
-            self.last_referee_puzzle_hash = self.current_puzzle_hash(allocator)?;
-            debug!(
-                "SET_STATE_FOR_COIN: rewound, new last_ref_ph={:?}",
-                self.last_referee_puzzle_hash
-            );
-            return Ok(result);
-        }
-
-        if referee_puzzle_hash == *want_ph {
-            self.rewind_outcome = Some(result.clone());
-            self.last_referee_puzzle_hash = self.current_puzzle_hash(allocator)?;
-            debug!(
-                "SET_STATE_FOR_COIN: matched on_chain, new last_ref_ph={:?}",
-                self.last_referee_puzzle_hash
-            );
-            return Ok(result);
-        }
-
-        debug!("SET_STATE_FOR_COIN: NO MATCH FOUND");
-        Ok(result)
+        Ok(res)
     }
 
     pub fn get_transaction_for_timeout(

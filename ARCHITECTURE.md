@@ -17,15 +17,18 @@ For debugging and testing operational guidance, see `DEBUGGING_GUIDE.md`.
 - [The Potato Protocol](#the-potato-protocol)
 - [Off-Chain Game Flow](#off-chain-game-flow)
 - [Going On-Chain: Dispute Resolution](#going-on-chain-dispute-resolution)
+- [Preemption](#preemption)
 - [The Referee](#the-referee)
   - [Referee Puzzle Args](#referee-puzzle-args)
   - [On-Chain Referee Actions](#on-chain-referee-actions)
   - [Referee State Model](#referee-state-model)
+  - [previous_validation_info_hash and the Initial State](#previous_validation_info_hash-and-the-initial-state)
 - [Calpoker: The Reference Game](#calpoker-the-reference-game)
   - [Commit-Reveal Protocol](#commit-reveal-protocol)
   - [On-Chain Steps (a through e)](#on-chain-steps-a-through-e)
 - [Code Organization](#code-organization)
 - [Key Types](#key-types)
+- [Timeouts](#timeouts)
 - [Peer Disconnect Invariant](#peer-disconnect-invariant)
 - [cached_last_action and the Redo Mechanism](#cached_last_action-and-the-redo-mechanism)
 - [ResyncMove and the Simulation Loop](#resyncmove-and-the-simulation-loop)
@@ -83,7 +86,7 @@ Channel Coin ── 2-of-2 multisig (aggregate channel keys)
     ▼  (spend to unroll)
 Unroll Coin ── unroll_puzzle.clsp (sequence number, default conditions)
     │
-    ▼  (timeout / reveal default conditions)
+    ▼  (timeout / preemption)
 ┌───┴───────────────────────┐
 │                           │
 ▼                           ▼
@@ -113,10 +116,10 @@ The unroll coin implements the **optimistic rollback** mechanism:
 
 - **Curried parameters:** `SHARED_PUZZLE_HASH`, `OLD_SEQUENCE_NUMBER`,
   `DEFAULT_CONDITIONS_HASH`
-- **Timeout path** (no challenge): After enough blocks pass, the default
-  conditions are revealed and applied. These conditions create the game coins
-  and reward coins reflecting the last agreed state.
-- **Challenge path** (preemption): The opponent provides a solution with a
+- **Timeout path** (no challenge): After `unroll_timeout` blocks pass, the
+  default conditions are revealed and applied. These conditions create the game
+  coins and reward coins reflecting the last agreed state.
+- **Preemption path** (challenge): The opponent provides a solution with a
   **higher sequence number** (with correct parity). The unroll puzzle verifies
   the new sequence number is greater than the old one and has the right parity
   bit (determined by which player published), then applies the challenger's
@@ -138,8 +141,8 @@ current game state (`RefereePuzzleArgs`).
 
 The referee enforces game rules on-chain:
 - **Move:** Advance the game state (creates a new game coin with updated args)
-- **Timeout:** If the current mover doesn't act within the timeout period, the
-  waiter claims the pot based on `mover_share`
+- **Timeout:** If the current mover doesn't act within `game_timeout` blocks,
+  the waiter claims the pot based on `mover_share`
 - **Slash:** If a previous move was provably invalid, the opponent can slash and
   take the funds
 
@@ -224,31 +227,41 @@ last co-signed state.
 
 ### Step 2: Unroll → Game Coins
 
-After the unroll timeout, or if the opponent doesn't challenge,
-`do_unroll_spend_to_games` spends the unroll coin with the default conditions.
-This creates:
-- **Reward coins** — the non-game balances for each player
-- **Game coins** — one per active game, curried with `RefereePuzzleArgs`
+The unroll coin resolves via one of two paths:
 
-### Step 3: Rewind & Align State
+- **Timeout path:** After `unroll_timeout` blocks, the initiator spends the
+  unroll coin with the default conditions, creating game and reward coins.
+- **Preemption path:** The opponent immediately spends the unroll coin with a
+  higher sequence number (see [Preemption](#preemption) below), which creates
+  game and reward coins from a more up-to-date state.
 
-`ChannelHandler::set_state_for_coins` calls `LiveGame::set_state_for_coin` for
-each game coin, which calls `Referee::rewind`. The referee walks its ancestor
-chain to find the state matching the game coin's puzzle hash. This is necessary
-because the unroll coin reflects the last **co-signed** state, which may be
-behind the actual game state (if moves were in-flight when the dispute started).
+### Step 3: Forward-Align State
 
-### Step 4: Redo Moves
+`ChannelHandler::set_state_for_coins` matches each created game coin's puzzle
+hash against known states. All state tracking is **forward-only** — there is no
+rewind logic. Two cases:
 
-If the local player had made moves that weren't yet acknowledged (co-signed) by
-the opponent, those moves need to be **replayed on-chain**. The
-`OnChainPotatoHandler` processes `RedoMove` actions to submit these moves as
-on-chain transactions.
+1. **Coin PH matches `last_referee_puzzle_hash`** (the outcome/post-move PH):
+   The game coin is at the latest known state. `our_turn` is set based on
+   `is_my_turn()`. No redo needed.
+
+2. **Coin PH matches `cached_last_action.match_puzzle_hash`**: The game coin
+   is at the state *before* our last cached move. A redo is needed to replay
+   that move on-chain (see [Redo Mechanism](#cached_last_action-and-the-redo-mechanism)).
+
+### Step 4: Redo (if needed)
+
+If the game coin landed at the pre-move state, `get_redo_action` returns a
+`RedoMove` that replays the cached move on-chain. The redo uses the cached
+move data and the actual on-chain coin ID to construct the transaction. After
+the redo, the game is at the latest known state.
 
 ### Step 5: Accept / Timeout
 
 Once all moves are replayed, `coin_timeout_reached` generates a timeout
 transaction that ends the game and distributes funds based on `mover_share`.
+Timeout transactions are submitted as soon as the `game_timeout` relative
+timelock allows.
 
 ### Step 6: Shutdown
 
@@ -259,6 +272,40 @@ After all games resolve, the players can shut down the channel.
 - `src/potato_handler/on_chain.rs` — `OnChainPotatoHandler`
 - `src/channel_handler/mod.rs` — `set_state_for_coins`,
   `accept_or_timeout_game_on_chain`, `game_coin_spent`
+
+---
+
+## Preemption
+
+Preemption is the mechanism that prevents stale unrolls from succeeding. When
+a player sees the channel coin being spent to an unroll coin, they compare the
+on-chain sequence number against their own latest state:
+
+| On-chain SN vs ours | Action | Explanation |
+|---------------------|--------|-------------|
+| On-chain < ours | **Preempt** (immediate) | Spend the unroll coin immediately with our higher SN and more up-to-date conditions |
+| On-chain == ours | **Wait for timeout** | The unroll is at the state we expect; wait for it to resolve |
+| On-chain > ours | **Error** | We've been hacked or something went very wrong |
+
+Preemption is **immediate** — no timelock. This is by design: the preempting
+player gets first-mover advantage because they're correcting an out-of-date
+unroll. Timeouts require waiting for `unroll_timeout` blocks.
+
+### Parity
+
+Each player "owns" state numbers of a particular parity (odd or even), based on
+`started_with_potato`. A player can only preempt with a state number of the
+correct parity. This prevents replay attacks where a player submits the
+opponent's signatures.
+
+### After Preemption or Timeout
+
+Regardless of which path resolved the unroll coin, the result is the same: game
+coins and reward coins are created. The game code then uses
+`set_state_for_coins` to determine if a redo is needed (see Step 3 above).
+
+**Key code:** `src/channel_handler/mod.rs` — `channel_coin_spent`,
+`make_preemption_unroll_spend`
 
 ---
 
@@ -283,6 +330,7 @@ RefereePuzzleArgs {
         },
         validation_info_hash,  // hash of the validation program + state
     },
+    previous_validation_info_hash,  // hash from the prior move (None for initial state)
     validation_program,     // the chialisp program that validates moves
     nonce,                  // unique identifier for this game instance
 }
@@ -329,9 +377,26 @@ state" args.
 The `get_transaction_for_timeout` function handles this by checking the coin's
 actual puzzle hash against both accessors and using whichever matches.
 
-**Ancestor chain:** Each referee state has a `parent` pointer. The `rewind`
-function walks this chain to find a state matching a given puzzle hash — this
-is how the referee aligns with the on-chain coin state after the unroll.
+`last_referee_puzzle_hash` on `LiveGame` always tracks
+`outcome_referee_puzzle_hash()` — the post-move puzzle hash. This is the
+expected "latest state" puzzle hash used by `set_state_for_coins` to determine
+whether the game coin is at the latest state or needs a redo.
+
+### previous_validation_info_hash and the Initial State
+
+`RefereePuzzleArgs` contains a `previous_validation_info_hash` field. For
+**on-chain** use (stored in state, used for slash evidence), this is always
+`Some(hash)`. However, some game validators (e.g., the debug game) expect this
+field to be `None` during the **initial** game state when validating off-chain.
+
+To handle this, `make_move` (in `my_turn.rs`) and `their_turn_move_off_chain`
+(in `their_turn.rs`) construct **two** sets of puzzle args:
+
+- `offchain_puzzle_args`: Has `previous_validation_info_hash = None` when the
+  game state is `Initial`, used for running the off-chain validator.
+- `rc_puzzle_args`: Always has `previous_validation_info_hash = Some(hash)`,
+  used for on-chain state persistence via `accept_this_move` /
+  `accept_their_move`.
 
 **Key code:** `src/referee/mod.rs`, `src/referee/my_turn.rs`,
 `src/referee/their_turn.rs`, `src/referee/types.rs`
@@ -401,7 +466,7 @@ if Alice misclaims the split.
 | Layer | Directory | Responsibility |
 |-------|-----------|----------------|
 | **Types & Utilities** | `src/common/` | `CoinString`, `PuzzleHash`, `Amount`, `Hash`, `AllocEncoder`, etc. |
-| **Referee** | `src/referee/` | Per-game state machine: moves, timeouts, slashes, rewind |
+| **Referee** | `src/referee/` | Per-game state machine: moves, timeouts, slashes |
 | **Channel Handler** | `src/channel_handler/` | Channel/unroll/game coin management, balance tracking |
 | **Potato Handler** | `src/potato_handler/` | Turn-taking protocol, handshake, on-chain transitions |
 | **Peer Container** | `src/peer_container.rs` | Synchronous test adapter (`GameCradle` trait) |
@@ -421,7 +486,7 @@ if Alice misclaims the split.
 | File | Purpose |
 |------|---------|
 | `src/test_support/calpoker.rs` | Calpoker test registration and helpers |
-| `src/simulator/tests/potato_handler_sim.rs` | Integration tests including piss_off_peer suite |
+| `src/simulator/tests/potato_handler_sim.rs` | Integration tests including notification suite |
 | `src/test_support/peer/potato_handler.rs` | Test peer helper |
 | `docker-sim-tests.sh` | Docker-based test runner |
 
@@ -445,7 +510,29 @@ if Alice misclaims the split.
 | `ValidationInfo` | `channel_handler/types/validation_info.rs` | Game validation program + state |
 | `GameAction` | `potato_handler/types.rs` | Actions: `Move`, `Accept`, `GoOnChain`, `Shutdown`, etc. |
 | `SynchronousGameCradleState` | `peer_container.rs` | Per-peer mutable state: queues, flags, `peer_disconnected` |
-| `OnChainGameState` | `potato_handler/on_chain.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `accepted` |
+| `OnChainGameState` | `channel_handler/types/on_chain_game_state.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `accepted`, `game_timeout` |
+
+---
+
+## Timeouts
+
+There are three distinct timeouts in the system:
+
+| Timeout | Purpose | Typical test value |
+|---------|---------|-------------------|
+| `channel_timeout` | Safety timeout for the watcher to detect channel coin spends. Not an on-chain timelock. | 100 blocks |
+| `unroll_timeout` | On-chain `ASSERT_HEIGHT_RELATIVE` on the unroll coin. Controls how long the opponent has to preempt before the timeout path succeeds. Passed to `ChannelHandler::new`. | 5 blocks |
+| `game_timeout` | On-chain `ASSERT_HEIGHT_RELATIVE` on each game coin (referee). Controls how long the current mover has before the opponent can claim a timeout. Stored in `OnChainGameState.game_timeout`. | 10 blocks |
+
+**Important:** Game coins are registered with the watcher using their specific
+`game_timeout` (from the referee), not the `channel_timeout`. The
+`channel_timeout` is only used for watching channel and unroll coins.
+
+**Timeout transactions** should be submitted as soon as the relative timelock
+allows (i.e., at the exact block height where the coin's creation height +
+timeout = current height). The simulator enforces this by panicking if a
+transaction with an unsatisfied `ASSERT_HEIGHT_RELATIVE` is submitted to the
+mempool.
 
 ---
 
@@ -478,41 +565,56 @@ off-chain potato.
 
 ## cached_last_action and the Redo Mechanism
 
+### Design Principle
+
+All state transitions are **forward-only**. There is no rewind logic. When a
+game goes on-chain, the system either recognizes that the game coin is already
+at the latest state, or it replays a single cached move to advance to the
+latest state. This is the "redo" mechanism.
+
 ### Lifecycle
 
 `cached_last_action` on the `ChannelHandler` stores the data for the most
 recent move that we sent but the opponent has not yet acknowledged:
 
-- **Set** in `update_cache_for_potato_send` — when we send a move, we cache it.
-- **Cleared** in `received_potato_move` (line ~1162 of `channel_handler/mod.rs`)
-  — when we receive *any* opponent move, the cache is cleared because the
-  opponent's move implicitly acknowledges receipt of ours (the potato changed
-  hands).
+- **Set** in `update_cache_for_potato_send` — when we send a move, we cache
+  the move data, the puzzle hash it operates on (`match_puzzle_hash`), and the
+  post-move puzzle hash (`saved_post_move_last_ph`).
+- **Cleared** in `received_potato_move` — when we receive any opponent move,
+  the cache is cleared because the opponent's move implicitly acknowledges
+  receipt of ours (the potato changed hands).
 - **Cleared** in `received_empty_potato` — when we receive an explicit
   acknowledgment (empty potato pass).
 
-### Implications for Going On-Chain
+### How Redo Works
 
-When `go_on_chain` is called:
+When game coins are created after an unroll, `set_state_for_coins` checks each
+coin's puzzle hash:
 
-1. `set_state_for_coins` swaps `cached_last_action` into `did_rewind`.
-2. If `did_rewind` is `Some(...)`, the system replays the cached move on-chain
-   via `get_redo_action` → `RedoMove`.
-3. If `did_rewind` is `None`, no redo is needed — the on-chain state already
-   reflects all our moves.
+1. **Coin PH == `cached_last_action.match_puzzle_hash`**: The game coin is at
+   the state our cached move operates on. Queue a `RedoMove` to replay it.
+   Set `our_turn = true` (we need to submit the redo transaction).
+
+2. **Coin PH == `last_referee_puzzle_hash`**: The game coin is at the latest
+   state. No redo needed. Set `our_turn` based on `is_my_turn()`.
+
+3. **Neither matches**: Error condition (game disappeared or unexpected state).
+
+The `RedoMove` action is processed by `OnChainPotatoHandler::do_redo_move`,
+which calls `get_transaction_for_move` using the cached move data and the
+actual on-chain coin ID. After the redo succeeds, the game coin advances to the
+latest state and normal play/timeout continues.
 
 ### When Redo Happens (and When It Doesn't)
 
-In normal operation, a player goes on-chain because their opponent stopped
-responding. The player's last move is unacknowledged — `cached_last_action` is
-set — so the redo mechanism replays it on-chain. This is the common case and
-the whole point of the redo machinery.
+A redo is triggered when:
+- We sent a move that wasn't acknowledged before going on-chain
+- The unroll/preemption resolved to the state *before* that move
 
-A redo is **not** triggered only when the going-on-chain player was the
-**receiver** of the most recent move (which cleared their `cached_last_action`
-via `received_potato_move`). This scenario — going on-chain on your own turn
-with nothing pending — is less typical but matters for tests that want a
-straightforward timeout without redo complications.
+A redo is NOT needed when:
+- The preemption or timeout resolved to the latest state (our move was already
+  included in the unroll data)
+- We were the *receiver* of the last move (nothing to replay)
 
 ---
 
@@ -521,11 +623,9 @@ straightforward timeout without redo complications.
 ### What ResyncMove Does
 
 `Effect::ResyncMove { id, state_number, is_my_turn }` is emitted by
-`OnChainPotatoHandler::handle_game_coin_spent` (in `on_chain.rs`) when a game
-coin is spent with an `Expected` result that carries redo data. It signals:
-"the on-chain game has been replayed to this state; the UI should adjust."
-
-It is the **only** place `ResyncMove` is emitted.
+`OnChainPotatoHandler::handle_game_coin_spent` when a game coin is spent with
+a result that carries redo data. It signals: "the on-chain game has been
+replayed to this state; the UI should adjust."
 
 ### How the Simulation Handles It
 
@@ -533,34 +633,33 @@ In the simulation loop (`run_calpoker_container_with_action_list`), when
 `result.resync` is `Some((_, true))` (i.e., it's our turn after the resync):
 
 1. `can_move` is set to `true`
-2. `move_number` is **rewound** to the last `GameAction::Move(...)` in the
-   action list
+2. `move_number` walks backward to find the last `GameAction::Move` or
+   `GameAction::Cheat` in the action list
+3. **Player check**: If the found action is for a *different* player than the
+   one whose resync triggered the walkback, `move_number` is restored to its
+   original value. This prevents the simulation from trying to replay a stale
+   move for the wrong player.
 
-This is intended to let the simulation replay moves on-chain. However, the
-rewound `Move` action specifies a particular player. If the on-chain state now
-has a **different** player's turn, `my_move_in_game` returns `Some(false)` or
-`None`, the move is "put back" (`move_number -= 1`), and the simulation stalls.
+The player check is critical: without it, the simulation would find a Move for
+player B when player A resynced, try to execute it, fail (wrong player's turn),
+decrement `move_number`, and stall in an infinite loop.
 
-### Stall Conditions
+### Test Design: Turn Alignment After Redo
 
-A ResyncMove-induced stall occurs when:
-- The rewound `Move(player, ...)` targets a player who is NOT the current mover
-  on-chain
-- No other trigger (`opponent_moved`, `can_move`, `global_move`) fires to
-  advance `move_number` past the stuck `Move` action
+Because the redo mechanism automatically replays the last cached move, tests
+must account for the turn advancing one step beyond what the unroll produces.
 
-This is why **the going-on-chain player matters for tests**: if player A goes
-on-chain and has a redo, the ResyncMove fires with `is_my_turn` based on the
-post-redo state. If the rewound `Move` in the action list is for player B but
-the on-chain state expects player A, the simulation hangs.
+For calpoker with `prefix_test_moves()` returning 5 moves (alternating
+Alice/Bob):
 
-### Avoiding Resync Stalls in Tests
+| Moves taken | Last move by | After redo, whose turn | Use for |
+|-------------|-------------|----------------------|---------|
+| 2 (a,b) | Bob | Alice | `ForceDestroyCoin`, `OurTurnCoinSpentUnexpectedly` |
+| 3 (a,b,c) | Alice | Bob | `Cheat(1)`, `ForceDestroyCoin` (opponent's turn) |
+| 4 (a,b,c,d) | Bob | Alice | `Cheat(0)`, `Accept(0)` |
 
-- If the going-on-chain player has **no redo** (`cached_last_action` is `None`),
-  no `ResyncMove` is emitted and no rewind occurs.
-- To achieve no-redo: ensure the going-on-chain player **received** the last
-  move (clearing their cache) before `GoOnChain` fires. This means the last
-  `Move` action before `GoOnChain` should be from the **other** player.
+When designing tests with `Cheat(N)` or `Accept(N)`, ensure the number of
+off-chain moves results in the correct player's turn after the redo completes.
 
 ---
 
@@ -572,8 +671,9 @@ flag.
 
 ### How our_turn is Set
 
-- **Initial game coin** (from unroll): `our_turn = live_game.is_my_turn()` at
-  the time the unroll produces game coins (`set_state_for_coins`).
+- **Initial game coin** (from unroll): Set by `set_state_for_coins`. If a redo
+  is needed, `our_turn = true` (we need to submit the redo). Otherwise,
+  `our_turn = is_my_turn()` based on the referee state.
 - **After opponent's move** (`TheirSpend::Expected` or `TheirSpend::Moved`):
   `our_turn = true` — the opponent just moved, so now it's our turn.
 

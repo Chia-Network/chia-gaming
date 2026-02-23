@@ -225,6 +225,7 @@ impl Simulator {
 
         for (i, tx) in txs.iter().enumerate() {
             let coin_id = tx.coin.to_coin_id();
+            eprintln!("PUSH_TX: coin[{i}] coin_id={coin_id:?} coin={:?}", tx.coin.to_parts());
 
             let record = match state.coins.get(&coin_id) {
                 Some(r) => r,
@@ -246,6 +247,13 @@ impl Simulator {
             }
 
             let puzzle_program: Program = (*tx.bundle.puzzle.to_program()).clone();
+            let computed_ph = puzzle_program.sha256tree(allocator);
+            if computed_ph != record.puzzle_hash {
+                eprintln!(
+                    "PUSH_TX: puzzle hash MISMATCH for coin {i}: coin_ph={:?} computed_ph={computed_ph:?}",
+                    record.puzzle_hash,
+                );
+            }
             let solution_bytes = tx.bundle.solution.to_clvm(allocator).into_gen()?;
             let solution_program =
                 Program::from_nodeptr(allocator, solution_bytes)?;
@@ -257,6 +265,14 @@ impl Simulator {
             ) {
                 Ok(c) => c,
                 Err(e) => {
+                    let puzzle_hex = puzzle_program.to_hex();
+                    let sol_hex = solution_program.to_hex();
+                    eprintln!(
+                        "PUSH_TX: CLVM error for coin {i}: coin_id={:?} coin_ph={:?} computed_ph={computed_ph:?}\n  puzzle_len={} solution_len={}\n  err={e:?}",
+                        coin_id, record.puzzle_hash, puzzle_hex.len() / 2, sol_hex.len() / 2,
+                    );
+                    let _ = std::fs::write("/tmp/failing_puzzle.hex", &puzzle_hex);
+                    let _ = std::fs::write("/tmp/failing_solution.hex", &sol_hex);
                     return Ok(IncludeTransactionResult {
                         code: 3,
                         e: Some(7),
@@ -278,6 +294,17 @@ impl Simulator {
                         );
                         agg_sig_pairs.push((pk.to_bls(), full_msg));
                     }
+                    CoinCondition::AssertHeightRelative(blocks) => {
+                        let elapsed = state.height.saturating_sub(record.created_height);
+                        assert!(
+                            elapsed as u64 >= *blocks,
+                            "ASSERT_HEIGHT_RELATIVE violated at mempool submission: \
+                             coin {:?} created at height {}, current height {}, \
+                             elapsed {} but required {}. \
+                             Transactions with unsatisfied relative timelocks must not be submitted.",
+                            coin_id, record.created_height, state.height, elapsed, blocks,
+                        );
+                    }
                     _ => {}
                 }
             }
@@ -293,6 +320,29 @@ impl Simulator {
                 aggregate_signature = tx.bundle.signature.clone();
             } else {
                 aggregate_signature += tx.bundle.signature.clone();
+            }
+        }
+
+        // Check for duplicate or conflicting transactions already in the mempool.
+        for existing in state.mempool.iter() {
+            let overlap: Vec<&CoinID> = removals
+                .iter()
+                .filter(|r| existing.removals.contains(r))
+                .collect();
+            if !overlap.is_empty() {
+                if existing.removals == removals && existing.additions == additions {
+                    // Identical transaction already in mempool -- de-duplicate.
+                    return Ok(IncludeTransactionResult {
+                        code: 1,
+                        e: None,
+                        diagnostic: "duplicate transaction de-duplicated".to_string(),
+                    });
+                }
+                panic!(
+                    "Conflicting transactions in mempool: existing tx and new tx both \
+                     spend {:?}. Existing removals={:?}, new removals={:?}",
+                    overlap, existing.removals, removals,
+                );
             }
         }
 
@@ -580,5 +630,30 @@ mod test {
     #[test]
     fn sim_tests() {
         run_simulation_tests(Vec::new());
+    }
+
+    #[test]
+    fn sim_test_timeout_only() {
+        run_simulation_tests(vec!["piss_off_peer_timeout".to_string()]);
+    }
+
+    #[test]
+    fn sim_test_complete_only() {
+        run_simulation_tests(vec!["piss_off_peer_complete".to_string()]);
+    }
+
+    #[test]
+    fn sim_test_slash_only() {
+        run_simulation_tests(vec!["piss_off_peer_slash".to_string()]);
+    }
+
+    #[test]
+    fn sim_test_bob_slash_only() {
+        run_simulation_tests(vec!["test_referee_play_debug_game_bob_slash".to_string()]);
+    }
+
+    #[test]
+    fn sim_test_alice_slash_only() {
+        run_simulation_tests(vec!["test_referee_play_debug_game_alice_slash".to_string()]);
     }
 }

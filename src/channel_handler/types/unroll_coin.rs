@@ -11,7 +11,7 @@ use rand::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::types::ChannelHandlerEnv;
-use crate::common::constants::{CREATE_COIN, REM};
+use crate::common::constants::{ASSERT_HEIGHT_RELATIVE, CREATE_COIN, REM};
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_pk, unsafe_sign_partial,
 };
@@ -95,6 +95,10 @@ impl UnrollCoin {
         }
     }
 
+    pub fn get_old_state_number_public(&self) -> Result<usize, Error> {
+        self.get_old_state_number()
+    }
+
     pub fn get_conditions_for_unroll_coin_spend(&self) -> Result<ProgramRef, Error> {
         if let Some(r) = self.outcome.as_ref() {
             Ok(r.conditions.clone())
@@ -149,6 +153,8 @@ impl UnrollCoin {
         .into_gen()
     }
 
+    /// Build a solution for the challenge/preemption path: (metapuzzle, conditions).
+    /// The CLSP runs metapuzzle(conditions) which adds AGG_SIG_UNSAFE.
     pub fn make_unroll_puzzle_solution<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
@@ -163,11 +169,25 @@ impl UnrollCoin {
 
         let unroll_puzzle_solution = (
             Node(unroll_inner_puzzle),
-            (self.get_conditions_for_unroll_coin_spend()?, ()),
+            (self.get_internal_conditions_for_unroll_coin_spend()?, ()),
         )
             .to_clvm(env.allocator)
             .into_gen()?;
         Ok(unroll_puzzle_solution)
+    }
+
+    /// Build a solution for the default/timeout path: just (reveal).
+    /// The CLSP verifies shatree(reveal) == DEFAULT_CONDITIONS_HASH and
+    /// returns reveal.  The timeout conditions include ASSERT_HEIGHT_RELATIVE.
+    pub fn make_timeout_unroll_solution<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+    ) -> Result<NodePtr, Error> {
+        let timeout_conditions = self.get_conditions_for_unroll_coin_spend()?;
+        let solution = (timeout_conditions, ())
+            .to_clvm(env.allocator)
+            .into_gen()?;
+        Ok(solution)
     }
 
     /// Returns a list of create coin conditions which the unroll coin should do.
@@ -234,21 +254,39 @@ impl UnrollCoin {
         their_unroll_coin_public_key: &PublicKey,
         inputs: &UnrollCoinConditionInputs,
     ) -> Result<Aggsig, Error> {
-        let unroll_conditions = self.compute_unroll_coin_conditions(env, inputs)?;
-        let conditions_hash = unroll_conditions.sha256tree(env.allocator);
+        eprintln!("UNROLL_UPDATE: sn={} unroll_timeout={} started_with_potato={}", self.state_number, inputs.unroll_timeout, self.started_with_potato);
+        let base_conditions = self.compute_unroll_coin_conditions(env, inputs)?;
+
+        // Timeout conditions: prepend ASSERT_HEIGHT_RELATIVE to the base
+        // conditions.  The preemption path uses the base conditions (no
+        // timelock) so it can execute immediately.
+        let timeout_conditions = if inputs.unroll_timeout > 0 {
+            let timelock_cond = (ASSERT_HEIGHT_RELATIVE, (inputs.unroll_timeout, ()))
+                .to_clvm(env.allocator)
+                .into_gen()?;
+            let timeout_node = (Node(timelock_cond), Node(base_conditions.to_nodeptr(env.allocator)?))
+                .to_clvm(env.allocator)
+                .into_gen()?;
+            ProgramRef::new(Rc::new(Program::from_nodeptr(env.allocator, timeout_node)?))
+        } else {
+            base_conditions.clone()
+        };
+
+        let timeout_hash = timeout_conditions.sha256tree(env.allocator);
+        let base_hash = base_conditions.sha256tree(env.allocator);
         let unroll_public_key = private_to_public_key(unroll_private_key);
         let unroll_aggregate_key = unroll_public_key.clone() + their_unroll_coin_public_key.clone();
-        debug!("conditions_hash {conditions_hash:?}");
+        debug!("conditions_hash {base_hash:?}");
         let unroll_signature = unsafe_sign_partial(
             unroll_private_key,
             &unroll_aggregate_key,
-            conditions_hash.bytes(),
+            base_hash.bytes(),
         );
         self.outcome = Some(UnrollCoinOutcome {
-            conditions: unroll_conditions.clone(),
-            conditions_without_hash: unroll_conditions,
-            state_number: inputs.rem_condition_state,
-            hash: conditions_hash,
+            conditions: timeout_conditions,
+            conditions_without_hash: base_conditions,
+            state_number: self.state_number,
+            hash: timeout_hash,
             signature: unroll_signature.clone(),
         });
 
@@ -289,6 +327,7 @@ pub struct UnrollCoinConditionInputs {
     pub their_balance: Amount,
     pub puzzle_hashes_and_amounts: Vec<(PuzzleHash, Amount)>,
     pub rem_condition_state: usize,
+    pub unroll_timeout: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

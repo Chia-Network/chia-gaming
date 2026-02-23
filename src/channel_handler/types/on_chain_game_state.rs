@@ -1,7 +1,11 @@
 use super::accept_transaction_state::AcceptTransactionState;
-use crate::common::types::{Amount, GameID, PuzzleHash};
+use crate::common::types::{Amount, GameID, PuzzleHash, Timeout};
 
 use serde::{Deserialize, Serialize};
+
+fn default_game_timeout() -> Timeout {
+    Timeout::new(10)
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OnChainGameState {
@@ -17,4 +21,7 @@ pub struct OnChainGameState {
     pub pending_slash_amount: Option<Amount>,
     #[serde(default)]
     pub accepted: bool,
+    /// The game-specific on-chain timeout (ASSERT_HEIGHT_RELATIVE) from the referee puzzle.
+    #[serde(default = "default_game_timeout")]
+    pub game_timeout: Timeout,
 }

@@ -21,9 +21,9 @@ use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
 };
 use crate::common::types::{
-    chia_dialect, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error,
+    chia_dialect, Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error,
     GameID, GameType, GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash,
-    Sha256Input, Sha256tree, Spend, SpendBundle, Timeout,
+    Sha256Input, Spend, SpendBundle, Timeout,
 };
 use crate::utils::proper_list;
 
@@ -792,7 +792,7 @@ impl PotatoHandler {
 
                 Ok((true, effects))
             }
-            Some(GameAction::RedoMove(_coin, _new_ph, _transaction, _, _)) => {
+            Some(GameAction::RedoMove(..)) => {
                 Err(Error::StrErr("redo move when not on chain".to_string()))
             }
             Some(GameAction::RedoAccept(_, _, _, _)) => {
@@ -1195,7 +1195,7 @@ impl PotatoHandler {
             }
             Err(e) => {
                 if matches!(self.handshake_state, HandshakeState::Finished(_)) {
-                    debug!("corrupted peer message detected, ignoring and going on chain: {e:?}");
+                    eprintln!("CORRUPTED_PEER_MSG: going on chain due to error: {e:?}");
                     effects.push(Effect::GoingOnChain { got_error: true });
                     effects.extend(self.go_on_chain(env, true)?);
                     return Ok(effects);
@@ -1233,7 +1233,7 @@ impl PotatoHandler {
             msg.reward_puzzle_hash.clone(),
             self.my_contribution.clone(),
             self.their_contribution.clone(),
-            self.channel_timeout.clone(),
+            self.unroll_timeout.clone(),
             self.reward_puzzle_hash.clone(),
         )
     }
@@ -1502,9 +1502,9 @@ impl PotatoHandler {
                 swap(&mut hs, &mut self.handshake_state);
                 match hs {
                     HandshakeState::OnChainTransition(unroll_coin, _t) => {
-                        debug!(
-                            "{} notified of channel coin spend in on chain transition state",
-                            ch.is_initial_potato()
+                        eprintln!(
+                            "CHANNEL_SPENT_TRANSITION: initiator={} unroll_coin={:?}",
+                            ch.is_initial_potato(), unroll_coin
                         );
                         self.handshake_state =
                             HandshakeState::OnChainWaitingForUnrollTimeoutOrSpend(
@@ -1576,6 +1576,7 @@ impl PotatoHandler {
         };
 
         if is_unroll_coin {
+            eprintln!("CHECK_UNROLL_SPENT: unroll coin detected as spent, state={:?}", std::mem::discriminant(&self.handshake_state));
             let effect = self.unroll_start_condition_check(coin_id)?;
             return Ok((true, Some(effect)));
         }
@@ -1593,6 +1594,13 @@ impl PotatoHandler {
             player_ch.set_initiated_on_chain();
         }
 
+        eprintln!(
+            "DO_CHANNEL_SPEND: handshake_bundle name={:?} num_spends={}",
+            spend.spend.name, spend.spend.spends.len()
+        );
+        for (i, cs) in spend.spend.spends.iter().enumerate() {
+            eprintln!("  handshake_spend[{i}]: coin={:?}", cs.coin);
+        }
         let mut effects = vec![Effect::SpendTransaction(spend.spend.clone())];
 
         let (channel_spend_bundle, unroll_coin) = {
@@ -1617,6 +1625,10 @@ impl PotatoHandler {
         Ok(effects)
     }
 
+    /// Spend the unroll coin via the default/timeout path.  The timeout
+    /// conditions include ASSERT_HEIGHT_RELATIVE so this path only succeeds
+    /// after the timelock elapses.  No aggregate signature is needed — the
+    /// CLSP simply verifies the hash of the revealed conditions.
     pub fn do_unroll_spend_to_games<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
@@ -1626,38 +1638,30 @@ impl PotatoHandler {
         let spend_bundle = {
             let player_ch = self.channel_handler()?;
             let finished_unroll_coin = player_ch.get_finished_unroll_coin();
+            eprintln!(
+                "DO_UNROLL_SPEND (timeout): initiator={} sn={} old_sn={:?} conds_hash={:?}",
+                player_ch.is_initial_potato(),
+                finished_unroll_coin.coin.state_number,
+                finished_unroll_coin.coin.get_old_state_number_public(),
+                finished_unroll_coin.coin.get_conditions_hash_for_unroll_puzzle(),
+            );
             let curried_unroll_puzzle = finished_unroll_coin
                 .coin
                 .make_curried_unroll_puzzle(env, &player_ch.get_aggregate_unroll_public_key())?;
             let curried_unroll_program =
                 Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?;
-            let unroll_solution = finished_unroll_coin
+            let timeout_solution = finished_unroll_coin
                 .coin
-                .make_unroll_puzzle_solution(env, &player_ch.get_aggregate_unroll_public_key())?;
-            let unroll_solution_program = Program::from_nodeptr(env.allocator, unroll_solution)?;
+                .make_timeout_unroll_solution(env)?;
+            let timeout_solution_program = Program::from_nodeptr(env.allocator, timeout_solution)?;
 
-            let unroll_puzzle_solution = finished_unroll_coin
-                .coin
-                .get_internal_conditions_for_unroll_coin_spend()?;
-            let unroll_puzzle_solution_hash = unroll_puzzle_solution.sha256tree(env.allocator);
-            let aggregate_unroll_signature = finished_unroll_coin
-                .signatures
-                .my_unroll_half_signature_peer
-                .clone()
-                + finished_unroll_coin.coin.get_unroll_coin_signature()?;
-            assert!(aggregate_unroll_signature.verify(
-                &player_ch.get_aggregate_unroll_public_key(),
-                unroll_puzzle_solution_hash.bytes()
-            ));
-
-            debug!("{} SPEND: AGGREGATE UNROLL hash {unroll_puzzle_solution_hash:?} {aggregate_unroll_signature:?}", player_ch.is_initial_potato());
             SpendBundle {
-                name: Some("create unroll".to_string()),
+                name: Some("create unroll (timeout)".to_string()),
                 spends: vec![CoinSpend {
                     bundle: Spend {
                         puzzle: curried_unroll_program,
-                        solution: unroll_solution_program.into(),
-                        signature: aggregate_unroll_signature,
+                        solution: timeout_solution_program.into(),
+                        signature: Aggsig::default(),
                     },
                     coin: unroll_coin.clone(),
                 }],
@@ -1744,14 +1748,14 @@ impl PotatoHandler {
         env: &mut ChannelHandlerEnv<'_, R>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<Option<Effect>, Error> {
+    ) -> Result<Vec<Effect>, Error> {
         let i_did_channel_spend = matches!(
             self.handshake_state,
             HandshakeState::OnChainTransition(_, _)
         );
 
         if i_did_channel_spend {
-            return Ok(None);
+            return Ok(vec![]);
         }
 
         let (puzzle, solution) = if let Some((puzzle, solution)) = puzzle_and_solution {
@@ -1762,37 +1766,75 @@ impl PotatoHandler {
             ));
         };
 
-        let unroll_coin = {
-            let channel_conditions =
-                CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
+        let mut effects = Vec::new();
 
-            if let Some(coin_id) = channel_conditions
-                .iter()
-                .filter_map(|c| {
-                    if let CoinCondition::CreateCoin(ph, amt) = c {
-                        let created = CoinString::from_parts(&coin_id.to_coin_id(), ph, amt);
-                        debug!("created unroll coin {created:?}");
-                        return Some(created);
+        // Run the channel coin puzzle/solution to get the raw conditions NodePtr.
+        let run_puzzle = puzzle.to_nodeptr(env.allocator)?;
+        let run_args = solution.to_nodeptr(env.allocator)?;
+        let conditions_result = run_program(
+            env.allocator.allocator(),
+            &chia_dialect(),
+            run_puzzle,
+            run_args,
+            0,
+        )
+        .into_gen()?;
+        let conditions_nodeptr = conditions_result.1;
+
+        let channel_conditions =
+            CoinCondition::from_nodeptr(env.allocator, conditions_nodeptr);
+
+        let unroll_coin = channel_conditions
+            .iter()
+            .find_map(|c| {
+                if let CoinCondition::CreateCoin(ph, amt) = c {
+                    let created = CoinString::from_parts(&coin_id.to_coin_id(), ph, amt);
+                    debug!("created unroll coin {created:?}");
+                    return Some(created);
+                }
+                None
+            })
+            .ok_or_else(|| {
+                Error::StrErr("channel conditions didn't include a coin creation".to_string())
+            })?;
+
+        // Run the channel coin conditions through ChannelHandler to determine
+        // whether we should preempt or wait for timeout.
+        let preempted = {
+            let player_ch = self.channel_handler()?;
+            eprintln!("HANDLE_CHANNEL_SPENT: calling channel_coin_spent for non-initiator");
+            match player_ch.channel_coin_spent(env, false, conditions_nodeptr) {
+                Ok(result) => {
+                    if !result.timeout {
+                        eprintln!("HANDLE_CHANNEL_SPENT: PREEMPTION → submitting spend");
+                        effects.push(Effect::SpendTransaction(SpendBundle {
+                            name: Some("preempt unroll".to_string()),
+                            spends: vec![CoinSpend {
+                                bundle: result.transaction,
+                                coin: unroll_coin.clone(),
+                            }],
+                        }));
+                        true
+                    } else {
+                        eprintln!("HANDLE_CHANNEL_SPENT: timeout path → waiting");
+                        false
                     }
-
-                    None
-                })
-                .next()
-            {
-                coin_id
-            } else {
-                return Err(Error::StrErr(
-                    "channel conditions didn't include a coin creation".to_string(),
-                ));
+                }
+                Err(e) => {
+                    eprintln!("HANDLE_CHANNEL_SPENT: channel_coin_spent error: {e:?}");
+                    false
+                }
             }
         };
+        let _ = preempted;
 
         self.handshake_state = HandshakeState::OnChainWaitingForUnrollSpend(unroll_coin.clone());
-        Ok(Some(Effect::RegisterCoin {
+        effects.push(Effect::RegisterCoin {
             coin: unroll_coin,
             timeout: self.unroll_timeout.clone(),
             name: Some("unroll"),
-        }))
+        });
+        Ok(effects)
     }
 
     // All remaining work to finish the on chain transition.  We have the state number and
@@ -1836,9 +1878,11 @@ impl PotatoHandler {
                 })
                 .collect();
 
-            // We have a collection puzzle hash and amount pairs.  We need to match these to the
-            // games in the channel handler.
-            debug!("have unrolled coins {created_coins:?}");
+            eprintln!(
+                "FINISH_TRANSITION: initiator={} created_coins={:?}",
+                player_ch.is_initial_potato(),
+                created_coins
+            );
             let game_map = player_ch.set_state_for_coins(env, unroll_coin, &created_coins)?;
 
             let surviving_ids: HashSet<GameID> =
@@ -1862,10 +1906,10 @@ impl PotatoHandler {
             );
         }
 
-        for coin in game_map.keys() {
+        for (coin, state) in game_map.iter() {
             effects.push(Effect::RegisterCoin {
                 coin: coin.clone(),
-                timeout: self.channel_timeout.clone(),
+                timeout: state.game_timeout.clone(),
                 name: Some("game coin"),
             });
         }
@@ -1874,9 +1918,16 @@ impl PotatoHandler {
             let player_ch = self.channel_handler_mut()?;
             if let Some(redo_move) = player_ch.get_redo_action(env, coin)? {
                 debug!("redo move: {redo_move:?}");
+                eprintln!("FINISH_REDO_ACTION: redo={redo_move:?}");
                 self.game_action_queue.push_front(redo_move);
             }
         }
+
+        eprintln!(
+            "FINISH_ON_CHAIN_QUEUE: len={} items={:?}",
+            self.game_action_queue.len(),
+            self.game_action_queue
+        );
 
         debug!("we can proceed with game");
 
@@ -2156,8 +2207,10 @@ impl SpendWalletReceiver for PotatoHandler
             if let HandshakeState::OnChainWaitingForUnrollTimeoutOrSpend(unroll) =
                 &self.handshake_state
             {
+                eprintln!("TIMEOUT_CHECK: state=WaitingForUnrollTimeoutOrSpend, coin_id match={}", coin_id == unroll);
                 coin_id == unroll
             } else {
+                eprintln!("TIMEOUT_CHECK: state={:?} (not WaitingForUnrollTimeoutOrSpend)", std::mem::discriminant(&self.handshake_state));
                 false
             };
 

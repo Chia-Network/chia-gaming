@@ -558,31 +558,30 @@ impl MyTurnReferee {
             },
             validation_info_hash,
         };
-        let rc_puzzle_args = Rc::new(RefereePuzzleArgs {
+        let is_initial = matches!(self.state.as_ref(), MyTurnRefereeGameState::Initial { .. });
+        let offchain_prev_hash = if is_initial {
+            None
+        } else {
+            Some(ref_puzzle_args.game_move.validation_info_hash.clone())
+        };
+        let offchain_puzzle_args = Rc::new(RefereePuzzleArgs {
             mover_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
             waiter_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
             game_move: game_move_details.clone(),
             validation_program: result.outgoing_move_state_update_program.clone(),
-            previous_validation_info_hash: if matches!(
-                *self.state,
-                MyTurnRefereeGameState::Initial { .. }
-            ) {
-                None
-            } else {
-                Some(ref_puzzle_args.game_move.validation_info_hash.clone())
-            },
+            previous_validation_info_hash: offchain_prev_hash,
             ..ref_puzzle_args.clone()
         });
-        let validator_prog = rc_puzzle_args.validation_program.to_program();
+        let validator_prog = offchain_puzzle_args.validation_program.to_program();
         let validator_hex = validator_prog.to_hex();
         debug!(
             "running validator program hash={:?} len={}",
-            rc_puzzle_args.validation_program.sha256tree(allocator),
+            offchain_puzzle_args.validation_program.sha256tree(allocator),
             validator_hex.len()
         );
         let new_state_following_my_move = self.run_validator_for_my_move(
             allocator,
-            rc_puzzle_args.clone(),
+            offchain_puzzle_args,
             state_to_update.clone(),
             Evidence::nil()?,
         )?;
@@ -594,6 +593,15 @@ impl MyTurnReferee {
                 .incoming_move_state_update_program
                 .sha256tree(allocator)
         );
+
+        let rc_puzzle_args = Rc::new(RefereePuzzleArgs {
+            mover_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
+            waiter_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
+            game_move: game_move_details.clone(),
+            validation_program: result.outgoing_move_state_update_program.clone(),
+            previous_validation_info_hash: Some(ref_puzzle_args.game_move.validation_info_hash.clone()),
+            ..ref_puzzle_args.clone()
+        });
 
         let new_self = self.accept_this_move(
             result.waiting_handler.clone(),

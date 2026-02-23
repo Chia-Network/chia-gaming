@@ -486,23 +486,30 @@ impl TheirTurnReferee {
             "running state update program {:?}",
             validation_program.to_program()
         );
+        let is_initial = matches!(self.state.borrow(), TheirTurnRefereeGameState::Initial { .. });
+        let offchain_prev_hash = if is_initial {
+            None
+        } else {
+            Some(puzzle_args.game_move.validation_info_hash.clone())
+        };
+        let offchain_puzzle_args = Rc::new(RefereePuzzleArgs {
+            mover_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
+            waiter_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
+            game_move: details.clone(),
+            validation_program: validation_program.clone(),
+            previous_validation_info_hash: offchain_prev_hash,
+            ..ref_puzzle_args.clone()
+        });
         let rc_puzzle_args = Rc::new(RefereePuzzleArgs {
             mover_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
             waiter_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
             game_move: details.clone(),
             validation_program: validation_program.clone(),
-            previous_validation_info_hash: if matches!(
-                *self.state,
-                TheirTurnRefereeGameState::Initial { .. }
-            ) {
-                None
-            } else {
-                Some(puzzle_args.game_move.validation_info_hash.clone())
-            },
+            previous_validation_info_hash: Some(puzzle_args.game_move.validation_info_hash.clone()),
             ..ref_puzzle_args.clone()
         });
         let state_update =
-            self.run_state_update(allocator, rc_puzzle_args.clone(), state.clone(), evidence)?;
+            self.run_state_update(allocator, offchain_puzzle_args.clone(), state.clone(), evidence)?;
         debug!("XXX their_turn state_update: {state_update:?}");
 
         // Retrieve evidence from their turn handler.
@@ -573,7 +580,7 @@ impl TheirTurnReferee {
             debug!("calling slash for given evidence {evidence:?}");
             if let StateUpdateResult::Slash(_result_evidence) = self.run_state_update(
                 allocator,
-                rc_puzzle_args.clone(),
+                offchain_puzzle_args.clone(),
                 state.clone(),
                 evidence.clone(),
             )? {

@@ -538,6 +538,12 @@ impl OnChainRefereeMoveData {
             &fixed.referee_coin_puzzle_hash,
             &self.after_args,
         )?;
+        let before_ph = curry_referee_puzzle_hash(
+            allocator,
+            &fixed.referee_coin_puzzle_hash,
+            &self.before_args,
+        )?;
+        eprintln!("TO_MOVE: before_ph={before_ph:?} after_ph(new_puzzle_hash)={new_puzzle_hash:?}");
         let inner_conditions = [(
             CREATE_COIN,
             (new_puzzle_hash.clone(), (fixed.amount.clone(), ())),

@@ -14,7 +14,7 @@ use crate::channel_handler::types::{
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
     AllocEncoder, Amount, CoinCondition, CoinString, Error, Hash, Program, Puzzle, PuzzleHash,
-    Sha256tree, Spend,
+    Sha256tree, Spend, Timeout,
 };
 use crate::referee::my_turn::MyTurnReferee;
 use crate::referee::their_turn::TheirTurnReferee;
@@ -51,51 +51,12 @@ pub fn serialize_referee<S: Serializer>(
     x.get_serialized_form().serialize(s)
 }
 
-pub fn serialize_referee_option<S: Serializer>(
-    x: &Option<Rc<dyn RefereeInterface>>,
-    s: S,
-) -> Result<S::Ok, S::Error> {
-    x.as_ref().map(|v| v.get_serialized_form()).serialize(s)
-}
-
 pub fn deserialize_referee<'de, D>(deserializer: D) -> Result<Rc<dyn RefereeInterface>, D::Error>
 where
     D: Deserializer<'de>,
 {
     let to_check = RefereeSerializeContainer::deserialize(deserializer)?;
     Ok(to_check.into_rc())
-}
-
-pub fn deserialize_referee_option<'de, D>(
-    deserializer: D,
-) -> Result<Option<Rc<dyn RefereeInterface>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let to_check = Option::<RefereeSerializeContainer>::deserialize(deserializer)?;
-    Ok(to_check.map(|v| v.into_rc()))
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct RewindResult {
-    pub version: usize,
-    pub state_number: Option<usize>,
-    #[serde(
-        serialize_with = "serialize_referee_option",
-        deserialize_with = "deserialize_referee_option"
-    )]
-    pub new_referee: Option<Rc<dyn RefereeInterface>>,
-    pub transaction: Option<RefereeOnChainTransaction>,
-    pub outcome_puzzle_hash: PuzzleHash,
-    /// The chronological successor of the matched ancestor (the state that
-    /// comes immediately after it in the game timeline). When a rewind lands
-    /// on a TheirTurn referee, this holds the next MyTurn referee so that an
-    /// Expected coin spend can properly advance the referee state.
-    #[serde(
-        serialize_with = "serialize_referee_option",
-        deserialize_with = "deserialize_referee_option"
-    )]
-    pub successor: Option<Rc<dyn RefereeInterface>>,
 }
 
 pub trait RefereeInterface {
@@ -157,14 +118,6 @@ pub trait RefereeInterface {
         state_number: usize,
     ) -> Result<(Option<Rc<dyn RefereeInterface>>, TheirTurnCoinSpentResult), Error>;
 
-    fn rewind(
-        &self,
-        allocator: &mut AllocEncoder,
-        myself: Rc<dyn RefereeInterface>,
-        coin: &CoinString,
-        puzzle_hash: &PuzzleHash,
-    ) -> Result<RewindResult, Error>;
-
     fn check_their_turn_for_slash(
         &self,
         allocator: &mut AllocEncoder,
@@ -185,6 +138,8 @@ pub trait RefereeInterface {
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
     ) -> Result<Option<RefereeOnChainTransaction>, Error>;
+
+    fn get_game_timeout(&self) -> Timeout;
 
     fn on_chain_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error>;
 
@@ -369,25 +324,6 @@ impl Referee {
         }))
     }
 
-    fn generate_ancestor_list(&self, ref_list: &mut Vec<Rc<Referee>>) {
-        match self {
-            Referee::MyTurn(t) => {
-                if let Some(p) = t.parent.as_ref() {
-                    let their_turn = Referee::TheirTurn(p.clone());
-                    ref_list.push(Rc::new(their_turn.clone()));
-                    their_turn.generate_ancestor_list(ref_list);
-                }
-            }
-            Referee::TheirTurn(t) => {
-                if let Some(p) = t.parent.as_ref() {
-                    let my_turn = Referee::MyTurn(p.clone());
-                    ref_list.push(Rc::new(my_turn.clone()));
-                    my_turn.generate_ancestor_list(ref_list);
-                }
-            }
-        }
-    }
-
     fn get_my_turn_move_spend(&self) -> Result<Rc<OnChainRefereeMoveData>, Error> {
         let move_spend = match self {
             Referee::TheirTurn(t) => {
@@ -431,6 +367,10 @@ impl RefereeInterface for Referee {
 
     fn get_amount(&self) -> Amount {
         self.fixed().amount.clone()
+    }
+
+    fn get_game_timeout(&self) -> Timeout {
+        self.fixed().timeout.clone()
     }
 
     fn get_their_current_share(&self) -> Amount {
@@ -527,11 +467,10 @@ impl RefereeInterface for Referee {
                 .iter()
                 .find(|cond| matches!(cond, CoinCondition::CreateCoin(_, _)))
             {
-                debug!("on chain puzzle hash {ph:?}");
                 let my_on_chain = self.on_chain_referee_puzzle_hash(allocator)?;
-                debug!("{} my on chain {my_on_chain:?}", self.is_my_turn());
                 let my_outcome = self.outcome_referee_puzzle_hash(allocator)?;
-                debug!("{} my outcome {my_outcome:?}", self.is_my_turn());
+                eprintln!("THEIR_TURN_SPENT: is_my_turn={} on_chain_ph={on_chain_ph:?} create_ph={ph:?} my_on_chain={my_on_chain:?} my_outcome={my_outcome:?} expected={}",
+                    self.is_my_turn(), on_chain_ph == my_on_chain && *ph == my_outcome);
 
                 if on_chain_ph == my_on_chain && *ph == my_outcome {
                     debug!("repeat: my turn {:?}", self.is_my_turn());
@@ -597,152 +536,6 @@ impl RefereeInterface for Referee {
                 Ok((new_ref_rc, res))
             }
         }
-    }
-
-    fn rewind(
-        &self,
-        allocator: &mut AllocEncoder,
-        myself: Rc<dyn RefereeInterface>,
-        coin: &CoinString,
-        puzzle_hash: &PuzzleHash,
-    ) -> Result<RewindResult, Error> {
-        let mut ancestors = vec![];
-        self.generate_ancestor_list(&mut ancestors);
-
-        let outcome_ph = self.outcome_referee_puzzle_hash(allocator)?;
-        let on_chain_ph = self.on_chain_referee_puzzle_hash(allocator)?;
-        debug!(
-            "REWIND: want={:?} outcome={:?} on_chain={:?} is_my_turn={} state_number={} num_ancestors={}",
-            puzzle_hash, outcome_ph, on_chain_ph, self.is_my_turn(), self.state_number(), ancestors.len()
-        );
-
-        if *puzzle_hash == outcome_ph {
-            debug!("rewind: current outcome matches, coin is at spend state");
-            return Ok(RewindResult {
-                outcome_puzzle_hash: outcome_ph,
-                state_number: Some(self.state_number()),
-                new_referee: None,
-                version: 1,
-                transaction: None,
-                successor: None,
-            });
-        }
-
-        if *puzzle_hash == on_chain_ph {
-            debug!("rewind: current on-chain state matches, no rewind needed");
-            return Ok(RewindResult {
-                outcome_puzzle_hash: self.outcome_referee_puzzle_hash(allocator)?,
-                state_number: Some(self.state_number()),
-                new_referee: None,
-                version: 1,
-                transaction: None,
-                successor: None,
-            });
-        }
-
-        for old_referee in ancestors.iter() {
-            let start_args = old_referee.args_for_this_coin();
-            let end_args = old_referee.spend_this_coin();
-            debug!(
-                "end   puzzle hash {:?}",
-                curry_referee_puzzle_hash(
-                    allocator,
-                    &old_referee.fixed().referee_coin_puzzle_hash,
-                    &end_args
-                )
-            );
-            debug!(
-                "state {} is_my_turn {}",
-                old_referee.state_number(),
-                old_referee.is_my_turn()
-            );
-            debug!("game move at end {:?}", end_args.game_move.basic.move_made);
-            debug!(
-                "game move at start {:?}",
-                start_args.game_move.basic.move_made
-            );
-            debug!(
-                "start puzzle hash {:?}",
-                curry_referee_puzzle_hash(
-                    allocator,
-                    &old_referee.fixed().referee_coin_puzzle_hash,
-                    &start_args
-                )
-            );
-        }
-
-        let mut old_end = None;
-        for old_referee in ancestors.iter().rev() {
-            let start_args = old_referee.args_for_this_coin();
-            let end_args = old_referee.spend_this_coin();
-            let start_hash = curry_referee_puzzle_hash(
-                allocator,
-                &old_referee.fixed().referee_coin_puzzle_hash,
-                &start_args,
-            )?;
-            let end_hash = curry_referee_puzzle_hash(
-                allocator,
-                &old_referee.fixed().referee_coin_puzzle_hash,
-                &end_args,
-            )?;
-            debug!("have old end {old_end:?} checking {start_hash:?}:{end_hash:?}");
-            if let Some(e) = &old_end {
-                assert_eq!(start_hash, *e);
-            }
-            old_end = Some(end_hash.clone());
-        }
-
-        for (idx, old_referee) in ancestors.iter().enumerate() {
-            let origin_puzzle_hash = old_referee.on_chain_referee_puzzle_hash(allocator)?;
-            let destination_puzzle_hash = old_referee.outcome_referee_puzzle_hash(allocator)?;
-
-            debug!(
-                "referee rewind: {} my turn {} try state {origin_puzzle_hash:?} => {destination_puzzle_hash:?} want {puzzle_hash:?}",
-                old_referee.state_number(),
-                old_referee.is_my_turn(),
-            );
-            if *puzzle_hash == origin_puzzle_hash {
-                let to_use = old_referee.clone();
-                let transaction = if !old_referee.is_my_turn() {
-                    debug!("will redo: {}", to_use.state_number());
-                    Some(to_use.get_transaction_for_move(allocator, coin, true)?)
-                } else {
-                    None
-                };
-                let successor: Option<Rc<dyn RefereeInterface>> = if idx > 0 {
-                    Some(ancestors[idx - 1].clone())
-                } else {
-                    Some(myself.clone())
-                };
-                debug!(
-                    "referee rewind: matched at idx={} successor is_my_turn={:?} state={:?}",
-                    idx,
-                    successor.as_ref().map(|s: &Rc<dyn RefereeInterface>| s.is_my_turn()),
-                    successor.as_ref().map(|s: &Rc<dyn RefereeInterface>| s.state_number()),
-                );
-                let to_return = old_referee.clone();
-                return Ok(RewindResult {
-                    outcome_puzzle_hash: to_return.outcome_referee_puzzle_hash(allocator)?,
-                    state_number: Some(to_return.state_number()),
-                    new_referee: Some(to_return),
-                    version: 1,
-                    transaction,
-                    successor,
-                });
-            }
-        }
-
-        debug!("referee rewind: no matching state");
-        debug!("still in state {:?}", self.state_number());
-
-        Ok(RewindResult {
-            new_referee: None,
-            version: 1,
-            state_number: Some(self.state_number()),
-            transaction: None,
-            outcome_puzzle_hash: self.outcome_referee_puzzle_hash(allocator)?,
-            successor: None,
-        })
     }
 
     fn get_our_current_share(&self) -> Amount {
@@ -836,14 +629,18 @@ impl RefereeInterface for Referee {
             curry_referee_puzzle(allocator, &self.fixed().referee_coin_puzzle, &args)?;
 
         if let Some((_, ph, _)) = coin_string.to_parts() {
+            let start_ph = curry_referee_puzzle_hash(
+                allocator,
+                &self.fixed().referee_coin_puzzle_hash,
+                &args,
+            )?;
             if on_chain {
-                let start_ph = curry_referee_puzzle_hash(
-                    allocator,
-                    &self.fixed().referee_coin_puzzle_hash,
-                    &args,
-                )?;
-                debug!("spend puzzle hash {ph:?}");
-                debug!("this coin start {start_ph:?}");
+                eprintln!(
+                    "GET_TX_FOR_MOVE: coin_ph={ph:?} before_args_ph={start_ph:?} match={} mover_share={:?} phase={}",
+                    ph == start_ph,
+                    self.get_our_current_share(),
+                    match self { Referee::MyTurn(_) => "MyTurn", Referee::TheirTurn(_) => "TheirTurn" },
+                );
             }
         }
 

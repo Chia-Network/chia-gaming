@@ -376,13 +376,7 @@ impl<'de> Deserialize<'de> for ShutdownActionHolder {
 #[derive(Serialize, Deserialize)]
 pub enum GameAction {
     Move(GameID, ReadableMove, Hash),
-    RedoMove(
-        CoinString,
-        PuzzleHash,
-        Box<RefereeOnChainTransaction>,
-        Option<PotatoMoveCachedData>,
-        Amount,
-    ),
+    RedoMove(GameID, CoinString, Rc<PotatoMoveCachedData>),
     RedoAccept(
         GameID,
         CoinString,
@@ -399,8 +393,8 @@ impl std::fmt::Debug for GameAction {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
             GameAction::Move(gi, rm, h) => write!(formatter, "Move({gi:?},{rm:?},{h:?})"),
-            GameAction::RedoMove(cs, ph, rt, md, amt) => {
-                write!(formatter, "RedoMove({cs:?},{ph:?},{rt:?},{md:?},{amt:?})")
+            GameAction::RedoMove(gi, cs, md) => {
+                write!(formatter, "RedoMove({gi:?},{cs:?},{md:?})")
             }
             GameAction::RedoAccept(gi, cs, ph, rt) => {
                 write!(formatter, "RedoAccept({gi:?},{cs:?},{ph:?},{rt:?})")

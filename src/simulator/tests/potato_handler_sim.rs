@@ -687,16 +687,29 @@ fn run_game_container_with_action_list_with_success_predicate(
 
             while let Some(result) = cradles[i].idle(allocator, rng, &mut local_uis[i], 0)? {
                 if result.resync.is_some() {
-                    debug!("RESYNC from player {i}: {:?}", result.resync);
+                    eprintln!("SIM_RESYNC: player={i} resync={:?} num_steps={num_steps}", result.resync);
                 }
                 if matches!(result.resync, Some((_, true))) {
                     can_move = true;
-                    debug!("resync requested at id {:?}", result.resync);
+                    eprintln!("SIM_RESYNC_CAN_MOVE: player={i} move_number={move_number} num_steps={num_steps}");
+                    let saved = move_number;
                     while move_number > 0
                         && (move_number >= moves_input.len()
-                            || !matches!(moves_input[move_number], GameAction::Move(_, _, _)))
+                            || !matches!(moves_input[move_number], GameAction::Move(_, _, _) | GameAction::Cheat(_)))
                     {
                         move_number -= 1;
+                    }
+                    // Only rewind to a Move/Cheat that belongs to the
+                    // player whose turn it is.  If the nearest action is
+                    // for a different player, restore move_number so the
+                    // sim keeps processing subsequent (non-Move) actions.
+                    let dominated_by_other = match moves_input.get(move_number) {
+                        Some(GameAction::Move(who, _, _)) => *who != i,
+                        Some(GameAction::Cheat(who)) => *who != i,
+                        _ => true,
+                    };
+                    if dominated_by_other {
+                        move_number = saved;
                     }
                     debug!(
                         "{num_steps} can move {can_move} {move_number} {:?}",
@@ -705,10 +718,12 @@ fn run_game_container_with_action_list_with_success_predicate(
                 }
 
                 for coin in result.coin_solution_requests.iter() {
+                    eprintln!("COIN_SOL_REQ: from_player={i} coin={coin:?} num_steps={num_steps}");
                     let ps_res = simulator
                         .get_puzzle_and_solution(&coin.to_coin_id())
                         .expect("should work");
-                    for cradle in cradles.iter_mut() {
+                    for (ci, cradle) in cradles.iter_mut().enumerate() {
+                        eprintln!("REPORT_PAS: to_cradle={ci} coin={:?}", coin.to_coin_id());
                         cradle.report_puzzle_and_solution(
                             allocator,
                             rng,
@@ -851,9 +866,9 @@ fn run_game_container_with_action_list_with_success_predicate(
                             "Move({who}) at move_number={move_number} but game_ids is empty"
                         );
                         let is_my_move = cradles[*who].my_move_in_game(&game_ids[0]);
-                        debug!("MOVE player {who}: is_my_move={is_my_move:?} on_chain={} move_number={move_number}", cradles[*who].is_on_chain());
+                        eprintln!("SIM_MOVE: player={who} is_my_move={is_my_move:?} on_chain={} move_number={move_number} num_steps={num_steps}",
+                            cradles[*who].is_on_chain());
                         if matches!(is_my_move, Some(true)) {
-                            debug!("make move");
                             let readable_program = readable.to_program();
                             let encoded_readable_move = readable_program.bytes();
                             let entropy = rng.gen();
@@ -865,7 +880,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 entropy,
                             )?;
                         } else {
-                            debug!("put move back: not my turn");
+                            eprintln!("SIM_MOVE_PUTBACK: player={who} move_number back to {}", move_number - 1);
                             move_number -= 1;
                             continue;
                         }
@@ -1480,16 +1495,16 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         &|| {
             let mut allocator = AllocEncoder::new();
 
-            // Play the full game off-chain, then go on-chain and cheat.
+            // Play 3 moves off-chain (not all 5, so the game still has
+            // moves remaining), then go on-chain. Alice replays Move 3
+            // via redo; once that lands it becomes Bob's turn for Move 4.
+            // Cheat(1) defers until Bob is on-chain and it's his turn,
+            // then submits a move with invalid data that Alice detects.
             let mut moves = prefix_test_moves(&mut allocator).to_vec();
-            // One player goes on chain; the other follows automatically.
+            moves.truncate(3);
             moves.push(GameAction::GoOnChain(0));
-            // Enable cheating on player 1 (Bob): the next on-chain move
-            // will use garbage bytes instead of the real handler output.
-            // This defers until Bob is actually on chain.
-            moves.push(GameAction::EnableCheating(1, vec![0xfa, 0x11]));
-            // Let both players process blocks so on-chain redo moves happen,
-            // Bob makes his cheating move, and Alice detects & slashes.
+            moves.push(GameAction::Cheat(1));
+            // Let both players process blocks so Alice detects & slashes.
             moves.push(GameAction::WaitBlocks(30, 0));
             moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
             moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
@@ -1877,10 +1892,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         &|| {
             let mut allocator = AllocEncoder::new();
 
+            // 3 moves so that after the redo (alice's reveal) it's Bob's
+            // turn, allowing Cheat(1) to fire.
             let moves = prefix_test_moves(&mut allocator);
-            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(2).collect();
+            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(3).collect();
             on_chain_moves.push(GameAction::GoOnChain(0));
-            on_chain_moves.push(GameAction::WaitBlocks(5, 0));
             on_chain_moves.push(GameAction::Cheat(1));
             on_chain_moves.push(GameAction::WaitBlocks(30, 0));
             on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
@@ -1906,10 +1922,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         &|| {
             let mut allocator = AllocEncoder::new();
 
+            // 4 moves so that after the redo (bob's discard) it's Alice's
+            // turn, allowing Cheat(0) to fire.
             let moves = prefix_test_moves(&mut allocator);
-            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(3).collect();
+            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(4).collect();
             on_chain_moves.push(GameAction::GoOnChain(0));
-            on_chain_moves.push(GameAction::WaitBlocks(10, 0));
             on_chain_moves.push(GameAction::Cheat(0));
             on_chain_moves.push(GameAction::WaitBlocks(30, 0));
             on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
@@ -1931,13 +1948,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         &|| {
             let mut allocator = AllocEncoder::new();
 
-            // Use 3 moves (remove last 2 from prefix) so the game is mid-play
-            // and it's player 0's turn. Go on-chain first so Accept goes through
-            // the on-chain handler (off-chain Accept immediately finishes the game).
+            // Use 4 moves (remove only alice_accept) so the game is mid-play.
+            // After redo of bob's discard it's player 0's turn, so Accept(0)
+            // fires.  Go on-chain first so Accept goes through the on-chain
+            // handler (off-chain Accept immediately finishes the game).
             let mut moves = prefix_test_moves(&mut allocator).to_vec();
-            let moves_len = moves.len();
-            moves.remove(moves_len - 2);
-            moves.remove(moves_len - 2);
+            moves.pop();
             moves.push(GameAction::GoOnChain(0));
             moves.push(GameAction::Accept(0));
             moves.push(GameAction::WaitBlocks(120, 1));
@@ -1995,10 +2011,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         &|| {
             let mut allocator = AllocEncoder::new();
 
+            // 3 moves so that after the redo (alice's reveal) it's Bob's
+            // turn, allowing Cheat(1) to fire.
             let moves = prefix_test_moves(&mut allocator);
-            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(2).collect();
+            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(3).collect();
             on_chain_moves.push(GameAction::GoOnChain(0));
-            on_chain_moves.push(GameAction::WaitBlocks(5, 0));
             on_chain_moves.push(GameAction::NerfTransactions(0));
             on_chain_moves.push(GameAction::Cheat(1));
             on_chain_moves.push(GameAction::WaitBlocks(120, 0));
@@ -2027,10 +2044,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         &|| {
             let mut allocator = AllocEncoder::new();
 
+            // 3 moves so after redo it's Bob's turn; destroying the coin
+            // from Alice's view gives GameDestroyedOnChain/OpponentMadeImpossibleSpend.
             let moves = prefix_test_moves(&mut allocator);
-            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(2).collect();
+            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(3).collect();
             on_chain_moves.push(GameAction::GoOnChain(0));
-            on_chain_moves.push(GameAction::WaitBlocks(5, 0));
             on_chain_moves.push(GameAction::ForceDestroyCoin(0));
             on_chain_moves.push(GameAction::WaitBlocks(30, 0));
             on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
