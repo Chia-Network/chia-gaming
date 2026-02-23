@@ -21,4 +21,4 @@ fi
 (/app/beacon.sh http://localhost:3000 http://localhost:3001 &)
 
 # Run the simulator (must be last)
-. /app/test/bin/activate && RUST_LOG=debug python3 /app/run_simulator.py
+RUST_LOG=debug /app/rust/target/debug/chia-gaming-sim

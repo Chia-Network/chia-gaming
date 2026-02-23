@@ -1,6 +1,8 @@
 use exec::execvp;
 use std::ffi::OsString;
 
+pub mod calpoker_handlers;
+pub mod calpoker_validation;
 pub mod channel_handler;
 pub mod chialisp;
 pub mod constants;

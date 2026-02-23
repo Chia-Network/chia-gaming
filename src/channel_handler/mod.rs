@@ -1939,7 +1939,7 @@ impl ChannelHandler {
     ///      this game, we still need the redo
     pub fn set_state_for_coins<R: Rng>(
         &mut self,
-        env: &mut ChannelHandlerEnv<R>,
+        _env: &mut ChannelHandlerEnv<R>,
         unroll_coin: &CoinString,
         coins: &[PuzzleHash],
     ) -> Result<HashMap<CoinString, OnChainGameState>, Error> {
@@ -2264,91 +2264,6 @@ impl ChannelHandler {
             self.current_state_number,
         )?;
         Ok(CoinSpentInformation::TheirSpend(spent_result))
-    }
-
-    fn get_redo_result<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<R>,
-        cla: &mut Option<CachedPotatoRegenerateLastHop>,
-        coin: &CoinString,
-    ) -> Result<Option<GameAction>, Error> {
-        match cla {
-            Some(CachedPotatoRegenerateLastHop::PotatoCreatedGame(
-                ids,
-                my_contrib,
-                their_contrib,
-            )) => {
-                // Can't restart games on chain so rewind.
-                self.my_allocated_balance -= my_contrib.clone();
-                self.their_allocated_balance -= their_contrib.clone();
-                let remove_ids: Vec<usize> = self
-                    .live_games
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, g)| {
-                        if ids.contains(&g.game_id) {
-                            Some(i)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                for id in remove_ids.into_iter() {
-                    self.live_games.remove(id);
-                }
-                Ok(None)
-            }
-            Some(CachedPotatoRegenerateLastHop::PotatoAccept(ref mut accept)) => {
-                debug!("{} redo move is an accept", self.is_initial_potato());
-                let transaction = accept
-                    .live_game
-                    .get_transaction_for_timeout(env.allocator, coin)?;
-
-                debug!("{} redo accept data {accept:?}", self.is_initial_potato());
-                let outcome_puzzle_hash = accept.live_game.outcome_puzzle_hash(env.allocator)?;
-                Ok(transaction.map(|t| {
-                    GameAction::RedoAccept(
-                        accept.live_game.game_id.clone(),
-                        coin.clone(),
-                        outcome_puzzle_hash,
-                        Box::new(t),
-                    )
-                }))
-            }
-            Some(CachedPotatoRegenerateLastHop::PotatoMoveHappening(move_data)) => {
-                let _game_idx = self.get_game_by_id(&move_data.game_id)?;
-                debug!(
-                    "{} have cached move {move_data:?}",
-                    self.is_initial_potato()
-                );
-                debug!(
-                    "redo if move matches puzzle hash {:?}",
-                    move_data.match_puzzle_hash
-                );
-                debug!("redo for coin {coin:?}");
-
-                let coin_matches = coin
-                    .to_parts()
-                    .map(|(_, ph, _)| ph == move_data.match_puzzle_hash)
-                    .unwrap_or(false);
-                if coin_matches {
-                    debug!(
-                        "{} coin matches cached move, replaying as RedoMove",
-                        self.is_initial_potato()
-                    );
-                    let action = GameAction::RedoMove(
-                        move_data.game_id.clone(),
-                        coin.clone(),
-                        move_data.clone(),
-                    );
-                    *cla = None;
-                    return Ok(Some(action));
-                }
-
-                Ok(None)
-            }
-            _ => Ok(None),
-        }
     }
 
     /// Simple forward-only redo check.  `set_state_for_coins` already matched

@@ -8,7 +8,6 @@ RUN apt-get update -y && \
     yarn set version 1.22.22 && \
     python3 -m venv /app/test && \
     . /app/test/bin/activate && \
-    pip install maturin==1.9.2 && \
     sh -c ". /app/test/bin/activate && python3 -m pip install chiavdf==1.1.12 chia-blockchain==2.5.5-rc3" && \
     : "# Gross, check the hash at least." && \
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rustup.sh && \
@@ -17,8 +16,9 @@ RUN apt-get update -y && \
     . $HOME/.cargo/env && \
     rustup default stable && \
     rustup target add wasm32-unknown-unknown --toolchain stable && cargo +stable install --version 0.13.1 wasm-pack && \
-    mkdir -p /app/rust/src && mkdir -p /app/rust/wasm/src && \
+    mkdir -p /app/rust/src/bin && mkdir -p /app/rust/wasm/src && \
     sh -c "echo > /app/rust/src/lib.rs" && \
+    sh -c "echo 'fn main() {}' > /app/rust/src/bin/simulator.rs" && \
     sh -c "echo > /app/rust/wasm/src/mod.rs"
 
 WORKDIR /app
@@ -39,8 +39,7 @@ RUN --mount=type=tmpfs,dst=/tmp/rust \
 	mkdir -p /tmp/rust/wasm && (cd /app/rust/wasm && tar cf - .) | (cd /tmp/rust/wasm && tar xf -) && \
 	cd /tmp/rust && \
 	. $HOME/.cargo/env && \
-	. /app/test/bin/activate && \
-	maturin build --features sim-tests && \
+	cargo build --features sim-tests && \
 	cd /tmp/rust/wasm && \
 	wasm-pack build --out-dir=/tmp/rust/wasm/node-pkg --release --target=nodejs && \
 	wasm-pack build --out-dir=/tmp/rust/wasm/pkg --release --target=web && \
@@ -134,12 +133,10 @@ RUN --mount=type=tmpfs,dst=/tmp/rust \
 	--mount=type=cache,target=/root/.cache \
 	(cd /app/rust/ && tar cvf - .) | (cd /tmp/rust && tar xf -) && \
 	cd /tmp/rust && \
-	rm -rf `find . -name \*.whl` && \
 	. $HOME/.cargo/env && \
-	. /app/test/bin/activate && \
-	maturin build --features sim-tests && \
-	pip install `find . -name \*.whl` && \
-	cp -r /tmp/rust/target/wheels/* /app/rust/target/wheels && \
+	cargo build --features sim-tests && \
+	mkdir -p /app/rust/target/debug && \
+	cp /tmp/rust/target/debug/chia-gaming-sim /app/rust/target/debug/ && \
 	cd /tmp/rust/wasm && \
 	cargo clean -p chia_gaming_wasm && \
 	wasm-pack build --out-dir=/app/game/node-pkg --release --target=nodejs && \
@@ -194,7 +191,8 @@ COPY resources/nginx/urls /app/dist
 COPY resources/nginx/beacon.sh /app
 COPY resources/gaming-fe/test.sh /app
 
-RUN (echo 'from chia_gaming import chia_gaming' ; echo 'chia_gaming.service_main()') > /app/run_simulator.py
+# The simulator service is now a Rust binary; run_simulator.py is no longer needed.
+# To run the service: cd /app/rust && cargo run --features sim-tests
 COPY resources/fe-test/scripts/test_env.sh /app
 
 CMD /bin/bash /app/test_env.sh

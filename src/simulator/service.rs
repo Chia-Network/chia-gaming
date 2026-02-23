@@ -10,8 +10,6 @@ use std::time::Duration;
 use lazy_static::lazy_static;
 use log::debug;
 
-#[cfg(feature = "py-bindings")]
-use pyo3::Python;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
@@ -30,9 +28,6 @@ use crate::common::types::{
 };
 use crate::peer_container::{FullCoinSetAdapter, WatchReport};
 use crate::simulator::Simulator;
-#[cfg(feature = "py-bindings")]
-use pyo3::pyfunction;
-
 trait HttpError<V> {
     fn report_err(self) -> Result<V, String>;
 }
@@ -679,22 +674,6 @@ fn service_main_inner() {
     })
 }
 
-#[cfg(feature = "py-bindings")]
-#[pyo3::pyfunction]
-pub fn service_main() {
-    if let Err(e) = std::panic::catch_unwind(|| {
-        Python::with_gil(|py| {
-            py.allow_threads(|| {
-                service_main_inner();
-            })
-        })
-    }) {
-        eprintln!("panic: {e:?}");
-        std::process::exit(1);
-    }
-}
-
-#[cfg(not(feature = "py-bindings"))]
 pub fn service_main() {
     if let Err(e) = std::panic::catch_unwind(|| {
         service_main_inner();

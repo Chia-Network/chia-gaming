@@ -23,8 +23,6 @@ use crate::common::types::{
 
 use crate::utils::map_m;
 
-#[cfg(feature = "py-bindings")]
-use crate::simulator::service::service_main;
 use crate::simulator::tests::potato_handler_sim::test_funs as potato_handler_sim_tests;
 use crate::simulator::tests::simenv::test_funs as simenv_tests;
 use crate::test_support::calpoker::test_funs as calpoker_tests;
@@ -596,30 +594,6 @@ pub fn run_simulation_tests(choices: Vec<String>) {
             eprintln!("panic: <non-string payload>");
         }
         std::process::exit(1);
-    }
-}
-
-#[cfg(feature = "py-bindings")]
-mod python_bindings {
-    use super::*;
-    use pyo3::prelude::*;
-
-    #[pyfunction]
-    #[pyo3(signature = (choices = Vec::new()))]
-    fn run_simulation_tests_py(choices: Vec<String>) {
-        super::run_simulation_tests(choices);
-    }
-
-    #[pyfunction]
-    fn service_main_py() {
-        service_main();
-    }
-
-    #[pymodule]
-    pub fn chia_gaming(_py: Python, m: Bound<'_, PyModule>) -> PyResult<()> {
-        m.add_function(wrap_pyfunction!(run_simulation_tests_py, &m)?)?;
-        m.add_function(wrap_pyfunction!(service_main_py, &m)?)?;
-        Ok(())
     }
 }
 

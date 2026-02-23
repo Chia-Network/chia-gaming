@@ -6,4 +6,4 @@ docker rm chia-gaming-test || true
 
 docker build --platform linux/amd64 -t chia-gaming-test .
 
-docker run --platform linux/amd64 --name chia-gaming-test -t chia-gaming-test /bin/bash -x -c "export RUST_BACKTRACE=1; export RUST_LOG=debug; /usr/bin/python3 -m venv /app/test && cd /app && . ./test/bin/activate && python3 -c 'import sys; from chia_gaming import chia_gaming; chia_gaming.run_simulation_tests(sys.argv[1:])' $@"
+docker run --platform linux/amd64 --name chia-gaming-test -t chia-gaming-test /bin/bash -x -c "export RUST_BACKTRACE=1; export RUST_LOG=info; cd /app/rust && cargo test --features sim-tests -- sim_tests $@ --nocapture"

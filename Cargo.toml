@@ -14,7 +14,6 @@ repository = "https://github.com/Chia-Network/chia-gaming/"
 
 [features]
 sim-tests = ["dep:tokio","dep:salvo","dep:exec"]
-py-bindings = ["sim-tests", "dep:pyo3"]
 used_linker = []
 
 [dependencies]
@@ -34,7 +33,6 @@ lazy_static = "1.4.0"
 log = "0.4.22"
 num-bigint = "0.4.4"
 num-traits = "0.2.15"
-pyo3 = { version = "0.25.1", features = ["auto-initialize","extension-module"], optional = true }
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 salvo = { version = "0.89.1", optional = true }
@@ -61,6 +59,11 @@ colored = "3.0.0"
 serde = "1.0.228"
 toml = "0.8.14"
 
+[[bin]]
+name = "chia-gaming-sim"
+path = "src/bin/simulator.rs"
+required-features = ["sim-tests"]
+
 [lib]
 name = "chia_gaming"
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib"]
