@@ -117,8 +117,8 @@ impl GameStartInfo {
         matches!(self.game_handler, GameHandler::MyTurnHandler(_))
     }
 
-    pub fn from_clvm(allocator: &mut AllocEncoder, clvm: NodePtr) -> Result<Self, Error> {
-        let lst = if let Some(lst) = proper_list(allocator.allocator(), clvm, true) {
+    pub fn from_clvm(allocator: &AllocEncoder, clvm: NodePtr) -> Result<Self, Error> {
+        let lst = if let Some(lst) = proper_list(allocator.allocator_ref(), clvm, true) {
             lst
         } else {
             return Err(Error::StrErr(

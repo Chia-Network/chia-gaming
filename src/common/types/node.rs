@@ -17,8 +17,8 @@ impl Default for Node {
 }
 
 impl Node {
-    pub fn to_hex(&self, allocator: &mut AllocEncoder) -> Result<String, Error> {
-        let bytes = node_to_bytes(allocator.allocator(), self.0).into_gen()?;
+    pub fn to_hex(&self, allocator: &AllocEncoder) -> Result<String, Error> {
+        let bytes = node_to_bytes(allocator.allocator_ref(), self.0).into_gen()?;
         Ok(hex::encode(bytes))
     }
 }

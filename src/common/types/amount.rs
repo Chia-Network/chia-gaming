@@ -23,7 +23,7 @@ impl Amount {
         self.0
     }
 
-    pub fn from_clvm(allocator: &mut AllocEncoder, clvm: NodePtr) -> Result<Amount, Error> {
+    pub fn from_clvm(allocator: &AllocEncoder, clvm: NodePtr) -> Result<Amount, Error> {
         if let Some(val) = atom_from_clvm(allocator, clvm).and_then(|a| u64_from_atom(&a)) {
             Ok(Amount::new(val))
         } else {

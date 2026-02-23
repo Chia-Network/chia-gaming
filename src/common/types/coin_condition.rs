@@ -24,8 +24,8 @@ pub enum CoinCondition {
     Rem(Vec<Vec<u8>>),
 }
 
-fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<CoinCondition> {
-    let exploded = proper_list(allocator.allocator(), condition, true)?;
+fn parse_condition(allocator: &AllocEncoder, condition: NodePtr) -> Option<CoinCondition> {
+    let exploded = proper_list(allocator.allocator_ref(), condition, true)?;
     let public_key_from_bytes = |b: &[u8]| -> Result<PublicKey, Error> {
         let mut fixed: [u8; 48] = [0; 48];
         for (i, b) in b.iter().enumerate() {
@@ -36,9 +36,9 @@ fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<C
     if exploded.len() > 2
         && matches!(
             (
-                allocator.allocator().sexp(exploded[0]),
-                allocator.allocator().sexp(exploded[1]),
-                allocator.allocator().sexp(exploded[2])
+                allocator.allocator_ref().sexp(exploded[0]),
+                allocator.allocator_ref().sexp(exploded[1]),
+                allocator.allocator_ref().sexp(exploded[2])
             ),
             (SExp::Atom, SExp::Atom, SExp::Atom)
         )
@@ -46,7 +46,7 @@ fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<C
         let atoms: Vec<Vec<u8>> = exploded
             .iter()
             .take(3)
-            .map(|a| allocator.allocator().atom(*a).to_vec())
+            .map(|a| allocator.allocator_ref().atom(*a).to_vec())
             .collect();
         if *atoms[0] == AGG_SIG_UNSAFE_ATOM {
             if let Ok(pk) = public_key_from_bytes(&atoms[1]) {
@@ -69,11 +69,11 @@ fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<C
     if !exploded.is_empty()
         && exploded
             .iter()
-            .all(|e| matches!(allocator.allocator().sexp(*e), SExp::Atom))
+            .all(|e| matches!(allocator.allocator_ref().sexp(*e), SExp::Atom))
     {
         let atoms: Vec<Vec<u8>> = exploded
             .iter()
-            .map(|a| allocator.allocator().atom(*a).to_vec())
+            .map(|a| allocator.allocator_ref().atom(*a).to_vec())
             .collect();
         if *atoms[0] == REM_ATOM {
             return Some(CoinCondition::Rem(
@@ -86,9 +86,9 @@ fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<C
 }
 
 impl CoinCondition {
-    pub fn from_nodeptr(allocator: &mut AllocEncoder, conditions: NodePtr) -> Vec<CoinCondition> {
+    pub fn from_nodeptr(allocator: &AllocEncoder, conditions: NodePtr) -> Vec<CoinCondition> {
         // Ensure this borrow of allocator is finished for what's next.
-        if let Some(exploded) = proper_list(allocator.allocator(), conditions, true) {
+        if let Some(exploded) = proper_list(allocator.allocator_ref(), conditions, true) {
             exploded
                 .iter()
                 .flat_map(|cond| parse_condition(allocator, *cond))

@@ -1,6 +1,10 @@
 #!/bin/bash -x
 
 set -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
+
 docker kill chia-gaming-test || true
 docker rm chia-gaming-test || true
 docker build --platform linux/amd64 -t chia-gaming-test .

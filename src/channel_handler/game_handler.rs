@@ -524,7 +524,7 @@ pub struct MessageInputs {
 pub struct MessageHandler(pub Program);
 
 impl MessageHandler {
-    pub fn from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<Self, Error> {
+    pub fn from_nodeptr(allocator: &AllocEncoder, n: NodePtr) -> Result<Self, Error> {
         Ok(MessageHandler(Program::from_nodeptr(allocator, n)?))
     }
     pub fn run(

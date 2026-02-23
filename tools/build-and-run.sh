@@ -1,5 +1,10 @@
 #!/bin/bash
 
+set -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
+
 # Step 1: Stop containers using specific ports
 ports=(3000 3001 5800)
 
@@ -15,11 +20,10 @@ for port in "${ports[@]}"; do
 done
 
 # Step 2: Build the frontend (using yarn)
-cd resources/gaming-fe
+cd "$REPO_ROOT/resources/gaming-fe"
 yarn build
-cd ../lobby-view
+cd "$REPO_ROOT/resources/lobby-view"
 yarn build
-cd ../..
 
 
 # Step 3: Run the Docker container with volume mounts

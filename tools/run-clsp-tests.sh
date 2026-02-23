@@ -1,6 +1,12 @@
 #!/bin/bash -x
 
-cargo build  # Rebuild root-generated .hex artifacts
+set -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
+
+# find . -name '*.hex' | xargs rm
+cargo build  # Rebuild .hex artifacts
 cargo test chialisp
 
 if ! which uv; then
@@ -11,7 +17,7 @@ if ! which uv; then
   exit 1
 fi
 
-cd ./python
+cd "$REPO_ROOT/python"
 UV_VENV_CLEAR=1 uv venv --python 3.12 --clear
 cargo build --manifest-path ../Cargo.toml  # Ensure root .hex files exist
 
