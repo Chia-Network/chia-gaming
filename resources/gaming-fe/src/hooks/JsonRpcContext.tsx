@@ -40,6 +40,10 @@ import {
   GetCurrentAddressResponse,
 } from '../types/rpc/GetCurrentAddress';
 import {
+  GetCoinRecordsByNamesRequest,
+  GetCoinRecordsByNamesResponse,
+} from '../types/rpc/GetCoinRecordsByNames';
+import {
   GetNextAddressRequest,
   GetNextAddressResponse,
 } from '../types/rpc/GetNextAddress';
@@ -131,6 +135,9 @@ interface _JsonRpc {
   getCurrentAddress: (
     data: GetCurrentAddressRequest,
   ) => Promise<GetCurrentAddressResponse>;
+  getCoinRecordsByNames: (
+    data: GetCoinRecordsByNamesRequest,
+  ) => Promise<GetCoinRecordsByNamesResponse>;
   sendTransaction: (
     data: SendTransactionRequest,
   ) => Promise<SendTransactionResponse>;
@@ -273,6 +280,13 @@ async function getWalletBalance(data: GetWalletBalanceRequest) {
 async function getCurrentAddress(data: GetCurrentAddressRequest) {
   return await request<GetCurrentAddressResponse>(
     ChiaMethod.GetCurrentAddress,
+    data,
+  );
+}
+
+async function getCoinRecordsByNames(data: GetCoinRecordsByNamesRequest) {
+  return await request<GetCoinRecordsByNamesResponse>(
+    ChiaMethod.GetCoinRecordsByNames,
     data,
   );
 }
@@ -447,6 +461,7 @@ export const rpc = {
   getTransaction,
   getWalletBalance,
   getCurrentAddress,
+  getCoinRecordsByNames,
   sendTransaction,
   signMessageById,
   signMessageByAddress,

@@ -4,6 +4,7 @@ import {
   DoInitialSpendResult,
   BlockchainInboundAddressResult,
 } from '../types/ChiaGaming';
+import { GetCoinRecordsByNamesResponse } from '../types/rpc/GetCoinRecordsByNames';
 
 import {
   blockchainConnector,
@@ -95,6 +96,30 @@ export class ChildFrameBlockchainInterface {
       (e: any) => e.getBalance,
       requestId,
       request
+    );
+  }
+
+  getCoinRecordsByNames(
+    names: string[],
+    startHeight?: number,
+    endHeight?: number,
+    includeSpentCoins: boolean = true,
+  ): Promise<GetCoinRecordsByNamesResponse> {
+    const requestId = requestNumber++;
+    const request = {
+      requestId,
+      getCoinRecordsByNames: {
+        names,
+        startHeight,
+        endHeight,
+        includeSpentCoins,
+      },
+    };
+
+    return performTransaction(
+      (e: any) => e.getCoinRecordsByNames,
+      requestId,
+      request,
     );
   }
 

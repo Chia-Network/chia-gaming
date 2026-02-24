@@ -4,6 +4,7 @@ import {
   DoInitialSpendResult,
   BlockchainInboundAddressResult,
 } from '../types/ChiaGaming';
+import { GetCoinRecordsByNamesResponse } from '../types/rpc/GetCoinRecordsByNames';
 
 export interface BlockchainOutboundInitialSpendRequest {
   uniqueId: string;
@@ -20,12 +21,20 @@ export type BlockchainOutboundAddressRequest = boolean;
 
 export type BlockchainOutboundBalanceRequest = boolean;
 
+export interface BlockchainOutboundCoinRecordsByNamesRequest {
+  names: string[];
+  startHeight?: number;
+  endHeight?: number;
+  includeSpentCoins?: boolean;
+}
+
 export interface BlockchainOutboundRequest {
   requestId: number;
   initialSpend?: BlockchainOutboundInitialSpendRequest;
   transaction?: BlockchainOutboundTransactionRequest;
   getAddress?: BlockchainOutboundAddressRequest;
   getBalance?: BlockchainOutboundBalanceRequest;
+  getCoinRecordsByNames?: BlockchainOutboundCoinRecordsByNamesRequest;
 }
 
 export interface BlockchainInboundReply {
@@ -34,6 +43,7 @@ export interface BlockchainInboundReply {
   transaction?: string;
   getAddress?: BlockchainInboundAddressResult;
   getBalance?: number;
+  getCoinRecordsByNames?: GetCoinRecordsByNamesResponse;
   error?: string;
 }
 

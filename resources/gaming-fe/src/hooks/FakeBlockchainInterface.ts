@@ -281,6 +281,7 @@ export function connectSimulatorBlockchain() {
       let transaction = evt.transaction;
       let getAddress = evt.getAddress;
       let getBalance = evt.getBalance;
+      let getCoinRecordsByNames = evt.getCoinRecordsByNames;
       if (initialSpend) {
         return fakeBlockchainInfo
           .do_initial_spend(
@@ -325,6 +326,12 @@ export function connectSimulatorBlockchain() {
       } else if (getBalance) {
         fakeBlockchainInfo.getBalance().then((balance) => {
           blockchainConnector.replyEmitter({ responseId: evt.requestId, getBalance: balance });
+        });
+      } else if (getCoinRecordsByNames) {
+        blockchainConnector.replyEmitter({
+          responseId: evt.requestId,
+          error:
+            'getCoinRecordsByNames is not supported on the simulator blockchain backend',
         });
       } else {
         console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);
