@@ -229,6 +229,8 @@ export function connectRealBlockchain(baseUrl: string) {
       let getAddress = evt.getAddress;
       let getBalance = evt.getBalance;
       let getCoinRecordsByNames = evt.getCoinRecordsByNames;
+      let createNewRemoteWallet = evt.createNewRemoteWallet;
+      let registerRemoteCoins = evt.registerRemoteCoins;
       if (initialSpend) {
         try {
           const currentAddress = await rpc.getCurrentAddress({
@@ -355,6 +357,39 @@ export function connectRealBlockchain(baseUrl: string) {
             blockchainConnector.replyEmitter({
               responseId: evt.requestId,
               getCoinRecordsByNames: coinRecordsResult,
+            });
+          })
+          .catch((e: any) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              error: e?.toString?.() ?? JSON.stringify(e),
+            });
+          });
+      } else if (createNewRemoteWallet) {
+        rpc
+          .createNewRemoteWallet({})
+          .then((remoteWalletResult) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              createNewRemoteWallet: remoteWalletResult,
+            });
+          })
+          .catch((e: any) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              error: e?.toString?.() ?? JSON.stringify(e),
+            });
+          });
+      } else if (registerRemoteCoins) {
+        rpc
+          .registerRemoteCoins({
+            walletId: registerRemoteCoins.walletId,
+            coinIds: registerRemoteCoins.coinIds,
+          })
+          .then((registerRemoteCoinsResult) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              registerRemoteCoins: registerRemoteCoinsResult,
             });
           })
           .catch((e: any) => {

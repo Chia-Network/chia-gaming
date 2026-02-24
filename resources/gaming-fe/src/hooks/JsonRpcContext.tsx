@@ -20,6 +20,10 @@ import {
   CreateNewDidWalletResponse,
 } from '../types/rpc/CreateNewDidWallet';
 import {
+  CreateNewRemoteWalletRequest,
+  CreateNewRemoteWalletResponse,
+} from '../types/rpc/CreateNewRemoteWallet';
+import {
   CreateOfferForIdsRequest,
   CreateOfferForIdsResponse,
 } from '../types/rpc/CreateOfferForIds';
@@ -93,6 +97,10 @@ import { GetWalletsRequest, GetWalletsResponse } from '../types/rpc/GetWallets';
 import { LogInRequest, LogInResponse } from '../types/rpc/LogIn';
 import { MintNftRequest, MintNftResponse } from '../types/rpc/MintNft';
 import {
+  RegisterRemoteCoinsRequest,
+  RegisterRemoteCoinsResponse,
+} from '../types/rpc/RegisterRemoteCoins';
+import {
   SendTransactionRequest,
   SendTransactionResponse,
 } from '../types/rpc/SendTransaction';
@@ -135,6 +143,12 @@ interface _JsonRpc {
   getCurrentAddress: (
     data: GetCurrentAddressRequest,
   ) => Promise<GetCurrentAddressResponse>;
+  createNewRemoteWallet: (
+    data: CreateNewRemoteWalletRequest,
+  ) => Promise<CreateNewRemoteWalletResponse>;
+  registerRemoteCoins: (
+    data: RegisterRemoteCoinsRequest,
+  ) => Promise<RegisterRemoteCoinsResponse>;
   getCoinRecordsByNames: (
     data: GetCoinRecordsByNamesRequest,
   ) => Promise<GetCoinRecordsByNamesResponse>;
@@ -280,6 +294,20 @@ async function getWalletBalance(data: GetWalletBalanceRequest) {
 async function getCurrentAddress(data: GetCurrentAddressRequest) {
   return await request<GetCurrentAddressResponse>(
     ChiaMethod.GetCurrentAddress,
+    data,
+  );
+}
+
+async function createNewRemoteWallet(data: CreateNewRemoteWalletRequest) {
+  return await request<CreateNewRemoteWalletResponse>(
+    ChiaMethod.CreateNewRemoteWallet,
+    data,
+  );
+}
+
+async function registerRemoteCoins(data: RegisterRemoteCoinsRequest) {
+  return await request<RegisterRemoteCoinsResponse>(
+    ChiaMethod.RegisterRemoteCoins,
     data,
   );
 }
@@ -461,6 +489,8 @@ export const rpc = {
   getTransaction,
   getWalletBalance,
   getCurrentAddress,
+  createNewRemoteWallet,
+  registerRemoteCoins,
   getCoinRecordsByNames,
   sendTransaction,
   signMessageById,

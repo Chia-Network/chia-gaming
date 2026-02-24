@@ -188,6 +188,8 @@ class WalletState {
             'chia_getWalletBalance',
             'chia_sendTransaction',
             'chia_getCoinRecordsByNames',
+            'chia_createNewRemoteWallet',
+            'chia_registerRemoteCoins',
           ],
           chains: [CHAIN_ID],
           events: [],

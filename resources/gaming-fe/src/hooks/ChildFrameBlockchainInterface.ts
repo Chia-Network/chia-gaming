@@ -4,7 +4,9 @@ import {
   DoInitialSpendResult,
   BlockchainInboundAddressResult,
 } from '../types/ChiaGaming';
+import { CreateNewRemoteWalletResponse } from '../types/rpc/CreateNewRemoteWallet';
 import { GetCoinRecordsByNamesResponse } from '../types/rpc/GetCoinRecordsByNames';
+import { RegisterRemoteCoinsResponse } from '../types/rpc/RegisterRemoteCoins';
 
 import {
   blockchainConnector,
@@ -118,6 +120,37 @@ export class ChildFrameBlockchainInterface {
 
     return performTransaction(
       (e: any) => e.getCoinRecordsByNames,
+      requestId,
+      request,
+    );
+  }
+
+  createNewRemoteWallet(): Promise<CreateNewRemoteWalletResponse> {
+    const requestId = requestNumber++;
+    const request = {
+      requestId,
+      createNewRemoteWallet: true,
+    };
+
+    return performTransaction(
+      (e: any) => e.createNewRemoteWallet,
+      requestId,
+      request,
+    );
+  }
+
+  registerRemoteCoins(
+    walletId: number,
+    coinIds: string[],
+  ): Promise<RegisterRemoteCoinsResponse> {
+    const requestId = requestNumber++;
+    const request = {
+      requestId,
+      registerRemoteCoins: { walletId, coinIds },
+    };
+
+    return performTransaction(
+      (e: any) => e.registerRemoteCoins,
       requestId,
       request,
     );
