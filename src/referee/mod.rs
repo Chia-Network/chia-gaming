@@ -642,6 +642,15 @@ impl RefereeInterface for Referee {
         }
     }
 
+    fn check_their_turn_for_slash(
+        &self,
+        _allocator: &AllocEncoder,
+        _evidence: Evidence,
+        _coin_string: &CoinString,
+    ) -> Result<Option<TheirTurnCoinSpentResult>, Error> {
+        todo!();
+    }
+
     fn get_serialized_form(&self) -> RefereeSerializeContainer {
         RefereeSerializeContainer::V1(self.clone())
     }

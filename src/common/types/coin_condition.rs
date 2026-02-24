@@ -74,14 +74,14 @@ fn parse_condition(allocator: &AllocEncoder, condition: NodePtr) -> Option<CoinC
     if exploded.len() == 2
         && matches!(
             (
-                allocator.allocator().sexp(exploded[0]),
-                allocator.allocator().sexp(exploded[1]),
+                allocator.allocator_ref().sexp(exploded[0]),
+                allocator.allocator_ref().sexp(exploded[1]),
             ),
             (SExp::Atom, SExp::Atom)
         )
     {
-        let op = allocator.allocator().atom(exploded[0]).to_vec();
-        let arg = allocator.allocator().atom(exploded[1]).to_vec();
+        let op = allocator.allocator_ref().atom(exploded[0]).to_vec();
+        let arg = allocator.allocator_ref().atom(exploded[1]).to_vec();
         if *op == ASSERT_HEIGHT_RELATIVE_ATOM {
             if let Some(val) = u64_from_atom(&arg) {
                 return Some(CoinCondition::AssertHeightRelative(val));
