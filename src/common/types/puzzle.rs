@@ -44,8 +44,8 @@ impl Puzzle {
     pub fn from_bytes(by: &[u8]) -> Puzzle {
         Puzzle(Program::from_bytes(by).into())
     }
-    pub fn from_nodeptr(allocator: &mut AllocEncoder, node: NodePtr) -> Result<Puzzle, Error> {
-        let bytes = node_to_bytes(allocator.allocator(), node).into_gen()?;
+    pub fn from_nodeptr(allocator: &AllocEncoder, node: NodePtr) -> Result<Puzzle, Error> {
+        let bytes = node_to_bytes(allocator.allocator_ref(), node).into_gen()?;
         Ok(Puzzle::from_bytes(&bytes))
     }
     pub fn to_hex(&self) -> String {

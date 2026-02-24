@@ -235,7 +235,7 @@ impl BootstrapTowardWallet for SimulatedPeer {
 impl ToLocalUI for SimulatedPeer {
     fn opponent_moved(
         &mut self,
-        _allocator: &mut AllocEncoder,
+        _allocator: &AllocEncoder,
         _id: &GameID,
         _state_number: usize,
         _readable: ReadableMove,
@@ -251,7 +251,7 @@ impl ToLocalUI for SimulatedPeer {
     }
     fn game_message(
         &mut self,
-        _allocator: &mut AllocEncoder,
+        _allocator: &AllocEncoder,
         _id: &GameID,
         readable: ReadableMove,
     ) -> Result<(), Error> {
@@ -413,7 +413,7 @@ pub struct LocalTestUIReceiver {
 impl ToLocalUI for LocalTestUIReceiver {
     fn opponent_moved(
         &mut self,
-        _allocator: &mut AllocEncoder,
+        _allocator: &AllocEncoder,
         id: &GameID,
         state_number: usize,
         readable: ReadableMove,
@@ -427,7 +427,7 @@ impl ToLocalUI for LocalTestUIReceiver {
 
     fn game_message(
         &mut self,
-        _allocator: &mut AllocEncoder,
+        _allocator: &AllocEncoder,
         _id: &GameID,
         readable: ReadableMove,
     ) -> Result<(), Error> {

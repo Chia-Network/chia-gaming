@@ -431,7 +431,7 @@ async fn get_current_peak(req: &mut Request, response: &mut Response) -> Result<
     pass_on_request(req, response, WebRequest::GetCurrentPeak)
 }
 
-fn get_arg_string(req: &mut Request, name: &str) -> Result<String, Error> {
+fn get_arg_string(req: &Request, name: &str) -> Result<String, Error> {
     let uri_string = req.uri().to_string();
     let want_string = format!("{name}=");
     if let Some(found_eq) = uri_string.find(&want_string) {
@@ -446,7 +446,7 @@ fn get_arg_string(req: &mut Request, name: &str) -> Result<String, Error> {
     Err(Error::StrErr("no argument".to_string()))
 }
 
-fn get_arg_integer(req: &mut Request, name: &str) -> Result<u64, Error> {
+fn get_arg_integer(req: &Request, name: &str) -> Result<u64, Error> {
     let arg = get_arg_string(req, name)?;
     arg.parse::<u64>()
         .map_err(|_e| Error::StrErr(format!("{name} is not an integer")))
@@ -540,7 +540,7 @@ async fn push_tx(
     )
 }
 
-fn cors_origin(req: &mut Request, response: &mut Response) -> Result<(), String> {
+fn cors_origin(req: &Request, response: &mut Response) -> Result<(), String> {
     let origin_header: Option<String> = req.header("Origin");
     if let Some(origin) = origin_header {
         response

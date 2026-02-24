@@ -12,9 +12,9 @@ use sha2::{Digest, Sha256};
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Hash, Default)]
 pub struct Hash(pub [u8; 32]);
 
-pub fn atom_from_clvm(allocator: &mut AllocEncoder, n: NodePtr) -> Option<Vec<u8>> {
-    if matches!(allocator.allocator().sexp(n), SExp::Atom) {
-        Some(allocator.allocator().atom(n).to_vec())
+pub fn atom_from_clvm(allocator: &AllocEncoder, n: NodePtr) -> Option<Vec<u8>> {
+    if matches!(allocator.allocator_ref().sexp(n), SExp::Atom) {
+        Some(allocator.allocator_ref().atom(n).to_vec())
     } else {
         None
     }
@@ -34,7 +34,7 @@ impl Hash {
         }
         Hash::from_bytes(fixed)
     }
-    pub fn from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<Hash, Error> {
+    pub fn from_nodeptr(allocator: &AllocEncoder, n: NodePtr) -> Result<Hash, Error> {
         if let Some(bytes) = atom_from_clvm(allocator, n) {
             return Ok(Hash::from_slice(&bytes));
         }
