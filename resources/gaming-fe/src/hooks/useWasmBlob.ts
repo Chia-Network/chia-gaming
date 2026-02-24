@@ -100,7 +100,6 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     setOutcome(outcome);
     if (outcome) {
       const iAmAlice = !iStarted;
-      console.log('recognizeOutcome', outcome);
       const mySelects = iAmAlice ? outcome.alice_selects : outcome.bob_selects;
       const theirSelects = iAmAlice ? outcome.bob_selects : outcome.alice_selects;
       const myFinalHand = iAmAlice ? outcome.alice_final_hand : outcome.bob_final_hand;
@@ -163,9 +162,6 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
   };
 
   function setState(state: any): void {
-    if (state.setMyTurn !== undefined) {
-      console.log('state.setMyTurn:', state);
-    }
     const keys = Object.keys(state);
     keys.forEach((k) => {
       if (settable[k]) {
@@ -249,12 +245,6 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
 
   // Called once at an arbitrary time.
   (window as any).loadWasm = useCallback((chia_gaming_init: any, cg: any) => {
-    console.log(
-      'Wasm init: storing chia_gaming_init=',
-      chia_gaming_init,
-      'and cg=',
-      cg,
-    );
     storeInitArgs(chia_gaming_init, cg);
   }, []);
 

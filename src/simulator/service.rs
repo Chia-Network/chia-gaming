@@ -409,7 +409,7 @@ fn pass_on_request(
     response: &mut Response,
     wr: WebRequest,
 ) -> Result<(), String> {
-    debug!("pass on request {wr:?}");
+    debug!("pass on request");
 
     let locked = ONE_REQUEST.lock().unwrap();
 

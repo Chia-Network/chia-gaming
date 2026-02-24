@@ -18,6 +18,18 @@ RUST_LOG=info cargo test --features sim-tests -- sim_tests --nocapture 2>&1 \
 - Each iteration of the simulation loop involves expensive CLVM evaluation, so
   a 200-step stall can take a long time before the assertion fires.
 
+### Running a single sim test
+
+Set the `SIM_TEST` environment variable to a substring of the test name:
+
+```bash
+SIM_TEST=piss_off_peer_timeout cargo test --features sim-tests sim_tests -- --nocapture
+```
+
+This runs only tests whose name contains the given substring. Omit `SIM_TEST`
+to run the full suite. This is much faster for iterating on a single failure
+(~5s vs minutes for the whole suite).
+
 ### Always tee output to a file
 
 Test runs are expensive (minutes each). Always capture the full output so you

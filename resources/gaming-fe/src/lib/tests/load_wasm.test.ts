@@ -156,7 +156,6 @@ async function action_with_messages(
   cradle1: WasmBlobWrapperAdapter,
   cradle2: WasmBlobWrapperAdapter,
 ) {
-  console.log("action_with_messages START")
   let cradles = [cradle1, cradle2];
   let subscriptions: Subscription[] = [];
 
@@ -167,7 +166,6 @@ async function action_with_messages(
         if (evt.block) {
           block_array = evt.block;
         }
-        console.log('pass on block', evt.peak, block_array, evt.report);
         c.take_block(evt.peak, block_array, evt.report);
       });
     },
@@ -177,7 +175,6 @@ async function action_with_messages(
   cradles.forEach((cradle, index) => {
     subscriptions.push(addActiveSubscription(cradle.getObservable().subscribe({
       next: (evt) => {
-        // console.log('WasmBlobWrapper Event: ', evt);
         if (
           evt.setGameConnectionState &&
           evt.setGameConnectionState.stateIdentifier === 'running'
@@ -192,7 +189,6 @@ async function action_with_messages(
       for (let c = 0; c < 2; c++) {
         let outbound = cradles[c].outbound_messages();
         for (let i = 0; i < outbound.length; i++) {
-          console.log(`delivering message from cradle ${c}: ${JSON.stringify(outbound[i])}`);
           cradles[c ^ 1].deliver_message(outbound[i].msgno, outbound[i].msg);
         }
       }
@@ -201,10 +197,8 @@ async function action_with_messages(
 
     // If any evt_results are false, that means we did not get a setState msg from that cradle
     if (!evt_results.every((x) => x)) {
-      console.log('got running:', evt_results);
       throw 'we expected running state in both cradles';
     }
-    console.log("action_with_messages END")
   } finally {
     subscriptions.forEach((sub) => sub.unsubscribe());
   }
@@ -217,7 +211,6 @@ async function initWasmBlobWrapper(
   peer_conn: PeerConnectionResult,
   wasmStateInit: WasmStateInit,
 ) {
-  console.log("initWasmBlobWrapper start:", blockchain, uniqueId, iStarted, peer_conn,  wasmStateInit);
   const amount = 100;
 
   // Ensure that each user has a wallet.
@@ -239,7 +232,6 @@ async function initWasmBlobWrapper(
   let calpokerHexes = await loadCalpoker(fetchHex);
   configGameObject(gameObject, iStarted, wasmStateInit, calpokerHexes, blockchain, uniqueId, amount);
 
-  console.log("initWasmBlobWrapper end");
   return gameObject;
 }
 
@@ -264,13 +256,10 @@ it(
         sendMessage: (msgno: number, message: string) => {
           cradle1.add_outbound_message(msgno, message);
         },
-        hostLog: (msg: string) => console.log(msg)
+        hostLog: (msg: string) => process.stderr.write(msg + '\n')
       };
-      console.log("after peer_conn1");
       let wasm_init1 = new WasmStateInit(doInternalLoadWasm, fetchHex);
       storeInitArgs(() => {}, WholeWasmObject);
-      console.log("afer WasmStateInit");
-
       let wasm_blob1 = await initWasmBlobWrapper(
         blockchainInterface,
         'a11ce000',
@@ -278,14 +267,13 @@ it(
         peer_conn1,
         wasm_init1
       );
-      console.log("after wasm_blob1");
       cradle1.set_blob(wasm_blob1);
 
       let peer_conn2 = {
         sendMessage: (msgno: number, message: string) => {
           cradle2.add_outbound_message(msgno, message);
         },
-        hostLog: (msg: string) => console.log(msg)
+        hostLog: (msg: string) => process.stderr.write(msg + '\n')
       };
       let wasm_init2 = new WasmStateInit(doInternalLoadWasm, fetchHex);
       let wasm_blob2 = await initWasmBlobWrapper(
@@ -295,11 +283,8 @@ it(
         peer_conn2,
         wasm_init2
       );
-      console.log("after wasm_blob2");
-
       cradle2.set_blob(wasm_blob2);
 
-      console.log("Running action_with_messages");
       await action_with_messages(blockchainInterface, cradle1, cradle2);
     } finally {
       cradle1.shutdown();

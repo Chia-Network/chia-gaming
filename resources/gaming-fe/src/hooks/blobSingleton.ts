@@ -42,7 +42,6 @@ export async function configGameObject(
   gameObject.loadWasm(wasmConnection);
   let seed = getRandomInt(1<<31);
   let seedStr = getEvenHexString(seed);
-  console.log("configGameObject wasmConnection", wasmConnection);
   let rngId = wasmConnection.create_rng(seedStr);
   let identity = wasmConnection.chia_identity(rngId);
   let address = await blockchain.getAddress();
@@ -104,7 +103,6 @@ export function getBlobSingleton(
   };
 
   let signaledSave: string | undefined = undefined;
-  console.log('getGameSocket');
   const wasmStateInit = new WasmStateInit(doInternalLoadWasm, fetchHex);
   const peerconn = getGameSocket(
     searchParams,

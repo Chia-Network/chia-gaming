@@ -15,9 +15,6 @@ var logInitialized = false;
 
 export const readyToInit = new Subject<boolean>();
 export const waitForReadyToInit = new Observable<boolean>((subscriber) => {
-  console.log('subscriber added to waitForReadyToInit');
-  console.log('chia_gaming_init=', chia_gaming_init);
-  console.log('cg=', cg);
   if (chia_gaming_init && cg) {
     subscriber.next(true);
     subscriber.complete();
@@ -65,29 +62,13 @@ export class WasmStateInit {
     this.doInternalLoadWasm = doInternalLoadWasm;
     this.fetchHex = fetchHex;
     this.deferredWasmConnection = new Subject<WasmConnection>();
-    console.log("WasmStateInit created")
   }
-
-  /*
-observable.subscribe({
-  next(x) {
-    console.log('got value ' + x);
-  },
-  error(err) {
-    console.error('something wrong occurred: ' + err);
-  },
-  complete() {
-    console.log('done');
-  },
-});
-    */
 
   async internalLoadWasm(
     chia_gaming_init: any,
     cg: WasmConnection,
   ): Promise<WasmConnection> {
     // Fill out WasmConnection object
-    console.log('wasm detected');
     const modData = await this.doInternalLoadWasm();
     chia_gaming_init(modData);
     if (!logInitialized) {
@@ -138,9 +119,6 @@ observable.subscribe({
     });
     return Promise.all(presetFetches).then((presets) => {
       presets.forEach((nameAndContent) => {
-        console.log(
-          `preset load ${nameAndContent.name} ${nameAndContent.content.length}`,
-        );
         if (!this.wasmConnection) {
           throw 'this.wasmConnection undefined in loadPresets';
         }
@@ -195,10 +173,6 @@ observable.subscribe({
       let msg = 'createStartCoin: negative amount:' + amount;
       throw new Error(msg);
     }
-
-    console.log(
-      `create coin spendable by ${identity.puzzle_hash} for ${amount}`,
-    );
 
     /*
     TODO: move one call layer up

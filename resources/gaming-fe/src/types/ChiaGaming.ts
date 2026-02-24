@@ -184,7 +184,6 @@ export class ChiaGame {
     this.waiting_messages = [];
     this.private_key = private_key;
     this.cradle = cradleId;
-    console.log('constructed with cradle=', cradleId);
   }
 
   start_games(initiator: boolean, game: any): string[] {
@@ -476,9 +475,6 @@ export class CalpokerOutcome {
     this.alice_cards = alice_cards;
     this.bob_cards = bob_cards;
 
-    console.log('alice_cards', alice_cards);
-    console.log('bob_cards', bob_cards);
-
     this.alice_selects = result_list[1];
     this.bob_selects = result_list[2];
     this.alice_hand_value = proper_list(result_list[3]);
@@ -513,39 +509,22 @@ export class CalpokerOutcome {
       this.bob_discards,
     );
 
-    console.log('alice_for_alice', alice_for_alice);
-    console.log('alice_for_bob', alice_for_bob);
-    console.log('bob_for_alice', bob_for_alice);
-    console.log('bob_for_bob', bob_for_bob);
-
     this.alice_final_hand = [...bob_for_alice];
     alice_for_alice.forEach((c) => this.alice_final_hand.push(c));
     this.alice_final_hand.sort(compare_card);
-    console.log('final alice hand', this.alice_final_hand);
 
     this.bob_final_hand = [...alice_for_bob];
     bob_for_bob.forEach((c) => this.bob_final_hand.push(c));
     this.bob_final_hand.sort(compare_card);
-    console.log('final bob hand', this.bob_final_hand);
 
     this.alice_used_cards = select_cards_using_bits(
       this.alice_final_hand,
       this.alice_selects,
     )[1];
-    console.log(
-      'alice selects',
-      this.alice_selects.toString(16),
-      this.alice_used_cards,
-    );
     this.bob_used_cards = select_cards_using_bits(
       this.bob_final_hand,
       this.bob_selects,
     )[1];
-    console.log(
-      'bob selects',
-      this.bob_selects.toString(16),
-      this.bob_used_cards,
-    );
   }
 }
 

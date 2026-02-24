@@ -90,8 +90,6 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
 
   startMonitoring(uniqueId: string) {
     this.deleted = false;
-    console.log('startMonitoring', uniqueId);
-
     return this.upstream.getOrRequestToken(uniqueId).then((puzzleHash) => {
       if (this.deleted) {
         return;
@@ -122,7 +120,6 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         }
 
         // Returns the coin string
-        console.log('set opening coin', coin);
         return { coin, fromPuzzleHash };
       });
     });
@@ -355,7 +352,6 @@ blockchainDataEmitter.getSelectionObservable().subscribe({
   next: (e: SelectionMessage) => {
     if (e.selection == FAKE_BLOCKCHAIN_ID) {
       // Simulator selected
-      console.log('simulator blockchain selected');
       fakeBlockchainInfo.startMonitoring(e.uniqueId);
       connectSimulatorBlockchain();
     }
