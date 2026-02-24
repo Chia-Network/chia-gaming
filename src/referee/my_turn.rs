@@ -16,13 +16,13 @@ use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
     AllocEncoder, Amount, Error, Hash, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree,
 };
-use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RMFixed};
 use crate::referee::their_turn::{TheirTurnReferee, TheirTurnRefereeGameState};
 use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs,
     OnChainRefereeMoveData, OnChainRefereeSlashData, RefereePuzzleArgs, StateUpdateMoveArgs,
     StateUpdateResult,
 };
+use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RMFixed};
 use crate::referee::Referee;
 
 // Contains a state of the game for use in currying the coin puzzle or for
@@ -475,9 +475,17 @@ impl MyTurnReferee {
                 mover_share: Amount::default(),
                 max_move_size: args.game_move.basic.max_move_size,
                 outgoing_move_state_update_program: args.validation_program.clone(),
-                outgoing_move_state_update_program_hash: args.validation_program.sha256tree(allocator).hash().clone(),
+                outgoing_move_state_update_program_hash: args
+                    .validation_program
+                    .sha256tree(allocator)
+                    .hash()
+                    .clone(),
                 incoming_move_state_update_program: args.validation_program.clone(),
-                incoming_move_state_update_program_hash: args.validation_program.sha256tree(allocator).hash().clone(),
+                incoming_move_state_update_program_hash: args
+                    .validation_program
+                    .sha256tree(allocator)
+                    .hash()
+                    .clone(),
                 waiting_handler: game_handler.clone(),
                 message_parser: None,
             })
@@ -546,7 +554,9 @@ impl MyTurnReferee {
             waiter_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
             game_move: game_move_details.clone(),
             validation_program: result.outgoing_move_state_update_program.clone(),
-            previous_validation_info_hash: Some(ref_puzzle_args.game_move.validation_info_hash.clone()),
+            previous_validation_info_hash: Some(
+                ref_puzzle_args.game_move.validation_info_hash.clone(),
+            ),
             ..ref_puzzle_args.clone()
         });
 

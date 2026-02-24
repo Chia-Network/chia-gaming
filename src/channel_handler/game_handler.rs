@@ -183,7 +183,10 @@ impl GameHandler {
                 inputs.amount.clone(),
                 (
                     inputs.state.clone(),
-                    (inputs.last_mover_share.clone(), (inputs.entropy.clone(), ())),
+                    (
+                        inputs.last_mover_share.clone(),
+                        (inputs.entropy.clone(), ()),
+                    ),
                 ),
             ),
         )
@@ -200,7 +203,11 @@ impl GameHandler {
                 "error {e:?} from clvm during my turn handler: node_len={} node_prefix={}{}",
                 failing_hex.len(),
                 failing_prefix,
-                if failing_hex.len() > failing_prefix.len() { "..." } else { "" }
+                if failing_hex.len() > failing_prefix.len() {
+                    "..."
+                } else {
+                    ""
+                }
             );
         }
 

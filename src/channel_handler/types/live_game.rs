@@ -66,10 +66,17 @@ impl LiveGame {
     }
 
     pub fn save_referee_state(&self) -> (Rc<dyn RefereeInterface>, PuzzleHash) {
-        (self.referee_maker.clone(), self.last_referee_puzzle_hash.clone())
+        (
+            self.referee_maker.clone(),
+            self.last_referee_puzzle_hash.clone(),
+        )
     }
 
-    pub fn restore_referee_state(&mut self, referee: Rc<dyn RefereeInterface>, last_ph: PuzzleHash) {
+    pub fn restore_referee_state(
+        &mut self,
+        referee: Rc<dyn RefereeInterface>,
+        last_ph: PuzzleHash,
+    ) {
         self.referee_maker = referee;
         self.last_referee_puzzle_hash = last_ph;
     }
@@ -132,7 +139,10 @@ impl LiveGame {
         if their_move_result.puzzle_hash_for_unroll.is_some() {
             self.last_referee_puzzle_hash =
                 self.referee_maker.outcome_referee_puzzle_hash(allocator)?;
-            debug!("ACCEPT MOVE: last_ref_ph={:?}", self.last_referee_puzzle_hash);
+            debug!(
+                "ACCEPT MOVE: last_ref_ph={:?}",
+                self.last_referee_puzzle_hash
+            );
         }
         Ok(their_move_result)
     }

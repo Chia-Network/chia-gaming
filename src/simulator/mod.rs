@@ -76,7 +76,13 @@ impl SimulatorState {
         }
     }
 
-    fn add_coin(&mut self, parent_id: &CoinID, puzzle_hash: &PuzzleHash, amount: &Amount, coinbase: bool) {
+    fn add_coin(
+        &mut self,
+        parent_id: &CoinID,
+        puzzle_hash: &PuzzleHash,
+        amount: &Amount,
+        coinbase: bool,
+    ) {
         let coin = CoinString::from_parts(parent_id, puzzle_hash, amount);
         let coin_id = coin.to_coin_id();
         self.coins.insert(
@@ -110,8 +116,18 @@ impl SimulatorState {
         let pool_parent = Self::reward_parent_id(b"pool_reward", next_height);
         let farmer_parent = Self::reward_parent_id(b"farmer_reward", next_height);
 
-        self.add_coin(&pool_parent, puzzle_hash, &Amount::new(POOL_REWARD_AMOUNT), true);
-        self.add_coin(&farmer_parent, puzzle_hash, &Amount::new(FARMER_REWARD_AMOUNT), true);
+        self.add_coin(
+            &pool_parent,
+            puzzle_hash,
+            &Amount::new(POOL_REWARD_AMOUNT),
+            true,
+        );
+        self.add_coin(
+            &farmer_parent,
+            puzzle_hash,
+            &Amount::new(FARMER_REWARD_AMOUNT),
+            true,
+        );
 
         let pending: Vec<PendingSpend> = self.mempool.drain(..).collect();
         for spend in pending {
@@ -135,7 +151,8 @@ impl SimulatorState {
                 );
             }
             for (coin_id, puzzle, solution) in spend.puzzle_solutions {
-                self.spent_puzzle_solutions.insert(coin_id, (puzzle, solution));
+                self.spent_puzzle_solutions
+                    .insert(coin_id, (puzzle, solution));
             }
         }
 
@@ -202,10 +219,7 @@ impl Simulator {
                 return Ok(None);
             }
         }
-        Ok(state
-            .spent_puzzle_solutions
-            .get(coin_id)
-            .cloned())
+        Ok(state.spent_puzzle_solutions.get(coin_id).cloned())
     }
 
     pub fn push_tx(
@@ -265,8 +279,7 @@ impl Simulator {
                 );
             }
             let solution_bytes = tx.bundle.solution.to_clvm(allocator).into_gen()?;
-            let solution_program =
-                Program::from_nodeptr(allocator, solution_bytes)?;
+            let solution_program = Program::from_nodeptr(allocator, solution_bytes)?;
 
             let conditions = match CoinCondition::from_puzzle_and_solution(
                 allocator,
@@ -324,11 +337,7 @@ impl Simulator {
             }
 
             removals.push(coin_id.clone());
-            puzzle_solutions.push((
-                coin_id,
-                puzzle_program,
-                solution_program,
-            ));
+            puzzle_solutions.push((coin_id, puzzle_program, solution_program));
 
             if i == 0 {
                 aggregate_signature = tx.bundle.signature.clone();

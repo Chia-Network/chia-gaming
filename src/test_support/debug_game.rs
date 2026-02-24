@@ -11,13 +11,13 @@ use clvmr::{run_program, NodePtr};
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
 
+use crate::channel_handler::game::Game;
 use crate::channel_handler::game_handler::TheirTurnResult;
+use crate::channel_handler::game_handler::{GameHandler, MyTurnInputs, TheirTurnInputs};
+use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::channel_handler::types::{
     Evidence, HasStateUpdateProgram, ReadableMove, StateUpdateProgram, ValidationInfo,
 };
-use crate::channel_handler::game::Game;
-use crate::channel_handler::game_handler::{GameHandler, MyTurnInputs, TheirTurnInputs};
-use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::standard_coin::ChiaIdentity;
 #[cfg(test)]

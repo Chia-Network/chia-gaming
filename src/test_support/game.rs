@@ -37,8 +37,8 @@ mod sim_tests {
     use crate::channel_handler::game::Game;
     use crate::channel_handler::runner::ChannelHandlerParty;
     use crate::channel_handler::types::{
-        ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerPrivateKeys,
-        GameStartInfoInterface, HandshakeResult, StartGameResult,
+        ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartInfoInterface,
+        HandshakeResult, StartGameResult,
     };
     use crate::common::standard_coin::{
         private_to_public_key, puzzle_for_pk, puzzle_hash_for_synthetic_public_key, ChiaIdentity,
@@ -316,18 +316,10 @@ mod sim_tests {
 
         let timeout = Timeout::new(10);
 
-        let our_game_start = alice_game.game_start(
-            game_id,
-            &contributions[0],
-            &contributions[1],
-            &timeout,
-        );
-        let their_game_start = bob_game.game_start(
-            game_id,
-            &contributions[1],
-            &contributions[0],
-            &timeout,
-        );
+        let our_game_start =
+            alice_game.game_start(game_id, &contributions[0], &contributions[1], &timeout);
+        let their_game_start =
+            bob_game.game_start(game_id, &contributions[1], &contributions[0], &timeout);
 
         debug!("our_game_start {:?}", our_game_start);
         debug!("their_game_start {:?}", their_game_start);
@@ -351,11 +343,11 @@ mod sim_tests {
             return Err(Error::StrErr("game start failed in test".to_string()));
         };
 
-        let (_, solidified_state) = party.player(1).ch.received_potato_start_game(
-            env,
-            &start_potato,
-            &[their_start],
-        )?;
+        let (_, solidified_state) =
+            party
+                .player(1)
+                .ch
+                .received_potato_start_game(env, &start_potato, &[their_start])?;
         party.update_channel_coin_after_receive(1, &solidified_state)?;
 
         Ok((party, state_channel_coin))

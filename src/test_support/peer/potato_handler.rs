@@ -21,12 +21,12 @@ use crate::games::poker_collection;
 #[cfg(test)]
 use crate::peer_container::WalletBootstrapState;
 use crate::peer_container::{MessagePeerQueue, MessagePipe};
+use crate::potato_handler::effects::{apply_effects, Effect};
 #[cfg(test)]
 use crate::potato_handler::start::GameStart;
-use crate::potato_handler::effects::{apply_effects, Effect};
 use crate::potato_handler::types::{
-    BootstrapTowardGame, BootstrapTowardWallet, PacketSender, PeerMessage,
-    SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
+    BootstrapTowardGame, BootstrapTowardWallet, PacketSender, PeerMessage, SpendWalletReceiver,
+    ToLocalUI, WalletSpendInterface,
 };
 #[cfg(test)]
 use crate::potato_handler::types::{FromLocalUI, PotatoHandlerInit};
@@ -345,7 +345,15 @@ where
 
         let who = i % 2;
 
-        run_move(allocator, rng, Amount::new(200), pipes, &mut peers[who], who).expect("should send");
+        run_move(
+            allocator,
+            rng,
+            Amount::new(200),
+            pipes,
+            &mut peers[who],
+            who,
+        )
+        .expect("should send");
 
         i += 1;
 

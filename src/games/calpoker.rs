@@ -269,10 +269,7 @@ pub fn card_list_to_clvm(
     allocator: &mut AllocEncoder,
     cards: &[Card],
 ) -> Result<Vec<NodePtr>, Error> {
-    map_m(
-        &mut |card: &Card| card.to_clvm(allocator).into_gen(),
-        cards,
-    )
+    map_m(&mut |card: &Card| card.to_clvm(allocator).into_gen(), cards)
 }
 
 pub fn card_list_from_clvm(

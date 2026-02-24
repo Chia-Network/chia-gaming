@@ -58,7 +58,10 @@ impl std::fmt::Debug for PotatoMoveCachedData {
             .field("puzzle_hash", &self.puzzle_hash)
             .field("match_puzzle_hash", &self.match_puzzle_hash)
             .field("amount", &self.amount)
-            .field("saved_post_move_referee", &self.saved_post_move_referee.is_some())
+            .field(
+                "saved_post_move_referee",
+                &self.saved_post_move_referee.is_some(),
+            )
             .field("saved_post_move_last_ph", &self.saved_post_move_last_ph)
             .finish()
     }

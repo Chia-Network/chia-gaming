@@ -204,11 +204,7 @@ impl GameRunner {
         let identity = self.lookup_identity(who).cloned();
         let mut result_balance: u64 = 0;
         if let Some(pk) = identity {
-            for coin in self
-                .simulator
-                .get_my_coins(&pk.puzzle_hash)?
-                .iter()
-            {
+            for coin in self.simulator.get_my_coins(&pk.puzzle_hash)?.iter() {
                 if let Some((_, _, amt)) = coin.to_parts() {
                     result_balance += amt.to_u64();
                 }
@@ -271,9 +267,7 @@ impl GameRunner {
         let target_ph = PuzzleHash::from_hash(Hash::from_slice(&target_ph_bytes));
         let identity = self.lookup_identity(who).cloned();
         if let Some(identity) = identity {
-            let coins0 = self
-                .simulator
-                .get_my_coins(&identity.puzzle_hash)?;
+            let coins0 = self.simulator.get_my_coins(&identity.puzzle_hash)?;
             let coin_amt = Amount::new(amt);
             for c in coins0.iter() {
                 if let Some((_, _ph, amt)) = c.to_parts() {
@@ -297,9 +291,7 @@ impl GameRunner {
     }
 
     fn spend_list_of_spends(&mut self, spends: &[CoinSpend]) -> StringWithError {
-        let result = self
-            .simulator
-            .push_tx(&mut self.allocator, spends)?;
+        let result = self.simulator.push_tx(&mut self.allocator, spends)?;
         let e_res = result
             .e
             .map(|e| format!("{e}"))
@@ -365,7 +357,10 @@ impl GameRunner {
         });
         let value = serde_json::to_value(&spends).into_gen()?;
         let serialized = serde_json::to_string(&value).into_gen()?;
-        debug!("block spends for height {height}: {} bytes", serialized.len());
+        debug!(
+            "block spends for height {height}: {} bytes",
+            serialized.len()
+        );
         Ok(serialized)
     }
 }

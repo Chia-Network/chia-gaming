@@ -633,7 +633,6 @@ dependencies = [
  "clvm-traits",
  "clvm-utils",
  "clvm_tools_rs",
- "clvmr 0.12.1",
  "clvmr 0.16.2",
  "colored",
  "ctor",

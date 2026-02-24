@@ -1,7 +1,5 @@
 use crate::channel_handler::types::{GameStartFailed, ReadableMove};
-use crate::common::types::{
-    Amount, CoinString, GameID, PuzzleHash, SpendBundle, Timeout,
-};
+use crate::common::types::{Amount, CoinString, GameID, PuzzleHash, SpendBundle, Timeout};
 use crate::potato_handler::types::PeerMessage;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

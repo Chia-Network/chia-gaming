@@ -5,11 +5,11 @@ use rand::Rng;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json_any_key::*;
 
+use crate::channel_handler::game_start_info;
 use crate::channel_handler::types::{
     ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartFailed, GameStartInfo,
     GameStartInfoInterface, MoveResult, PotatoMoveCachedData, PotatoSignatures, ReadableMove,
 };
-use crate::channel_handler::game_start_info;
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, Program,
@@ -36,8 +36,7 @@ pub enum ConditionWaitKind {
 /// to not take place in the potato handler.  The injected wallet bootstrap
 /// dependency must be stateful enough that it can cope with receiving a partly
 /// funded offer spend bundle and fully fund it if needed.
-pub trait BootstrapTowardGame
-{
+pub trait BootstrapTowardGame {
     /// Gives a partly signed offer to the wallet bootstrap.
     ///
     /// Intended use: channel_puzzle_hash delivers the desired puzzle hash and this
@@ -144,8 +143,7 @@ pub trait BootstrapTowardWallet {
 }
 
 /// Spend wallet receiver
-pub trait SpendWalletReceiver
-{
+pub trait SpendWalletReceiver {
     fn coin_created<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
@@ -225,7 +223,10 @@ pub trait ToLocalUI {
 
     fn game_start(&mut self, id: &[GameID], failed: Option<GameStartFailed>) -> Result<(), Error>;
     fn game_finished(&mut self, id: &GameID, mover_share: Amount) -> Result<(), Error>;
-    fn game_notification(&mut self, _notification: &crate::potato_handler::effects::GameNotification) -> Result<(), Error> {
+    fn game_notification(
+        &mut self,
+        _notification: &crate::potato_handler::effects::GameNotification,
+    ) -> Result<(), Error> {
         Ok(())
     }
 
@@ -237,8 +238,7 @@ pub trait ToLocalUI {
     fn going_on_chain(&mut self, got_error: bool) -> Result<(), Error>;
 }
 
-pub trait FromLocalUI
-{
+pub trait FromLocalUI {
     /// Start games requires queueing so that we handle them one at a time only
     /// when the previous start game.
     ///

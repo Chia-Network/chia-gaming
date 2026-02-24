@@ -12,16 +12,16 @@ use crate::channel_handler::game::Game;
 
 use crate::channel_handler::types::{ChannelHandlerEnv, ReadableMove};
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
+use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_synthetic_public_key, sign_agg_sig_me,
     solution_for_conditions, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
     chia_dialect, Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString,
-    Error, GameID, GetCoinStringParts, Hash, IntoErr, PrivateKey, Program, PuzzleHash,
-    Sha256tree, Spend, ToQuotedProgram,
+    Error, GameID, GetCoinStringParts, Hash, IntoErr, PrivateKey, Program, PuzzleHash, Sha256tree,
+    Spend, ToQuotedProgram,
 };
-use crate::common::constants::CREATE_COIN;
 use crate::shutdown::get_conditions_with_channel_handler;
 use crate::simulator::Simulator;
 use crate::test_support::game::{
@@ -255,15 +255,13 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             self.parties.player(1).ch.unroll_private_key()
         );
         debug!("doing transaction");
-        let included = self
-            .simulator
-            .push_tx(
-                self.env.allocator,
-                &[CoinSpend {
-                    bundle: pre_unroll_data.transaction.clone(),
-                    coin: unroll_coin.clone(),
-                }],
-            )?;
+        let included = self.simulator.push_tx(
+            self.env.allocator,
+            &[CoinSpend {
+                bundle: pre_unroll_data.transaction.clone(),
+                coin: unroll_coin.clone(),
+            }],
+        )?;
         if included.code != 1 {
             return Err(Error::StrErr(format!(
                 "could not spend unroll coin for move: {included:?}"
@@ -584,7 +582,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
         s.farm_block(&identity.puzzle_hash);
         let after = s.get_my_coins(&identity.puzzle_hash).expect("ok");
-        assert_eq!(after.len(), 2, "farm_block should create pool + farmer reward");
+        assert_eq!(
+            after.len(),
+            2,
+            "farm_block should create pool + farmer reward"
+        );
 
         let total: u64 = after
             .iter()
@@ -603,7 +605,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         s.farm_block(&ph);
 
         let all = s.get_all_coins().expect("ok");
-        assert!(all.is_empty(), "get_all_coins should exclude coinbase/reward coins");
+        assert!(
+            all.is_empty(),
+            "get_all_coins should exclude coinbase/reward coins"
+        );
 
         let my = s.get_my_coins(&ph).expect("ok");
         assert_eq!(my.len(), 2, "get_my_coins should include reward coins");
@@ -625,7 +630,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let pk2: PrivateKey = rng.gen();
         let identity2 = ChiaIdentity::new(&mut allocator, pk2).expect("should create");
 
-        let conditions = ((CREATE_COIN, (identity2.puzzle_hash.clone(), (amt.clone(), ()))), ())
+        let conditions = (
+            (
+                CREATE_COIN,
+                (identity2.puzzle_hash.clone(), (amt.clone(), ())),
+            ),
+            (),
+        )
             .to_clvm(&mut allocator)
             .into_gen()
             .unwrap();
@@ -642,7 +653,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             coin: coin.clone(),
             bundle: Spend {
                 puzzle: identity.puzzle.clone(),
-                solution: Program::from_nodeptr(&mut allocator, solution).unwrap().into(),
+                solution: Program::from_nodeptr(&mut allocator, solution)
+                    .unwrap()
+                    .into(),
                 signature: sig,
             },
         };
@@ -652,15 +665,23 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
         // Before farming: old coin still visible, new coin not yet
         let still_there = s.get_my_coins(&identity.puzzle_hash).expect("ok");
-        assert!(still_there.iter().any(|c| c.to_coin_id() == coin.to_coin_id()),
-            "coin should still exist before farming");
+        assert!(
+            still_there
+                .iter()
+                .any(|c| c.to_coin_id() == coin.to_coin_id()),
+            "coin should still exist before farming"
+        );
 
         s.farm_block(&identity.puzzle_hash);
 
         // After farming: old coin gone (spent), new coin exists
         let id1_coins = s.get_my_coins(&identity.puzzle_hash).expect("ok");
-        assert!(!id1_coins.iter().any(|c| c.to_coin_id() == coin.to_coin_id()),
-            "spent coin should be gone after farming");
+        assert!(
+            !id1_coins
+                .iter()
+                .any(|c| c.to_coin_id() == coin.to_coin_id()),
+            "spent coin should be gone after farming"
+        );
 
         let id2_coins = s.get_my_coins(&identity2.puzzle_hash).expect("ok");
         assert_eq!(id2_coins.len(), 1, "new coin should exist");
@@ -682,7 +703,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let (_, _, amt) = coin.get_coin_string_parts().unwrap();
 
         let spend_coin = |allocator: &mut AllocEncoder| -> CoinSpend {
-            let conditions = ((CREATE_COIN, (identity.puzzle_hash.clone(), (amt.clone(), ()))), ())
+            let conditions = (
+                (
+                    CREATE_COIN,
+                    (identity.puzzle_hash.clone(), (amt.clone(), ())),
+                ),
+                (),
+            )
                 .to_clvm(allocator)
                 .into_gen()
                 .unwrap();
@@ -730,7 +757,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             &Amount::new(1000),
         );
 
-        let conditions = ((CREATE_COIN, (identity.puzzle_hash.clone(), (Amount::new(1000), ()))), ())
+        let conditions = (
+            (
+                CREATE_COIN,
+                (identity.puzzle_hash.clone(), (Amount::new(1000), ())),
+            ),
+            (),
+        )
             .to_clvm(&mut allocator)
             .into_gen()
             .unwrap();
@@ -747,13 +780,18 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             coin: fake_coin,
             bundle: Spend {
                 puzzle: identity.puzzle.clone(),
-                solution: Program::from_nodeptr(&mut allocator, solution).unwrap().into(),
+                solution: Program::from_nodeptr(&mut allocator, solution)
+                    .unwrap()
+                    .into(),
                 signature: sig,
             },
         };
 
         let result = s.push_tx(&mut allocator, &[tx]).expect("ok");
-        assert_eq!(result.code, 3, "spending non-existent coin should be rejected");
+        assert_eq!(
+            result.code, 3,
+            "spending non-existent coin should be rejected"
+        );
     }));
 
     res.push(("test_simulator_bad_signature_rejected", &|| {
@@ -769,7 +807,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let coin = &coins[0];
         let (_, _, amt) = coin.get_coin_string_parts().unwrap();
 
-        let conditions = ((CREATE_COIN, (identity.puzzle_hash.clone(), (amt.clone(), ()))), ())
+        let conditions = (
+            (
+                CREATE_COIN,
+                (identity.puzzle_hash.clone(), (amt.clone(), ())),
+            ),
+            (),
+        )
             .to_clvm(&mut allocator)
             .into_gen()
             .unwrap();
@@ -779,7 +823,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             coin: coin.clone(),
             bundle: Spend {
                 puzzle: identity.puzzle.clone(),
-                solution: Program::from_nodeptr(&mut allocator, solution).unwrap().into(),
+                solution: Program::from_nodeptr(&mut allocator, solution)
+                    .unwrap()
+                    .into(),
                 signature: Aggsig::default(),
             },
         };
@@ -802,7 +848,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let coin_id = coin.to_coin_id();
 
         let ps_before = s.get_puzzle_and_solution(&coin_id).expect("ok");
-        assert!(ps_before.is_none(), "unspent coin should have no puzzle/solution");
+        assert!(
+            ps_before.is_none(),
+            "unspent coin should have no puzzle/solution"
+        );
 
         let (_, _, coin_amt) = coin.get_coin_string_parts().unwrap();
         s.spend_coin_to_puzzle_hash(
@@ -816,11 +865,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         s.farm_block(&identity.puzzle_hash);
 
         let ps_after = s.get_puzzle_and_solution(&coin_id).expect("ok");
-        assert!(ps_after.is_some(), "spent coin should have puzzle/solution stored");
+        assert!(
+            ps_after.is_some(),
+            "spent coin should have puzzle/solution stored"
+        );
 
         let (puzzle, solution) = ps_after.unwrap();
         assert!(!puzzle.to_hex().is_empty(), "puzzle should have content");
-        assert!(!solution.to_hex().is_empty(), "solution should have content");
+        assert!(
+            !solution.to_hex().is_empty(),
+            "solution should have content"
+        );
     }));
 
     res.push(("test_simulator_mempool_not_applied_before_farm", &|| {
@@ -848,12 +903,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         .expect("should transfer");
 
         let id2_before_farm = s.get_my_coins(&identity2.puzzle_hash).expect("ok");
-        assert!(id2_before_farm.is_empty(), "new coins should not exist before farm_block");
+        assert!(
+            id2_before_farm.is_empty(),
+            "new coins should not exist before farm_block"
+        );
 
         s.farm_block(&identity.puzzle_hash);
 
         let id2_after_farm = s.get_my_coins(&identity2.puzzle_hash).expect("ok");
-        assert_eq!(id2_after_farm.len(), 1, "new coin should exist after farm_block");
+        assert_eq!(
+            id2_after_farm.len(),
+            1,
+            "new coin should exist after farm_block"
+        );
     }));
 
     res

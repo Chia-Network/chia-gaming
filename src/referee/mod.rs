@@ -558,13 +558,19 @@ impl RefereeInterface for Referee {
                     "TIMEOUT: coin matches outcome_ph {:?}, using spend_this_coin args",
                     outcome_ph
                 );
-                (self.outcome_referee_puzzle(allocator)?, self.fixed().amount.clone())
+                (
+                    self.outcome_referee_puzzle(allocator)?,
+                    self.fixed().amount.clone(),
+                )
             } else {
                 debug!(
                     "TIMEOUT: coin matches on_chain_ph {:?} (or fallback)",
                     on_chain_ph
                 );
-                (self.on_chain_referee_puzzle(allocator)?, self.fixed().amount.clone())
+                (
+                    self.on_chain_referee_puzzle(allocator)?,
+                    self.fixed().amount.clone(),
+                )
             };
 
         self.get_transaction(

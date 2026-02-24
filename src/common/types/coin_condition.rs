@@ -6,8 +6,8 @@ use clvmr::{run_program, ChiaDialect, NO_UNKNOWN_OPS};
 use crate::utils::proper_list;
 
 use crate::common::constants::{
-    AGG_SIG_ME_ATOM, AGG_SIG_UNSAFE_ATOM, ASSERT_HEIGHT_RELATIVE_ATOM, CREATE_COIN_ATOM,
-    RESERVE_FEE_ATOM, REM_ATOM,
+    AGG_SIG_ME_ATOM, AGG_SIG_UNSAFE_ATOM, ASSERT_HEIGHT_RELATIVE_ATOM, CREATE_COIN_ATOM, REM_ATOM,
+    RESERVE_FEE_ATOM,
 };
 
 use crate::common::types::{

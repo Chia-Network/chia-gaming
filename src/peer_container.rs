@@ -20,8 +20,8 @@ use crate::common::types::{
     AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr, Program,
     PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
-use crate::potato_handler::start::GameStart;
 use crate::potato_handler::effects::{apply_effects, Effect, GameNotification};
+use crate::potato_handler::start::GameStart;
 use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameFactory, PacketSender,
     PeerMessage, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
@@ -811,10 +811,7 @@ impl GameCradle for SynchronousGameCradle {
         rng: &mut R,
         game_id: &GameID,
     ) -> Result<(), Error> {
-        assert!(
-            self.is_on_chain(),
-            "cheat() requires being on-chain"
-        );
+        assert!(self.is_on_chain(), "cheat() requires being on-chain");
         assert!(
             matches!(self.my_move_in_game(game_id), Some(true)),
             "cheat() requires it to be our turn"
@@ -1041,7 +1038,6 @@ impl GameCradle for SynchronousGameCradle {
         );
 
         swap(&mut result.resync, &mut self.state.resync);
-        
 
         self.state.coin_solution_requests.clear();
 

@@ -182,9 +182,7 @@ impl UnrollCoin {
         env: &mut ChannelHandlerEnv<R>,
     ) -> Result<NodePtr, Error> {
         let timeout_conditions = self.get_conditions_for_unroll_coin_spend()?;
-        let solution = (timeout_conditions, ())
-            .to_clvm(env.allocator)
-            .into_gen()?;
+        let solution = (timeout_conditions, ()).to_clvm(env.allocator).into_gen()?;
         Ok(solution)
     }
 
@@ -261,7 +259,10 @@ impl UnrollCoin {
             let timelock_cond = (ASSERT_HEIGHT_RELATIVE, (inputs.unroll_timeout, ()))
                 .to_clvm(env.allocator)
                 .into_gen()?;
-            let timeout_node = (Node(timelock_cond), Node(base_conditions.to_nodeptr(env.allocator)?))
+            let timeout_node = (
+                Node(timelock_cond),
+                Node(base_conditions.to_nodeptr(env.allocator)?),
+            )
                 .to_clvm(env.allocator)
                 .into_gen()?;
             ProgramRef::new(Rc::new(Program::from_nodeptr(env.allocator, timeout_node)?))
@@ -273,11 +274,8 @@ impl UnrollCoin {
         let base_hash = base_conditions.sha256tree(env.allocator);
         let unroll_public_key = private_to_public_key(unroll_private_key);
         let unroll_aggregate_key = unroll_public_key.clone() + their_unroll_coin_public_key.clone();
-        let unroll_signature = unsafe_sign_partial(
-            unroll_private_key,
-            &unroll_aggregate_key,
-            base_hash.bytes(),
-        );
+        let unroll_signature =
+            unsafe_sign_partial(unroll_private_key, &unroll_aggregate_key, base_hash.bytes());
         self.outcome = Some(UnrollCoinOutcome {
             conditions: timeout_conditions,
             conditions_without_hash: base_conditions,

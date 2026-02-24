@@ -18,17 +18,14 @@ use crate::common::types::{
     AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, IntoErr, Node,
     PrivateKey, Program, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
-use crate::games::calpoker::{
-    decode_calpoker_readable,
-    decode_readable_card_choices,
-};
+use crate::games::calpoker::{decode_calpoker_readable, decode_readable_card_choices};
 use crate::games::poker_collection;
 use crate::peer_container::{
     report_coin_changes_to_peer, FullCoinSetAdapter, GameCradle, GameStartRecord, MessagePeerQueue,
     MessagePipe, SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
 };
-use crate::potato_handler::start::GameStart;
 use crate::potato_handler::effects::{apply_effects, Effect, GameNotification};
+use crate::potato_handler::start::GameStart;
 use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, PacketSender, PeerMessage, ToLocalUI,
     WalletSpendInterface,
@@ -100,7 +97,8 @@ pub fn update_and_report_coins<'a, R: Rng>(
     for who in 0..=1 {
         {
             let mut env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
-            let reported_effects = report_coin_changes_to_peer(&mut env, &mut peers[who], &watch_report)?;
+            let reported_effects =
+                report_coin_changes_to_peer(&mut env, &mut peers[who], &watch_report)?;
             apply_effects(reported_effects, allocator, &mut pipes[who])?;
         }
     }
@@ -282,7 +280,6 @@ impl ToLocalUI for SimulatedPeer {
     }
 }
 
-
 #[allow(clippy::too_many_arguments)]
 pub fn handshake<R: Rng>(
     rng: &mut R,
@@ -304,7 +301,15 @@ pub fn handshake<R: Rng>(
         assert!(steps < 50);
 
         debug!("handshake iterate {who}");
-        run_move(allocator, rng, Amount::new(200), pipes, &mut peers[who], who).expect("should send");
+        run_move(
+            allocator,
+            rng,
+            Amount::new(200),
+            pipes,
+            &mut peers[who],
+            who,
+        )
+        .expect("should send");
 
         if let Some(ph) = pipes[who].channel_puzzle_hash.clone() {
             debug!("puzzle hash");
@@ -333,11 +338,7 @@ pub fn handshake<R: Rng>(
                 peers[who].channel_transaction_completion(&mut env, &u)?
             };
             if let Some(effects) = reported_effects {
-                apply_effects(
-                    effects,
-                    allocator,
-                    &mut pipes[who],
-                )?;
+                apply_effects(effects, allocator, &mut pipes[who])?;
             }
 
             let env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
@@ -364,8 +365,7 @@ pub fn handshake<R: Rng>(
                     signature,
                 },
             });
-            let included_result = simulator
-                .push_tx(env.allocator, &spends.spends)?;
+            let included_result = simulator.push_tx(env.allocator, &spends.spends)?;
 
             pipes[who].unfunded_offer = None;
             debug!("included_result {included_result:?}");
@@ -520,10 +520,8 @@ fn run_game_container_with_action_list_with_success_predicate(
     simulator.farm_block(&identities[0].puzzle_hash);
     simulator.farm_block(&identities[1].puzzle_hash);
 
-    let coins0 = simulator
-        .get_my_coins(&identities[0].puzzle_hash)?;
-    let coins1 = simulator
-        .get_my_coins(&identities[1].puzzle_hash)?;
+    let coins0 = simulator.get_my_coins(&identities[0].puzzle_hash)?;
+    let coins1 = simulator.get_my_coins(&identities[1].puzzle_hash)?;
 
     // Make a 100 coin for each player (and test the deleted and created events).
     let (parent_coin_0, _rest_0) = simulator.transfer_coin_amount(
@@ -673,7 +671,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                         moves_input.get(move_number)
                     );
                 }
-                debug!("GO_ON_CHAIN: player {i} got_error={} move_number={move_number}", local_uis[i].got_error);
+                debug!(
+                    "GO_ON_CHAIN: player {i} got_error={} move_number={move_number}",
+                    local_uis[i].got_error
+                );
                 local_uis[i].go_on_chain = false;
                 let got_error = local_uis[i].got_error;
                 cradles[i].go_on_chain(allocator, rng, &mut local_uis[i], got_error)?;
@@ -687,7 +688,10 @@ fn run_game_container_with_action_list_with_success_predicate(
 
             while let Some(result) = cradles[i].idle(allocator, rng, &mut local_uis[i], 0)? {
                 if result.resync.is_some() {
-                    eprintln!("SIM_RESYNC: player={i} resync={:?} num_steps={num_steps}", result.resync);
+                    eprintln!(
+                        "SIM_RESYNC: player={i} resync={:?} num_steps={num_steps}",
+                        result.resync
+                    );
                 }
                 if matches!(result.resync, Some((_, true))) {
                     can_move = true;
@@ -695,7 +699,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                     let saved = move_number;
                     while move_number > 0
                         && (move_number >= moves_input.len()
-                            || !matches!(moves_input[move_number], GameAction::Move(_, _, _) | GameAction::Cheat(_)))
+                            || !matches!(
+                                moves_input[move_number],
+                                GameAction::Move(_, _, _) | GameAction::Cheat(_)
+                            ))
                     {
                         move_number -= 1;
                     }
@@ -741,7 +748,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                     debug!(
                         "TX from player {i}: name={:?} coins={:?}",
                         tx.name,
-                        tx.spends.iter().map(|s| s.coin.to_parts()).collect::<Vec<_>>()
+                        tx.spends
+                            .iter()
+                            .map(|s| s.coin.to_parts())
+                            .collect::<Vec<_>>()
                     );
                     let included_result = simulator.push_tx(allocator, &tx.spends)?;
                     debug!(
@@ -880,7 +890,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 entropy,
                             )?;
                         } else {
-                            eprintln!("SIM_MOVE_PUTBACK: player={who} move_number back to {}", move_number - 1);
+                            eprintln!(
+                                "SIM_MOVE_PUTBACK: player={who} move_number back to {}",
+                                move_number - 1
+                            );
                             move_number -= 1;
                             continue;
                         }
@@ -955,10 +968,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                             "EnableCheating: player {who} enabling cheating with {} fake bytes",
                             fake_move_bytes.len()
                         );
-                        cradles[*who].enable_cheating_for_game(
-                            &game_ids[0],
-                            fake_move_bytes,
-                        )?;
+                        cradles[*who].enable_cheating_for_game(&game_ids[0], fake_move_bytes)?;
                         can_move = true;
                     }
                     GameAction::Cheat(who) => {
@@ -1109,10 +1119,12 @@ fn check_calpoker_economic_result(
     // Decode card choices from both players' views and verify they match.
     let alice_cards = decode_readable_card_choices(allocator, p0_view_of_cards.2.clone())
         .expect("should get cards from p0 view");
-    let bob_cards =
-        decode_readable_card_choices(allocator, p1_view_of_cards.2.clone())
-            .expect("should get cards from p1 view");
-    assert_eq!(alice_cards, bob_cards, "both players should see the same dealt cards");
+    let bob_cards = decode_readable_card_choices(allocator, p1_view_of_cards.2.clone())
+        .expect("should get cards from p1 view");
+    assert_eq!(
+        alice_cards, bob_cards,
+        "both players should see the same dealt cards"
+    );
 
     let (alice_initial, bob_initial) = &alice_cards;
 
@@ -1342,8 +1354,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let mut moves = prefix_test_moves(&mut allocator).to_vec();
         moves.push(GameAction::Accept(0));
         moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
-        let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
-            .expect("should finish");
+        let outcome =
+            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
 
         let p0_view_of_cards = &outcome.local_uis[0].opponent_moves[0];
         let p1_view_of_cards = &outcome.local_uis[1].opponent_moves[1];
@@ -1417,10 +1429,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         &|| {
             let mut allocator = AllocEncoder::new();
 
-            let moves = vec![
-                GameAction::GoOnChain(1),
-                GameAction::WaitBlocks(20, 1),
-            ];
+            let moves = vec![GameAction::GoOnChain(1), GameAction::WaitBlocks(20, 1)];
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
                 .expect("should finish");
@@ -1480,33 +1489,29 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         },
     ));
 
-    res.push((
-        "sim_test_with_peer_container_piss_off_peer_slash",
-        &|| {
-            let mut allocator = AllocEncoder::new();
+    res.push(("sim_test_with_peer_container_piss_off_peer_slash", &|| {
+        let mut allocator = AllocEncoder::new();
 
-            // Play 3 moves off-chain (not all 5, so the game still has
-            // moves remaining), then go on-chain. Alice replays Move 3
-            // via redo; once that lands it becomes Bob's turn for Move 4.
-            // Cheat(1) defers until Bob is on-chain and it's his turn,
-            // then submits a move with invalid data that Alice detects.
-            let mut moves = prefix_test_moves(&mut allocator).to_vec();
-            moves.truncate(3);
-            moves.push(GameAction::GoOnChain(0));
-            moves.push(GameAction::Cheat(1));
-            // Let both players process blocks so Alice detects & slashes.
-            moves.push(GameAction::WaitBlocks(30, 0));
+        // Play 3 moves off-chain (not all 5, so the game still has
+        // moves remaining), then go on-chain. Alice replays Move 3
+        // via redo; once that lands it becomes Bob's turn for Move 4.
+        // Cheat(1) defers until Bob is on-chain and it's his turn,
+        // then submits a move with invalid data that Alice detects.
+        let mut moves = prefix_test_moves(&mut allocator).to_vec();
+        moves.truncate(3);
+        moves.push(GameAction::GoOnChain(0));
+        moves.push(GameAction::Cheat(1));
+        // Let both players process blocks so Alice detects & slashes.
+        moves.push(GameAction::WaitBlocks(30, 0));
 
-            let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
-                .expect("should finish");
+        let outcome =
+            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
 
-            let (p1_balance, p2_balance) =
-                get_balances_from_outcome(&outcome).expect("should work");
-            // Alice (player 0) should get all the money via slash because
-            // Bob (player 1) cheated.
-            assert_eq!(p1_balance, p2_balance + 200);
-        },
-    ));
+        let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
+        // Alice (player 0) should get all the money via slash because
+        // Bob (player 1) cheated.
+        assert_eq!(p1_balance, p2_balance + 200);
+    }));
 
     res.push(("test_referee_play_debug_game_alice_slash", &|| {
         let mut allocator = AllocEncoder::new();
@@ -1727,8 +1732,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         moves.push(GameAction::NerfTransactions(0));
         moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
-        let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
-            .expect("should finish");
+        let outcome =
+            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
 
         let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
         assert_eq!(p2_balance, p1_balance + 200);
@@ -1742,58 +1747,59 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         moves.push(GameAction::NerfTransactions(1));
         moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
-        let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
-            .expect("should finish");
+        let outcome =
+            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
 
         let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
         assert_eq!(p2_balance, p1_balance + 200);
     }));
 
-    res.push((
-        "test_notification_we_timed_out_during_redo",
-        &|| {
-            let mut allocator = AllocEncoder::new();
+    res.push(("test_notification_we_timed_out_during_redo", &|| {
+        let mut allocator = AllocEncoder::new();
 
-            // Keep first 3 calpoker moves (alice commit, bob seed, alice reveal).
-            // After alice's reveal, cached_last_action is set. GoOnChain immediately
-            // so go_on_chain runs before the response clears cached_last_action.
-            // The unroll uses the previous fully-signed state (before alice's reveal),
-            // so it's alice's turn on chain and she needs to redo her reveal.
-            let mut moves = prefix_test_moves(&mut allocator).to_vec();
-            moves.truncate(3);
+        // Keep first 3 calpoker moves (alice commit, bob seed, alice reveal).
+        // After alice's reveal, cached_last_action is set. GoOnChain immediately
+        // so go_on_chain runs before the response clears cached_last_action.
+        // The unroll uses the previous fully-signed state (before alice's reveal),
+        // so it's alice's turn on chain and she needs to redo her reveal.
+        let mut moves = prefix_test_moves(&mut allocator).to_vec();
+        moves.truncate(3);
 
-            // Go on chain right after alice's reveal; she still has cached_last_action.
-            moves.push(GameAction::GoOnChain(0));
-            // Nerf bob so he can't interfere during the unroll process.
-            moves.push(GameAction::NerfTransactions(1));
-            // Wait for channel spend inclusion + unroll coin registration + 5-block
-            // unroll timeout to fire. At the end of this wait the unroll spend is
-            // submitted (alice is still un-nerfed here).
-            moves.push(GameAction::WaitBlocks(4, 0));
-            // Switch the nerf: now alice's redo transaction will be dropped while
-            // bob is free to act.
-            moves.push(GameAction::NerfTransactions(0));
-            // Wait long enough for the game coin timeout (100 blocks) to fire.
-            // Alice's redo was dropped so the game coin stays at "alice's turn".
-            moves.push(GameAction::WaitBlocks(110, 0));
-            moves.push(GameAction::UnNerfTransactions);
-            moves.push(GameAction::WaitBlocks(5, 0));
+        // Go on chain right after alice's reveal; she still has cached_last_action.
+        moves.push(GameAction::GoOnChain(0));
+        // Nerf bob so he can't interfere during the unroll process.
+        moves.push(GameAction::NerfTransactions(1));
+        // Wait for channel spend inclusion + unroll coin registration + 5-block
+        // unroll timeout to fire. At the end of this wait the unroll spend is
+        // submitted (alice is still un-nerfed here).
+        moves.push(GameAction::WaitBlocks(4, 0));
+        // Switch the nerf: now alice's redo transaction will be dropped while
+        // bob is free to act.
+        moves.push(GameAction::NerfTransactions(0));
+        // Wait long enough for the game coin timeout (100 blocks) to fire.
+        // Alice's redo was dropped so the game coin stays at "alice's turn".
+        moves.push(GameAction::WaitBlocks(110, 0));
+        moves.push(GameAction::UnNerfTransactions);
+        moves.push(GameAction::WaitBlocks(5, 0));
 
-            let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
-                .expect("should finish");
+        let outcome =
+            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
 
-            let p0_notifs = &outcome.local_uis[0].notifications;
-            let p1_notifs = &outcome.local_uis[1].notifications;
-            assert!(
-                p0_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
-                "player 0 should get WeTimedOut (redo move couldn't land), got: {p0_notifs:?}"
-            );
-            assert!(
-                p1_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOutOpponent { .. })),
-                "player 1 should get WeTimedOutOpponent, got: {p1_notifs:?}"
-            );
-        },
-    ));
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        let p1_notifs = &outcome.local_uis[1].notifications;
+        assert!(
+            p0_notifs
+                .iter()
+                .any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
+            "player 0 should get WeTimedOut (redo move couldn't land), got: {p0_notifs:?}"
+        );
+        assert!(
+            p1_notifs
+                .iter()
+                .any(|n| matches!(n, GameNotification::WeTimedOutOpponent { .. })),
+            "player 1 should get WeTimedOutOpponent, got: {p1_notifs:?}"
+        );
+    }));
 
     res.push((
         "test_notification_bob_redo_then_alice_timeout",
@@ -1836,149 +1842,147 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         },
     ));
 
-    res.push((
-        "test_notification_we_timed_out_our_turn",
-        &|| {
-            let mut allocator = AllocEncoder::new();
+    res.push(("test_notification_we_timed_out_our_turn", &|| {
+        let mut allocator = AllocEncoder::new();
 
-            // 3 calpoker moves (alice commit, bob seed, alice reveal).
-            // Bob received alice's reveal so his cached_last_action is
-            // cleared.  Bob goes on-chain: no redo needed.  The game
-            // coin lands at bob's turn (to discard) and he never moves,
-            // so his clock runs out.
-            let mut moves = prefix_test_moves(&mut allocator).to_vec();
-            moves.truncate(3);
-            moves.push(GameAction::GoOnChain(1));
-            // 120 blocks covers the unroll timeout (5) and
-            // game coin timeout (100).
-            moves.push(GameAction::WaitBlocks(120, 0));
+        // 3 calpoker moves (alice commit, bob seed, alice reveal).
+        // Bob received alice's reveal so his cached_last_action is
+        // cleared.  Bob goes on-chain: no redo needed.  The game
+        // coin lands at bob's turn (to discard) and he never moves,
+        // so his clock runs out.
+        let mut moves = prefix_test_moves(&mut allocator).to_vec();
+        moves.truncate(3);
+        moves.push(GameAction::GoOnChain(1));
+        // 120 blocks covers the unroll timeout (5) and
+        // game coin timeout (100).
+        moves.push(GameAction::WaitBlocks(120, 0));
 
-            let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
-                .expect("should finish");
+        let outcome =
+            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
 
-            let p0_notifs = &outcome.local_uis[0].notifications;
-            let p1_notifs = &outcome.local_uis[1].notifications;
-            assert!(
-                p1_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
-                "player 1 should get WeTimedOut (it was our turn, no move queued), got: {p1_notifs:?}"
-            );
-            assert!(
-                p0_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOutOpponent { .. })),
-                "player 0 should get WeTimedOutOpponent, got: {p0_notifs:?}"
-            );
-        },
-    ));
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        let p1_notifs = &outcome.local_uis[1].notifications;
+        assert!(
+            p1_notifs
+                .iter()
+                .any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
+            "player 1 should get WeTimedOut (it was our turn, no move queued), got: {p1_notifs:?}"
+        );
+        assert!(
+            p0_notifs
+                .iter()
+                .any(|n| matches!(n, GameNotification::WeTimedOutOpponent { .. })),
+            "player 0 should get WeTimedOutOpponent, got: {p0_notifs:?}"
+        );
+    }));
 
-    res.push((
-        "test_notification_slash_opponent_illegal_move",
-        &|| {
-            let mut allocator = AllocEncoder::new();
+    res.push(("test_notification_slash_opponent_illegal_move", &|| {
+        let mut allocator = AllocEncoder::new();
 
-            // 3 moves so that after the redo (alice's reveal) it's Bob's
-            // turn, allowing Cheat(1) to fire.
-            let moves = prefix_test_moves(&mut allocator);
-            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(3).collect();
-            on_chain_moves.push(GameAction::GoOnChain(0));
-            on_chain_moves.push(GameAction::Cheat(1));
-            on_chain_moves.push(GameAction::WaitBlocks(30, 0));
+        // 3 moves so that after the redo (alice's reveal) it's Bob's
+        // turn, allowing Cheat(1) to fire.
+        let moves = prefix_test_moves(&mut allocator);
+        let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(3).collect();
+        on_chain_moves.push(GameAction::GoOnChain(0));
+        on_chain_moves.push(GameAction::Cheat(1));
+        on_chain_moves.push(GameAction::WaitBlocks(30, 0));
 
-            let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
-                .expect("should finish");
+        let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
+            .expect("should finish");
 
-            let p0_notifs = &outcome.local_uis[0].notifications;
-            assert!(
-                p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentPlayedIllegalMove { .. })),
-                "player 0 should get OpponentPlayedIllegalMove, got: {p0_notifs:?}"
-            );
-            assert!(
-                p0_notifs.iter().any(|n| matches!(n, GameNotification::WeSlashedOpponent { .. })),
-                "player 0 should get WeSlashedOpponent, got: {p0_notifs:?}"
-            );
-        },
-    ));
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        assert!(
+            p0_notifs
+                .iter()
+                .any(|n| matches!(n, GameNotification::OpponentPlayedIllegalMove { .. })),
+            "player 0 should get OpponentPlayedIllegalMove, got: {p0_notifs:?}"
+        );
+        assert!(
+            p0_notifs
+                .iter()
+                .any(|n| matches!(n, GameNotification::WeSlashedOpponent { .. })),
+            "player 0 should get WeSlashedOpponent, got: {p0_notifs:?}"
+        );
+    }));
 
-    res.push((
-        "test_notification_opponent_slashed_us",
-        &|| {
-            let mut allocator = AllocEncoder::new();
+    res.push(("test_notification_opponent_slashed_us", &|| {
+        let mut allocator = AllocEncoder::new();
 
-            // 4 moves so that after the redo (bob's discard) it's Alice's
-            // turn, allowing Cheat(0) to fire.
-            let moves = prefix_test_moves(&mut allocator);
-            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(4).collect();
-            on_chain_moves.push(GameAction::GoOnChain(0));
-            on_chain_moves.push(GameAction::Cheat(0));
-            on_chain_moves.push(GameAction::WaitBlocks(30, 0));
+        // 4 moves so that after the redo (bob's discard) it's Alice's
+        // turn, allowing Cheat(0) to fire.
+        let moves = prefix_test_moves(&mut allocator);
+        let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(4).collect();
+        on_chain_moves.push(GameAction::GoOnChain(0));
+        on_chain_moves.push(GameAction::Cheat(0));
+        on_chain_moves.push(GameAction::WaitBlocks(30, 0));
 
-            let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
-                .expect("should finish");
+        let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
+            .expect("should finish");
 
-            let p0_notifs = &outcome.local_uis[0].notifications;
-            assert!(
-                p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentSlashedUs { .. })),
-                "player 0 (cheater) should get OpponentSlashedUs, got: {p0_notifs:?}"
-            );
-        },
-    ));
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        assert!(
+            p0_notifs
+                .iter()
+                .any(|n| matches!(n, GameNotification::OpponentSlashedUs { .. })),
+            "player 0 (cheater) should get OpponentSlashedUs, got: {p0_notifs:?}"
+        );
+    }));
 
-    res.push((
-        "test_notification_accept_finished",
-        &|| {
-            let mut allocator = AllocEncoder::new();
+    res.push(("test_notification_accept_finished", &|| {
+        let mut allocator = AllocEncoder::new();
 
-            // Use 4 moves (remove only alice_accept) so the game is mid-play.
-            // After redo of bob's discard it's player 0's turn, so Accept(0)
-            // fires.  Go on-chain first so Accept goes through the on-chain
-            // handler (off-chain Accept immediately finishes the game).
-            let mut moves = prefix_test_moves(&mut allocator).to_vec();
-            moves.pop();
-            moves.push(GameAction::GoOnChain(0));
-            moves.push(GameAction::Accept(0));
-            moves.push(GameAction::WaitBlocks(120, 1));
-            moves.push(GameAction::WaitBlocks(5, 0));
+        // Use 4 moves (remove only alice_accept) so the game is mid-play.
+        // After redo of bob's discard it's player 0's turn, so Accept(0)
+        // fires.  Go on-chain first so Accept goes through the on-chain
+        // handler (off-chain Accept immediately finishes the game).
+        let mut moves = prefix_test_moves(&mut allocator).to_vec();
+        moves.pop();
+        moves.push(GameAction::GoOnChain(0));
+        moves.push(GameAction::Accept(0));
+        moves.push(GameAction::WaitBlocks(120, 1));
+        moves.push(GameAction::WaitBlocks(5, 0));
 
-            let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
-                .expect("should finish");
+        let outcome =
+            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
 
-            let p0_notifs = &outcome.local_uis[0].notifications;
-            assert!(
-                p0_notifs.iter().any(|n| matches!(n, GameNotification::AcceptFinished { .. })),
-                "player 0 (who accepted) should get AcceptFinished, got: {p0_notifs:?}"
-            );
-        },
-    ));
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        assert!(
+            p0_notifs
+                .iter()
+                .any(|n| matches!(n, GameNotification::AcceptFinished { .. })),
+            "player 0 (who accepted) should get AcceptFinished, got: {p0_notifs:?}"
+        );
+    }));
 
-    res.push((
-        "test_on_chain_before_any_moves_times_out",
-        &|| {
-            let mut allocator = AllocEncoder::new();
+    res.push(("test_on_chain_before_any_moves_times_out", &|| {
+        let mut allocator = AllocEncoder::new();
 
-            // Game is committed during handshake, so going on-chain before any
-            // moves creates the game coin on-chain where it times out normally.
-            // GameCancelled only happens when a game was proposed but never
-            // committed (unroll reverts to before the game existed).
-            let moves = vec![
-                GameAction::GoOnChain(1),
-                GameAction::WaitBlocks(20, 1),
-            ];
+        // Game is committed during handshake, so going on-chain before any
+        // moves creates the game coin on-chain where it times out normally.
+        // GameCancelled only happens when a game was proposed but never
+        // committed (unroll reverts to before the game existed).
+        let moves = vec![GameAction::GoOnChain(1), GameAction::WaitBlocks(20, 1)];
 
-            let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
-                .expect("should finish");
+        let outcome =
+            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
 
-            let p0_notifs = &outcome.local_uis[0].notifications;
-            let p1_notifs = &outcome.local_uis[1].notifications;
-            let p0_timed_out = p0_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOut { .. }));
-            let p1_timed_out_opponent = p1_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOutOpponent { .. }));
-            assert!(
-                p0_timed_out,
-                "player 0 should get WeTimedOut (it was their turn, no move made), got: {p0_notifs:?}"
-            );
-            assert!(
-                p1_timed_out_opponent,
-                "player 1 should get WeTimedOutOpponent (claimed timeout), got: {p1_notifs:?}"
-            );
-        },
-    ));
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        let p1_notifs = &outcome.local_uis[1].notifications;
+        let p0_timed_out = p0_notifs
+            .iter()
+            .any(|n| matches!(n, GameNotification::WeTimedOut { .. }));
+        let p1_timed_out_opponent = p1_notifs
+            .iter()
+            .any(|n| matches!(n, GameNotification::WeTimedOutOpponent { .. }));
+        assert!(
+            p0_timed_out,
+            "player 0 should get WeTimedOut (it was their turn, no move made), got: {p0_notifs:?}"
+        );
+        assert!(
+            p1_timed_out_opponent,
+            "player 1 should get WeTimedOutOpponent (claimed timeout), got: {p1_notifs:?}"
+        );
+    }));
 
     res.push((
         "test_notification_opponent_successfully_cheated",

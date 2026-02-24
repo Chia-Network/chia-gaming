@@ -9,23 +9,21 @@ use log::debug;
 use serde::{Deserialize, Serialize};
 use serde_json_any_key::*;
 
+use crate::channel_handler::types::ChannelHandlerEnv;
 use crate::channel_handler::types::{
     AcceptTransactionState, CoinSpentInformation, OnChainGameState, PotatoMoveCachedData,
     ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
-use clvm_traits::ClvmEncoder;
 use crate::common::types::{
     Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Program,
     PuzzleHash, SpendBundle, Timeout,
 };
-use crate::channel_handler::types::ChannelHandlerEnv;
 use crate::potato_handler::effects::{Effect, GameNotification};
-use crate::potato_handler::types::{
-    GameAction, PotatoHandlerImpl, PotatoState,
-};
+use crate::potato_handler::types::{GameAction, PotatoHandlerImpl, PotatoState};
 use crate::referee::types::{RefereeOnChainTransaction, SlashOutcome, TheirTurnCoinSpentResult};
 use crate::referee::RefereeInterface;
+use clvm_traits::ClvmEncoder;
 
 enum PendingMoveKind {
     /// From do_on_chain_move: we computed the move locally and can restore the
@@ -87,8 +85,7 @@ impl OnChainPotatoHandler {
         game_id: &GameID,
         make_move: &[u8],
     ) -> Result<bool, Error> {
-        self.player_ch
-            .enable_cheating_for_game(game_id, make_move)
+        self.player_ch.enable_cheating_for_game(game_id, make_move)
     }
 
     pub fn get_game_coin(&self, game_id: &GameID) -> Option<CoinString> {
@@ -99,7 +96,9 @@ impl OnChainPotatoHandler {
     }
 
     pub fn remove_game_coin_info(&mut self, coin_id: &CoinString) -> Option<(GameID, bool)> {
-        self.game_map.remove(coin_id).map(|def| (def.game_id, def.our_turn))
+        self.game_map
+            .remove(coin_id)
+            .map(|def| (def.game_id, def.our_turn))
     }
 
     fn no_live_games(&self) -> bool {
@@ -117,33 +116,34 @@ impl OnChainPotatoHandler {
         coin: CoinString,
         cached_move: Rc<PotatoMoveCachedData>,
     ) -> Result<Vec<Effect>, Error> {
-        let saved_referee = cached_move.saved_post_move_referee.as_ref().ok_or_else(|| {
-            Error::StrErr("RedoMove: no saved post-move referee in cached data".to_string())
-        })?;
-        let saved_ph = cached_move.saved_post_move_last_ph.as_ref().ok_or_else(|| {
-            Error::StrErr("RedoMove: no saved post-move last_ph in cached data".to_string())
-        })?;
+        let saved_referee = cached_move
+            .saved_post_move_referee
+            .as_ref()
+            .ok_or_else(|| {
+                Error::StrErr("RedoMove: no saved post-move referee in cached data".to_string())
+            })?;
+        let saved_ph = cached_move
+            .saved_post_move_last_ph
+            .as_ref()
+            .ok_or_else(|| {
+                Error::StrErr("RedoMove: no saved post-move last_ph in cached data".to_string())
+            })?;
 
         let (pre_referee, pre_last_ph) = self.player_ch.save_game_state(&game_id)?;
 
-        self.player_ch.restore_game_state(
-            &game_id,
-            saved_referee.clone(),
-            saved_ph.clone(),
-        )?;
+        self.player_ch
+            .restore_game_state(&game_id, saved_referee.clone(), saved_ph.clone())?;
 
-        let transaction = self.player_ch.get_transaction_for_game_move(
-            env.allocator,
-            &game_id,
-            &coin,
-            true,
-        )?;
+        let transaction =
+            self.player_ch
+                .get_transaction_for_game_move(env.allocator, &game_id, &coin, true)?;
 
         let new_ph = self.player_ch.get_game_outcome_puzzle_hash(env, &game_id)?;
 
         let (post_referee, post_last_ph) = self.player_ch.save_game_state(&game_id)?;
 
-        self.player_ch.restore_game_state(&game_id, pre_referee, pre_last_ph)?;
+        self.player_ch
+            .restore_game_state(&game_id, pre_referee, pre_last_ph)?;
 
         self.pending_move = Some(PendingMoveSavedState {
             coin: coin.clone(),
@@ -155,15 +155,13 @@ impl OnChainPotatoHandler {
             },
         });
 
-        let effects = vec![
-            Effect::SpendTransaction(SpendBundle {
-                name: Some("on chain redo move".to_string()),
-                spends: vec![CoinSpend {
-                    coin: coin.clone(),
-                    bundle: transaction.bundle.clone(),
-                }],
-            }),
-        ];
+        let effects = vec![Effect::SpendTransaction(SpendBundle {
+            name: Some("on chain redo move".to_string()),
+            spends: vec![CoinSpend {
+                coin: coin.clone(),
+                bundle: transaction.bundle.clone(),
+            }],
+        })];
 
         Ok(effects)
     }
@@ -204,10 +202,12 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
     fn check_game_coin_spent(
         &mut self,
         coin_id: &CoinString,
-    ) -> Result<(bool, Option<Effect>), Error>
-    {
+    ) -> Result<(bool, Option<Effect>), Error> {
         if self.game_map.contains_key(coin_id) {
-            return Ok((true, Some(Effect::RequestPuzzleAndSolution(coin_id.clone()))));
+            return Ok((
+                true,
+                Some(Effect::RequestPuzzleAndSolution(coin_id.clone())),
+            ));
         }
 
         Ok((false, None))
@@ -219,15 +219,16 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         coin_id: &CoinString,
         puzzle: &Program,
         solution: &Program,
-    ) -> Result<Vec<Effect>, Error>
-    {
+    ) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
         let mut unblock_queue = false;
         let initial_potato = self.player_ch.is_initial_potato();
 
         debug!("{initial_potato} handle game coin spent {coin_id:?}");
 
-        let is_pending = self.pending_move.as_ref()
+        let is_pending = self
+            .pending_move
+            .as_ref()
             .map(|p| p.coin == *coin_id)
             .unwrap_or(false);
 
@@ -242,17 +243,21 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             if let Some((create_ph, create_amt)) = create {
                 let pending = self.pending_move.take().unwrap();
 
-                let old_def = self.game_map.remove(coin_id)
-                    .ok_or_else(|| Error::StrErr("pending move coin not in game_map".to_string()))?;
+                let old_def = self.game_map.remove(coin_id).ok_or_else(|| {
+                    Error::StrErr("pending move coin not in game_map".to_string())
+                })?;
                 self.have_potato = PotatoState::Present;
 
-                let new_coin = CoinString::from_parts(
-                    &coin_id.to_coin_id(), &create_ph, &create_amt,
-                );
+                let new_coin =
+                    CoinString::from_parts(&coin_id.to_coin_id(), &create_ph, &create_amt);
 
                 if create_ph == pending.expected_ph {
                     // Our transaction won the race.
-                    let PendingMoveKind::OurMove { post_move_referee, post_move_last_ph, .. } = pending.kind;
+                    let PendingMoveKind::OurMove {
+                        post_move_referee,
+                        post_move_last_ph,
+                        ..
+                    } = pending.kind;
                     self.player_ch.restore_game_state(
                         &pending.game_id,
                         post_move_referee,
@@ -282,10 +287,13 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 // Re-insert the game into game_map and fall through to
                 // the standard coin-spent processing path, which will
                 // call their_turn_coin_spent to advance the referee.
-                self.game_map.insert(pending.coin.clone(), OnChainGameState {
-                    our_turn: false,
-                    ..old_def
-                });
+                self.game_map.insert(
+                    pending.coin.clone(),
+                    OnChainGameState {
+                        our_turn: false,
+                        ..old_def
+                    },
+                );
             }
         }
 
@@ -310,8 +318,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             return Ok(effects);
         }
 
-        let conditions =
-            CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
+        let conditions = CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
 
         let reward_spend = self
             .player_ch
@@ -330,9 +337,11 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         } else {
             debug!("failed result {result:?}");
             if !old_definition.our_turn && !game_already_ended {
-                effects.push(Effect::Notification(GameNotification::OpponentMadeImpossibleSpend {
-                    id: old_definition.game_id.clone(),
-                }));
+                effects.push(Effect::Notification(
+                    GameNotification::OpponentMadeImpossibleSpend {
+                        id: old_definition.game_id.clone(),
+                    },
+                ));
             }
             CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Timedout {
                 my_reward_coin_string: None,
@@ -356,9 +365,11 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     | CoinSpentInformation::OurSpend(..)
             );
             if !is_expected {
-                effects.push(Effect::Notification(GameNotification::OurTurnCoinSpentUnexpectedly {
-                    id: old_definition.game_id.clone(),
-                }));
+                effects.push(Effect::Notification(
+                    GameNotification::OurTurnCoinSpentUnexpectedly {
+                        id: old_definition.game_id.clone(),
+                    },
+                ));
             }
         }
 
@@ -373,10 +384,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 let new_coin_id = CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt);
 
                 let game_id = old_definition.game_id.clone();
-                let is_my_turn = matches!(
-                    self.player_ch.game_is_my_turn(&game_id),
-                    Some(true)
-                );
+                let is_my_turn = matches!(self.player_ch.game_is_my_turn(&game_id), Some(true));
 
                 // is_my_turn==false means the referee already processed
                 // our move (it thinks it's "their turn"). The on-chain
@@ -384,11 +392,12 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 // redo to replay it. Don't flip our_turn - the redo
                 // transaction just gets pushed out.
                 if !is_my_turn {
-                    if let Some(cached) =
-                        self.player_ch.take_cached_move_for_game(&game_id)
-                    {
-                        self.game_action_queue
-                            .push_front(GameAction::RedoMove(game_id.clone(), new_coin_id.clone(), cached));
+                    if let Some(cached) = self.player_ch.take_cached_move_for_game(&game_id) {
+                        self.game_action_queue.push_front(GameAction::RedoMove(
+                            game_id.clone(),
+                            new_coin_id.clone(),
+                            cached,
+                        ));
                     }
                 }
 
@@ -405,7 +414,11 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 effects.push(Effect::RegisterCoin {
                     coin: new_coin_id,
                     timeout: gt,
-                    name: Some(if is_my_turn { "expected spend - my turn" } else { "expected spend - their turn" }),
+                    name: Some(if is_my_turn {
+                        "expected spend - my turn"
+                    } else {
+                        "expected spend - their turn"
+                    }),
                 });
                 effects.push(Effect::ResyncMove {
                     id: game_id,
@@ -438,16 +451,22 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                             }));
                         }
                     } else {
-                        let has_rem = conditions.iter().any(|c| matches!(c, CoinCondition::Rem(_)));
+                        let has_rem = conditions
+                            .iter()
+                            .any(|c| matches!(c, CoinCondition::Rem(_)));
                         if has_rem {
-                            effects.push(Effect::Notification(GameNotification::OpponentSlashedUs {
-                                id: old_definition.game_id.clone(),
-                            }));
+                            effects.push(Effect::Notification(
+                                GameNotification::OpponentSlashedUs {
+                                    id: old_definition.game_id.clone(),
+                                },
+                            ));
                         } else {
-                            effects.push(Effect::Notification(GameNotification::WeTimedOutOpponent {
-                                id: old_definition.game_id.clone(),
-                                amount: amount.clone(),
-                            }));
+                            effects.push(Effect::Notification(
+                                GameNotification::WeTimedOutOpponent {
+                                    id: old_definition.game_id.clone(),
+                                    amount: amount.clone(),
+                                },
+                            ));
                         }
                     }
                 }
@@ -491,12 +510,13 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
 
                 // Opponent moved on-chain, advancing the game state.
                 // If we had a cached move, check if it's now stale.
-                if let Some(cached) =
-                    self.player_ch.take_cached_move_for_game(&game_id)
-                {
+                if let Some(cached) = self.player_ch.take_cached_move_for_game(&game_id) {
                     if cached.match_puzzle_hash == puzzle_hash {
-                        self.game_action_queue
-                            .push_front(GameAction::RedoMove(game_id.clone(), new_coin_string.clone(), cached));
+                        self.game_action_queue.push_front(GameAction::RedoMove(
+                            game_id.clone(),
+                            new_coin_string.clone(),
+                            cached,
+                        ));
                     } else {
                         debug!(
                             "{initial_potato} discarding stale cached move for game={game_id:?} \
@@ -524,9 +544,11 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 debug!("{initial_potato} slash {outcome:?}");
                 self.have_potato = PotatoState::Present;
 
-                effects.push(Effect::Notification(GameNotification::OpponentPlayedIllegalMove {
-                    id: old_definition.game_id.clone(),
-                }));
+                effects.push(Effect::Notification(
+                    GameNotification::OpponentPlayedIllegalMove {
+                        id: old_definition.game_id.clone(),
+                    },
+                ));
 
                 match outcome.borrow() {
                     SlashOutcome::Reward {
@@ -622,8 +644,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
         coin_id: &CoinString,
-    ) -> Result<Vec<Effect>, Error>
-    {
+    ) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
 
         if let Some(mut game_def) = self.game_map.remove(coin_id) {
@@ -633,11 +654,15 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             debug!("{initial_potato} timeout coin {coin_id:?}, do accept");
 
             if let Some(slash_amount) = game_def.pending_slash_amount {
-                debug!("{initial_potato} pending slash coin timed out - opponent successfully cheated");
-                effects.push(Effect::Notification(GameNotification::OpponentSuccessfullyCheated {
-                    id: game_id.clone(),
-                    amount: slash_amount,
-                }));
+                debug!(
+                    "{initial_potato} pending slash coin timed out - opponent successfully cheated"
+                );
+                effects.push(Effect::Notification(
+                    GameNotification::OpponentSuccessfullyCheated {
+                        id: game_id.clone(),
+                        amount: slash_amount,
+                    },
+                ));
                 effects.push(Effect::GameFinished {
                     id: game_id,
                     mover_share: Amount::default(),
@@ -721,7 +746,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                         Err(e) => {
                             eprintln!("accept_or_timeout error: {e:?}");
                             return self.next_action(env);
-                        },
+                        }
                     }
                 };
 
@@ -784,17 +809,14 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
     fn next_action<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
-    ) -> Result<Vec<Effect>, Error>
-    {
+    ) -> Result<Vec<Effect>, Error> {
         if let Some(action) = self.game_action_queue.pop_front() {
             return self.do_on_chain_action(env, action);
         }
 
         if !self.completion_emitted && self.no_live_games() {
             self.completion_emitted = true;
-            return Ok(vec![Effect::ShutdownComplete {
-                reward_coin: None,
-            }]);
+            return Ok(vec![Effect::ShutdownComplete { reward_coin: None }]);
         }
 
         Ok(Vec::new())
@@ -807,19 +829,13 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         game_id: GameID,
         readable_move: ReadableMove,
         entropy: Hash,
-    ) -> Result<Vec<Effect>, Error>
-    {
+    ) -> Result<Vec<Effect>, Error> {
         let initial_potato = self.player_ch.is_initial_potato();
         let my_turn = self.my_move_in_game(&game_id);
         if my_turn != Some(true) {
-            debug!(
-                "{initial_potato} trying to do game action when not my turn {readable_move:?}"
-            );
-            self.game_action_queue.push_front(GameAction::Move(
-                game_id,
-                readable_move,
-                entropy,
-            ));
+            debug!("{initial_potato} trying to do game action when not my turn {readable_move:?}");
+            self.game_action_queue
+                .push_front(GameAction::Move(game_id, readable_move, entropy));
             return Ok(Vec::new());
         }
 
@@ -827,18 +843,14 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
 
         let (pre_referee, pre_last_ph) = self.player_ch.save_game_state(&game_id)?;
 
-        let (old_ph, new_ph, state_number, move_result, transaction) =
-            self.player_ch.on_chain_our_move(
-                env,
-                &game_id,
-                &readable_move,
-                entropy.clone(),
-                current_coin,
-            )?;
+        let (old_ph, new_ph, state_number, move_result, transaction) = self
+            .player_ch
+            .on_chain_our_move(env, &game_id, &readable_move, entropy.clone(), current_coin)?;
 
         let (post_referee, post_last_ph) = self.player_ch.save_game_state(&game_id)?;
 
-        self.player_ch.restore_game_state(&game_id, pre_referee, pre_last_ph.clone())?;
+        self.player_ch
+            .restore_game_state(&game_id, pre_referee, pre_last_ph.clone())?;
 
         if let Some((_, ph, _)) = current_coin.to_parts() {
             assert_eq!(old_ph, ph);
@@ -876,8 +888,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
         action: GameAction,
-    ) -> Result<Vec<Effect>, Error>
-    {
+    ) -> Result<Vec<Effect>, Error> {
         let initial_potato = self.player_ch.is_initial_potato();
         let get_current_coin = |game_id: &GameID| -> Result<CoinString, Error> {
             if let Some((current, _game)) = self.game_map.iter().find(|g| g.1.game_id == *game_id) {
@@ -943,20 +954,16 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 }
 
                 debug!("notify shutdown complete");
-                Ok(vec![Effect::ShutdownComplete {
-                    reward_coin: None,
-                }])
+                Ok(vec![Effect::ShutdownComplete { reward_coin: None }])
             }
             GameAction::SendPotato => Ok(Vec::new()),
         }
     }
 
-
     fn get_game_state_id<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<'_, R>,
-    ) -> Result<Option<Hash>, Error>
-    {
+    ) -> Result<Option<Hash>, Error> {
         self.player_ch.get_game_state_id(env).map(Some)
     }
 }

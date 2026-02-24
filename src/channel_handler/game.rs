@@ -51,8 +51,13 @@ impl GameStart {
 
         let amount_atom = atom_from_clvm(allocator, template_list[0]);
         let is_my_turn = non_nil(allocator.allocator(), template_list[1]);
-        let handler_hex_len = Node(template_list[2]).to_hex(allocator).map(|h| h.len()).unwrap_or(0);
-        let vh_hex = atom_from_clvm(allocator, template_list[6]).map(|a| hex::encode(&a)).unwrap_or_default();
+        let handler_hex_len = Node(template_list[2])
+            .to_hex(allocator)
+            .map(|h| h.len())
+            .unwrap_or(0);
+        let vh_hex = atom_from_clvm(allocator, template_list[6])
+            .map(|a| hex::encode(&a))
+            .unwrap_or_default();
         debug!(
             "GameStart: amount={:?} is_my_turn={} handler_hex_len={} vh={} state={:?} move={:?} max_move_size={:?} mover_share={:?}",
             amount_atom.as_ref().map(|a| u64_from_atom(a)),
@@ -149,7 +154,11 @@ impl Game {
             0,
         )
         .into_gen()
-        .map_err(|e| Error::StrErr(format!("make_proposal failed: bet_size={bet_size:?} error={e:?}")))?
+        .map_err(|e| {
+            Error::StrErr(format!(
+                "make_proposal failed: bet_size={bet_size:?} error={e:?}"
+            ))
+        })?
         .1;
 
         // Result is (wire_data local_data)
@@ -290,8 +299,11 @@ impl Game {
         };
 
         let validation_prog = Rc::new(Program::from_nodeptr(allocator, validator_node)?);
-        let initial_validation_program =
-            StateUpdateProgram::new_hash(validation_prog, "initial", spec.initial_validation_program_hash.clone());
+        let initial_validation_program = StateUpdateProgram::new_hash(
+            validation_prog,
+            "initial",
+            spec.initial_validation_program_hash.clone(),
+        );
 
         let start = GameStart {
             id: game_id.clone(),
@@ -304,7 +316,9 @@ impl Game {
             initial_mover_share: spec.initial_mover_share,
         };
 
-        Ok(Game { starts: vec![start] })
+        Ok(Game {
+            starts: vec![start],
+        })
     }
 
     pub fn new_program(
@@ -337,17 +351,19 @@ impl Game {
                 )));
             }
         };
-        let template_list = if let Some(lst) = proper_list(allocator.allocator(), template_clvm, true) {
-            lst
-        } else {
-            return Err(Error::StrErr(
-                "poker program didn't return a list".to_string(),
-            ));
-        };
+        let template_list =
+            if let Some(lst) = proper_list(allocator.allocator(), template_clvm, true) {
+                lst
+            } else {
+                return Err(Error::StrErr(
+                    "poker program didn't return a list".to_string(),
+                ));
+            };
         debug!(
             "factory returned as_alice={as_alice} num_games={} first_game_len={}",
             template_list.len(),
-            template_list.first()
+            template_list
+                .first()
                 .and_then(|g| proper_list(allocator.allocator(), *g, true))
                 .map(|l| l.len())
                 .unwrap_or(0),

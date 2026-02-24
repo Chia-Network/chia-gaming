@@ -1138,8 +1138,10 @@ impl ChannelHandler {
             ),
             TheirTurnResult::Slash(_) => {
                 self.live_games[game_idx].restore_referee_state(saved_referee, saved_last_ph);
-                debug!("{} slash detected, preserving cached_last_action for on-chain replay",
-                    self.is_initial_potato());
+                debug!(
+                    "{} slash detected, preserving cached_last_action for on-chain replay",
+                    self.is_initial_potato()
+                );
                 return Err(Error::StrErr(
                     "slash when off chain: go on chain".to_string(),
                 ));
@@ -1569,7 +1571,10 @@ impl ChannelHandler {
     ) -> Result<ChannelCoinSpentResult, Error> {
         let agg_key = self.get_aggregate_unroll_public_key();
         let curried_puzzle = self.unroll.coin.make_curried_unroll_puzzle(env, &agg_key)?;
-        let solution = self.unroll.coin.make_unroll_puzzle_solution(env, &agg_key)?;
+        let solution = self
+            .unroll
+            .coin
+            .make_unroll_puzzle_solution(env, &agg_key)?;
 
         Ok(ChannelCoinSpentResult {
             transaction: Spend {
@@ -1651,11 +1656,16 @@ impl ChannelHandler {
         .into_gen()?;
 
         // SOLUTION: from the preemption source (our newer state).
-        let solution = preempt_source.coin.make_unroll_puzzle_solution(env, &agg_key)?;
+        let solution = preempt_source
+            .coin
+            .make_unroll_puzzle_solution(env, &agg_key)?;
 
         // SIGNATURE: aggregate of both halves from the preemption source.
         let mut signature = preempt_source.coin.get_unroll_coin_signature()?;
-        signature += preempt_source.signatures.my_unroll_half_signature_peer.clone();
+        signature += preempt_source
+            .signatures
+            .my_unroll_half_signature_peer
+            .clone();
 
         Ok(ChannelCoinSpentResult {
             transaction: Spend {
@@ -2090,12 +2100,7 @@ impl ChannelHandler {
             if !matches_spent {
                 self.live_games[live_game_idx].last_referee_puzzle_hash = ph.clone();
                 return Ok(CoinSpentInformation::TheirSpend(
-                    TheirTurnCoinSpentResult::Expected(
-                        self.current_state_number,
-                        ph,
-                        amt,
-                        None,
-                    ),
+                    TheirTurnCoinSpentResult::Expected(self.current_state_number, ph, amt, None),
                 ));
             }
         }
