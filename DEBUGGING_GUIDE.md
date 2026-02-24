@@ -18,16 +18,6 @@ RUST_LOG=info cargo test --features sim-tests -- sim_tests --nocapture 2>&1 \
 - Each iteration of the simulation loop involves expensive CLVM evaluation, so
   a 200-step stall can take a long time before the assertion fires.
 
-### Docker sim tests
-
-```bash
-./docker-sim-tests.sh <filter>
-```
-
-- Pass a substring to filter tests: `./docker-sim-tests.sh piss_off_peer`
-- Pass empty string for all tests: `./docker-sim-tests.sh ''`
-- Docker builds are slower; prefer local cargo runs for development.
-
 ### Always tee output to a file
 
 Test runs are expensive (minutes each). Always capture the full output so you
@@ -56,8 +46,7 @@ Typical durations:
 |-------|-------------|
 | Single simple test | 15–30s |
 | Single on-chain test | 30–60s |
-| Full sim suite (local) | 3–5 minutes |
-| Full sim suite (Docker) | 5–8 minutes |
+| Full sim suite | 3–5 minutes |
 
 ### How to check pass/fail
 

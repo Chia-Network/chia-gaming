@@ -514,7 +514,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         LocalTestUIReceiver::default(),
         LocalTestUIReceiver::default(),
     ];
-    let simulator = Simulator::default();
+    let simulator = Simulator::new_strict();
 
     // Give some money to the users.
     simulator.farm_block(&identities[0].puzzle_hash);
@@ -1010,8 +1010,12 @@ fn run_game_container_with_action_list_with_success_predicate(
                         cradles[*who].accept(allocator, rng, &game_ids[0])?;
                     }
                     GameAction::Shutdown(who, conditions) => {
+                        assert!(
+                            !cradles[*who].is_on_chain(),
+                            "Shutdown({who}) called while on chain; on-chain completion is automatic"
+                        );
                         if !cradles[*who].handshake_finished() {
-                            debug!("Shutdown({who}) deferred: handshake not finished, is_on_chain={}", cradles[*who].is_on_chain());
+                            debug!("Shutdown({who}) deferred: handshake not finished");
                             move_number -= 1;
                             continue;
                         }
@@ -1199,12 +1203,6 @@ pub fn add_debug_test_slash_shutdown(test_setup: &mut DebugGameSimSetup, wait: u
     test_setup
         .game_actions
         .push(GameAction::WaitBlocks(wait, 1));
-    test_setup
-        .game_actions
-        .push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-    test_setup
-        .game_actions
-        .push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 }
 
 pub fn setup_debug_test(
@@ -1370,8 +1368,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             let mut moves = prefix_test_moves(&mut allocator).to_vec();
             moves.push(GameAction::Accept(0));
             moves.push(GameAction::Accept(1));
-            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
             if let GameAction::Move(player, readable, _) = moves[3].clone() {
                 // Replace the real move with a FakeMove. Bob's redo will
                 // automatically replay the real move on-chain, so remove
@@ -1424,8 +1420,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             let moves = vec![
                 GameAction::GoOnChain(1),
                 GameAction::WaitBlocks(20, 1),
-                GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)),
-                GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)),
             ];
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
@@ -1446,8 +1440,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             moves.push(GameAction::Accept(0));
             moves.push(GameAction::GoOnChain(1));
             moves.push(GameAction::WaitBlocks(20, 1));
-            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
                 .expect("should finish");
 
@@ -1478,8 +1470,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             moves.remove(moves_len - 2);
             moves.push(GameAction::GoOnChain(0));
             moves.push(GameAction::WaitBlocks(120, 1));
-            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
                 .expect("should finish");
@@ -1506,8 +1496,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             moves.push(GameAction::Cheat(1));
             // Let both players process blocks so Alice detects & slashes.
             moves.push(GameAction::WaitBlocks(30, 0));
-            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
                 .expect("should finish");
@@ -1790,8 +1778,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             moves.push(GameAction::WaitBlocks(110, 0));
             moves.push(GameAction::UnNerfTransactions);
             moves.push(GameAction::WaitBlocks(5, 0));
-            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
                 .expect("should finish");
@@ -1833,8 +1819,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             moves.push(GameAction::WaitBlocks(110, 0));
             moves.push(GameAction::UnNerfTransactions);
             moves.push(GameAction::WaitBlocks(5, 0));
-            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
                 .expect("should finish");
@@ -1868,8 +1852,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             // 120 blocks covers the unroll timeout (5) and
             // game coin timeout (100).
             moves.push(GameAction::WaitBlocks(120, 0));
-            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
                 .expect("should finish");
@@ -1899,8 +1881,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             on_chain_moves.push(GameAction::GoOnChain(0));
             on_chain_moves.push(GameAction::Cheat(1));
             on_chain_moves.push(GameAction::WaitBlocks(30, 0));
-            on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            on_chain_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                 .expect("should finish");
@@ -1929,8 +1909,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             on_chain_moves.push(GameAction::GoOnChain(0));
             on_chain_moves.push(GameAction::Cheat(0));
             on_chain_moves.push(GameAction::WaitBlocks(30, 0));
-            on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            on_chain_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                 .expect("should finish");
@@ -1958,8 +1936,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             moves.push(GameAction::Accept(0));
             moves.push(GameAction::WaitBlocks(120, 1));
             moves.push(GameAction::WaitBlocks(5, 0));
-            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
                 .expect("should finish");
@@ -1984,8 +1960,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             let moves = vec![
                 GameAction::GoOnChain(1),
                 GameAction::WaitBlocks(20, 1),
-                GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)),
-                GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)),
             ];
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
@@ -2021,8 +1995,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             on_chain_moves.push(GameAction::WaitBlocks(120, 0));
             on_chain_moves.push(GameAction::UnNerfTransactions);
             on_chain_moves.push(GameAction::WaitBlocks(30, 0));
-            on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            on_chain_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                 .expect("should finish");
@@ -2051,8 +2023,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             on_chain_moves.push(GameAction::GoOnChain(0));
             on_chain_moves.push(GameAction::ForceDestroyCoin(0));
             on_chain_moves.push(GameAction::WaitBlocks(30, 0));
-            on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            on_chain_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                 .expect("should finish");
@@ -2077,8 +2047,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             on_chain_moves.push(GameAction::WaitBlocks(5, 0));
             on_chain_moves.push(GameAction::ForceDestroyCoin(1));
             on_chain_moves.push(GameAction::WaitBlocks(30, 0));
-            on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            on_chain_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                 .expect("should finish");
@@ -2104,8 +2072,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             on_chain_moves.push(GameAction::WaitBlocks(5, 0));
             on_chain_moves.push(GameAction::ForceDestroyCoin(0));
             on_chain_moves.push(GameAction::WaitBlocks(30, 0));
-            on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            on_chain_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                 .expect("should finish");

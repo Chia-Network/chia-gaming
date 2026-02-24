@@ -370,8 +370,6 @@ impl WalletSpendInterface for SynchronousGameCradleState {
         name: Option<&'static str>,
     ) -> Result<(), Error> {
         let timeout_at = timeout.to_u64() + self.current_height;
-        eprintln!("REGISTER_COIN: name={name:?} current_height={} timeout={} timeout_at={timeout_at} coin={coin_id:?}",
-            self.current_height, timeout.to_u64());
         debug!("register coin {coin_id:?} as {name:?}");
         self.watching_coins.insert(
             coin_id.clone(),
@@ -490,8 +488,6 @@ impl ToLocalUI for SynchronousGameCradleState {
         state_number: usize,
         is_my_turn: bool,
     ) -> Result<(), Error> {
-        eprintln!("STATE_RESYNC_MOVE: initiator={} state={state_number} is_my_turn={is_my_turn}",
-            self.is_initiator);
         self.resync = Some((state_number, is_my_turn));
         Ok(())
     }
@@ -515,8 +511,6 @@ impl ToLocalUI for SynchronousGameCradleState {
         readable: ReadableMove,
         my_share: Amount,
     ) -> Result<(), Error> {
-        eprintln!("STATE_OPPONENT_MOVED: game={id:?} state={state_number} queue_len={}",
-            self.opponent_moves.len() + 1);
         self.opponent_moves
             .push_back((id.clone(), state_number, readable, my_share));
         Ok(())
@@ -726,8 +720,6 @@ impl SynchronousGameCradle {
                     signature,
                 },
             });
-            debug!("s1 {:?}", spends.spends[0]);
-            debug!("s2 {:?}", spends.spends[1]);
             assert_eq!(spends.spends.len(), 2);
 
             self.state.outbound_transactions.push_back(spends);
@@ -790,7 +782,6 @@ impl SynchronousGameCradle {
         for (k, w) in self.state.watching_coins.iter_mut() {
             if let Some(t) = w.timeout_at {
                 if t <= block {
-                    eprintln!("FILTER_TIMEOUT: block={block} timeout_at={t} name={:?} coin={k:?}", w.name);
                     w.timeout_at = None;
                     timed_out.insert(k.clone());
                 }
@@ -1050,9 +1041,7 @@ impl GameCradle for SynchronousGameCradle {
         );
 
         swap(&mut result.resync, &mut self.state.resync);
-        if result.resync.is_some() {
-            eprintln!("IDLE_RESYNC_SWAPPED: initiator={} {:?}", self.state.is_initiator, result.resync);
-        }
+        
 
         self.state.coin_solution_requests.clear();
 
@@ -1073,7 +1062,6 @@ impl GameCradle for SynchronousGameCradle {
 
         if let Some((id, state_number, readable, my_share)) = self.state.opponent_moves.pop_front()
         {
-            eprintln!("IDLE_POP_OPPONENT_MOVED: game={id:?} state={state_number}");
             local_ui.opponent_moved(allocator, &id, state_number, readable, my_share)?;
             result.continue_on = true;
             return Ok(Some(result));

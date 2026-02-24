@@ -488,9 +488,4 @@ pub trait PotatoHandlerImpl {
         env: &mut ChannelHandlerEnv<'_, R>,
         action: GameAction,
     ) -> Result<Vec<Effect>, Error>;
-
-    fn shut_down(
-        &mut self,
-        conditions: Rc<dyn ShutdownConditions>,
-    ) -> Result<(bool, Option<Effect>), Error>;
 }

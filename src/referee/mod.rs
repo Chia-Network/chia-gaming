@@ -305,7 +305,6 @@ impl Referee {
         let signature = args.get_signature().unwrap_or_default();
 
         let transaction_solution = args.to_nodeptr(allocator, &self.fixed())?;
-        debug!("transaction solution inputs {args:?}");
         let transaction_bundle = Spend {
             puzzle: puzzle.clone(),
             solution: Program::from_nodeptr(allocator, transaction_solution)?.into(),
@@ -460,7 +459,6 @@ impl RefereeInterface for Referee {
         state_number: usize,
     ) -> Result<(Option<Rc<dyn RefereeInterface>>, TheirTurnCoinSpentResult), Error> {
         debug!("their_turn_coin_spent: state={}", state_number);
-        debug!("on chain coin {:?}", referee_coin_string.to_parts());
 
         if let Some((_, on_chain_ph, _)) = referee_coin_string.to_parts() {
             if let Some(CoinCondition::CreateCoin(ph, amt)) = conditions
@@ -469,8 +467,6 @@ impl RefereeInterface for Referee {
             {
                 let my_on_chain = self.on_chain_referee_puzzle_hash(allocator)?;
                 let my_outcome = self.outcome_referee_puzzle_hash(allocator)?;
-                eprintln!("THEIR_TURN_SPENT: is_my_turn={} on_chain_ph={on_chain_ph:?} create_ph={ph:?} my_on_chain={my_on_chain:?} my_outcome={my_outcome:?} expected={}",
-                    self.is_my_turn(), on_chain_ph == my_on_chain && *ph == my_outcome);
 
                 if on_chain_ph == my_on_chain && *ph == my_outcome {
                     debug!("repeat: my turn {:?}", self.is_my_turn());
@@ -487,8 +483,6 @@ impl RefereeInterface for Referee {
                 }
             }
         }
-
-        debug!("rems in spend {conditions:?}");
 
         let rem_conditions = if let Some(CoinCondition::Rem(rem_condition)) = conditions
             .iter()
@@ -573,14 +567,6 @@ impl RefereeInterface for Referee {
                 (self.on_chain_referee_puzzle(allocator)?, self.fixed().amount.clone())
             };
 
-        let puzzle_treehash = puzzle.sha256tree(allocator);
-        debug!(
-            "TIMEOUT PUZZLE DEBUG: treehash={:?} coin_ph={:?} match={}",
-            PuzzleHash::from_hash(puzzle_treehash.hash().clone()),
-            coin_ph,
-            coin_ph.as_ref() == Some(&PuzzleHash::from_hash(puzzle_treehash.hash().clone()))
-        );
-
         self.get_transaction(
             allocator,
             coin_string,
@@ -621,28 +607,12 @@ impl RefereeInterface for Referee {
         &self,
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
-        on_chain: bool,
+        _on_chain: bool,
     ) -> Result<RefereeOnChainTransaction, Error> {
         let my_turn_spend = self.get_my_turn_move_spend()?;
         let args = my_turn_spend.before_args.clone();
         let spend_puzzle =
             curry_referee_puzzle(allocator, &self.fixed().referee_coin_puzzle, &args)?;
-
-        if let Some((_, ph, _)) = coin_string.to_parts() {
-            let start_ph = curry_referee_puzzle_hash(
-                allocator,
-                &self.fixed().referee_coin_puzzle_hash,
-                &args,
-            )?;
-            if on_chain {
-                eprintln!(
-                    "GET_TX_FOR_MOVE: coin_ph={ph:?} before_args_ph={start_ph:?} match={} mover_share={:?} phase={}",
-                    ph == start_ph,
-                    self.get_our_current_share(),
-                    match self { Referee::MyTurn(_) => "MyTurn", Referee::TheirTurn(_) => "TheirTurn" },
-                );
-            }
-        }
 
         let args_list = OnChainRefereeSolution::Move(Rc::new(my_turn_spend.to_move(
             allocator,

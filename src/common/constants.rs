@@ -14,6 +14,7 @@ pub const AGG_SIG_UNSAFE_ATOM: [u8; 1] = [49];
 pub const AGG_SIG_ME_ATOM: [u8; 1] = [50];
 pub const CREATE_COIN_ATOM: [u8; 1] = [51];
 pub const REM_ATOM: [u8; 1] = [1];
+pub const RESERVE_FEE_ATOM: [u8; 1] = [52];
 pub const ASSERT_HEIGHT_RELATIVE_ATOM: [u8; 1] = [82];
 
 pub const GROUP_ORDER: [u8; 32] = [

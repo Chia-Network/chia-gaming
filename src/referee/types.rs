@@ -232,14 +232,6 @@ impl RefereePuzzleArgs {
         validation_program: StateUpdateProgram,
         my_turn: bool,
     ) -> Self {
-        debug!(
-            "PREVIOUS_VALIDATION_INFO_HASH {my_turn} {:?}",
-            previous_validation_info_hash.map(|h| hex::encode(h.bytes()))
-        );
-        debug!(
-            "VALIDATION_INFO_HASH {my_turn} {}",
-            hex::encode(initial_move.validation_info_hash.bytes())
-        );
         RefereePuzzleArgs {
             mover_puzzle_hash: if my_turn {
                 fixed_info.my_identity.puzzle_hash.clone()
@@ -326,10 +318,6 @@ pub fn curry_referee_puzzle(
     args: &RefereePuzzleArgs,
 ) -> Result<Puzzle, Error> {
     let combined_args = args.to_clvm(allocator).into_gen()?;
-    debug!(
-        "curry_referee_puzzle {}",
-        Node(combined_args).to_hex(allocator)?
-    );
     let curried_program_nodeptr = CurriedProgram {
         program: referee_coin_puzzle,
         args: clvm_curried_args!(Node(combined_args)),
@@ -417,42 +405,13 @@ impl InternalStateUpdateArgs {
             self.referee_args.validation_program.hash(),
             self.validation_program.hash()
         );
-        debug!(
-            "<X> state hash {:?}",
-            self.state_update_args.state.sha256tree(allocator)
-        );
         let validation_program_mod_hash = self.validation_program.hash();
-        debug!("<X> validation_program_mod_hash {validation_program_mod_hash:?}");
-        let validation_program_mod_hash_hex = hex::encode(validation_program_mod_hash.bytes());
-        let predicted_info_hash = ValidationInfo::new_state_update(
-            allocator,
-            self.validation_program.clone(),
-            self.state_update_args.state.clone(),
-        );
-        debug!("<X> validation info hash {:?}", predicted_info_hash.hash());
         let validation_program_nodeptr = self.validation_program.to_nodeptr(allocator)?;
         let validator_full_args_node = self.to_nodeptr(
             allocator,
             PuzzleHash::from_hash(validation_program_mod_hash.clone()),
         )?;
 
-        let validator_args_hex = Node(validator_full_args_node).to_hex(allocator)?;
-        let validator_args_prefix = if validator_args_hex.len() > 96 {
-            &validator_args_hex[..96]
-        } else {
-            &validator_args_hex
-        };
-        debug!("validator program hash={validation_program_mod_hash:?}");
-        debug!(
-            "validator args len={} prefix={}{}",
-            validator_args_hex.len(),
-            validator_args_prefix,
-            if validator_args_hex.len() > validator_args_prefix.len() {
-                "..."
-            } else {
-                ""
-            }
-        );
         let raw_result_p = run_program(
             allocator.allocator(),
             &chia_dialect(),
@@ -468,42 +427,9 @@ impl InternalStateUpdateArgs {
             );
         }
         let raw_result = raw_result_p?;
-        let validator_result_hex = Node(raw_result.1).to_hex(allocator)?;
-        let validator_result_prefix = if validator_result_hex.len() > 96 {
-            &validator_result_hex[..96]
-        } else {
-            &validator_result_hex
-        };
-        debug!(
-            "validator result len={} prefix={}{}",
-            validator_result_hex.len(),
-            validator_result_prefix,
-            if validator_result_hex.len() > validator_result_prefix.len() {
-                "..."
-            } else {
-                ""
-            }
-        );
 
         // Targeted decode for calpoker final validator (onchain/e):
         // move bytes = 16-byte salt || 1-byte alice_discards || 1-byte alice_selects
-        if validation_program_mod_hash_hex == "f61d57ac1299dc30c6d29861cba1db58eb202a936ea9ab571aeda37d3c2cbb66"
-        {
-            let move_bytes = &self.referee_args.game_move.basic.move_made;
-            let move_hex = hex::encode(move_bytes);
-            let maybe_discards = move_bytes.get(16).copied();
-            let maybe_selects = move_bytes.get(17).copied();
-            debug!(
-                "e move decode: len={} hex={} discards={:?} discards_popcount={:?} selects={:?} selects_popcount={:?}",
-                move_bytes.len(),
-                move_hex,
-                maybe_discards.map(|b| format!("{b:02x}")),
-                maybe_discards.map(|b| b.count_ones()),
-                maybe_selects.map(|b| format!("{b:02x}")),
-                maybe_selects.map(|b| b.count_ones()),
-            );
-        }
-
         StateUpdateResult::from_nodeptr(allocator, raw_result.1)
     }
 }
@@ -530,20 +456,11 @@ impl OnChainRefereeMoveData {
         fixed: &RMFixed,
         coin_string: &CoinString,
     ) -> Result<OnChainRefereeMove, Error> {
-        let args_for_ph_node = self.after_args.to_clvm(allocator).into_gen()?;
-        let args_for_ph_prog = Program::from_nodeptr(allocator, args_for_ph_node)?;
-        debug!("args for new puzzle hash: {} bytes", args_for_ph_prog.to_hex().len() / 2);
         let new_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &fixed.referee_coin_puzzle_hash,
             &self.after_args,
         )?;
-        let before_ph = curry_referee_puzzle_hash(
-            allocator,
-            &fixed.referee_coin_puzzle_hash,
-            &self.before_args,
-        )?;
-        eprintln!("TO_MOVE: before_ph={before_ph:?} after_ph(new_puzzle_hash)={new_puzzle_hash:?}");
         let inner_conditions = [(
             CREATE_COIN,
             (new_puzzle_hash.clone(), (fixed.amount.clone(), ())),
@@ -554,10 +471,6 @@ impl OnChainRefereeMoveData {
         // Generalize this once the test is working.  Move out the assumption that
         // referee private key is my_identity.synthetic_private_key.
         debug!("referee spend with parent coin {coin_string:?}");
-        debug!(
-            "signing coin with synthetic public key {:?} for public key {:?}",
-            fixed.my_identity.synthetic_public_key, fixed.my_identity.public_key
-        );
         let referee_spend = standard_solution_partial(
             allocator,
             &fixed.my_identity.synthetic_private_key,

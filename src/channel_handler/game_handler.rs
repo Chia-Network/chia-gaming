@@ -12,7 +12,7 @@ use log::debug;
 use crate::channel_handler::types::{Evidence, ReadableMove, StateUpdateProgram};
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
-    Hash, IntoErr, Node, Program, ProgramRef, Sha256tree,
+    Hash, IntoErr, Node, Program, ProgramRef,
 };
 use crate::referee::types::GameMoveDetails;
 
@@ -191,18 +191,6 @@ impl GameHandler {
             .into_gen()?;
 
         let handler_node = self.get_my_turn_handler(allocator)?;
-        let handler_args_hex = Node(handler_args).to_hex(allocator)?;
-        let handler_args_prefix = &handler_args_hex[..handler_args_hex.len().min(96)];
-        debug!(
-            "my-turn handler args len={} prefix={}{}",
-            handler_args_hex.len(),
-            handler_args_prefix,
-            if handler_args_hex.len() > handler_args_prefix.len() {
-                "..."
-            } else {
-                ""
-            }
-        );
         let run_result = run_code(allocator, handler_node, handler_args, false);
 
         if let Err(Error::ClvmErr(e)) = &run_result {
@@ -255,7 +243,6 @@ impl GameHandler {
                     Node(pl[7]).to_hex(allocator)?
                 )));
             };
-        debug!("MOVER_SHARE {mover_share:?}");
         let message_parser = if pl.len() <= 9 || pl[9] == allocator.allocator().nil() {
             None
         } else {
@@ -332,21 +319,6 @@ impl GameHandler {
             .into_gen()?;
 
         let handler_node = self.get_their_turn_handler(allocator)?;
-        let handler_hex_len = Node(handler_node).to_hex(allocator).map(|h| h.len()).unwrap_or(0);
-        debug!(
-            "their-turn handler: handler_hex_len={} move_len={} move_hex={} pre_state_len={} state_len={} amount={:?} mover_share={:?}",
-            handler_hex_len,
-            inputs.new_move.basic.move_made.len(),
-            hex::encode(&inputs.new_move.basic.move_made),
-            proper_list(allocator.allocator(), inputs.pre_state, true)
-                .map(|v| v.len())
-                .unwrap_or(0),
-            proper_list(allocator.allocator(), inputs.state, true)
-                .map(|v| v.len())
-                .unwrap_or(0),
-            inputs.amount,
-            inputs.new_move.basic.mover_share,
-        );
 
         let run_result_e = run_code(
             allocator,
@@ -421,8 +393,6 @@ impl GameHandler {
                 Program::from_nodeptr(allocator, run_result)?
             )));
         };
-
-        debug!("got move result len {}", pl.len());
 
         if pl.is_empty() {
             return Err(Error::StrErr(
@@ -542,21 +512,6 @@ impl MessageHandler {
             .to_clvm(allocator)
             .into_gen()?;
         let run_prog = self.0.to_nodeptr(allocator)?;
-        let run_prog_hex = Node(run_prog).to_hex(allocator)?;
-        let run_prog_prefix = &run_prog_hex[..run_prog_hex.len().min(96)];
-        debug!(
-            "message parser program hash={:?} len={} prefix={}",
-            self.0.sha256tree(allocator),
-            run_prog_hex.len(),
-            run_prog_prefix
-        );
-        let args_hex = Node(args).to_hex(allocator)?;
-        let args_prefix = &args_hex[..args_hex.len().min(96)];
-        debug!(
-            "running message handler args len={} prefix={}",
-            args_hex.len(),
-            args_prefix
-        );
         let run_result = run_code(allocator, run_prog, args, false);
 
         if run_result.is_err() {

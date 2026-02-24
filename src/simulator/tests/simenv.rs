@@ -61,7 +61,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         ];
 
         let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-        let simulator = Simulator::default();
+        let simulator = Simulator::new_strict();
         let (parties, coin) = new_channel_handler_game(
             &simulator,
             &mut env,
@@ -470,7 +470,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let seed: [u8; 32] = [0; 32];
         let mut rng = ChaCha8Rng::from_seed(seed);
         let mut allocator = AllocEncoder::new();
-        let s = Simulator::default();
+        let s = Simulator::new_strict();
         let private_key: PrivateKey = rng.gen();
         debug!("private_key: {private_key:?}");
         let identity = ChiaIdentity::new(&mut allocator, private_key.clone())
@@ -501,7 +501,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let seed: [u8; 32] = [0; 32];
         let mut rng = ChaCha8Rng::from_seed(seed);
         let mut allocator = AllocEncoder::new();
-        let s = Simulator::default();
+        let s = Simulator::new_strict();
         let private_key: PrivateKey = rng.gen();
         let identity1 =
             ChiaIdentity::new(&mut allocator, private_key.clone()).expect("should create");
@@ -534,7 +534,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let seed: [u8; 32] = [0; 32];
         let mut rng = ChaCha8Rng::from_seed(seed);
         let mut allocator = AllocEncoder::new();
-        let s = Simulator::default();
+        let s = Simulator::new_strict();
         let private_key: PrivateKey = rng.gen();
         let identity =
             ChiaIdentity::new(&mut allocator, private_key.clone()).expect("should create");
@@ -560,7 +560,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
     }));
 
     res.push(("test_simulator_farm_block_height", &|| {
-        let s = Simulator::default();
+        let s = Simulator::new_strict();
         assert_eq!(s.get_current_height(), 0usize);
 
         let ph = PuzzleHash::from_hash(Hash::from_slice(&[1u8; 32]));
@@ -575,7 +575,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let mut allocator = AllocEncoder::new();
         let seed: [u8; 32] = [1; 32];
         let mut rng = ChaCha8Rng::from_seed(seed);
-        let s = Simulator::default();
+        let s = Simulator::new_strict();
         let pk: PrivateKey = rng.gen();
         let identity = ChiaIdentity::new(&mut allocator, pk).expect("should create");
 
@@ -598,7 +598,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
     }));
 
     res.push(("test_simulator_get_all_coins_excludes_coinbase", &|| {
-        let s = Simulator::default();
+        let s = Simulator::new_strict();
         let ph = PuzzleHash::from_hash(Hash::from_slice(&[2u8; 32]));
         s.farm_block(&ph);
 
@@ -613,7 +613,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let seed: [u8; 32] = [3; 32];
         let mut rng = ChaCha8Rng::from_seed(seed);
         let mut allocator = AllocEncoder::new();
-        let s = Simulator::default();
+        let s = Simulator::new_strict();
         let pk: PrivateKey = rng.gen();
         let identity = ChiaIdentity::new(&mut allocator, pk).expect("should create");
 
@@ -672,7 +672,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let seed: [u8; 32] = [4; 32];
         let mut rng = ChaCha8Rng::from_seed(seed);
         let mut allocator = AllocEncoder::new();
-        let s = Simulator::default();
+        let s = Simulator::new_strict();
         let pk: PrivateKey = rng.gen();
         let identity = ChiaIdentity::new(&mut allocator, pk).expect("should create");
 
@@ -720,7 +720,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let seed: [u8; 32] = [5; 32];
         let mut rng = ChaCha8Rng::from_seed(seed);
         let mut allocator = AllocEncoder::new();
-        let s = Simulator::default();
+        let s = Simulator::new_strict();
         let pk: PrivateKey = rng.gen();
         let identity = ChiaIdentity::new(&mut allocator, pk).expect("should create");
 
@@ -760,7 +760,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let seed: [u8; 32] = [6; 32];
         let mut rng = ChaCha8Rng::from_seed(seed);
         let mut allocator = AllocEncoder::new();
-        let s = Simulator::default();
+        let s = Simulator::new_strict();
         let pk: PrivateKey = rng.gen();
         let identity = ChiaIdentity::new(&mut allocator, pk).expect("should create");
 
@@ -792,7 +792,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let seed: [u8; 32] = [7; 32];
         let mut rng = ChaCha8Rng::from_seed(seed);
         let mut allocator = AllocEncoder::new();
-        let s = Simulator::default();
+        let s = Simulator::new_strict();
         let pk: PrivateKey = rng.gen();
         let identity = ChiaIdentity::new(&mut allocator, pk).expect("should create");
 
@@ -827,7 +827,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let seed: [u8; 32] = [8; 32];
         let mut rng = ChaCha8Rng::from_seed(seed);
         let mut allocator = AllocEncoder::new();
-        let s = Simulator::default();
+        let s = Simulator::new_strict();
         let pk: PrivateKey = rng.gen();
         let identity = ChiaIdentity::new(&mut allocator, pk).expect("should create");
 

@@ -195,13 +195,14 @@ mod sim_tests {
 
         res.push(("test_fixture_revealed_hands_match", &|| {
             let mut allocator = AllocEncoder::new();
-            let mut moves = prefix_test_moves(&mut allocator).to_vec();
-            moves.truncate(2);
-            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+            let moves = prefix_test_moves(&mut allocator).to_vec();
             let game_outcome =
-                run_calpoker_container_with_action_list(&mut allocator, &moves)
-                    .expect("opening moves should complete");
+                run_calpoker_container_with_action_list_with_success_predicate(
+                    &mut allocator,
+                    &moves,
+                    Some(&|move_number, _cradles| move_number >= 3),
+                )
+                .expect("opening moves should complete");
             let game_results = game_run_outcome_to_move_results(&game_outcome);
             let revealed_cards = extract_info_from_messages(&game_results)
                 .expect("expected revealed message payload");
@@ -247,12 +248,13 @@ mod sim_tests {
                 other => panic!("unexpected opening action #2: {other:?}"),
             }
 
-            let mut opening_moves = moves[..2].to_vec();
-            opening_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            opening_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
             let game_outcome =
-                run_calpoker_container_with_action_list(&mut allocator, &opening_moves)
-                    .expect("opening moves should complete");
+                run_calpoker_container_with_action_list_with_success_predicate(
+                    &mut allocator,
+                    &moves,
+                    Some(&|move_number, _cradles| move_number >= 3),
+                )
+                .expect("opening moves should complete");
             let game_results = game_run_outcome_to_move_results(&game_outcome);
             let revealed_cards = extract_info_from_messages(&game_results)
                 .expect("expected revealed message payload");
@@ -335,12 +337,15 @@ mod sim_tests {
 
         res.push(("test_verify_bob_message", &|| {
             let mut allocator = AllocEncoder::new();
-            let mut moves = prefix_test_moves(&mut allocator).to_vec();
-            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+            let moves = prefix_test_moves(&mut allocator).to_vec();
+            let num_moves = moves.len();
             let game_outcome =
-                run_calpoker_container_with_action_list(&mut allocator, &moves)
-                    .expect("should work");
+                run_calpoker_container_with_action_list_with_success_predicate(
+                    &mut allocator,
+                    &moves,
+                    Some(&move |move_number, _cradles| move_number >= num_moves),
+                )
+                .expect("should work");
             let game_results = game_run_outcome_to_move_results(&game_outcome);
             let bob_clvm_data =
                 extract_info_from_messages(&game_results).expect("expected message payload");
@@ -353,8 +358,6 @@ mod sim_tests {
             let moves = prefix_test_moves(&mut allocator);
             let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(1).collect();
             on_chain_moves.push(GameAction::GoOnChain(true as usize));
-            on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            on_chain_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
             let outcome =
                 run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                     .expect("should work");
@@ -367,8 +370,6 @@ mod sim_tests {
             let mut on_chain_moves: Vec<GameAction> =
                 moves.into_iter().take(1).map(|x| x.lose()).collect();
             on_chain_moves.push(GameAction::GoOnChain(true as usize));
-            on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            on_chain_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
             let outcome =
                 run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                     .expect("should work");
@@ -380,8 +381,6 @@ mod sim_tests {
             let moves = prefix_test_moves(&mut allocator);
             let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(1).collect();
             on_chain_moves.push(GameAction::GoOnChain(true as usize));
-            on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            on_chain_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
             let outcome =
                 run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                     .expect("should work");
@@ -393,8 +392,6 @@ mod sim_tests {
             let moves = prefix_test_moves(&mut allocator);
             let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(2).collect();
             on_chain_moves.push(GameAction::GoOnChain(false as usize));
-            on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            on_chain_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
             let outcome =
                 run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                     .expect("should work");
@@ -406,8 +403,6 @@ mod sim_tests {
             let moves = prefix_test_moves(&mut allocator);
             let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(2).collect();
             on_chain_moves.push(GameAction::GoOnChain(true as usize));
-            on_chain_moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-            on_chain_moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
             let outcome =
                 run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                     .expect("should work");

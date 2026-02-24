@@ -482,10 +482,6 @@ impl TheirTurnReferee {
         let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
         let (state, validation_program) = self.get_validation_program_for_their_move()?;
         let pre_state_nodeptr = state.to_nodeptr(allocator)?;
-        debug!(
-            "running state update program {:?}",
-            validation_program.to_program()
-        );
         let is_initial = matches!(self.state.borrow(), TheirTurnRefereeGameState::Initial { .. });
         let offchain_prev_hash = if is_initial {
             None
@@ -510,7 +506,6 @@ impl TheirTurnReferee {
         });
         let state_update =
             self.run_state_update(allocator, offchain_puzzle_args.clone(), state.clone(), evidence)?;
-        debug!("XXX their_turn state_update: {state_update:?}");
 
         // Retrieve evidence from their turn handler.
         let new_state = match &state_update {
@@ -564,8 +559,6 @@ impl TheirTurnReferee {
             }
         };
 
-        debug!("<W> {puzzle_args:?}");
-
         let new_self = self.accept_their_move(
             handler,
             new_state.clone(),
@@ -596,7 +589,6 @@ impl TheirTurnReferee {
 
         let out_move = self.finish_their_turn(allocator, puzzle_args, result)?;
 
-        debug!("final inputs {:?}", new_self.spend_this_coin());
         Ok((Some(new_self), out_move))
     }
 
@@ -608,15 +600,6 @@ impl TheirTurnReferee {
         state_number: usize,
         rem_conditions: &[Vec<u8>],
     ) -> Result<(Option<Referee>, TheirTurnCoinSpentResult), Error> {
-        debug!(
-            "their_turn_coin_spent: current ref coinstring: {:?}",
-            referee_coin_string
-        );
-        debug!(
-            "their_turn_coin_spent: current ref coinstring: {:?}",
-            conditions
-        );
-
         if rem_conditions.len() != REM_CONDITION_FIELDS {
             return Err(Error::StrErr(
                 "rem condition should have the right number of fields".to_string(),
@@ -625,7 +608,6 @@ impl TheirTurnReferee {
 
         let new_move = &rem_conditions[0];
         let validation_info_hash = Hash::from_slice(&rem_conditions[1]);
-        debug!("got validation info hash from rems {validation_info_hash:?}");
         let new_mover_share = if let Some(share) = u64_from_atom(&rem_conditions[2]) {
             Amount::new(share)
         } else {
@@ -746,51 +728,10 @@ impl TheirTurnReferee {
                     &to_spend_ph,
                     &self.fixed.amount,
                 );
-                let infohash_for_slash = ValidationInfo::new_state_update(
-                    allocator,
-                    slash_validation_program.clone(),
-                    slash_state.clone(),
-                );
-
-                debug!(
-                    "our notion of previous validation program hash {:?}",
-                    slash_validation_program.sha256tree(allocator)
-                );
-                debug!(
-                    "our notion of state hash {:?}",
-                    slash_state.sha256tree(allocator)
-                );
-                debug!(
-                    "our notion of validation info hash {:?}",
-                    infohash_for_slash.hash()
-                );
 
                 // Slash specified.
                 debug!("their turn: slash specified {:?}", evidence);
-                let current_args = self.args_for_this_coin();
                 let after_args = self.spend_this_coin();
-                let a_infohash = ValidationInfo::new_state_update(
-                    allocator,
-                    slash_validation_program.clone(),
-                    slash_state.clone(),
-                );
-                debug!("a_infohash {a_infohash:?}");
-                debug!(
-                    "aa_infohash {:?}",
-                    after_args.game_move.validation_info_hash
-                );
-                debug!(
-                    "aa_prev_infohash {:?}",
-                    after_args.previous_validation_info_hash
-                );
-                debug!(
-                    "current_args.validation_info_hash {:?}",
-                    current_args.game_move.validation_info_hash
-                );
-                debug!(
-                    "current_args.previous_validation_info_hash {:?}",
-                    current_args.previous_validation_info_hash
-                );
                 let expected_ph = self.outcome_referee_puzzle_hash(allocator)?;
                 debug!("slash: outcome_ph={expected_ph:?} spent_ph={spent_ph:?} match={}", expected_ph == spent_ph);
 
@@ -807,7 +748,6 @@ impl TheirTurnReferee {
                         after_args.game_move.validation_info_hash.clone(),
                     ),
                 });
-                debug!("match 2c9e2c? {args:?}");
                 let puzzle =
                     curry_referee_puzzle(allocator, &self.fixed.referee_coin_puzzle, &args)?;
                 let new_puzzle_hash = curry_referee_puzzle_hash(
@@ -917,10 +857,6 @@ impl TheirTurnReferee {
             &self.fixed.referee_coin_puzzle_hash,
             &puzzle_args,
         )?;
-        debug!(
-            "new_curried_referee_puzzle_hash (their turn): {:?}",
-            puzzle_hash_for_unroll
-        );
 
         // Coin calculated off the new new state.
         Ok(TheirTurnMoveResult {

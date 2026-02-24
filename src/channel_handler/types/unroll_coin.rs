@@ -4,8 +4,6 @@ use clvm_traits::{clvm_curried_args, ToClvm};
 use clvm_utils::CurriedProgram;
 use clvmr::allocator::NodePtr;
 
-use log::debug;
-
 use rand::prelude::*;
 
 use serde::{Deserialize, Serialize};
@@ -254,7 +252,6 @@ impl UnrollCoin {
         their_unroll_coin_public_key: &PublicKey,
         inputs: &UnrollCoinConditionInputs,
     ) -> Result<Aggsig, Error> {
-        eprintln!("UNROLL_UPDATE: sn={} unroll_timeout={} started_with_potato={}", self.state_number, inputs.unroll_timeout, self.started_with_potato);
         let base_conditions = self.compute_unroll_coin_conditions(env, inputs)?;
 
         // Timeout conditions: prepend ASSERT_HEIGHT_RELATIVE to the base
@@ -276,7 +273,6 @@ impl UnrollCoin {
         let base_hash = base_conditions.sha256tree(env.allocator);
         let unroll_public_key = private_to_public_key(unroll_private_key);
         let unroll_aggregate_key = unroll_public_key.clone() + their_unroll_coin_public_key.clone();
-        debug!("conditions_hash {base_hash:?}");
         let unroll_signature = unsafe_sign_partial(
             unroll_private_key,
             &unroll_aggregate_key,
@@ -289,12 +285,6 @@ impl UnrollCoin {
             hash: timeout_hash,
             signature: unroll_signature.clone(),
         });
-
-        debug!("AGGREGATE PUBLIC KEY {:?}", unroll_aggregate_key);
-        debug!(
-            "SIGNATURE {} {:?}",
-            self.started_with_potato, unroll_signature
-        );
 
         Ok(unroll_signature)
     }
@@ -310,7 +300,6 @@ impl UnrollCoin {
         let unroll_puzzle_solution_hash = unroll_puzzle_solution.sha256tree(env.allocator);
 
         let aggregate_unroll_signature = signature.clone() + self.get_unroll_coin_signature()?;
-        debug!("{} VERIFY: AGGREGATE UNROLL hash {unroll_puzzle_solution_hash:?} {aggregate_unroll_signature:?}", self.started_with_potato);
 
         Ok(aggregate_unroll_signature.verify(
             aggregate_unroll_public_key,

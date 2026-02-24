@@ -99,15 +99,12 @@ impl LiveGame {
         state_number: usize,
     ) -> Result<GameMoveWireData, Error> {
         // assert!(self.referee_maker.is_my_turn());
-        eprintln!("MAKE_MOVE: entropy={new_entropy:?} state_number={state_number} is_my_turn={}",
-            self.referee_maker.is_my_turn());
         let (new_ref, referee_result) = self.referee_maker.my_turn_make_move(
             allocator,
             readable_move,
             new_entropy.clone(),
             state_number,
         )?;
-        eprintln!("MAKE_MOVE: result ph_for_unroll={:?}", referee_result.puzzle_hash_for_unroll);
         self.referee_maker = new_ref;
         self.last_referee_puzzle_hash =
             self.referee_maker.outcome_referee_puzzle_hash(allocator)?;
@@ -184,16 +181,12 @@ impl LiveGame {
         conditions: &[CoinCondition],
         current_state: usize,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
-        let pre_ph = self.current_puzzle_hash(allocator)?;
-        let pre_last = self.last_referee_puzzle_hash.clone();
-        // assert!(self.referee_maker.processing_my_turn());
         let (new_ref, res) = self.referee_maker.their_turn_coin_spent(
             allocator,
             coin_string,
             conditions,
             current_state,
         )?;
-        let got_new_ref = new_ref.is_some();
         if let Some(r) = new_ref {
             self.referee_maker = r;
         }
@@ -203,10 +196,6 @@ impl LiveGame {
         } else {
             self.last_referee_puzzle_hash = self.current_puzzle_hash(allocator)?;
         }
-        eprintln!(
-            "THEIR_TURN_COIN_SPENT: game={:?} pre_ph={pre_ph:?} pre_last={pre_last:?} got_new_ref={got_new_ref} result={:?} post_last={:?}",
-            self.game_id, std::mem::discriminant(&res), self.last_referee_puzzle_hash,
-        );
         Ok(res)
     }
 

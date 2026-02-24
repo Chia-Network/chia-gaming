@@ -488,7 +488,7 @@ if Alice misclaims the split.
 | `src/test_support/calpoker.rs` | Calpoker test registration and helpers |
 | `src/simulator/tests/potato_handler_sim.rs` | Integration tests including notification suite |
 | `src/test_support/peer/potato_handler.rs` | Test peer helper |
-| `docker-sim-tests.sh` | Docker-based test runner |
+| `run-js-tests.sh` | Local JS/WASM integration test runner |
 
 ---
 

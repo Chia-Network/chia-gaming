@@ -23,11 +23,14 @@ cargo build
 # Run unit tests
 cargo test
 
-# Run chialisp + python tests
+# Run chialisp tests
 ./run-clsp-tests.sh
 
-# Run simulation tests (requires Docker)
-./docker-sim-tests.sh
+# Run simulation tests
+cargo test --features sim-tests -- sim_tests --nocapture
+
+# Run JS/WASM integration tests (builds WASM, starts simulator, runs Jest)
+./run-js-tests.sh
 
 # Run everything
 ./run-all-tests.sh
@@ -35,9 +38,10 @@ cargo test
 
 ### Prerequisites
 
-- **Rust** (nightly)
-- **Docker** with BuildKit — for simulation and integration tests
-- **Python 3.11–3.13** and **uv** — for chialisp/python tests
+- **Rust** (nightly) with `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
+- **Node.js** and **yarn** — for JS/WASM integration tests
+- **wasm-pack** — for building the WASM package (`cargo install wasm-pack`)
+- **LLVM** (Homebrew) — on macOS, needed for compiling `blst` to wasm (`brew install llvm`)
 
 ## Project Structure
 

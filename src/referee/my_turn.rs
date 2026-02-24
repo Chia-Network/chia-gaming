@@ -410,10 +410,6 @@ impl MyTurnReferee {
             after_args: new_puzzle_args.clone(),
         });
 
-        debug!(
-            "MY TURN FINISHED WITH STATE {current_state:?} REPLACING {:?}",
-            self.get_game_state()
-        );
         let new_state = TheirTurnRefereeGameState::AfterOurTurn {
             their_turn_game_handler: game_handler.clone(),
             their_turn_validation_program: my_turn_result
@@ -471,27 +467,6 @@ impl MyTurnReferee {
             } => state_after_their_turn.clone(),
         };
 
-        let handler_kind = |h: &GameHandler| match h {
-            GameHandler::MyTurnHandler(_) => "my_turn",
-            GameHandler::TheirTurnHandler(_) => "their_turn",
-        };
-        let state_variant = match self.state.as_ref() {
-            MyTurnRefereeGameState::Initial { game_handler, .. } => {
-                format!("Initial(handler={})", handler_kind(game_handler))
-            }
-            MyTurnRefereeGameState::AfterTheirTurn { game_handler, .. } => format!(
-                "AfterTheirTurn(handler={})",
-                game_handler
-                    .as_ref()
-                    .map(handler_kind)
-                    .unwrap_or("none/final")
-            ),
-        };
-        debug!(
-            "my turn state {state_variant} state_hash={:?}",
-            state_to_update.sha256tree(allocator)
-        );
-        debug!("entropy {state_number} {new_entropy:?}");
         let result = if self.enable_cheating.is_some() {
             debug!("my_turn_make_move: cheating - nil move, mover_share=0");
             Rc::new(MyTurnResult {
@@ -529,19 +504,6 @@ impl MyTurnReferee {
             result.message_parser.is_some()
         );
 
-        let state_hex = state_to_update.to_hex();
-        let state_prefix = &state_hex[..state_hex.len().min(96)];
-        debug!(
-            "my turn start state hash={:?} len={} prefix={}",
-            state_to_update.sha256tree(allocator),
-            state_hex.len(),
-            state_prefix
-        );
-        debug!(
-            "about to call my validator for my move bytes len={} prefix={}",
-            result.move_bytes.len(),
-            hex::encode(&result.move_bytes[..result.move_bytes.len().min(16)])
-        );
         let puzzle_args = self.spend_this_coin();
         let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
         let v = ValidationInfo::new_state_update(
@@ -572,27 +534,12 @@ impl MyTurnReferee {
             previous_validation_info_hash: offchain_prev_hash,
             ..ref_puzzle_args.clone()
         });
-        let validator_prog = offchain_puzzle_args.validation_program.to_program();
-        let validator_hex = validator_prog.to_hex();
-        debug!(
-            "running validator program hash={:?} len={}",
-            offchain_puzzle_args.validation_program.sha256tree(allocator),
-            validator_hex.len()
-        );
         let new_state_following_my_move = self.run_validator_for_my_move(
             allocator,
             offchain_puzzle_args,
             state_to_update.clone(),
             Evidence::nil()?,
         )?;
-
-        debug!("state following my turn {new_state_following_my_move:?}");
-        debug!(
-            "corresponding new validation program {:?}",
-            result
-                .incoming_move_state_update_program
-                .sha256tree(allocator)
-        );
 
         let rc_puzzle_args = Rc::new(RefereePuzzleArgs {
             mover_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
@@ -619,17 +566,13 @@ impl MyTurnReferee {
         //
         // Validation_info_hash is hashed together the state and the validation
         // puzzle.
-        debug!("<W> {ref_puzzle_args:?}");
         let new_curried_referee_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &self.fixed.referee_coin_puzzle_hash,
             ref_puzzle_args,
         )?;
 
-        debug!("new_curried_referee_puzzle_hash (our turn) {new_curried_referee_puzzle_hash:?}");
-
         let new_self = Referee::TheirTurn(Rc::new(new_self));
-        debug!("final inputs {:?}", new_self.spend_this_coin());
         Ok((
             new_self,
             GameMoveWireData {
@@ -685,7 +628,6 @@ impl MyTurnReferee {
             )],
         )?;
         let solution_program = Rc::new(Program::from_nodeptr(allocator, solution)?);
-        debug!("my turn update using state {state:?}");
         let validator_move_args = InternalStateUpdateArgs {
             validation_program: referee_args.validation_program.clone(),
             referee_args: Rc::new(referee_args.swap()),
@@ -713,13 +655,7 @@ impl MyTurnReferee {
                     Err(Error::StrErr("our own move was slashed by us".to_string()))
                 }
             }
-            Ok(StateUpdateResult::MoveOk(new_state)) => {
-                debug!(
-                    "<V> new state for my move {:?} {new_state:?}",
-                    referee_args.validation_program.sha256tree(allocator)
-                );
-                Ok(new_state.clone())
-            }
+            Ok(StateUpdateResult::MoveOk(new_state)) => Ok(new_state.clone()),
         }
     }
 }

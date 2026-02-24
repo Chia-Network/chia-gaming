@@ -252,16 +252,8 @@ impl ChannelHandler {
 
     pub fn get_finished_unroll_coin(&self) -> &ChannelHandlerUnrollSpendInfo {
         if let Some(t) = self.timeout.as_ref() {
-            eprintln!(
-                "GET_FINISHED_UNROLL: using timeout, sn={}",
-                t.coin.state_number
-            );
             t
         } else {
-            eprintln!(
-                "GET_FINISHED_UNROLL: using unroll (no timeout), sn={}",
-                self.unroll.coin.state_number
-            );
             &self.unroll
         }
     }
@@ -296,7 +288,6 @@ impl ChannelHandler {
             rem_condition_state: self.current_state_number,
             unroll_timeout: self.unroll_advance_timeout.to_u64(),
         };
-        debug!("computed unroll inputs {inputs:?}");
         inputs
     }
 
@@ -322,6 +313,39 @@ impl ChannelHandler {
         } else {
             vec![]
         }
+    }
+
+    /// Returns true if there are active games that weren't just created in the
+    /// most recent potato exchange (and thus can't be cancelled for shutdown).
+    pub fn has_games_beyond_just_created(&self) -> bool {
+        let just_created = self.get_just_created_games();
+        self.live_games
+            .iter()
+            .any(|g| !just_created.contains(&g.game_id))
+    }
+
+    /// Cancel games that were just created (in the most recent potato) by
+    /// restoring their contributions to the out-of-game balances and removing
+    /// them from live_games.  Used before clean shutdown when the only active
+    /// games are ones we just initiated.
+    pub fn cancel_just_created_games(&mut self) {
+        let just_created = self.get_just_created_games();
+        if just_created.is_empty() {
+            return;
+        }
+        for game in self.live_games.iter() {
+            if just_created.contains(&game.game_id) {
+                self.my_out_of_game_balance += game.my_contribution.clone();
+                self.their_out_of_game_balance += game.their_contribution.clone();
+                self.my_allocated_balance =
+                    self.my_allocated_balance.clone() - game.my_contribution.clone();
+                self.their_allocated_balance =
+                    self.their_allocated_balance.clone() - game.their_contribution.clone();
+            }
+        }
+        self.live_games
+            .retain(|g| !just_created.contains(&g.game_id));
+        self.cached_last_action = None;
     }
 
     pub fn create_conditions_and_signature_of_channel_coin<R: Rng>(
@@ -438,9 +462,6 @@ impl ChannelHandler {
 
         let aggregate_public_key = our_channel_pubkey.clone() + their_channel_pubkey.clone();
         debug!("construct channel handler {}", we_start_with_potato);
-        debug!("aggregate public key {aggregate_public_key:?}");
-        debug!("our unroll public key {our_unroll_pubkey:?}");
-        debug!("their unroll public key {:?}", their_unroll_pubkey);
 
         let state_channel_coin_puzzle_hash =
             puzzle_hash_for_synthetic_public_key(env.allocator, &aggregate_public_key)?;
@@ -561,20 +582,14 @@ impl ChannelHandler {
         let channel_coin_spend =
             self.create_conditions_and_signature_of_channel_coin(env, &self.unroll.coin)?;
 
-        debug!("their sig {:?}", their_initial_channel_half_signature);
         let combined_signature =
             channel_coin_spend.signature.clone() + their_initial_channel_half_signature.clone();
-        debug!("combined signature {combined_signature:?}");
 
         let state_channel_puzzle = puzzle_for_synthetic_public_key(
             env.allocator,
             &env.standard_puzzle,
             &aggregate_public_key,
         )?;
-        debug!(
-            "puzzle hash for state channel coin (ch) {:?}",
-            state_channel_puzzle.sha256tree(env.allocator)
-        );
 
         Ok(HandshakeResult {
             channel_puzzle_reveal: state_channel_puzzle,
@@ -708,7 +723,6 @@ impl ChannelHandler {
 
         let full_signature =
             channel_coin_spend.signature.clone() + their_channel_half_signature.clone();
-        debug!("combined signature {full_signature:?}");
         if full_signature.verify(&aggregate_public_key, &channel_coin_spend.message) {
             Ok(BrokenOutCoinSpendInfo {
                 signature: full_signature,
@@ -734,10 +748,6 @@ impl ChannelHandler {
             &self.their_unroll_coin_public_key,
             inputs,
         )?;
-        debug!(
-            "verify: started with potato: {}",
-            test_unroll.started_with_potato
-        );
 
         if !test_unroll.verify(
             env,
@@ -764,7 +774,6 @@ impl ChannelHandler {
 
         self.current_state_number += 1;
         debug!("current state number now {}", self.current_state_number);
-        debug!("test_unroll updated {:?}", test_unroll.outcome);
         if let Some(ref outcome) = test_unroll.outcome {
             self.state_conditions_hashes
                 .insert(outcome.state_number, outcome.hash.clone());
@@ -874,10 +883,6 @@ impl ChannelHandler {
         let (my_full_contribution, their_full_contribution) =
             self.start_game_contributions(start_info_list);
 
-        debug!(
-            "send potato start game: me {my_full_contribution:?} then {their_full_contribution:?}"
-        );
-
         if my_full_contribution.clone() > self.my_out_of_game_balance
             || their_full_contribution.clone() > self.their_out_of_game_balance
         {
@@ -916,10 +921,8 @@ impl ChannelHandler {
             self.unroll.coin.started_with_potato
         );
 
-        debug!("before adding games: {} games", self.live_games.len());
         let mut new_games = self.add_games(env, start_info_list)?;
         self.live_games.append(&mut new_games);
-        debug!("after adding games: {} games", self.live_games.len());
 
         Ok(StartGameResult::Success(Box::new(
             self.update_cached_unroll_state(env)?,
@@ -944,10 +947,6 @@ impl ChannelHandler {
         let (my_full_contribution, their_full_contribution) =
             self.start_game_contributions(start_info_list);
 
-        debug!(
-            "recv potato start game: me {my_full_contribution:?} then {their_full_contribution:?}"
-        );
-
         if my_full_contribution.clone() > self.my_out_of_game_balance
             || their_full_contribution.clone() > self.their_out_of_game_balance
         {
@@ -971,10 +970,8 @@ impl ChannelHandler {
             .get_cached_game_id()
             .map(|g| vec![g.clone()])
             .unwrap_or_default();
-        debug!("taking into account cached game ids when doing receive_potato_start_games: {cached_game_ids:?}");
         let mut unroll_data_for_all_games =
             self.compute_unroll_data_for_games(&cached_game_ids, None, &self.live_games)?;
-        debug!("start with {} games", unroll_data_for_all_games.len());
         unroll_data_for_all_games.append(&mut self.compute_unroll_data_for_games(
             &[],
             None,
@@ -992,10 +989,6 @@ impl ChannelHandler {
         }
 
         // Update an unroll coin to see if we can verify the message.
-        debug!(
-            "aggregate state channel public key {:?}",
-            self.get_aggregate_channel_public_key()
-        );
         let spend = self.received_potato_verify_signatures(
             env,
             signatures,
@@ -1065,20 +1058,10 @@ impl ChannelHandler {
 
         self.live_games[game_idx].last_referee_puzzle_hash =
             self.live_games[game_idx].outcome_puzzle_hash(env.allocator)?;
-        eprintln!(
-            "SEND_MOVE: initiator={} state={} last_ref_ph={:?}",
-            self.is_initial_potato(),
-            self.current_state_number,
-            self.live_games[game_idx].last_referee_puzzle_hash,
-        );
 
         // Referee is now at S' (post-move). Save it for potential redo after unroll.
         let (saved_referee, saved_ph) = self.live_games[game_idx].save_referee_state();
 
-        debug!(
-            "{} move_result {referee_result:?}",
-            self.unroll.coin.started_with_potato
-        );
         let puzzle_hash = referee_result.puzzle_hash_for_unroll;
         let amount = referee_result.details.basic.mover_share.clone();
 
@@ -1089,8 +1072,6 @@ impl ChannelHandler {
                 game_id: game_id.clone(),
                 match_puzzle_hash,
                 puzzle_hash,
-                move_data: readable_move.clone(),
-                move_entropy: new_entropy,
                 amount,
                 saved_post_move_referee: Some(saved_referee),
                 saved_post_move_last_ph: Some(saved_ph),
@@ -1138,33 +1119,6 @@ impl ChannelHandler {
             }
         };
 
-        let (result_kind, message_len, slash_evidence_len, mover_share_dbg) =
-            match &their_move_result.original {
-                TheirTurnResult::FinalMove(move_data) => (
-                    "FinalMove",
-                    0usize,
-                    move_data.slash_evidence.len(),
-                    format!("{:?}", move_data.mover_share),
-                ),
-                TheirTurnResult::MakeMove(_, message, move_data) => (
-                    "MakeMove",
-                    message.len(),
-                    move_data.slash_evidence.len(),
-                    format!("{:?}", move_data.mover_share),
-                ),
-                TheirTurnResult::Slash(_evidence) => {
-                    ("Slash", 0usize, 0usize, "<n/a>".to_string())
-                }
-            };
-        debug!(
-            "{} their_move_result kind={} unroll_ph={:?} message_len={} slash_evidence_len={} mover_share={}",
-            self.unroll.coin.started_with_potato,
-            result_kind,
-            their_move_result.puzzle_hash_for_unroll,
-            message_len,
-            slash_evidence_len,
-            mover_share_dbg
-        );
         debug!(
             "{} my share after their move {:?}",
             self.unroll.coin.started_with_potato,
@@ -1193,13 +1147,6 @@ impl ChannelHandler {
         };
 
         let unroll_data = self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
-        eprintln!(
-            "RECV_MOVE_UNROLL: initiator={} state={} unroll_data={:?} last_ref_ph={:?}",
-            self.is_initial_potato(),
-            self.current_state_number,
-            unroll_data.iter().map(|(ph, _)| format!("{:?}", ph)).collect::<Vec<_>>(),
-            self.live_games.iter().map(|g| format!("{:?}", g.last_referee_puzzle_hash)).collect::<Vec<_>>(),
-        );
 
         let spend = match self.received_potato_verify_signatures(
             env,
@@ -1212,17 +1159,11 @@ impl ChannelHandler {
         ) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!(
-                    "RECV_MOVE_SIG_FAIL: initiator={} restoring referee state, error={e:?}",
-                    self.is_initial_potato()
-                );
                 self.live_games[game_idx].restore_referee_state(saved_referee, saved_last_ph);
                 return Err(e);
             }
         };
 
-        eprintln!("CLEAR_CACHE: initiator={} received valid potato move, clearing cached_last_action",
-            self.is_initial_potato());
         self.cached_last_action = None;
 
         Ok(ChannelHandlerMoveResult {
@@ -1387,7 +1328,6 @@ impl ChannelHandler {
         let spend = self.state_channel_coin();
 
         let conditions_program = Program::from_nodeptr(env.allocator, conditions)?;
-        debug!("conditions {conditions_program:?}");
         let channel_coin_spend = self.get_solution_and_signature_from_conditions(
             &spend.to_coin_id(),
             env,
@@ -1395,11 +1335,6 @@ impl ChannelHandler {
             &aggregate_public_key,
             Rc::new(conditions_program),
         )?;
-
-        debug!(
-            "send_potato_clean_shutdown {:?}",
-            channel_coin_spend.solution
-        );
 
         Ok(Spend {
             solution: channel_coin_spend.solution.clone(),
@@ -1416,7 +1351,6 @@ impl ChannelHandler {
         aggregate_public_key: &PublicKey,
         conditions: Rc<Program>,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
-        debug!("STATE CONDITONS: {conditions:?}");
         let conditions_nodeptr = conditions.to_nodeptr(env.allocator)?;
         let spend = standard_solution_partial(
             env.allocator,
@@ -1480,17 +1414,11 @@ impl ChannelHandler {
         );
         assert!(!self.have_potato);
         let conditions_program = Program::from_nodeptr(env.allocator, conditions)?;
-        debug!("conditions {conditions_program:?}");
         let channel_spend = self.verify_channel_coin_from_peer_signatures(
             env,
             their_channel_half_signature,
             Rc::new(conditions_program),
         )?;
-
-        debug!(
-            "received_potato_clean_shutdown {:?}",
-            channel_spend.solution
-        );
 
         Ok(channel_spend)
     }
@@ -1502,7 +1430,6 @@ impl ChannelHandler {
     ) -> Result<Vec<Vec<u8>>, Error> {
         // Figure out our state number vs the one given in conditions.
         let all_conditions = CoinCondition::from_nodeptr(env.allocator, conditions);
-        debug!("all_conditions {all_conditions:?}");
         let rem_conditions: Vec<Vec<u8>> = all_conditions
             .iter()
             .filter_map(|c| {
@@ -1547,10 +1474,6 @@ impl ChannelHandler {
             .make_unroll_puzzle_solution(env, &self.get_aggregate_unroll_public_key())?;
         let solution_program = Program::from_nodeptr(env.allocator, unroll_puzzle_solution)?;
 
-        debug!(
-            "get_unroll_coin_transaction {:?}",
-            solution_program.to_hex()
-        );
         let mut signature = use_unroll.coin.get_unroll_coin_signature()?;
         if add_sigs {
             signature += use_unroll.signatures.my_unroll_half_signature_peer.clone();
@@ -1616,12 +1539,6 @@ impl ChannelHandler {
         let unrolling_state_number = usize_from_atom(&rem_conditions[0])
             .ok_or_else(|| Error::StrErr("Unconvertible state number".to_string()))?;
 
-        eprintln!(
-            "CHANNEL_COIN_SPENT: initiator={} myself={myself} current_state={} unrolling_state={unrolling_state_number}",
-            self.unroll.coin.started_with_potato,
-            self.current_state_number,
-        );
-
         // Three cases based on comparing on-chain state to our current state:
         let result = match (
             myself,
@@ -1629,28 +1546,18 @@ impl ChannelHandler {
         ) {
             // We initiated this spend, or the on-chain state matches ours:
             // use the timeout (default) path.
-            (true, _) | (_, Ordering::Equal) => {
-                eprintln!("CHANNEL_COIN_SPENT: → timeout path (myself={myself} equal={}))", unrolling_state_number == self.current_state_number);
-                self.make_timeout_unroll_spend(env)
-            }
+            (true, _) | (_, Ordering::Equal) => self.make_timeout_unroll_spend(env),
             // On-chain state is from the future relative to us - error.
-            (_, Ordering::Greater) => {
-                eprintln!("CHANNEL_COIN_SPENT: → ERROR future state");
-                Err(Error::StrErr(format!(
-                    "Reply from the future onchain {} (me {})",
-                    unrolling_state_number, self.current_state_number,
-                )))
-            }
+            (_, Ordering::Greater) => Err(Error::StrErr(format!(
+                "Reply from the future onchain {} (me {})",
+                unrolling_state_number, self.current_state_number,
+            ))),
             // On-chain state is behind ours - preempt.  We have two
             // adjacent states (unroll and timeout); exactly one will
             // satisfy the CLSP parity constraint.  If neither does,
             // make_preemption_unroll_spend returns an error (case e).
-            (_, Ordering::Less) => {
-                eprintln!("CHANNEL_COIN_SPENT: → preemption path (onchain={unrolling_state_number} < ours={})", self.current_state_number);
-                self.make_preemption_unroll_spend(env, unrolling_state_number)
-            }
+            (_, Ordering::Less) => self.make_preemption_unroll_spend(env, unrolling_state_number),
         };
-        eprintln!("CHANNEL_COIN_SPENT: result={}", if result.is_ok() { "ok" } else { "err" });
         result
     }
 
@@ -1712,13 +1619,6 @@ impl ChannelHandler {
                 "No timeout state available for preemption".to_string(),
             ));
         };
-
-        eprintln!(
-            "PREEMPTION: old_sn={old_sn} unroll_sn={} timeout_sn={:?} preempt_source_sn={} (unroll_ok={unroll_ok})",
-            self.unroll.coin.state_number,
-            self.timeout.as_ref().map(|t| t.coin.state_number),
-            preempt_source.coin.state_number,
-        );
 
         // PUZZLE: must match the on-chain unroll coin.  Reconstruct it from
         // known components using the stored conditions_hash for the on-chain
@@ -1783,16 +1683,6 @@ impl ChannelHandler {
         &mut self,
         cache_update: Option<CachedPotatoRegenerateLastHop>,
     ) {
-        eprintln!(
-            "UPDATE_CACHE: initiator={} state={} new={:?}",
-            self.is_initial_potato(),
-            self.current_state_number,
-            cache_update.as_ref().map(|c| match c {
-                CachedPotatoRegenerateLastHop::PotatoMoveHappening(d) => format!("MoveHappening(state={}, entropy={:?}, match_ph={:?})", d.state_number, d.move_entropy, d.match_puzzle_hash),
-                CachedPotatoRegenerateLastHop::PotatoAccept(_) => "Accept".to_string(),
-                CachedPotatoRegenerateLastHop::PotatoCreatedGame(_, _, _) => "CreatedGame".to_string(),
-            })
-        );
         self.cached_last_action = cache_update;
     }
 
@@ -1944,7 +1834,6 @@ impl ChannelHandler {
         coins: &[PuzzleHash],
     ) -> Result<HashMap<CoinString, OnChainGameState>, Error> {
         let mut res = HashMap::new();
-        let initial_potato = self.is_initial_potato();
 
         let (cached_game_id, cached_match_ph) = match &self.cached_last_action {
             Some(CachedPotatoRegenerateLastHop::PotatoMoveHappening(d)) => {
@@ -1952,11 +1841,6 @@ impl ChannelHandler {
             }
             _ => (None, None),
         };
-
-        eprintln!(
-            "SET_STATE_FOR_COINS: initiator={} cached_game={:?} cached_match_ph={:?} #coins={} #live_games={}",
-            initial_potato, cached_game_id, cached_match_ph, coins.len(), self.live_games.len(),
-        );
 
         for game_coin_ph in coins.iter() {
             for live_game in self.live_games.iter_mut() {
@@ -1970,15 +1854,9 @@ impl ChannelHandler {
                     && cached_match_ph.as_ref() == Some(game_coin_ph);
                 let is_latest = live_game.last_referee_puzzle_hash == *game_coin_ph;
 
-                eprintln!(
-                    "SET_STATE_FOR_COINS: game={:?} coin_ph={:?} last_ref_ph={:?} needs_redo={} is_latest={}",
-                    live_game.game_id, game_coin_ph, live_game.last_referee_puzzle_hash, needs_redo, is_latest,
-                );
-
                 let game_timeout = live_game.get_game_timeout();
 
                 if needs_redo {
-                    eprintln!("SET_STATE_FOR_COINS: → needs redo of cached move");
                     res.insert(
                         coin_id,
                         OnChainGameState {
@@ -1999,10 +1877,6 @@ impl ChannelHandler {
                 // If the coin is at the latest state and the referee
                 // says it's our turn, we can move normally on-chain.
                 let our_turn = is_latest && live_game.is_my_turn();
-                eprintln!(
-                    "SET_STATE_FOR_COINS: → no cached action, our_turn={} (is_latest={})",
-                    our_turn, is_latest,
-                );
                 res.insert(
                     coin_id,
                     OnChainGameState {
@@ -2116,22 +1990,10 @@ impl ChannelHandler {
         ),
         Error,
     > {
-        debug!(
-            "{} ON CHAIN OUR MOVE {:?} {:?} {:?}",
-            self.is_initial_potato(),
-            readable_move,
-            entropy,
-            existing_coin
-        );
         let game_idx = self.get_game_by_id(game_id)?;
 
         let last_puzzle_hash = self.live_games[game_idx].last_puzzle_hash();
-        let start_puzzle_hash = self.live_games[game_idx].current_puzzle_hash(env.allocator)?;
-        let end_puzzle_hash = self.live_games[game_idx].outcome_puzzle_hash(env.allocator)?;
-
-        debug!("last puzzle hash {last_puzzle_hash:?}");
-        debug!("start puzzle hash {start_puzzle_hash:?}");
-        debug!("outcome puzzle hash {end_puzzle_hash:?}");
+        let _start_puzzle_hash = self.live_games[game_idx].current_puzzle_hash(env.allocator)?;
 
         // assert_eq!(start_puzzle_hash, existing_ph);
 
@@ -2148,10 +2010,6 @@ impl ChannelHandler {
             entropy,
             self.current_state_number,
         )?;
-        debug!(
-            "{} move_result {move_result:?}",
-            self.unroll.coin.started_with_potato
-        );
 
         let tx = self.live_games[game_idx].get_transaction_for_move(
             env.allocator,
@@ -2159,10 +2017,7 @@ impl ChannelHandler {
             true,
         )?;
 
-        let post_current = self.live_games[game_idx].current_puzzle_hash(env.allocator)?;
         let post_outcome = self.live_games[game_idx].outcome_puzzle_hash(env.allocator)?;
-        eprintln!("ON_CHAIN_OUR_MOVE: player={} post_current={post_current:?} post_outcome={post_outcome:?}",
-            self.is_initial_potato());
 
         Ok((
             last_puzzle_hash,
@@ -2199,14 +2054,6 @@ impl ChannelHandler {
         coin_string: &CoinString,
         conditions: &[CoinCondition],
     ) -> Result<CoinSpentInformation, Error> {
-        debug!(
-            "{} GAME COIN SPENT {:?} {:?} {:?}",
-            self.is_initial_potato(),
-            coin_string,
-            conditions,
-            self.game_is_my_turn(game_id)
-        );
-
         let reward_puzzle_hash = self.get_reward_puzzle_hash(env)?;
 
         let (ph, amt) = if let Some((ph, amt)) = conditions
@@ -2226,7 +2073,6 @@ impl ChannelHandler {
         };
 
         if reward_puzzle_hash == ph {
-            debug!("was our turn, reward {ph:?} {amt:?}");
             return Ok(CoinSpentInformation::OurReward(ph.clone(), amt.clone()));
         }
 
@@ -2242,9 +2088,6 @@ impl ChannelHandler {
             let coin_being_spent_ph = coin_string.to_parts().map(|(_, p, _)| p);
             let matches_spent = coin_being_spent_ph.as_ref() == Some(&ph);
             if !matches_spent {
-                eprintln!(
-                    "GAME_COIN_SPENT: forward-align: create_ph={ph:?} matches our expected state, skipping referee"
-                );
                 self.live_games[live_game_idx].last_referee_puzzle_hash = ph.clone();
                 return Ok(CoinSpentInformation::TheirSpend(
                     TheirTurnCoinSpentResult::Expected(
@@ -2280,20 +2123,12 @@ impl ChannelHandler {
                 .map(|(_, ph, _)| ph == move_data.match_puzzle_hash)
                 .unwrap_or(false);
             if coin_matches {
-                eprintln!(
-                    "GET_REDO_FORWARD: coin PH matches cached move for game={:?}, replaying as RedoMove",
-                    move_data.game_id,
-                );
                 return Ok(Some(GameAction::RedoMove(
                     move_data.game_id.clone(),
                     coin.clone(),
                     move_data.clone(),
                 )));
             }
-            eprintln!(
-                "GET_REDO_FORWARD: coin PH mismatch for game={:?} (expected={:?})",
-                move_data.game_id, move_data.match_puzzle_hash,
-            );
         }
         Ok(None)
     }
@@ -2397,18 +2232,6 @@ impl ChannelHandler {
         coin: &CoinString,
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
         if let Ok(game_idx) = self.get_game_by_id(game_id) {
-            if let Some((_, coin_ph, _)) = coin.to_parts() {
-                let current_ph = self.live_games[game_idx]
-                    .current_puzzle_hash(env.allocator)?;
-                if coin_ph != current_ph {
-                    let outcome_ph = self.live_games[game_idx]
-                        .outcome_puzzle_hash(env.allocator)?;
-                    eprintln!(
-                        "accept_or_timeout: coin PH {:?} != current {:?}, outcome {:?} for game {:?}",
-                        coin_ph, current_ph, outcome_ph, game_id
-                    );
-                }
-            }
             let tx = self.live_games[game_idx].get_transaction_for_timeout(env.allocator, coin)?;
             // Game is done one way or another.
             self.live_games.remove(game_idx);
@@ -2556,7 +2379,6 @@ impl ChannelHandler {
             .collect();
 
         if !pay_to_me.is_empty() {
-            debug!("handle rewards {conditions:?} output {pay_to_me:?}");
             // Check for conditions that pay us
             let reward_puzzle_hash = self.get_reward_puzzle_hash(env)?;
             let spend_rewards = self.spend_reward_coins(env, &pay_to_me, &reward_puzzle_hash)?;

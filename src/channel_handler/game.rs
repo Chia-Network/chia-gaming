@@ -141,7 +141,6 @@ impl Game {
     ) -> Result<(NodePtr, GameHandler, NodePtr, ProposalGameSpec), Error> {
         let args = (bet_size.clone(), ()).to_clvm(allocator).into_gen()?;
         let proposal_clvm = proposal_program.to_clvm(allocator).into_gen()?;
-        debug!("running make_proposal bet_size={bet_size:?}");
         let result = run_program(
             allocator.allocator(),
             &chia_dialect(),
@@ -231,7 +230,6 @@ impl Game {
         wire_data: NodePtr,
     ) -> Result<(GameHandler, NodePtr), Error> {
         let parser_clvm = parser_program.to_clvm(allocator).into_gen()?;
-        debug!("running parser");
         // Parser expects wire_data as its environment (spread args)
         let result = run_program(
             allocator.allocator(),
@@ -323,9 +321,6 @@ impl Game {
             .into_gen()?;
 
         let poker_generator_clvm = poker_generator.to_clvm(allocator).into_gen()?;
-        debug!(
-            "running factory as_alice={as_alice} args={args_program:?}"
-        );
         let template_clvm = match run_program(
             allocator.allocator(),
             &chia_dialect(),

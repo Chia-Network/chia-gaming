@@ -43,7 +43,6 @@ const FARMER_REWARD_AMOUNT: u64 = 250_000_000_000;
 struct CoinRecord {
     coin: CoinString,
     puzzle_hash: PuzzleHash,
-    amount: Amount,
     created_height: u32,
     spent_height: Option<u32>,
     coinbase: bool,
@@ -64,6 +63,7 @@ struct SimulatorState {
 
 pub struct Simulator {
     state: RefCell<SimulatorState>,
+    strict: bool,
 }
 
 impl SimulatorState {
@@ -84,7 +84,6 @@ impl SimulatorState {
             CoinRecord {
                 coin,
                 puzzle_hash: puzzle_hash.clone(),
-                amount: amount.clone(),
                 created_height: self.height,
                 spent_height: None,
                 coinbase,
@@ -129,7 +128,6 @@ impl SimulatorState {
                     CoinRecord {
                         coin,
                         puzzle_hash: ph.clone(),
-                        amount: amt.clone(),
                         created_height: next_height,
                         spent_height: None,
                         coinbase: false,
@@ -147,16 +145,25 @@ impl SimulatorState {
 
 impl Default for Simulator {
     fn default() -> Self {
+        Simulator::new(false)
+    }
+}
+
+impl Simulator {
+    pub fn new(strict: bool) -> Self {
         let mut state = SimulatorState::new();
         let zero_ph = PuzzleHash::from_hash(Hash::from_slice(&[0u8; 32]));
         state.farm_block_inner(&zero_ph);
         Simulator {
             state: RefCell::new(state),
+            strict,
         }
     }
-}
 
-impl Simulator {
+    pub fn new_strict() -> Self {
+        Simulator::new(true)
+    }
+
     pub fn farm_block(&self, puzzle_hash: &PuzzleHash) {
         self.state.borrow_mut().farm_block_inner(puzzle_hash);
     }
@@ -220,10 +227,12 @@ impl Simulator {
         let mut puzzle_solutions = Vec::new();
         let mut agg_sig_pairs: Vec<(chia_bls::PublicKey, Vec<u8>)> = Vec::new();
         let mut aggregate_signature = Aggsig::default();
+        let mut total_input = Amount::default();
+        let mut total_output = Amount::default();
+        let mut total_reserve_fee = Amount::default();
 
         for (i, tx) in txs.iter().enumerate() {
             let coin_id = tx.coin.to_coin_id();
-            eprintln!("PUSH_TX: coin[{i}] coin_id={coin_id:?} coin={:?}", tx.coin.to_parts());
 
             let record = match state.coins.get(&coin_id) {
                 Some(r) => r,
@@ -243,6 +252,9 @@ impl Simulator {
                     diagnostic: format!("Coin already spent: {:?}", coin_id),
                 });
             }
+
+            let (_, _, coin_amount) = tx.coin.get_coin_string_parts()?;
+            total_input += coin_amount;
 
             let puzzle_program: Program = (*tx.bundle.puzzle.to_program()).clone();
             let computed_ph = puzzle_program.sha256tree(allocator);
@@ -282,6 +294,7 @@ impl Simulator {
             for cond in &conditions {
                 match cond {
                     CoinCondition::CreateCoin(ph, amt) => {
+                        total_output += amt.clone();
                         additions.push((coin_id.clone(), ph.clone(), amt.clone()));
                     }
                     CoinCondition::AggSigMe(pk, msg) => {
@@ -291,6 +304,9 @@ impl Simulator {
                             &Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA),
                         );
                         agg_sig_pairs.push((pk.to_bls(), full_msg));
+                    }
+                    CoinCondition::ReserveFee(amt) => {
+                        total_reserve_fee += amt.clone();
                     }
                     CoinCondition::AssertHeightRelative(blocks) => {
                         let elapsed = state.height.saturating_sub(record.created_height);
@@ -319,6 +335,44 @@ impl Simulator {
             } else {
                 aggregate_signature += tx.bundle.signature.clone();
             }
+        }
+
+        if total_output > total_input {
+            return Ok(IncludeTransactionResult {
+                code: 3,
+                e: Some(20),
+                diagnostic: format!(
+                    "Minting coins: outputs ({}) exceed inputs ({})",
+                    total_output.to_u64(),
+                    total_input.to_u64()
+                ),
+            });
+        }
+
+        let implicit_fee = Amount::new(total_input.to_u64() - total_output.to_u64());
+        if total_reserve_fee > implicit_fee {
+            return Ok(IncludeTransactionResult {
+                code: 3,
+                e: Some(21),
+                diagnostic: format!(
+                    "RESERVE_FEE not satisfied: declared {} but only {} available",
+                    total_reserve_fee.to_u64(),
+                    implicit_fee.to_u64()
+                ),
+            });
+        }
+
+        if self.strict && implicit_fee != total_reserve_fee {
+            return Ok(IncludeTransactionResult {
+                code: 3,
+                e: Some(22),
+                diagnostic: format!(
+                    "Strict mode: implicit fee ({}) != declared RESERVE_FEE ({}). \
+                     All fees must be explicitly declared.",
+                    implicit_fee.to_u64(),
+                    total_reserve_fee.to_u64()
+                ),
+            });
         }
 
         // Check for duplicate or conflicting transactions already in the mempool.
@@ -601,33 +655,15 @@ pub fn run_simulation_tests(choices: Vec<String>) {
 mod test {
     use super::*;
 
+    /// Run simulation tests. Set `SIM_TEST=<substring>` to run only matching
+    /// tests, e.g. `SIM_TEST=piss_off_peer_timeout cargo test --features sim-tests sim_tests`
     #[test]
     fn sim_tests() {
-        run_simulation_tests(Vec::new());
-    }
-
-    #[test]
-    fn sim_test_timeout_only() {
-        run_simulation_tests(vec!["piss_off_peer_timeout".to_string()]);
-    }
-
-    #[test]
-    fn sim_test_complete_only() {
-        run_simulation_tests(vec!["piss_off_peer_complete".to_string()]);
-    }
-
-    #[test]
-    fn sim_test_slash_only() {
-        run_simulation_tests(vec!["piss_off_peer_slash".to_string()]);
-    }
-
-    #[test]
-    fn sim_test_bob_slash_only() {
-        run_simulation_tests(vec!["test_referee_play_debug_game_bob_slash".to_string()]);
-    }
-
-    #[test]
-    fn sim_test_alice_slash_only() {
-        run_simulation_tests(vec!["test_referee_play_debug_game_alice_slash".to_string()]);
+        let filter: Vec<String> = std::env::var("SIM_TEST")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .into_iter()
+            .collect();
+        run_simulation_tests(filter);
     }
 }
