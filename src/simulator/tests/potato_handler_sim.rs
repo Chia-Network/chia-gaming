@@ -642,6 +642,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 GameAction::Shutdown(_, _)
                     | GameAction::WaitBlocks(_, _)
                     | GameAction::GoOnChain(_)
+                    | GameAction::GoOnChainThenMove(_)
                     | GameAction::Accept(_)
                     | GameAction::Timeout(_)
                     | GameAction::EnableCheating(_, _, _)
@@ -655,7 +656,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     };
     let has_explicit_go_on_chain = moves_input
         .iter()
-        .any(|m| matches!(m, GameAction::GoOnChain(_)));
+        .any(|m| matches!(m, GameAction::GoOnChain(_) | GameAction::GoOnChainThenMove(_)));
 
     while !matches!(ending, Some(0)) {
         num_steps += 1;
@@ -981,6 +982,50 @@ fn run_game_container_with_action_list_with_success_predicate(
                         }
                         debug!("go on chain");
                         local_uis[*who].go_on_chain = true;
+                    }
+                    GameAction::GoOnChainThenMove(who) => {
+                        assert!(
+                            !game_ids.is_empty(),
+                            "GoOnChainThenMove({who}) but game_ids is empty"
+                        );
+                        if !cradles[*who].handshake_finished() {
+                            move_number -= 1;
+                            continue;
+                        }
+
+                        debug!("go on chain then move for player {who}");
+                        local_uis[*who].go_on_chain = true;
+                        let got_error = local_uis[*who].got_error;
+                        cradles[*who].go_on_chain(
+                            allocator, rng, &mut local_uis[*who], got_error,
+                        )?;
+                        local_uis[*who].go_on_chain = false;
+
+                        let next = moves_input.get(move_number);
+                        if let Some(GameAction::Move(mwho, readable, _)) = next {
+                            assert_eq!(
+                                *mwho, *who,
+                                "GoOnChainThenMove({who}) followed by Move({mwho},...) — player mismatch"
+                            );
+                            let readable_program = readable.to_program();
+                            let encoded = readable_program.bytes();
+                            let entropy = rng.gen();
+                            eprintln!(
+                                "QUEUED_MOVE: player={who} calling make_move immediately after go_on_chain"
+                            );
+                            cradles[*who].make_move(
+                                allocator,
+                                rng,
+                                &game_ids[0],
+                                encoded.to_vec(),
+                                entropy,
+                            )?;
+                            move_number += 1;
+                        } else {
+                            panic!(
+                                "GoOnChainThenMove({who}) must be followed by a Move action, got {next:?}"
+                            );
+                        }
                     }
                     GameAction::FakeMove(who, readable, move_data) => {
                         assert!(
@@ -2494,16 +2539,27 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
                 run_calpoker_container_with_action_list_with_success_predicate(
                     &mut allocator,
                     &moves,
-                    Some(&|_, cradles| cradles[0].is_on_chain() && cradles[1].is_on_chain()),
+                    Some(&|_, cradles| {
+                        cradles[0].is_on_chain()
+                            && (cradles[1].is_on_chain() || cradles[1].is_failed())
+                    }),
                     None,
                 )
                 .expect("should finish");
 
+            assert!(
+                outcome.cradles[1].is_failed(),
+                "player 1 should be in Failed state"
+            );
             let p1_notifs = &outcome.local_uis[1].notifications;
             assert!(
                 p1_notifs.iter().any(|n| matches!(n, GameNotification::ChannelError { .. })),
                 "player 1 should get ChannelError for state-from-the-future, got: {p1_notifs:?}"
             );
+            let channel_error_idx = p1_notifs.iter().position(|n| matches!(n, GameNotification::ChannelError { .. })).unwrap();
+            for n in &p1_notifs[channel_error_idx + 1..] {
+                panic!("no notifications should arrive after ChannelError, but got {n:?}");
+            }
         },
     ));
 
@@ -2530,15 +2586,76 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
                 run_calpoker_container_with_action_list_with_success_predicate(
                     &mut allocator,
                     &moves,
-                    Some(&|_, cradles| cradles[0].is_on_chain() && cradles[1].is_on_chain()),
+                    Some(&|_, cradles| {
+                        cradles[0].is_on_chain()
+                            && (cradles[1].is_on_chain() || cradles[1].is_failed())
+                    }),
                     None,
                 )
                 .expect("should finish");
 
+            assert!(
+                outcome.cradles[1].is_failed(),
+                "player 1 should be in Failed state"
+            );
             let p1_notifs = &outcome.local_uis[1].notifications;
             assert!(
                 p1_notifs.iter().any(|n| matches!(n, GameNotification::ChannelError { .. })),
                 "player 1 should get ChannelError for wrong-parity old state, got: {p1_notifs:?}"
+            );
+            let channel_error_idx = p1_notifs.iter().position(|n| matches!(n, GameNotification::ChannelError { .. })).unwrap();
+            for n in &p1_notifs[channel_error_idx + 1..] {
+                panic!("no notifications should arrive after ChannelError, but got {n:?}");
+            }
+        },
+    ));
+
+    res.push((
+        "test_go_on_chain_then_move_queued_and_replayed",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+
+            // After moves 0 (alice commit) and 1 (bob seed), it's alice's
+            // turn for move 2 (reveal).  GoOnChainThenMove calls go_on_chain
+            // and then make_move in the same tick, before any blockchain
+            // events.  The move must be queued (initiated_on_chain blocks
+            // off-chain execution) and replayed once on-chain.  Bob is
+            // nerfed so he can't respond; alice times him out.
+            let all_moves = prefix_test_moves(&mut allocator);
+            let mut moves = Vec::new();
+            moves.push(all_moves[0].clone()); // alice commit
+            moves.push(all_moves[1].clone()); // bob seed
+            moves.push(GameAction::GoOnChainThenMove(0));
+            moves.push(all_moves[2].clone()); // alice reveal — consumed by GoOnChainThenMove
+            moves.push(GameAction::NerfTransactions(1));
+            moves.push(GameAction::WaitBlocks(120, 0));
+
+            let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &moves,
+                None,
+                None,
+            )
+            .expect("should finish");
+
+            for (i, notifs) in outcome.local_uis.iter().enumerate() {
+                for n in &notifs.notifications {
+                    assert!(
+                        !matches!(n, GameNotification::ChannelError { .. }),
+                        "player {i} should not get ChannelError, got: {n:?}"
+                    );
+                }
+            }
+
+            let p0_notifs = &outcome.local_uis[0].notifications;
+            let p1_notifs = &outcome.local_uis[1].notifications;
+            assert!(
+                p0_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOutOpponent { .. })),
+                "alice should get WeTimedOutOpponent (bob was nerfed), got: {p0_notifs:?}"
+            );
+            assert!(
+                p1_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
+                "bob should get WeTimedOut (nerfed, couldn't play), got: {p1_notifs:?}"
             );
         },
     ));

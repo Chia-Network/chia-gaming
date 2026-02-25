@@ -48,4 +48,5 @@ pub enum HandshakeState {
     OnChainWaitingForUnrollConditions(CoinString),
     OnChain(Box<OnChainPotatoHandler>),
     Completed,
+    Failed,
 }

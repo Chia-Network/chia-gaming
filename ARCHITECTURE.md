@@ -587,10 +587,19 @@ This is enforced in `SynchronousGameCradleState`:
 After disconnection, all state updates come from coin-watching events. The
 disconnected peer's own unroll transaction is detected via the same
 `handle_channel_coin_spent` path that handles opponent-initiated unrolls (see
-[Unified Path](#unified-path)). The only flag distinguishing self-initiated
-from opponent-initiated is `initiated_on_chain` in the `ChannelHandler`, which
-is used solely to avoid submitting a duplicate unroll transaction — not for
-any state-machine branching.
+[Unified Path](#unified-path)).
+
+The `initiated_on_chain` flag in `ChannelHandler` serves two purposes:
+1. **Duplicate prevention**: Avoids submitting a second unroll transaction when
+   we detect our own channel coin spend.
+2. **Action queuing**: When `initiated_on_chain` is true, `do_game_action`
+   places user-initiated actions (moves, accepts) directly on
+   `game_action_queue` without executing them off-chain. Incoming peer messages
+   are also dropped (`process_incoming_message` returns early). The queued
+   actions are drained during `finish_on_chain_transition`, where `Shutdown`
+   actions are discarded (on-chain path supersedes the clean shutdown path) and
+   `LocalStartGame` actions emit `GameCancelled`. Remaining actions (moves,
+   accepts) are forwarded to the `OnChainPotatoHandler` for on-chain replay.
 
 **Key code:** `src/peer_container.rs` — `go_on_chain`, `send_message`,
 `deliver_message`
@@ -649,6 +658,27 @@ A redo is NOT needed when:
 - The preemption or timeout resolved to the latest state (our move was already
   included in the unroll data)
 - We were the *receiver* of the last move (nothing to replay)
+
+### Stale Cache After Peer Disconnect
+
+When `go_on_chain` is called, all incoming peer messages are black-holed (see
+[Peer Disconnect Invariant](#peer-disconnect-invariant)). If we sent a move
+(setting `cached_last_action`) but the peer's response — which would normally
+clear the cache — arrives *after* the disconnect, the cache remains set. This
+is expected and correct: the stale cache causes `set_state_for_coins` to
+detect a redo is needed, which replays our unacknowledged move on-chain. The
+redo is legitimate because the unroll resolves to the pre-move state (the last
+mutually signed state was before our unacknowledged move).
+
+### Redo and User-Queued Moves Can Coexist
+
+When a user calls `make_move` after `go_on_chain`, the move is placed directly
+on `game_action_queue` without touching the potato or channel handler (since
+`initiated_on_chain` is true). During `finish_on_chain_transition`, the stale
+`cached_last_action` may also produce a `RedoMove` that is pushed to the
+*front* of the queue. This is correct: the redo replays the previous
+unacknowledged move, and the user's new move follows once the game state has
+caught up. They are different moves for different game states.
 
 ---
 
@@ -711,6 +741,19 @@ flag.
 - **After opponent's move** (`TheirSpend::Expected` or `TheirSpend::Moved`):
   `our_turn = true` — the opponent just moved, so now it's our turn.
 
+### our_turn Correction for Pending Redos
+
+In the `TheirSpend(Expected)` path of `handle_game_coin_spent`, the channel
+handler's referee may be one step ahead of the on-chain state (because we
+already processed the next move off-chain but the response was dropped). In
+this case, `game_is_my_turn()` returns `false` (the referee thinks it is the
+opponent's turn), but on-chain it is actually *our* turn to submit the redo.
+
+When a redo is generated via `take_cached_move_for_game`, `our_turn` is set to
+`true` to reflect the on-chain reality. Without this correction, a timeout on
+the intermediate redo coin would emit `WeTimedOutOpponent` instead of
+`WeTimedOut`, producing wrong notifications.
+
 ### How our_turn Determines Timeout Notifications
 
 When `coin_timeout_reached` fires on a game coin:
@@ -723,6 +766,17 @@ else                        →  GameNotification::WeTimedOutOpponent
 So the notification depends entirely on `our_turn` in the `game_map` entry for
 the coin that timed out. Both players maintain independent `game_map`s, and
 both should have complementary values of `our_turn` for the same game coin.
+
+### Moves for Finished Games Are Discarded
+
+When a game coin times out, the game is removed from `game_map` and
+`live_games`. If a user-queued `Move` for that game is still on the
+`game_action_queue`, it is discarded when popped: `do_on_chain_action` checks
+`get_current_coin` and falls through to `next_action` if the game is gone, and
+`do_on_chain_move` checks `my_move_in_game` — returning `None` (game absent)
+causes a discard, while `Some(false)` (game alive, not our turn) causes a
+requeue. This prevents stale moves from crashing or looping after a legitimate
+timeout.
 
 ---
 

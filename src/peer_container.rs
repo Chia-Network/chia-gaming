@@ -278,6 +278,9 @@ pub trait GameCradle {
     /// Check whether we're on chain.
     fn is_on_chain(&self) -> bool;
 
+    /// Check whether the channel has failed.
+    fn is_failed(&self) -> bool;
+
     /// Trigger going on chain.
     fn go_on_chain<R: Rng>(
         &mut self,
@@ -841,6 +844,10 @@ impl GameCradle for SynchronousGameCradle {
 
     fn is_on_chain(&self) -> bool {
         self.peer.is_on_chain()
+    }
+
+    fn is_failed(&self) -> bool {
+        self.peer.is_failed()
     }
 
     fn my_move_in_game(&self, game_id: &GameID) -> Option<bool> {

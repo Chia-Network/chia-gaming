@@ -186,6 +186,11 @@ mod sim_tests {
         ProposeNewGame(usize),
         /// Go on chain
         GoOnChain(usize),
+        /// Go on chain and immediately make the next Move in the action
+        /// list before any blockchain events are processed.  This tests
+        /// that moves issued right after go_on_chain get queued and
+        /// replayed once the on-chain transition completes.
+        GoOnChainThenMove(usize),
         /// Wait a number of blocks
         WaitBlocks(usize, usize),
         /// Accept
@@ -212,6 +217,9 @@ mod sim_tests {
                 GameAction::UnNerfTransactions => write!(formatter, "UnNerfTransactions"),
                 GameAction::ProposeNewGame(p) => write!(formatter, "ProposeNewGame({p})"),
                 GameAction::GoOnChain(p) => write!(formatter, "GoOnChain({p})"),
+                GameAction::GoOnChainThenMove(p) => {
+                    write!(formatter, "GoOnChainThenMove({p})")
+                }
                 GameAction::Accept(p) => write!(formatter, "Accept({p})"),
                 GameAction::WaitBlocks(n, p) => write!(formatter, "WaitBlocks({n},{p})"),
                 GameAction::Shutdown(p, _) => write!(formatter, "Shutdown({p},..)"),
