@@ -7,7 +7,6 @@ use crate::potato_handler::types::PeerMessage;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum GameNotification {
     GameCancelled { id: GameID },
-    AcceptFinished { id: GameID, amount: Amount },
     WeTimedOut { id: GameID, amount: Amount },
     WeTimedOutOpponent { id: GameID, amount: Amount },
     OpponentPlayedIllegalMove { id: GameID },
@@ -18,6 +17,9 @@ pub enum GameNotification {
     GameDestroyedOnChain { id: GameID },
     OurTurnCoinSpentUnexpectedly { id: GameID },
     OpponentMadeImpossibleSpend { id: GameID },
+
+    ChannelCoinSpent,
+    UnrollCoinSpent,
 }
 
 #[derive(Debug, Clone)]

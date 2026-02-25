@@ -1942,11 +1942,58 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
             let p0_notifs = &outcome.local_uis[0].notifications;
             assert!(
-                p0_notifs.iter().any(|n| matches!(n, GameNotification::AcceptFinished { .. })),
-                "player 0 (who accepted) should get AcceptFinished, got: {p0_notifs:?}"
+                p0_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
+                "player 0 (who accepted) should get WeTimedOut, got: {p0_notifs:?}"
             );
         },
     ));
+
+    res.push(("test_accept_after_nerfed_peer_gets_share", &|| {
+        let mut allocator = AllocEncoder::new();
+        let seed_data: [u8; 32] = [0; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed_data);
+
+        // Single debug-game move: Alice sets mover_share to 100 (half of the
+        // 200-unit pot).  Alice then gets nerfed so her transactions are
+        // dropped, goes on-chain (disconnecting from Bob), and Bob accepts the
+        // result and goes on-chain himself.  Bob's unroll lands and after the
+        // timeout he claims his half.
+        let moves = [DebugGameTestMove::new(100, 0)];
+        let mut sim_setup =
+            setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
+        sim_setup.game_actions.push(GameAction::NerfTransactions(0));
+        sim_setup.game_actions.push(GameAction::GoOnChain(0));
+        sim_setup.game_actions.push(GameAction::Accept(1));
+        sim_setup.game_actions.push(GameAction::GoOnChain(1));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(120, 0));
+
+        let outcome = run_game_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &mut rng,
+            sim_setup.private_keys.clone(),
+            &sim_setup.identities,
+            b"debug",
+            &sim_setup.args_program,
+            &sim_setup.game_actions,
+            None,
+        )
+        .expect("should finish");
+
+        let p1_notifs = &outcome.local_uis[1].notifications;
+        assert!(
+            p1_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
+            "Bob (who accepted) should get WeTimedOut, got: {p1_notifs:?}"
+        );
+
+        let (p0_balance, p1_balance) =
+            get_balances_from_outcome(&outcome).expect("should get balances");
+        // Bob claimed his 100.  Alice is still nerfed so her 100 reward sits
+        // unclaimed, leaving her 100 short.
+        assert_eq!(
+            p1_balance, p0_balance + 100,
+            "Bob should have claimed his half (p0={p0_balance} p1={p1_balance})"
+        );
+    }));
 
     res.push((
         "test_on_chain_before_any_moves_times_out",

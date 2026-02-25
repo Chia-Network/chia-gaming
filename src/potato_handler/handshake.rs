@@ -41,13 +41,10 @@ pub enum HandshakeState {
     StepF(Box<HandshakeStepInfo>),
     PostStepF(Box<HandshakeStepInfo>),
     Finished(Box<HandshakeStepWithSpend>),
-    // Going on chain ourselves route.
-    OnChainTransition(CoinString, Box<HandshakeStepWithSpend>),
-    OnChainWaitingForUnrollTimeoutOrSpend(CoinString),
-    // Other party went on chain, we're catching up route.
+    OnChainWaitingForUnrollTimeoutOrSpend(CoinString, usize),
     OnChainWaitForConditions(CoinString, Box<HandshakeStepWithSpend>),
     // Converge here to on chain state.
-    OnChainWaitingForUnrollSpend(CoinString),
+    OnChainWaitingForUnrollSpend(CoinString, usize),
     OnChainWaitingForUnrollConditions(CoinString),
     OnChain(Box<OnChainPotatoHandler>),
     Completed,

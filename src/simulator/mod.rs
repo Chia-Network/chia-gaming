@@ -259,8 +259,8 @@ impl Simulator {
             let puzzle_program: Program = (*tx.bundle.puzzle.to_program()).clone();
             let computed_ph = puzzle_program.sha256tree(allocator);
             if computed_ph != record.puzzle_hash {
-                eprintln!(
-                    "PUSH_TX: puzzle hash MISMATCH for coin {i}: coin_ph={:?} computed_ph={computed_ph:?}",
+                panic!(
+                    "PUSH_TX: puzzle hash MISMATCH for coin {i}: coin_id={coin_id:?} coin_ph={:?} computed_ph={computed_ph:?}",
                     record.puzzle_hash,
                 );
             }
@@ -304,6 +304,9 @@ impl Simulator {
                             &Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA),
                         );
                         agg_sig_pairs.push((pk.to_bls(), full_msg));
+                    }
+                    CoinCondition::AggSigUnsafe(pk, msg) => {
+                        agg_sig_pairs.push((pk.to_bls(), msg.clone()));
                     }
                     CoinCondition::ReserveFee(amt) => {
                         total_reserve_fee += amt.clone();

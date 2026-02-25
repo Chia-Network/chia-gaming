@@ -134,6 +134,12 @@ pub struct ChannelHandler {
 
     // Live games
     live_games: Vec<LiveGame>,
+
+    // Games removed by send_potato_accept / received_potato_accept that
+    // haven't been confirmed by a full potato round-trip yet.  Kept so
+    // set_state_for_coins and accept_or_timeout_game_on_chain can find them
+    // if the channel goes on-chain before the round-trip completes.
+    pending_accept_games: Vec<LiveGame>,
 }
 
 pub trait EnvDataForReferee {
@@ -260,6 +266,24 @@ impl ChannelHandler {
 
     pub fn get_unroll_coin(&self) -> &ChannelHandlerUnrollSpendInfo {
         &self.unroll
+    }
+
+    /// Return whichever stored UnrollCoin matches the given on-chain state
+    /// number.  Checks `self.timeout` first, then `self.unroll`.
+    pub fn get_unroll_for_state(&self, state_number: usize) -> Result<&ChannelHandlerUnrollSpendInfo, Error> {
+        if let Some(t) = self.timeout.as_ref() {
+            if t.coin.state_number == state_number {
+                return Ok(t);
+            }
+        }
+        if self.unroll.coin.state_number == state_number {
+            return Ok(&self.unroll);
+        }
+        Err(Error::StrErr(format!(
+            "No stored unroll matches on-chain state {state_number} (unroll={}, timeout={:?})",
+            self.unroll.coin.state_number,
+            self.timeout.as_ref().map(|t| t.coin.state_number),
+        )))
     }
 
     fn make_curried_unroll_puzzle<R: Rng>(
@@ -502,6 +526,7 @@ impl ChannelHandler {
             state_conditions_hashes: HashMap::new(),
 
             live_games: Vec::new(),
+            pending_accept_games: Vec::new(),
 
             private_keys,
         };
@@ -739,6 +764,10 @@ impl ChannelHandler {
         signatures: &PotatoSignatures,
         inputs: &UnrollCoinConditionInputs,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
+        // The potato just arrived, so any prior pending accepts are now
+        // confirmed by the round-trip.
+        self.pending_accept_games.clear();
+
         // Unroll coin section.
         let mut test_unroll = self.unroll.coin.clone();
         test_unroll.state_number = self.current_state_number + 1;
@@ -1199,14 +1228,25 @@ impl ChannelHandler {
         debug!("{} SEND_POTATO_ACCEPT", self.is_initial_potato());
         let game_idx = self.get_game_by_id(game_id)?;
 
-        // referee maker is removed and will be destroyed when we leave this
-        // function.
         let live_game = self.live_games.remove(game_idx);
         self.my_allocated_balance -= live_game.my_contribution.clone();
         self.their_allocated_balance -= live_game.their_contribution.clone();
 
         let amount = live_game.get_our_current_share();
         let at_stake = live_game.get_amount();
+
+        // Keep a copy of the referee so set_state_for_coins and
+        // accept_or_timeout_game_on_chain can find it during on-chain
+        // resolution if the channel goes on-chain before the potato
+        // round-trip completes.
+        let (ref_clone, ph_clone) = live_game.save_referee_state();
+        self.pending_accept_games.push(LiveGame::new(
+            game_id.clone(),
+            ph_clone,
+            ref_clone,
+            live_game.my_contribution.clone(),
+            live_game.their_contribution.clone(),
+        ));
 
         self.my_out_of_game_balance += amount.clone();
         self.their_out_of_game_balance += at_stake.clone() - amount.clone();
@@ -1285,7 +1325,8 @@ impl ChannelHandler {
         self.my_out_of_game_balance = my_balance;
         self.their_out_of_game_balance = their_balance;
 
-        self.live_games.remove(game_idx);
+        let removed = self.live_games.remove(game_idx);
+        self.pending_accept_games.push(removed);
 
         Ok(ChannelCoinSpendInfo {
             aggsig: spend.signature,
@@ -1423,6 +1464,18 @@ impl ChannelHandler {
         Ok(channel_spend)
     }
 
+    /// Extract the on-chain unrolling state number from the channel-coin
+    /// spend conditions.
+    pub fn unrolling_state_from_conditions<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+        conditions: NodePtr,
+    ) -> Result<usize, Error> {
+        let rem = self.break_out_conditions_for_spent_coin(env, conditions)?;
+        usize_from_atom(&rem[0])
+            .ok_or_else(|| Error::StrErr("Unconvertible state number".to_string()))
+    }
+
     fn break_out_conditions_for_spent_coin<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
@@ -1486,6 +1539,7 @@ impl ChannelHandler {
             },
             timeout: false,
             games_canceled: self.get_just_created_games(),
+            unrolling_state_number: 0,
         })
     }
 
@@ -1540,7 +1594,7 @@ impl ChannelHandler {
             .ok_or_else(|| Error::StrErr("Unconvertible state number".to_string()))?;
 
         // Three cases based on comparing on-chain state to our current state:
-        let result = match (
+        let mut result = match (
             myself,
             unrolling_state_number.cmp(&self.current_state_number),
         ) {
@@ -1558,6 +1612,9 @@ impl ChannelHandler {
             // make_preemption_unroll_spend returns an error (case e).
             (_, Ordering::Less) => self.make_preemption_unroll_spend(env, unrolling_state_number),
         };
+        if let Ok(ref mut r) = result {
+            r.unrolling_state_number = unrolling_state_number;
+        }
         result
     }
 
@@ -1579,6 +1636,7 @@ impl ChannelHandler {
             },
             timeout: true,
             games_canceled: self.get_just_created_games(),
+            unrolling_state_number: 0,
         })
     }
 
@@ -1601,15 +1659,26 @@ impl ChannelHandler {
         // Pick whichever of our stored states has the right parity relative
         // to OLD.  The CLSP requires logand(1, logxor(new_sn, old_sn)) == 1,
         // i.e. new_sn and old_sn must differ in the LSB.
-        let unroll_ok = (self.unroll.coin.state_number ^ old_sn) & 1 == 1;
+        //
+        // A candidate must also have the peer's half-signature — without it
+        // the aggregate signature cannot be formed and the spend would be
+        // rejected on-chain.  The `unroll` slot lacks peer signatures after
+        // update_cached_unroll_state (they arrive only in the `timeout` slot
+        // when the peer responds), so it is often ineligible.
+        let has_peer_sig = |info: &ChannelHandlerUnrollSpendInfo| -> bool {
+            info.signatures.my_unroll_half_signature_peer != Aggsig::default()
+        };
+        let parity_ok = |sn: usize| -> bool { (sn ^ old_sn) & 1 == 1 };
+
+        let unroll_ok = parity_ok(self.unroll.coin.state_number) && has_peer_sig(&self.unroll);
         let preempt_source = if unroll_ok {
             &self.unroll
         } else if let Some(t) = self.timeout.as_ref() {
-            if (t.coin.state_number ^ old_sn) & 1 == 1 {
+            if parity_ok(t.coin.state_number) && has_peer_sig(t) {
                 t
             } else {
                 return Err(Error::StrErr(format!(
-                    "Neither stored state satisfies parity for preemption (old={old_sn} unroll_sn={} timeout_sn={:?})",
+                    "No stored state satisfies parity+signature for preemption (old={old_sn} unroll_sn={} timeout_sn={:?})",
                     self.unroll.coin.state_number,
                     self.timeout.as_ref().map(|t| t.coin.state_number),
                 )));
@@ -1665,6 +1734,7 @@ impl ChannelHandler {
             },
             timeout: false,
             games_canceled: self.get_just_created_games(),
+            unrolling_state_number: 0,
         })
     }
 
@@ -1843,6 +1913,8 @@ impl ChannelHandler {
         };
 
         for game_coin_ph in coins.iter() {
+            let mut matched = false;
+
             for live_game in self.live_games.iter_mut() {
                 let coin_id = CoinString::from_parts(
                     &unroll_coin.to_coin_id(),
@@ -1870,6 +1942,7 @@ impl ChannelHandler {
                             game_timeout,
                         },
                     );
+                    matched = true;
                     break;
                 }
 
@@ -1890,7 +1963,32 @@ impl ChannelHandler {
                         game_timeout,
                     },
                 );
+                matched = true;
                 break;
+            }
+
+            if !matched {
+                for pending in self.pending_accept_games.iter() {
+                    let coin_id = CoinString::from_parts(
+                        &unroll_coin.to_coin_id(),
+                        game_coin_ph,
+                        &pending.get_amount(),
+                    );
+                    res.insert(
+                        coin_id,
+                        OnChainGameState {
+                            game_id: pending.game_id.clone(),
+                            puzzle_hash: game_coin_ph.clone(),
+                            our_turn: true,
+                            state_number: self.current_state_number,
+                            accept: AcceptTransactionState::Waiting,
+                            pending_slash_amount: None,
+                            accepted: true,
+                            game_timeout: pending.get_game_timeout(),
+                        },
+                    );
+                    break;
+                }
             }
         }
 
@@ -2233,8 +2331,16 @@ impl ChannelHandler {
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
         if let Ok(game_idx) = self.get_game_by_id(game_id) {
             let tx = self.live_games[game_idx].get_transaction_for_timeout(env.allocator, coin)?;
-            // Game is done one way or another.
             self.live_games.remove(game_idx);
+            Ok(tx)
+        } else if let Some(idx) = self
+            .pending_accept_games
+            .iter()
+            .position(|g| g.game_id == *game_id)
+        {
+            let tx = self.pending_accept_games[idx]
+                .get_transaction_for_timeout(env.allocator, coin)?;
+            self.pending_accept_games.remove(idx);
             Ok(tx)
         } else {
             Ok(None)
