@@ -500,6 +500,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     moves_input: &[GameAction],
     pred: GameRunEarlySuccessPredicate,
     per_player_balance: Option<u64>,
+    skip_initial_game: bool,
 ) -> Result<GameRunOutcome, Error> {
     let bal = per_player_balance.unwrap_or(100);
     let mut move_number = 0;
@@ -803,40 +804,41 @@ fn run_game_container_with_action_list_with_success_predicate(
                 continue;
             }
 
-            // Start game.
             handshake_done = true;
 
-            let game_id = cradles[0].next_game_id().unwrap();
-            debug!("testing with game id {game_id:?}");
-            game_ids = cradles[0].start_games(
-                allocator,
-                rng,
-                true,
-                &GameStart {
-                    game_id: game_id.clone(),
-                    amount: Amount::new(200),
-                    my_contribution: Amount::new(100),
-                    game_type: GameType(game_type.to_vec()),
-                    timeout: Timeout::new(10),
-                    my_turn: true,
-                    parameters: extras.clone(),
-                },
-            )?;
+            if !skip_initial_game {
+                let game_id = cradles[0].next_game_id().unwrap();
+                debug!("testing with game id {game_id:?}");
+                game_ids = cradles[0].start_games(
+                    allocator,
+                    rng,
+                    true,
+                    &GameStart {
+                        game_id: game_id.clone(),
+                        amount: Amount::new(200),
+                        my_contribution: Amount::new(100),
+                        game_type: GameType(game_type.to_vec()),
+                        timeout: Timeout::new(10),
+                        my_turn: true,
+                        parameters: extras.clone(),
+                    },
+                )?;
 
-            cradles[1].start_games(
-                allocator,
-                rng,
-                false,
-                &GameStart {
-                    game_id,
-                    amount: Amount::new(200),
-                    my_contribution: Amount::new(100),
-                    game_type: GameType(game_type.to_vec()),
-                    timeout: Timeout::new(10),
-                    my_turn: false,
-                    parameters: extras.clone(),
-                },
-            )?;
+                cradles[1].start_games(
+                    allocator,
+                    rng,
+                    false,
+                    &GameStart {
+                        game_id,
+                        amount: Amount::new(200),
+                        my_contribution: Amount::new(100),
+                        game_type: GameType(game_type.to_vec()),
+                        timeout: Timeout::new(10),
+                        my_turn: false,
+                        parameters: extras.clone(),
+                    },
+                )?;
+            }
 
             can_move = true;
         } else if let Some((wb, _)) = &mut wait_blocks {
@@ -1088,6 +1090,7 @@ pub fn run_calpoker_container_with_action_list_with_success_predicate(
         moves,
         predicate,
         per_player_balance,
+        false,
     )
 }
 
@@ -1350,6 +1353,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
                 &moves,
                 Some(&|_, cradles| cradles[0].is_on_chain() && cradles[1].is_on_chain()),
                 None,
+                false,
             )
             .expect("should finish");
             assert!(
@@ -1562,6 +1566,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             &sim_setup.game_actions,
             None,
             None,
+            false,
         )
         .expect("should finish");
 
@@ -1594,6 +1599,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             &sim_setup.game_actions,
             None,
             None,
+            false,
         )
         .expect("should finish");
 
@@ -1626,6 +1632,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             &sim_setup.game_actions,
             None,
             None,
+            false,
         )
         .expect("should finish");
 
@@ -1661,6 +1668,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             &sim_setup.game_actions,
             None,
             None,
+            false,
         )
         .expect("should finish");
 
@@ -1692,6 +1700,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             &sim_setup.game_actions,
             Some(&|_, cradles| cradles[0].handshake_finished() && cradles[1].handshake_finished()),
             None,
+            false,
         )
         .expect("should finish");
 
@@ -2013,6 +2022,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             &sim_setup.game_actions,
             None,
             None,
+            false,
         )
         .expect("should finish");
 
@@ -2155,6 +2165,99 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
                 p0_notifs.iter().any(|n| matches!(n, GameNotification::GameDestroyedOnChain { .. }))
                 || p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentMadeImpossibleSpend { .. })),
                 "player 0 should get GameDestroyedOnChain or OpponentMadeImpossibleSpend when coin is force-destroyed, got: {p0_notifs:?}"
+            );
+        },
+    ));
+
+    res.push((
+        "test_post_handshake_alice_nerfed_bob_unrolls",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+            let seed_data: [u8; 32] = [0; 32];
+            let mut rng = ChaCha8Rng::from_seed(seed_data);
+            let pk1: PrivateKey = rng.gen();
+            let id1 = ChiaIdentity::new(&mut allocator, pk1).expect("ok");
+            let pk2: PrivateKey = rng.gen();
+            let id2 = ChiaIdentity::new(&mut allocator, pk2).expect("ok");
+            let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.gen();
+            let identities: [ChiaIdentity; 2] = [id1, id2];
+
+            // WaitBlocks at the start lets the post-handshake empty potato
+            // exchange complete so hs.spend is properly set before go_on_chain.
+            // Alice is nerfed during go_on_chain so her outbound txs are
+            // dropped.  Un-nerf before WaitBlocks so she can sweep her
+            // reward coin once the unroll completes.
+            let moves = vec![
+                GameAction::WaitBlocks(5, 0),
+                GameAction::NerfTransactions(0),
+                GameAction::GoOnChain(1),
+                GameAction::UnNerfTransactions,
+                GameAction::WaitBlocks(120, 0),
+            ];
+
+            let outcome = run_game_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &mut rng,
+                private_keys,
+                &identities,
+                b"calpoker",
+                &Program::from_hex("80").unwrap(),
+                &moves,
+                None,
+                None,
+                true,
+            )
+            .expect("should finish");
+
+            let (p0_balance, p1_balance) =
+                get_balances_from_outcome(&outcome).expect("should work");
+            assert_eq!(
+                p0_balance, p1_balance,
+                "both players should get exactly the same amount back (no game was played): p0={p0_balance} p1={p1_balance}"
+            );
+        },
+    ));
+
+    res.push((
+        "test_post_handshake_bob_nerfed_alice_unrolls",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+            let seed_data: [u8; 32] = [0; 32];
+            let mut rng = ChaCha8Rng::from_seed(seed_data);
+            let pk1: PrivateKey = rng.gen();
+            let id1 = ChiaIdentity::new(&mut allocator, pk1).expect("ok");
+            let pk2: PrivateKey = rng.gen();
+            let id2 = ChiaIdentity::new(&mut allocator, pk2).expect("ok");
+            let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.gen();
+            let identities: [ChiaIdentity; 2] = [id1, id2];
+
+            let moves = vec![
+                GameAction::WaitBlocks(5, 0),
+                GameAction::NerfTransactions(1),
+                GameAction::GoOnChain(0),
+                GameAction::UnNerfTransactions,
+                GameAction::WaitBlocks(120, 0),
+            ];
+
+            let outcome = run_game_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &mut rng,
+                private_keys,
+                &identities,
+                b"calpoker",
+                &Program::from_hex("80").unwrap(),
+                &moves,
+                None,
+                None,
+                true,
+            )
+            .expect("should finish");
+
+            let (p0_balance, p1_balance) =
+                get_balances_from_outcome(&outcome).expect("should work");
+            assert_eq!(
+                p0_balance, p1_balance,
+                "both players should get exactly the same amount back (no game was played): p0={p0_balance} p1={p1_balance}"
             );
         },
     ));

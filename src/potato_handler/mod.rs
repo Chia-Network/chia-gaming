@@ -150,6 +150,11 @@ pub struct PotatoHandler {
     // Accepts we sent but haven't been confirmed by the potato returning.
     // Drained in update_channel_coin_after_receive to emit GameFinished.
     pending_accept_completions: Vec<(GameID, Amount)>,
+
+    // Cached from the most recent potato exchange so go_on_chain can fix
+    // hs.spend even if the exchange happened before Finished was set.
+    #[serde(skip)]
+    last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
 }
 
 fn init_game_id(parent_coin_string: &[u8]) -> Vec<u8> {
@@ -218,6 +223,7 @@ impl PotatoHandler {
             incoming_messages: VecDeque::default(),
             peer_wants_potato: false,
             pending_accept_completions: Vec::new(),
+            last_channel_coin_spend_info: None,
         }
     }
 
@@ -396,6 +402,8 @@ impl PotatoHandler {
     ) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
         self.have_potato = PotatoState::Present;
+
+        self.last_channel_coin_spend_info = Some(spend.clone());
 
         // Always update hs.spend with the latest channel coin spend info so
         // that go_on_chain can use it at any time.  This must happen before
@@ -1653,7 +1661,7 @@ impl PotatoHandler {
     /// used when the opponent initiates the unroll.
     pub fn go_on_chain<R: Rng>(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
         got_error: bool,
     ) -> Result<Vec<Effect>, Error> {
         debug!("going on chain due to error {got_error}");
@@ -1672,6 +1680,34 @@ impl PotatoHandler {
         }
 
         let mut effects = Vec::new();
+
+        // If the last potato exchange happened before Finished was set,
+        // hs.spend still contains the channel creation bundle.  Patch it
+        // now using the cached spend info from the last exchange.
+        if let Some(saved) = self.last_channel_coin_spend_info.clone() {
+            let (channel_coin, channel_public_key) = {
+                let ch = self.channel_handler()?;
+                (
+                    ch.state_channel_coin().clone(),
+                    ch.get_aggregate_channel_public_key(),
+                )
+            };
+            let channel_coin_puzzle = puzzle_for_synthetic_public_key(
+                env.allocator,
+                &env.standard_puzzle,
+                &channel_public_key,
+            )?;
+            if let HandshakeState::Finished(hs) = &mut self.handshake_state {
+                hs.spend.spends = vec![CoinSpend {
+                    coin: channel_coin,
+                    bundle: Spend {
+                        solution: saved.solution.clone().into(),
+                        signature: saved.aggsig.clone(),
+                        puzzle: channel_coin_puzzle,
+                    },
+                }];
+            }
+        }
 
         // hs.spend is maintained by update_channel_coin_after_receive on each
         // potato exchange.  It already contains the correct puzzle, solution
