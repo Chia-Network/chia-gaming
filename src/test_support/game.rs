@@ -180,6 +180,9 @@ mod sim_tests {
         NerfTransactions(usize),
         /// Stop nerfing transactions.
         UnNerfTransactions,
+        /// Propose a new game from the specified player (initiator side only).
+        /// The proposal will be queued and sent on the next potato exchange.
+        ProposeNewGame(usize),
         /// Go on chain
         GoOnChain(usize),
         /// Wait a number of blocks
@@ -203,6 +206,7 @@ mod sim_tests {
                 GameAction::ForceDestroyCoin(p) => write!(formatter, "ForceDestroyCoin({p})"),
                 GameAction::NerfTransactions(p) => write!(formatter, "NerfTransactions({p})"),
                 GameAction::UnNerfTransactions => write!(formatter, "UnNerfTransactions"),
+                GameAction::ProposeNewGame(p) => write!(formatter, "ProposeNewGame({p})"),
                 GameAction::GoOnChain(p) => write!(formatter, "GoOnChain({p})"),
                 GameAction::Accept(p) => write!(formatter, "Accept({p})"),
                 GameAction::WaitBlocks(n, p) => write!(formatter, "WaitBlocks({n},{p})"),

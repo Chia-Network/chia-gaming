@@ -182,6 +182,7 @@ mod sim_tests {
                 &mut allocator,
                 &moves,
                 Some(&calpoker_ran_all_the_moves_predicate(moves.len())),
+                None,
             );
             match result {
                 Ok(outcome) => {
@@ -201,6 +202,7 @@ mod sim_tests {
                     &mut allocator,
                     &moves,
                     Some(&|move_number, _cradles| move_number >= 3),
+                    None,
                 )
                 .expect("opening moves should complete");
             let game_results = game_run_outcome_to_move_results(&game_outcome);
@@ -253,6 +255,7 @@ mod sim_tests {
                     &mut allocator,
                     &moves,
                     Some(&|move_number, _cradles| move_number >= 3),
+                    None,
                 )
                 .expect("opening moves should complete");
             let game_results = game_run_outcome_to_move_results(&game_outcome);
@@ -344,6 +347,7 @@ mod sim_tests {
                     &mut allocator,
                     &moves,
                     Some(&move |move_number, _cradles| move_number >= num_moves),
+                    None,
                 )
                 .expect("should work");
             let game_results = game_run_outcome_to_move_results(&game_outcome);

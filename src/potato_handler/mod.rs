@@ -1846,6 +1846,7 @@ impl PotatoHandler {
 
             let pre_game_ids: HashSet<GameID> =
                 player_ch.live_game_ids().into_iter().collect();
+            debug!("finish_on_chain_transition: pre_game_ids={pre_game_ids:?}");
 
             let conditions =
                 CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
@@ -1866,7 +1867,9 @@ impl PotatoHandler {
 
             let surviving_ids: HashSet<GameID> =
                 game_map.values().map(|def| def.game_id.clone()).collect();
+            debug!("finish_on_chain_transition: surviving_ids={surviving_ids:?}");
             for cancelled_id in pre_game_ids.difference(&surviving_ids) {
+                debug!("finish_on_chain_transition: CANCELLING game {cancelled_id:?}");
                 effects.push(Effect::Notification(GameNotification::GameCancelled {
                     id: cancelled_id.clone(),
                 }));

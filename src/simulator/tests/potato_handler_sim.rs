@@ -499,7 +499,9 @@ fn run_game_container_with_action_list_with_success_predicate(
     extras: &Program,
     moves_input: &[GameAction],
     pred: GameRunEarlySuccessPredicate,
+    per_player_balance: Option<u64>,
 ) -> Result<GameRunOutcome, Error> {
+    let bal = per_player_balance.unwrap_or(100);
     let mut move_number = 0;
     debug!("DEBUG: RNG {:?}", rng);
     // debug!("DEBUG: KEYS {:?}", private_keys);
@@ -525,20 +527,19 @@ fn run_game_container_with_action_list_with_success_predicate(
     let coins1 = simulator
         .get_my_coins(&identities[1].puzzle_hash)?;
 
-    // Make a 100 coin for each player (and test the deleted and created events).
     let (parent_coin_0, _rest_0) = simulator.transfer_coin_amount(
         allocator,
         &identities[0].puzzle_hash,
         &identities[0],
         &coins0[0],
-        Amount::new(100),
+        Amount::new(bal),
     )?;
     let (parent_coin_1, _rest_1) = simulator.transfer_coin_amount(
         allocator,
         &identities[1].puzzle_hash,
         &identities[1],
         &coins1[0],
-        Amount::new(100),
+        Amount::new(bal),
     )?;
 
     simulator.farm_block(&neutral_identity.puzzle_hash);
@@ -548,8 +549,8 @@ fn run_game_container_with_action_list_with_success_predicate(
             game_types: game_type_map.clone(),
             have_potato: true,
             identity: identities[0].clone(),
-            my_contribution: Amount::new(100),
-            their_contribution: Amount::new(100),
+            my_contribution: Amount::new(bal),
+            their_contribution: Amount::new(bal),
             channel_timeout: Timeout::new(100),
             unroll_timeout: Timeout::new(5),
             reward_puzzle_hash: identities[0].puzzle_hash.clone(),
@@ -561,8 +562,8 @@ fn run_game_container_with_action_list_with_success_predicate(
             game_types: game_type_map.clone(),
             have_potato: false,
             identity: identities[1].clone(),
-            my_contribution: Amount::new(100),
-            their_contribution: Amount::new(100),
+            my_contribution: Amount::new(bal),
+            their_contribution: Amount::new(bal),
             channel_timeout: Timeout::new(100),
             unroll_timeout: Timeout::new(5),
             reward_puzzle_hash: identities[1].puzzle_hash.clone(),
@@ -600,6 +601,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                     | GameAction::ForceDestroyCoin(_)
                     | GameAction::NerfTransactions(_)
                     | GameAction::UnNerfTransactions
+                    | GameAction::ProposeNewGame(_)
             )
     };
     let has_explicit_go_on_chain = moves_input
@@ -769,6 +771,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                 }
 
                 for msg in result.outbound_messages.iter() {
+                    if cradles[i].is_peer_disconnected() {
+                        debug!("dropping outbound msg from player {i} (peer_disconnected)");
+                        continue;
+                    }
                     cradles[i ^ 1].deliver_message(msg)?;
                 }
 
@@ -885,6 +891,29 @@ fn run_game_container_with_action_list_with_success_predicate(
                             continue;
                         }
                     }
+                    GameAction::ProposeNewGame(who) => {
+                        if !handshake_done {
+                            move_number -= 1;
+                            continue;
+                        }
+                        let new_game_id = cradles[*who].next_game_id().unwrap();
+                        debug!("ProposeNewGame({who}): game_id={new_game_id:?}");
+                        cradles[*who].start_games(
+                            allocator,
+                            rng,
+                            true,
+                            &GameStart {
+                                game_id: new_game_id,
+                                amount: Amount::new(100),
+                                my_contribution: Amount::new(50),
+                                game_type: GameType(game_type.to_vec()),
+                                timeout: Timeout::new(10),
+                                my_turn: true,
+                                parameters: extras.clone(),
+                            },
+                        )?;
+                        can_move = true;
+                    }
                     GameAction::GoOnChain(who) => {
                         assert!(
                             local_uis[*who].game_finished.is_none(),
@@ -897,8 +926,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                             );
                         }
                         if !cradles[*who].handshake_finished() {
-                            // Defer explicit on-chain requests until both peers have completed
-                            // handshake/startup; otherwise go_on_chain() returns a protocol error.
                             move_number -= 1;
                             continue;
                         }
@@ -1040,6 +1067,7 @@ pub fn run_calpoker_container_with_action_list_with_success_predicate(
     allocator: &mut AllocEncoder,
     moves: &[GameAction],
     predicate: GameRunEarlySuccessPredicate,
+    per_player_balance: Option<u64>,
 ) -> Result<GameRunOutcome, Error> {
     let seed_data: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed_data);
@@ -1059,6 +1087,7 @@ pub fn run_calpoker_container_with_action_list_with_success_predicate(
         &Program::from_hex("80")?,
         moves,
         predicate,
+        per_player_balance,
     )
 }
 
@@ -1066,7 +1095,7 @@ pub fn run_calpoker_container_with_action_list(
     allocator: &mut AllocEncoder,
     moves: &[GameAction],
 ) -> Result<GameRunOutcome, Error> {
-    run_calpoker_container_with_action_list_with_success_predicate(allocator, moves, None)
+    run_calpoker_container_with_action_list_with_success_predicate(allocator, moves, None, None)
 }
 
 fn get_balances_from_outcome(outcome: &GameRunOutcome) -> Result<(u64, u64), Error> {
@@ -1285,6 +1314,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             &mut allocator,
             &moves,
             Some(&calpoker_ran_all_the_moves_predicate(moves.len())),
+            None,
         )
         .expect("this is a test");
     }));
@@ -1319,6 +1349,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
                 &Program::from_hex("80").unwrap(),
                 &moves,
                 Some(&|_, cradles| cradles[0].is_on_chain() && cradles[1].is_on_chain()),
+                None,
             )
             .expect("should finish");
             assert!(
@@ -1530,6 +1561,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             &sim_setup.args_program.clone(),
             &sim_setup.game_actions,
             None,
+            None,
         )
         .expect("should finish");
 
@@ -1561,6 +1593,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             &sim_setup.args_program.clone(),
             &sim_setup.game_actions,
             None,
+            None,
         )
         .expect("should finish");
 
@@ -1591,6 +1624,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             b"debug",
             &sim_setup.args_program.clone(),
             &sim_setup.game_actions,
+            None,
             None,
         )
         .expect("should finish");
@@ -1626,6 +1660,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             &sim_setup.args_program.clone(),
             &sim_setup.game_actions,
             None,
+            None,
         )
         .expect("should finish");
 
@@ -1656,6 +1691,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             &sim_setup.args_program,
             &sim_setup.game_actions,
             Some(&|_, cradles| cradles[0].handshake_finished() && cradles[1].handshake_finished()),
+            None,
         )
         .expect("should finish");
 
@@ -1976,6 +2012,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             &sim_setup.args_program,
             &sim_setup.game_actions,
             None,
+            None,
         )
         .expect("should finish");
 
@@ -1992,6 +2029,45 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         assert_eq!(
             p1_balance, p0_balance + 100,
             "Bob should have claimed his half (p0={p0_balance} p1={p1_balance})"
+        );
+    }));
+
+    res.push(("test_game_cancellation_nerfed_proposal", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        // Game A (calpoker, 100+100) starts normally during the handshake.
+        // Channel is funded with 200 per player (400 total) so there is
+        // 100 per player left over for game B.
+        //
+        // Sequence:
+        //  1. ProposeNewGame(0) — Alice queues game B (50+50).  She may
+        //     not have the potato yet so it gets queued.
+        //  2. GoOnChain(1) — Bob goes on-chain.  peer_disconnected stops
+        //     all of Bob's messages (outbound dropped by the sim loop,
+        //     inbound dropped by deliver_message).  Bob's unroll tx goes
+        //     through with game A only (hs.spend reflects the last potato
+        //     Bob received, which predates game B).
+        //  3. Alice detects the channel coin spend.  Game B is in
+        //     pre_game_ids but not surviving_ids → GameCancelled.
+        let moves = vec![
+            GameAction::ProposeNewGame(0),
+            GameAction::GoOnChain(1),
+            GameAction::WaitBlocks(120, 0),
+            GameAction::WaitBlocks(5, 0),
+        ];
+
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
+
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        assert!(
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::GameCancelled { .. })),
+            "Alice should get GameCancelled for her uncommitted game, got: {p0_notifs:?}"
         );
     }));
 

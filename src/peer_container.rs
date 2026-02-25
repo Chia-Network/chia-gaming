@@ -612,6 +612,10 @@ impl SynchronousGameCradle {
         self.state.finished
     }
 
+    pub fn is_peer_disconnected(&self) -> bool {
+        self.state.peer_disconnected
+    }
+
     pub fn next_game_id(&mut self) -> Result<GameID, Error> {
         self.peer.next_game_id()
     }

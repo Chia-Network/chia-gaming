@@ -917,7 +917,8 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
 
         match action {
             GameAction::LocalStartGame => {
-                Err(Error::StrErr("can't start game on chain".to_string()))
+                debug!("ignoring LocalStartGame on chain (game was cancelled)");
+                Ok(vec![])
             }
             GameAction::Move(game_id, readable_move, hash) => {
                 let current_coin = get_current_coin(&game_id)?;
