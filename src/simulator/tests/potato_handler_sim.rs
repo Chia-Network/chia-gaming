@@ -644,8 +644,8 @@ fn run_game_container_with_action_list_with_success_predicate(
                     | GameAction::GoOnChain(_)
                     | GameAction::Accept(_)
                     | GameAction::Timeout(_)
-                    | GameAction::EnableCheating(_, _)
-                    | GameAction::Cheat(_)
+                    | GameAction::EnableCheating(_, _, _)
+                    | GameAction::Cheat(_, _)
                     | GameAction::ForceDestroyCoin(_)
                     | GameAction::NerfTransactions(_)
                     | GameAction::UnNerfTransactions
@@ -745,7 +745,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                     let saved = move_number;
                     while move_number > 0
                         && (move_number >= moves_input.len()
-                            || !matches!(moves_input[move_number], GameAction::Move(_, _, _) | GameAction::Cheat(_)))
+                            || !matches!(moves_input[move_number], GameAction::Move(_, _, _) | GameAction::Cheat(_, _)))
                     {
                         move_number -= 1;
                     }
@@ -755,7 +755,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                     // sim keeps processing subsequent (non-Move) actions.
                     let dominated_by_other = match moves_input.get(move_number) {
                         Some(GameAction::Move(who, _, _)) => *who != i,
-                        Some(GameAction::Cheat(who)) => *who != i,
+                        Some(GameAction::Cheat(who, _)) => *who != i,
                         _ => true,
                     };
                     if dominated_by_other {
@@ -1018,7 +1018,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                             Ok(PeerMessage::Move(game_id.clone(), fake_move))
                         })?;
                     }
-                    GameAction::EnableCheating(who, fake_move_bytes) => {
+                    GameAction::EnableCheating(who, fake_move_bytes, cheat_share) => {
                         assert!(
                             !game_ids.is_empty(),
                             "EnableCheating({who}) at move_number={move_number} but game_ids is empty"
@@ -1028,16 +1028,17 @@ fn run_game_container_with_action_list_with_success_predicate(
                             continue;
                         }
                         debug!(
-                            "EnableCheating: player {who} enabling cheating with {} fake bytes",
+                            "EnableCheating: player {who} enabling cheating with {} fake bytes, mover_share={cheat_share:?}",
                             fake_move_bytes.len()
                         );
                         cradles[*who].enable_cheating_for_game(
                             &game_ids[0],
                             fake_move_bytes,
+                            cheat_share.clone(),
                         )?;
                         can_move = true;
                     }
-                    GameAction::Cheat(who) => {
+                    GameAction::Cheat(who, cheat_share) => {
                         assert!(
                             !game_ids.is_empty(),
                             "Cheat({who}) at move_number={move_number} but game_ids is empty"
@@ -1051,7 +1052,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                             move_number -= 1;
                             continue;
                         }
-                        cradles[*who].cheat(allocator, rng, &game_ids[0])?;
+                        cradles[*who].cheat(allocator, rng, &game_ids[0], cheat_share.clone())?;
                         can_move = true;
                     }
                     GameAction::ForceDestroyCoin(who) => {
@@ -1582,7 +1583,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             let mut moves = prefix_test_moves(&mut allocator).to_vec();
             moves.truncate(3);
             moves.push(GameAction::GoOnChain(0));
-            moves.push(GameAction::Cheat(1));
+            moves.push(GameAction::Cheat(1, Amount::default()));
             // Let both players process blocks so Alice detects & slashes.
             moves.push(GameAction::WaitBlocks(30, 0));
 
@@ -1978,7 +1979,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             let moves = prefix_test_moves(&mut allocator);
             let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(3).collect();
             on_chain_moves.push(GameAction::GoOnChain(0));
-            on_chain_moves.push(GameAction::Cheat(1));
+            on_chain_moves.push(GameAction::Cheat(1, Amount::default()));
             on_chain_moves.push(GameAction::WaitBlocks(30, 0));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -2006,7 +2007,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             let moves = prefix_test_moves(&mut allocator);
             let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(4).collect();
             on_chain_moves.push(GameAction::GoOnChain(0));
-            on_chain_moves.push(GameAction::Cheat(0));
+            on_chain_moves.push(GameAction::Cheat(0, Amount::default()));
             on_chain_moves.push(GameAction::WaitBlocks(30, 0));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -2016,6 +2017,54 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             assert!(
                 p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentSlashedUs { .. })),
                 "player 0 (cheater) should get OpponentSlashedUs, got: {p0_notifs:?}"
+            );
+        },
+    ));
+
+    res.push((
+        "test_cheat_with_funny_mover_share",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+
+            // Play 3 moves off-chain, go on-chain. After redo it's Bob's turn.
+            // Bob cheats with mover_share=137 (a distinctive value that no
+            // legitimate game state would produce). Alice should detect the
+            // illegal move and slash, getting the full pot. The funny share
+            // lets us confirm the cheat mechanism actually uses our value
+            // rather than a hardcoded default.
+            let moves = prefix_test_moves(&mut allocator);
+            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(3).collect();
+            on_chain_moves.push(GameAction::GoOnChain(0));
+            on_chain_moves.push(GameAction::Cheat(1, Amount::new(137)));
+            on_chain_moves.push(GameAction::WaitBlocks(30, 0));
+
+            let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
+                .expect("should finish");
+
+            let (p0_balance, p1_balance) =
+                get_balances_from_outcome(&outcome).expect("should work");
+            // Alice (player 0) should get the full pot via slash.
+            // Bob cheated so Alice gets all 200.
+            assert_eq!(
+                p0_balance,
+                p1_balance + 200,
+                "alice should win the full pot via slash: p0={p0_balance} p1={p1_balance}"
+            );
+
+            let p0_notifs = &outcome.local_uis[0].notifications;
+            assert!(
+                p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentPlayedIllegalMove { .. })),
+                "player 0 should get OpponentPlayedIllegalMove, got: {p0_notifs:?}"
+            );
+            assert!(
+                p0_notifs.iter().any(|n| matches!(n, GameNotification::WeSlashedOpponent { .. })),
+                "player 0 should get WeSlashedOpponent, got: {p0_notifs:?}"
+            );
+
+            let p1_notifs = &outcome.local_uis[1].notifications;
+            assert!(
+                p1_notifs.iter().any(|n| matches!(n, GameNotification::OpponentSlashedUs { .. })),
+                "player 1 (cheater) should get OpponentSlashedUs, got: {p1_notifs:?}"
             );
         },
     ));
@@ -2178,7 +2227,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(3).collect();
             on_chain_moves.push(GameAction::GoOnChain(0));
             on_chain_moves.push(GameAction::NerfTransactions(0));
-            on_chain_moves.push(GameAction::Cheat(1));
+            on_chain_moves.push(GameAction::Cheat(1, Amount::default()));
             on_chain_moves.push(GameAction::WaitBlocks(120, 0));
             on_chain_moves.push(GameAction::UnNerfTransactions);
             on_chain_moves.push(GameAction::WaitBlocks(30, 0));

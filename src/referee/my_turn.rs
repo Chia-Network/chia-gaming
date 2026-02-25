@@ -195,7 +195,7 @@ pub struct MyTurnReferee {
     pub fixed: Rc<RMFixed>,
 
     pub finished: bool,
-    pub enable_cheating: Option<Vec<u8>>,
+    pub enable_cheating: Option<(Vec<u8>, Amount)>,
 
     #[allow(dead_code)]
     pub message_handler: Option<MessageHandler>,
@@ -336,9 +336,9 @@ impl MyTurnReferee {
     }
 
     #[allow(dead_code)]
-    pub fn enable_cheating(&self, make_move: &[u8]) -> MyTurnReferee {
+    pub fn enable_cheating(&self, make_move: &[u8], mover_share: Amount) -> MyTurnReferee {
         MyTurnReferee {
-            enable_cheating: Some(make_move.to_vec()),
+            enable_cheating: Some((make_move.to_vec(), mover_share)),
             ..self.clone()
         }
     }
@@ -467,12 +467,12 @@ impl MyTurnReferee {
             } => state_after_their_turn.clone(),
         };
 
-        let result = if self.enable_cheating.is_some() {
-            debug!("my_turn_make_move: cheating - nil move, mover_share=0");
+        let result = if let Some((ref fake_move, ref cheat_share)) = self.enable_cheating {
+            debug!("my_turn_make_move: cheating - fake move, mover_share={cheat_share:?}");
             Rc::new(MyTurnResult {
                 name: "cheat".to_string(),
-                move_bytes: vec![0x80],
-                mover_share: Amount::default(),
+                move_bytes: fake_move.clone(),
+                mover_share: cheat_share.clone(),
                 max_move_size: args.game_move.basic.max_move_size,
                 outgoing_move_state_update_program: args.validation_program.clone(),
                 outgoing_move_state_update_program_hash: args.validation_program.sha256tree(allocator).hash().clone(),

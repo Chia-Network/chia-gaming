@@ -79,7 +79,7 @@ pub trait RefereeInterface {
         ph: &PuzzleHash,
     ) -> Result<bool, Error>;
 
-    fn enable_cheating(&self, make_move: &[u8]) -> Option<Rc<dyn RefereeInterface>>;
+    fn enable_cheating(&self, make_move: &[u8], mover_share: Amount) -> Option<Rc<dyn RefereeInterface>>;
 
     fn my_turn_make_move(
         &self,
@@ -385,10 +385,10 @@ impl RefereeInterface for Referee {
         Ok(!self.is_my_turn())
     }
 
-    fn enable_cheating(&self, make_move: &[u8]) -> Option<Rc<dyn RefereeInterface>> {
+    fn enable_cheating(&self, make_move: &[u8], mover_share: Amount) -> Option<Rc<dyn RefereeInterface>> {
         if let Referee::MyTurn(t) = self {
             return Some(Rc::new(Referee::MyTurn(Rc::new(
-                t.enable_cheating(make_move),
+                t.enable_cheating(make_move, mover_share),
             ))));
         }
 

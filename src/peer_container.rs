@@ -254,21 +254,25 @@ pub trait GameCradle {
     ) -> Result<Option<IdleResult>, Error>;
 
     /// Enable cheating for a specific game (test support).
-    /// The next on-chain move for this game will use fake move bytes.
+    /// The next on-chain move for this game will use fake move bytes and
+    /// the given mover_share instead of the real handler output.
     fn enable_cheating_for_game(
         &mut self,
         game_id: &GameID,
         make_move: &[u8],
+        mover_share: Amount,
     ) -> Result<bool, Error>;
 
     /// Cheat in a game: assert on-chain + our turn, then submit a move that
-    /// violates game rules (nil move, zero mover_share, junk validation hash).
-    /// The game handler is bypassed entirely. Test-only.
+    /// violates game rules. The given mover_share is used instead of the real
+    /// handler output, allowing the caller to differentiate a cheat from a
+    /// timeout. The game handler is bypassed entirely.
     fn cheat<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,
         rng: &mut R,
         game_id: &GameID,
+        mover_share: Amount,
     ) -> Result<(), Error>;
 
     /// Check whether we're on chain.
@@ -805,8 +809,9 @@ impl GameCradle for SynchronousGameCradle {
         &mut self,
         game_id: &GameID,
         make_move: &[u8],
+        mover_share: Amount,
     ) -> Result<bool, Error> {
-        self.peer.enable_cheating_for_game(game_id, make_move)
+        self.peer.enable_cheating_for_game(game_id, make_move, mover_share)
     }
 
     fn cheat<R: Rng>(
@@ -814,6 +819,7 @@ impl GameCradle for SynchronousGameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
         game_id: &GameID,
+        mover_share: Amount,
     ) -> Result<(), Error> {
         assert!(
             self.is_on_chain(),
@@ -823,7 +829,7 @@ impl GameCradle for SynchronousGameCradle {
             matches!(self.my_move_in_game(game_id), Some(true)),
             "cheat() requires it to be our turn"
         );
-        self.enable_cheating_for_game(game_id, &[0x80])?;
+        self.enable_cheating_for_game(game_id, &[0x80], mover_share)?;
         let entropy: Hash = rng.gen();
         self.make_move(allocator, rng, game_id, vec![0x80], entropy)
     }

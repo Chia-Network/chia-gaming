@@ -2009,9 +2009,10 @@ impl ChannelHandler {
         &mut self,
         game_id: &GameID,
         make_move: &[u8],
+        mover_share: Amount,
     ) -> Result<bool, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
-        Ok(self.live_games[game_idx].enable_cheating(make_move))
+        Ok(self.live_games[game_idx].enable_cheating(make_move, mover_share))
     }
 
     pub fn save_game_state(

@@ -86,9 +86,10 @@ impl OnChainPotatoHandler {
         &mut self,
         game_id: &GameID,
         make_move: &[u8],
+        mover_share: Amount,
     ) -> Result<bool, Error> {
         self.player_ch
-            .enable_cheating_for_game(game_id, make_move)
+            .enable_cheating_for_game(game_id, make_move, mover_share)
     }
 
     pub fn get_game_coin(&self, game_id: &GameID) -> Option<CoinString> {

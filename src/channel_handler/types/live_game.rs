@@ -82,8 +82,8 @@ impl LiveGame {
         self.referee_maker.outcome_referee_puzzle_hash(allocator)
     }
 
-    pub fn enable_cheating(&mut self, make_move: &[u8]) -> bool {
-        if let Some(new_ref) = self.referee_maker.enable_cheating(make_move) {
+    pub fn enable_cheating(&mut self, make_move: &[u8], mover_share: Amount) -> bool {
+        if let Some(new_ref) = self.referee_maker.enable_cheating(make_move, mover_share) {
             self.referee_maker = new_ref;
             true
         } else {
