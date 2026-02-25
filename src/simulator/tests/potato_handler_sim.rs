@@ -399,6 +399,7 @@ pub struct OpponentMessageInfo {
 
 #[derive(Default, Debug)]
 pub struct LocalTestUIReceiver {
+    pub handshake_complete: bool,
     pub shutdown_complete: bool,
     pub game_started: Option<GameStartRecord>,
     pub game_finished: Option<Amount>,
@@ -410,7 +411,21 @@ pub struct LocalTestUIReceiver {
     pub notifications: Vec<GameNotification>,
 }
 
+impl LocalTestUIReceiver {
+    fn assert_handshake_complete(&self, method: &str) {
+        assert!(
+            self.handshake_complete,
+            "ToLocalUI::{method} called before handshake_complete notification"
+        );
+    }
+}
+
 impl ToLocalUI for LocalTestUIReceiver {
+    fn handshake_complete(&mut self) -> Result<(), Error> {
+        self.handshake_complete = true;
+        Ok(())
+    }
+
     fn opponent_moved(
         &mut self,
         _allocator: &mut AllocEncoder,
@@ -419,9 +434,35 @@ impl ToLocalUI for LocalTestUIReceiver {
         readable: ReadableMove,
         my_share: Amount,
     ) -> Result<(), Error> {
+        self.assert_handshake_complete("opponent_moved");
         self.opponent_moved = true;
         self.opponent_moves
             .push((id.clone(), state_number, readable, my_share));
+        Ok(())
+    }
+
+    fn self_move(
+        &mut self,
+        _id: &GameID,
+        _state_number: usize,
+        _readable: &[u8],
+    ) -> Result<(), Error> {
+        self.assert_handshake_complete("self_move");
+        Ok(())
+    }
+
+    fn resync_move(
+        &mut self,
+        _id: &GameID,
+        _state_number: usize,
+        _is_my_turn: bool,
+    ) -> Result<(), Error> {
+        self.assert_handshake_complete("resync_move");
+        Ok(())
+    }
+
+    fn raw_game_message(&mut self, _id: &GameID, _readable: &[u8]) -> Result<(), Error> {
+        self.assert_handshake_complete("raw_game_message");
         Ok(())
     }
 
@@ -431,6 +472,7 @@ impl ToLocalUI for LocalTestUIReceiver {
         _id: &GameID,
         readable: ReadableMove,
     ) -> Result<(), Error> {
+        self.assert_handshake_complete("game_message");
         self.opponent_messages.push(OpponentMessageInfo {
             opponent_move_size: self.opponent_moves.len(),
             opponent_message: readable.clone(),
@@ -439,6 +481,7 @@ impl ToLocalUI for LocalTestUIReceiver {
     }
 
     fn game_start(&mut self, ids: &[GameID], failed: Option<GameStartFailed>) -> Result<(), Error> {
+        self.assert_handshake_complete("game_start");
         self.game_started = Some(GameStartRecord {
             game_ids: ids.to_vec(),
             failed: failed.clone(),
@@ -447,15 +490,24 @@ impl ToLocalUI for LocalTestUIReceiver {
     }
 
     fn game_finished(&mut self, _id: &GameID, my_share: Amount) -> Result<(), Error> {
+        self.assert_handshake_complete("game_finished");
         self.game_finished = Some(my_share);
         Ok(())
     }
 
+    fn game_notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
+        self.assert_handshake_complete("game_notification");
+        self.notifications.push(notification.clone());
+        Ok(())
+    }
+
     fn shutdown_started(&mut self) -> Result<(), Error> {
+        self.assert_handshake_complete("shutdown_started");
         Ok(())
     }
 
     fn shutdown_complete(&mut self, _reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
+        self.assert_handshake_complete("shutdown_complete");
         self.shutdown_complete = true;
         Ok(())
     }
@@ -463,11 +515,6 @@ impl ToLocalUI for LocalTestUIReceiver {
     fn going_on_chain(&mut self, got_error: bool) -> Result<(), Error> {
         self.go_on_chain = true;
         self.got_error = got_error;
-        Ok(())
-    }
-
-    fn game_notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
-        self.notifications.push(notification.clone());
         Ok(())
     }
 }
@@ -1055,6 +1102,13 @@ fn run_game_container_with_action_list_with_success_predicate(
                 }
             }
         }
+    }
+
+    for (i, lui) in local_uis.iter().enumerate() {
+        assert!(
+            lui.handshake_complete,
+            "player {i} never received handshake_complete notification"
+        );
     }
 
     Ok(GameRunOutcome {

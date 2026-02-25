@@ -1025,6 +1025,7 @@ impl GameCradle for SynchronousGameCradle {
         if self.state.handshake_complete {
             result.handshake_complete = true;
             self.state.handshake_complete = false;
+            local_ui.handshake_complete()?;
         }
 
         swap(
