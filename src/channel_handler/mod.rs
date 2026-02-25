@@ -201,6 +201,18 @@ impl ChannelHandler {
         self.current_state_number
     }
 
+    /// Corrupt the channel handler's view of state for testing unrecoverable
+    /// unroll edge cases.  Sets `current_state_number` to `new_sn`, changes
+    /// `unroll.coin.state_number` to match, and clears `timeout` so that
+    /// `get_unroll_for_state` won't find the real on-chain state.
+    #[cfg(feature = "sim-tests")]
+    pub fn corrupt_state_for_testing(&mut self, new_sn: usize) {
+        self.current_state_number = new_sn;
+        self.unroll.coin.state_number = new_sn;
+        self.unroll.signatures = Default::default();
+        self.timeout = None;
+    }
+
     pub fn all_games_finished(&self) -> bool {
         self.live_games.is_empty()
     }

@@ -650,6 +650,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                     | GameAction::NerfTransactions(_)
                     | GameAction::UnNerfTransactions
                     | GameAction::ProposeNewGame(_)
+                    | GameAction::CorruptStateNumber(_, _)
             )
     };
     let has_explicit_go_on_chain = moves_input
@@ -1099,6 +1100,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                         debug!("Shutdown({who}) processing");
                         can_move = true;
                         cradles[*who].shut_down(allocator, rng, conditions.clone())?;
+                    }
+                    GameAction::CorruptStateNumber(who, new_sn) => {
+                        debug!("CorruptStateNumber({who}, {new_sn})");
+                        cradles[*who].corrupt_state_for_testing(*new_sn)?;
                     }
                 }
             }
@@ -2464,6 +2469,76 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             assert!(
                 all_notifs.iter().any(|n| matches!(n, GameNotification::OurTurnCoinSpentUnexpectedly { .. })),
                 "some player should get OurTurnCoinSpentUnexpectedly when own game coin force-destroyed, got: {all_notifs:?}"
+            );
+        },
+    ));
+
+    res.push((
+        "test_unroll_state_too_high",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+
+            let moves = vec![
+                // Let the handshake + empty potato exchanges settle.
+                GameAction::WaitBlocks(5, 0),
+                // Corrupt player 1: pretend we're at state 0.
+                // This wipes stored unroll/timeout so the real on-chain
+                // state number will be "from the future" AND unmatchable.
+                GameAction::CorruptStateNumber(1, 0),
+                // Player 0 goes on chain normally (real state number).
+                GameAction::GoOnChain(0),
+                GameAction::WaitBlocks(20, 0),
+            ];
+
+            let outcome =
+                run_calpoker_container_with_action_list_with_success_predicate(
+                    &mut allocator,
+                    &moves,
+                    Some(&|_, cradles| cradles[0].is_on_chain() && cradles[1].is_on_chain()),
+                    None,
+                )
+                .expect("should finish");
+
+            let p1_notifs = &outcome.local_uis[1].notifications;
+            assert!(
+                p1_notifs.iter().any(|n| matches!(n, GameNotification::UnrollUnrecoverable { .. })),
+                "player 1 should get UnrollUnrecoverable for state-from-the-future, got: {p1_notifs:?}"
+            );
+        },
+    ));
+
+    res.push((
+        "test_unroll_wrong_parity_old_state",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+
+            let moves = vec![
+                // Let the handshake + empty potato exchanges settle.
+                GameAction::WaitBlocks(5, 0),
+                // Corrupt player 1: pretend we're at state 100.
+                // The real on-chain state (~3) will look "old" from player 1's
+                // perspective.  With stored unroll/timeout wiped, neither
+                // preemption (no matching parity+sig) nor timeout (no stored
+                // state) can succeed.
+                GameAction::CorruptStateNumber(1, 100),
+                // Player 0 goes on chain normally.
+                GameAction::GoOnChain(0),
+                GameAction::WaitBlocks(20, 0),
+            ];
+
+            let outcome =
+                run_calpoker_container_with_action_list_with_success_predicate(
+                    &mut allocator,
+                    &moves,
+                    Some(&|_, cradles| cradles[0].is_on_chain() && cradles[1].is_on_chain()),
+                    None,
+                )
+                .expect("should finish");
+
+            let p1_notifs = &outcome.local_uis[1].notifications;
+            assert!(
+                p1_notifs.iter().any(|n| matches!(n, GameNotification::UnrollUnrecoverable { .. })),
+                "player 1 should get UnrollUnrecoverable for wrong-parity old state, got: {p1_notifs:?}"
             );
         },
     ));

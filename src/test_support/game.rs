@@ -192,6 +192,9 @@ mod sim_tests {
         Accept(usize),
         /// Shut down
         Shutdown(usize, Rc<dyn ShutdownConditions>),
+        /// Corrupt a player's current_state_number for testing edge cases.
+        /// (player, new_state_number)
+        CorruptStateNumber(usize, usize),
     }
 
     impl std::fmt::Debug for GameAction {
@@ -212,6 +215,9 @@ mod sim_tests {
                 GameAction::Accept(p) => write!(formatter, "Accept({p})"),
                 GameAction::WaitBlocks(n, p) => write!(formatter, "WaitBlocks({n},{p})"),
                 GameAction::Shutdown(p, _) => write!(formatter, "Shutdown({p},..)"),
+                GameAction::CorruptStateNumber(p, sn) => {
+                    write!(formatter, "CorruptStateNumber({p},{sn})")
+                }
             }
         }
     }

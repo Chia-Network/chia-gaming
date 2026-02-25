@@ -600,6 +600,11 @@ impl SynchronousGameCradle {
         self.peer.has_potato()
     }
 
+    #[cfg(feature = "sim-tests")]
+    pub fn corrupt_state_for_testing(&mut self, new_sn: usize) -> Result<(), Error> {
+        self.peer.corrupt_state_for_testing(new_sn)
+    }
+
     pub fn amount(&self) -> Amount {
         self.peer.amount()
     }

@@ -352,6 +352,13 @@ impl PotatoHandler {
         )
     }
 
+    #[cfg(feature = "sim-tests")]
+    pub fn corrupt_state_for_testing(&mut self, new_sn: usize) -> Result<(), Error> {
+        let ch = self.channel_handler_mut()?;
+        ch.corrupt_state_for_testing(new_sn);
+        Ok(())
+    }
+
     /// Tell whether this peer has the potato.  If it has been sent but not received yet
     /// then both will say false
     pub fn has_potato(&self) -> bool {
@@ -1815,42 +1822,69 @@ impl PotatoHandler {
             player_ch.unrolling_state_from_conditions(env, conditions_nodeptr)?
         };
 
-        // Determine preempt vs timeout.  Three outcomes:
-        //  - Ok(timeout: false) → preemption succeeded, submit it
-        //  - Ok(timeout: true)  → timeout path (state numbers equal)
-        //  - Err(_)             → preemption attempted but no valid signed
-        //                         data above the on-chain state; fall back
-        //                         to timeout
-        let preempted = {
+        // Determine preempt vs timeout.  Four outcomes:
+        //  - Ok(timeout: false)      → preemption succeeded, submit it
+        //  - Ok(timeout: true)       → timeout path (state numbers equal)
+        //  - Err + timeout possible  → fall back to timeout
+        //  - Err + timeout impossible→ unrecoverable: emit notification
+        let spend_result = {
             let player_ch = self.channel_handler()?;
-            match player_ch.channel_coin_spent(env, false, conditions_nodeptr) {
-                Ok(result) => {
-                    if !result.timeout {
-                        effects.push(Effect::SpendTransaction(SpendBundle {
-                            name: Some("preempt unroll".to_string()),
-                            spends: vec![CoinSpend {
-                                bundle: result.transaction,
-                                coin: unroll_coin.clone(),
-                            }],
-                        }));
-                        true
-                    } else {
-                        false
-                    }
-                }
-                Err(e) => {
-                    debug!("HANDLE_CHANNEL_SPENT: preemption not possible, falling back to timeout: {e:?}");
-                    false
+            player_ch.channel_coin_spent(env, false, conditions_nodeptr)
+        };
+
+        enum Outcome { Preempted, WaitForTimeout, Unrecoverable(String) }
+
+        let outcome = match spend_result {
+            Ok(result) if !result.timeout => {
+                effects.push(Effect::SpendTransaction(SpendBundle {
+                    name: Some("preempt unroll".to_string()),
+                    spends: vec![CoinSpend {
+                        bundle: result.transaction,
+                        coin: unroll_coin.clone(),
+                    }],
+                }));
+                Outcome::Preempted
+            }
+            Ok(_) => Outcome::WaitForTimeout,
+            Err(e) => {
+                debug!("HANDLE_CHANNEL_SPENT: preemption not possible: {e:?}");
+                let can_timeout = {
+                    let player_ch = self.channel_handler()?;
+                    player_ch.get_unroll_for_state(on_chain_state).is_ok()
+                };
+                if can_timeout {
+                    debug!("falling back to timeout for state {on_chain_state}");
+                    Outcome::WaitForTimeout
+                } else {
+                    let reason = format!(
+                        "cannot preempt ({e:?}) and no stored state for timeout at {on_chain_state}"
+                    );
+                    debug!("UNRECOVERABLE: {reason}");
+                    Outcome::Unrecoverable(reason)
                 }
             }
         };
 
-        let next_state = if preempted {
-            HandshakeState::OnChainWaitingForUnrollSpend(unroll_coin.clone(), on_chain_state)
-        } else {
-            HandshakeState::OnChainWaitingForUnrollTimeoutOrSpend(unroll_coin.clone(), on_chain_state)
-        };
-        self.handshake_state = next_state;
+        match outcome {
+            Outcome::Preempted => {
+                self.handshake_state = HandshakeState::OnChainWaitingForUnrollSpend(
+                    unroll_coin.clone(), on_chain_state,
+                );
+            }
+            Outcome::WaitForTimeout => {
+                self.handshake_state = HandshakeState::OnChainWaitingForUnrollTimeoutOrSpend(
+                    unroll_coin.clone(), on_chain_state,
+                );
+            }
+            Outcome::Unrecoverable(ref reason) => {
+                effects.push(Effect::Notification(GameNotification::UnrollUnrecoverable {
+                    reason: reason.clone(),
+                }));
+                self.handshake_state = HandshakeState::OnChainWaitingForUnrollSpend(
+                    unroll_coin.clone(), on_chain_state,
+                );
+            }
+        }
 
         effects.push(Effect::RegisterCoin {
             coin: unroll_coin,
@@ -2215,8 +2249,20 @@ impl SpendWalletReceiver for PotatoHandler
             };
 
         if let Some(on_chain_state) = unroll_timed_out {
-            let effect = self.do_unroll_spend_to_games(env, coin_id, on_chain_state)?;
-            effects.extend(effect);
+            match self.do_unroll_spend_to_games(env, coin_id, on_chain_state) {
+                Ok(effect) => {
+                    effects.extend(effect);
+                }
+                Err(e) => {
+                    let reason = format!(
+                        "timeout unroll failed for state {on_chain_state}: {e:?}"
+                    );
+                    debug!("UNRECOVERABLE (timeout path): {reason}");
+                    effects.push(Effect::Notification(GameNotification::UnrollUnrecoverable {
+                        reason,
+                    }));
+                }
+            }
             return Ok(effects);
         }
 

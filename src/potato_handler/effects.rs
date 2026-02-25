@@ -20,6 +20,11 @@ pub enum GameNotification {
 
     ChannelCoinSpent,
     UnrollCoinSpent,
+
+    /// The unroll coin appeared on-chain with a state number we can neither
+    /// preempt (wrong parity / missing peer signature) nor timeout
+    /// (no stored state matches).  This is unrecoverable.
+    UnrollUnrecoverable { reason: String },
 }
 
 #[derive(Debug, Clone)]
