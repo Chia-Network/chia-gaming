@@ -1877,7 +1877,7 @@ impl PotatoHandler {
                 );
             }
             Outcome::Unrecoverable(ref reason) => {
-                effects.push(Effect::Notification(GameNotification::UnrollUnrecoverable {
+                effects.push(Effect::Notification(GameNotification::ChannelError {
                     reason: reason.clone(),
                 }));
                 self.handshake_state = HandshakeState::OnChainWaitingForUnrollSpend(
@@ -2258,7 +2258,7 @@ impl SpendWalletReceiver for PotatoHandler
                         "timeout unroll failed for state {on_chain_state}: {e:?}"
                     );
                     debug!("UNRECOVERABLE (timeout path): {reason}");
-                    effects.push(Effect::Notification(GameNotification::UnrollUnrecoverable {
+                    effects.push(Effect::Notification(GameNotification::ChannelError {
                         reason,
                     }));
                 }
@@ -2289,11 +2289,12 @@ impl SpendWalletReceiver for PotatoHandler
                 return Ok(effects);
             } else if let Some((game_id, our_turn)) = on_chain.remove_game_coin_info(coin_id) {
                 debug!("game coin {coin_id:?} spent with no puzzle/solution - our_turn={our_turn}");
-                let notification = if our_turn {
-                    GameNotification::OurTurnCoinSpentUnexpectedly { id: game_id.clone() }
+                let reason = if our_turn {
+                    "our turn coin spent unexpectedly".to_string()
                 } else {
-                    GameNotification::OpponentMadeImpossibleSpend { id: game_id.clone() }
+                    "opponent made impossible spend".to_string()
                 };
+                let notification = GameNotification::GameError { id: game_id.clone(), reason };
                 effects.push(Effect::Notification(notification));
                 effects.push(Effect::GameFinished {
                     id: game_id,
@@ -2344,14 +2345,11 @@ impl SpendWalletReceiver for PotatoHandler
                             effects.extend(effect);
                         }
                         Err(e) => {
-                            debug!("channel coin spent to non-unroll: {e:?}");
-                            if let Ok(player_ch) = self.channel_handler() {
-                                for id in player_ch.live_game_ids() {
-                                    effects.push(Effect::Notification(
-                                        GameNotification::GameDestroyedOnChain { id },
-                                    ));
-                                }
-                            }
+                            let reason = format!("channel coin spent to non-unroll: {e:?}");
+                            debug!("{reason}");
+                            effects.push(Effect::Notification(
+                                GameNotification::ChannelError { reason },
+                            ));
                         }
                     }
                     return Ok(effects);
@@ -2364,14 +2362,11 @@ impl SpendWalletReceiver for PotatoHandler
                             effects.extend(transition_effects);
                         }
                         Err(e) => {
-                            debug!("unroll coin spent with unexpected state: {e:?}");
-                            if let Ok(player_ch) = self.channel_handler() {
-                                for id in player_ch.live_game_ids() {
-                                    effects.push(Effect::Notification(
-                                        GameNotification::GameDestroyedOnChain { id },
-                                    ));
-                                }
-                            }
+                            let reason = format!("unroll coin spent with unexpected state: {e:?}");
+                            debug!("{reason}");
+                            effects.push(Effect::Notification(
+                                GameNotification::ChannelError { reason },
+                            ));
                         }
                     }
                     return Ok(effects);

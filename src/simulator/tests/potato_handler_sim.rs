@@ -2311,7 +2311,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             let mut allocator = AllocEncoder::new();
 
             // 3 moves so after redo it's Bob's turn; destroying the coin
-            // from Alice's view gives GameDestroyedOnChain/OpponentMadeImpossibleSpend.
+            // from Alice's view gives a GameError or ChannelError.
             let moves = prefix_test_moves(&mut allocator);
             let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(3).collect();
             on_chain_moves.push(GameAction::GoOnChain(0));
@@ -2323,9 +2323,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
             let p0_notifs = &outcome.local_uis[0].notifications;
             assert!(
-                p0_notifs.iter().any(|n| matches!(n, GameNotification::GameDestroyedOnChain { .. }))
-                || p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentMadeImpossibleSpend { .. })),
-                "player 0 should get GameDestroyedOnChain or OpponentMadeImpossibleSpend when coin is force-destroyed, got: {p0_notifs:?}"
+                p0_notifs.iter().any(|n| matches!(n, GameNotification::GameError { .. }))
+                || p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelError { .. })),
+                "player 0 should get GameError or ChannelError when coin is force-destroyed, got: {p0_notifs:?}"
             );
         },
     ));
@@ -2442,8 +2442,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
                 .flat_map(|ui| ui.notifications.iter())
                 .collect();
             assert!(
-                all_notifs.iter().any(|n| matches!(n, GameNotification::OpponentMadeImpossibleSpend { .. })),
-                "some player should get OpponentMadeImpossibleSpend when game coin force-destroyed, got: {all_notifs:?}"
+                all_notifs.iter().any(|n| matches!(n, GameNotification::GameError { .. })),
+                "some player should get GameError when game coin force-destroyed, got: {all_notifs:?}"
             );
         },
     ));
@@ -2467,8 +2467,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
                 .flat_map(|ui| ui.notifications.iter())
                 .collect();
             assert!(
-                all_notifs.iter().any(|n| matches!(n, GameNotification::OurTurnCoinSpentUnexpectedly { .. })),
-                "some player should get OurTurnCoinSpentUnexpectedly when own game coin force-destroyed, got: {all_notifs:?}"
+                all_notifs.iter().any(|n| matches!(n, GameNotification::GameError { .. })),
+                "some player should get GameError when own game coin force-destroyed, got: {all_notifs:?}"
             );
         },
     ));
@@ -2501,8 +2501,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
             let p1_notifs = &outcome.local_uis[1].notifications;
             assert!(
-                p1_notifs.iter().any(|n| matches!(n, GameNotification::UnrollUnrecoverable { .. })),
-                "player 1 should get UnrollUnrecoverable for state-from-the-future, got: {p1_notifs:?}"
+                p1_notifs.iter().any(|n| matches!(n, GameNotification::ChannelError { .. })),
+                "player 1 should get ChannelError for state-from-the-future, got: {p1_notifs:?}"
             );
         },
     ));
@@ -2537,8 +2537,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
             let p1_notifs = &outcome.local_uis[1].notifications;
             assert!(
-                p1_notifs.iter().any(|n| matches!(n, GameNotification::UnrollUnrecoverable { .. })),
-                "player 1 should get UnrollUnrecoverable for wrong-parity old state, got: {p1_notifs:?}"
+                p1_notifs.iter().any(|n| matches!(n, GameNotification::ChannelError { .. })),
+                "player 1 should get ChannelError for wrong-parity old state, got: {p1_notifs:?}"
             );
         },
     ));

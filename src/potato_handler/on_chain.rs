@@ -376,8 +376,9 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         } else {
             debug!("failed result {result:?}");
             if !old_definition.our_turn && !game_already_ended {
-                effects.push(Effect::Notification(GameNotification::OpponentMadeImpossibleSpend {
+                effects.push(Effect::Notification(GameNotification::GameError {
                     id: old_definition.game_id.clone(),
+                    reason: format!("opponent move failed validation: {result:?}"),
                 }));
             }
             CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Timedout {
@@ -402,8 +403,9 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     | CoinSpentInformation::OurSpend(..)
             );
             if !is_expected {
-                effects.push(Effect::Notification(GameNotification::OurTurnCoinSpentUnexpectedly {
+                effects.push(Effect::Notification(GameNotification::GameError {
                     id: old_definition.game_id.clone(),
+                    reason: format!("our turn coin spent unexpectedly: {their_turn_result:?}"),
                 }));
             }
         }

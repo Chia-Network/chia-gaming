@@ -14,17 +14,14 @@ pub enum GameNotification {
     OpponentSlashedUs { id: GameID },
     OpponentSuccessfullyCheated { id: GameID, amount: Amount },
 
-    GameDestroyedOnChain { id: GameID },
-    OurTurnCoinSpentUnexpectedly { id: GameID },
-    OpponentMadeImpossibleSpend { id: GameID },
+    /// The channel or unroll coin is in an unrecoverable state.
+    /// Everything is lost.
+    ChannelError { reason: String },
+    /// A single game coin is in an unrecoverable state.
+    GameError { id: GameID, reason: String },
 
     ChannelCoinSpent,
     UnrollCoinSpent,
-
-    /// The unroll coin appeared on-chain with a state number we can neither
-    /// preempt (wrong parity / missing peer signature) nor timeout
-    /// (no stored state matches).  This is unrecoverable.
-    UnrollUnrecoverable { reason: String },
 }
 
 #[derive(Debug, Clone)]
