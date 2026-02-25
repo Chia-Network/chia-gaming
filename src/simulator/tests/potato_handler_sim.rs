@@ -2070,6 +2070,59 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
     ));
 
     res.push((
+        "test_cheat_with_funny_mover_share_alice_nerfed",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+
+            // Same setup as test_cheat_with_funny_mover_share but Alice is
+            // nerfed so she can't submit the slash transaction. Bob's cheat
+            // with mover_share=137 succeeds because Alice's slash times out.
+            //
+            // The on-chain referee resolves using the cheat's mover_share=137,
+            // giving Bob 137 of the 200 pot and Alice 63. But Alice is nerfed
+            // during the critical window and can't sweep her 63-mojo coin, so
+            // the balance difference is exactly 200-137 = 63 (not the full 200).
+            // This proves the funny mover_share flows all the way through to
+            // the on-chain resolution.
+            let moves = prefix_test_moves(&mut allocator);
+            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(3).collect();
+            on_chain_moves.push(GameAction::GoOnChain(0));
+            on_chain_moves.push(GameAction::NerfTransactions(0));
+            on_chain_moves.push(GameAction::Cheat(1, Amount::new(137)));
+            on_chain_moves.push(GameAction::WaitBlocks(120, 0));
+            on_chain_moves.push(GameAction::UnNerfTransactions);
+            on_chain_moves.push(GameAction::WaitBlocks(30, 0));
+
+            let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
+                .expect("should finish");
+
+            let (p0_balance, p1_balance) =
+                get_balances_from_outcome(&outcome).expect("should work");
+            // The funny mover_share=137 determines the split: Bob gets 137,
+            // Alice gets 63 (=200-137). Verify this by checking the difference
+            // between the two players' final balances is exactly 200-137=63
+            // (Alice lost her full 100 contribution but recovered 63 from the
+            // game resolution, while Bob lost 100 but recovered 137+63=200...
+            // except Alice couldn't sweep her portion while nerfed).
+            assert_eq!(
+                p1_balance - p0_balance, 63,
+                "balance difference should reflect funny mover_share: \
+                 200 - 137 = 63: p0={p0_balance} p1={p1_balance}"
+            );
+
+            let p0_notifs = &outcome.local_uis[0].notifications;
+            assert!(
+                p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentPlayedIllegalMove { .. })),
+                "player 0 should get OpponentPlayedIllegalMove, got: {p0_notifs:?}"
+            );
+            assert!(
+                p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentSuccessfullyCheated { .. })),
+                "player 0 should get OpponentSuccessfullyCheated (slash was nerfed), got: {p0_notifs:?}"
+            );
+        },
+    ));
+
+    res.push((
         "test_notification_accept_finished",
         &|| {
             let mut allocator = AllocEncoder::new();
