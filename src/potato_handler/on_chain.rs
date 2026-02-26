@@ -670,9 +670,16 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             if let Some(_slash_amount) = game_def.pending_slash_amount {
                 debug!("{initial_potato} pending slash coin timed out - opponent successfully cheated");
                 let our_reward = game_def.cheating_move_mover_share.unwrap_or_default();
+                let reward_coin = if our_reward > Amount::default() {
+                    let reward_ph = self.player_ch.get_reward_puzzle_hash(env)?;
+                    Some(CoinString::from_parts(&coin_id.to_coin_id(), &reward_ph, &our_reward))
+                } else {
+                    None
+                };
                 effects.push(Effect::Notification(GameNotification::OpponentSuccessfullyCheated {
                     id: game_id.clone(),
                     our_reward,
+                    reward_coin,
                 }));
                 effects.extend(self.next_action(env)?);
                 return Ok(effects);

@@ -20,7 +20,7 @@ pub enum GameNotification {
     OpponentPlayedIllegalMove { id: GameID },
     WeSlashedOpponent { id: GameID, reward_coin: CoinString },
     OpponentSlashedUs { id: GameID },
-    OpponentSuccessfullyCheated { id: GameID, our_reward: Amount },
+    OpponentSuccessfullyCheated { id: GameID, our_reward: Amount, reward_coin: Option<CoinString> },
 
     /// The channel or unroll coin is in an unrecoverable state.
     /// Everything is lost.
