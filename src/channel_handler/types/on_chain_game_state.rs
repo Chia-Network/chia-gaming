@@ -25,6 +25,11 @@ pub struct OnChainGameState {
     pub cheating_move_mover_share: Option<Amount>,
     #[serde(default)]
     pub accepted: bool,
+    /// Set when a terminal notification (WeTimedOut, OpponentTimedOut, etc.) has
+    /// already been emitted for this game, to prevent duplicate notifications when
+    /// the same game coin is observed via multiple code paths.
+    #[serde(default)]
+    pub notification_sent: bool,
     /// The game-specific on-chain timeout (ASSERT_HEIGHT_RELATIVE) from the referee puzzle.
     #[serde(default = "default_game_timeout")]
     pub game_timeout: Timeout,

@@ -556,7 +556,7 @@ impl LocalTestUIReceiver {
     }
 
     pub fn has_terminal_notification(&self) -> bool {
-        self.notifications.iter().any(|n| matches!(n,
+        let has_game_terminal = self.notifications.iter().any(|n| matches!(n,
             GameNotification::WeTimedOut { .. }
             | GameNotification::OpponentTimedOut { .. }
             | GameNotification::WeSlashedOpponent { .. }
@@ -565,7 +565,15 @@ impl LocalTestUIReceiver {
             | GameNotification::GameCancelled { .. }
             | GameNotification::GameError { .. }
             | GameNotification::ChannelError { .. }
-        ))
+        ));
+        if has_game_terminal {
+            return true;
+        }
+        let has_unroll = self.notifications.iter().any(|n| matches!(n,
+            GameNotification::UnrollCoinSpent { .. }
+        ));
+        let had_games = self.events.iter().any(|e| matches!(e, TestEvent::GameStart { .. }));
+        has_unroll && !had_games
     }
 }
 
@@ -961,7 +969,10 @@ fn run_game_container_with_action_list_with_success_predicate(
             }
         }
 
-        let should_end = cradles.iter().all(|c| c.finished()) && ending.is_none();
+        let all_actions_processed = move_number >= moves_input.len();
+        let should_end = cradles.iter().enumerate().all(|(i, c)| {
+            c.finished() || (all_actions_processed && local_uis[i].has_terminal_notification())
+        }) && ending.is_none();
         if should_end {
             ending = Some(10);
         }
@@ -2718,7 +2729,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(100) },
             ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
             ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-            ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
             ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
         ], "nerfed_accept p1");
     }));

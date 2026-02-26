@@ -1859,6 +1859,7 @@ impl ChannelHandler {
                             pending_slash_amount: None,
                             cheating_move_mover_share: None,
                             accepted: false,
+                            notification_sent: false,
                             game_timeout,
                         },
                     );
@@ -1881,6 +1882,7 @@ impl ChannelHandler {
                         pending_slash_amount: None,
                         cheating_move_mover_share: None,
                         accepted: false,
+                        notification_sent: false,
                         game_timeout,
                     },
                 );
@@ -1906,6 +1908,7 @@ impl ChannelHandler {
                             pending_slash_amount: None,
                             cheating_move_mover_share: None,
                             accepted: true,
+                            notification_sent: false,
                             game_timeout: pending.get_game_timeout(),
                         },
                     );

@@ -44,7 +44,7 @@ pub enum HandshakeState {
     OnChainWaitingForUnrollTimeoutOrSpend(CoinString, usize),
     OnChainWaitForConditions(CoinString, Box<HandshakeStepWithSpend>),
     // Converge here to on chain state.
-    OnChainWaitingForUnrollSpend(CoinString, usize),
+    OnChainWaitingForUnrollSpend(CoinString, usize, Option<CoinString>),
     OnChainWaitingForUnrollConditions(CoinString),
     OnChain(Box<OnChainPotatoHandler>),
     Completed,

@@ -579,6 +579,12 @@ impl PotatoHandler {
                     (coin, my_reward, full_spend, channel_puzzle_public_key)
                 };
 
+                let reward_coin_for_state = if my_reward.to_parts().map(|(_, _, amt)| amt > Amount::default()).unwrap_or(false) {
+                    Some(my_reward.clone())
+                } else {
+                    None
+                };
+
                 effects.push(Effect::RegisterCoin {
                     coin: my_reward,
                     timeout: timeout.clone(),
@@ -615,7 +621,7 @@ impl PotatoHandler {
                 ));
 
                 self.have_potato = PotatoState::Present;
-                self.handshake_state = HandshakeState::OnChainWaitingForUnrollSpend(coin.clone(), 0);
+                self.handshake_state = HandshakeState::OnChainWaitingForUnrollSpend(coin.clone(), 0, reward_coin_for_state);
             }
             PeerMessage::CleanShutdownComplete(coin_spend) => {
                 effects.push(Effect::SpendTransaction(SpendBundle {
@@ -857,6 +863,12 @@ impl PotatoHandler {
                     &want_amount,
                 );
 
+                let reward_coin_for_state = if want_amount > Amount::default() {
+                    Some(my_reward.clone())
+                } else {
+                    None
+                };
+
                 effects.push(Effect::RegisterCoin {
                     coin: my_reward,
                     timeout,
@@ -873,7 +885,7 @@ impl PotatoHandler {
                 ));
 
                 self.handshake_state =
-                    HandshakeState::OnChainWaitingForUnrollSpend(state_channel_coin.clone(), 0);
+                    HandshakeState::OnChainWaitingForUnrollSpend(state_channel_coin.clone(), 0, reward_coin_for_state);
 
                 Ok((true, effects))
             }
@@ -1529,10 +1541,10 @@ impl PotatoHandler {
                         assert!(!matches!(self.handshake_state, HandshakeState::StepA));
                         return Ok((true, vec![Effect::RequestPuzzleAndSolution(coin_id.clone())]));
                     }
-                    HandshakeState::OnChainWaitingForUnrollSpend(..) => {
+                    HandshakeState::OnChainWaitingForUnrollSpend(_, _, reward_coin) => {
                         self.handshake_state = HandshakeState::Completed;
                         return Ok((false, vec![Effect::CleanShutdownComplete {
-                            reward_coin: None,
+                            reward_coin,
                         }]));
                     }
                     HandshakeState::Failed => {
@@ -1570,7 +1582,7 @@ impl PotatoHandler {
     ) -> Result<(bool, Option<Effect>), Error> {
         // Channel coin was spent so we're going on chain.
         let is_unroll_coin = match &self.handshake_state {
-            HandshakeState::OnChainWaitingForUnrollSpend(unroll_coin, _) => coin_id == unroll_coin,
+            HandshakeState::OnChainWaitingForUnrollSpend(unroll_coin, ..) => coin_id == unroll_coin,
             HandshakeState::OnChainWaitingForUnrollTimeoutOrSpend(unroll_coin, _) => {
                 coin_id == unroll_coin
             }
@@ -1625,7 +1637,7 @@ impl PotatoHandler {
             }
         };
 
-        self.handshake_state = HandshakeState::OnChainWaitingForUnrollSpend(unroll_coin.clone(), on_chain_state);
+        self.handshake_state = HandshakeState::OnChainWaitingForUnrollSpend(unroll_coin.clone(), on_chain_state, None);
 
         Ok(Some(Effect::SpendTransaction(spend_bundle)))
     }
@@ -1842,7 +1854,7 @@ impl PotatoHandler {
         match outcome {
             Outcome::Preempted => {
                 self.handshake_state = HandshakeState::OnChainWaitingForUnrollSpend(
-                    unroll_coin.clone(), on_chain_state,
+                    unroll_coin.clone(), on_chain_state, None,
                 );
                 effects.push(Effect::RegisterCoin {
                     coin: unroll_coin,
@@ -2306,7 +2318,7 @@ impl SpendWalletReceiver for PotatoHandler
             HandshakeState::OnChainWaitForConditions(state_coin_id, _data) => {
                 Some(ConditionWaitKind::Channel(state_coin_id.clone()))
             }
-            HandshakeState::OnChainWaitingForUnrollSpend(unroll_id, _) => {
+            HandshakeState::OnChainWaitingForUnrollSpend(unroll_id, ..) => {
                 Some(ConditionWaitKind::Unroll(unroll_id.clone()))
             }
             HandshakeState::OnChainWaitingForUnrollConditions(unroll_id) => {

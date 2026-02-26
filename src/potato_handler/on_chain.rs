@@ -52,8 +52,6 @@ pub struct OnChainPotatoHandler {
     game_map: HashMap<CoinString, OnChainGameState>,
     #[serde(skip)]
     pending_move: Option<PendingMoveSavedState>,
-    #[serde(default)]
-    completion_emitted: bool,
 }
 
 impl std::fmt::Debug for OnChainPotatoHandler {
@@ -77,7 +75,6 @@ impl OnChainPotatoHandler {
             game_action_queue,
             game_map,
             pending_move: None,
-            completion_emitted: false,
         }
     }
 
@@ -100,14 +97,6 @@ impl OnChainPotatoHandler {
 
     pub fn remove_game_coin_info(&mut self, coin_id: &CoinString) -> Option<(GameID, bool)> {
         self.game_map.remove(coin_id).map(|def| (def.game_id, def.our_turn))
-    }
-
-    fn no_live_games(&self) -> bool {
-        self.game_map.is_empty()
-            || self
-                .game_map
-                .values()
-                .all(|g| matches!(g.accept, AcceptTransactionState::Finished))
     }
 
     fn do_on_chain_redo_move<R: Rng>(
@@ -332,16 +321,19 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
 
             if let Some((ph, amt)) = created {
                 if ph == reward_ph {
-                    let reward_coin = if amt > Amount::default() {
-                        Some(CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt))
-                    } else {
-                        None
-                    };
-                    effects.push(Effect::Notification(GameNotification::WeTimedOut {
-                        id: old_definition.game_id.clone(),
-                        our_reward: amt,
-                        reward_coin,
-                    }));
+                    if !old_definition.notification_sent {
+
+                        let reward_coin = if amt > Amount::default() {
+                            Some(CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt))
+                        } else {
+                            None
+                        };
+                        effects.push(Effect::Notification(GameNotification::WeTimedOut {
+                            id: old_definition.game_id.clone(),
+                            our_reward: amt,
+                            reward_coin,
+                        }));
+                    }
                 } else {
                     // The accepted coin was spent by a game move (e.g. the
                     // opponent's redo) rather than a timeout.  Carry the
@@ -488,8 +480,9 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     .and_then(|c| c.to_parts())
                     .map(|(_, _, amt)| amt.clone())
                     .unwrap_or_default();
-                if !game_already_ended {
+                if !game_already_ended && !old_definition.notification_sent {
                     if old_definition.our_turn {
+
                         effects.push(Effect::Notification(GameNotification::WeTimedOut {
                             id: old_definition.game_id.clone(),
                             our_reward: amount.clone(),
@@ -624,23 +617,26 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             }
             CoinSpentInformation::OurReward(ph, amt) => {
                 debug!("{initial_potato} our reward coin was spent");
-                let reward_coin = if amt > Amount::default() {
-                    Some(CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt))
-                } else {
-                    None
-                };
-                if old_definition.our_turn {
-                    effects.push(Effect::Notification(GameNotification::WeTimedOut {
-                        id: old_definition.game_id.clone(),
-                        our_reward: amt,
-                        reward_coin,
-                    }));
-                } else {
-                    effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
-                        id: old_definition.game_id.clone(),
-                        our_reward: amt,
-                        reward_coin,
-                    }));
+                if !game_already_ended && !old_definition.notification_sent {
+
+                    let reward_coin = if amt > Amount::default() {
+                        Some(CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt))
+                    } else {
+                        None
+                    };
+                    if old_definition.our_turn {
+                        effects.push(Effect::Notification(GameNotification::WeTimedOut {
+                            id: old_definition.game_id.clone(),
+                            our_reward: amt,
+                            reward_coin,
+                        }));
+                    } else {
+                        effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
+                            id: old_definition.game_id.clone(),
+                            our_reward: amt,
+                            reward_coin,
+                        }));
+                    }
                 }
                 unblock_queue = true;
             }
@@ -724,6 +720,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 effects.push(Effect::SpendTransaction(spend_bundle));
 
                 if game_def.our_turn {
+
                     effects.push(Effect::Notification(GameNotification::WeTimedOut {
                         id: game_id.clone(),
                         our_reward: coin_amount.clone(),
@@ -738,7 +735,9 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 }
             } else {
                 let our_turn = game_def.our_turn;
+                let already_notified = game_def.notification_sent;
                 game_def.accept = AcceptTransactionState::Finished;
+                game_def.notification_sent = true;
                 self.game_map.insert(coin_id.clone(), game_def);
 
                 let result_transaction = {
@@ -772,18 +771,20 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     None
                 };
 
-                if our_turn {
-                    effects.push(Effect::Notification(GameNotification::WeTimedOut {
-                        id: game_id.clone(),
-                        our_reward: coin_amount.clone(),
-                        reward_coin,
-                    }));
-                } else {
-                    effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
-                        id: game_id.clone(),
-                        our_reward: coin_amount.clone(),
-                        reward_coin,
-                    }));
+                if !already_notified {
+                    if our_turn {
+                        effects.push(Effect::Notification(GameNotification::WeTimedOut {
+                            id: game_id.clone(),
+                            our_reward: coin_amount.clone(),
+                            reward_coin,
+                        }));
+                    } else {
+                        effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
+                            id: game_id.clone(),
+                            our_reward: coin_amount.clone(),
+                            reward_coin,
+                        }));
+                    }
                 }
             }
 
@@ -800,13 +801,6 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
     {
         if let Some(action) = self.game_action_queue.pop_front() {
             return self.do_on_chain_action(env, action);
-        }
-
-        if !self.completion_emitted && self.no_live_games() {
-            self.completion_emitted = true;
-            return Ok(vec![Effect::CleanShutdownComplete {
-                reward_coin: None,
-            }]);
         }
 
         Ok(Vec::new())
@@ -962,18 +956,8 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
 
                 Ok(Vec::new())
             }
-            GameAction::CleanShutdown(conditions) => {
-                if !self.no_live_games() {
-                    debug!("Can't shut down yet, still have games");
-                    self.game_action_queue
-                        .push_front(GameAction::CleanShutdown(conditions));
-                    return Ok(Vec::new());
-                }
-
-                debug!("notify clean shutdown complete");
-                Ok(vec![Effect::CleanShutdownComplete {
-                    reward_coin: None,
-                }])
+            GameAction::CleanShutdown(_) => {
+                Ok(Vec::new())
             }
             GameAction::SendPotato => Ok(Vec::new()),
         }
