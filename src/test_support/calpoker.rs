@@ -101,8 +101,9 @@ mod sim_tests {
     };
     use crate::shutdown::BasicShutdownConditions;
     use crate::simulator::tests::potato_handler_sim::{
-        run_calpoker_container_with_action_list,
-        run_calpoker_container_with_action_list_with_success_predicate, GameRunOutcome,
+        assert_event_sequence, run_calpoker_container_with_action_list,
+        run_calpoker_container_with_action_list_with_success_predicate, ExpectedEvent,
+        ExpectedNotification, GameRunOutcome, TestEvent,
     };
     use crate::test_support::game::GameActionResult;
     use log::debug;
@@ -155,6 +156,26 @@ mod sim_tests {
     }
 
 
+    fn assert_calpoker_moves_have_data(events: &[TestEvent], player_label: &str) {
+        for event in events {
+            match event {
+                TestEvent::SelfMove { state_number, move_data, .. } => {
+                    assert!(
+                        !move_data.is_empty(),
+                        "{player_label}: SelfMove(sn={state_number}) has empty move_data"
+                    );
+                }
+                TestEvent::OpponentMoved { state_number, readable, .. } => {
+                    assert!(
+                        !readable.to_program().to_hex().is_empty(),
+                        "{player_label}: OpponentMoved(sn={state_number}) has empty readable"
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn assert_stayed_off_chain(outcome: &GameRunOutcome, test_name: &str) {
         for (who, ui) in outcome.local_uis.iter().enumerate() {
             assert!(
@@ -187,6 +208,23 @@ mod sim_tests {
             match result {
                 Ok(outcome) => {
                     assert_stayed_off_chain(&outcome, "test_play_calpoker_happy_path");
+                    assert_event_sequence(&outcome.local_uis[0].events, &[
+                        ExpectedEvent::GameStart,
+                        ExpectedEvent::SelfMove { state_number: 6 },
+                        ExpectedEvent::OpponentMoved { state_number: 7 },
+                        ExpectedEvent::SelfMove { state_number: 8 },
+                        ExpectedEvent::OpponentMoved { state_number: 9 },
+                    ], "happy_path p0");
+                    assert_event_sequence(&outcome.local_uis[1].events, &[
+                        ExpectedEvent::GameStart,
+                        ExpectedEvent::OpponentMoved { state_number: 6 },
+                        ExpectedEvent::SelfMove { state_number: 7 },
+                        ExpectedEvent::GameMessage,
+                        ExpectedEvent::OpponentMoved { state_number: 8 },
+                        ExpectedEvent::SelfMove { state_number: 9 },
+                    ], "happy_path p1");
+                    assert_calpoker_moves_have_data(&outcome.local_uis[0].events, "happy_path p0");
+                    assert_calpoker_moves_have_data(&outcome.local_uis[1].events, "happy_path p1");
                 }
                 Err(e) => {
                     panic!("happy path failed; scripted moves={moves:?}; error={e:?}");
@@ -214,6 +252,20 @@ mod sim_tests {
 
             assert_eq!(alice_cards, vec![0usize, 7, 10, 11, 32, 36, 41, 49]);
             assert_eq!(bob_cards, vec![2usize, 6, 9, 13, 18, 19, 23, 47]);
+
+            assert_event_sequence(&game_outcome.local_uis[0].events, &[
+                ExpectedEvent::GameStart,
+                ExpectedEvent::SelfMove { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 7 },
+            ], "revealed_hands p0");
+            assert_event_sequence(&game_outcome.local_uis[1].events, &[
+                ExpectedEvent::GameStart,
+                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::SelfMove { state_number: 7 },
+                ExpectedEvent::GameMessage,
+            ], "revealed_hands p1");
+            assert_calpoker_moves_have_data(&game_outcome.local_uis[0].events, "revealed_hands p0");
+            assert_calpoker_moves_have_data(&game_outcome.local_uis[1].events, "revealed_hands p1");
         }));
 
         res.push(("test_opening_parity_with_main_vectors", &|| {
@@ -267,6 +319,18 @@ mod sim_tests {
 
             assert_eq!(alice_cards, vec![0usize, 7, 10, 11, 32, 36, 41, 49]);
             assert_eq!(bob_cards, vec![2usize, 6, 9, 13, 18, 19, 23, 47]);
+
+            assert_event_sequence(&game_outcome.local_uis[0].events, &[
+                ExpectedEvent::GameStart,
+                ExpectedEvent::SelfMove { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 7 },
+            ], "parity p0");
+            assert_event_sequence(&game_outcome.local_uis[1].events, &[
+                ExpectedEvent::GameStart,
+                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::SelfMove { state_number: 7 },
+                ExpectedEvent::GameMessage,
+            ], "parity p1");
         }));
 
         res.push(("test_discard_to_bitfield_parity_with_main", &|| {
@@ -336,6 +400,27 @@ mod sim_tests {
             } else {
                 panic!("expected MoveResult for final game action, got: {:?}", last_result);
             }
+
+            assert_event_sequence(&game_outcome.local_uis[0].events, &[
+                ExpectedEvent::GameStart,
+                ExpectedEvent::SelfMove { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 7 },
+                ExpectedEvent::SelfMove { state_number: 8 },
+                ExpectedEvent::OpponentMoved { state_number: 9 },
+                ExpectedEvent::SelfMove { state_number: 10 },
+                ExpectedEvent::Notification(ExpectedNotification::WeTimedOutOpponent),
+            ], "endgame p0");
+            assert_event_sequence(&game_outcome.local_uis[1].events, &[
+                ExpectedEvent::GameStart,
+                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::SelfMove { state_number: 7 },
+                ExpectedEvent::GameMessage,
+                ExpectedEvent::OpponentMoved { state_number: 8 },
+                ExpectedEvent::SelfMove { state_number: 9 },
+                ExpectedEvent::OpponentMoved { state_number: 10 },
+            ], "endgame p1");
+            assert_calpoker_moves_have_data(&game_outcome.local_uis[0].events, "endgame p0");
+            assert_calpoker_moves_have_data(&game_outcome.local_uis[1].events, "endgame p1");
         }));
 
         res.push(("test_verify_bob_message", &|| {
@@ -355,6 +440,24 @@ mod sim_tests {
                 extract_info_from_messages(&game_results).expect("expected message payload");
             assert_ne!(bob_clvm_data.to_program().to_hex(), "80");
             debug!("play_result {game_results:?}");
+
+            assert_event_sequence(&game_outcome.local_uis[0].events, &[
+                ExpectedEvent::GameStart,
+                ExpectedEvent::SelfMove { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 7 },
+                ExpectedEvent::SelfMove { state_number: 8 },
+                ExpectedEvent::OpponentMoved { state_number: 9 },
+            ], "bob_message p0");
+            assert_event_sequence(&game_outcome.local_uis[1].events, &[
+                ExpectedEvent::GameStart,
+                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::SelfMove { state_number: 7 },
+                ExpectedEvent::GameMessage,
+                ExpectedEvent::OpponentMoved { state_number: 8 },
+                ExpectedEvent::SelfMove { state_number: 9 },
+            ], "bob_message p1");
+            assert_calpoker_moves_have_data(&game_outcome.local_uis[0].events, "bob_message p0");
+            assert_calpoker_moves_have_data(&game_outcome.local_uis[1].events, "bob_message p1");
         }));
 
         res.push(("test_play_calpoker_on_chain_after_1_move_p1", &|| {
@@ -366,6 +469,21 @@ mod sim_tests {
                 run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                     .expect("should work");
             debug!("play_result {:?}", outcome.local_uis);
+
+            assert_event_sequence(&outcome.local_uis[0].events, &[
+                ExpectedEvent::GameStart,
+                ExpectedEvent::SelfMove { state_number: 6 },
+                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::WeTimedOutOpponent),
+            ], "on_chain_1move_p1 p0");
+            assert_event_sequence(&outcome.local_uis[1].events, &[
+                ExpectedEvent::GameStart,
+                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                ExpectedEvent::OpponentMoved { state_number: 5 },
+                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+            ], "on_chain_1move_p1 p1");
         }));
 
         res.push(("test_play_calpoker_on_chain_after_1_move_p0_lost_message", &|| {
@@ -378,6 +496,21 @@ mod sim_tests {
                 run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                     .expect("should work");
             debug!("play_result {:?}", outcome.local_uis);
+
+            assert_event_sequence(&outcome.local_uis[0].events, &[
+                ExpectedEvent::GameStart,
+                ExpectedEvent::SelfMove { state_number: 6 },
+                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::WeTimedOutOpponent),
+            ], "on_chain_1move_p0_lost p0");
+            assert_event_sequence(&outcome.local_uis[1].events, &[
+                ExpectedEvent::GameStart,
+                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                ExpectedEvent::OpponentMoved { state_number: 5 },
+                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+            ], "on_chain_1move_p0_lost p1");
         }));
 
         res.push(("test_play_calpoker_on_chain_after_1_move_p0", &|| {
@@ -389,6 +522,21 @@ mod sim_tests {
                 run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                     .expect("should work");
             debug!("play_result {:?}", outcome.local_uis);
+
+            assert_event_sequence(&outcome.local_uis[0].events, &[
+                ExpectedEvent::GameStart,
+                ExpectedEvent::SelfMove { state_number: 6 },
+                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::WeTimedOutOpponent),
+            ], "on_chain_1move_p0 p0");
+            assert_event_sequence(&outcome.local_uis[1].events, &[
+                ExpectedEvent::GameStart,
+                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                ExpectedEvent::OpponentMoved { state_number: 5 },
+                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+            ], "on_chain_1move_p0 p1");
         }));
 
         res.push(("test_play_calpoker_on_chain_after_2_moves_p0", &|| {
@@ -400,6 +548,23 @@ mod sim_tests {
                 run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                     .expect("should work");
             debug!("play_result {:?}", outcome.local_uis);
+
+            assert_event_sequence(&outcome.local_uis[0].events, &[
+                ExpectedEvent::GameStart,
+                ExpectedEvent::SelfMove { state_number: 6 },
+                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+            ], "on_chain_2moves_p0 p0");
+            assert_event_sequence(&outcome.local_uis[1].events, &[
+                ExpectedEvent::GameStart,
+                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::SelfMove { state_number: 7 },
+                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::WeTimedOutOpponent),
+            ], "on_chain_2moves_p0 p1");
         }));
 
         res.push(("test_play_calpoker_on_chain_after_2_moves_p1", &|| {
@@ -411,6 +576,23 @@ mod sim_tests {
                 run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                     .expect("should work");
             debug!("play_result {:?}", outcome.local_uis);
+
+            assert_event_sequence(&outcome.local_uis[0].events, &[
+                ExpectedEvent::GameStart,
+                ExpectedEvent::SelfMove { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 7 },
+                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+            ], "on_chain_2moves_p1 p0");
+            assert_event_sequence(&outcome.local_uis[1].events, &[
+                ExpectedEvent::GameStart,
+                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::SelfMove { state_number: 7 },
+                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::WeTimedOutOpponent),
+            ], "on_chain_2moves_p1 p1");
         }));
 
         res.push(("test_play_calpoker_end_game_reward", &|| {
@@ -424,6 +606,27 @@ mod sim_tests {
                 run_calpoker_container_with_action_list(&mut allocator, &moves)
                     .expect("end game reward should work");
             assert_stayed_off_chain(&game_outcome, "test_play_calpoker_end_game_reward");
+
+            assert_event_sequence(&game_outcome.local_uis[0].events, &[
+                ExpectedEvent::GameStart,
+                ExpectedEvent::SelfMove { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 7 },
+                ExpectedEvent::SelfMove { state_number: 8 },
+                ExpectedEvent::OpponentMoved { state_number: 9 },
+                ExpectedEvent::SelfMove { state_number: 10 },
+                ExpectedEvent::Notification(ExpectedNotification::WeTimedOutOpponent),
+            ], "end_game_reward p0");
+            assert_event_sequence(&game_outcome.local_uis[1].events, &[
+                ExpectedEvent::GameStart,
+                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::SelfMove { state_number: 7 },
+                ExpectedEvent::GameMessage,
+                ExpectedEvent::OpponentMoved { state_number: 8 },
+                ExpectedEvent::SelfMove { state_number: 9 },
+                ExpectedEvent::OpponentMoved { state_number: 10 },
+            ], "end_game_reward p1");
+            assert_calpoker_moves_have_data(&game_outcome.local_uis[0].events, "end_game_reward p0");
+            assert_calpoker_moves_have_data(&game_outcome.local_uis[1].events, "end_game_reward p1");
         }));
 
         res

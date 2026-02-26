@@ -328,14 +328,34 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 if ph == reward_ph {
                     effects.push(Effect::Notification(GameNotification::WeTimedOut {
                         id: old_definition.game_id.clone(),
-                        amount: amt.clone(),
+                        amount: amt,
                     }));
                 } else {
-                    debug_assert!(false, "accepted game coin spent to non-reward: opponent should not be able to move on our accepted coin");
-                    effects.push(Effect::Notification(GameNotification::GameError {
-                        id: old_definition.game_id.clone(),
-                        reason: "accepted game coin spent to non-reward (unreachable)".to_string(),
-                    }));
+                    // The accepted coin was spent by a game move (e.g. the
+                    // opponent's redo) rather than a timeout.  Carry the
+                    // accepted flag forward to the new game coin so we keep
+                    // waiting for the eventual timeout.
+                    let new_coin = CoinString::from_parts(
+                        &coin_id.to_coin_id(), &ph, &amt,
+                    );
+                    debug!(
+                        "{initial_potato} accepted coin advanced by redo: tracking new coin {new_coin:?}"
+                    );
+                    let gt = old_definition.game_timeout.clone();
+                    self.game_map.insert(
+                        new_coin.clone(),
+                        OnChainGameState {
+                            puzzle_hash: ph,
+                            our_turn: !old_definition.our_turn,
+                            accepted: true,
+                            ..old_definition
+                        },
+                    );
+                    effects.push(Effect::RegisterCoin {
+                        coin: new_coin,
+                        timeout: gt,
+                        name: Some("accepted game coin advanced by redo"),
+                    });
                 }
             }
 
@@ -893,14 +913,17 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 Ok(effects)
             }
             GameAction::Accept(game_id) => {
+                let on_chain_turn = self.my_move_in_game(&game_id);
+                if on_chain_turn != Some(true) {
+                    debug!(
+                        "{initial_potato} Accept: not our turn ({on_chain_turn:?}), deferring"
+                    );
+                    self.game_action_queue.push_back(GameAction::Accept(game_id));
+                    return Ok(Vec::new());
+                }
                 let current_coin = get_current_coin(&game_id)?;
-                let my_turn = self.player_ch.game_is_my_turn(&game_id);
-                assert!(
-                    my_turn == Some(true),
-                    "Accept called when not our turn: {my_turn:?}"
-                );
                 debug!(
-                    "{initial_potato} on chain (my turn {my_turn:?}): accept game coin {current_coin:?}",
+                    "{initial_potato} on chain: accept game coin {current_coin:?}",
                 );
 
                 if let Some(def) = self.game_map.get_mut(&current_coin) {
