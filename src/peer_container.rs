@@ -160,7 +160,7 @@ pub struct GameStartRecord {
 pub struct IdleResult {
     pub continue_on: bool,
     pub finished: bool,
-    pub shutdown_received: bool,
+    pub clean_shutdown_received: bool,
     pub handshake_done: bool,
     pub handshake_complete: bool,
     pub outbound_transactions: VecDeque<SpendBundle>,
@@ -336,9 +336,9 @@ struct SynchronousGameCradleState {
     #[serde(skip)]
     pending_notifications: VecDeque<GameNotification>,
     handshake_complete: bool,
-    shutdown_received: bool,
+    clean_shutdown_received: bool,
     finished: bool,
-    shutdown: Option<CoinString>,
+    clean_shutdown: Option<CoinString>,
     identity: ChiaIdentity,
     peer_disconnected: bool,
     went_on_chain: Option<String>,
@@ -432,9 +432,9 @@ impl SynchronousGameCradle {
                 channel_puzzle_hash: None,
                 funding_coin: None,
                 unfunded_offer: None,
-                shutdown: None,
+                clean_shutdown: None,
                 resync: None,
-                shutdown_received: false,
+                clean_shutdown_received: false,
                 finished: false,
                 peer_disconnected: false,
                 went_on_chain: None,
@@ -512,12 +512,12 @@ impl ToLocalUI for SynchronousGameCradleState {
         self.handshake_complete = true;
         Ok(())
     }
-    fn shutdown_started(&mut self) -> Result<(), Error> {
-        self.shutdown_received = true;
+    fn clean_shutdown_started(&mut self) -> Result<(), Error> {
+        self.clean_shutdown_received = true;
         Ok(())
     }
-    fn shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
-        self.shutdown = reward_coin_string.cloned();
+    fn clean_shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
+        self.clean_shutdown = reward_coin_string.cloned();
         self.finished = true;
         Ok(())
     }
@@ -984,13 +984,13 @@ impl GameCradle for SynchronousGameCradle {
         local_ui: &mut dyn ToLocalUI,
         flags: u32,
     ) -> Result<Option<IdleResult>, Error> {
-        if self.state.shutdown.is_some() {
+        if self.state.clean_shutdown.is_some() {
             return Ok(None);
         }
 
         let mut result = IdleResult {
             finished: self.finished(),
-            shutdown_received: self.state.shutdown_received,
+            clean_shutdown_received: self.state.clean_shutdown_received,
             ..IdleResult::default()
         };
 

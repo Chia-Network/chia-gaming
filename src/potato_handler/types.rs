@@ -211,8 +211,8 @@ pub trait ToLocalUI {
     fn handshake_complete(&mut self) -> Result<(), Error> {
         Ok(())
     }
-    fn shutdown_started(&mut self) -> Result<(), Error>;
-    fn shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error>;
+    fn clean_shutdown_started(&mut self) -> Result<(), Error>;
+    fn clean_shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error>;
     fn going_on_chain(&mut self, reason: &str) -> Result<(), Error>;
 }
 
@@ -300,8 +300,8 @@ pub enum PeerMessage {
     Move(GameID, MoveResult),
     Message(GameID, Vec<u8>),
     Accept(GameID, Amount, PotatoSignatures),
-    Shutdown(Aggsig, ProgramRef),
-    ShutdownComplete(CoinSpend),
+    CleanShutdown(Aggsig, ProgramRef),
+    CleanShutdownComplete(CoinSpend),
     RequestPotato(()),
     StartGames(PotatoSignatures, Vec<GSI>),
 }
@@ -363,7 +363,7 @@ pub enum GameAction {
         Box<RefereeOnChainTransaction>,
     ),
     Accept(GameID),
-    Shutdown(ShutdownActionHolder),
+    CleanShutdown(ShutdownActionHolder),
     LocalStartGame,
     SendPotato,
 }
@@ -379,7 +379,7 @@ impl std::fmt::Debug for GameAction {
                 write!(formatter, "RedoAccept({gi:?},{cs:?},{ph:?},{rt:?})")
             }
             GameAction::Accept(gi) => write!(formatter, "Accept({gi:?})"),
-            GameAction::Shutdown(_) => write!(formatter, "Shutdown(..)"),
+            GameAction::CleanShutdown(_) => write!(formatter, "CleanShutdown(..)"),
             GameAction::LocalStartGame => write!(formatter, "LocalStartGame"),
             GameAction::SendPotato => write!(formatter, "SendPotato"),
         }

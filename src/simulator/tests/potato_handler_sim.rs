@@ -263,10 +263,10 @@ impl ToLocalUI for SimulatedPeer {
     ) -> Result<(), Error> {
         Ok(())
     }
-    fn shutdown_started(&mut self) -> Result<(), Error> {
+    fn clean_shutdown_started(&mut self) -> Result<(), Error> {
         todo!();
     }
-    fn shutdown_complete(&mut self, _reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
+    fn clean_shutdown_complete(&mut self, _reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
         todo!();
     }
     fn going_on_chain(&mut self, _reason: &str) -> Result<(), Error> {
@@ -396,7 +396,7 @@ pub enum TestEvent {
     GameMessage { id: GameID, readable: ReadableMove },
     GoingOnChain { reason: String },
     Notification(GameNotification),
-    ShutdownComplete,
+    CleanShutdownComplete,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -421,7 +421,7 @@ pub enum ExpectedEvent {
     GameMessage,
     GoingOnChain,
     Notification(ExpectedNotification),
-    ShutdownComplete,
+    CleanShutdownComplete,
 }
 
 fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
@@ -432,7 +432,7 @@ fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
         (TestEvent::OpponentMoved { state_number: a, mover_share: a_share, .. }, ExpectedEvent::OpponentMoved { state_number: e, mover_share: e_share }) => a == e && a_share == e_share,
         (TestEvent::GameMessage { .. }, ExpectedEvent::GameMessage) => true,
         (TestEvent::GoingOnChain { .. }, ExpectedEvent::GoingOnChain) => true,
-        (TestEvent::ShutdownComplete, ExpectedEvent::ShutdownComplete) => true,
+        (TestEvent::CleanShutdownComplete, ExpectedEvent::CleanShutdownComplete) => true,
         (TestEvent::Notification(actual_n), ExpectedEvent::Notification(expected_n)) => {
             match (actual_n, expected_n) {
                 (GameNotification::WeTimedOut { .. }, ExpectedNotification::WeTimedOut) => true,
@@ -462,7 +462,7 @@ fn event_shape(actual: &TestEvent) -> String {
         TestEvent::OpponentMoved { state_number, mover_share, .. } => format!("OpponentMoved(sn={state_number},share={})", mover_share.to_u64()),
         TestEvent::GameMessage { .. } => "GameMessage".to_string(),
         TestEvent::GoingOnChain { reason } => format!("GoingOnChain(reason={reason})"),
-        TestEvent::ShutdownComplete => "ShutdownComplete".to_string(),
+        TestEvent::CleanShutdownComplete => "CleanShutdownComplete".to_string(),
         TestEvent::Notification(n) => match n {
             GameNotification::WeTimedOut { .. } => "Notif(WeTimedOut)".to_string(),
             GameNotification::OpponentTimedOut { .. } => "Notif(OpponentTimedOut)".to_string(),
@@ -485,7 +485,7 @@ fn expected_shape(expected: &ExpectedEvent) -> String {
         ExpectedEvent::OpponentMoved { state_number, mover_share } => format!("OpponentMoved(sn={state_number},share={})", mover_share.to_u64()),
         ExpectedEvent::GameMessage => "GameMessage".to_string(),
         ExpectedEvent::GoingOnChain => "GoingOnChain".to_string(),
-        ExpectedEvent::ShutdownComplete => "ShutdownComplete".to_string(),
+        ExpectedEvent::CleanShutdownComplete => "CleanShutdownComplete".to_string(),
         ExpectedEvent::Notification(n) => match n {
             ExpectedNotification::WeTimedOut => "Notif(WeTimedOut)".to_string(),
             ExpectedNotification::OpponentTimedOut => "Notif(OpponentTimedOut)".to_string(),
@@ -536,7 +536,7 @@ pub fn assert_event_sequence(events: &[TestEvent], expected: &[ExpectedEvent], p
 #[derive(Default, Debug)]
 pub struct LocalTestUIReceiver {
     pub handshake_complete: bool,
-    pub shutdown_complete: bool,
+    pub clean_shutdown_complete: bool,
     pub game_started: Option<GameStartRecord>,
     pub opponent_moved: bool,
     pub go_on_chain: bool,
@@ -632,15 +632,15 @@ impl ToLocalUI for LocalTestUIReceiver {
         Ok(())
     }
 
-    fn shutdown_started(&mut self) -> Result<(), Error> {
-        self.assert_handshake_complete("shutdown_started");
+    fn clean_shutdown_started(&mut self) -> Result<(), Error> {
+        self.assert_handshake_complete("clean_shutdown_started");
         Ok(())
     }
 
-    fn shutdown_complete(&mut self, _reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
-        self.assert_handshake_complete("shutdown_complete");
-        self.shutdown_complete = true;
-        self.events.push(TestEvent::ShutdownComplete);
+    fn clean_shutdown_complete(&mut self, _reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
+        self.assert_handshake_complete("clean_shutdown_complete");
+        self.clean_shutdown_complete = true;
+        self.events.push(TestEvent::CleanShutdownComplete);
         Ok(())
     }
 
@@ -772,7 +772,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         move_number < moves.len()
             && matches!(
                 &moves[move_number],
-                GameAction::Shutdown(_, _)
+                GameAction::CleanShutdown(_, _)
                     | GameAction::WaitBlocks(_, _)
                     | GameAction::GoOnChain(_)
                     | GameAction::GoOnChainThenMove(_)
@@ -1249,17 +1249,17 @@ fn run_game_container_with_action_list_with_success_predicate(
                         can_move = true;
                         cradles[*who].accept(allocator, rng, &game_ids[0])?;
                     }
-                    GameAction::Shutdown(who, conditions) => {
+                    GameAction::CleanShutdown(who, conditions) => {
                         assert!(
                             !cradles[*who].is_on_chain(),
-                            "Shutdown({who}) called while on chain; on-chain completion is automatic"
+                            "CleanShutdown({who}) called while on chain; on-chain completion is automatic"
                         );
                         if !cradles[*who].handshake_finished() {
-                            debug!("Shutdown({who}) deferred: handshake not finished");
+                            debug!("CleanShutdown({who}) deferred: handshake not finished");
                             move_number -= 1;
                             continue;
                         }
-                        debug!("Shutdown({who}) processing");
+                        debug!("CleanShutdown({who}) processing");
                         can_move = true;
                         cradles[*who].shut_down(allocator, rng, conditions.clone())?;
                     }
@@ -1447,7 +1447,7 @@ pub fn add_debug_test_accept_shutdown(test_setup: &mut DebugGameSimSetup, wait: 
         .push(GameAction::WaitBlocks(wait, 1));
     test_setup
         .game_actions
-        .push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+        .push(GameAction::CleanShutdown(1, Rc::new(BasicShutdownConditions)));
 }
 
 pub fn add_debug_test_slash_shutdown(test_setup: &mut DebugGameSimSetup, wait: usize) {
@@ -1625,7 +1625,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
         let mut moves = prefix_test_moves(&mut allocator).to_vec();
         moves.push(GameAction::Accept(0));
-        moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+        moves.push(GameAction::CleanShutdown(1, Rc::new(BasicShutdownConditions)));
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
             .expect("should finish");
 
@@ -2164,7 +2164,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let mut moves = prefix_test_moves(&mut allocator).to_vec();
         moves.push(GameAction::Accept(0));
         moves.push(GameAction::NerfTransactions(0));
-        moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+        moves.push(GameAction::CleanShutdown(1, Rc::new(BasicShutdownConditions)));
 
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
             .expect("should finish");
@@ -2193,7 +2193,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let mut moves = prefix_test_moves(&mut allocator).to_vec();
         moves.push(GameAction::Accept(0));
         moves.push(GameAction::NerfTransactions(1));
-        moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+        moves.push(GameAction::CleanShutdown(1, Rc::new(BasicShutdownConditions)));
 
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
             .expect("should finish");

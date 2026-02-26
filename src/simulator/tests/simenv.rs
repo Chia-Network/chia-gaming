@@ -391,7 +391,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
 
                 Ok(GameActionResult::Accepted)
             }
-            GameAction::Shutdown(player, target_conditions) => {
+            GameAction::CleanShutdown(player, target_conditions) => {
                 let real_target_conditions = get_conditions_with_channel_handler(
                     &mut self.env,
                     &self.parties.player(*player).ch,
@@ -413,7 +413,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                         real_target_conditions,
                     )?;
 
-                // The shutdown gives a spend, which we need to do here.
+                // The clean shutdown gives a spend, which we need to do here.
                 let channel_coin = self.parties.player(*player).ch.state_channel_coin().clone();
 
                 debug!("solution in full spend: {:?}", full_spend.solution);

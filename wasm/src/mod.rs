@@ -100,8 +100,8 @@ mod gaming_wasm {
         "opponent_moved": ((game_id: string, readable_move_hex: string) => void) | undefined,
         "game_message": ((game_id: string, readable_move_hex: string) => void) | undefined,
         "game_notification": ((notification_json: string) => void) | undefined,
-        "shutdown_started": (() => void) | undefined,
-        "shutdown_complete": ((coin: string) => void) | undefined,
+        "clean_shutdown_started": (() => void) | undefined,
+        "clean_shutdown_complete": ((coin: string) => void) | undefined,
         "going_on_chain": ((reason: string) => void) | undefined
     };
     "#;
@@ -717,19 +717,19 @@ mod gaming_wasm {
             })
         }
 
-        fn shutdown_started(
+        fn clean_shutdown_started(
             &mut self
         ) -> Result<(), chia_gaming::common::types::Error> {
-            call_javascript_from_collection(&self.callbacks, "shutdown_started", |_args_array| {
+            call_javascript_from_collection(&self.callbacks, "clean_shutdown_started", |_args_array| {
                 Ok(())
             })
         }
 
-        fn shutdown_complete(
+        fn clean_shutdown_complete(
             &mut self,
             coin: Option<&CoinString>,
         ) -> Result<(), chia_gaming::common::types::Error> {
-            call_javascript_from_collection(&self.callbacks, "shutdown_complete", |args_array| {
+            call_javascript_from_collection(&self.callbacks, "clean_shutdown_complete", |args_array| {
                 args_array.set(
                     0,
                     coin.map(|c| JsValue::from_str(&hex::encode(&c.to_bytes())))
@@ -809,7 +809,7 @@ mod gaming_wasm {
     struct JsIdleResult {
         continue_on: bool,
         finished: bool,
-        shutdown_received: bool,
+        clean_shutdown_received: bool,
         outbound_transactions: Vec<JsSpendBundle>,
         outbound_messages: Vec<String>,
         opponent_move: Option<(String, String)>,
@@ -895,7 +895,7 @@ mod gaming_wasm {
         serde_wasm_bindgen::to_value(&JsIdleResult {
             continue_on: idle_result.continue_on,
             finished: idle_result.finished,
-            shutdown_received: idle_result.shutdown_received,
+            clean_shutdown_received: idle_result.clean_shutdown_received,
             outbound_transactions: idle_result
                 .outbound_transactions
                 .iter()

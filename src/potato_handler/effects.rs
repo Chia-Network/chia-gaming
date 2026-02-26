@@ -58,8 +58,8 @@ pub enum Effect {
         is_my_turn: bool,
     },
     HandshakeComplete,
-    ShutdownStarted,
-    ShutdownComplete {
+    CleanShutdownStarted,
+    CleanShutdownComplete {
         reward_coin: Option<CoinString>,
     },
     GoingOnChain {
@@ -116,11 +116,11 @@ pub fn apply_effects(
             Effect::HandshakeComplete => {
                 system.handshake_complete()?;
             }
-            Effect::ShutdownStarted => {
-                system.shutdown_started()?;
+            Effect::CleanShutdownStarted => {
+                system.clean_shutdown_started()?;
             }
-            Effect::ShutdownComplete { reward_coin } => {
-                system.shutdown_complete(reward_coin.as_ref())?;
+            Effect::CleanShutdownComplete { reward_coin } => {
+                system.clean_shutdown_complete(reward_coin.as_ref())?;
             }
             Effect::GoingOnChain { reason } => {
                 system.going_on_chain(&reason)?;

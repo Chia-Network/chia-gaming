@@ -162,7 +162,7 @@ the holder permission to update state. Only the player holding the potato can:
 - Start a new game
 - Make a move
 - Accept a game result
-- Initiate shutdown
+- Initiate clean shutdown
 
 When a player wants to act but doesn't have the potato, they **request** it.
 The other player passes it (along with any pending state updates) in their next
@@ -289,9 +289,9 @@ Timeout transactions are submitted as soon as the `game_timeout` relative
 timelock allows. The `WeTimedOut` notification is emitted only at this point
 — not when accept is first called.
 
-### Step 6: Shutdown
+### Step 6: Clean Shutdown
 
-After all games resolve, `ShutdownComplete` is emitted and the channel can
+After all games resolve, `CleanShutdownComplete` is emitted and the channel can
 be closed.
 
 **Key code:**
@@ -538,7 +538,7 @@ if Alice misclaims the split.
 | `UnrollCoin` | `channel_handler/types/unroll_coin.rs` | Unroll coin state and puzzle construction |
 | `GameCradle` | `peer_container.rs` | Trait for synchronous game interaction (tests/UI) |
 | `ValidationInfo` | `channel_handler/types/validation_info.rs` | Game validation program + state |
-| `GameAction` | `potato_handler/types.rs` | Actions: `Move`, `Accept`, `GoOnChain`, `Shutdown`, etc. |
+| `GameAction` | `potato_handler/types.rs` | Actions: `Move`, `Accept`, `GoOnChain`, `CleanShutdown`, etc. |
 | `SynchronousGameCradleState` | `peer_container.rs` | Per-peer mutable state: queues, flags, `peer_disconnected` |
 | `OnChainGameState` | `channel_handler/types/on_chain_game_state.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `accepted`, `pending_slash_amount`, `game_timeout` |
 | `GameNotification` | `potato_handler/effects.rs` | Notifications to the UI: `ChannelCoinSpent`, `UnrollCoinSpent`, `WeTimedOut`, etc. |
@@ -596,7 +596,7 @@ The `initiated_on_chain` flag in `ChannelHandler` serves two purposes:
    places user-initiated actions (moves, accepts) directly on
    `game_action_queue` without executing them off-chain. Incoming peer messages
    are also dropped (`process_incoming_message` returns early). The queued
-   actions are drained during `finish_on_chain_transition`, where `Shutdown`
+   actions are drained during `finish_on_chain_transition`, where `CleanShutdown`
    actions are discarded (on-chain path supersedes the clean shutdown path) and
    `LocalStartGame` actions emit `GameCancelled`. Remaining actions (moves,
    accepts) are forwarded to the `OnChainPotatoHandler` for on-chain replay.
@@ -797,8 +797,8 @@ both game lifecycle callbacks and `GameNotification` variants (delivered through
 | `opponent_moved` | `id, state_number, readable, mover_share` | Opponent made a move; `mover_share` is their declared share. |
 | `game_message` | `id, readable` | Informational message from the game (e.g., revealed data). |
 | `going_on_chain` | `reason: &str` | We are automatically going on-chain due to an error. |
-| `shutdown_started` | (none) | Clean shutdown sequence has begun. |
-| `shutdown_complete` | `reward_coin_string` | Channel fully closed; optional reward coin. |
+| `clean_shutdown_started` | (none) | Clean shutdown sequence has begun. |
+| `clean_shutdown_complete` | `reward_coin_string` | Channel fully closed; optional reward coin. |
 
 ### Game Notifications
 
@@ -816,7 +816,7 @@ cleanup and game-over transitions.
 |--------------|------|---------|
 | `ChannelCoinSpent` | Channel coin spend detected on-chain | The channel is being unrolled (by either player) |
 | `UnrollCoinSpent { reward_coin }` | Unroll coin spend detected on-chain | Game coins and reward coins are now live; `reward_coin` is `Some(CoinString)` for our change/reward coin from the unroll, `None` if our balance is zero |
-| `GoingOnChain { reason }` | Error detected in peer message | We are automatically going on-chain due to an error; `reason` describes what went wrong (e.g., invalid peer message, opponent requested shutdown while games are active) |
+| `GoingOnChain { reason }` | Error detected in peer message | We are automatically going on-chain due to an error; `reason` describes what went wrong (e.g., invalid peer message, opponent requested clean shutdown while games are active) |
 
 `ChannelCoinSpent` and `UnrollCoinSpent` fire regardless of who initiated the
 unroll. A player who called `go_on_chain` will see `ChannelCoinSpent` when
@@ -946,7 +946,7 @@ in `src/test_support/game.rs`):
 | `Cheat(player)` | Submit an illegal on-chain move |
 | `EnableCheating(player, bytes)` | Set up a fake move for the next on-chain action |
 | `ForceDestroyCoin(player)` | Inject a fake coin deletion to test error handling |
-| `Shutdown(player, conditions)` | Initiate clean channel shutdown |
+| `CleanShutdown(player, conditions)` | Initiate clean channel shutdown |
 
 `NerfTransactions` is particularly useful for testing asymmetric scenarios —
 e.g., one player's unroll transaction gets dropped (simulating network issues)

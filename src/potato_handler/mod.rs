@@ -528,13 +528,13 @@ impl PotatoHandler {
                 }));
                 effects.extend(self.update_channel_coin_after_receive(env, &spend_info)?);
             }
-            PeerMessage::Shutdown(sig, conditions) => {
+            PeerMessage::CleanShutdown(sig, conditions) => {
                 let has_active = {
                     let ch = self.channel_handler_mut()?;
                     ch.has_games_beyond_just_created()
                 };
                 if has_active {
-                    effects.push(Effect::GoingOnChain { reason: "opponent requested shutdown while games are active".to_string() });
+                    effects.push(Effect::GoingOnChain { reason: "opponent requested clean shutdown while games are active".to_string() });
                     effects.extend(self.go_on_chain(env, true)?);
                     return Ok(effects);
                 }
@@ -589,7 +589,7 @@ impl PotatoHandler {
                     timeout: timeout.clone(),
                     name: Some("parent"),
                 });
-                effects.push(Effect::ShutdownStarted);
+                effects.push(Effect::CleanShutdownStarted);
 
                 let puzzle = puzzle_for_synthetic_public_key(
                     env.allocator,
@@ -611,13 +611,13 @@ impl PotatoHandler {
                 }));
 
                 effects.push(Effect::SendMessage(
-                    PeerMessage::ShutdownComplete(coin_spend),
+                    PeerMessage::CleanShutdownComplete(coin_spend),
                 ));
 
                 self.have_potato = PotatoState::Present;
                 self.handshake_state = HandshakeState::OnChainWaitingForUnrollSpend(coin.clone(), 0);
             }
-            PeerMessage::ShutdownComplete(coin_spend) => {
+            PeerMessage::CleanShutdownComplete(coin_spend) => {
                 effects.push(Effect::SpendTransaction(SpendBundle {
                     name: Some("Create unroll".to_string()),
                     spends: vec![coin_spend.clone()],
@@ -822,7 +822,7 @@ impl PotatoHandler {
 
                 Ok((true, effects))
             }
-            Some(GameAction::Shutdown(conditions)) => {
+            Some(GameAction::CleanShutdown(conditions)) => {
                 {
                     let ch = self.channel_handler_mut()?;
                     if ch.has_games_beyond_just_created() {
@@ -866,7 +866,7 @@ impl PotatoHandler {
                 let shutdown_condition_program =
                     Rc::new(Program::from_nodeptr(env.allocator, real_conditions)?);
                 effects.push(Effect::SendMessage(
-                    PeerMessage::Shutdown(
+                    PeerMessage::CleanShutdown(
                         spend.signature.clone(),
                         shutdown_condition_program.into(),
                     ),
@@ -1481,7 +1481,7 @@ impl PotatoHandler {
             }
 
             HandshakeState::OnChainWaitingForUnrollSpend(..) => {
-                if matches!(msg_envelope.borrow(), PeerMessage::ShutdownComplete(_)) {
+                if matches!(msg_envelope.borrow(), PeerMessage::CleanShutdownComplete(_)) {
                     effects.extend(self.pass_on_channel_handler_message(env, msg_envelope)?);
                     return Ok(effects);
                 }
@@ -1531,7 +1531,7 @@ impl PotatoHandler {
                     }
                     HandshakeState::OnChainWaitingForUnrollSpend(..) => {
                         self.handshake_state = HandshakeState::Completed;
-                        return Ok((false, vec![Effect::ShutdownComplete {
+                        return Ok((false, vec![Effect::CleanShutdownComplete {
                             reward_coin: None,
                         }]));
                     }
@@ -1955,7 +1955,7 @@ impl PotatoHandler {
                         }
                     }
                 }
-                GameAction::Shutdown(_) => {}
+                GameAction::CleanShutdown(_) => {}
                 _ => on_chain_queue.push_back(action),
             }
         }
@@ -2026,7 +2026,7 @@ impl FromLocalUI for PotatoHandler
 
         // Starting a new game cancels any pending clean shutdown request.
         self.game_action_queue
-            .retain(|a| !matches!(a, GameAction::Shutdown(_)));
+            .retain(|a| !matches!(a, GameAction::CleanShutdown(_)));
 
         let (my_games, their_games) = self.get_games_by_start_type(env, i_initiated, game)?;
 
@@ -2111,7 +2111,7 @@ impl FromLocalUI for PotatoHandler
         }
 
         let (_continued, effects) =
-            self.do_game_action(env, GameAction::Shutdown(ShutdownActionHolder(conditions)))?;
+            self.do_game_action(env, GameAction::CleanShutdown(ShutdownActionHolder(conditions)))?;
         Ok(effects)
     }
 }

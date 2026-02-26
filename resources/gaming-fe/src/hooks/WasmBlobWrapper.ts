@@ -45,7 +45,7 @@ const uiSettingSource: Record<string, "value" | "array"> = {
   cardSelections: "value",
   playerHand: "value",
   opponentHand: "value",
-  shutdownCalled: "value",
+  cleanShutdownCalled: "value",
   finished: "value",
   perGameAmount: "value",
   gameOutcome: "value"
@@ -72,7 +72,7 @@ export class WasmBlobWrapper {
   cardSelections: number[];
   playerHand: number[];
   opponentHand: number[];
-  shutdownCalled: boolean;
+  cleanShutdownCalled: boolean;
   finished: boolean;
   reloading: boolean;
   perGameAmount: number;
@@ -115,7 +115,7 @@ export class WasmBlobWrapper {
     this.cardSelections = [];
     this.playerHand = [];
     this.opponentHand = [];
-    this.shutdownCalled = false;
+    this.cleanShutdownCalled = false;
     this.finished = false;
     this.reloading = false;
     this.perGameAmount = perGameAmount;
@@ -141,7 +141,7 @@ export class WasmBlobWrapper {
 
   cleanup() {
     this.finished = true;
-    this.shutdownCalled = true;
+    this.cleanShutdownCalled = true;
     this.messageQueue = [];
     this.storedMessages = [];
     this.gameIds = [];
@@ -251,10 +251,10 @@ export class WasmBlobWrapper {
       return this.internalSetCardSelections(msg.setCardSelections);
     } else if (msg.startGame) {
       return this.internalStartGame();
-    } else if (msg.shutDown) {
-      return this.internalShutdown(msg.condition);
-    } else if (msg.receivedShutdown) {
-      return this.internalReceivedShutdown();
+    } else if (msg.cleanShutdown) {
+      return this.internalCleanShutdown(msg.condition);
+    } else if (msg.receivedCleanShutdown) {
+      return this.internalReceivedCleanShutdown();
     } else if (msg.takeBlockData) {
       return this.internalTakeBlock(
         msg.takeBlockData.peak,
@@ -404,7 +404,7 @@ export class WasmBlobWrapper {
   }
 
   internalStartGame(): any {
-    if (this.finished || this.shutdownCalled) {
+    if (this.finished || this.cleanShutdownCalled) {
       return empty();
     }
 
@@ -524,21 +524,21 @@ export class WasmBlobWrapper {
       return { stop: true };
     }
 
-    if (idle.shutdown_received && !this.shutdownCalled) {
-      this.shutdownCalled = true;
+    if (idle.clean_shutdown_received && !this.cleanShutdownCalled) {
+      this.cleanShutdownCalled = true;
     }
 
     if (idle.finished && !this.finished) {
-      console.error('we shut down');
+      console.error('clean shutdown complete');
       this.finished = true;
       this.rxjsEmitter?.next({
         setGameConnectionState: {
-          stateIdentifier: 'shutdown',
+          stateIdentifier: 'clean_shutdown',
           stateDetail: [],
         },
         outcome: undefined,
       });
-      this.messageQueue.push({ receivedShutdown: true });
+      this.messageQueue.push({ receivedCleanShutdown: true });
       return result;
     }
 
@@ -666,23 +666,23 @@ export class WasmBlobWrapper {
     return empty().then(() => result);
   }
 
-  shutDown(condition: string | undefined) {
-    this.pushEvent({ shutDown: true, condition });
+  cleanShutdown(condition: string | undefined) {
+    this.pushEvent({ cleanShutdown: true, condition });
   }
 
-  internalShutdown(condition: string) {
+  internalCleanShutdown(condition: string) {
     const details: string[] = [];
     if (condition) {
       details.push(condition);
     }
     const result: any = {
       setGameConnectionState: {
-        stateIdentifier: 'shutdown',
+        stateIdentifier: 'clean_shutdown',
         stateDetail: details,
       },
       outcome: undefined,
     };
-    this.shutdownCalled = true;
+    this.cleanShutdownCalled = true;
     this.cradle?.shut_down();
     return empty().then(() => result);
   }
@@ -692,12 +692,12 @@ export class WasmBlobWrapper {
     return empty();
   }
 
-  internalReceivedShutdown() {
+  internalReceivedCleanShutdown() {
     const result: any = {};
-    console.warn('internalReceivedShutdown', this.finished);
-    console.warn('setting shutdown state in ui');
+    console.warn('internalReceivedCleanShutdown', this.finished);
+    console.warn('setting clean_shutdown state in ui');
     result.setGameConnectionState = {
-      stateIdentifier: 'shutdown',
+      stateIdentifier: 'clean_shutdown',
       stateDetail: [],
     };
     result.outcome = undefined;

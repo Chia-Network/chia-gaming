@@ -178,11 +178,11 @@ impl ToLocalUI for Pipe {
     ) -> Result<(), Error> {
         Ok(())
     }
-    fn shutdown_started(&mut self) -> Result<(), Error> {
+    fn clean_shutdown_started(&mut self) -> Result<(), Error> {
         Ok(())
     }
 
-    fn shutdown_complete(&mut self, _reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
+    fn clean_shutdown_complete(&mut self, _reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
         todo!();
     }
     fn going_on_chain(&mut self, _reason: &str) -> Result<(), Error> {

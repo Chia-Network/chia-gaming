@@ -134,7 +134,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
   };
 
   const recognizeGameConnectionState = async (cs: GameConnectionState) => {
-    if (cs.stateIdentifier === 'shutdown') {
+    if (cs.stateIdentifier === 'clean_shutdown') {
       startNewSession();
     }
     setGameConnectionState(cs);
@@ -206,7 +206,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
   );
 
   const stopPlaying = useCallback(() => {
-    gameObject?.shutDown();
+    gameObject?.cleanShutdown();
   }, [gameObject]);
 
   useEffect(() => {

@@ -339,7 +339,7 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
             let mut moves = prefix_test_moves(&mut allocator).to_vec();
             moves.push(GameAction::Accept(1));
-            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            moves.push(GameAction::CleanShutdown(0, Rc::new(BasicShutdownConditions)));
             let game_outcome =
                 run_calpoker_container_with_action_list(&mut allocator, &moves)
                     .expect("game should complete");
@@ -570,7 +570,7 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
             let mut moves = prefix_test_moves(&mut allocator).to_vec();
             moves.push(GameAction::Accept(1));
-            moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+            moves.push(GameAction::CleanShutdown(0, Rc::new(BasicShutdownConditions)));
 
             debug!("running moves {moves:?}");
             let game_outcome =

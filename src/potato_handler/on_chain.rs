@@ -804,7 +804,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
 
         if !self.completion_emitted && self.no_live_games() {
             self.completion_emitted = true;
-            return Ok(vec![Effect::ShutdownComplete {
+            return Ok(vec![Effect::CleanShutdownComplete {
                 reward_coin: None,
             }]);
         }
@@ -962,16 +962,16 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
 
                 Ok(Vec::new())
             }
-            GameAction::Shutdown(conditions) => {
+            GameAction::CleanShutdown(conditions) => {
                 if !self.no_live_games() {
                     debug!("Can't shut down yet, still have games");
                     self.game_action_queue
-                        .push_front(GameAction::Shutdown(conditions));
+                        .push_front(GameAction::CleanShutdown(conditions));
                     return Ok(Vec::new());
                 }
 
-                debug!("notify shutdown complete");
-                Ok(vec![Effect::ShutdownComplete {
+                debug!("notify clean shutdown complete");
+                Ok(vec![Effect::CleanShutdownComplete {
                     reward_coin: None,
                 }])
             }

@@ -43,12 +43,12 @@ export interface SaveData {
 }
 
 export type OpponentMove = [string, string];
-export type StateIdentifier = 'starting' | 'running' | 'shutdown' | 'end';
+export type StateIdentifier = 'starting' | 'running' | 'clean_shutdown' | 'end';
 
 export interface IdleResult {
   continue_on: boolean;
   finished: boolean;
-  shutdown_received: boolean;
+  clean_shutdown_received: boolean;
   outbound_transactions: SpendBundle[];
   outbound_messages: string[];
   opponent_move: OpponentMove | undefined;
@@ -93,8 +93,8 @@ export interface IdleCallbacks {
     | ((games: Array<{ game_id: string; my_turn: boolean; my_contribution: number; their_contribution: number }>) => void)
     | undefined;
   game_notification?: ((notification_json: string) => void) | undefined;
-  shutdown_started?: (() => void) | undefined;
-  shutdown_complete?: ((coin: string) => void) | undefined;
+  clean_shutdown_started?: (() => void) | undefined;
+  clean_shutdown_complete?: ((coin: string) => void) | undefined;
   going_on_chain?: ((reason: string) => void) | undefined;
 }
 
