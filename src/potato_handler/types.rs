@@ -196,9 +196,6 @@ pub trait ToLocalUI {
         readable: ReadableMove,
         mover_share: Amount,
     ) -> Result<(), Error>;
-    fn raw_game_message(&mut self, _id: &GameID, _readable: &[u8]) -> Result<(), Error> {
-        Ok(())
-    }
     fn game_message(
         &mut self,
         allocator: &mut AllocEncoder,

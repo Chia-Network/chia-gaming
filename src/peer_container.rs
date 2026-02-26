@@ -332,7 +332,6 @@ struct SynchronousGameCradleState {
     coin_solution_requests: VecDeque<CoinString>,
     resync: Option<(usize, bool)>,
     opponent_moves: VecDeque<(GameID, usize, ReadableMove, Amount)>,
-    raw_game_messages: VecDeque<(GameID, Vec<u8>)>,
     game_messages: VecDeque<(GameID, ReadableMove)>,
     game_started: VecDeque<GameStartRecord>,
     #[serde(skip)]
@@ -428,7 +427,6 @@ impl SynchronousGameCradle {
                 coin_solution_requests: VecDeque::default(),
                 opponent_moves: VecDeque::default(),
                 game_messages: VecDeque::default(),
-                raw_game_messages: VecDeque::default(),
                 game_started: VecDeque::default(),
                 pending_notifications: VecDeque::default(),
                 handshake_complete: false,
@@ -490,11 +488,6 @@ impl ToLocalUI for SynchronousGameCradleState {
     ) -> Result<(), Error> {
         self.opponent_moves
             .push_back((id.clone(), state_number, readable, my_share));
-        Ok(())
-    }
-    fn raw_game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
-        self.raw_game_messages
-            .push_back((id.clone(), readable.to_vec()));
         Ok(())
     }
     fn game_message(

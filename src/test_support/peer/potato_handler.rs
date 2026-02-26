@@ -59,7 +59,6 @@ struct Pipe {
 
     // Opponent moves
     opponent_moves: Vec<(GameID, ReadableMove, Amount)>,
-    opponent_raw_messages: Vec<(GameID, Vec<u8>)>,
     opponent_messages: Vec<(GameID, ReadableMove)>,
     our_moves: Vec<(GameID, usize, Vec<u8>)>,
 
@@ -162,11 +161,6 @@ impl ToLocalUI for Pipe {
     ) -> Result<(), Error> {
         self.opponent_moves
             .push((id.clone(), readable, mover_share));
-        Ok(())
-    }
-    fn raw_game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
-        self.opponent_raw_messages
-            .push((id.clone(), readable.to_vec()));
         Ok(())
     }
     fn game_message(

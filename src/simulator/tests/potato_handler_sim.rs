@@ -62,7 +62,6 @@ pub struct SimulatedPeer {
     unfunded_offer: Option<SpendBundle>,
     outbound_transactions: Vec<SpendBundle>,
 
-    raw_messages: Vec<Vec<u8>>,
     messages: Vec<ReadableMove>,
 
     simulated_wallet_spend: SimulatedWalletSpend,
@@ -245,10 +244,6 @@ impl ToLocalUI for SimulatedPeer {
     ) -> Result<(), Error> {
         // We can record stuff here and check that we got what was expected, but there's
         // no effect on the game mechanics.
-        Ok(())
-    }
-    fn raw_game_message(&mut self, _id: &GameID, readable: &[u8]) -> Result<(), Error> {
-        self.raw_messages.push(readable.to_vec());
         Ok(())
     }
     fn game_message(
@@ -589,11 +584,6 @@ impl ToLocalUI for LocalTestUIReceiver {
             readable,
             mover_share: my_share,
         });
-        Ok(())
-    }
-
-    fn raw_game_message(&mut self, _id: &GameID, _readable: &[u8]) -> Result<(), Error> {
-        self.assert_handshake_complete("raw_game_message");
         Ok(())
     }
 

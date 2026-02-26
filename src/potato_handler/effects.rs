@@ -37,10 +37,6 @@ pub enum Effect {
         readable: ReadableMove,
         mover_share: Amount,
     },
-    RawGameMessage {
-        id: GameID,
-        readable: Vec<u8>,
-    },
     GameMessage {
         id: GameID,
         readable: ReadableMove,
@@ -97,9 +93,6 @@ pub fn apply_effects(
                 mover_share,
             } => {
                 system.opponent_moved(allocator, &id, state_number, readable, mover_share)?;
-            }
-            Effect::RawGameMessage { id, readable } => {
-                system.raw_game_message(&id, &readable)?;
             }
             Effect::GameMessage { id, readable } => {
                 system.game_message(allocator, &id, readable)?;

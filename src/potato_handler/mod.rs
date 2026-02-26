@@ -511,10 +511,6 @@ impl PotatoHandler {
                     let ch = self.channel_handler_mut()?;
                     ch.received_message(env, game_id, message)?
                 };
-                effects.push(Effect::RawGameMessage {
-                    id: game_id.clone(),
-                    readable: message.clone(),
-                });
                 effects.push(Effect::GameMessage {
                     id: game_id.clone(),
                     readable: decoded_message,
