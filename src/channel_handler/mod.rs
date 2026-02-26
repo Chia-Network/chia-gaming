@@ -9,8 +9,6 @@ use std::collections::HashMap;
 use std::mem::swap;
 use std::rc::Rc;
 
-use log::debug;
-
 use rand::prelude::*;
 
 use clvm_traits::{clvm_curried_args, ToClvm};
@@ -249,9 +247,7 @@ impl ChannelHandler {
 
     pub fn clear_cached_game_id_for_send(&mut self) {
         if let Some(game_id) = self.get_cached_game_id() {
-            debug!("cached game id {game_id:?}");
             if let Ok(idx) = self.get_game_by_id(game_id) {
-                debug!("delete old matching game {idx}");
                 self.live_games.remove(idx);
             }
         }
@@ -497,7 +493,6 @@ impl ChannelHandler {
         }
 
         let aggregate_public_key = our_channel_pubkey.clone() + their_channel_pubkey.clone();
-        debug!("construct channel handler {}", we_start_with_potato);
 
         let state_channel_coin_puzzle_hash =
             puzzle_hash_for_synthetic_public_key(env.allocator, &aggregate_public_key)?;
@@ -615,7 +610,6 @@ impl ChannelHandler {
     ) -> Result<HandshakeResult, Error> {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
 
-        debug!("finish_handshake");
         let channel_coin_spend =
             self.create_conditions_and_signature_of_channel_coin(env, &self.unroll.coin)?;
 
@@ -814,7 +808,6 @@ impl ChannelHandler {
         }
 
         self.current_state_number += 1;
-        debug!("current state number now {}", self.current_state_number);
         if let Some(ref outcome) = test_unroll.outcome {
             self.state_conditions_hashes
                 .insert(outcome.state_number, outcome.hash.clone());
@@ -920,7 +913,6 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         start_info_list: &[Rc<dyn GameStartInfoInterface>],
     ) -> Result<StartGameResult, Error> {
-        debug!("{} SEND POTATO START GAME", self.is_initial_potato());
         let (my_full_contribution, their_full_contribution) =
             self.start_game_contributions(start_info_list);
 
@@ -931,21 +923,10 @@ impl ChannelHandler {
         }
 
         self.clear_cached_game_id_for_send();
-        let live_game_ids: Vec<&GameID> = self.live_games.iter().map(|l| &l.game_id).collect();
-        debug!("current game ids: {live_game_ids:?}");
-
         self.my_allocated_balance += my_full_contribution.clone();
         self.their_allocated_balance += their_full_contribution.clone();
         self.my_out_of_game_balance -= my_full_contribution.clone();
         self.their_out_of_game_balance -= their_full_contribution.clone();
-
-        debug!(
-            "start: my_allocated {:?} their_allocated {:?} my_balance {:?} their_balance {:?}",
-            self.my_allocated_balance,
-            self.their_allocated_balance,
-            self.my_out_of_game_balance,
-            self.their_out_of_game_balance
-        );
 
         // We let them spend a state number 1 higher but nothing else changes.
         self.update_cache_for_potato_send(Some(CachedPotatoRegenerateLastHop::PotatoCreatedGame(
@@ -956,11 +937,6 @@ impl ChannelHandler {
             my_full_contribution,
             their_full_contribution,
         )));
-
-        debug!(
-            "send: started with potato: {}",
-            self.unroll.coin.started_with_potato
-        );
 
         let mut new_games = self.add_games(env, start_info_list)?;
         self.live_games.append(&mut new_games);
@@ -976,12 +952,6 @@ impl ChannelHandler {
         signatures: &PotatoSignatures,
         start_info_list: &[Rc<dyn GameStartInfoInterface>],
     ) -> Result<(Vec<GameID>, ChannelCoinSpendInfo), Error> {
-        debug!(
-            "{} RECEIVED_POTATO_START_GAME: our state is {}, unroll state is {}",
-            self.is_initial_potato(),
-            self.current_state_number,
-            self.unroll.coin.state_number
-        );
         let mut new_games = self.add_games(env, start_info_list)?;
         let result_game_ids: Vec<GameID> = new_games.iter().map(|g| &g.game_id).cloned().collect();
 
@@ -999,13 +969,6 @@ impl ChannelHandler {
         self.my_out_of_game_balance -= my_full_contribution.clone();
         self.their_out_of_game_balance -= their_full_contribution.clone();
 
-        debug!(
-            "start: my_allocated {:?} their_allocated {:?} my_balance {:?} their_balance {:?}",
-            self.my_allocated_balance,
-            self.their_allocated_balance,
-            self.my_out_of_game_balance,
-            self.their_out_of_game_balance
-        );
         // Make a list of all game outputs in order.
         let cached_game_ids = self
             .get_cached_game_id()
@@ -1018,16 +981,6 @@ impl ChannelHandler {
             None,
             &new_games,
         )?);
-
-        debug!(
-            "existing games {} new games {} total games {}",
-            self.live_games.len(),
-            new_games.len(),
-            unroll_data_for_all_games.len()
-        );
-        for n in new_games.iter() {
-            debug!("received game id {:?}", n.game_id);
-        }
 
         // Update an unroll coin to see if we can verify the message.
         let spend = self.received_potato_verify_signatures(
@@ -1057,7 +1010,6 @@ impl ChannelHandler {
             .position(|g| &g.game_id == game_id)
             .map(Ok)
             .unwrap_or_else(|| {
-                debug!("nonexistent game id {game_id:?}");
                 Err(Error::StrErr(
                     "send potato move for nonexistent game id".to_string(),
                 ))
@@ -1071,11 +1023,6 @@ impl ChannelHandler {
         readable_move: &ReadableMove,
         new_entropy: Hash,
     ) -> Result<MoveResult, Error> {
-        debug!(
-            "{} SEND_POTATO_MOVE {}",
-            self.is_initial_potato(),
-            self.current_state_number
-        );
         let game_idx = self.get_game_by_id(game_id)?;
 
         let referee_result = self.live_games[game_idx].internal_make_move(
@@ -1135,11 +1082,6 @@ impl ChannelHandler {
         game_id: &GameID,
         move_result: &MoveResult,
     ) -> Result<ChannelHandlerMoveResult, Error> {
-        debug!(
-            "{} RECEIVED_POTATO_MOVE {}",
-            self.is_initial_potato(),
-            self.current_state_number,
-        );
         let game_idx = self.get_game_by_id(game_id)?;
 
         // Save referee state so we can restore it if anything goes wrong
@@ -1160,12 +1102,6 @@ impl ChannelHandler {
             }
         };
 
-        debug!(
-            "{} my share after their move {:?}",
-            self.unroll.coin.started_with_potato,
-            self.live_games[game_idx].get_our_current_share()
-        );
-
         let (readable_move, message, mover_share) = match their_move_result.original {
             TheirTurnResult::FinalMove(move_data) => (
                 move_data.readable_move,
@@ -1179,8 +1115,6 @@ impl ChannelHandler {
             ),
             TheirTurnResult::Slash(_) => {
                 self.live_games[game_idx].restore_referee_state(saved_referee, saved_last_ph);
-                debug!("{} slash detected, preserving cached_last_action for on-chain replay",
-                    self.is_initial_potato());
                 return Err(Error::StrErr(
                     "slash when off chain: go on chain".to_string(),
                 ));
@@ -1237,7 +1171,6 @@ impl ChannelHandler {
         game_id: &GameID,
     ) -> Result<(PotatoSignatures, Amount), Error> {
         assert!(self.have_potato);
-        debug!("{} SEND_POTATO_ACCEPT", self.is_initial_potato());
         let game_idx = self.get_game_by_id(game_id)?;
 
         let live_game = self.live_games.remove(game_idx);
@@ -1262,14 +1195,6 @@ impl ChannelHandler {
 
         self.my_out_of_game_balance += amount.clone();
         self.their_out_of_game_balance += at_stake.clone() - amount.clone();
-
-        debug!(
-            "accept: my_allocated {:?} their_allocated {:?} my_balance {:?} their_balance {:?}",
-            self.my_allocated_balance,
-            self.their_allocated_balance,
-            self.my_out_of_game_balance,
-            self.their_out_of_game_balance
-        );
 
         self.update_cache_for_potato_send(if amount == Amount::default() {
             None
@@ -1297,7 +1222,6 @@ impl ChannelHandler {
         game_id: &GameID,
     ) -> Result<ChannelCoinSpendInfo, Error> {
         assert!(!self.have_potato);
-        debug!("{} RECEIVED_POTATO_ACCEPT", self.is_initial_potato());
         let game_idx = self.get_game_by_id(game_id)?;
         let unroll_data = self.compute_unroll_data_for_games(
             // Skip the removed game.
@@ -1310,18 +1234,12 @@ impl ChannelHandler {
         let game_amount_for_them = self.live_games[game_idx].get_amount()
             - self.live_games[game_idx].get_our_current_share();
 
-        debug!("received potato accept, my share {game_amount_for_me:?}");
         let new_my_allocated =
             self.my_allocated_balance.clone() - self.live_games[game_idx].my_contribution.clone();
         let new_their_allocated = self.their_allocated_balance.clone()
             - self.live_games[game_idx].their_contribution.clone();
         let my_balance = self.my_out_of_game_balance.clone() + game_amount_for_me;
         let their_balance = self.their_out_of_game_balance.clone() + game_amount_for_them;
-
-        debug!(
-            "accept: my_allocated {:?} their_allocated {:?} my_balance {:?} their_balance {:?}",
-            new_my_allocated, new_their_allocated, my_balance, their_balance
-        );
 
         let unroll_condition_inputs = self.unroll_coin_condition_inputs(
             my_balance.clone(),
@@ -1375,7 +1293,6 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         conditions: NodePtr,
     ) -> Result<Spend, Error> {
-        debug!("{} SEND_POTATO_CLEAN_SHUTDOWN", self.is_initial_potato());
         assert!(self.have_potato);
         let aggregate_public_key = self.get_aggregate_channel_public_key();
         let spend = self.state_channel_coin();
@@ -1427,10 +1344,6 @@ impl ChannelHandler {
         amount: &Amount,
         unroll_coin: &UnrollCoin,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
-        debug!(
-            "making solution for channel coin with unroll state {}",
-            unroll_coin.state_number
-        );
         let unroll_puzzle =
             unroll_coin.make_curried_unroll_puzzle(env, aggregate_unroll_public_key)?;
         let unroll_puzzle_hash = Node(unroll_puzzle).sha256tree(env.allocator);
@@ -1461,10 +1374,6 @@ impl ChannelHandler {
         their_channel_half_signature: &Aggsig,
         conditions: NodePtr,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
-        debug!(
-            "{} RECEIVED_POTATO_CLEAN_SHUTDOWN",
-            self.is_initial_potato()
-        );
         assert!(!self.have_potato);
         let conditions_program = Program::from_nodeptr(env.allocator, conditions)?;
         let channel_spend = self.verify_channel_coin_from_peer_signatures(
@@ -1522,8 +1431,6 @@ impl ChannelHandler {
         add_sigs: bool,
     ) -> Result<ChannelCoinSpentResult, Error> {
         assert!(self.timeout.is_some());
-
-        debug!("channel handler at {}", self.current_state_number);
 
         // Superceding state no timeout
         // Provide a reveal of the unroll puzzle.
@@ -2107,12 +2014,6 @@ impl ChannelHandler {
         let _start_puzzle_hash = self.live_games[game_idx].current_puzzle_hash(env.allocator)?;
 
         // assert_eq!(start_puzzle_hash, existing_ph);
-
-        debug!(
-            "on chain our turn {} processing our turn {}",
-            self.live_games[game_idx].is_my_turn(),
-            self.live_games[game_idx].processing_my_turn()
-        );
 
         // assert_eq!(self.game_is_my_turn(game_id), Some(true));
         let move_result = self.live_games[game_idx].internal_make_move(

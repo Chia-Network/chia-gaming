@@ -5,15 +5,13 @@ use clvmr::{run_program, NodePtr};
 
 use crate::utils::{non_nil, proper_list};
 
-use log::debug;
-
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::channel_handler::types::StateUpdateProgram;
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
-    GameID, Hash, IntoErr, Node, Program, Puzzle, Timeout,
+    GameID, Hash, IntoErr, Program, Puzzle, Timeout,
 };
 
 struct ProposalGameSpec {
@@ -49,21 +47,7 @@ impl GameStart {
             )));
         }
 
-        let amount_atom = atom_from_clvm(allocator, template_list[0]);
         let is_my_turn = non_nil(allocator.allocator(), template_list[1]);
-        let handler_hex_len = Node(template_list[2]).to_hex(allocator).map(|h| h.len()).unwrap_or(0);
-        let vh_hex = atom_from_clvm(allocator, template_list[6]).map(|a| hex::encode(&a)).unwrap_or_default();
-        debug!(
-            "GameStart: amount={:?} is_my_turn={} handler_hex_len={} vh={} state={:?} move={:?} max_move_size={:?} mover_share={:?}",
-            amount_atom.as_ref().map(|a| u64_from_atom(a)),
-            is_my_turn,
-            handler_hex_len,
-            vh_hex,
-            Program::from_nodeptr(allocator, template_list[7]).ok(),
-            atom_from_clvm(allocator, template_list[8]).map(hex::encode),
-            atom_from_clvm(allocator, template_list[9]).and_then(|a| usize_from_atom(&a)),
-            atom_from_clvm(allocator, template_list[10]).and_then(|a| u64_from_atom(&a)),
-        );
         let initial_mover_handler = if is_my_turn {
             GameHandler::my_handler_from_nodeptr(allocator, template_list[2])?
         } else {
@@ -213,13 +197,6 @@ impl Game {
         let handler = GameHandler::my_handler_from_nodeptr(allocator, handler_info[0])?;
         let validator_node = handler_info[1];
 
-        debug!(
-            "make_proposal: vh={} max_move_size={} mover_share={}",
-            hex::encode(spec.initial_validation_program_hash.bytes()),
-            spec.initial_max_move_size,
-            spec.initial_mover_share,
-        );
-
         Ok((wire_data, handler, validator_node, spec))
     }
 
@@ -264,8 +241,6 @@ impl Game {
         // Parser returns (validator handler) in handler_info
         let validator_node = handler_info[0];
         let handler = GameHandler::their_handler_from_nodeptr(allocator, handler_info[1])?;
-
-        debug!("parser: got handler and validator");
 
         Ok((handler, validator_node))
     }
@@ -344,14 +319,6 @@ impl Game {
                 "poker program didn't return a list".to_string(),
             ));
         };
-        debug!(
-            "factory returned as_alice={as_alice} num_games={} first_game_len={}",
-            template_list.len(),
-            template_list.first()
-                .and_then(|g| proper_list(allocator.allocator(), *g, true))
-                .map(|l| l.len())
-                .unwrap_or(0),
-        );
         if template_list.is_empty() {
             return Err(Error::StrErr("not even one game returned".to_string()));
         }

@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use chia_bls;
 
-use log::debug;
 use num_bigint::{BigInt, Sign};
 
 use chia_puzzles::P2_DELEGATED_PUZZLE_OR_HIDDEN_PUZZLE;
@@ -327,7 +326,6 @@ pub fn standard_solution_partial(
     let quoted_conds = conditions.to_quoted_program(allocator)?;
     let quoted_conds_hash = quoted_conds.sha256tree(allocator);
     let solution = solution_for_conditions(allocator, conditions)?;
-    debug!("standard signing with parent coin {parent_coin:?}");
     let coin_agg_sig_me_message = agg_sig_me_message(
         quoted_conds_hash.bytes(),
         parent_coin,
@@ -353,7 +351,6 @@ pub fn standard_solution_partial(
     for cond in conds.iter() {
         match cond {
             CoinCondition::CreateCoin(_, _) => {
-                debug!("adding signature based on create coin: {aggregate_public_key:?} {coin_agg_sig_me_message:?}");
                 if !one_create {
                     one_create = true;
                     add_signature(
@@ -382,7 +379,6 @@ pub fn standard_solution_partial(
             }
             CoinCondition::AggSigUnsafe(pubkey, data) => {
                 // It's "unsafe" because it's just a hash of the data.
-                debug!("adding unsafe sig for {data:?}");
                 add_signature(
                     &mut aggregated_signature,
                     partial_signer(private_key, pubkey, data),

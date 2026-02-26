@@ -85,7 +85,6 @@ interface GameSelection {
 // Return true if game= and token= are present in the url.
 export function getGameSelection(): GameSelection | undefined {
   const search = getSearchParams();
-  console.log('getGameSelection', search);
   if (search.game && search.join) {
     return {
       game: search.game,
@@ -104,7 +103,6 @@ function clvm_enlist(clvms: string[]): string {
   }
 
   result.push('80');
-  console.log(result);
   return result.join('');
 }
 
@@ -129,7 +127,6 @@ function spend_to_clvm(spend: any): string {
     spend.solution,
     clvm_length(spend.signature),
   ]);
-  console.log('spend', spend_clvm);
   return spend_clvm;
 }
 
@@ -138,7 +135,6 @@ function coin_spend_to_clvm(coinspend: any): string {
     clvm_length(coinspend.coin),
     spend_to_clvm(coinspend.bundle),
   ]);
-  console.log('coin_spend', coin_spend_clvm);
   return coin_spend_clvm;
 }
 
@@ -168,7 +164,6 @@ export function spend_bundle_to_clvm(sbundle: any): string {
   const bundle_clvm = clvm_enlist(
     sbundle.spends.map((s: any) => coin_spend_to_clvm(s)),
   );
-  console.log('bundle', bundle_clvm);
   return bundle_clvm;
 }
 

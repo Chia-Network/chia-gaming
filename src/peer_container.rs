@@ -3,7 +3,7 @@ use std::mem::swap;
 use std::rc::Rc;
 
 use clvm_traits::ToClvm;
-use log::debug;
+
 use rand::Rng;
 
 use serde::{Deserialize, Serialize};
@@ -350,7 +350,6 @@ struct SynchronousGameCradleState {
 impl PacketSender for SynchronousGameCradleState {
     fn send_message(&mut self, msg: &PeerMessage) -> Result<(), Error> {
         if self.peer_disconnected {
-            debug!("peer disconnected: dropping outbound message {msg:?}");
             return Ok(());
         }
         let bson_doc = bson::to_bson(&msg).map_err(|e| Error::StrErr(format!("{e:?}")))?;
@@ -375,7 +374,6 @@ impl WalletSpendInterface for SynchronousGameCradleState {
         name: Option<&'static str>,
     ) -> Result<(), Error> {
         let timeout_at = timeout.to_u64() + self.current_height;
-        debug!("register coin {coin_id:?} as {name:?}");
         self.watching_coins.insert(
             coin_id.clone(),
             WatchEntry {
@@ -389,7 +387,6 @@ impl WalletSpendInterface for SynchronousGameCradleState {
     }
     /// Request the puzzle and solution from a coin spend.
     fn request_puzzle_and_solution(&mut self, coin_id: &CoinString) -> Result<(), Error> {
-        debug!("request puzzle and solution for {coin_id:?}");
         self.coin_solution_requests.push_back(coin_id.clone());
         Ok(())
     }
@@ -472,7 +469,6 @@ impl BootstrapTowardWallet for SynchronousGameCradleState {
     }
 
     fn received_channel_offer(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
-        debug!("received_channel_offer {:?}", self.identity.public_key);
         self.unfunded_offer = Some(bundle.clone());
         Ok(())
     }
@@ -553,7 +549,6 @@ impl ToLocalUI for SynchronousGameCradleState {
         Ok(())
     }
     fn shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
-        debug!("cradle detected shutdown");
         self.shutdown = reward_coin_string.cloned();
         self.finished = true;
         Ok(())
@@ -572,19 +567,14 @@ pub fn report_coin_changes_to_peer<R: Rng>(
 ) -> Result<Vec<Effect>, Error> {
     let mut effects = Vec::new();
     for t in watch_report.timed_out.iter() {
-        debug!("reporting coin timeout: {t:?}");
         effects.extend(peer.coin_timeout_reached(env, t)?);
     }
 
-    // Report deleted coins
     for d in watch_report.deleted_watched.iter() {
-        debug!("reporting coin deletion: {d:?}");
         effects.extend(peer.coin_spent(env, d)?);
     }
 
-    // Report created coins
     for c in watch_report.created_watched.iter() {
-        debug!("reporting coin creation: {c:?}");
         effects.extend(peer.coin_created(env, c)?.into_iter().flatten());
     }
 
@@ -993,7 +983,6 @@ impl GameCradle for SynchronousGameCradle {
     /// Deliver a message from the peer.
     fn deliver_message(&mut self, inbound_message: &[u8]) -> Result<(), Error> {
         if self.state.peer_disconnected {
-            debug!("peer disconnected: dropping inbound message");
             return Ok(());
         }
         self.state
@@ -1109,7 +1098,6 @@ impl GameCradle for SynchronousGameCradle {
                     return Ok(Some(result));
                 }
                 Err(e) => {
-                    debug!("going on chain for error {e:?}");
                     result.receive_error = Some(e);
                     local_ui.going_on_chain(true)?;
                     return Ok(Some(result));

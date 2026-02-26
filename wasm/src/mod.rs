@@ -8,7 +8,6 @@ mod gaming_wasm {
     use std::sync::atomic::{AtomicI32, Ordering};
 
     use hex::FromHexError;
-    use log::debug;
 
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha8Rng;
@@ -311,7 +310,6 @@ mod gaming_wasm {
         let rng = ChaCha8Rng::from_seed(*hashed.bytes());
         let id = get_next_id();
         insert_rng(id, rng);
-        debug!("create_rng: {id}");
         return Ok(id);
     }
 
@@ -335,22 +333,16 @@ mod gaming_wasm {
     #[wasm_bindgen(typescript_type = "ICreateGameCradle")]
     pub fn create_game_cradle(js_config: JsValue) -> Result<i32, JsValue> {
         let new_id = get_next_id();
-        debug!("AA");
         let mut allocator = AllocEncoder::new();
-        debug!("BB");
         let game_config = get_game_config(&mut allocator, js_config.clone())?;
-        debug!("CC");
         with_rng(game_config.rng_id, move |rng: &mut ChaCha8Rng| {
             let synchronous_game_cradle_config = game_config.config.clone();
-            debug!("DD");
             let game_cradle = SynchronousGameCradle::new(rng, synchronous_game_cradle_config);
-            debug!("EE");
             let cradle = JsCradle {
                 allocator,
                 rng: ChaCha8SerializationWrapper(rng.clone()),
                 cradle: game_cradle,
             };
-            debug!("FF");
             insert_cradle(new_id, cradle);
             Ok(new_id)
         })
@@ -652,19 +644,14 @@ mod gaming_wasm {
     where
         F: FnOnce(&mut Array) -> Result<(), types::Error>,
     {
-        debug!("try to call {name} from {callbacks:?}");
         if let Some(js_value) = callbacks.get(name) {
             let function = js_value
                 .dyn_ref::<js_sys::Function>()
                 .expect("Not a js function");
             let mut args_array = Array::new();
-            debug!("call user's injected function in {name}");
             f(&mut args_array)?;
-            debug!("call javascript for {name}");
             function.apply(&JsValue::NULL, &args_array).into_e()?;
         }
-
-        debug!("finished {name} callback");
 
         Ok(())
     }
@@ -1076,13 +1063,9 @@ mod gaming_wasm {
     #[wasm_bindgen]
     pub fn convert_chia_public_key_to_puzzle_hash(public_key: &str) -> Result<String, JsValue> {
         let mut allocator = AllocEncoder::new();
-        debug!("decode public key {public_key:?}");
         let public_key_bytes = check_for_hex(public_key)?;
-        debug!("public key bytes {public_key_bytes:?}");
         let pubkey = PublicKey::from_slice(&public_key_bytes).into_js()?;
-        debug!("decoded public key {pubkey:?}");
         let puzzle_hash = puzzle_hash_for_pk(&mut allocator, &pubkey).into_js()?;
-        debug!("use puzzle hash {puzzle_hash:?}");
         Ok(hex::encode(puzzle_hash.bytes()))
     }
 
@@ -1100,11 +1083,7 @@ mod gaming_wasm {
     pub fn chia_identity(rng_id: i32) -> Result<JsValue, JsValue> {
         with_rng(rng_id, move |rng: &mut ChaCha8Rng| {
             let mut allocator = AllocEncoder::new();
-            let mut seed: [u8; 32] = rng.get_seed();
             let private_key = rng.gen();
-            debug!("Generating private_key={private_key:?} from ChaCha8Rng({seed:?}");
-            seed = rng.get_seed();
-            debug!("ChaCha8Rng seed after rnd.gen() for private_key={seed:?}");
             let identity = ChiaIdentity::new(&mut allocator, private_key)?;
             let js_identity: JsChiaIdentity = identity.into();
             serde_wasm_bindgen::to_value(&js_identity)

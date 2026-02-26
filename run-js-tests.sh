@@ -41,7 +41,7 @@ cargo build --features sim-tests --bin chia-gaming-sim
 # Start the Rust simulator in the background
 echo "=== Starting simulator ==="
 SIM_BIN="${CARGO_TARGET_DIR:-$SCRIPT_DIR/target}/debug/chia-gaming-sim"
-RUST_LOG=debug "$SIM_BIN" &
+RUST_LOG=error "$SIM_BIN" &
 SIM_PID=$!
 
 # Wait for the simulator to be ready on port 5800

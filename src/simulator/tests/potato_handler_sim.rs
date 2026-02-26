@@ -900,12 +900,8 @@ fn run_game_container_with_action_list_with_success_predicate(
             }
 
             while let Some(result) = cradles[i].idle(allocator, rng, &mut local_uis[i], 0)? {
-                if result.resync.is_some() {
-                    eprintln!("SIM_RESYNC: player={i} resync={:?} num_steps={num_steps}", result.resync);
-                }
                 if matches!(result.resync, Some((_, true))) {
                     can_move = true;
-                    eprintln!("SIM_RESYNC_CAN_MOVE: player={i} move_number={move_number} num_steps={num_steps}");
                     let saved = move_number;
                     while move_number > 0
                         && (move_number >= moves_input.len()
@@ -932,12 +928,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                 }
 
                 for coin in result.coin_solution_requests.iter() {
-                    eprintln!("COIN_SOL_REQ: from_player={i} coin={coin:?} num_steps={num_steps}");
                     let ps_res = simulator
                         .get_puzzle_and_solution(&coin.to_coin_id())
                         .expect("should work");
-                    for (ci, cradle) in cradles.iter_mut().enumerate() {
-                        eprintln!("REPORT_PAS: to_cradle={ci} coin={:?}", coin.to_coin_id());
+                    for (_ci, cradle) in cradles.iter_mut().enumerate() {
                         cradle.report_puzzle_and_solution(
                             allocator,
                             rng,
@@ -1085,8 +1079,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                             "Move({who}) at move_number={move_number} but game_ids is empty"
                         );
                         let is_my_move = cradles[*who].my_move_in_game(&game_ids[0]);
-                        eprintln!("SIM_MOVE: player={who} is_my_move={is_my_move:?} on_chain={} move_number={move_number} num_steps={num_steps}",
-                            cradles[*who].is_on_chain());
                         if matches!(is_my_move, Some(true)) {
                             let readable_program = readable.to_program();
                             let encoded_readable_move = readable_program.bytes();
@@ -1099,7 +1091,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 entropy,
                             )?;
                         } else {
-                            eprintln!("SIM_MOVE_PUTBACK: player={who} move_number back to {}", move_number - 1);
                             move_number -= 1;
                             continue;
                         }
@@ -1172,9 +1163,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                             let readable_program = readable.to_program();
                             let encoded = readable_program.bytes();
                             let entropy = rng.gen();
-                            eprintln!(
-                                "QUEUED_MOVE: player={who} calling make_move immediately after go_on_chain"
-                            );
                             cradles[*who].make_move(
                                 allocator,
                                 rng,

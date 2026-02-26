@@ -1,5 +1,3 @@
-use log::debug;
-
 use clvmr::allocator::{NodePtr, SExp};
 use clvmr::{run_program, ChiaDialect, NO_UNKNOWN_OPS};
 
@@ -11,7 +9,7 @@ use crate::common::constants::{
 };
 
 use crate::common::types::{
-    u64_from_atom, AllocEncoder, Amount, Error, Hash, IntoErr, Node, Program, PublicKey, PuzzleHash,
+    u64_from_atom, AllocEncoder, Amount, Error, Hash, IntoErr, Program, PublicKey, PuzzleHash,
 };
 
 pub fn chia_dialect() -> ChiaDialect {
@@ -141,11 +139,6 @@ impl CoinCondition {
             0,
         )
         .into_gen()?;
-        debug!(
-            "conditions to parse {}",
-            Node(conditions.1).to_hex(allocator)?
-        );
-
         Ok(CoinCondition::from_nodeptr(allocator, conditions.1))
     }
 }
