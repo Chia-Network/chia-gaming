@@ -83,7 +83,6 @@ export interface GameInitParams {
 export type IChiaIdentityFun = (seed: string) => IChiaIdentity;
 
 export interface IdleCallbacks {
-  self_move?: ((game_id: string, move_hex: string) => void) | undefined;
   opponent_moved?:
     | ((game_id: string, readable_move_hex: string) => void)
     | undefined;

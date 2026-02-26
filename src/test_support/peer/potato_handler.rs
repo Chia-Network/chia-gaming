@@ -152,17 +152,6 @@ impl BootstrapTowardWallet for Pipe {
 
 #[cfg(test)]
 impl ToLocalUI for Pipe {
-    fn self_move(
-        &mut self,
-        id: &GameID,
-        state_number: usize,
-        readable: &[u8],
-    ) -> Result<(), Error> {
-        self.our_moves
-            .push((id.clone(), state_number, readable.to_vec()));
-        Ok(())
-    }
-
     fn opponent_moved(
         &mut self,
         _allocator: &mut AllocEncoder,

@@ -525,7 +525,7 @@ impl PotatoHandler {
                     let ch = self.channel_handler_mut()?;
                     ch.received_potato_accept(env, sigs, game_id)?
                 };
-                effects.push(Effect::Notification(GameNotification::WeTimedOutOpponent {
+                effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
                     id: game_id.clone(),
                     amount: amount.clone(),
                 }));
@@ -798,12 +798,6 @@ impl PotatoHandler {
                         return Ok((false, effects));
                     }
                 };
-
-                effects.push(Effect::SelfMove {
-                    id: game_id.clone(),
-                    state_number: move_result.state_number,
-                    move_made: move_result.game_move.basic.move_made.clone(),
-                });
 
                 effects.push(Effect::SendMessage(PeerMessage::Move(game_id, move_result)));
                 self.have_potato = PotatoState::Absent;

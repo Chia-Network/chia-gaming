@@ -8,7 +8,7 @@ use crate::potato_handler::types::PeerMessage;
 pub enum GameNotification {
     GameCancelled { id: GameID },
     WeTimedOut { id: GameID, amount: Amount },
-    WeTimedOutOpponent { id: GameID, amount: Amount },
+    OpponentTimedOut { id: GameID, amount: Amount },
     OpponentPlayedIllegalMove { id: GameID },
     WeSlashedOpponent { id: GameID },
     OpponentSlashedUs { id: GameID },
@@ -36,11 +36,6 @@ pub enum Effect {
         state_number: usize,
         readable: ReadableMove,
         mover_share: Amount,
-    },
-    SelfMove {
-        id: GameID,
-        state_number: usize,
-        move_made: Vec<u8>,
     },
     RawGameMessage {
         id: GameID,
@@ -103,13 +98,6 @@ pub fn apply_effects(
             } => {
                 system.opponent_moved(allocator, &id, state_number, readable, mover_share)?;
             }
-            Effect::SelfMove {
-                id,
-                state_number,
-                move_made,
-            } => {
-                system.self_move(&id, state_number, &move_made)?;
-            }
             Effect::RawGameMessage { id, readable } => {
                 system.raw_game_message(&id, &readable)?;
             }
@@ -122,12 +110,8 @@ pub fn apply_effects(
             Effect::Notification(notification) => {
                 system.game_notification(&notification)?;
             }
-            Effect::ResyncMove {
-                id,
-                state_number,
-                is_my_turn,
-            } => {
-                system.resync_move(&id, state_number, is_my_turn)?;
+            Effect::ResyncMove { .. } => {
+                // Handled internally by peer_container before reaching apply_effects
             }
             Effect::HandshakeComplete => {
                 system.handshake_complete()?;

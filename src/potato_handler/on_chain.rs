@@ -489,7 +489,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                                 id: old_definition.game_id.clone(),
                             }));
                         } else {
-                            effects.push(Effect::Notification(GameNotification::WeTimedOutOpponent {
+                            effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
                                 id: old_definition.game_id.clone(),
                                 amount: amount.clone(),
                             }));
@@ -614,7 +614,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                         amount: amt,
                     }));
                 } else {
-                    effects.push(Effect::Notification(GameNotification::WeTimedOutOpponent {
+                    effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
                         id: old_definition.game_id.clone(),
                         amount: amt,
                     }));
@@ -701,7 +701,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                         amount: coin_amount.clone(),
                     }));
                 } else {
-                    effects.push(Effect::Notification(GameNotification::WeTimedOutOpponent {
+                    effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
                         id: game_id.clone(),
                         amount: coin_amount.clone(),
                     }));
@@ -745,7 +745,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                         amount: coin_amount.clone(),
                     }));
                 } else {
-                    effects.push(Effect::Notification(GameNotification::WeTimedOutOpponent {
+                    effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
                         id: game_id.clone(),
                         amount: coin_amount.clone(),
                     }));
@@ -810,7 +810,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
 
         let (pre_referee, pre_last_ph) = self.player_ch.save_game_state(&game_id)?;
 
-        let (old_ph, new_ph, state_number, move_result, transaction) =
+        let (old_ph, new_ph, _state_number, _move_result, transaction) =
             self.player_ch.on_chain_our_move(
                 env,
                 &game_id,
@@ -845,11 +845,6 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     bundle: transaction.bundle.clone(),
                 }],
             }),
-            Effect::SelfMove {
-                id: game_id,
-                state_number,
-                move_made: move_result.basic.move_made.clone(),
-            },
         ];
 
         Ok(effects)

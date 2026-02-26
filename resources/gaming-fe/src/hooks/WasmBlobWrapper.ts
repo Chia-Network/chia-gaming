@@ -488,7 +488,7 @@ export class WasmBlobWrapper {
         try {
           const notification = JSON.parse(notification_json);
           const terminalTypes = [
-            'WeTimedOut', 'WeTimedOutOpponent', 'WeSlashedOpponent',
+            'WeTimedOut', 'OpponentTimedOut', 'WeSlashedOpponent',
             'OpponentSlashedUs', 'OpponentSuccessfullyCheated',
             'GameCancelled', 'GameError', 'ChannelError',
           ];

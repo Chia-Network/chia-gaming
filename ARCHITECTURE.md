@@ -688,8 +688,11 @@ caught up. They are different moves for different game states.
 
 `Effect::ResyncMove { id, state_number, is_my_turn }` is emitted by
 `OnChainPotatoHandler::handle_game_coin_spent` when a game coin is spent with
-a result that carries redo data. It signals: "the on-chain game has been
-replayed to this state; the UI should adjust."
+a result that carries redo data. It is internal plumbing — not a UX
+notification. `SynchronousGameCradle::process_effects` intercepts it before
+`apply_effects` runs and stores `(state_number, is_my_turn)` in
+`SynchronousGameCradleState.resync`, which the simulation loop reads via
+`CradleResult.resync`.
 
 ### How the Simulation Handles It
 
@@ -751,7 +754,7 @@ opponent's turn), but on-chain it is actually *our* turn to submit the redo.
 
 When a redo is generated via `take_cached_move_for_game`, `our_turn` is set to
 `true` to reflect the on-chain reality. Without this correction, a timeout on
-the intermediate redo coin would emit `WeTimedOutOpponent` instead of
+the intermediate redo coin would emit `OpponentTimedOut` instead of
 `WeTimedOut`, producing wrong notifications.
 
 ### How our_turn Determines Timeout Notifications
@@ -760,7 +763,7 @@ When `coin_timeout_reached` fires on a game coin:
 
 ```
 if old_definition.our_turn →  GameNotification::WeTimedOut
-else                        →  GameNotification::WeTimedOutOpponent
+else                        →  GameNotification::OpponentTimedOut
 ```
 
 So the notification depends entirely on `our_turn` in the `game_map` entry for
@@ -810,7 +813,7 @@ The frontend should treat any of these as the "game ended" signal.
 | Notification | When | Meaning |
 |--------------|------|---------|
 | `WeTimedOut { id, amount }` | Game resolved in our favor | Includes off-chain accept (fires when potato returns) and on-chain timeout |
-| `WeTimedOutOpponent { id, amount }` | Game resolved in opponent's favor | Includes receiving opponent's off-chain accept |
+| `OpponentTimedOut { id, amount }` | Game resolved in opponent's favor | Includes receiving opponent's off-chain accept |
 | `GameCancelled { id }` | Unroll resolved without this game | Game existed off-chain but wasn't in the unroll conditions |
 | `WeSlashedOpponent { id }` | Slash transaction confirmed | Opponent's illegal move was proven on-chain |
 | `OpponentSlashedUs { id }` | Opponent slashed us | Our move was proven illegal on-chain |
@@ -848,7 +851,7 @@ full lifecycle is:
 2. The accept data is bundled into the next potato pass.
 3. When the potato comes back (acknowledgment), `pending_accept_completions` is
    drained, emitting `WeTimedOut` for the accepter. The opponent who receives
-   the accept gets `WeTimedOutOpponent` immediately.
+   the accept gets `OpponentTimedOut` immediately.
 
 If the channel goes on-chain **before** the round-trip completes, the game
 is still in `pending_accept_games`. The `set_state_for_coins` function

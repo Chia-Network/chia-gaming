@@ -97,7 +97,6 @@ mod gaming_wasm {
     export type IChiaIdentityFun = (seed: string) => IChiaIdentity;
 
     export type IdleCallbacks = {
-        "self_move": ((game_id: string, move_hex: string) => void) | undefined,
         "opponent_moved": ((game_id: string, readable_move_hex: string) => void) | undefined,
         "game_message": ((game_id: string, readable_move_hex: string) => void) | undefined,
         "game_notification": ((notification_json: string) => void) | undefined,
@@ -657,20 +656,6 @@ mod gaming_wasm {
     }
 
     impl ToLocalUI for JsLocalUI {
-        fn self_move(
-            &mut self,
-            game_id: &GameID,
-            state_number: usize,
-            readable: &[u8],
-        ) -> Result<(), types::Error> {
-            call_javascript_from_collection(&self.callbacks, "self_move", |args_array| {
-                args_array.set(0, JsValue::from_str(&game_id_to_string(game_id)));
-                args_array.set(1, JsValue::from_str(&hex::encode(readable)));
-                args_array.set(2, state_number.into());
-                Ok(())
-            })
-        }
-
         fn opponent_moved(
             &mut self,
             _allocator: &mut AllocEncoder,
