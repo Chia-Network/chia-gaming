@@ -763,6 +763,7 @@ impl TheirTurnReferee {
                     &coin_string_to_spend,
                     &puzzle,
                     evidence.clone(),
+                    new_mover_share.clone(),
                 )?;
                 Ok((None, slash))
             }
@@ -780,6 +781,7 @@ impl TheirTurnReferee {
         coin_string: &CoinString,
         puzzle: &Puzzle,
         evidence: Evidence,
+        cheating_move_mover_share: Amount,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
         debug!(
             "slash spend: parent coin is {coin_string:?} => {:?}",
@@ -842,6 +844,7 @@ impl TheirTurnReferee {
                     },
                 }),
                 my_reward_coin_string: coin_string_of_output_coin,
+                cheating_move_mover_share,
             },
         )))
     }

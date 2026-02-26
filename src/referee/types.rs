@@ -64,6 +64,9 @@ pub enum SlashOutcome {
     Reward {
         transaction: Box<CoinSpend>,
         my_reward_coin_string: CoinString,
+        /// The mover_share the opponent claimed in their illegal move.
+        /// If the slash times out, this is what we actually end up with.
+        cheating_move_mover_share: Amount,
     },
 }
 

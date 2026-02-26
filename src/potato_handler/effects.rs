@@ -7,12 +7,12 @@ use crate::potato_handler::types::PeerMessage;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum GameNotification {
     GameCancelled { id: GameID },
-    WeTimedOut { id: GameID, amount: Amount },
-    OpponentTimedOut { id: GameID, amount: Amount },
+    WeTimedOut { id: GameID, our_reward: Amount },
+    OpponentTimedOut { id: GameID, our_reward: Amount },
     OpponentPlayedIllegalMove { id: GameID },
     WeSlashedOpponent { id: GameID },
     OpponentSlashedUs { id: GameID },
-    OpponentSuccessfullyCheated { id: GameID, amount: Amount },
+    OpponentSuccessfullyCheated { id: GameID, our_reward: Amount },
 
     /// The channel or unroll coin is in an unrecoverable state.
     /// Everything is lost.

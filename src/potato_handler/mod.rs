@@ -441,7 +441,7 @@ impl PotatoHandler {
         }
 
         for (id, amount) in self.pending_accept_completions.drain(..) {
-            effects.push(Effect::Notification(GameNotification::WeTimedOut { id, amount }));
+            effects.push(Effect::Notification(GameNotification::WeTimedOut { id, our_reward: amount }));
         }
 
         let (started, start_effects) = self.have_potato_start_game(env)?;
@@ -523,7 +523,7 @@ impl PotatoHandler {
                 };
                 effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
                     id: game_id.clone(),
-                    amount: amount.clone(),
+                    our_reward: amount.clone(),
                 }));
                 effects.extend(self.update_channel_coin_after_receive(env, &spend_info)?);
             }

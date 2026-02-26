@@ -19,6 +19,10 @@ pub struct OnChainGameState {
     /// spent), we emit WeSlashedOpponent. If it times out, OpponentSuccessfullyCheated.
     #[serde(default)]
     pub pending_slash_amount: Option<Amount>,
+    /// The mover_share the opponent claimed in their illegal move. If the slash
+    /// times out, this is the amount we actually end up with.
+    #[serde(default)]
+    pub cheating_move_mover_share: Option<Amount>,
     #[serde(default)]
     pub accepted: bool,
     /// The game-specific on-chain timeout (ASSERT_HEIGHT_RELATIVE) from the referee puzzle.

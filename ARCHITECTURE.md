@@ -812,12 +812,12 @@ The frontend should treat any of these as the "game ended" signal.
 
 | Notification | When | Meaning |
 |--------------|------|---------|
-| `WeTimedOut { id, amount }` | Game resolved in our favor | Includes off-chain accept (fires when potato returns) and on-chain timeout |
-| `OpponentTimedOut { id, amount }` | Game resolved in opponent's favor | Includes receiving opponent's off-chain accept |
+| `WeTimedOut { id, our_reward }` | Game resolved in our favor | Includes off-chain accept (fires when potato returns) and on-chain timeout; `our_reward` is the amount we received |
+| `OpponentTimedOut { id, our_reward }` | Game resolved in opponent's favor | Includes receiving opponent's off-chain accept; `our_reward` is the amount we received |
 | `GameCancelled { id }` | Unroll resolved without this game | Game existed off-chain but wasn't in the unroll conditions |
 | `WeSlashedOpponent { id }` | Slash transaction confirmed | Opponent's illegal move was proven on-chain |
 | `OpponentSlashedUs { id }` | Opponent slashed us | Our move was proven illegal on-chain |
-| `OpponentSuccessfullyCheated { id, amount }` | Slash coin timed out | Opponent cheated and we failed to challenge in time |
+| `OpponentSuccessfullyCheated { id, our_reward }` | Slash coin timed out | Opponent cheated and we failed to challenge in time; `our_reward` is the mover_share from their cheating move (what we actually ended up with) |
 | `GameError { id, reason }` | A single game coin is in an unrecoverable state | Something went wrong with one game |
 | `ChannelError { reason }` | The channel or unroll coin is unrecoverable | Everything is lost |
 

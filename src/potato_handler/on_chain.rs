@@ -328,7 +328,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 if ph == reward_ph {
                     effects.push(Effect::Notification(GameNotification::WeTimedOut {
                         id: old_definition.game_id.clone(),
-                        amount: amt,
+                        our_reward: amt,
                     }));
                 } else {
                     // The accepted coin was spent by a game move (e.g. the
@@ -480,7 +480,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     if old_definition.our_turn {
                         effects.push(Effect::Notification(GameNotification::WeTimedOut {
                             id: old_definition.game_id.clone(),
-                            amount: amount.clone(),
+                            our_reward: amount.clone(),
                         }));
                     } else {
                         let has_rem = conditions.iter().any(|c| matches!(c, CoinCondition::Rem(_)));
@@ -491,7 +491,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                         } else {
                             effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
                                 id: old_definition.game_id.clone(),
-                                amount: amount.clone(),
+                                our_reward: amount.clone(),
                             }));
                         }
                     }
@@ -573,6 +573,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     SlashOutcome::Reward {
                         my_reward_coin_string,
                         transaction,
+                        cheating_move_mover_share,
                     } => {
                         let amount = my_reward_coin_string
                             .to_parts()
@@ -589,6 +590,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                             slash_coin.clone(),
                             OnChainGameState {
                                 pending_slash_amount: Some(amount),
+                                cheating_move_mover_share: Some(cheating_move_mover_share.clone()),
                                 our_turn: false,
                                 ..old_definition
                             },
@@ -611,12 +613,12 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 if old_definition.our_turn {
                     effects.push(Effect::Notification(GameNotification::WeTimedOut {
                         id: old_definition.game_id.clone(),
-                        amount: amt,
+                        our_reward: amt,
                     }));
                 } else {
                     effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
                         id: old_definition.game_id.clone(),
-                        amount: amt,
+                        our_reward: amt,
                     }));
                 }
                 unblock_queue = true;
@@ -648,11 +650,12 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             let game_id = game_def.game_id.clone();
             debug!("{initial_potato} timeout coin {coin_id:?}, do accept");
 
-            if let Some(slash_amount) = game_def.pending_slash_amount {
+            if let Some(_slash_amount) = game_def.pending_slash_amount {
                 debug!("{initial_potato} pending slash coin timed out - opponent successfully cheated");
+                let our_reward = game_def.cheating_move_mover_share.unwrap_or_default();
                 effects.push(Effect::Notification(GameNotification::OpponentSuccessfullyCheated {
                     id: game_id.clone(),
-                    amount: slash_amount,
+                    our_reward,
                 }));
                 effects.extend(self.next_action(env)?);
                 return Ok(effects);
@@ -698,12 +701,12 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 if game_def.our_turn {
                     effects.push(Effect::Notification(GameNotification::WeTimedOut {
                         id: game_id.clone(),
-                        amount: coin_amount.clone(),
+                        our_reward: coin_amount.clone(),
                     }));
                 } else {
                     effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
                         id: game_id.clone(),
-                        amount: coin_amount.clone(),
+                        our_reward: coin_amount.clone(),
                     }));
                 }
             } else {
@@ -742,12 +745,12 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 if our_turn {
                     effects.push(Effect::Notification(GameNotification::WeTimedOut {
                         id: game_id.clone(),
-                        amount: coin_amount.clone(),
+                        our_reward: coin_amount.clone(),
                     }));
                 } else {
                     effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
                         id: game_id.clone(),
-                        amount: coin_amount.clone(),
+                        our_reward: coin_amount.clone(),
                     }));
                 }
             }
