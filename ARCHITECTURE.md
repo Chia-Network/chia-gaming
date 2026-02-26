@@ -799,7 +799,7 @@ cleanup and game-over transitions.
 |--------------|------|---------|
 | `ChannelCoinSpent` | Channel coin spend detected on-chain | The channel is being unrolled (by either player) |
 | `UnrollCoinSpent` | Unroll coin spend detected on-chain | Game coins and reward coins are now live |
-| `GoingOnChain { got_error }` | `go_on_chain` called | We are initiating the on-chain transition; `got_error` indicates whether this was triggered by an error condition |
+| `GoingOnChain { reason }` | Error detected in peer message | We are automatically going on-chain due to an error; `reason` describes what went wrong (e.g., invalid peer message, opponent requested shutdown while games are active) |
 
 `ChannelCoinSpent` and `UnrollCoinSpent` fire regardless of who initiated the
 unroll. A player who called `go_on_chain` will see `ChannelCoinSpent` when

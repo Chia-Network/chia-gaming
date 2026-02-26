@@ -533,7 +533,7 @@ impl PotatoHandler {
                     ch.has_games_beyond_just_created()
                 };
                 if has_active {
-                    effects.push(Effect::GoingOnChain { got_error: true });
+                    effects.push(Effect::GoingOnChain { reason: "opponent requested shutdown while games are active".to_string() });
                     effects.extend(self.go_on_chain(env, true)?);
                     return Ok(effects);
                 }
@@ -1207,7 +1207,7 @@ impl PotatoHandler {
             }
             Err(e) => {
                 if matches!(self.handshake_state, HandshakeState::Finished(_)) {
-                    effects.push(Effect::GoingOnChain { got_error: true });
+                    effects.push(Effect::GoingOnChain { reason: format!("error processing peer message: {e:?}") });
                     effects.extend(self.go_on_chain(env, true)?);
                     return Ok(effects);
                 } else {

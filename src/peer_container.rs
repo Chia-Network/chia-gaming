@@ -342,7 +342,7 @@ struct SynchronousGameCradleState {
     shutdown: Option<CoinString>,
     identity: ChiaIdentity,
     peer_disconnected: bool,
-    went_on_chain: Option<bool>,
+    went_on_chain: Option<String>,
 }
 
 impl PacketSender for SynchronousGameCradleState {
@@ -523,9 +523,9 @@ impl ToLocalUI for SynchronousGameCradleState {
         self.finished = true;
         Ok(())
     }
-    fn going_on_chain(&mut self, got_error: bool) -> Result<(), Error> {
+    fn going_on_chain(&mut self, reason: &str) -> Result<(), Error> {
         self.peer_disconnected = true;
-        self.went_on_chain = Some(got_error);
+        self.went_on_chain = Some(reason.to_string());
         Ok(())
     }
 }
@@ -1069,8 +1069,8 @@ impl GameCradle for SynchronousGameCradle {
                 self.process_effects(returned_effects.clone(), allocator)?;
             }
 
-            if let Some(got_error) = self.state.went_on_chain.take() {
-                local_ui.going_on_chain(got_error)?;
+            if let Some(reason) = self.state.went_on_chain.take() {
+                local_ui.going_on_chain(&reason)?;
             }
 
             match recv_result {
@@ -1079,8 +1079,8 @@ impl GameCradle for SynchronousGameCradle {
                     return Ok(Some(result));
                 }
                 Err(e) => {
+                    local_ui.going_on_chain(&format!("error receiving peer message: {e:?}"))?;
                     result.receive_error = Some(e);
-                    local_ui.going_on_chain(true)?;
                     return Ok(Some(result));
                 }
             }

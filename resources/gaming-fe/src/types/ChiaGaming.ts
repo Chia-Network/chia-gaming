@@ -95,7 +95,7 @@ export interface IdleCallbacks {
   game_notification?: ((notification_json: string) => void) | undefined;
   shutdown_started?: (() => void) | undefined;
   shutdown_complete?: ((coin: string) => void) | undefined;
-  going_on_chain?: (() => void) | undefined;
+  going_on_chain?: ((reason: string) => void) | undefined;
 }
 
 export interface WasmConnection {

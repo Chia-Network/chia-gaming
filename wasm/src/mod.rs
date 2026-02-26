@@ -102,7 +102,7 @@ mod gaming_wasm {
         "game_notification": ((notification_json: string) => void) | undefined,
         "shutdown_started": (() => void) | undefined,
         "shutdown_complete": ((coin: string) => void) | undefined,
-        "going_on_chain": (() => void) | undefined
+        "going_on_chain": ((reason: string) => void) | undefined
     };
     "#;
 
@@ -737,9 +737,9 @@ mod gaming_wasm {
             })
         }
 
-        fn going_on_chain(&mut self, got_error: bool) -> Result<(), chia_gaming::common::types::Error> {
+        fn going_on_chain(&mut self, reason: &str) -> Result<(), chia_gaming::common::types::Error> {
             call_javascript_from_collection(&self.callbacks, "going_on_chain", |args_array| {
-                args_array.set(0, JsValue::from_bool(got_error));
+                args_array.set(0, JsValue::from_str(reason));
                 Ok(())
             })
         }

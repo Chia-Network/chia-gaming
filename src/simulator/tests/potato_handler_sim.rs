@@ -269,7 +269,7 @@ impl ToLocalUI for SimulatedPeer {
     fn shutdown_complete(&mut self, _reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
         todo!();
     }
-    fn going_on_chain(&mut self, _got_error: bool) -> Result<(), Error> {
+    fn going_on_chain(&mut self, _reason: &str) -> Result<(), Error> {
         todo!();
     }
 }
@@ -394,7 +394,7 @@ pub enum TestEvent {
     GameStart { ids: Vec<GameID>, failed: Option<GameStartFailed> },
     OpponentMoved { id: GameID, state_number: usize, readable: ReadableMove, mover_share: Amount },
     GameMessage { id: GameID, readable: ReadableMove },
-    GoingOnChain { got_error: bool },
+    GoingOnChain { reason: String },
     Notification(GameNotification),
     ShutdownComplete,
 }
@@ -420,7 +420,7 @@ pub enum ExpectedEvent {
     GameStartFailed,
     OpponentMoved { state_number: usize, mover_share: Amount },
     GameMessage,
-    GoingOnChain { got_error: bool },
+    GoingOnChain,
     Notification(ExpectedNotification),
     ShutdownComplete,
 }
@@ -431,7 +431,7 @@ fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
         (TestEvent::GameStart { failed: Some(_), .. }, ExpectedEvent::GameStartFailed) => true,
         (TestEvent::OpponentMoved { state_number: a, mover_share: a_share, .. }, ExpectedEvent::OpponentMoved { state_number: e, mover_share: e_share }) => a == e && a_share == e_share,
         (TestEvent::GameMessage { .. }, ExpectedEvent::GameMessage) => true,
-        (TestEvent::GoingOnChain { got_error: a }, ExpectedEvent::GoingOnChain { got_error: e }) => a == e,
+        (TestEvent::GoingOnChain { .. }, ExpectedEvent::GoingOnChain) => true,
         (TestEvent::ShutdownComplete, ExpectedEvent::ShutdownComplete) => true,
         (TestEvent::Notification(actual_n), ExpectedEvent::Notification(expected_n)) => {
             match (actual_n, expected_n) {
@@ -459,7 +459,7 @@ fn event_shape(actual: &TestEvent) -> String {
         TestEvent::GameStart { failed: Some(f), .. } => format!("GameStartFailed({f:?})"),
         TestEvent::OpponentMoved { state_number, mover_share, .. } => format!("OpponentMoved(sn={state_number},share={})", mover_share.to_u64()),
         TestEvent::GameMessage { .. } => "GameMessage".to_string(),
-        TestEvent::GoingOnChain { got_error } => format!("GoingOnChain(err={got_error})"),
+        TestEvent::GoingOnChain { reason } => format!("GoingOnChain(reason={reason})"),
         TestEvent::ShutdownComplete => "ShutdownComplete".to_string(),
         TestEvent::Notification(n) => match n {
             GameNotification::WeTimedOut { .. } => "Notif(WeTimedOut)".to_string(),
@@ -483,7 +483,7 @@ fn expected_shape(expected: &ExpectedEvent) -> String {
         ExpectedEvent::GameStartFailed => "GameStartFailed".to_string(),
         ExpectedEvent::OpponentMoved { state_number, mover_share } => format!("OpponentMoved(sn={state_number},share={})", mover_share.to_u64()),
         ExpectedEvent::GameMessage => "GameMessage".to_string(),
-        ExpectedEvent::GoingOnChain { got_error } => format!("GoingOnChain(err={got_error})"),
+        ExpectedEvent::GoingOnChain => "GoingOnChain".to_string(),
         ExpectedEvent::ShutdownComplete => "ShutdownComplete".to_string(),
         ExpectedEvent::Notification(n) => match n {
             ExpectedNotification::WeTimedOut => "Notif(WeTimedOut)".to_string(),
@@ -637,10 +637,10 @@ impl ToLocalUI for LocalTestUIReceiver {
         Ok(())
     }
 
-    fn going_on_chain(&mut self, got_error: bool) -> Result<(), Error> {
+    fn going_on_chain(&mut self, reason: &str) -> Result<(), Error> {
         self.go_on_chain = true;
-        self.got_error = got_error;
-        self.events.push(TestEvent::GoingOnChain { got_error });
+        self.got_error = true;
+        self.events.push(TestEvent::GoingOnChain { reason: reason.to_string() });
         Ok(())
     }
 }
@@ -1599,7 +1599,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 ExpectedEvent::GameStart,
                 ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
-                ExpectedEvent::GoingOnChain { got_error: true },
+                ExpectedEvent::GoingOnChain,
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
             ], "piss_off_basic p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
@@ -1690,7 +1690,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 ExpectedEvent::GameStart,
                 ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
-                ExpectedEvent::GoingOnChain { got_error: true },
+                ExpectedEvent::GoingOnChain,
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
@@ -1906,7 +1906,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         assert_event_sequence(&outcome.local_uis[0].events, &[
             ExpectedEvent::GameStart,
             ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
-            ExpectedEvent::GoingOnChain { got_error: true },
+            ExpectedEvent::GoingOnChain,
             ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
             ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
             ExpectedEvent::Notification(ExpectedNotification::OpponentPlayedIllegalMove),
@@ -1966,7 +1966,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             ExpectedEvent::GameStart,
             ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
             ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(50) },
-            ExpectedEvent::GoingOnChain { got_error: true },
+            ExpectedEvent::GoingOnChain,
             ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
             ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
             ExpectedEvent::Notification(ExpectedNotification::OpponentPlayedIllegalMove),

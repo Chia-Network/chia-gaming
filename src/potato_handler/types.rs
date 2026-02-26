@@ -213,7 +213,7 @@ pub trait ToLocalUI {
     }
     fn shutdown_started(&mut self) -> Result<(), Error>;
     fn shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error>;
-    fn going_on_chain(&mut self, got_error: bool) -> Result<(), Error>;
+    fn going_on_chain(&mut self, reason: &str) -> Result<(), Error>;
 }
 
 pub trait FromLocalUI

@@ -56,7 +56,7 @@ pub enum Effect {
         reward_coin: Option<CoinString>,
     },
     GoingOnChain {
-        got_error: bool,
+        reason: String,
     },
 
     // WalletSpendInterface
@@ -115,8 +115,8 @@ pub fn apply_effects(
             Effect::ShutdownComplete { reward_coin } => {
                 system.shutdown_complete(reward_coin.as_ref())?;
             }
-            Effect::GoingOnChain { got_error } => {
-                system.going_on_chain(got_error)?;
+            Effect::GoingOnChain { reason } => {
+                system.going_on_chain(&reason)?;
             }
             Effect::SpendTransaction(bundle) => {
                 system.spend_transaction_and_add_fee(&bundle)?;
