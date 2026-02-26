@@ -425,7 +425,7 @@ pub enum ExpectedEvent {
     GameStart,
     GameStartFailed,
     SelfMove { state_number: usize },
-    OpponentMoved { state_number: usize },
+    OpponentMoved { state_number: usize, mover_share: Amount },
     GameMessage,
     GoingOnChain { got_error: bool },
     Notification(ExpectedNotification),
@@ -437,7 +437,7 @@ fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
         (TestEvent::GameStart { failed: None, .. }, ExpectedEvent::GameStart) => true,
         (TestEvent::GameStart { failed: Some(_), .. }, ExpectedEvent::GameStartFailed) => true,
         (TestEvent::SelfMove { state_number: a, .. }, ExpectedEvent::SelfMove { state_number: e }) => a == e,
-        (TestEvent::OpponentMoved { state_number: a, .. }, ExpectedEvent::OpponentMoved { state_number: e }) => a == e,
+        (TestEvent::OpponentMoved { state_number: a, mover_share: a_share, .. }, ExpectedEvent::OpponentMoved { state_number: e, mover_share: e_share }) => a == e && a_share == e_share,
         (TestEvent::GameMessage { .. }, ExpectedEvent::GameMessage) => true,
         (TestEvent::GoingOnChain { got_error: a }, ExpectedEvent::GoingOnChain { got_error: e }) => a == e,
         (TestEvent::ShutdownComplete, ExpectedEvent::ShutdownComplete) => true,
@@ -466,7 +466,7 @@ fn event_shape(actual: &TestEvent) -> String {
         TestEvent::GameStart { failed: None, .. } => "GameStart".to_string(),
         TestEvent::GameStart { failed: Some(f), .. } => format!("GameStartFailed({f:?})"),
         TestEvent::SelfMove { state_number, .. } => format!("SelfMove(sn={state_number})"),
-        TestEvent::OpponentMoved { state_number, .. } => format!("OpponentMoved(sn={state_number})"),
+        TestEvent::OpponentMoved { state_number, mover_share, .. } => format!("OpponentMoved(sn={state_number},share={})", mover_share.to_u64()),
         TestEvent::GameMessage { .. } => "GameMessage".to_string(),
         TestEvent::GoingOnChain { got_error } => format!("GoingOnChain(err={got_error})"),
         TestEvent::ShutdownComplete => "ShutdownComplete".to_string(),
@@ -491,7 +491,7 @@ fn expected_shape(expected: &ExpectedEvent) -> String {
         ExpectedEvent::GameStart => "GameStart".to_string(),
         ExpectedEvent::GameStartFailed => "GameStartFailed".to_string(),
         ExpectedEvent::SelfMove { state_number } => format!("SelfMove(sn={state_number})"),
-        ExpectedEvent::OpponentMoved { state_number } => format!("OpponentMoved(sn={state_number})"),
+        ExpectedEvent::OpponentMoved { state_number, mover_share } => format!("OpponentMoved(sn={state_number},share={})", mover_share.to_u64()),
         ExpectedEvent::GameMessage => "GameMessage".to_string(),
         ExpectedEvent::GoingOnChain { got_error } => format!("GoingOnChain(err={got_error})"),
         ExpectedEvent::ShutdownComplete => "ShutdownComplete".to_string(),
@@ -1591,16 +1591,16 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         assert_event_sequence(&outcome.local_uis[0].events, &[
             ExpectedEvent::GameStart,
             ExpectedEvent::SelfMove { state_number: 6 },
-            ExpectedEvent::OpponentMoved { state_number: 7 },
+            ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
             ExpectedEvent::SelfMove { state_number: 8 },
-            ExpectedEvent::OpponentMoved { state_number: 9 },
+            ExpectedEvent::OpponentMoved { state_number: 9, mover_share: Amount::new(0) },
         ], "peer_in_sim p0");
         assert_event_sequence(&outcome.local_uis[1].events, &[
             ExpectedEvent::GameStart,
-            ExpectedEvent::OpponentMoved { state_number: 6 },
+            ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
             ExpectedEvent::SelfMove { state_number: 7 },
             ExpectedEvent::GameMessage,
-            ExpectedEvent::OpponentMoved { state_number: 8 },
+            ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
             ExpectedEvent::SelfMove { state_number: 9 },
         ], "peer_in_sim p1");
     }));
@@ -1655,17 +1655,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 ExpectedEvent::GameStart,
                 ExpectedEvent::SelfMove { state_number: 6 },
-                ExpectedEvent::OpponentMoved { state_number: 7 },
+                ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 8 },
                 ExpectedEvent::GoingOnChain { got_error: true },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
             ], "piss_off_basic p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 ExpectedEvent::GameStart,
-                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 7 },
                 ExpectedEvent::GameMessage,
-                ExpectedEvent::OpponentMoved { state_number: 8 },
+                ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 9 },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
@@ -1699,19 +1699,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         assert_event_sequence(&outcome.local_uis[0].events, &[
             ExpectedEvent::GameStart,
             ExpectedEvent::SelfMove { state_number: 6 },
-            ExpectedEvent::OpponentMoved { state_number: 7 },
+            ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
             ExpectedEvent::SelfMove { state_number: 8 },
-            ExpectedEvent::OpponentMoved { state_number: 9 },
+            ExpectedEvent::OpponentMoved { state_number: 9, mover_share: Amount::new(0) },
             ExpectedEvent::SelfMove { state_number: 10 },
         ], "off_chain_complete p0");
         assert_event_sequence(&outcome.local_uis[1].events, &[
             ExpectedEvent::GameStart,
-            ExpectedEvent::OpponentMoved { state_number: 6 },
+            ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
             ExpectedEvent::SelfMove { state_number: 7 },
             ExpectedEvent::GameMessage,
-            ExpectedEvent::OpponentMoved { state_number: 8 },
+            ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
             ExpectedEvent::SelfMove { state_number: 9 },
-            ExpectedEvent::OpponentMoved { state_number: 10 },
+            ExpectedEvent::OpponentMoved { state_number: 10, mover_share: Amount::new(200) },
             ExpectedEvent::Notification(ExpectedNotification::WeTimedOutOpponent),
         ], "off_chain_complete p1");
     }));
@@ -1755,25 +1755,25 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 ExpectedEvent::GameStart,
                 ExpectedEvent::SelfMove { state_number: 6 },
-                ExpectedEvent::OpponentMoved { state_number: 7 },
+                ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 8 },
                 ExpectedEvent::GoingOnChain { got_error: true },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::OpponentMoved { state_number: 8 },
+                ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 8 },
                 ExpectedEvent::Notification(ExpectedNotification::WeTimedOutOpponent),
             ], "piss_off_complete p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 ExpectedEvent::GameStart,
-                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 7 },
                 ExpectedEvent::GameMessage,
-                ExpectedEvent::OpponentMoved { state_number: 8 },
+                ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 9 },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::OpponentMoved { state_number: 9 },
+                ExpectedEvent::OpponentMoved { state_number: 9, mover_share: Amount::new(200) },
                 ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
             ], "piss_off_complete p1");
         },
@@ -1840,9 +1840,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 ExpectedEvent::GameStart,
                 ExpectedEvent::SelfMove { state_number: 6 },
-                ExpectedEvent::OpponentMoved { state_number: 7 },
+                ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 8 },
-                ExpectedEvent::OpponentMoved { state_number: 9 },
+                ExpectedEvent::OpponentMoved { state_number: 9, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 10 },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
@@ -1850,12 +1850,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             ], "after_accept p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 ExpectedEvent::GameStart,
-                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 7 },
                 ExpectedEvent::GameMessage,
-                ExpectedEvent::OpponentMoved { state_number: 8 },
+                ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 9 },
-                ExpectedEvent::OpponentMoved { state_number: 10 },
+                ExpectedEvent::OpponentMoved { state_number: 10, mover_share: Amount::new(200) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
@@ -1885,7 +1885,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 ExpectedEvent::GameStart,
                 ExpectedEvent::SelfMove { state_number: 6 },
-                ExpectedEvent::OpponentMoved { state_number: 7 },
+                ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 8 },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
@@ -1893,10 +1893,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             ], "timeout p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 ExpectedEvent::GameStart,
-                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 7 },
                 ExpectedEvent::GameMessage,
-                ExpectedEvent::OpponentMoved { state_number: 8 },
+                ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
@@ -1933,7 +1933,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 ExpectedEvent::GameStart,
                 ExpectedEvent::SelfMove { state_number: 6 },
-                ExpectedEvent::OpponentMoved { state_number: 7 },
+                ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 8 },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
@@ -1942,10 +1942,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             ], "piss_off_slash p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 ExpectedEvent::GameStart,
-                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 7 },
                 ExpectedEvent::GameMessage,
-                ExpectedEvent::OpponentMoved { state_number: 8 },
+                ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::SelfMove { state_number: 8 },
@@ -1988,7 +1988,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         assert_event_sequence(&outcome.local_uis[0].events, &[
             ExpectedEvent::GameStart,
             ExpectedEvent::SelfMove { state_number: 6 },
-            ExpectedEvent::OpponentMoved { state_number: 7 },
+            ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
             ExpectedEvent::SelfMove { state_number: 8 },
             ExpectedEvent::GoingOnChain { got_error: true },
             ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
@@ -1998,9 +1998,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         ], "alice_slash p0");
         assert_event_sequence(&outcome.local_uis[1].events, &[
             ExpectedEvent::GameStart,
-            ExpectedEvent::OpponentMoved { state_number: 6 },
+            ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
             ExpectedEvent::SelfMove { state_number: 7 },
-            ExpectedEvent::OpponentMoved { state_number: 8 },
+            ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(50) },
             ExpectedEvent::SelfMove { state_number: 9 },
             ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
             ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
@@ -2043,9 +2043,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         assert_event_sequence(&outcome.local_uis[0].events, &[
             ExpectedEvent::GameStart,
             ExpectedEvent::SelfMove { state_number: 6 },
-            ExpectedEvent::OpponentMoved { state_number: 7 },
+            ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
             ExpectedEvent::SelfMove { state_number: 8 },
-            ExpectedEvent::OpponentMoved { state_number: 9 },
+            ExpectedEvent::OpponentMoved { state_number: 9, mover_share: Amount::new(150) },
             ExpectedEvent::SelfMove { state_number: 10 },
             ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
             ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
@@ -2053,9 +2053,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         ], "bob_slash p0");
         assert_event_sequence(&outcome.local_uis[1].events, &[
             ExpectedEvent::GameStart,
-            ExpectedEvent::OpponentMoved { state_number: 6 },
+            ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
             ExpectedEvent::SelfMove { state_number: 7 },
-            ExpectedEvent::OpponentMoved { state_number: 8 },
+            ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(50) },
             ExpectedEvent::SelfMove { state_number: 9 },
             ExpectedEvent::GoingOnChain { got_error: true },
             ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
@@ -2102,18 +2102,18 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         assert_event_sequence(&outcome.local_uis[0].events, &[
             ExpectedEvent::GameStart,
             ExpectedEvent::SelfMove { state_number: 6 },
-            ExpectedEvent::OpponentMoved { state_number: 7 },
+            ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
             ExpectedEvent::SelfMove { state_number: 8 },
-            ExpectedEvent::OpponentMoved { state_number: 9 },
+            ExpectedEvent::OpponentMoved { state_number: 9, mover_share: Amount::new(150) },
             ExpectedEvent::SelfMove { state_number: 10 },
         ], "debug_alice p0");
         assert_event_sequence(&outcome.local_uis[1].events, &[
             ExpectedEvent::GameStart,
-            ExpectedEvent::OpponentMoved { state_number: 6 },
+            ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
             ExpectedEvent::SelfMove { state_number: 7 },
-            ExpectedEvent::OpponentMoved { state_number: 8 },
+            ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(50) },
             ExpectedEvent::SelfMove { state_number: 9 },
-            ExpectedEvent::OpponentMoved { state_number: 10 },
+            ExpectedEvent::OpponentMoved { state_number: 10, mover_share: Amount::new(49) },
             ExpectedEvent::Notification(ExpectedNotification::WeTimedOutOpponent),
         ], "debug_alice p1");
     }));
@@ -2156,20 +2156,20 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         assert_event_sequence(&outcome.local_uis[0].events, &[
             ExpectedEvent::GameStart,
             ExpectedEvent::SelfMove { state_number: 6 },
-            ExpectedEvent::OpponentMoved { state_number: 7 },
+            ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
             ExpectedEvent::SelfMove { state_number: 8 },
-            ExpectedEvent::OpponentMoved { state_number: 9 },
+            ExpectedEvent::OpponentMoved { state_number: 9, mover_share: Amount::new(150) },
             ExpectedEvent::SelfMove { state_number: 10 },
-            ExpectedEvent::OpponentMoved { state_number: 11 },
+            ExpectedEvent::OpponentMoved { state_number: 11, mover_share: Amount::new(49) },
             ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
         ], "debug_bob p0");
         assert_event_sequence(&outcome.local_uis[1].events, &[
             ExpectedEvent::GameStart,
-            ExpectedEvent::OpponentMoved { state_number: 6 },
+            ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
             ExpectedEvent::SelfMove { state_number: 7 },
-            ExpectedEvent::OpponentMoved { state_number: 8 },
+            ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(50) },
             ExpectedEvent::SelfMove { state_number: 9 },
-            ExpectedEvent::OpponentMoved { state_number: 10 },
+            ExpectedEvent::OpponentMoved { state_number: 10, mover_share: Amount::new(49) },
             ExpectedEvent::SelfMove { state_number: 11 },
             ExpectedEvent::Notification(ExpectedNotification::WeTimedOutOpponent),
         ], "debug_bob p1");
@@ -2283,19 +2283,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         assert_event_sequence(&outcome.local_uis[0].events, &[
             ExpectedEvent::GameStart,
             ExpectedEvent::SelfMove { state_number: 6 },
-            ExpectedEvent::OpponentMoved { state_number: 7 },
+            ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
             ExpectedEvent::SelfMove { state_number: 8 },
-            ExpectedEvent::OpponentMoved { state_number: 9 },
+            ExpectedEvent::OpponentMoved { state_number: 9, mover_share: Amount::new(0) },
             ExpectedEvent::SelfMove { state_number: 10 },
         ], "shutdown_nerf_alice p0");
         assert_event_sequence(&outcome.local_uis[1].events, &[
             ExpectedEvent::GameStart,
-            ExpectedEvent::OpponentMoved { state_number: 6 },
+            ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
             ExpectedEvent::SelfMove { state_number: 7 },
             ExpectedEvent::GameMessage,
-            ExpectedEvent::OpponentMoved { state_number: 8 },
+            ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
             ExpectedEvent::SelfMove { state_number: 9 },
-            ExpectedEvent::OpponentMoved { state_number: 10 },
+            ExpectedEvent::OpponentMoved { state_number: 10, mover_share: Amount::new(200) },
             ExpectedEvent::Notification(ExpectedNotification::WeTimedOutOpponent),
         ], "shutdown_nerf_alice p1");
     }));
@@ -2317,19 +2317,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         assert_event_sequence(&outcome.local_uis[0].events, &[
             ExpectedEvent::GameStart,
             ExpectedEvent::SelfMove { state_number: 6 },
-            ExpectedEvent::OpponentMoved { state_number: 7 },
+            ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
             ExpectedEvent::SelfMove { state_number: 8 },
-            ExpectedEvent::OpponentMoved { state_number: 9 },
+            ExpectedEvent::OpponentMoved { state_number: 9, mover_share: Amount::new(0) },
             ExpectedEvent::SelfMove { state_number: 10 },
         ], "shutdown_nerf_bob p0");
         assert_event_sequence(&outcome.local_uis[1].events, &[
             ExpectedEvent::GameStart,
-            ExpectedEvent::OpponentMoved { state_number: 6 },
+            ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
             ExpectedEvent::SelfMove { state_number: 7 },
             ExpectedEvent::GameMessage,
-            ExpectedEvent::OpponentMoved { state_number: 8 },
+            ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
             ExpectedEvent::SelfMove { state_number: 9 },
-            ExpectedEvent::OpponentMoved { state_number: 10 },
+            ExpectedEvent::OpponentMoved { state_number: 10, mover_share: Amount::new(200) },
             ExpectedEvent::Notification(ExpectedNotification::WeTimedOutOpponent),
         ], "shutdown_nerf_bob p1");
     }));
@@ -2381,7 +2381,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 ExpectedEvent::GameStart,
                 ExpectedEvent::SelfMove { state_number: 6 },
-                ExpectedEvent::OpponentMoved { state_number: 7 },
+                ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 8 },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
@@ -2389,10 +2389,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             ], "redo_timeout p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 ExpectedEvent::GameStart,
-                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 7 },
                 ExpectedEvent::GameMessage,
-                ExpectedEvent::OpponentMoved { state_number: 8 },
+                ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::WeTimedOutOpponent),
@@ -2442,19 +2442,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 ExpectedEvent::GameStart,
                 ExpectedEvent::SelfMove { state_number: 6 },
-                ExpectedEvent::OpponentMoved { state_number: 7 },
+                ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 8 },
-                ExpectedEvent::OpponentMoved { state_number: 9 },
+                ExpectedEvent::OpponentMoved { state_number: 9, mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
             ], "bob_redo_alice_timeout p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 ExpectedEvent::GameStart,
-                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 7 },
                 ExpectedEvent::GameMessage,
-                ExpectedEvent::OpponentMoved { state_number: 8 },
+                ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 9 },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
@@ -2497,7 +2497,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 ExpectedEvent::GameStart,
                 ExpectedEvent::SelfMove { state_number: 6 },
-                ExpectedEvent::OpponentMoved { state_number: 7 },
+                ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 8 },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
@@ -2505,10 +2505,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             ], "our_turn_timeout p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 ExpectedEvent::GameStart,
-                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 7 },
                 ExpectedEvent::GameMessage,
-                ExpectedEvent::OpponentMoved { state_number: 8 },
+                ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
@@ -2545,7 +2545,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 ExpectedEvent::GameStart,
                 ExpectedEvent::SelfMove { state_number: 6 },
-                ExpectedEvent::OpponentMoved { state_number: 7 },
+                ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 8 },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
@@ -2554,10 +2554,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             ], "slash_illegal p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 ExpectedEvent::GameStart,
-                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 7 },
                 ExpectedEvent::GameMessage,
-                ExpectedEvent::OpponentMoved { state_number: 8 },
+                ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::SelfMove { state_number: 8 },
@@ -2591,20 +2591,20 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 ExpectedEvent::GameStart,
                 ExpectedEvent::SelfMove { state_number: 6 },
-                ExpectedEvent::OpponentMoved { state_number: 7 },
+                ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 8 },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::SelfMove { state_number: 8 },
-                ExpectedEvent::OpponentMoved { state_number: 8 },
+                ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::OpponentSlashedUs),
             ], "opponent_slashed p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 ExpectedEvent::GameStart,
-                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 7 },
                 ExpectedEvent::GameMessage,
-                ExpectedEvent::OpponentMoved { state_number: 8 },
+                ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 9 },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
@@ -2663,7 +2663,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 ExpectedEvent::GameStart,
                 ExpectedEvent::SelfMove { state_number: 6 },
-                ExpectedEvent::OpponentMoved { state_number: 7 },
+                ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 8 },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
@@ -2672,10 +2672,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             ], "funny_share p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 ExpectedEvent::GameStart,
-                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 7 },
                 ExpectedEvent::GameMessage,
-                ExpectedEvent::OpponentMoved { state_number: 8 },
+                ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::SelfMove { state_number: 8 },
@@ -2738,7 +2738,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 ExpectedEvent::GameStart,
                 ExpectedEvent::SelfMove { state_number: 6 },
-                ExpectedEvent::OpponentMoved { state_number: 7 },
+                ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 8 },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
@@ -2747,10 +2747,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             ], "nerfed_cheat p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 ExpectedEvent::GameStart,
-                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 7 },
                 ExpectedEvent::GameMessage,
-                ExpectedEvent::OpponentMoved { state_number: 8 },
+                ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::SelfMove { state_number: 8 },
@@ -2787,19 +2787,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 ExpectedEvent::GameStart,
                 ExpectedEvent::SelfMove { state_number: 6 },
-                ExpectedEvent::OpponentMoved { state_number: 7 },
+                ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 8 },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::OpponentMoved { state_number: 8 },
+                ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
             ], "accept_finished p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 ExpectedEvent::GameStart,
-                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 7 },
                 ExpectedEvent::GameMessage,
-                ExpectedEvent::OpponentMoved { state_number: 8 },
+                ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 9 },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
@@ -2865,7 +2865,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         ], "nerfed_accept p0");
         assert_event_sequence(&outcome.local_uis[1].events, &[
             ExpectedEvent::GameStart,
-            ExpectedEvent::OpponentMoved { state_number: 6 },
+            ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(100) },
             ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
             ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
             ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
@@ -3031,7 +3031,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 ExpectedEvent::GameStart,
                 ExpectedEvent::SelfMove { state_number: 6 },
-                ExpectedEvent::OpponentMoved { state_number: 7 },
+                ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 8 },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
@@ -3040,10 +3040,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             ], "opp_cheated p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 ExpectedEvent::GameStart,
-                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 7 },
                 ExpectedEvent::GameMessage,
-                ExpectedEvent::OpponentMoved { state_number: 8 },
+                ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::SelfMove { state_number: 8 },
@@ -3078,7 +3078,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 ExpectedEvent::GameStart,
                 ExpectedEvent::SelfMove { state_number: 6 },
-                ExpectedEvent::OpponentMoved { state_number: 7 },
+                ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 8 },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
@@ -3086,10 +3086,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             ], "destroyed p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 ExpectedEvent::GameStart,
-                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 7 },
                 ExpectedEvent::GameMessage,
-                ExpectedEvent::OpponentMoved { state_number: 8 },
+                ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::GameError),
@@ -3236,12 +3236,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
                 ExpectedEvent::SelfMove { state_number: 6 },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::GameError),
             ], "impossible_spend p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 ExpectedEvent::GameStart,
-                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 7 },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
@@ -3278,12 +3278,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
                 ExpectedEvent::SelfMove { state_number: 6 },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::GameError),
             ], "our_turn_spent p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 ExpectedEvent::GameStart,
-                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 7 },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
@@ -3461,7 +3461,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             ], "go_on_chain_then_move p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 ExpectedEvent::GameStart,
-                ExpectedEvent::OpponentMoved { state_number: 6 },
+                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
                 ExpectedEvent::SelfMove { state_number: 7 },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
