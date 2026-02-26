@@ -615,7 +615,7 @@ impl Simulator {
     }
 }
 
-pub fn run_simulation_tests(choices: Vec<String>) {
+pub fn run_simulation_tests() {
     std::panic::set_hook(Box::new(|panic_info| {
         if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
             eprintln!("panic payload: {s}");
@@ -633,14 +633,38 @@ pub fn run_simulation_tests(choices: Vec<String>) {
             &calpoker_tests(),
             &potato_handler_sim_tests(),
         ];
-        for test_set in ref_lists.iter() {
-            for (name, f) in test_set.iter() {
-                if choices.is_empty() || choices.iter().any(|choice| name.contains(choice)) {
-                    eprintln!("RUNNING TEST {} ...", name);
-                    f();
-                    eprintln!("{} ... ok\n", name);
+
+        let from_filter: Option<String> = std::env::var("SIM_TEST_FROM")
+            .ok()
+            .filter(|s| !s.is_empty());
+
+        let all_tests: Vec<_> = ref_lists.iter()
+            .flat_map(|set| set.iter())
+            .collect();
+
+        let start_idx = if let Some(ref f) = from_filter {
+            match all_tests.iter().position(|(name, _)| name.contains(f.as_str())) {
+                Some(idx) => idx,
+                None => {
+                    eprintln!("ERROR: no test name contains '{f}'");
+                    eprintln!("Available tests:");
+                    for (name, _) in &all_tests {
+                        eprintln!("  {name}");
+                    }
+                    panic!("SIM_TEST_FROM='{f}' matched no tests");
                 }
             }
+        } else {
+            0
+        };
+
+        let rotated = all_tests[start_idx..].iter()
+            .chain(all_tests[..start_idx].iter());
+
+        for (name, f) in rotated {
+            eprintln!("RUNNING TEST {} ...", name);
+            f();
+            eprintln!("{} ... ok\n", name);
         }
     }) {
         if let Some(s) = e.downcast_ref::<&str>() {
@@ -658,15 +682,11 @@ pub fn run_simulation_tests(choices: Vec<String>) {
 mod test {
     use super::*;
 
-    /// Run simulation tests. Set `SIM_TEST=<substring>` to run only matching
-    /// tests, e.g. `SIM_TEST=piss_off_peer_timeout cargo test --features sim-tests sim_tests`
+    /// Run simulation tests. Set `SIM_TEST_FROM=<substring>` to start from
+    /// the first matching test and wraparound through all tests.
+    /// Use the `ct` script: `ct` runs all, `ct accept_finished` starts there.
     #[test]
     fn sim_tests() {
-        let filter: Vec<String> = std::env::var("SIM_TEST")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .into_iter()
-            .collect();
-        run_simulation_tests(filter);
+        run_simulation_tests();
     }
 }

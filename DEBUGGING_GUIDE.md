@@ -5,40 +5,50 @@ tests. It is intended as a reference for future sessions.
 
 ## Building and Running Tests
 
-### Running tests locally (preferred)
+### Helper scripts
 
-Tests run directly with cargo:
+Two scripts in the repo root handle the common cases:
+
+- **`./cb`** — Build with sim-tests feature: `./cb` (passes extra args to cargo,
+  e.g. `./cb --release`).
+- **`./ct`** — Run all sim tests with output tee'd to a log file.
+  - `./ct` — runs all tests in normal order.
+  - `./ct accept_finished` — starts at the first test matching `accept_finished`,
+    runs through the end, wraps back to the beginning, and finishes right before
+    where it started. Every test runs exactly once. Use this when debugging a
+    specific failure: the test you care about runs first, then you confirm nothing
+    else broke.
+  - If the argument doesn't match any test name, you get a clear error listing
+    all available tests.
+  - The full log is saved to `/tmp/ct-<timestamp>.log` (printed at the end).
+
+### Running tests directly (without scripts)
+
 ```bash
-RUST_LOG=info cargo test --features sim-tests -- sim_tests --nocapture 2>&1 \
+cargo test --features sim-tests -- sim_tests --nocapture 2>&1 \
   | tee /tmp/test-output.log \
-  | rg "RUNNING TEST|ok|panic|stall"
+  | tail -40
 ```
 
-- A single on-chain test takes 30–60s locally; the full sim suite takes 3–5 min.
+To start from a specific test (wraparound):
+```bash
+SIM_TEST_FROM=accept_finished cargo test --features sim-tests -- sim_tests --nocapture
+```
+
+- A single on-chain test takes 30–60s locally; the full sim suite takes 5–8 min.
 - Each iteration of the simulation loop involves expensive CLVM evaluation, so
   a 200-step stall can take a long time before the assertion fires.
-
-### Running a single sim test
-
-Set the `SIM_TEST` environment variable to a substring of the test name:
-
-```bash
-SIM_TEST=piss_off_peer_timeout cargo test --features sim-tests sim_tests -- --nocapture
-```
-
-This runs only tests whose name contains the given substring. Omit `SIM_TEST`
-to run the full suite. This is much faster for iterating on a single failure
-(~5s vs minutes for the whole suite).
 
 ### Always tee output to a file
 
 Test runs are expensive (minutes each). Always capture the full output so you
-can re-filter without re-running:
+can re-filter without re-running. The `ct` script does this automatically.
 
+If running manually:
 ```bash
-RUST_LOG=info cargo test --features sim-tests -- sim_tests --nocapture 2>&1 \
+cargo test --features sim-tests -- sim_tests --nocapture 2>&1 \
   | tee /tmp/test-output.log \
-  | rg "RUNNING TEST|ok|panic|stall"
+  | tail -40
 ```
 
 Then if the initial filter missed something:
