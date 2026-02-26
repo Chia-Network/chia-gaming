@@ -785,6 +785,23 @@ timeout.
 
 ## UX Notifications
 
+The UI layer receives events via the `ToLocalUI` trait callbacks. These include
+both game lifecycle callbacks and `GameNotification` variants (delivered through
+`game_notification`).
+
+### Game Lifecycle Callbacks
+
+| Callback | Parameters | Meaning |
+|----------|------------|---------|
+| `game_start` | `games: &[GameStartInfo]` | One or more games have started. Each `GameStartInfo` contains `game_id`, `my_turn` (whether we move first), `my_contribution`, and `their_contribution`. |
+| `opponent_moved` | `id, state_number, readable, mover_share` | Opponent made a move; `mover_share` is their declared share. |
+| `game_message` | `id, readable` | Informational message from the game (e.g., revealed data). |
+| `going_on_chain` | `reason: &str` | We are automatically going on-chain due to an error. |
+| `shutdown_started` | (none) | Clean shutdown sequence has begun. |
+| `shutdown_complete` | `reward_coin_string` | Channel fully closed; optional reward coin. |
+
+### Game Notifications
+
 The `GameNotification` enum is the sole mechanism for reporting game outcomes to
 the UI layer. All notifications are emitted as `Effect::Notification(...)` values
 returned from the `PotatoHandler` and `OnChainPotatoHandler` methods.
@@ -798,7 +815,7 @@ cleanup and game-over transitions.
 | Notification | When | Meaning |
 |--------------|------|---------|
 | `ChannelCoinSpent` | Channel coin spend detected on-chain | The channel is being unrolled (by either player) |
-| `UnrollCoinSpent` | Unroll coin spend detected on-chain | Game coins and reward coins are now live |
+| `UnrollCoinSpent { reward_coin }` | Unroll coin spend detected on-chain | Game coins and reward coins are now live; `reward_coin` is `Some(CoinString)` for our change/reward coin from the unroll, `None` if our balance is zero |
 | `GoingOnChain { reason }` | Error detected in peer message | We are automatically going on-chain due to an error; `reason` describes what went wrong (e.g., invalid peer message, opponent requested shutdown while games are active) |
 
 `ChannelCoinSpent` and `UnrollCoinSpent` fire regardless of who initiated the
@@ -812,10 +829,10 @@ The frontend should treat any of these as the "game ended" signal.
 
 | Notification | When | Meaning |
 |--------------|------|---------|
-| `WeTimedOut { id, our_reward }` | Game resolved in our favor | Includes off-chain accept (fires when potato returns) and on-chain timeout; `our_reward` is the amount we received |
-| `OpponentTimedOut { id, our_reward }` | Game resolved in opponent's favor | Includes receiving opponent's off-chain accept; `our_reward` is the amount we received |
+| `WeTimedOut { id, our_reward, reward_coin }` | Game resolved in our favor | Includes off-chain accept (fires when potato returns) and on-chain timeout; `our_reward` is the amount we received; `reward_coin` is `Some(CoinString)` when on-chain and reward is nonzero, `None` for off-chain resolution |
+| `OpponentTimedOut { id, our_reward, reward_coin }` | Game resolved in opponent's favor | Includes receiving opponent's off-chain accept; `our_reward` is the amount we received; `reward_coin` is `Some(CoinString)` when on-chain and reward is nonzero, `None` for off-chain |
 | `GameCancelled { id }` | Unroll resolved without this game | Game existed off-chain but wasn't in the unroll conditions |
-| `WeSlashedOpponent { id }` | Slash transaction confirmed | Opponent's illegal move was proven on-chain |
+| `WeSlashedOpponent { id, reward_coin }` | Slash transaction confirmed | Opponent's illegal move was proven on-chain; `reward_coin` is the `CoinString` of the reward we received |
 | `OpponentSlashedUs { id }` | Opponent slashed us | Our move was proven illegal on-chain |
 | `OpponentSuccessfullyCheated { id, our_reward }` | Slash coin timed out | Opponent cheated and we failed to challenge in time; `our_reward` is the mover_share from their cheating move (what we actually ended up with) |
 | `GameError { id, reason }` | A single game coin is in an unrecoverable state | Something went wrong with one game |

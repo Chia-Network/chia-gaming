@@ -6,7 +6,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json_any_key::*;
 
 use crate::channel_handler::types::{
-    ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartFailed, GameStartInfo,
+    ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartInfo,
     GameStartInfoInterface, MoveResult, PotatoMoveCachedData, PotatoSignatures, ReadableMove,
 };
 use crate::channel_handler::game_start_info;
@@ -203,7 +203,7 @@ pub trait ToLocalUI {
         readable: ReadableMove,
     ) -> Result<(), Error>;
 
-    fn game_start(&mut self, id: &[GameID], failed: Option<GameStartFailed>) -> Result<(), Error>;
+    fn game_start(&mut self, games: &[crate::potato_handler::effects::GameStartInfo]) -> Result<(), Error>;
     fn game_notification(&mut self, _notification: &crate::potato_handler::effects::GameNotification) -> Result<(), Error> {
         Ok(())
     }

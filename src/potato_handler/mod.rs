@@ -26,7 +26,7 @@ use crate::common::types::{
 };
 use crate::utils::proper_list;
 
-use crate::potato_handler::effects::{Effect, GameNotification};
+use crate::potato_handler::effects::{Effect, GameNotification, GameStartInfo as GameStartedInfo};
 use crate::potato_handler::on_chain::OnChainPotatoHandler;
 use crate::shutdown::{get_conditions_with_channel_handler, ShutdownConditions};
 
@@ -441,7 +441,7 @@ impl PotatoHandler {
         }
 
         for (id, amount) in self.pending_accept_completions.drain(..) {
-            effects.push(Effect::Notification(GameNotification::WeTimedOut { id, our_reward: amount }));
+            effects.push(Effect::Notification(GameNotification::WeTimedOut { id, our_reward: amount, reward_coin: None }));
         }
 
         let (started, start_effects) = self.have_potato_start_game(env)?;
@@ -524,6 +524,7 @@ impl PotatoHandler {
                 effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
                     id: game_id.clone(),
                     our_reward: amount.clone(),
+                    reward_coin: None,
                 }));
                 effects.extend(self.update_channel_coin_after_receive(env, &spend_info)?);
             }
@@ -719,24 +720,24 @@ impl PotatoHandler {
                 let unwrapped_games: Vec<Rc<dyn GameStartInfoInterface>> =
                     desc.my_games.iter().map(|g| g.0.clone()).collect();
 
-                let game_ids: Vec<GameID> = desc
+                let game_infos: Vec<GameStartedInfo> = desc
                     .my_games
                     .iter()
-                    .map(|d| d.0.game_id().clone())
+                    .map(|g| GameStartedInfo {
+                        game_id: g.0.game_id().clone(),
+                        my_turn: desc.my_turn,
+                        my_contribution: g.0.my_contribution_this_game().clone(),
+                        their_contribution: g.0.their_contribution_this_game().clone(),
+                    })
                     .collect();
 
                 match ch.send_potato_start_game(env, &unwrapped_games)? {
-                    StartGameResult::Failure(reason) => {
-                        effects.push(Effect::GameStart {
-                            ids: game_ids,
-                            failed: Some(reason),
-                        });
+                    StartGameResult::Failure(_) => {
                         return Ok((true, effects));
                     }
                     StartGameResult::Success(sigs) => {
                         effects.push(Effect::GameStart {
-                            ids: game_ids,
-                            failed: None,
+                            games: game_infos,
                         });
                         sigs
                     }
@@ -1146,13 +1147,13 @@ impl PotatoHandler {
         let mut effects = Vec::new();
         // We must have received a peer layer message indicating that we're waiting for this
         // game start.
-        let our_game_ids =
-            if let Some(GameStartQueueEntry(game_ids)) = self.their_start_queue.pop_front() {
-                game_ids
+        let our_entry =
+            if let Some(entry) = self.their_start_queue.pop_front() {
+                entry
             } else {
                 return Err(Error::StrErr("no waiting games to start".to_string()));
             };
-        let game_id_set: HashSet<&GameID> = our_game_ids.iter().collect();
+        let game_id_set: HashSet<&GameID> = our_entry.game_ids.iter().collect();
 
         let (game_ids, spend_info) = {
             let ch = self.channel_handler_mut()?;
@@ -1163,9 +1164,10 @@ impl PotatoHandler {
             let (game_ids, spend_info) =
                 ch.received_potato_start_game(env, sigs, &rehydrated_games)?;
 
-            if game_ids.len() != our_game_ids.len() {
+            if game_ids.len() != our_entry.game_ids.len() {
                 return Err(Error::StrErr(format!(
-                    "wrong number of game_ids {game_ids:?} vs {our_game_ids:?}"
+                    "wrong number of game_ids {game_ids:?} vs {:?}",
+                    our_entry.game_ids
                 )));
             }
 
@@ -1178,9 +1180,19 @@ impl PotatoHandler {
             (game_ids, spend_info)
         };
 
+        let game_infos: Vec<GameStartedInfo> = games
+            .iter()
+            .zip(game_ids.iter())
+            .map(|(g, id)| GameStartedInfo {
+                game_id: id.clone(),
+                my_turn: our_entry.my_turn,
+                my_contribution: g.0.my_contribution_this_game().clone(),
+                their_contribution: g.0.their_contribution_this_game().clone(),
+            })
+            .collect();
+
         effects.push(Effect::GameStart {
-            ids: game_ids,
-            failed: None,
+            games: game_infos,
         });
 
         effects.extend(self.update_channel_coin_after_receive(env, &spend_info)?);
@@ -1875,8 +1887,6 @@ impl PotatoHandler {
             return Err(Error::StrErr("no conditions for unroll coin".to_string()));
         };
 
-        effects.push(Effect::Notification(GameNotification::UnrollCoinSpent));
-
         let game_map = {
             let player_ch = self.channel_handler_mut()?;
 
@@ -1885,6 +1895,12 @@ impl PotatoHandler {
 
             let conditions =
                 CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
+
+            let reward_coin = player_ch
+                .find_my_reward_coin(env, unroll_coin, &conditions)
+                .ok();
+            effects.push(Effect::Notification(GameNotification::UnrollCoinSpent { reward_coin }));
+
             let created_coins: Vec<PuzzleHash> = conditions
                 .iter()
                 .filter_map(|c| {
@@ -2023,6 +2039,7 @@ impl FromLocalUI for PotatoHandler
             self.my_start_queue.push_back(MyGameStartQueueEntry {
                 my_games: my_games.into_iter().map(GSI).collect(),
                 their_games: their_games.into_iter().map(GSI).collect(),
+                my_turn: game.my_turn,
             });
 
             self.push_action(GameAction::LocalStartGame);
@@ -2038,7 +2055,10 @@ impl FromLocalUI for PotatoHandler
         } else {
             // All checking needed is done by channel handler.
             self.their_start_queue
-                .push_back(GameStartQueueEntry(game_id_list.clone()));
+                .push_back(GameStartQueueEntry {
+                    game_ids: game_id_list.clone(),
+                    my_turn: game.my_turn,
+                });
         }
 
         Ok((game_id_list, effects))

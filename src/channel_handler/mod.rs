@@ -2378,6 +2378,30 @@ impl ChannelHandler {
         })
     }
 
+    /// Find the first created coin whose puzzle hash matches our referee key.
+    pub fn find_my_reward_coin<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+        parent_coin: &CoinString,
+        conditions: &[CoinCondition],
+    ) -> Result<CoinString, Error> {
+        let referee_public_key = private_to_public_key(&self.private_keys.my_referee_private_key);
+        let referee_puzzle_hash = puzzle_hash_for_pk(env.allocator, &referee_public_key)?;
+        let parent_coin_id = parent_coin.to_coin_id();
+
+        conditions
+            .iter()
+            .find_map(|c| {
+                if let CoinCondition::CreateCoin(ph, amt) = c {
+                    if ph == &referee_puzzle_hash && amt > &Amount::default() {
+                        return Some(CoinString::from_parts(&parent_coin_id, ph, amt));
+                    }
+                }
+                None
+            })
+            .ok_or_else(|| Error::StrErr("no reward coin found for our puzzle hash".to_string()))
+    }
+
     pub fn handle_reward_spends<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,

@@ -7,7 +7,7 @@ use log::debug;
 
 use crate::channel_handler::types::ChannelHandlerEnv;
 #[cfg(test)]
-use crate::channel_handler::types::{ChannelHandlerPrivateKeys, GameStartFailed, ReadableMove};
+use crate::channel_handler::types::{ChannelHandlerPrivateKeys, ReadableMove};
 use crate::common::standard_coin::private_to_public_key;
 #[cfg(test)]
 use crate::common::types::GameType;
@@ -174,8 +174,7 @@ impl ToLocalUI for Pipe {
     }
     fn game_start(
         &mut self,
-        _id: &[GameID],
-        _failed: Option<GameStartFailed>,
+        _games: &[crate::potato_handler::effects::GameStartInfo],
     ) -> Result<(), Error> {
         Ok(())
     }

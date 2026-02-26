@@ -299,8 +299,14 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
 
         if old_definition.pending_slash_amount.is_some() {
             debug!("{initial_potato} pending slash coin was spent - slash succeeded");
+            let conditions =
+                CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
+            let reward_coin = self.player_ch
+                .find_my_reward_coin(env, coin_id, &conditions)
+                .unwrap_or_else(|_| CoinString::default());
             effects.push(Effect::Notification(GameNotification::WeSlashedOpponent {
                 id: old_definition.game_id.clone(),
+                reward_coin,
             }));
             effects.extend(self.next_action(env)?);
             return Ok(effects);
@@ -326,9 +332,15 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
 
             if let Some((ph, amt)) = created {
                 if ph == reward_ph {
+                    let reward_coin = if amt > Amount::default() {
+                        Some(CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt))
+                    } else {
+                        None
+                    };
                     effects.push(Effect::Notification(GameNotification::WeTimedOut {
                         id: old_definition.game_id.clone(),
                         our_reward: amt,
+                        reward_coin,
                     }));
                 } else {
                     // The accepted coin was spent by a game move (e.g. the
@@ -481,6 +493,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                         effects.push(Effect::Notification(GameNotification::WeTimedOut {
                             id: old_definition.game_id.clone(),
                             our_reward: amount.clone(),
+                            reward_coin: my_reward_coin_string.clone(),
                         }));
                     } else {
                         let has_rem = conditions.iter().any(|c| matches!(c, CoinCondition::Rem(_)));
@@ -492,6 +505,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                             effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
                                 id: old_definition.game_id.clone(),
                                 our_reward: amount.clone(),
+                                reward_coin: my_reward_coin_string.clone(),
                             }));
                         }
                     }
@@ -608,17 +622,24 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     }
                 }
             }
-            CoinSpentInformation::OurReward(_, amt) => {
+            CoinSpentInformation::OurReward(ph, amt) => {
                 debug!("{initial_potato} our reward coin was spent");
+                let reward_coin = if amt > Amount::default() {
+                    Some(CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt))
+                } else {
+                    None
+                };
                 if old_definition.our_turn {
                     effects.push(Effect::Notification(GameNotification::WeTimedOut {
                         id: old_definition.game_id.clone(),
                         our_reward: amt,
+                        reward_coin,
                     }));
                 } else {
                     effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
                         id: old_definition.game_id.clone(),
                         our_reward: amt,
+                        reward_coin,
                     }));
                 }
                 unblock_queue = true;
@@ -671,17 +692,21 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
 
                 debug!("Spend reward coins downstream of the timeout");
 
+                let conditions = CoinCondition::from_puzzle_and_solution(
+                    env.allocator,
+                    &tx.bundle.puzzle.to_program(),
+                    &tx.bundle.solution.p(),
+                )?;
+
+                let reward_coin = self.player_ch
+                    .find_my_reward_coin(env, coin_id, &conditions)
+                    .ok();
+
                 let spend_bundle = {
                     let mut total_spends = vec![CoinSpend {
                         coin: coin_id.clone(),
                         bundle: tx.bundle.clone(),
                     }];
-
-                    let conditions = CoinCondition::from_puzzle_and_solution(
-                        env.allocator,
-                        &tx.bundle.puzzle.to_program(),
-                        &tx.bundle.solution.p(),
-                    )?;
 
                     if let Some(mut spend_bundle) =
                         self.player_ch
@@ -702,11 +727,13 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     effects.push(Effect::Notification(GameNotification::WeTimedOut {
                         id: game_id.clone(),
                         our_reward: coin_amount.clone(),
+                        reward_coin,
                     }));
                 } else {
                     effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
                         id: game_id.clone(),
                         our_reward: coin_amount.clone(),
+                        reward_coin,
                     }));
                 }
             } else {
@@ -728,8 +755,9 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 };
 
                 self.have_potato = PotatoState::Present;
-                if let Some(tx) = result_transaction {
+                let reward_coin = if let Some(tx) = result_transaction {
                     self.have_potato = PotatoState::Absent;
+                    let rc = Some(tx.coin.clone());
                     effects.push(Effect::SpendTransaction(SpendBundle {
                         name: Some(format!("{initial_potato} accept transaction")),
                         spends: vec![CoinSpend {
@@ -737,20 +765,24 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                             bundle: tx.bundle.clone(),
                         }],
                     }));
+                    rc
                 } else {
                     debug!("{initial_potato} Accepted game when our share was zero");
                     debug!("when action queue is {:?}", self.game_action_queue);
-                }
+                    None
+                };
 
                 if our_turn {
                     effects.push(Effect::Notification(GameNotification::WeTimedOut {
                         id: game_id.clone(),
                         our_reward: coin_amount.clone(),
+                        reward_coin,
                     }));
                 } else {
                     effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
                         id: game_id.clone(),
                         our_reward: coin_amount.clone(),
+                        reward_coin,
                     }));
                 }
             }

@@ -1,16 +1,24 @@
-use crate::channel_handler::types::{GameStartFailed, ReadableMove};
+use crate::channel_handler::types::ReadableMove;
 use crate::common::types::{
     Amount, CoinString, GameID, PuzzleHash, SpendBundle, Timeout,
 };
 use crate::potato_handler::types::PeerMessage;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct GameStartInfo {
+    pub game_id: GameID,
+    pub my_turn: bool,
+    pub my_contribution: Amount,
+    pub their_contribution: Amount,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum GameNotification {
     GameCancelled { id: GameID },
-    WeTimedOut { id: GameID, our_reward: Amount },
-    OpponentTimedOut { id: GameID, our_reward: Amount },
+    WeTimedOut { id: GameID, our_reward: Amount, reward_coin: Option<CoinString> },
+    OpponentTimedOut { id: GameID, our_reward: Amount, reward_coin: Option<CoinString> },
     OpponentPlayedIllegalMove { id: GameID },
-    WeSlashedOpponent { id: GameID },
+    WeSlashedOpponent { id: GameID, reward_coin: CoinString },
     OpponentSlashedUs { id: GameID },
     OpponentSuccessfullyCheated { id: GameID, our_reward: Amount },
 
@@ -21,7 +29,7 @@ pub enum GameNotification {
     GameError { id: GameID, reason: String },
 
     ChannelCoinSpent,
-    UnrollCoinSpent,
+    UnrollCoinSpent { reward_coin: Option<CoinString> },
 }
 
 #[derive(Debug, Clone)]
@@ -42,8 +50,7 @@ pub enum Effect {
         readable: ReadableMove,
     },
     GameStart {
-        ids: Vec<GameID>,
-        failed: Option<GameStartFailed>,
+        games: Vec<GameStartInfo>,
     },
     ResyncMove {
         id: GameID,
@@ -97,8 +104,8 @@ pub fn apply_effects(
             Effect::GameMessage { id, readable } => {
                 system.game_message(allocator, &id, readable)?;
             }
-            Effect::GameStart { ids, failed } => {
-                system.game_start(&ids, failed)?;
+            Effect::GameStart { games } => {
+                system.game_start(&games)?;
             }
             Effect::Notification(notification) => {
                 system.game_notification(&notification)?;

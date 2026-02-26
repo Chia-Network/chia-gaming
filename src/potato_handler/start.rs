@@ -22,10 +22,14 @@ pub struct WireGameStart {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GameStartQueueEntry(pub Vec<GameID>);
+pub struct GameStartQueueEntry {
+    pub game_ids: Vec<GameID>,
+    pub my_turn: bool,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MyGameStartQueueEntry {
     pub my_games: Vec<GSI>,
     pub their_games: Vec<GSI>,
+    pub my_turn: bool,
 }

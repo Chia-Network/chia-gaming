@@ -17,7 +17,7 @@ mod gaming_wasm {
 
     use wasm_bindgen::prelude::*;
 
-    use chia_gaming::channel_handler::types::{GameStartFailed, ReadableMove};
+    use chia_gaming::channel_handler::types::ReadableMove;
     use chia_gaming::common::load_clvm::wasm_deposit_file;
     use chia_gaming::common::standard_coin::{puzzle_hash_for_pk, ChiaIdentity};
 
@@ -687,18 +687,20 @@ mod gaming_wasm {
 
         fn game_start(
             &mut self,
-            game_ids: &[GameID],
-            finished: std::option::Option<GameStartFailed>,
+            games: &[chia_gaming::potato_handler::effects::GameStartInfo],
         ) -> Result<(), chia_gaming::common::types::Error> {
+            // game_started(games: Array<{game_id: string, my_turn: boolean, my_contribution: number, their_contribution: number}>)
             call_javascript_from_collection(&self.callbacks, "game_started", |args_array| {
-                let game_ids_array = Array::new();
-                for (i, game_id) in game_ids.iter().enumerate() {
-                    game_ids_array.set(i as u32, JsValue::from_str(&game_id_to_string(game_id)));
+                let games_array = Array::new();
+                for (i, game) in games.iter().enumerate() {
+                    let obj = js_sys::Object::new();
+                    js_sys::Reflect::set(&obj, &"game_id".into(), &JsValue::from_str(&game_id_to_string(&game.game_id))).unwrap();
+                    js_sys::Reflect::set(&obj, &"my_turn".into(), &JsValue::from_bool(game.my_turn)).unwrap();
+                    js_sys::Reflect::set(&obj, &"my_contribution".into(), &JsValue::from_f64(game.my_contribution.to_u64() as f64)).unwrap();
+                    js_sys::Reflect::set(&obj, &"their_contribution".into(), &JsValue::from_f64(game.their_contribution.to_u64() as f64)).unwrap();
+                    games_array.set(i as u32, obj.into());
                 }
-                args_array.set(0, game_ids_array.into());
-                if let Some(f) = finished {
-                    args_array.set(1, JsValue::from_str(&format!("{:?}", f)));
-                }
+                args_array.set(0, games_array.into());
                 Ok(())
             })
         }
@@ -791,9 +793,16 @@ mod gaming_wasm {
     }
 
     #[derive(Serialize)]
+    struct JsGameStartedGame {
+        game_id: String,
+        my_turn: bool,
+        my_contribution: u64,
+        their_contribution: u64,
+    }
+
+    #[derive(Serialize)]
     struct JsGameStarted {
-        game_ids: Vec<String>,
-        failed: Option<String>,
+        games: Vec<JsGameStartedGame>,
     }
 
     #[derive(Serialize)]
@@ -872,8 +881,12 @@ mod gaming_wasm {
         };
         let game_started = if let Some(gs) = &idle_result.game_started {
             Some(JsGameStarted {
-                game_ids: gs.game_ids.iter().map(game_id_to_string).collect(),
-                failed: gs.failed.as_ref().map(|f| format!("{:?}", f)),
+                games: gs.games.iter().map(|g| JsGameStartedGame {
+                    game_id: game_id_to_string(&g.game_id),
+                    my_turn: g.my_turn,
+                    my_contribution: g.my_contribution.to_u64(),
+                    their_contribution: g.their_contribution.to_u64(),
+                }).collect(),
             })
         } else {
             None

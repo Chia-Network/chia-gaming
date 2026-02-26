@@ -478,11 +478,7 @@ export class WasmBlobWrapper {
           },
         });
       },
-      game_started: (game_ids, failed) => {
-        if (failed) {
-          console.warn('game start failed', failed);
-          this.messageQueue.push({ shutDown: true, condition: failed });
-        }
+      game_started: (_games) => {
       },
       game_notification: (notification_json) => {
         try {

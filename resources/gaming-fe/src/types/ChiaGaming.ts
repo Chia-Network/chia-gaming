@@ -90,7 +90,7 @@ export interface IdleCallbacks {
     | ((game_id: string, readable_move_hex: string) => void)
     | undefined;
   game_started?:
-    | ((game_ids: string[], failed: string | undefined) => void)
+    | ((games: Array<{ game_id: string; my_turn: boolean; my_contribution: number; their_contribution: number }>) => void)
     | undefined;
   game_notification?: ((notification_json: string) => void) | undefined;
   shutdown_started?: (() => void) | undefined;

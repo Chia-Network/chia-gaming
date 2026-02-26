@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json_any_key::*;
 
 use crate::channel_handler::types::{
-    ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartFailed, ReadableMove,
+    ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
@@ -153,8 +153,7 @@ impl<'a> Iterator for RegisteredCoinsIterator<'a> {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct GameStartRecord {
-    pub game_ids: Vec<GameID>,
-    pub failed: Option<GameStartFailed>,
+    pub games: Vec<crate::potato_handler::effects::GameStartInfo>,
 }
 
 #[derive(Default)]
@@ -499,10 +498,9 @@ impl ToLocalUI for SynchronousGameCradleState {
         self.game_messages.push_back((id.clone(), readable.clone()));
         Ok(())
     }
-    fn game_start(&mut self, ids: &[GameID], failed: Option<GameStartFailed>) -> Result<(), Error> {
+    fn game_start(&mut self, games: &[crate::potato_handler::effects::GameStartInfo]) -> Result<(), Error> {
         self.game_started.push_back(GameStartRecord {
-            game_ids: ids.to_vec(),
-            failed: failed.clone(),
+            games: games.to_vec(),
         });
         Ok(())
     }
@@ -1054,7 +1052,7 @@ impl GameCradle for SynchronousGameCradle {
         }
 
         if let Some(gs) = self.state.game_started.pop_front() {
-            local_ui.game_start(&gs.game_ids, gs.failed.clone())?;
+            local_ui.game_start(&gs.games)?;
             result.game_started = Some(gs.clone());
             result.continue_on = true;
             return Ok(Some(result));
