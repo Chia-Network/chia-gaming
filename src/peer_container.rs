@@ -169,7 +169,6 @@ pub struct IdleResult {
     pub outbound_messages: VecDeque<Vec<u8>>,
     pub opponent_move: Option<(GameID, usize, ReadableMove)>,
     pub game_started: Option<GameStartRecord>,
-    pub game_finished: Option<(GameID, Amount)>,
     pub notifications: Vec<GameNotification>,
     pub receive_error: Option<Error>,
     pub action_queue: Vec<String>,
@@ -337,7 +336,6 @@ struct SynchronousGameCradleState {
     raw_game_messages: VecDeque<(GameID, Vec<u8>)>,
     game_messages: VecDeque<(GameID, ReadableMove)>,
     game_started: VecDeque<GameStartRecord>,
-    game_finished: VecDeque<(GameID, Amount)>,
     #[serde(skip)]
     pending_notifications: VecDeque<GameNotification>,
     handshake_complete: bool,
@@ -437,7 +435,6 @@ impl SynchronousGameCradle {
                 game_messages: VecDeque::default(),
                 raw_game_messages: VecDeque::default(),
                 game_started: VecDeque::default(),
-                game_finished: VecDeque::default(),
                 pending_notifications: VecDeque::default(),
                 handshake_complete: false,
                 channel_puzzle_hash: None,
@@ -541,10 +538,6 @@ impl ToLocalUI for SynchronousGameCradleState {
             game_ids: ids.to_vec(),
             failed: failed.clone(),
         });
-        Ok(())
-    }
-    fn game_finished(&mut self, id: &GameID, my_share: Amount) -> Result<(), Error> {
-        self.game_finished.push_back((id.clone(), my_share));
         Ok(())
     }
     fn game_notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
@@ -1093,12 +1086,6 @@ impl GameCradle for SynchronousGameCradle {
         if let Some(gs) = self.state.game_started.pop_front() {
             local_ui.game_start(&gs.game_ids, gs.failed.clone())?;
             result.game_started = Some(gs.clone());
-            result.continue_on = true;
-            return Ok(Some(result));
-        }
-
-        if let Some((id, amount)) = self.state.game_finished.pop_front() {
-            local_ui.game_finished(&id, amount.clone())?;
             result.continue_on = true;
             return Ok(Some(result));
         }

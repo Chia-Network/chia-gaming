@@ -54,10 +54,6 @@ pub enum Effect {
         ids: Vec<GameID>,
         failed: Option<GameStartFailed>,
     },
-    GameFinished {
-        id: GameID,
-        mover_share: Amount,
-    },
     ResyncMove {
         id: GameID,
         state_number: usize,
@@ -125,9 +121,6 @@ pub fn apply_effects(
             }
             Effect::Notification(notification) => {
                 system.game_notification(&notification)?;
-            }
-            Effect::GameFinished { id, mover_share } => {
-                system.game_finished(&id, mover_share)?;
             }
             Effect::ResyncMove {
                 id,

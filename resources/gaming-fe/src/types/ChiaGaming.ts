@@ -43,7 +43,6 @@ export interface SaveData {
 }
 
 export type OpponentMove = [string, string];
-export type GameFinished = [string, number];
 export type StateIdentifier = 'starting' | 'running' | 'shutdown' | 'end';
 
 export interface IdleResult {
@@ -53,7 +52,6 @@ export interface IdleResult {
   outbound_transactions: SpendBundle[];
   outbound_messages: string[];
   opponent_move: OpponentMove | undefined;
-  game_finished: GameFinished | undefined;
   handshake_done: boolean;
   receive_error: string | undefined;
   action_queue: string[];
@@ -95,7 +93,6 @@ export interface IdleCallbacks {
   game_started?:
     | ((game_ids: string[], failed: string | undefined) => void)
     | undefined;
-  game_finished?: ((game_id: string, amount: number) => void) | undefined;
   game_notification?: ((notification_json: string) => void) | undefined;
   shutdown_started?: (() => void) | undefined;
   shutdown_complete?: ((coin: string) => void) | undefined;

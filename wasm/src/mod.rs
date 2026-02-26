@@ -76,14 +76,12 @@ mod gaming_wasm {
     };
 
     export type OpponentMove = [string, string];
-    export type GameFinished = [string, number];
 
     export type IdleResult = {
         "continue_on": boolean,
         "outbound_transactions": Array<SpendBundle>,
         "outbound_messages": Array<string>,
         "opponent_move": OpponentMove | undefined,
-        "game_finished": GameFinished | undefined
     };
 
     export type GameCradleConfig = {
@@ -103,7 +101,6 @@ mod gaming_wasm {
         "self_move": ((game_id: string, move_hex: string) => void) | undefined,
         "opponent_moved": ((game_id: string, readable_move_hex: string) => void) | undefined,
         "game_message": ((game_id: string, readable_move_hex: string) => void) | undefined,
-        "game_finished": ((game_id: string) => void) | undefined,
         "game_notification": ((notification_json: string) => void) | undefined,
         "shutdown_started": (() => void) | undefined,
         "shutdown_complete": ((coin: string) => void) | undefined,
@@ -734,18 +731,6 @@ mod gaming_wasm {
             })
         }
 
-        fn game_finished(
-            &mut self,
-            game_id: &GameID,
-            amount: Amount,
-        ) -> Result<(), chia_gaming::common::types::Error> {
-            call_javascript_from_collection(&self.callbacks, "game_finished", |args_array| {
-                args_array.set(0, JsValue::from_str(&game_id_to_string(game_id)));
-                args_array.set(1, amount.to_u64().into());
-                Ok(())
-            })
-        }
-
         fn game_notification(
             &mut self,
             notification: &chia_gaming::potato_handler::effects::GameNotification,
@@ -848,7 +833,6 @@ mod gaming_wasm {
         outbound_messages: Vec<String>,
         opponent_move: Option<(String, String)>,
         game_started: Option<JsGameStarted>,
-        game_finished: Option<(String, u64)>,
         handshake_done: bool,
         receive_error: Option<String>,
         action_queue: Vec<String>,
@@ -914,11 +898,6 @@ mod gaming_wasm {
         } else {
             None
         };
-        let game_finished = if let Some((gid, amt)) = &idle_result.game_finished {
-            Some((game_id_to_string(gid), amt.to_u64()))
-        } else {
-            None
-        };
         let game_started = if let Some(gs) = &idle_result.game_started {
             Some(JsGameStarted {
                 game_ids: gs.game_ids.iter().map(game_id_to_string).collect(),
@@ -944,7 +923,6 @@ mod gaming_wasm {
                 .collect(),
             opponent_move,
             game_started,
-            game_finished,
             handshake_done: idle_result.handshake_done,
             action_queue: idle_result.action_queue.clone(),
             incoming_messages: idle_result.incoming_messages.clone(),

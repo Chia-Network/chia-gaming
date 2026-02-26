@@ -5,7 +5,6 @@ use crate::referee::types::TheirTurnCoinSpentResult;
 #[derive(Debug)]
 pub enum CoinSpentInformation {
     OurReward(PuzzleHash, Amount),
-    OurSpend(PuzzleHash, Amount),
     TheirSpend(TheirTurnCoinSpentResult),
 }
 

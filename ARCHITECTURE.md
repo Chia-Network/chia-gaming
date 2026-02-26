@@ -782,9 +782,13 @@ timeout.
 
 ## UX Notifications
 
-The `Effect` / `GameNotification` system communicates state transitions to the
-UI layer. All notifications are emitted as `Effect::Notification(...)` values
+The `GameNotification` enum is the sole mechanism for reporting game outcomes to
+the UI layer. All notifications are emitted as `Effect::Notification(...)` values
 returned from the `PotatoHandler` and `OnChainPotatoHandler` methods.
+
+**There is no separate `GameFinished` effect.** Terminal `GameNotification`
+variants are the "game is done" signal — the frontend uses them to trigger UI
+cleanup and game-over transitions.
 
 ### On-Chain Transition Notifications
 
@@ -798,18 +802,35 @@ returned from the `PotatoHandler` and `OnChainPotatoHandler` methods.
 unroll. A player who called `go_on_chain` will see `ChannelCoinSpent` when
 their own transaction is mined, exactly as if the opponent had initiated it.
 
-### Game Outcome Notifications
+### Game Outcome Notifications (Terminal)
+
+These are the terminal notifications — each signals that a game is finished.
+The frontend should treat any of these as the "game ended" signal.
 
 | Notification | When | Meaning |
 |--------------|------|---------|
-| `WeTimedOut { id, amount }` | Our game coin timed out on-chain | We claimed the timeout; `amount` is our payout |
-| `WeTimedOutOpponent { id, amount }` | Opponent's game coin timed out | Opponent claimed timeout on our turn |
+| `WeTimedOut { id, amount }` | Game resolved in our favor | Includes off-chain accept (fires when potato returns) and on-chain timeout |
+| `WeTimedOutOpponent { id, amount }` | Game resolved in opponent's favor | Includes receiving opponent's off-chain accept |
 | `GameCancelled { id }` | Unroll resolved without this game | Game existed off-chain but wasn't in the unroll conditions |
 | `WeSlashedOpponent { id }` | Slash transaction confirmed | Opponent's illegal move was proven on-chain |
+| `OpponentSlashedUs { id }` | Opponent slashed us | Our move was proven illegal on-chain |
 | `OpponentSuccessfullyCheated { id, amount }` | Slash coin timed out | Opponent cheated and we failed to challenge in time |
-| `GameDestroyedOnChain { id }` | Game coin spent to unrecognized state | The coin was destroyed in a way we can't parse |
-| `OurTurnCoinSpentUnexpectedly { id }` | Our-turn game coin spent by someone else | Unexpected spend of a coin where it was our turn |
-| `OpponentMadeImpossibleSpend { id }` | Opponent spent game coin illegally | The coin was spent in a way that doesn't match any valid move |
+| `GameError { id, reason }` | A single game coin is in an unrecoverable state | Something went wrong with one game |
+| `ChannelError { reason }` | The channel or unroll coin is unrecoverable | Everything is lost |
+
+### Key Invariants
+
+- **Accept only on our turn.** Calling `accept()` when it is not our turn is an
+  assert failure. Accept is an alternative to moving.
+- **Only our redos after unroll.** After an unroll, game coins always land at
+  either our latest state or one step behind (needing OUR redo). We always
+  preempt any stale opponent unroll or timeout at the correct state. If the
+  opponent unrolled to an old state that we could not preempt, that is a
+  `ChannelError`. The opponent never needs to make moves on game coins after an
+  unroll we participated in.
+- **Accepted + opponent move is unreachable.** Since accept only happens on our
+  turn, and only the mover can advance a game coin, the opponent cannot move on
+  a coin where we already accepted. This path is a `debug_assert!` / `GameError`.
 
 **Key code:** `src/potato_handler/effects.rs`
 
@@ -825,8 +846,9 @@ full lifecycle is:
 1. `send_potato_accept` moves the game from `live_games` to
    `pending_accept_games` in the `ChannelHandler` and updates balances.
 2. The accept data is bundled into the next potato pass.
-3. When the potato comes back (acknowledgment), `pending_accept_games` is
-   cleared — the accept is confirmed.
+3. When the potato comes back (acknowledgment), `pending_accept_completions` is
+   drained, emitting `WeTimedOut` for the accepter. The opponent who receives
+   the accept gets `WeTimedOutOpponent` immediately.
 
 If the channel goes on-chain **before** the round-trip completes, the game
 is still in `pending_accept_games`. The `set_state_for_coins` function
@@ -837,15 +859,15 @@ coins, so accepted-but-unconfirmed games are correctly tracked on-chain.
 
 When a game is already on-chain and the player calls `Accept(game_id)`:
 
-1. `OnChainPotatoHandler` sets `accepted = true` on the `OnChainGameState`
-   entry. No transaction is submitted and no notification is emitted yet.
+1. `OnChainPotatoHandler` asserts it is our turn, then sets `accepted = true`
+   on the `OnChainGameState` entry. No transaction is submitted and no
+   notification is emitted yet.
 2. When the game coin is spent on-chain, `handle_game_coin_spent` checks the
    `accepted` flag. For accepted games:
    - If the spend creates a **reward coin** (matching the player's reward
-     puzzle hash): `WeTimedOut` and `GameFinished` are emitted.
-   - If the spend creates a **new game coin** (opponent moved on-chain): the
-     game is re-inserted into `game_map` with the new coin and continues
-     tracking.
+     puzzle hash): `WeTimedOut` is emitted.
+   - Any other spend is unreachable (opponent cannot move on our accepted
+     coin) and triggers a `GameError`.
 3. When `coin_timeout_reached` fires, the timeout transaction is submitted and
    `WeTimedOut` is emitted.
 

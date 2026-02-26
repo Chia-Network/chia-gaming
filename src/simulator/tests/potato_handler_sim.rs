@@ -268,9 +268,6 @@ impl ToLocalUI for SimulatedPeer {
     ) -> Result<(), Error> {
         Ok(())
     }
-    fn game_finished(&mut self, _id: &GameID, _my_share: Amount) -> Result<(), Error> {
-        todo!();
-    }
     fn shutdown_started(&mut self) -> Result<(), Error> {
         todo!();
     }
@@ -402,7 +399,6 @@ pub struct LocalTestUIReceiver {
     pub handshake_complete: bool,
     pub shutdown_complete: bool,
     pub game_started: Option<GameStartRecord>,
-    pub game_finished: Option<Amount>,
     pub opponent_moved: bool,
     pub go_on_chain: bool,
     pub got_error: bool,
@@ -417,6 +413,19 @@ impl LocalTestUIReceiver {
             self.handshake_complete,
             "ToLocalUI::{method} called before handshake_complete notification"
         );
+    }
+
+    pub fn has_terminal_notification(&self) -> bool {
+        self.notifications.iter().any(|n| matches!(n,
+            GameNotification::WeTimedOut { .. }
+            | GameNotification::WeTimedOutOpponent { .. }
+            | GameNotification::WeSlashedOpponent { .. }
+            | GameNotification::OpponentSlashedUs { .. }
+            | GameNotification::OpponentSuccessfullyCheated { .. }
+            | GameNotification::GameCancelled { .. }
+            | GameNotification::GameError { .. }
+            | GameNotification::ChannelError { .. }
+        ))
     }
 }
 
@@ -486,12 +495,6 @@ impl ToLocalUI for LocalTestUIReceiver {
             game_ids: ids.to_vec(),
             failed: failed.clone(),
         });
-        Ok(())
-    }
-
-    fn game_finished(&mut self, _id: &GameID, my_share: Amount) -> Result<(), Error> {
-        self.assert_handshake_complete("game_finished");
-        self.game_finished = Some(my_share);
         Ok(())
     }
 
@@ -678,9 +681,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                 debug!("We're past the end of the given actions, probably waiting to shut down");
             }
         }
-        debug!("local_uis[0].finished {:?}", local_uis[0].game_finished);
-        debug!("local_uis[1].finished {:?}", local_uis[0].game_finished);
-
         assert!(
             num_steps < 200,
             "simulation stalled: num_steps={num_steps} move_number={move_number} can_move={can_move} next_action={:?} explicit_go_on_chain={has_explicit_go_on_chain}",
@@ -967,9 +967,9 @@ fn run_game_container_with_action_list_with_success_predicate(
                     }
                     GameAction::GoOnChain(who) => {
                         assert!(
-                            local_uis[*who].game_finished.is_none(),
-                            "GameAction::GoOnChain({who}) but game is already finished: move_number={move_number} finished={:?}",
-                            local_uis[*who].game_finished
+                            !local_uis[*who].has_terminal_notification(),
+                            "GameAction::GoOnChain({who}) but game is already finished: move_number={move_number} notifications={:?}",
+                            local_uis[*who].notifications
                         );
                         if cradles[*who].is_on_chain() {
                             panic!(

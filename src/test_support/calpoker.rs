@@ -159,15 +159,15 @@ mod sim_tests {
         for (who, ui) in outcome.local_uis.iter().enumerate() {
             assert!(
                 !ui.go_on_chain,
-                "{test_name}: player {who} unexpectedly entered on-chain mode; got_error={} finished={:?}",
+                "{test_name}: player {who} unexpectedly entered on-chain mode; got_error={} notifications={:?}",
                 ui.got_error,
-                ui.game_finished
+                ui.notifications
             );
             assert!(
                 !ui.got_error,
-                "{test_name}: player {who} reported an on-chain/error transition; go_on_chain={} finished={:?}",
+                "{test_name}: player {who} reported an on-chain/error transition; go_on_chain={} notifications={:?}",
                 ui.go_on_chain,
-                ui.game_finished
+                ui.notifications
             );
         }
     }

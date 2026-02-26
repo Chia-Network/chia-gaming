@@ -148,7 +148,7 @@ pub struct PotatoHandler {
     peer_wants_potato: bool,
 
     // Accepts we sent but haven't been confirmed by the potato returning.
-    // Drained in update_channel_coin_after_receive to emit GameFinished.
+    // Drained in update_channel_coin_after_receive to emit WeTimedOut.
     pending_accept_completions: Vec<(GameID, Amount)>,
 
     // Cached from the most recent potato exchange so go_on_chain can fix
@@ -444,8 +444,8 @@ impl PotatoHandler {
             }
         }
 
-        for (id, mover_share) in self.pending_accept_completions.drain(..) {
-            effects.push(Effect::GameFinished { id, mover_share });
+        for (id, amount) in self.pending_accept_completions.drain(..) {
+            effects.push(Effect::Notification(GameNotification::WeTimedOut { id, amount }));
         }
 
         let (started, start_effects) = self.have_potato_start_game(env)?;
@@ -531,10 +531,10 @@ impl PotatoHandler {
                     let ch = self.channel_handler_mut()?;
                     ch.received_potato_accept(env, sigs, game_id)?
                 };
-                effects.push(Effect::GameFinished {
+                effects.push(Effect::Notification(GameNotification::WeTimedOutOpponent {
                     id: game_id.clone(),
-                    mover_share: amount.clone(),
-                });
+                    amount: amount.clone(),
+                }));
                 effects.extend(self.update_channel_coin_after_receive(env, &spend_info)?);
             }
             PeerMessage::Shutdown(sig, conditions) => {
@@ -2361,10 +2361,6 @@ impl SpendWalletReceiver for PotatoHandler
                 };
                 let notification = GameNotification::GameError { id: game_id.clone(), reason };
                 effects.push(Effect::Notification(notification));
-                effects.push(Effect::GameFinished {
-                    id: game_id,
-                    mover_share: Amount::default(),
-                });
                 effects.extend(on_chain.next_action(env)?);
                 return Ok(effects);
             }

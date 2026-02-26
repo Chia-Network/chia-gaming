@@ -484,33 +484,43 @@ export class WasmBlobWrapper {
           this.messageQueue.push({ shutDown: true, condition: failed });
         }
       },
-      game_finished: (_game_id, _amount) => {
-        // Signals accept.
-        this.gameIds.pop();
-        this.myTurn = false;
-      this.cardSelections = [];
-        this.moveNumber = 0;
-        this.playerHand = [];
-        this.opponentHand = [];
+      game_notification: (notification_json) => {
+        try {
+          const notification = JSON.parse(notification_json);
+          const terminalTypes = [
+            'WeTimedOut', 'WeTimedOutOpponent', 'WeSlashedOpponent',
+            'OpponentSlashedUs', 'OpponentSuccessfullyCheated',
+            'GameCancelled', 'GameError', 'ChannelError',
+          ];
+          const isTerminal = terminalTypes.some(t => t in notification);
+          if (isTerminal) {
+            this.gameIds.pop();
+            this.myTurn = false;
+            this.cardSelections = [];
+            this.moveNumber = 0;
+            this.playerHand = [];
+            this.opponentHand = [];
 
-        result.setCardSelections = [];
-        result.setMoveNumber = 0;
-        result.setPlayerHand = [];
-        result.setOpponentHand = [];
-        result.setOutcome = undefined;
-        result.setLastOutcome = this.gameOutcome;
-        result.setGameConnectionState = {
-          stateIdentifier: 'running',
-          stateDetail: [],
-        };
+            result.setCardSelections = [];
+            result.setMoveNumber = 0;
+            result.setPlayerHand = [];
+            result.setOpponentHand = [];
+            result.setOutcome = undefined;
+            result.setLastOutcome = this.gameOutcome;
+            result.setGameConnectionState = {
+              stateIdentifier: 'running',
+              stateDetail: [],
+            };
 
-        result.setMyTurn = false;
-        const handle = setTimeout(() => {
-          this.pushEvent({ startGame: true });
-        }, 2000);
-        this.timeoutHandles.push(handle);
-      },
-      game_notification: (_notification_json) => {
+            result.setMyTurn = false;
+            const handle = setTimeout(() => {
+              this.pushEvent({ startGame: true });
+            }, 2000);
+            this.timeoutHandles.push(handle);
+          }
+        } catch (e) {
+          console.warn('failed to parse game_notification', e);
+        }
       },
     });
 

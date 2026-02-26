@@ -224,7 +224,6 @@ pub trait ToLocalUI {
     ) -> Result<(), Error>;
 
     fn game_start(&mut self, id: &[GameID], failed: Option<GameStartFailed>) -> Result<(), Error>;
-    fn game_finished(&mut self, id: &GameID, mover_share: Amount) -> Result<(), Error>;
     fn game_notification(&mut self, _notification: &crate::potato_handler::effects::GameNotification) -> Result<(), Error> {
         Ok(())
     }

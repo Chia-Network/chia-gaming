@@ -196,9 +196,6 @@ impl ToLocalUI for Pipe {
     ) -> Result<(), Error> {
         Ok(())
     }
-    fn game_finished(&mut self, _id: &GameID, _my_share: Amount) -> Result<(), Error> {
-        Ok(())
-    }
     fn shutdown_started(&mut self) -> Result<(), Error> {
         Ok(())
     }
