@@ -637,7 +637,6 @@ dependencies = [
  "clvmr 0.16.2",
  "colored",
  "ctor",
- "exec",
  "ff",
  "hex",
  "indoc",
@@ -1230,43 +1229,12 @@ checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
 
 [[package]]
 name = "errno"
-version = "0.2.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f639046355ee4f37944e44f60642c6f3a7efa3cf6b78c78a0d989a8ce6c396a1"
-dependencies = [
- "errno-dragonfly",
- "libc",
- "winapi",
-]
-
-[[package]]
-name = "errno"
 version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "errno-dragonfly"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa68f1b12764fab894d2755d2518754e71b4fd80ecfb822714a1206c2aab39bf"
-dependencies = [
- "cc",
- "libc",
-]
-
-[[package]]
-name = "exec"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "886b70328cba8871bfc025858e1de4be16b1d5088f2ba50b57816f4210672615"
-dependencies = [
- "errno 0.2.8",
- "libc",
 ]
 
 [[package]]
@@ -2971,7 +2939,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fdb5bc1ae2baa591800df16c9ca78619bf65c0488b41b96ccec5d11220d8c154"
 dependencies = [
  "bitflags",
- "errno 0.3.10",
+ "errno",
  "libc",
  "linux-raw-sys 0.4.15",
  "windows-sys 0.52.0",
@@ -2984,7 +2952,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "146c9e247ccc180c1f61615433868c99f3de3ae256a30a43b49f67c2d9171f34"
 dependencies = [
  "bitflags",
- "errno 0.3.10",
+ "errno",
  "libc",
  "linux-raw-sys 0.11.0",
  "windows-sys 0.61.2",
