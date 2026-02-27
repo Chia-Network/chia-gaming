@@ -5,12 +5,13 @@ tests. It is intended as a reference for future sessions.
 
 ## Building and Running Tests
 
-### Helper scripts
+### Use `./cb` and `./ct`
 
-Two scripts in the repo root handle the common cases:
+**Always use the helper scripts.** They handle feature flags, output capture,
+log rotation, and wraparound test ordering so you don't have to.
 
-- **`./cb`** — Build with sim-tests feature: `./cb` (passes extra args to cargo,
-  e.g. `./cb --release`).
+- **`./cb`** — Build with sim-tests feature. Passes extra args to cargo
+  (e.g. `./cb --release`).
 - **`./ct`** — Run all sim tests with output tee'd to a log file.
   - `./ct` — runs all tests in normal order.
   - `./ct accept_finished` — starts at the first test matching `accept_finished`,
@@ -22,7 +23,14 @@ Two scripts in the repo root handle the common cases:
     all available tests.
   - The full log is saved to `/tmp/ct-<timestamp>.log` (printed at the end).
 
+Prefer `./ct some_test_name` over raw `cargo test` invocations. The scripts
+set `SIM_TEST_FROM` correctly, pipe through `tee`, and print the log path at
+the end. Running `cargo test` directly without the right flags and piping is
+error-prone and wastes time.
+
 ### Running tests directly (without scripts)
+
+If you must bypass the scripts:
 
 ```bash
 cargo test --features sim-tests -- sim_tests --nocapture 2>&1 \
@@ -348,9 +356,6 @@ set correctly for the off-chain path.
 
 ### Mistakes to avoid
 
-- **Don't use `git stash`.** The working tree has extensive local changes that
-  are not yet committed. Stashing risks losing or mangling them. If you need a
-  clean state for something, create a branch instead.
 - **Don't read full terminal output files.** They can be huge.
 - **Don't use `head` to read test output** — early output is build noise.
 - **Don't assume exit code 0 means all tests passed.** Always grep for `panic`.

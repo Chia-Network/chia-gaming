@@ -22,6 +22,7 @@ For debugging and testing operational guidance, see `DEBUGGING_GUIDE.md`.
   - [Referee Puzzle Args](#referee-puzzle-args)
   - [On-Chain Referee Actions](#on-chain-referee-actions)
   - [Referee State Model](#referee-state-model)
+  - [Reward Payout Signatures](#reward-payout-signatures)
   - [previous_validation_info_hash and the Initial State](#previous_validation_info_hash-and-the-initial-state)
 - [Calpoker: The Reference Game](#calpoker-the-reference-game)
   - [Commit-Reveal Protocol](#commit-reveal-protocol)
@@ -346,8 +347,8 @@ curried with `RefereePuzzleArgs` that encode the full game state.
 
 ```rust
 RefereePuzzleArgs {
-    mover_puzzle_hash,      // puzzle hash of the player whose turn it is
-    waiter_puzzle_hash,     // puzzle hash of the player waiting
+    mover_pubkey,           // public key of the player whose turn it is
+    waiter_pubkey,          // public key of the player waiting
     timeout,                // blocks before timeout can be claimed
     amount,                 // total amount in the game
     game_move: GameMoveDetails {
@@ -361,17 +362,28 @@ RefereePuzzleArgs {
     previous_validation_info_hash,  // hash from the prior move (None for initial state)
     validation_program,     // the chialisp program that validates moves
     nonce,                  // unique identifier for this game instance
+    referee_coin_puzzle_hash, // puzzle hash of the referee puzzle itself
 }
 ```
+
+Players are identified by **public keys** (not puzzle hashes) in the referee
+args. The reward destination puzzle hashes are not curried into the referee —
+instead they are revealed at timeout via `AGG_SIG_UNSAFE` (see
+[Reward Payout Signatures](#reward-payout-signatures)).
 
 ### On-Chain Referee Actions
 
 The referee puzzle (`referee.clsp`) accepts three types of solutions:
 
-1. **Timeout** (`args = nil`):
+1. **Timeout** (`args = (mover_payout_ph, waiter_payout_ph)`):
    - Requires `ASSERT_HEIGHT_RELATIVE >= TIMEOUT`
-   - Pays `MOVER_SHARE` to mover, remainder to waiter
+   - Creates a coin of `MOVER_SHARE` to `mover_payout_ph` (if nonzero)
+   - Creates a coin of `AMOUNT - MOVER_SHARE` to `waiter_payout_ph` (if nonzero)
+   - Requires `AGG_SIG_UNSAFE` from each player for their respective
+     `"x" || payout_ph` (only for nonzero shares)
    - Used when the current mover fails to act in time
+   - **Both players' reward coins are created in a single transaction** —
+     whichever player submits the timeout spend creates coins for both sides
 
 2. **Move** (`args = (new_move, infohash_c, new_mover_share, mover_puzzle, solution)`):
    - Runs the mover's puzzle to authorize the spend
@@ -409,6 +421,41 @@ actual puzzle hash against both accessors and using whichever matches.
 `outcome_referee_puzzle_hash()` — the post-move puzzle hash. This is the
 expected "latest state" puzzle hash used by `set_state_for_coins` to determine
 whether the game coin is at the latest state or needs a redo.
+
+### Reward Payout Signatures
+
+Reward destination puzzle hashes are **not** curried into the referee puzzle.
+Instead, they are revealed at timeout as solution arguments, and each player
+proves they authorized their payout destination via `AGG_SIG_UNSAFE`.
+
+**How it works:**
+
+1. During the **handshake**, each player signs `"x" || reward_puzzle_hash`
+   (a 33-byte message: the ASCII byte `'x'` followed by their 32-byte reward
+   puzzle hash) and sends the signature to the other player.
+
+2. The `RMFixed` struct stores both `reward_puzzle_hash` (ours) and
+   `their_reward_puzzle_hash` along with `their_reward_payout_signature`.
+
+3. When a **timeout** is submitted, the solution provides both payout puzzle
+   hashes. The referee puzzle emits `AGG_SIG_UNSAFE` conditions requiring the
+   mover's signature on `"x" || mover_payout_ph` and the waiter's signature
+   on `"x" || waiter_payout_ph` (only for nonzero shares).
+
+4. `get_transaction_for_timeout` in `src/referee/mod.rs` assembles the
+   aggregate signature:
+   - If our share is nonzero: sign our own `reward_puzzle_hash` with our
+     private key
+   - If their share is nonzero: include the pre-exchanged
+     `their_reward_payout_signature`
+   - Shares of zero are omitted from both the conditions and the aggregate
+     signature
+
+This design means reward puzzle hashes don't need to be curried into every
+game coin — they're only revealed once, in the final timeout spend.
+
+**Key code:** `src/common/standard_coin.rs` — `sign_reward_payout`,
+`reward_payout_message`, `verify_reward_payout_signature`
 
 ### previous_validation_info_hash and the Initial State
 
@@ -951,6 +998,12 @@ in `src/test_support/game.rs`):
 `NerfTransactions` is particularly useful for testing asymmetric scenarios —
 e.g., one player's unroll transaction gets dropped (simulating network issues)
 while the other player proceeds normally.
+
+**Important:** Nerfing only drops a player's *outbound transactions*. It does
+not prevent coins from being created for that player's puzzle hash by another
+player's transaction. In particular, the referee timeout creates reward coins
+for **both** mover and waiter in a single spend, so a nerfed player still
+receives their reward coin when the non-nerfed player submits the timeout.
 
 **Key code:**
 - `src/test_support/debug_game.rs` — `DebugGameHandler`, `DebugGameTestMove`
