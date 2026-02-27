@@ -809,7 +809,8 @@ fn run_game_container_with_action_list_with_success_predicate(
     let mut wait_blocks = None;
     let mut report_backlogs = [Vec::default(), Vec::default()];
     let mut force_destroyed_coins: Vec<CoinString> = Vec::new();
-    let mut nerf_transactions_for: Option<usize> = None;
+    let mut nerf_transactions_for: u8 = 0;
+    let mut nerf_messages_for: u8 = 0;
     let mut start_step = 0;
     let mut num_steps = 0;
 
@@ -834,6 +835,9 @@ fn run_game_container_with_action_list_with_success_predicate(
                     | GameAction::UnNerfTransactions
                     | GameAction::ProposeNewGame(_)
                     | GameAction::CorruptStateNumber(_, _)
+                    | GameAction::ForceUnroll(_)
+                    | GameAction::NerfMessages(_)
+                    | GameAction::UnNerfMessages
             )
     };
     let has_explicit_go_on_chain = moves_input
@@ -958,7 +962,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 }
 
                 for tx in result.outbound_transactions.iter() {
-                    if nerf_transactions_for == Some(i) {
+                    if nerf_transactions_for & (1 << i) != 0 {
                         debug!("NERFED tx from player {i}: {:?}", tx.name);
                         continue;
                     }
@@ -988,6 +992,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                 }
 
                 for msg in result.outbound_messages.iter() {
+                    if nerf_messages_for & (1 << i) != 0 {
+                        debug!("NERFED msg from player {i}");
+                        continue;
+                    }
                     if cradles[i].is_peer_disconnected() {
                         debug!("dropping outbound msg from player {i} (peer_disconnected)");
                         continue;
@@ -1281,10 +1289,16 @@ fn run_game_container_with_action_list_with_success_predicate(
                         }
                     }
                     GameAction::NerfTransactions(who) => {
-                        nerf_transactions_for = Some(*who);
+                        nerf_transactions_for |= 1 << *who;
                     }
                     GameAction::UnNerfTransactions => {
-                        nerf_transactions_for = None;
+                        nerf_transactions_for = 0;
+                    }
+                    GameAction::NerfMessages(who) => {
+                        nerf_messages_for |= 1 << *who;
+                    }
+                    GameAction::UnNerfMessages => {
+                        nerf_messages_for = 0;
                     }
                     GameAction::WaitBlocks(n, players) => {
                         wait_blocks = Some((*n, *players));
@@ -1315,6 +1329,16 @@ fn run_game_container_with_action_list_with_success_predicate(
                     GameAction::CorruptStateNumber(who, new_sn) => {
                         debug!("CorruptStateNumber({who}, {new_sn})");
                         cradles[*who].corrupt_state_for_testing(*new_sn)?;
+                    }
+                    GameAction::ForceUnroll(who) => {
+                        debug!("ForceUnroll({who})");
+                        let spend = cradles[*who].force_unroll_spend(allocator, rng)?;
+                        let included_result = simulator.push_tx(allocator, &spend.spends)?;
+                        debug!(
+                            "ForceUnroll TX result: code={} e={:?} diag={:?}",
+                            included_result.code, included_result.e, included_result.diagnostic
+                        );
+                        can_move = true;
                     }
                 }
             }
@@ -2263,6 +2287,91 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             ExpectedEvent::OpponentMoved { state_number: 10, mover_share: Amount::new(200) },
             ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
         ], "shutdown_nerf_bob p1");
+    }));
+
+    res.push(("test_clean_shutdown_opponent_unrolls", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        let mut moves = prefix_test_moves(&mut allocator).to_vec();
+        moves.push(GameAction::Accept(0));
+        // Nerf both so the clean shutdown tx is dropped for both sides.
+        moves.push(GameAction::NerfTransactions(0));
+        moves.push(GameAction::NerfTransactions(1));
+        moves.push(GameAction::CleanShutdown(1, Rc::new(BasicShutdownConditions)));
+        // Let messages and nerfed txs fully drain before un-nerfing.
+        moves.push(GameAction::WaitBlocks(3, 0));
+        // Un-nerf both so the force-unroll tx and subsequent spends land.
+        moves.push(GameAction::UnNerfTransactions);
+        // Alice force-submits the unroll (simulating a malicious peer).
+        moves.push(GameAction::ForceUnroll(0));
+        // Wait for the unroll timeout to elapse and reward coins to be created.
+        moves.push(GameAction::WaitBlocks(20, 0));
+
+        let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
+            .expect("should finish");
+
+        let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
+        assert_eq!(p2_balance, p1_balance + 200);
+
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        let p1_notifs = &outcome.local_uis[1].notifications;
+        assert!(
+            p1_notifs.iter().any(|n| matches!(n, GameNotification::ChannelCoinSpent)),
+            "player 1 should see ChannelCoinSpent, got: {p1_notifs:?}"
+        );
+        assert!(
+            p1_notifs.iter().any(|n| matches!(n, GameNotification::UnrollCoinSpent { .. })),
+            "player 1 should see UnrollCoinSpent, got: {p1_notifs:?}"
+        );
+        assert!(
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelCoinSpent)),
+            "player 0 should see ChannelCoinSpent, got: {p0_notifs:?}"
+        );
+    }));
+
+    res.push(("test_clean_shutdown_unroll_before_response", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        let mut moves = prefix_test_moves(&mut allocator).to_vec();
+        moves.push(GameAction::Accept(0));
+        // Nerf all transactions so no clean shutdown tx lands.
+        moves.push(GameAction::NerfTransactions(0));
+        moves.push(GameAction::NerfTransactions(1));
+        // Nerf player 0's messages so CleanShutdownComplete never reaches
+        // the initiator (player 1).  Player 1 is in the "started the
+        // attempt but hasn't gotten the response" state.
+        moves.push(GameAction::NerfMessages(0));
+        moves.push(GameAction::CleanShutdown(1, Rc::new(BasicShutdownConditions)));
+        // Drain nerfed txs/msgs.
+        moves.push(GameAction::WaitBlocks(3, 0));
+        // Un-nerf everything so the force-unroll tx and subsequent spends land.
+        moves.push(GameAction::UnNerfTransactions);
+        moves.push(GameAction::UnNerfMessages);
+        // Alice force-submits the unroll.
+        moves.push(GameAction::ForceUnroll(0));
+        // Wait for the unroll timeout to elapse.
+        moves.push(GameAction::WaitBlocks(20, 0));
+
+        let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
+            .expect("should finish");
+
+        let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
+        assert_eq!(p2_balance, p1_balance + 200);
+
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        let p1_notifs = &outcome.local_uis[1].notifications;
+        assert!(
+            p1_notifs.iter().any(|n| matches!(n, GameNotification::ChannelCoinSpent)),
+            "player 1 should see ChannelCoinSpent, got: {p1_notifs:?}"
+        );
+        assert!(
+            p1_notifs.iter().any(|n| matches!(n, GameNotification::UnrollCoinSpent { .. })),
+            "player 1 should see UnrollCoinSpent, got: {p1_notifs:?}"
+        );
+        assert!(
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelCoinSpent)),
+            "player 0 should see ChannelCoinSpent, got: {p0_notifs:?}"
+        );
     }));
 
     res.push((

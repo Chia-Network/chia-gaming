@@ -561,6 +561,16 @@ impl SynchronousGameCradle {
         self.peer.corrupt_state_for_testing(new_sn)
     }
 
+    #[cfg(test)]
+    pub fn force_unroll_spend<R: Rng>(
+        &self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+    ) -> Result<SpendBundle, Error> {
+        let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+        self.peer.force_unroll_spend(&mut env)
+    }
+
     pub fn amount(&self) -> Amount {
         self.peer.amount()
     }
@@ -987,6 +997,14 @@ impl GameCradle for SynchronousGameCradle {
         flags: u32,
     ) -> Result<Option<IdleResult>, Error> {
         if self.state.clean_shutdown.is_some() {
+            if !self.state.pending_notifications.is_empty() {
+                let mut result = IdleResult::default();
+                while let Some(notification) = self.state.pending_notifications.pop_front() {
+                    local_ui.game_notification(&notification)?;
+                    result.notifications.push(notification);
+                }
+                return Ok(Some(result));
+            }
             return Ok(None);
         }
 

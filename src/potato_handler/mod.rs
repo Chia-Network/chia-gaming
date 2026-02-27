@@ -1557,11 +1557,12 @@ impl PotatoHandler {
                         assert!(!matches!(self.handshake_state, HandshakeState::StepA));
                         return Ok((true, vec![Effect::RequestPuzzleAndSolution(coin_id.clone())]));
                     }
-                    HandshakeState::OnChainWaitingForUnrollSpend(_, _, reward_coin) => {
-                        self.handshake_state = HandshakeState::Completed;
-                        return Ok((false, vec![Effect::CleanShutdownComplete {
-                            reward_coin,
-                        }]));
+                    HandshakeState::OnChainWaitingForUnrollSpend(channel_coin, _, reward_coin) => {
+                        self.handshake_state = HandshakeState::CleanShutdownWaitForConditions(
+                            channel_coin, reward_coin,
+                        );
+                        assert!(!matches!(self.handshake_state, HandshakeState::StepA));
+                        return Ok((true, vec![Effect::RequestPuzzleAndSolution(coin_id.clone())]));
                     }
                     HandshakeState::Failed => {
                         self.handshake_state = HandshakeState::Failed;
@@ -1725,6 +1726,43 @@ impl PotatoHandler {
         Ok(effects)
     }
 
+    /// Build a channel-coin-to-unroll spend bundle regardless of current
+    /// handshake state.  Used by test infrastructure to simulate a malicious
+    /// peer that submits an unroll after agreeing to clean shutdown.
+    pub fn force_unroll_spend<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+    ) -> Result<SpendBundle, Error> {
+        let saved = self.last_channel_coin_spend_info.as_ref().ok_or_else(|| {
+            Error::StrErr("force_unroll_spend: no channel coin spend info cached".to_string())
+        })?;
+
+        let (channel_coin, channel_public_key) = {
+            let ch = self.channel_handler()?;
+            (
+                ch.state_channel_coin().clone(),
+                ch.get_aggregate_channel_public_key(),
+            )
+        };
+        let channel_coin_puzzle = puzzle_for_synthetic_public_key(
+            env.allocator,
+            &env.standard_puzzle,
+            &channel_public_key,
+        )?;
+
+        Ok(SpendBundle {
+            name: Some("force unroll".to_string()),
+            spends: vec![CoinSpend {
+                coin: channel_coin,
+                bundle: Spend {
+                    solution: saved.solution.clone().into(),
+                    signature: saved.aggsig.clone(),
+                    puzzle: channel_coin_puzzle,
+                },
+            }],
+        })
+    }
+
     fn do_game_action<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
@@ -1742,6 +1780,7 @@ impl PotatoHandler {
                 | HandshakeState::OnChainWaitingForUnrollTimeoutOrSpend(..)
                 | HandshakeState::OnChainWaitingForUnrollConditions(_)
                 | HandshakeState::OnChainWaitingForUnrollSpend(..)
+                | HandshakeState::CleanShutdownWaitForConditions(..)
         ) {
             self.push_action(action);
             return Ok((false, effects));
@@ -1822,6 +1861,28 @@ impl PotatoHandler {
 
         effects.push(Effect::Notification(GameNotification::ChannelCoinSpent));
 
+        effects.extend(self.handle_unroll_from_channel_conditions(
+            env, conditions_nodeptr, &unroll_coin,
+        )?);
+
+        Ok(effects)
+    }
+
+    /// Shared logic for handling a channel coin spend that produced an unroll
+    /// coin.  Determines whether to preempt or wait for timeout, registers the
+    /// unroll coin, and transitions `handshake_state` accordingly.
+    ///
+    /// Called from both `handle_channel_coin_spent` (normal unroll path) and
+    /// the clean-shutdown-fallback path when an unroll lands instead of the
+    /// clean shutdown transaction.
+    fn handle_unroll_from_channel_conditions<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+        conditions_nodeptr: NodePtr,
+        unroll_coin: &CoinString,
+    ) -> Result<Vec<Effect>, Error> {
+        let mut effects = Vec::new();
+
         let on_chain_state = {
             let player_ch = self.channel_handler()?;
             player_ch.unrolling_state_from_conditions(env, conditions_nodeptr)?
@@ -1873,7 +1934,7 @@ impl PotatoHandler {
                     unroll_coin.clone(), on_chain_state, None,
                 );
                 effects.push(Effect::RegisterCoin {
-                    coin: unroll_coin,
+                    coin: unroll_coin.clone(),
                     timeout: self.unroll_timeout.clone(),
                     name: Some("unroll"),
                 });
@@ -1883,7 +1944,7 @@ impl PotatoHandler {
                     unroll_coin.clone(), on_chain_state,
                 );
                 effects.push(Effect::RegisterCoin {
-                    coin: unroll_coin,
+                    coin: unroll_coin.clone(),
                     timeout: self.unroll_timeout.clone(),
                     name: Some("unroll"),
                 });
@@ -1895,6 +1956,86 @@ impl PotatoHandler {
                 self.handshake_state = HandshakeState::Failed;
             }
         }
+
+        Ok(effects)
+    }
+
+    /// Handle the puzzle-and-solution callback for a channel coin that was
+    /// spent while we were in clean-shutdown mode.  Inspects the actual
+    /// conditions to decide whether the clean shutdown transaction landed
+    /// (our expected reward coin is present) or an unroll landed instead.
+    fn handle_clean_shutdown_conditions<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+        coin_id: &CoinString,
+        puzzle_and_solution: Option<(&Program, &Program)>,
+    ) -> Result<Vec<Effect>, Error> {
+        let (puzzle, solution) = puzzle_and_solution.ok_or_else(|| {
+            Error::StrErr("Retrieve of puzzle and solution failed for channel coin".to_string())
+        })?;
+
+        let reward_coin = if let HandshakeState::CleanShutdownWaitForConditions(_, ref rc) = self.handshake_state {
+            rc.clone()
+        } else {
+            return Err(Error::StrErr("handle_clean_shutdown_conditions called in wrong state".to_string()));
+        };
+
+        let run_puzzle = puzzle.to_nodeptr(env.allocator)?;
+        let run_args = solution.to_nodeptr(env.allocator)?;
+        let conditions_result = run_program(
+            env.allocator.allocator(),
+            &chia_dialect(),
+            run_puzzle,
+            run_args,
+            0,
+        )
+        .into_gen()?;
+        let conditions_nodeptr = conditions_result.1;
+
+        let channel_conditions =
+            CoinCondition::from_nodeptr(env.allocator, conditions_nodeptr);
+
+        let is_clean_shutdown = if let Some(expected) = &reward_coin {
+            if let Some((_, expected_ph, expected_amt)) = expected.to_parts() {
+                channel_conditions.iter().any(|c| {
+                    matches!(c, CoinCondition::CreateCoin(ph, amt) if *ph == expected_ph && *amt == expected_amt)
+                })
+            } else {
+                false
+            }
+        } else {
+            // Our share is zero — we have no reward coin to look for.
+            // Fall back to checking for REM conditions: clean shutdown
+            // conditions never include REM, unroll conditions always do.
+            !channel_conditions.iter().any(|c| matches!(c, CoinCondition::Rem(_)))
+        };
+
+        if is_clean_shutdown {
+            self.handshake_state = HandshakeState::Completed;
+            return Ok(vec![Effect::CleanShutdownComplete { reward_coin }]);
+        }
+
+        // An unroll landed instead of the clean shutdown transaction.
+        let mut effects = Vec::new();
+
+        let unroll_coin = channel_conditions
+            .iter()
+            .find_map(|c| {
+                if let CoinCondition::CreateCoin(ph, amt) = c {
+                    Some(CoinString::from_parts(&coin_id.to_coin_id(), ph, amt))
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| {
+                Error::StrErr("channel conditions didn't include a coin creation".to_string())
+            })?;
+
+        effects.push(Effect::Notification(GameNotification::ChannelCoinSpent));
+
+        effects.extend(self.handle_unroll_from_channel_conditions(
+            env, conditions_nodeptr, &unroll_coin,
+        )?);
 
         Ok(effects)
     }
@@ -1915,7 +2056,7 @@ impl PotatoHandler {
             return Err(Error::StrErr("no conditions for unroll coin".to_string()));
         };
 
-        let game_map = {
+        let (game_map, on_chain_reward_coin) = {
             let player_ch = self.channel_handler_mut()?;
 
             let pre_game_ids: HashSet<GameID> =
@@ -1934,7 +2075,9 @@ impl PotatoHandler {
                 }
                 None
             });
-            effects.push(Effect::Notification(GameNotification::UnrollCoinSpent { reward_coin }));
+            effects.push(Effect::Notification(GameNotification::UnrollCoinSpent {
+                reward_coin: reward_coin.clone(),
+            }));
 
             let created_coins: Vec<PuzzleHash> = conditions
                 .iter()
@@ -1959,8 +2102,14 @@ impl PotatoHandler {
                 }));
             }
 
-            game_map
+            (game_map, reward_coin)
         };
+
+        if game_map.is_empty() {
+            self.handshake_state = HandshakeState::Completed;
+            effects.push(Effect::CleanShutdownComplete { reward_coin: on_chain_reward_coin });
+            return Ok(effects);
+        }
 
         for (coin, state) in game_map.iter() {
             effects.push(Effect::RegisterCoin {
@@ -2324,11 +2473,32 @@ impl SpendWalletReceiver for PotatoHandler
             }
         }
 
+        if let HandshakeState::CleanShutdownWaitForConditions(ref channel_coin_id, _) = self.handshake_state {
+            if *coin_id == *channel_coin_id {
+                match self.handle_clean_shutdown_conditions(env, coin_id, puzzle_and_solution) {
+                    Ok(effect) => {
+                        effects.extend(effect);
+                    }
+                    Err(e) => {
+                        let reason = format!("clean shutdown condition check failed: {e:?}");
+                        effects.push(Effect::Notification(
+                            GameNotification::ChannelError { reason },
+                        ));
+                        self.handshake_state = HandshakeState::Failed;
+                    }
+                }
+                return Ok(effects);
+            }
+        }
+
         let state_coin_id = match &self.handshake_state {
             HandshakeState::OnChainWaitForConditions(state_coin_id, _data) => {
                 Some(ConditionWaitKind::Channel(state_coin_id.clone()))
             }
-            HandshakeState::OnChainWaitingForUnrollSpend(unroll_id, ..) => {
+            // During clean shutdown the first field is the channel coin, not
+            // an unroll coin.  Ignore it here — the channel coin will be
+            // handled via CleanShutdownWaitForConditions after new_block.
+            HandshakeState::OnChainWaitingForUnrollSpend(unroll_id, _, None) => {
                 Some(ConditionWaitKind::Unroll(unroll_id.clone()))
             }
             HandshakeState::OnChainWaitingForUnrollConditions(unroll_id) => {

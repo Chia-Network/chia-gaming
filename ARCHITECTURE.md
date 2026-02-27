@@ -17,6 +17,7 @@ For debugging and testing operational guidance, see `DEBUGGING_GUIDE.md`.
 - [The Potato Protocol](#the-potato-protocol)
 - [Off-Chain Game Flow](#off-chain-game-flow)
 - [Going On-Chain: Dispute Resolution](#going-on-chain-dispute-resolution)
+- [Clean Shutdown (Advisory)](#clean-shutdown-advisory)
 - [Preemption](#preemption)
 - [The Referee](#the-referee)
   - [Referee Puzzle Args](#referee-puzzle-args)
@@ -301,6 +302,64 @@ be closed.
 - `src/potato_handler/on_chain.rs` — `OnChainPotatoHandler`
 - `src/channel_handler/mod.rs` — `set_state_for_coins`,
   `accept_or_timeout_game_on_chain`, `game_coin_spent`
+
+---
+
+## Clean Shutdown (Advisory)
+
+Clean shutdown is the cooperative channel closure path: both players agree to
+spend the channel coin directly to reward coins, bypassing the unroll/game-coin
+mechanism entirely.
+
+### Why "Advisory"
+
+A clean shutdown attempt is **advisory, not authoritative**. Both players
+exchange messages agreeing to close and submit a clean shutdown transaction,
+but a race condition exists: one player might simultaneously submit an unroll
+transaction that spends the same channel coin. Only one of these conflicting
+transactions can land on-chain.
+
+Because of this race, the system **never blindly trusts** that a clean shutdown
+succeeded. Instead, it always inspects the actual spend of the channel coin to
+determine what really happened.
+
+### State Machine
+
+When the channel coin is detected as spent during a clean shutdown attempt, the
+handler transitions to `CleanShutdownWaitForConditions` and requests the
+puzzle and solution of the spent coin via `RequestPuzzleAndSolution`. The
+spend conditions are then inspected:
+
+1. **Clean shutdown succeeded:** The conditions contain a `CreateCoin` matching
+   the expected reward coin (puzzle hash and amount). The handler transitions
+   to `Completed` and emits `CleanShutdownComplete`.
+
+2. **An unroll landed instead:** The conditions do not contain the expected
+   reward coin (or, when the player's expected reward is zero, the conditions
+   contain a `Rem` — which clean shutdown conditions never include). The
+   handler falls through to the standard unroll handling path: extract the
+   unroll coin from the conditions, determine preempt vs timeout, and proceed
+   with on-chain dispute resolution.
+
+### Fallback to Unroll Handling
+
+When an unroll is detected during a clean shutdown attempt, the same code path
+used for normal on-chain dispute resolution handles it. The
+`handle_unroll_from_channel_conditions` helper (shared with the normal
+`handle_channel_coin_spent` path) compares the on-chain state number against
+the channel handler's current state to determine whether to preempt or wait
+for timeout.
+
+Since clean shutdown only happens when no games are active, the unroll
+resolution creates only reward coins (no game coins). When
+`finish_on_chain_transition` finds an empty game map, it skips the
+`OnChainPotatoHandler` entirely and transitions directly to `Completed`.
+
+### Key Code
+
+- `src/potato_handler/mod.rs` — `handle_clean_shutdown_conditions`,
+  `handle_unroll_from_channel_conditions`
+- `src/potato_handler/handshake.rs` — `CleanShutdownWaitForConditions` variant
 
 ---
 
@@ -994,10 +1053,12 @@ in `src/test_support/game.rs`):
 | `EnableCheating(player, bytes)` | Set up a fake move for the next on-chain action |
 | `ForceDestroyCoin(player)` | Inject a fake coin deletion to test error handling |
 | `CleanShutdown(player, conditions)` | Initiate clean channel shutdown |
+| `ForceUnroll(player)` | Submit a unroll transaction using the player's cached spend info, bypassing state checks. Simulates a malicious peer unrolling after agreeing to clean shutdown. |
 
 `NerfTransactions` is particularly useful for testing asymmetric scenarios —
 e.g., one player's unroll transaction gets dropped (simulating network issues)
-while the other player proceeds normally.
+while the other player proceeds normally. Multiple players can be nerfed
+simultaneously (the implementation uses a bitmask).
 
 **Important:** Nerfing only drops a player's *outbound transactions*. It does
 not prevent coins from being created for that player's puzzle hash by another

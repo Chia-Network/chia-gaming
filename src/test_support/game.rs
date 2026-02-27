@@ -207,6 +207,14 @@ mod sim_tests {
         /// Corrupt a player's current_state_number for testing edge cases.
         /// (player, new_state_number)
         CorruptStateNumber(usize, usize),
+        /// Force-submit an unroll transaction for a player, bypassing
+        /// handshake state checks.  Simulates a malicious peer who submits
+        /// an old-state unroll even after agreeing to clean shutdown.
+        ForceUnroll(usize),
+        /// Nerf (silently drop) all outbound messages for a player.
+        NerfMessages(usize),
+        /// Stop nerfing messages.
+        UnNerfMessages,
     }
 
     impl std::fmt::Debug for GameAction {
@@ -233,6 +241,9 @@ mod sim_tests {
                 GameAction::CorruptStateNumber(p, sn) => {
                     write!(formatter, "CorruptStateNumber({p},{sn})")
                 }
+                GameAction::ForceUnroll(p) => write!(formatter, "ForceUnroll({p})"),
+                GameAction::NerfMessages(p) => write!(formatter, "NerfMessages({p})"),
+                GameAction::UnNerfMessages => write!(formatter, "UnNerfMessages"),
             }
         }
     }

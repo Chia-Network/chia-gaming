@@ -220,6 +220,7 @@ impl ChannelHandler {
         self.live_games.iter().map(|g| g.game_id.clone()).collect()
     }
 
+
     pub fn amount(&self, on_chain: bool) -> Amount {
         let allocated = self.my_allocated_balance.clone() + self.their_allocated_balance.clone();
 
@@ -1894,6 +1895,9 @@ impl ChannelHandler {
 
             if !matched {
                 for pending in self.pending_accept_games.iter() {
+                    if pending.last_referee_puzzle_hash != *game_coin_ph {
+                        continue;
+                    }
                     let coin_id = CoinString::from_parts(
                         &unroll_coin.to_coin_id(),
                         game_coin_ph,
