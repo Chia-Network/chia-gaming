@@ -46,9 +46,9 @@
             (list
                 (list ASSERT_HEIGHT_RELATIVE TIMEOUT)
                 (i MOVER_SHARE (list CREATE_COIN mover_payout_ph MOVER_SHARE) (list 1))
-                (i MOVER_SHARE (list AGG_SIG_UNSAFE MOVER_PUBKEY (concat "x" mover_payout_ph)) (list 1))
+                (i MOVER_SHARE (list AGG_SIG_UNSAFE MOVER_PUBKEY (concat 0x78 mover_payout_ph)) (list 1))
                 (i (- AMOUNT MOVER_SHARE) (list CREATE_COIN waiter_payout_ph (- AMOUNT MOVER_SHARE)) (list 1))
-                (i (- AMOUNT MOVER_SHARE) (list AGG_SIG_UNSAFE WAITER_PUBKEY (concat "x" waiter_payout_ph)) (list 1))
+                (i (- AMOUNT MOVER_SHARE) (list AGG_SIG_UNSAFE WAITER_PUBKEY (concat 0x78 waiter_payout_ph)) (list 1))
             )
         )
         (l (f (r args)))

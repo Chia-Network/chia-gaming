@@ -4,7 +4,7 @@ mod amount;
 mod coin_condition;
 mod coin_id;
 mod coin_string;
-mod divmod;
+pub(crate) mod divmod;
 mod error;
 mod game_id;
 mod game_type;

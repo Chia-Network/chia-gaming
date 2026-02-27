@@ -618,8 +618,7 @@ pub fn make_debug_games(
     )
 }
 
-#[test]
-fn test_debug_game_factory() {
+pub fn test_debug_game_factory() {
     let mut allocator = AllocEncoder::new();
     let rng_seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(rng_seed);
@@ -789,8 +788,7 @@ impl ExhaustiveMoveInputs {
     }
 }
 
-#[test]
-fn test_debug_game_validation_move() {
+pub fn test_debug_game_validation_move() {
     let mut allocator = AllocEncoder::new();
     let rng_seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(rng_seed);
@@ -821,4 +819,11 @@ fn test_debug_game_validation_move() {
         .1
         .do_move(&mut allocator, debug_games.0, Amount::default(), 0)
         .expect("ok");
+}
+
+pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
+    vec![
+        ("test_debug_game_factory", &test_debug_game_factory),
+        ("test_debug_game_validation_move", &test_debug_game_validation_move),
+    ]
 }

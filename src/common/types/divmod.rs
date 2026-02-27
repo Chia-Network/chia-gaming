@@ -11,7 +11,7 @@ pub fn divmod(a: BigInt, b: BigInt) -> (BigInt, BigInt) {
     }
 }
 
-#[test]
+#[cfg(test)]
 fn test_local_divmod() {
     assert_eq!(
         divmod((-7).to_bigint().unwrap(), 2.to_bigint().unwrap()),
@@ -29,4 +29,11 @@ fn test_local_divmod() {
         divmod(7.to_bigint().unwrap(), 2.to_bigint().unwrap()),
         (3.to_bigint().unwrap(), 1.to_bigint().unwrap())
     );
+}
+
+#[cfg(test)]
+pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
+    vec![
+        ("test_local_divmod", &test_local_divmod),
+    ]
 }

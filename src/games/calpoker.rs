@@ -119,7 +119,7 @@ impl RawCalpokerHandValue {
     }
 }
 
-#[test]
+#[cfg(test)]
 fn test_simple_hand_values() {
     assert_eq!(
         RawCalpokerHandValue::SimpleList(vec![3, 1, 3, 13, 10, 9, 6, 3])
@@ -434,7 +434,7 @@ pub fn decode_calpoker_readable(
     })
 }
 
-#[test]
+#[cfg(test)]
 fn test_decode_calpoker_readable() {
     let mut allocator = AllocEncoder::new();
     let alice_selects_node = allocator
@@ -507,7 +507,7 @@ fn test_decode_calpoker_readable() {
     );
 }
 
-#[test]
+#[cfg(test)]
 fn test_decode_calpoker_readable_outcome_matches() {
     let mut allocator = AllocEncoder::new();
     let alice_selects_node = allocator
@@ -577,4 +577,13 @@ fn test_decode_calpoker_readable_outcome_matches() {
             win_direction: None,
         }
     );
+}
+
+#[cfg(test)]
+pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
+    vec![
+        ("test_simple_hand_values", &test_simple_hand_values),
+        ("test_decode_calpoker_readable", &test_decode_calpoker_readable),
+        ("test_decode_calpoker_readable_outcome_matches", &test_decode_calpoker_readable_outcome_matches),
+    ]
 }

@@ -353,7 +353,6 @@ fn e_move(td: &TestData) -> Vec<u8> {
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
-#[test]
 fn test_calpoker_validator_hashes() {
     let mut allocator = AllocEncoder::new();
     let lib = load_validators(&mut allocator);
@@ -361,11 +360,9 @@ fn test_calpoker_validator_hashes() {
     for (i, name) in VALIDATOR_NAMES.iter().enumerate() {
         let info = lib.by_hash.get(&lib.hashes[i]).unwrap();
         assert_eq!(info.name, *name);
-        eprintln!("validator {name}: hash = {}", hex::encode(lib.hashes[i]));
     }
 }
 
-#[test]
 fn test_calpoker_a_slash_too_short() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -374,7 +371,6 @@ fn test_calpoker_a_slash_too_short() {
     run_step_and_check(&mut a, &lib, &init, &make_step(&td.first_move[1..], 0, None, MoveCode::Slash, false, "a"));
 }
 
-#[test]
 fn test_calpoker_a_slash_too_long() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -384,7 +380,6 @@ fn test_calpoker_a_slash_too_long() {
     run_step_and_check(&mut a, &lib, &init, &make_step(&long, 0, None, MoveCode::Slash, false, "a"));
 }
 
-#[test]
 fn test_calpoker_b_slash_too_short() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -394,7 +389,6 @@ fn test_calpoker_b_slash_too_short() {
     run_step_and_check(&mut a, &lib, &after, &make_step(&td.seed.bob_seed[1..], 0, None, MoveCode::Slash, false, "b"));
 }
 
-#[test]
 fn test_calpoker_b_slash_too_long() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -405,7 +399,6 @@ fn test_calpoker_b_slash_too_long() {
     run_step_and_check(&mut a, &lib, &after, &make_step(&long, 0, None, MoveCode::Slash, false, "b"));
 }
 
-#[test]
 fn test_calpoker_c_slash_too_short() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -418,7 +411,6 @@ fn test_calpoker_c_slash_too_short() {
     run_step_and_check(&mut a, &lib, &after, &make_step(&td.good_c_move[1..], 0, None, MoveCode::Slash, false, "c"));
 }
 
-#[test]
 fn test_calpoker_c_slash_too_long() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -432,7 +424,6 @@ fn test_calpoker_c_slash_too_long() {
     run_step_and_check(&mut a, &lib, &after, &make_step(&long, 0, None, MoveCode::Slash, false, "c"));
 }
 
-#[test]
 fn test_calpoker_c_slash_bad_alice_reveal() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -448,7 +439,6 @@ fn test_calpoker_c_slash_bad_alice_reveal() {
     run_step_and_check(&mut a, &lib, &after, &make_step(&bad, 0, None, MoveCode::Slash, false, "c"));
 }
 
-#[test]
 fn test_calpoker_d_slash_too_short() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -462,7 +452,6 @@ fn test_calpoker_d_slash_too_short() {
     run_step_and_check(&mut a, &lib, &after, &make_step(&[], 0, None, MoveCode::Slash, false, "d"));
 }
 
-#[test]
 fn test_calpoker_d_slash_too_long() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -476,7 +465,6 @@ fn test_calpoker_d_slash_too_long() {
     run_step_and_check(&mut a, &lib, &after, &make_step(b"ab", 0, None, MoveCode::Slash, false, "d"));
 }
 
-#[test]
 fn test_calpoker_d_slash_too_few_bits() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -490,7 +478,6 @@ fn test_calpoker_d_slash_too_few_bits() {
     run_step_and_check(&mut a, &lib, &after, &make_step(&[0b00000111], 0, None, MoveCode::Slash, false, "d"));
 }
 
-#[test]
 fn test_calpoker_d_slash_too_many_bits() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -504,7 +491,6 @@ fn test_calpoker_d_slash_too_many_bits() {
     run_step_and_check(&mut a, &lib, &after, &make_step(&[0b00011111], 0, None, MoveCode::Slash, false, "d"));
 }
 
-#[test]
 fn test_calpoker_e_slash_too_short() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -515,7 +501,6 @@ fn test_calpoker_e_slash_too_short() {
     run_step_and_check(&mut a, &lib, &after, &make_step(&em[1..], 100, Some(&td.bob_good_selections), MoveCode::Slash, false, "e"));
 }
 
-#[test]
 fn test_calpoker_e_slash_too_long() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -526,7 +511,6 @@ fn test_calpoker_e_slash_too_long() {
     run_step_and_check(&mut a, &lib, &after, &make_step(&em, 100, Some(&td.bob_good_selections), MoveCode::Slash, false, "e"));
 }
 
-#[test]
 fn test_calpoker_e_slash_bad_reveal() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -539,7 +523,6 @@ fn test_calpoker_e_slash_bad_reveal() {
     run_step_and_check(&mut a, &lib, &after, &make_step(&bad, 100, Some(&td.bob_good_selections), MoveCode::Slash, false, "e"));
 }
 
-#[test]
 fn test_calpoker_e_slash_too_few_discards() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -550,7 +533,6 @@ fn test_calpoker_e_slash_too_few_discards() {
     run_step_and_check(&mut a, &lib, &after, &make_step(&bad, 100, Some(&td.bob_good_selections), MoveCode::Slash, false, "e"));
 }
 
-#[test]
 fn test_calpoker_e_slash_too_many_discards() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -561,7 +543,6 @@ fn test_calpoker_e_slash_too_many_discards() {
     run_step_and_check(&mut a, &lib, &after, &make_step(&bad, 100, Some(&td.bob_good_selections), MoveCode::Slash, false, "e"));
 }
 
-#[test]
 fn test_calpoker_e_slash_too_few_selections() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -572,7 +553,6 @@ fn test_calpoker_e_slash_too_few_selections() {
     run_step_and_check(&mut a, &lib, &after, &make_step(&bad, 100, Some(&td.bob_good_selections), MoveCode::Slash, false, "e"));
 }
 
-#[test]
 fn test_calpoker_e_slash_too_many_selections() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -583,7 +563,6 @@ fn test_calpoker_e_slash_too_many_selections() {
     run_step_and_check(&mut a, &lib, &after, &make_step(&bad, 100, Some(&td.bob_good_selections), MoveCode::Slash, false, "e"));
 }
 
-#[test]
 fn test_calpoker_happy_path() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -594,7 +573,6 @@ fn test_calpoker_happy_path() {
     assert!(run_sequence(&mut a, &lib, &init, &steps).is_some(), "happy path should complete");
 }
 
-#[test]
 fn test_calpoker_e_mover_share_zero_slash() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -604,7 +582,6 @@ fn test_calpoker_e_mover_share_zero_slash() {
     run_step_and_check(&mut a, &lib, &after, &make_step(&e_move(&td), 0, Some(&td.bob_good_selections), MoveCode::Slash, false, "e"));
 }
 
-#[test]
 fn test_calpoker_e_alice_loss_slash() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -615,7 +592,6 @@ fn test_calpoker_e_alice_loss_slash() {
     run_step_and_check(&mut a, &lib, &after, &make_step(&m, 0, Some(&td.bob_good_selections), MoveCode::Slash, false, "e"));
 }
 
-#[test]
 fn test_calpoker_e_alice_loss_mover_share_100_slash() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -626,7 +602,6 @@ fn test_calpoker_e_alice_loss_mover_share_100_slash() {
     run_step_and_check(&mut a, &lib, &after, &make_step(&m, 100, Some(&td.bob_good_selections), MoveCode::Slash, false, "e"));
 }
 
-#[test]
 fn test_calpoker_e_bob_loss_make_move() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -636,7 +611,6 @@ fn test_calpoker_e_bob_loss_make_move() {
     run_step_and_check(&mut a, &lib, &after, &make_step(&e_move(&td), 100, Some(&td.bob_loss_selections), MoveCode::MakeMove, false, "e"));
 }
 
-#[test]
 fn test_calpoker_e_bob_loss_zero_make_move() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -646,7 +620,6 @@ fn test_calpoker_e_bob_loss_zero_make_move() {
     run_step_and_check(&mut a, &lib, &after, &make_step(&e_move(&td), 0, Some(&td.bob_loss_selections), MoveCode::MakeMove, false, "e"));
 }
 
-#[test]
 fn test_calpoker_e_nil_evidence_offchain() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -656,7 +629,6 @@ fn test_calpoker_e_nil_evidence_offchain() {
     run_step_and_check(&mut a, &lib, &after, &make_step(&e_move(&td), 100, None, MoveCode::MakeMove, false, "e"));
 }
 
-#[test]
 fn test_calpoker_e_nil_evidence_onchain_exception() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -666,7 +638,6 @@ fn test_calpoker_e_nil_evidence_onchain_exception() {
     run_step_and_check(&mut a, &lib, &after, &make_step(&e_move(&td), 100, None, MoveCode::ClvmException, true, "e"));
 }
 
-#[test]
 fn test_calpoker_e_bad_evidence_exception() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
@@ -675,4 +646,37 @@ fn test_calpoker_e_bad_evidence_exception() {
     let after = run_sequence(&mut a, &lib, &init, &happy_path_through_d(&td)).unwrap();
     let mut m = td.alice_discards_salt.clone(); m.extend_from_slice(&td.alice_discards_byte); m.extend_from_slice(&td.alice_loss_selections);
     run_step_and_check(&mut a, &lib, &after, &make_step(&m, 100, Some(&[0xFF]), MoveCode::ClvmException, false, "e"));
+}
+
+pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
+    vec![
+        ("test_calpoker_validator_hashes", &test_calpoker_validator_hashes),
+        ("test_calpoker_a_slash_too_short", &test_calpoker_a_slash_too_short),
+        ("test_calpoker_a_slash_too_long", &test_calpoker_a_slash_too_long),
+        ("test_calpoker_b_slash_too_short", &test_calpoker_b_slash_too_short),
+        ("test_calpoker_b_slash_too_long", &test_calpoker_b_slash_too_long),
+        ("test_calpoker_c_slash_too_short", &test_calpoker_c_slash_too_short),
+        ("test_calpoker_c_slash_too_long", &test_calpoker_c_slash_too_long),
+        ("test_calpoker_c_slash_bad_alice_reveal", &test_calpoker_c_slash_bad_alice_reveal),
+        ("test_calpoker_d_slash_too_short", &test_calpoker_d_slash_too_short),
+        ("test_calpoker_d_slash_too_long", &test_calpoker_d_slash_too_long),
+        ("test_calpoker_d_slash_too_few_bits", &test_calpoker_d_slash_too_few_bits),
+        ("test_calpoker_d_slash_too_many_bits", &test_calpoker_d_slash_too_many_bits),
+        ("test_calpoker_e_slash_too_short", &test_calpoker_e_slash_too_short),
+        ("test_calpoker_e_slash_too_long", &test_calpoker_e_slash_too_long),
+        ("test_calpoker_e_slash_bad_reveal", &test_calpoker_e_slash_bad_reveal),
+        ("test_calpoker_e_slash_too_few_discards", &test_calpoker_e_slash_too_few_discards),
+        ("test_calpoker_e_slash_too_many_discards", &test_calpoker_e_slash_too_many_discards),
+        ("test_calpoker_e_slash_too_few_selections", &test_calpoker_e_slash_too_few_selections),
+        ("test_calpoker_e_slash_too_many_selections", &test_calpoker_e_slash_too_many_selections),
+        ("test_calpoker_happy_path", &test_calpoker_happy_path),
+        ("test_calpoker_e_mover_share_zero_slash", &test_calpoker_e_mover_share_zero_slash),
+        ("test_calpoker_e_alice_loss_slash", &test_calpoker_e_alice_loss_slash),
+        ("test_calpoker_e_alice_loss_mover_share_100_slash", &test_calpoker_e_alice_loss_mover_share_100_slash),
+        ("test_calpoker_e_bob_loss_make_move", &test_calpoker_e_bob_loss_make_move),
+        ("test_calpoker_e_bob_loss_zero_make_move", &test_calpoker_e_bob_loss_zero_make_move),
+        ("test_calpoker_e_nil_evidence_offchain", &test_calpoker_e_nil_evidence_offchain),
+        ("test_calpoker_e_nil_evidence_onchain_exception", &test_calpoker_e_nil_evidence_onchain_exception),
+        ("test_calpoker_e_bad_evidence_exception", &test_calpoker_e_bad_evidence_exception),
+    ]
 }

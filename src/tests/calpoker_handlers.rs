@@ -1,7 +1,5 @@
-use std::collections::HashMap;
-
 use crate::common::load_clvm::read_hex_puzzle;
-use crate::common::types::{chia_dialect, AllocEncoder, Puzzle, Sha256Input, Sha256tree};
+use crate::common::types::{chia_dialect, AllocEncoder, Sha256Input};
 use crate::utils::proper_list;
 
 use clvm_traits::ToClvm;
@@ -86,24 +84,6 @@ fn node_to_hex(allocator: &mut AllocEncoder, node: NodePtr) -> String {
     hex::encode(bytes)
 }
 
-struct ValidatorInfo {
-    puzzle: Puzzle,
-}
-
-struct ValidatorLibrary {
-    by_hash: HashMap<Vec<u8>, ValidatorInfo>,
-}
-
-fn load_validator_library(allocator: &mut AllocEncoder) -> ValidatorLibrary {
-    let mut by_hash = HashMap::new();
-    for name in &["a", "b", "c", "d", "e"] {
-        let path = format!("clsp/games/calpoker/onchain/{name}.hex");
-        let puzzle = read_hex_puzzle(allocator, &path).unwrap();
-        let ph = puzzle.sha256tree(allocator);
-        by_hash.insert(ph.bytes().to_vec(), ValidatorInfo { puzzle });
-    }
-    ValidatorLibrary { by_hash }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum MoveCode {
@@ -123,26 +103,19 @@ fn parse_validator_output(allocator: &mut AllocEncoder, result: NodePtr) -> (Mov
 
 fn run_validator(
     allocator: &mut AllocEncoder,
-    lib: &ValidatorLibrary,
     validator_hash: NodePtr,
     move_bytes: NodePtr,
     mover_share: i64,
     max_move_size: i64,
     state: NodePtr,
-    validator_program_node: NodePtr,
+    validator_program: NodePtr,
     evidence: NodePtr,
 ) -> (MoveCode, NodePtr) {
-    let hash_bytes = atom_bytes(allocator, validator_hash);
-    let info = lib.by_hash.get(&hash_bytes)
-        .unwrap_or_else(|| panic!("unknown validator: {}", hex::encode(&hash_bytes)));
-    let program_clvm = info.puzzle.to_clvm(allocator).unwrap();
-
     let amount_node = AMOUNT.to_clvm(allocator).unwrap();
     let mms_node = max_move_size.to_clvm(allocator).unwrap();
     let ms_node = mover_share.to_clvm(allocator).unwrap();
 
     let a = allocator.allocator();
-    // curry_args: (nil nil nil amount nil nil move max_move_size nil mover_share nil)
     let tail = a.new_pair(NodePtr::NIL, NodePtr::NIL).unwrap();
     let tail = a.new_pair(ms_node, tail).unwrap();
     let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
@@ -155,15 +128,14 @@ fn run_validator(
     let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
     let curry_args = a.new_pair(NodePtr::NIL, tail).unwrap();
 
-    // args: (vh curry_args state validator_program evidence output_conditions)
-    let tail = a.new_pair(NodePtr::NIL, NodePtr::NIL).unwrap(); // output_conditions
+    let tail = a.new_pair(NodePtr::NIL, NodePtr::NIL).unwrap();
     let tail = a.new_pair(evidence, tail).unwrap();
-    let tail = a.new_pair(validator_program_node, tail).unwrap();
+    let tail = a.new_pair(validator_program, tail).unwrap();
     let tail = a.new_pair(state, tail).unwrap();
     let tail = a.new_pair(curry_args, tail).unwrap();
     let args = a.new_pair(validator_hash, tail).unwrap();
 
-    let result = run_clvm(allocator, program_clvm, args);
+    let result = run_clvm(allocator, validator_program, args);
     parse_validator_output(allocator, result)
 }
 
@@ -386,7 +358,6 @@ struct HandlerMove {
 
 fn run_handler_game(
     allocator: &mut AllocEncoder,
-    lib: &ValidatorLibrary,
     setup: &GameSetup,
     moves: &[HandlerMove],
 ) {
@@ -413,7 +384,6 @@ fn run_handler_game(
 
     for (step_idx, hm) in moves.iter().enumerate() {
         let is_alice = whose_move == 0;
-        eprintln!("--- step {step_idx}: {} MY TURN ---", if is_alice { "alice" } else { "bob" });
 
         let (handler, state, mover_share) = if is_alice {
             (alice_my_turn_handler, alice_state, alice_mover_share)
@@ -439,9 +409,8 @@ fn run_handler_game(
         assert_eq!(actual_move_bytes, hm.expected_move_bytes, "step {step_idx}: move bytes mismatch");
         assert_eq!(my_turn.new_mover_share, hm.expected_mover_share, "step {step_idx}: mover_share mismatch");
 
-        // Use validator_for_my_move_hash to look up the correct validator program
         let (code, validator_result) = run_validator(
-            allocator, lib, my_turn.validator_for_my_move_hash,
+            allocator, my_turn.validator_for_my_move_hash,
             my_turn.move_bytes_node, hm.expected_mover_share,
             my_turn.max_move_size, state,
             my_turn.validator_for_my_move, NodePtr::NIL,
@@ -472,7 +441,6 @@ fn run_handler_game(
         // Now the other player's their_turn
         whose_move ^= 1;
         let is_alice_waiter = whose_move == 0;
-        eprintln!("--- step {step_idx}: {} THEIR TURN ---", if is_alice_waiter { "alice" } else { "bob" });
 
         let (waiter_handler, waiter_state, waiter_vp_hash, waiter_max_move_size) = if is_alice_waiter {
             (alice_their_turn_handler, alice_state, alice_their_turn_vp_hash, alice_max_move_size)
@@ -486,9 +454,8 @@ fn run_handler_game(
             my_turn.new_mover_share
         };
 
-        // Run validator for the waiter's side
         let (_waiter_code, waiter_validator_result) = run_validator(
-            allocator, lib, waiter_vp_hash,
+            allocator, waiter_vp_hash,
             my_turn.move_bytes_node, effective_mover_share,
             waiter_max_move_size, waiter_state,
             if is_alice_waiter { alice_their_turn_validator } else { bob_their_turn_validator },
@@ -512,7 +479,7 @@ fn run_handler_game(
                 let mut found_slash = false;
                 for ev in &items {
                     let (ev_code, _) = run_validator(
-                        allocator, lib, waiter_vp_hash,
+                        allocator, waiter_vp_hash,
                         my_turn.move_bytes_node, effective_mover_share,
                         waiter_max_move_size, waiter_state,
                         if is_alice_waiter { alice_their_turn_validator } else { bob_their_turn_validator },
@@ -631,20 +598,23 @@ fn build_evil_moves(allocator: &mut AllocEncoder) -> Vec<HandlerMove> {
     moves
 }
 
-#[test]
 fn test_calpoker_handlers_happy_path() {
     let mut allocator = AllocEncoder::new();
-    let lib = load_validator_library(&mut allocator);
     let setup = setup_game(&mut allocator);
     let moves = build_happy_path_moves(&mut allocator);
-    run_handler_game(&mut allocator, &lib, &setup, &moves);
+    run_handler_game(&mut allocator, &setup, &moves);
 }
 
-#[test]
 fn test_calpoker_handlers_evil_path() {
     let mut allocator = AllocEncoder::new();
-    let lib = load_validator_library(&mut allocator);
     let setup = setup_game(&mut allocator);
     let moves = build_evil_moves(&mut allocator);
-    run_handler_game(&mut allocator, &lib, &setup, &moves);
+    run_handler_game(&mut allocator, &setup, &moves);
+}
+
+pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
+    vec![
+        ("test_calpoker_handlers_happy_path", &test_calpoker_handlers_happy_path),
+        ("test_calpoker_handlers_evil_path", &test_calpoker_handlers_evil_path),
+    ]
 }

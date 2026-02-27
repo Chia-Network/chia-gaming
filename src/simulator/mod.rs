@@ -30,6 +30,25 @@ use crate::simulator::tests::simenv::test_funs as simenv_tests;
 #[cfg(test)]
 use crate::test_support::calpoker::test_funs as calpoker_tests;
 
+#[cfg(test)]
+use crate::tests::calpoker_validation::test_funs as calpoker_validation_tests;
+#[cfg(test)]
+use crate::tests::calpoker_handlers::test_funs as calpoker_handler_tests;
+#[cfg(test)]
+use crate::tests::channel_handler::test_funs as channel_handler_tests;
+#[cfg(test)]
+use crate::tests::chialisp::test_funs as chialisp_tests;
+#[cfg(test)]
+use crate::tests::standard_coin::test_funs as standard_coin_tests;
+#[cfg(test)]
+use crate::test_support::debug_game::test_funs as debug_game_tests;
+#[cfg(test)]
+use crate::test_support::peer::potato_handler::test_funs as potato_handler_tests;
+#[cfg(test)]
+use crate::games::calpoker::test_funs as calpoker_game_tests;
+#[cfg(test)]
+use crate::common::types::divmod::test_funs as divmod_tests;
+
 #[derive(Debug, Clone)]
 pub struct IncludeTransactionResult {
     pub code: u32,
@@ -631,12 +650,22 @@ pub fn run_simulation_tests() {
         }
         let trace = Backtrace::force_capture();
         eprintln!("{trace}");
+        std::process::exit(1);
     }));
     if let Err(e) = std::panic::catch_unwind(|| {
-        let ref_lists = [
-            &simenv_tests(),
-            &calpoker_tests(),
-            &potato_handler_sim_tests(),
+        let ref_lists: Vec<Vec<(&str, &dyn Fn())>> = vec![
+            divmod_tests(),
+            standard_coin_tests(),
+            chialisp_tests(),
+            calpoker_game_tests(),
+            calpoker_validation_tests(),
+            calpoker_handler_tests(),
+            channel_handler_tests(),
+            debug_game_tests(),
+            potato_handler_tests(),
+            simenv_tests(),
+            calpoker_tests(),
+            potato_handler_sim_tests(),
         ];
 
         let from_filter: Option<String> = std::env::var("SIM_TEST_FROM")

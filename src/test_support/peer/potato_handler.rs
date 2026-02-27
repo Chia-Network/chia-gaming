@@ -372,8 +372,7 @@ where
     Ok(())
 }
 
-#[test]
-fn test_peer_smoke() {
+pub fn test_peer_smoke() {
     let seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed);
     let mut allocator = AllocEncoder::new();
@@ -566,4 +565,10 @@ fn test_peer_smoke() {
     assert!(pipe_sender[1].went_on_chain.is_none(), "peer 1 went on chain after accept: {:?}", pipe_sender[1].went_on_chain);
     assert!(pipe_sender[0].message_pipe.queue.is_empty());
     assert!(pipe_sender[1].message_pipe.queue.is_empty());
+}
+
+pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
+    vec![
+        ("test_peer_smoke", &test_peer_smoke),
+    ]
 }

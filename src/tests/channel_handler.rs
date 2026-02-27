@@ -12,7 +12,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{AllocEncoder, Amount, Hash, Puzzle, Sha256tree};
 
 #[cfg(feature = "sim-tests")]
-mod sim_tests {
+pub(crate) mod sim_tests {
     use super::*;
 
     use std::rc::Rc;
@@ -93,8 +93,7 @@ mod sim_tests {
     ///
     /// Case 3 — state from the future:
     ///   on-chain = 9 > our 7.  Must fail regardless of parity.
-    #[test]
-    fn test_preemption_parity_constraint() {
+    pub(crate) fn test_preemption_parity_constraint() {
         let mut allocator = AllocEncoder::new();
         let mut rng = ChaCha8Rng::from_seed([0; 32]);
         let unroll_metapuzzle = read_unroll_metapuzzle(&mut allocator).unwrap();
@@ -167,8 +166,7 @@ mod sim_tests {
         }
     }
 
-    #[test]
-    fn test_smoke_can_initiate_channel_handler() {
+    pub(crate) fn test_smoke_can_initiate_channel_handler() {
         let mut allocator = AllocEncoder::new();
         let mut rng = ChaCha8Rng::from_seed([0; 32]);
         let unroll_metapuzzle = read_unroll_metapuzzle(&mut allocator).unwrap();
@@ -229,8 +227,7 @@ mod sim_tests {
             .expect("should give counter transaction");
     }
 
-    #[test]
-    fn test_smoke_can_start_game() {
+    pub(crate) fn test_smoke_can_start_game() {
         let mut allocator = AllocEncoder::new();
         let mut rng = ChaCha8Rng::from_seed([0; 32]);
         let unroll_metapuzzle = read_unroll_metapuzzle(&mut allocator).unwrap();
@@ -301,8 +298,7 @@ mod sim_tests {
     }
 }
 
-#[test]
-fn test_unroll_can_verify_own_signature() {
+pub(crate) fn test_unroll_can_verify_own_signature() {
     let mut allocator = AllocEncoder::new();
     let mut rng = ChaCha8Rng::from_seed([0; 32]);
     let mut unroll_coin_1 = UnrollCoin {
@@ -371,4 +367,17 @@ fn test_unroll_can_verify_own_signature() {
     assert!(unroll_coin_1
         .verify(&mut env, &aggregate_unroll_public_key, &sig2,)
         .expect("should verify"));
+}
+
+pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
+    let mut v: Vec<(&'static str, &'static dyn Fn())> = vec![
+        ("test_unroll_can_verify_own_signature", &test_unroll_can_verify_own_signature),
+    ];
+    #[cfg(feature = "sim-tests")]
+    {
+        v.push(("test_preemption_parity_constraint", &sim_tests::test_preemption_parity_constraint));
+        v.push(("test_smoke_can_initiate_channel_handler", &sim_tests::test_smoke_can_initiate_channel_handler));
+        v.push(("test_smoke_can_start_game", &sim_tests::test_smoke_can_start_game));
+    }
+    v
 }

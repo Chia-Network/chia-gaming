@@ -10,7 +10,6 @@ use log::debug;
 
 // TODO: Remove duplicate code
 
-#[test]
 fn test_prepend_count() {
     let mut allocator = AllocEncoder::new();
     let source_data = (
@@ -51,7 +50,6 @@ fn test_prepend_count() {
     );
 }
 
-#[test]
 fn test_make_cards() {
     let mut allocator = AllocEncoder::new();
     let program =
@@ -82,7 +80,6 @@ fn test_make_cards() {
     );
 }
 
-#[test]
 fn test_mergein() {
     let mut allocator = AllocEncoder::new();
     let tests = [
@@ -108,7 +105,6 @@ fn test_mergein() {
     }
 }
 
-#[test]
 fn test_pull_indices() {
     let mut allocator = AllocEncoder::new();
     let source_data = (
@@ -149,7 +145,6 @@ fn test_pull_indices() {
     );
 }
 
-#[test]
 fn test_pull_out_straight() {
     let mut allocator = AllocEncoder::new();
     let source_data_ace = (
@@ -179,7 +174,6 @@ fn test_pull_out_straight() {
     );
 }
 
-#[test]
 fn test_find_straight_high() {
     let mut allocator = AllocEncoder::new();
     // Add additional case tests for normal range, not a straight.
@@ -213,7 +207,6 @@ fn test_find_straight_high() {
     assert_eq!(Node(result).to_hex(&mut allocator).expect("cvt"), "05");
 }
 
-#[test]
 fn test_straight_indices() {
     let mut allocator = AllocEncoder::new();
     // Add additional case tests for normal range, not a straight.
@@ -251,7 +244,6 @@ fn test_straight_indices() {
     );
 }
 
-#[test]
 fn test_handcalc() {
     let mut allocator = AllocEncoder::new();
     // Add additional case tests for normal range, not a straight.
@@ -940,4 +932,17 @@ fn test_handcalc() {
         debug!("test {test:?}");
         test_handcalc_with_example(test);
     }
+}
+
+pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
+    vec![
+        ("test_prepend_count", &test_prepend_count),
+        ("test_make_cards", &test_make_cards),
+        ("test_mergein", &test_mergein),
+        ("test_pull_indices", &test_pull_indices),
+        ("test_pull_out_straight", &test_pull_out_straight),
+        ("test_find_straight_high", &test_find_straight_high),
+        ("test_straight_indices", &test_straight_indices),
+        ("test_handcalc", &test_handcalc),
+    ]
 }

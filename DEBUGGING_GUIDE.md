@@ -12,7 +12,7 @@ log rotation, and wraparound test ordering so you don't have to.
 
 - **`./cb`** — Build with sim-tests feature. Passes extra args to cargo
   (e.g. `./cb --release`).
-- **`./ct`** — Run all sim tests with output tee'd to a log file.
+- **`./ct`** — Run all sim tests.
   - `./ct` — runs all tests in normal order.
   - `./ct accept_finished` — starts at the first test matching `accept_finished`,
     runs through the end, wraps back to the beginning, and finishes right before
@@ -21,12 +21,10 @@ log rotation, and wraparound test ordering so you don't have to.
     else broke.
   - If the argument doesn't match any test name, you get a clear error listing
     all available tests.
-  - The full log is saved to `/tmp/ct-<timestamp>.log` (printed at the end).
 
 Prefer `./ct some_test_name` over raw `cargo test` invocations. The scripts
-set `SIM_TEST_FROM` correctly, pipe through `tee`, and print the log path at
-the end. Running `cargo test` directly without the right flags and piping is
-error-prone and wastes time.
+set `SIM_TEST_FROM` and `--nocapture` correctly. Running `cargo test` directly
+without the right flags is error-prone and wastes time.
 
 ### Running tests directly (without scripts)
 
@@ -47,26 +45,17 @@ SIM_TEST_FROM=accept_finished cargo test --features sim-tests -- sim_tests --noc
 - Each iteration of the simulation loop involves expensive CLVM evaluation, so
   a 200-step stall can take a long time before the assertion fires.
 
-### Always tee output to a file
+### Capturing output to a file
 
-Test runs are expensive (minutes each). Always capture the full output so you
-can re-filter without re-running. The `ct` script does this automatically.
-
-If running manually:
+If you need to save test output for later filtering, pipe through `tee`:
 ```bash
-cargo test --features sim-tests -- sim_tests --nocapture 2>&1 \
-  | tee /tmp/test-output.log \
-  | tail -40
+./ct 2>&1 | tee /tmp/test-output.log
 ```
 
-Then if the initial filter missed something:
+Then filter as needed:
 ```bash
 rg "resync|SEND_POTATO" /tmp/test-output.log
 ```
-
-**Never rely solely on `head` or a narrow `rg` filter without saving the full
-output.** Re-running a test suite just to try a different filter is a waste of
-minutes.
 
 ### Waiting for test processes to finish
 
@@ -314,15 +303,12 @@ set correctly for the off-chain path.
 
 ### Process and output management
 
-1. **Always tee output to a file.** Re-running tests to try a different filter
-   wastes minutes.
+1. **Use `./ct` and `./cb`.** They handle feature flags and test ordering.
 
-2. **Always pipe through grep/rg or tail.** The raw output is 10k–100k+ lines.
-   Filter first.
+2. **Pipe through `tee` if you need to re-filter later.** Otherwise the direct
+   output is fine — debug spew has been cleaned up.
 
-3. **Set generous `block_until_ms`** (600000 = 10 min) for test runs.
-
-4. **The first panic kills the rest of the test output.** Look at the tail of
+3. **The first panic kills the rest of the test output.** Look at the tail of
    the output to find the relevant failure.
 
 ### Finding and interpreting failures
