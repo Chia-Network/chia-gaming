@@ -41,10 +41,12 @@ mod sim_tests {
         GameStartInfoInterface, HandshakeResult, StartGameResult,
     };
     use crate::common::standard_coin::{
-        private_to_public_key, puzzle_for_pk, puzzle_hash_for_synthetic_public_key, ChiaIdentity,
+        private_to_public_key, puzzle_for_pk, puzzle_hash_for_synthetic_public_key,
+        sign_reward_payout, ChiaIdentity,
     };
     use crate::common::types::{
-        Amount, CoinID, CoinString, Error, GameID, Hash, Puzzle, PuzzleHash, Sha256tree,
+        Aggsig, Amount, CoinID, CoinString, Error, GameID, Hash, PublicKey, Puzzle, PuzzleHash,
+        Sha256tree,
     };
     use crate::shutdown::ShutdownConditions;
     use crate::simulator::Simulator;
@@ -70,11 +72,15 @@ mod sim_tests {
 
             let make_ref_info = |env: &mut ChannelHandlerEnv<R>,
                                  id: usize|
-             -> Result<(Rc<Puzzle>, PuzzleHash), Error> {
+             -> Result<(Rc<Puzzle>, PuzzleHash, PublicKey, Aggsig), Error> {
                 let ref_key = private_to_public_key(&private_keys[id].my_referee_private_key);
                 let referee = puzzle_for_pk(env.allocator, &ref_key)?;
                 let ref_puzzle_hash = referee.sha256tree(env.allocator);
-                Ok((Rc::new(referee), ref_puzzle_hash))
+                let reward_sig = sign_reward_payout(
+                    &private_keys[id].my_referee_private_key,
+                    &ref_puzzle_hash,
+                );
+                Ok((Rc::new(referee), ref_puzzle_hash, ref_key, reward_sig))
             };
 
             let ref1 = make_ref_info(env, 0)?;
@@ -92,8 +98,9 @@ mod sim_tests {
                         id == 1,
                         private_to_public_key(&private_keys[id ^ 1].my_channel_coin_private_key),
                         private_to_public_key(&private_keys[id ^ 1].my_unroll_coin_private_key),
+                        referees[id ^ 1].2.clone(),
                         referees[id ^ 1].1.clone(),
-                        referees[id ^ 1].1.clone(),
+                        referees[id ^ 1].3.clone(),
                         contributions[id].clone(),
                         contributions[id ^ 1].clone(),
                         unroll_advance_timeout.clone(),

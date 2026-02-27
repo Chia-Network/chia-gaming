@@ -67,9 +67,9 @@
 )
 
 (export (mod_hash
-    (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
+    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
         MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-        (bob_discards alice_cards bob_cards alice_commit) previous_validation_program mover_puzzle solution bob_card_selections)
+        (bob_discards alice_cards bob_cards alice_commit) previous_validation_program bob_card_selections output_conditions)
     (if (or
             (not (= (strlen MOVE) 18))
             ;; Common subexpression: (substr MOVE 16 17) == alice_discards
@@ -92,7 +92,7 @@
                 (= (sha256 alice_salted_discards) alice_commit)
                 (if (not bob_card_selections)
                     ;; nil evidence is only valid for off-chain local validation
-                    (if WAITER_PUZZLE_HASH (x "On-chain, nil evidence") 1)
+                    (if WAITER_PUBKEY (x "On-chain, nil evidence") 1)
                     (does_alice_claim_small_enough
                         alice_hand_value
                         bob_card_selections

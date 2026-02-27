@@ -564,7 +564,7 @@ pub fn assert_reward_coin_consistency(notifications: &[GameNotification], label:
             }
             GameNotification::WeSlashedOpponent { .. } => {
                 // reward_coin is CoinString (not Option); may be default if
-                // find_my_reward_coin failed. No structural assertion here.
+                // no reward coin was found. No structural assertion here.
             }
             GameNotification::UnrollCoinSpent { reward_coin } => {
                 if let Some(rc) = reward_coin {
@@ -1565,8 +1565,8 @@ pub fn setup_debug_test(
 
     let args_curry = DebugGameCurry::new(
         allocator,
-        &debug_games[0].alice_identity.puzzle_hash,
-        &debug_games[0].bob_identity.puzzle_hash,
+        &debug_games[0].alice_identity.public_key,
+        &debug_games[0].bob_identity.public_key,
     );
     debug!("debug game curried data {args_curry:?}");
     let args = args_curry.expect("good").to_clvm(allocator).into_gen()?;

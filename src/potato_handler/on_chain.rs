@@ -290,9 +290,19 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             debug!("{initial_potato} pending slash coin was spent - slash succeeded");
             let conditions =
                 CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
-            let reward_coin = self.player_ch
-                .find_my_reward_coin(env, coin_id, &conditions)
-                .unwrap_or_else(|_| CoinString::default());
+            let reward_ph = self.player_ch.get_reward_puzzle_hash(env)?;
+            let parent_coin_id = coin_id.to_coin_id();
+            let reward_coin = conditions
+                .iter()
+                .find_map(|c| {
+                    if let CoinCondition::CreateCoin(ph, amt) = c {
+                        if *ph == reward_ph && *amt > Amount::default() {
+                            return Some(CoinString::from_parts(&parent_coin_id, ph, amt));
+                        }
+                    }
+                    None
+                })
+                .unwrap_or_default();
             effects.push(Effect::Notification(GameNotification::WeSlashedOpponent {
                 id: old_definition.game_id.clone(),
                 reward_coin,
@@ -304,15 +314,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         let conditions =
             CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
 
-        let reward_spend = self
-            .player_ch
-            .handle_reward_spends(env, coin_id, &conditions)?;
-
         if old_definition.accepted {
-            if let Some(spend_bundle) = &reward_spend {
-                effects.push(Effect::SpendTransaction(spend_bundle.clone()));
-            }
-
             let reward_ph = self.player_ch.get_reward_puzzle_hash(env)?;
             let created = conditions.iter().find_map(|c| match c {
                 CoinCondition::CreateCoin(ph, amt) => Some((ph.clone(), amt.clone())),
@@ -379,9 +381,6 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             result
         } else {
             debug!("failed result {result:?}");
-            if let Some(spend_bundle) = &reward_spend {
-                effects.push(Effect::SpendTransaction(spend_bundle.clone()));
-            }
             if !game_already_ended {
                 effects.push(Effect::Notification(GameNotification::GameError {
                     id: old_definition.game_id.clone(),
@@ -391,10 +390,6 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             effects.extend(self.next_action(env)?);
             return Ok(effects);
         };
-
-        if let Some(spend_bundle) = &reward_spend {
-            effects.push(Effect::SpendTransaction(spend_bundle.clone()));
-        }
 
         debug!(
             "{initial_potato} game coin spent result from channel handler {their_turn_result:?}"
@@ -688,40 +683,36 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             if let AcceptTransactionState::Determined(tx) = &game_def.accept {
                 self.have_potato = PotatoState::Present;
 
-                debug!("Spend reward coins downstream of the timeout");
-
                 let conditions = CoinCondition::from_puzzle_and_solution(
                     env.allocator,
                     &tx.bundle.puzzle.to_program(),
                     &tx.bundle.solution.p(),
                 )?;
 
-                let reward_coin = self.player_ch
-                    .find_my_reward_coin(env, coin_id, &conditions)
-                    .ok();
+                let reward_ph = self.player_ch.get_reward_puzzle_hash(env)?;
+                let parent_coin_id = coin_id.to_coin_id();
+                let reward_coin = conditions
+                    .iter()
+                    .find_map(|c| {
+                        if let CoinCondition::CreateCoin(ph, amt) = c {
+                            if *ph == reward_ph && *amt > Amount::default() {
+                                return Some(CoinString::from_parts(&parent_coin_id, ph, amt));
+                            }
+                        }
+                        None
+                    });
 
                 let our_reward = reward_coin
                     .as_ref()
                     .and_then(|rc| rc.amount())
                     .unwrap_or_default();
 
-                let spend_bundle = {
-                    let mut total_spends = vec![CoinSpend {
+                let spend_bundle = SpendBundle {
+                    name: Some("redo accept".to_string()),
+                    spends: vec![CoinSpend {
                         coin: coin_id.clone(),
                         bundle: tx.bundle.clone(),
-                    }];
-
-                    if let Some(mut spend_bundle) =
-                        self.player_ch
-                            .handle_reward_spends(env, coin_id, &conditions)?
-                    {
-                        total_spends.append(&mut spend_bundle.spends);
-                    }
-
-                    SpendBundle {
-                        name: Some("redo accept".to_string()),
-                        spends: total_spends,
-                    }
+                    }],
                 };
 
                 effects.push(Effect::SpendTransaction(spend_bundle));
@@ -768,9 +759,18 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                         &tx.bundle.puzzle.to_program(),
                         &tx.bundle.solution.p(),
                     )?;
-                    let reward_coin = self.player_ch
-                        .find_my_reward_coin(env, coin_id, &conditions)
-                        .ok();
+                    let reward_ph = self.player_ch.get_reward_puzzle_hash(env)?;
+                    let parent_coin_id = coin_id.to_coin_id();
+                    let reward_coin = conditions
+                        .iter()
+                        .find_map(|c| {
+                            if let CoinCondition::CreateCoin(ph, amt) = c {
+                                if *ph == reward_ph && *amt > Amount::default() {
+                                    return Some(CoinString::from_parts(&parent_coin_id, ph, amt));
+                                }
+                            }
+                            None
+                        });
                     let our_reward = reward_coin
                         .as_ref()
                         .and_then(|rc| rc.amount())

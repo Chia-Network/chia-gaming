@@ -16,9 +16,9 @@
 ; evidence is empty
 
 (export (mod_hash
-    (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
+    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
         bob_discards MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-        (@ state (alice_commit alice_cards bob_cards)) previous_validation_program mover_puzzle solution evidence)
+        (@ state (alice_commit alice_cards bob_cards)) previous_validation_program evidence output_conditions)
     (if_any_fail
         (= (strlen bob_discards) 1)
         (= (popcount bob_discards) 4)

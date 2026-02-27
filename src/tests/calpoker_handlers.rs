@@ -155,10 +155,9 @@ fn run_validator(
     let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
     let curry_args = a.new_pair(NodePtr::NIL, tail).unwrap();
 
-    // args: (vh curry_args state validator_program nil nil evidence)
-    let tail = a.new_pair(evidence, NodePtr::NIL).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
+    // args: (vh curry_args state validator_program evidence output_conditions)
+    let tail = a.new_pair(NodePtr::NIL, NodePtr::NIL).unwrap(); // output_conditions
+    let tail = a.new_pair(evidence, tail).unwrap();
     let tail = a.new_pair(validator_program_node, tail).unwrap();
     let tail = a.new_pair(state, tail).unwrap();
     let tail = a.new_pair(curry_args, tail).unwrap();

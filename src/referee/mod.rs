@@ -11,10 +11,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::channel_handler::types::{
     Evidence, GameStartInfoInterface, ReadableMove, ValidationInfo, ValidationOrUpdateProgram,
 };
-use crate::common::standard_coin::ChiaIdentity;
+use crate::common::standard_coin::{sign_reward_payout, ChiaIdentity};
 use crate::common::types::{
-    AllocEncoder, Amount, CoinCondition, CoinString, Error, Hash, Program, Puzzle, PuzzleHash,
-    Sha256tree, Spend, Timeout,
+    Aggsig, AllocEncoder, Amount, CoinCondition, CoinString, Error, Hash, Program, PublicKey,
+    Puzzle, PuzzleHash, Sha256tree, Spend, Timeout,
 };
 use crate::referee::my_turn::MyTurnReferee;
 use crate::referee::their_turn::TheirTurnReferee;
@@ -167,7 +167,9 @@ impl Referee {
         referee_coin_puzzle_hash: PuzzleHash,
         game_start_info: &Rc<dyn GameStartInfoInterface>,
         my_identity: ChiaIdentity,
-        their_puzzle_hash: &PuzzleHash,
+        their_pubkey: &PublicKey,
+        their_reward_puzzle_hash: &PuzzleHash,
+        their_reward_payout_signature: &Aggsig,
         reward_puzzle_hash: &PuzzleHash,
         nonce: usize,
         agg_sig_me_additional_data: &Hash,
@@ -183,8 +185,10 @@ impl Referee {
         let fixed_info = Rc::new(RMFixed {
             referee_coin_puzzle: referee_coin_puzzle.clone(),
             referee_coin_puzzle_hash: referee_coin_puzzle_hash.clone(),
-            their_referee_puzzle_hash: their_puzzle_hash.clone(),
+            their_referee_pubkey: their_pubkey.clone(),
+            their_reward_payout_signature: their_reward_payout_signature.clone(),
             reward_puzzle_hash: reward_puzzle_hash.clone(),
+            their_reward_puzzle_hash: their_reward_puzzle_hash.clone(),
             my_identity: my_identity.clone(),
             timeout: game_start_info.timeout().clone(),
             amount: game_start_info.amount().clone(),
@@ -222,13 +226,13 @@ impl Referee {
         ));
         if my_turn {
             assert_eq!(
-                fixed_info.my_identity.puzzle_hash,
-                ref_puzzle_args.mover_puzzle_hash
+                fixed_info.my_identity.public_key,
+                ref_puzzle_args.mover_pubkey
             );
         } else {
             assert_eq!(
-                fixed_info.their_referee_puzzle_hash,
-                ref_puzzle_args.mover_puzzle_hash
+                fixed_info.their_referee_pubkey,
+                ref_puzzle_args.mover_pubkey
             );
         }
         let puzzle_hash =
@@ -241,7 +245,9 @@ impl Referee {
                 referee_coin_puzzle_hash.clone(),
                 game_start_info,
                 my_identity.clone(),
-                their_puzzle_hash,
+                their_pubkey,
+                their_reward_puzzle_hash,
+                their_reward_payout_signature,
                 reward_puzzle_hash,
                 nonce,
                 agg_sig_me_additional_data,
@@ -255,7 +261,9 @@ impl Referee {
                 referee_coin_puzzle_hash,
                 game_start_info,
                 my_identity,
-                their_puzzle_hash,
+                their_pubkey,
+                their_reward_puzzle_hash,
+                their_reward_payout_signature,
                 reward_puzzle_hash,
                 nonce,
                 agg_sig_me_additional_data,
@@ -498,7 +506,7 @@ impl RefereeInterface for Referee {
         if rem_conditions.is_empty() {
             let my_reward_coin_string = CoinString::from_parts(
                 &referee_coin_string.to_coin_id(),
-                &self.fixed().my_identity.puzzle_hash,
+                &self.fixed().reward_puzzle_hash,
                 &mover_share,
             );
 
@@ -567,12 +575,28 @@ impl RefereeInterface for Referee {
                 (self.on_chain_referee_puzzle(allocator)?, self.fixed().amount.clone())
             };
 
+        let (mover_payout_ph, waiter_payout_ph) = if self.is_my_turn() {
+            (self.fixed().reward_puzzle_hash.clone(), self.fixed().their_reward_puzzle_hash.clone())
+        } else {
+            (self.fixed().their_reward_puzzle_hash.clone(), self.fixed().reward_puzzle_hash.clone())
+        };
+
+        let my_sig = sign_reward_payout(
+            &self.fixed().my_identity.private_key,
+            &self.fixed().reward_puzzle_hash,
+        );
+        let aggregate_signature = my_sig.aggregate(&self.fixed().their_reward_payout_signature);
+
         self.get_transaction(
             allocator,
             coin_string,
             false,
             puzzle,
-            &OnChainRefereeSolution::Timeout,
+            &OnChainRefereeSolution::Timeout {
+                mover_payout_ph,
+                waiter_payout_ph,
+                aggregate_signature,
+            },
             amount_for_timeout,
         )
     }

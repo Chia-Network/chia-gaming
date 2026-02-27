@@ -1,4 +1,4 @@
-use crate::common::types::{CoinString, PublicKey, PuzzleHash, SpendBundle};
+use crate::common::types::{Aggsig, CoinString, PublicKey, PuzzleHash, SpendBundle};
 use crate::potato_handler::on_chain::OnChainPotatoHandler;
 use serde::{Deserialize, Serialize};
 
@@ -7,7 +7,8 @@ pub struct HandshakeB {
     pub channel_public_key: PublicKey,
     pub unroll_public_key: PublicKey,
     pub reward_puzzle_hash: PuzzleHash,
-    pub referee_puzzle_hash: PuzzleHash,
+    pub referee_pubkey: PublicKey,
+    pub reward_payout_signature: Aggsig,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

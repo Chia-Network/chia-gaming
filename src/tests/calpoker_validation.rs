@@ -186,9 +186,8 @@ fn build_validator_args(
     let curry_args = build_curry_args(allocator, on_chain, move_node, max_move_size, mover_share);
 
     let a = allocator.allocator();
-    let tail = a.new_pair(evidence_node, NodePtr::NIL).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
+    let tail = a.new_pair(NodePtr::NIL, NodePtr::NIL).unwrap(); // output_conditions
+    let tail = a.new_pair(evidence_node, tail).unwrap();
     let tail = a.new_pair(validator_program, tail).unwrap();
     let tail = a.new_pair(previous_state, tail).unwrap();
     let tail = a.new_pair(curry_args, tail).unwrap();

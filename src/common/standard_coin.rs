@@ -284,6 +284,33 @@ pub fn sign_agg_sig_me(
     signed
 }
 
+pub fn reward_payout_message(reward_puzzle_hash: &PuzzleHash) -> Vec<u8> {
+    let mut message = Vec::with_capacity(33);
+    message.push(0x00);
+    message.extend(reward_puzzle_hash.bytes());
+    message
+}
+
+pub fn sign_reward_payout(
+    secret_key: &PrivateKey,
+    reward_puzzle_hash: &PuzzleHash,
+) -> Aggsig {
+    let message = reward_payout_message(reward_puzzle_hash);
+    let public_key = private_to_public_key(secret_key);
+    let signed = secret_key.sign(&message);
+    assert!(signed.verify(&public_key, &message));
+    signed
+}
+
+pub fn verify_reward_payout_signature(
+    pubkey: &PublicKey,
+    reward_puzzle_hash: &PuzzleHash,
+    signature: &Aggsig,
+) -> bool {
+    let message = reward_payout_message(reward_puzzle_hash);
+    signature.verify(pubkey, &message)
+}
+
 pub fn standard_solution_unsafe(
     allocator: &mut AllocEncoder,
     private_key: &PrivateKey,

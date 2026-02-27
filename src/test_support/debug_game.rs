@@ -24,7 +24,7 @@ use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::PrivateKey;
 use crate::common::types::{
     atom_from_clvm, chia_dialect, AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Node,
-    Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Timeout,
+    Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
 use crate::referee::types::{GameMoveDetails, GameMoveStateInfo};
 use crate::referee::types::{
@@ -38,15 +38,15 @@ pub struct DebugGameCurry {
     pub count: usize,
     pub self_hash: PuzzleHash,
     pub self_prog: Rc<Program>,
-    pub mover0: PuzzleHash,
-    pub waiter0: PuzzleHash,
+    pub mover0: PublicKey,
+    pub waiter0: PublicKey,
 }
 
 impl DebugGameCurry {
     pub fn new(
         allocator: &mut AllocEncoder,
-        mover_ph: &PuzzleHash,
-        waiter_ph: &PuzzleHash,
+        mover_pk: &PublicKey,
+        waiter_pk: &PublicKey,
     ) -> Result<DebugGameCurry, Error> {
         let raw_program = read_hex_puzzle(allocator, "clsp/test/debug_game.hex")?;
         let prog_hash = raw_program.sha256tree(allocator);
@@ -54,8 +54,8 @@ impl DebugGameCurry {
             count: 0,
             self_prog: raw_program.to_program(),
             self_hash: prog_hash,
-            mover0: mover_ph.clone(),
-            waiter0: waiter_ph.clone(),
+            mover0: mover_pk.clone(),
+            waiter0: waiter_pk.clone(),
         })
     }
 }
@@ -151,8 +151,8 @@ impl BareDebugGameHandler {
     ) -> Result<[BareDebugGameHandler; 2], Error> {
         let args = DebugGameCurry::new(
             allocator,
-            &identities[0].puzzle_hash,
-            &identities[1].puzzle_hash,
+            &identities[0].public_key,
+            &identities[1].public_key,
         )?;
         debug!("curried args into game {args:?}");
 
@@ -227,24 +227,19 @@ impl BareDebugGameHandler {
         (self.move_count & 1) == 0
     }
 
-    pub fn get_mover_and_waiter_ph(&self) -> (PuzzleHash, PuzzleHash, Puzzle) {
-        let mover_ph = if self.alice_turn() {
-            &self.alice_identity.puzzle_hash
+    pub fn get_mover_and_waiter_pubkey(&self) -> (PublicKey, PublicKey) {
+        let mover_pk = if self.alice_turn() {
+            &self.alice_identity.public_key
         } else {
-            &self.bob_identity.puzzle_hash
+            &self.bob_identity.public_key
         };
-        let mover_puzzle = if self.alice_turn() {
-            self.alice_identity.puzzle.clone()
+        let waiter_pk = if self.alice_turn() {
+            &self.bob_identity.public_key
         } else {
-            self.bob_identity.puzzle.clone()
-        };
-        let waiter_ph = if self.alice_turn() {
-            &self.bob_identity.puzzle_hash
-        } else {
-            &self.alice_identity.puzzle_hash
+            &self.alice_identity.public_key
         };
 
-        (mover_ph.clone(), waiter_ph.clone(), mover_puzzle)
+        (mover_pk.clone(), waiter_pk.clone())
     }
 
     pub fn prime_my_turn(
@@ -341,9 +336,7 @@ impl BareDebugGameHandler {
         mover_share: &Amount,
         evidence: Evidence,
     ) -> Result<StateUpdateResult, Error> {
-        let (mover_ph, waiter_ph, mover_puzzle) = self.get_mover_and_waiter_ph();
-
-        // tmpsave("v-prog.hex", &validation_program.to_program().to_hex());
+        let (mover_pk, waiter_pk) = self.get_mover_and_waiter_pubkey();
 
         debug!(
             "{} debug test v program hash: {:?}",
@@ -364,8 +357,8 @@ impl BareDebugGameHandler {
                     previous_validation_info_hash,
                     referee_coin_puzzle_hash: self.mod_hash.clone(),
                     timeout: self.timeout.clone(),
-                    mover_puzzle_hash: mover_ph.clone(),
-                    waiter_puzzle_hash: waiter_ph.clone(),
+                    mover_pubkey: mover_pk.clone(),
+                    waiter_pubkey: waiter_pk.clone(),
                     amount: self.start.amount.clone(),
                     game_move: GameMoveDetails {
                         basic: GameMoveStateInfo {
@@ -386,8 +379,6 @@ impl BareDebugGameHandler {
             ),
             state_update_args: StateUpdateMoveArgs {
                 evidence: evidence.to_program(),
-                mover_puzzle: mover_puzzle.to_program(),
-                solution: Rc::new(Program::from_hex("80")?),
                 state: self.state.p(),
             },
             validation_program: validation_program,
@@ -420,8 +411,8 @@ impl BareDebugGameHandler {
             ValidationInfo::new_state_update(allocator, validation_program.clone(), self.state.p());
 
         let emove = ExhaustiveMoveInputs {
-            alice_puzzle_hash: self.alice_identity.puzzle_hash.clone(),
-            bob_puzzle_hash: self.bob_identity.puzzle_hash.clone(),
+            alice_pubkey: self.alice_identity.public_key.clone(),
+            bob_pubkey: self.bob_identity.public_key.clone(),
             amount: self.start.amount.clone(),
             count: self.move_count,
             max_move_size: self.max_move_size,
@@ -637,8 +628,8 @@ fn test_debug_game_factory() {
 }
 
 pub struct ExhaustiveMoveInputs {
-    alice_puzzle_hash: PuzzleHash,
-    bob_puzzle_hash: PuzzleHash,
+    alice_pubkey: PublicKey,
+    bob_pubkey: PublicKey,
     mod_hash: PuzzleHash,
     validation_info: ValidationInfo,
     validation_program: StateUpdateProgram,
@@ -715,15 +706,15 @@ impl ExhaustiveMoveInputs {
     pub fn to_linear_move(&self, allocator: &mut AllocEncoder) -> Result<Vec<u8>, Error> {
         let bit_0_set: bool = ((self.count & 1) << 4) == 0;
         let alice_mover = bit_0_set;
-        let mover_ph_ref = if alice_mover {
-            &self.bob_puzzle_hash
+        let mover_pk_ref = if alice_mover {
+            &self.bob_pubkey
         } else {
-            &self.alice_puzzle_hash
+            &self.alice_pubkey
         };
-        let waiter_ph_ref = if alice_mover {
-            Some(&self.alice_puzzle_hash)
+        let waiter_pk_ref = if alice_mover {
+            Some(&self.alice_pubkey)
         } else {
-            Some(&self.bob_puzzle_hash)
+            Some(&self.bob_pubkey)
         };
         let pv_hash = self.validation_program.sha256tree(allocator);
         let timeout_atom = at_least_one_byte(allocator, self.timeout.to_u64())?;
@@ -735,9 +726,9 @@ impl ExhaustiveMoveInputs {
         let count_atom = at_least_one_byte(allocator, self.count as u64)?;
         let mut tail_bytes = self.move_tail(allocator)?;
         let args = (
-            mover_ph_ref.clone(),
+            mover_pk_ref.clone(),
             (
-                waiter_ph_ref.cloned(),
+                waiter_pk_ref.cloned(),
                 (
                     self.mod_hash.clone(),
                     (

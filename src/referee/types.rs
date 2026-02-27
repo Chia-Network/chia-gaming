@@ -1,4 +1,3 @@
-use std::borrow::Borrow;
 use std::rc::Rc;
 
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
@@ -14,15 +13,13 @@ use crate::channel_handler::game_handler::TheirTurnResult;
 use crate::channel_handler::types::{
     Evidence, PotatoMoveCachedData, ReadableMove, StateUpdateProgram, ValidationInfo,
 };
-use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
-    calculate_hash_of_quoted_mod_hash, curry_and_treehash, standard_solution_partial,
-    ChiaIdentity,
+    calculate_hash_of_quoted_mod_hash, curry_and_treehash, sign_agg_sig_me, ChiaIdentity,
 };
 use crate::common::types::{
     atom_from_clvm, chia_dialect, i64_from_atom, Aggsig, AllocEncoder, Amount, CoinSpend,
-    CoinString, Error, GameID, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree,
-    Spend, Timeout,
+    CoinString, Error, GameID, Hash, IntoErr, Node, Program, PublicKey, Puzzle,
+    PuzzleHash, Sha256tree, Spend, Timeout,
 };
 use crate::utils::proper_list;
 
@@ -101,8 +98,10 @@ pub struct RMFixed {
     pub my_identity: ChiaIdentity,
 
     pub reward_puzzle_hash: PuzzleHash,
+    pub their_reward_puzzle_hash: PuzzleHash,
 
-    pub their_referee_puzzle_hash: PuzzleHash,
+    pub their_referee_pubkey: PublicKey,
+    pub their_reward_payout_signature: Aggsig,
     pub agg_sig_me_additional_data: Hash,
 
     pub timeout: Timeout,
@@ -176,48 +175,33 @@ impl StateUpdateResult {
 
 /// Adjudicates a two player turn based game
 ///
+/// Curried args include MOVER_PUBKEY, WAITER_PUBKEY, TIMEOUT, AMOUNT, etc.
+///
 /// MOVE, VALIDATION_HASH and MOVER_SHARE were all accepted optimistically from the
-/// last move
+/// last move.
 ///
 /// Both VALIDATION_HASH values are a sha256 of a validation program hash and the
-/// shatree of a state
+/// shatree of a state.
 ///
-/// The next validation program hash may be nil which means no futher moves are
-/// allowed
+/// The next validation program hash may be nil which means no further moves are
+/// allowed.
 ///
-/// MOVER_SHARE is how much the mover will get if they fold/accept
-/// MOD_HASH should be the shatree of referee itself
-/// NONCE is for anti-replay prevention
+/// MOVER_SHARE is how much the mover will get if they fold/accept.
+/// MOD_HASH should be the shatree of referee itself.
+/// NONCE is for anti-replay prevention.
 ///
-/// If action is timeout args is nil
+/// If action is timeout, args is (mover_payout_ph waiter_payout_ph).
+///   Authorized via AGG_SIG_UNSAFE with pre-signed payout signatures.
 ///
-/// If action is slash args is (state validation_program mover_puzzle solution
-/// evidence)
+/// If action is slash, args is (state validation_program evidence output_conditions).
+///   Authorized via AGG_SIG_ME MOVER_PUBKEY (shatree args).
 ///
-/// If action is move args is (new_move new_validation_info_hash new_mover_share
-/// mover_puzzle solution)
-///
-/// validation programs get passed this:
-/// ((last_move
-///   next_validation_hash
-///   my_share
-///   me_hash
-///   my_puzzle_hash
-///   opponent_puzzle_hash
-///   amount
-///   timeout
-///   max_move_size
-///   referee_hash)
-///  state
-///  me
-///  mover_puzzle
-///  solution
-///  evidence
-///  )
+/// If action is move, args is (new_move infohash_c new_mover_share new_max_move_size).
+///   Authorized via AGG_SIG_ME MOVER_PUBKEY (shatree args).
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct RefereePuzzleArgs {
-    pub mover_puzzle_hash: PuzzleHash,
-    pub waiter_puzzle_hash: PuzzleHash,
+    pub mover_pubkey: PublicKey,
+    pub waiter_pubkey: PublicKey,
     pub timeout: Timeout,
     pub amount: Amount,
     pub nonce: usize,
@@ -236,15 +220,15 @@ impl RefereePuzzleArgs {
         my_turn: bool,
     ) -> Self {
         RefereePuzzleArgs {
-            mover_puzzle_hash: if my_turn {
-                fixed_info.my_identity.puzzle_hash.clone()
+            mover_pubkey: if my_turn {
+                fixed_info.my_identity.public_key.clone()
             } else {
-                fixed_info.their_referee_puzzle_hash.clone()
+                fixed_info.their_referee_pubkey.clone()
             },
-            waiter_puzzle_hash: if my_turn {
-                fixed_info.their_referee_puzzle_hash.clone()
+            waiter_pubkey: if my_turn {
+                fixed_info.their_referee_pubkey.clone()
             } else {
-                fixed_info.my_identity.puzzle_hash.clone()
+                fixed_info.my_identity.public_key.clone()
             },
             timeout: fixed_info.timeout.clone(),
             amount: fixed_info.amount.clone(),
@@ -258,15 +242,15 @@ impl RefereePuzzleArgs {
 
     pub fn swap(&self) -> RefereePuzzleArgs {
         RefereePuzzleArgs {
-            mover_puzzle_hash: self.waiter_puzzle_hash.clone(),
-            waiter_puzzle_hash: self.mover_puzzle_hash.clone(),
+            mover_pubkey: self.waiter_pubkey.clone(),
+            waiter_pubkey: self.mover_pubkey.clone(),
             ..self.clone()
         }
     }
 
     pub fn off_chain(&self) -> RefereePuzzleArgs {
         let mut new_result: RefereePuzzleArgs = self.clone();
-        new_result.waiter_puzzle_hash = PuzzleHash::default();
+        new_result.waiter_pubkey = PublicKey::default();
         new_result
     }
 }
@@ -277,11 +261,11 @@ where
 {
     fn to_clvm(&self, encoder: &mut E) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
         [
-            self.mover_puzzle_hash.to_clvm(encoder)?,
-            if self.waiter_puzzle_hash == PuzzleHash::default() {
+            self.mover_pubkey.to_clvm(encoder)?,
+            if self.waiter_pubkey == PublicKey::default() {
                 encoder.encode_atom(clvm_traits::Atom::Borrowed(&[]))?
             } else {
-                self.waiter_puzzle_hash.to_clvm(encoder)?
+                self.waiter_pubkey.to_clvm(encoder)?
             },
             self.timeout.to_clvm(encoder)?,
             self.amount.to_clvm(encoder)?,
@@ -330,32 +314,10 @@ pub fn curry_referee_puzzle(
     Puzzle::from_nodeptr(allocator, curried_program_nodeptr)
 }
 
-/// Type of arguments for validator move queries.
-///
-/// The result will be coin conditions via the mover puzzle run with solution.
-/// We'll check that the mover puzzle produces a coin whose puzzle hash is the
-/// puzzle hash of the next referee coin for the right amount (the game's amount).
-///
-/// A remark is added which encodes the arguments that are required for off chain
-/// interpretation containing:
-///
-/// - new_move
-/// - new_validation_info_hash
-/// - new_mover_share
-/// - new_max_move_size
-///
-/// If we can spend the resulting coin and validate these remark items i think
-/// we're good.
-///
-/// From my perspective, I always validate 'their' turn.
-///
-/// Mover puzzle is a wallet puzzle for an ordinary value coin and the solution
-/// is next to it.
-///
+/// Arguments passed to the validator (state update program) for move queries.
+/// Contains the game state and evidence for validation.
 pub struct StateUpdateMoveArgs {
     pub state: Rc<Program>,
-    pub mover_puzzle: Rc<Program>,
-    pub solution: Rc<Program>,
     pub evidence: Rc<Program>,
 }
 
@@ -365,10 +327,7 @@ impl StateUpdateMoveArgs {
         allocator: &mut AllocEncoder,
         me: StateUpdateProgram,
     ) -> Result<NodePtr, Error> {
-        (
-            &self.state,
-            (me, [&self.mover_puzzle, &self.solution, &self.evidence]),
-        )
+        (&self.state, (me, (&self.evidence, ())))
             .to_clvm(allocator)
             .into_gen()
     }
@@ -459,30 +418,33 @@ impl OnChainRefereeMoveData {
         fixed: &RMFixed,
         coin_string: &CoinString,
     ) -> Result<OnChainRefereeMove, Error> {
-        let new_puzzle_hash = curry_referee_puzzle_hash(
-            allocator,
-            &fixed.referee_coin_puzzle_hash,
-            &self.after_args,
-        )?;
-        let inner_conditions = [(
-            CREATE_COIN,
-            (new_puzzle_hash.clone(), (fixed.amount.clone(), ())),
-        )]
-        .to_clvm(allocator)
-        .into_gen()?;
-
-        // Generalize this once the test is working.  Move out the assumption that
-        // referee private key is my_identity.synthetic_private_key.
         debug!("referee spend with parent coin {coin_string:?}");
-        let referee_spend = standard_solution_partial(
+
+        let infohash_c = ValidationInfo::new_state_update(
             allocator,
-            &fixed.my_identity.synthetic_private_key,
+            self.validation_program.clone(),
+            self.state.clone(),
+        );
+        let solution_args_node = (
+            allocator.encode_atom(clvm_traits::Atom::Borrowed(&self.new_move.basic.move_made)).into_gen()?,
+            (
+                infohash_c.hash(),
+                (
+                    self.new_move.basic.mover_share.clone(),
+                    (self.new_move.basic.max_move_size, ()),
+                ),
+            ),
+        )
+            .to_clvm(allocator)
+            .into_gen()?;
+        let message = Node(solution_args_node).sha256tree(allocator);
+
+        let signature = sign_agg_sig_me(
+            &fixed.my_identity.private_key,
+            message.bytes(),
             &coin_string.to_coin_id(),
-            inner_conditions,
-            &fixed.my_identity.synthetic_public_key,
             &fixed.agg_sig_me_additional_data,
-            false,
-        )?;
+        );
 
         Ok(OnChainRefereeMove {
             game_move: self.new_move.clone(),
@@ -490,11 +452,7 @@ impl OnChainRefereeMoveData {
             after_puzzle_args: self.after_args.clone(),
             state: self.state.clone(),
             validation_program: self.validation_program.clone(),
-            mover_coin: IdentityCoinAndSolution {
-                mover_coin_puzzle: fixed.my_identity.puzzle.clone(),
-                mover_coin_spend_solution: referee_spend.solution.p(),
-                mover_coin_spend_signature: referee_spend.signature.clone(),
-            },
+            signature,
         })
     }
 }
@@ -507,31 +465,7 @@ pub struct OnChainRefereeSlashData {
     pub puzzle_args: Rc<RefereePuzzleArgs>,
 }
 
-/// A puzzle for a coin that will be run inside the referee to generate
-/// conditions that are acted on to spend the referee coin.
-/// The referee knows the mover puzzle hash, so we've already decided what
-/// puzzle this is.  It is usually the standard coin puzzle from the user's
-/// ChiaIdentity.
-///
-/// This groups that with the solution.
-#[derive(Debug, Clone)]
-pub struct IdentityCoinAndSolution {
-    /// A puzzle for a coin that will be run inside the referee to generate
-    /// conditions that are acted on to spend the referee coin.
-    /// The referee knows the mover puzzle hash, so we've already decided what
-    /// puzzle this is.  It is usually the standard coin puzzle from the user's
-    /// ChiaIdentity.
-    pub mover_coin_puzzle: Puzzle,
-    /// A solution for the above puzzle that the onchain referee applies to
-    /// extract the puzzle output conditions.  The spend results in a re-formed
-    /// referee on chain.
-    pub mover_coin_spend_solution: Rc<Program>,
-    /// The signature, which may be over part of the solution or something
-    /// derived from it.
-    pub mover_coin_spend_signature: Aggsig,
-}
-
-/// Dynamic arguments passed to the on chain refere to apply a move
+/// Dynamic arguments passed to the on chain referee to apply a move
 #[derive(Debug, Clone)]
 pub struct OnChainRefereeMove {
     /// The new move to make
@@ -545,12 +479,11 @@ pub struct OnChainRefereeMove {
     pub before_puzzle_args: Rc<RefereePuzzleArgs>,
     #[allow(dead_code)]
     pub after_puzzle_args: Rc<RefereePuzzleArgs>,
-    /// Coin puzzle and solution that are used to generate conditions for the
-    /// next generation of the on chain refere coin.
-    pub mover_coin: IdentityCoinAndSolution,
+    /// AGG_SIG_ME signature authorizing this move
+    pub signature: Aggsig,
 }
 
-/// Dynamic arguments passed to the on chain refere to apply a slash
+/// Dynamic arguments passed to the on chain referee to apply a slash
 #[derive(Debug, Clone)]
 pub struct OnChainRefereeSlash {
     /// Validation program that relates to this move.
@@ -559,60 +492,58 @@ pub struct OnChainRefereeSlash {
     /// State before this validation program ran.
     pub state: Rc<Program>,
 
-    /// Coin puzzle and solution that are used to generate conditions for the
-    /// next generation of the on chain refere coin.
-    pub mover_coin: IdentityCoinAndSolution,
-
     /// clvm data about the slash.
     pub evidence: Evidence,
+
+    /// Output conditions provided by the slasher (e.g. CREATE_COIN to their wallet)
+    pub output_conditions: Rc<Program>,
+
+    /// AGG_SIG_ME signature authorizing this slash
+    pub signature: Aggsig,
 }
 
 /// onchain referee solution
 ///
-/// This represents the whole solution for the on chain referee.
-///
-/// It is a solution itself, but the referee coin uses the mover puzzle as a
-/// puzzle for a coin that represents the user's identity ... most likely a
-/// standard puzzle.
+/// Timeout: (mover_payout_ph waiter_payout_ph)
+/// Move: (new_move infohash_c new_mover_share new_max_move_size)
+/// Slash: (previous_state previous_validation_program evidence output_conditions)
 #[derive(Debug, Clone)]
 pub enum OnChainRefereeSolution {
-    Timeout,
+    Timeout {
+        mover_payout_ph: PuzzleHash,
+        waiter_payout_ph: PuzzleHash,
+        aggregate_signature: Aggsig,
+    },
     Move(Rc<OnChainRefereeMove>),
     #[allow(dead_code)]
     Slash(Rc<OnChainRefereeSlash>),
 }
 
 impl OnChainRefereeSolution {
-    // Get the standard solution for these referee arguments.
-    // We will sign it with the synthetic private key if it exists.
     pub fn get_signature(&self) -> Option<Aggsig> {
         match self {
-            OnChainRefereeSolution::Timeout => None,
-            OnChainRefereeSolution::Move(refmove) => {
-                Some(refmove.mover_coin.mover_coin_spend_signature.clone())
+            OnChainRefereeSolution::Timeout { aggregate_signature, .. } => {
+                Some(aggregate_signature.clone())
             }
-            OnChainRefereeSolution::Slash(refslash) => {
-                Some(refslash.mover_coin.mover_coin_spend_signature.clone())
-            }
+            OnChainRefereeSolution::Move(refmove) => Some(refmove.signature.clone()),
+            OnChainRefereeSolution::Slash(refslash) => Some(refslash.signature.clone()),
         }
     }
 
     pub fn to_nodeptr(
         &self,
         encoder: &mut AllocEncoder,
-        fixed: &RMFixed,
+        _fixed: &RMFixed,
     ) -> Result<NodePtr, Error> {
         match self {
-            OnChainRefereeSolution::Timeout => encoder
-                .encode_atom(clvm_traits::Atom::Borrowed(&[]))
+            OnChainRefereeSolution::Timeout {
+                mover_payout_ph,
+                waiter_payout_ph,
+                ..
+            } => (mover_payout_ph.clone(), (waiter_payout_ph.clone(), ()))
+                .to_clvm(encoder)
                 .into_gen(),
             OnChainRefereeSolution::Move(refmove) => {
-                let refmove_coin_solution_ref: &Program =
-                    refmove.mover_coin.mover_coin_spend_solution.borrow();
-                assert_eq!(
-                    refmove.mover_coin.mover_coin_puzzle.sha256tree(encoder),
-                    fixed.my_identity.puzzle_hash
-                );
                 let move_atom = encoder
                     .encode_atom(clvm_traits::Atom::Borrowed(
                         &refmove.game_move.basic.move_made,
@@ -630,35 +561,25 @@ impl OnChainRefereeSolution {
                         infohash_c.hash(),
                         (
                             refmove.game_move.basic.mover_share.clone(),
-                            (
-                                refmove.game_move.basic.max_move_size,
-                                (
-                                    refmove.mover_coin.mover_coin_puzzle.clone(),
-                                    (refmove_coin_solution_ref, ()),
-                                ),
-                            ),
+                            (refmove.game_move.basic.max_move_size, ()),
                         ),
                     ),
                 )
                     .to_clvm(encoder)
                     .into_gen()
             }
-            OnChainRefereeSolution::Slash(refslash) => {
-                let refslash_solution_ref: &Program =
-                    refslash.mover_coin.mover_coin_spend_solution.borrow();
+            OnChainRefereeSolution::Slash(refslash) => (
+                refslash.state.clone(),
                 (
-                    refslash.state.clone(),
+                    refslash.validation_program.clone(),
                     (
-                        refslash.validation_program.clone(),
-                        (
-                            refslash.mover_coin.mover_coin_puzzle.clone(),
-                            (refslash_solution_ref, (refslash.evidence.clone(), ())),
-                        ),
+                        refslash.evidence.clone(),
+                        (refslash.output_conditions.clone(), ()),
                     ),
-                )
-                    .to_clvm(encoder)
-                    .into_gen()
-            }
+                ),
+            )
+                .to_clvm(encoder)
+                .into_gen(),
         }
     }
 }

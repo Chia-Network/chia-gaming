@@ -22,24 +22,24 @@ use crate::channel_handler::types::{
     prepend_rem_conditions, AcceptTransactionState, CachedPotatoRegenerateLastHop,
     ChannelCoinSpendInfo, ChannelCoinSpentResult, ChannelHandlerEnv,
     ChannelHandlerInitiationResult, ChannelHandlerMoveResult, ChannelHandlerPrivateKeys,
-    ChannelHandlerUnrollSpendInfo, CoinDataForReward, CoinSpentAccept, CoinSpentDisposition,
+    ChannelHandlerUnrollSpendInfo, CoinSpentAccept, CoinSpentDisposition,
     CoinSpentInformation, CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartFailed,
     GameStartInfoInterface, HandshakeResult, LiveGame, MoveResult, OnChainGameCoin,
     OnChainGameState, PotatoAcceptCachedData, PotatoMoveCachedData, PotatoSignatures, ReadableMove,
     StartGameResult, UnrollCoin, UnrollCoinConditionInputs, UnrollTarget,
 };
 
-use crate::common::constants::{CREATE_COIN, DEFAULT_HIDDEN_PUZZLE_HASH};
+use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
-    calculate_synthetic_secret_key, private_to_public_key, puzzle_for_pk,
-    puzzle_for_synthetic_public_key, puzzle_hash_for_pk, puzzle_hash_for_synthetic_public_key,
+    private_to_public_key, puzzle_for_pk,
+    puzzle_for_synthetic_public_key, puzzle_hash_for_synthetic_public_key,
     standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::Sha256Input;
 use crate::common::types::{
     usize_from_atom, Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID,
-    CoinSpend, CoinString, Error, GameID, GetCoinStringParts, Hash, IntoErr, Node, PrivateKey,
-    Program, PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend, SpendBundle, SpendRewardResult,
+    CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey,
+    Program, PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend, SpendBundle,
     Timeout,
 };
 use crate::potato_handler::types::GameAction;
@@ -92,8 +92,9 @@ pub struct ChannelHandler {
 
     their_channel_coin_public_key: PublicKey,
     their_unroll_coin_public_key: PublicKey,
-    their_referee_puzzle_hash: PuzzleHash,
+    their_referee_pubkey: PublicKey,
     their_reward_puzzle_hash: PuzzleHash,
+    their_reward_payout_signature: Aggsig,
     reward_puzzle_hash: PuzzleHash,
 
     my_out_of_game_balance: Amount,
@@ -309,18 +310,15 @@ impl ChannelHandler {
         their_balance: Amount,
         puzzle_hashes_and_amounts: &[(PuzzleHash, Amount)],
     ) -> UnrollCoinConditionInputs {
-        let my_referee_public_key =
-            private_to_public_key(&self.private_keys.my_referee_private_key);
-        let inputs = UnrollCoinConditionInputs {
-            ref_pubkey: my_referee_public_key,
-            their_referee_puzzle_hash: self.their_referee_puzzle_hash.clone(),
+        UnrollCoinConditionInputs {
+            my_reward_puzzle_hash: self.reward_puzzle_hash.clone(),
+            their_reward_puzzle_hash: self.their_reward_puzzle_hash.clone(),
             my_balance,
             their_balance,
             puzzle_hashes_and_amounts: puzzle_hashes_and_amounts.to_vec(),
             rem_condition_state: self.current_state_number,
             unroll_timeout: self.unroll_advance_timeout.to_u64(),
-        };
-        inputs
+        }
     }
 
     pub fn state_channel_coin(&self) -> &CoinString {
@@ -471,8 +469,9 @@ impl ChannelHandler {
         we_start_with_potato: bool,
         their_channel_pubkey: PublicKey,
         their_unroll_pubkey: PublicKey,
-        their_referee_puzzle_hash: PuzzleHash,
+        their_referee_pubkey: PublicKey,
         their_reward_puzzle_hash: PuzzleHash,
+        their_reward_payout_signature: Aggsig,
         my_contribution: Amount,
         their_contribution: Amount,
         unroll_advance_timeout: Timeout,
@@ -503,8 +502,9 @@ impl ChannelHandler {
         let mut myself = ChannelHandler {
             their_channel_coin_public_key: their_channel_pubkey.clone(),
             their_unroll_coin_public_key: their_unroll_pubkey.clone(),
-            their_referee_puzzle_hash: their_referee_puzzle_hash.clone(),
+            their_referee_pubkey: their_referee_pubkey.clone(),
             their_reward_puzzle_hash: their_reward_puzzle_hash.clone(),
+            their_reward_payout_signature: their_reward_payout_signature.clone(),
             my_out_of_game_balance: my_contribution.clone(),
             their_out_of_game_balance: their_contribution.clone(),
             unroll_advance_timeout: unroll_advance_timeout.clone(),
@@ -875,7 +875,9 @@ impl ChannelHandler {
                 ref_ph,
                 g,
                 referee_identity,
-                &self.their_referee_puzzle_hash,
+                &self.their_referee_pubkey,
+                &self.their_reward_puzzle_hash,
+                &self.their_reward_payout_signature,
                 &self.reward_puzzle_hash,
                 new_game_nonce,
                 &agg_sig_me,
@@ -2224,9 +2226,6 @@ impl ChannelHandler {
             disposition.as_ref().and_then(|d| d.skip_coin_id.as_ref()),
         )?;
 
-        // coin with = parent is the unroll coin id and whose puzzle hash is ref and amount is my vanilla amount.
-        let referee_public_key = private_to_public_key(&self.referee_private_key());
-        let referee_puzzle_hash = puzzle_hash_for_pk(env.allocator, &referee_public_key)?;
         let adjusted_amount = disposition
             .as_ref()
             .map(|d| d.our_contribution_adjustment.clone())
@@ -2235,7 +2234,7 @@ impl ChannelHandler {
         Ok(CoinSpentResult {
             my_clean_reward_coin_string_up: CoinString::from_parts(
                 &unroll_coin.to_coin_id(),
-                &referee_puzzle_hash.clone(),
+                &self.reward_puzzle_hash,
                 &(self.my_out_of_game_balance.clone() + adjusted_amount),
             ),
             new_game_coins_on_chain,
@@ -2275,92 +2274,6 @@ impl ChannelHandler {
     // Makes a single coin whose puzzle hash is the specified one and amount is
     // equal to all the inputs.
     //
-    // All coin strings coming in should have the referee pubkey's standard puzzle
-    // hash as their puzzle hash.
-    pub fn spend_reward_coins<R: Rng>(
-        &self,
-        env: &mut ChannelHandlerEnv<R>,
-        coins: &[CoinString],
-        target_puzzle_hash: &PuzzleHash,
-    ) -> Result<SpendRewardResult, Error> {
-        let mut total_amount = Amount::default();
-        let mut exploded_coins = Vec::with_capacity(coins.len());
-        let my_referee_public_key =
-            private_to_public_key(&self.private_keys.my_referee_private_key);
-        let referee_puzzle_hash = puzzle_hash_for_pk(env.allocator, &my_referee_public_key)?;
-
-        for c in coins.iter() {
-            let (_parent, ph, amount) = c.get_coin_string_parts()?;
-            assert_eq!(ph, referee_puzzle_hash);
-            total_amount += amount.clone();
-            exploded_coins.push(CoinDataForReward {
-                coin_string: c.clone(),
-                // parent,
-                // puzzle_hash: ph,
-                // amount,
-            });
-        }
-
-        let mut coins_with_solutions = Vec::with_capacity(exploded_coins.len());
-        let default_hidden_puzzle_hash = Hash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH);
-        let synthetic_referee_private_key = calculate_synthetic_secret_key(
-            &self.private_keys.my_referee_private_key,
-            &default_hidden_puzzle_hash,
-        )?;
-        let puzzle = puzzle_for_pk(env.allocator, &my_referee_public_key)?;
-
-        for (i, coin) in exploded_coins.iter().enumerate() {
-            let parent_id = coin.coin_string.to_coin_id();
-            let conditions = if i == 0 {
-                (
-                    (
-                        CREATE_COIN,
-                        (target_puzzle_hash.clone(), (total_amount.clone(), ())),
-                    ),
-                    (),
-                )
-                    .to_clvm(env.allocator)
-                    .into_gen()?
-            } else {
-                ().to_clvm(env.allocator).into_gen()?
-            };
-
-            let spend = standard_solution_partial(
-                env.allocator,
-                &synthetic_referee_private_key,
-                &parent_id,
-                conditions,
-                &my_referee_public_key,
-                &env.agg_sig_me_additional_data,
-                false,
-            )?;
-
-            coins_with_solutions.push(CoinSpend {
-                coin: coin.coin_string.clone(),
-                bundle: Spend {
-                    puzzle: puzzle.clone(),
-                    solution: spend.solution.clone(),
-                    signature: spend.signature.clone(),
-                },
-            });
-        }
-
-        let result_coin_parent = if let Some(coin) = exploded_coins.first() {
-            coin.coin_string.clone()
-        } else {
-            return Err(Error::StrErr("no reward coins to spend".to_string()));
-        };
-
-        Ok(SpendRewardResult {
-            coins_with_solutions,
-            result_coin_string_up: CoinString::from_parts(
-                &result_coin_parent.to_coin_id(),
-                target_puzzle_hash,
-                &total_amount,
-            ),
-        })
-    }
-
     // Inititate a simple on chain spend.
     //
     // Currently used for testing but might be used elsewhere.
@@ -2379,66 +2292,6 @@ impl ChannelHandler {
             my_amount: self.my_out_of_game_balance.clone(),
             their_amount: self.their_out_of_game_balance.clone(),
         })
-    }
-
-    /// Find the first created coin whose puzzle hash matches our referee key.
-    pub fn find_my_reward_coin<R: Rng>(
-        &self,
-        env: &mut ChannelHandlerEnv<R>,
-        parent_coin: &CoinString,
-        conditions: &[CoinCondition],
-    ) -> Result<CoinString, Error> {
-        let referee_public_key = private_to_public_key(&self.private_keys.my_referee_private_key);
-        let referee_puzzle_hash = puzzle_hash_for_pk(env.allocator, &referee_public_key)?;
-        let parent_coin_id = parent_coin.to_coin_id();
-
-        conditions
-            .iter()
-            .find_map(|c| {
-                if let CoinCondition::CreateCoin(ph, amt) = c {
-                    if ph == &referee_puzzle_hash && amt > &Amount::default() {
-                        return Some(CoinString::from_parts(&parent_coin_id, ph, amt));
-                    }
-                }
-                None
-            })
-            .ok_or_else(|| Error::StrErr("no reward coin found for our puzzle hash".to_string()))
-    }
-
-    pub fn handle_reward_spends<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<R>,
-        coin_id: &CoinString,
-        conditions: &[CoinCondition],
-    ) -> Result<Option<SpendBundle>, Error> {
-        let referee_public_key = private_to_public_key(&self.private_keys.my_referee_private_key);
-        let referee_puzzle_hash = puzzle_hash_for_pk(env.allocator, &referee_public_key)?;
-        let parent_coin_id = coin_id.to_coin_id();
-
-        let pay_to_me: Vec<CoinString> = conditions
-            .iter()
-            .filter_map(|c| {
-                if let CoinCondition::CreateCoin(ph, amt) = c {
-                    if ph == &referee_puzzle_hash && amt > &Amount::default() {
-                        return Some(CoinString::from_parts(&parent_coin_id, ph, amt));
-                    }
-                }
-
-                None
-            })
-            .collect();
-
-        if !pay_to_me.is_empty() {
-            // Check for conditions that pay us
-            let reward_puzzle_hash = self.get_reward_puzzle_hash(env)?;
-            let spend_rewards = self.spend_reward_coins(env, &pay_to_me, &reward_puzzle_hash)?;
-            return Ok(Some(SpendBundle {
-                name: Some("spend reward".to_string()),
-                spends: spend_rewards.coins_with_solutions,
-            }));
-        }
-
-        Ok(None)
     }
 
     pub fn get_game_state_id<R: Rng>(&self, env: &mut ChannelHandlerEnv<R>) -> Result<Hash, Error> {

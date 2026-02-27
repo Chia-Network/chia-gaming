@@ -17,7 +17,8 @@ use crate::channel_handler::types::{
 use crate::channel_handler::game;
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::{
-    private_to_public_key, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
+    private_to_public_key, puzzle_for_synthetic_public_key,
+    sign_reward_payout, verify_reward_payout_signature,
 };
 use crate::common::types::{
     chia_dialect, Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error,
@@ -377,7 +378,7 @@ impl PotatoHandler {
 
     pub fn start<R: Rng>(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        _env: &mut ChannelHandlerEnv<'_, R>,
         parent_coin: CoinString,
     ) -> Result<Option<Effect>, Error> {
         let channel_public_key =
@@ -385,7 +386,10 @@ impl PotatoHandler {
         let unroll_public_key =
             private_to_public_key(&self.private_keys.my_unroll_coin_private_key);
         let referee_public_key = private_to_public_key(&self.private_keys.my_referee_private_key);
-        let referee_puzzle_hash = puzzle_hash_for_pk(env.allocator, &referee_public_key)?;
+        let reward_payout_sig = sign_reward_payout(
+            &self.private_keys.my_referee_private_key,
+            &self.reward_puzzle_hash,
+        );
 
         assert!(matches!(self.handshake_state, HandshakeState::StepA));
         let my_hs_info = HandshakeA {
@@ -393,8 +397,9 @@ impl PotatoHandler {
             simple: HandshakeB {
                 channel_public_key,
                 unroll_public_key,
-                referee_puzzle_hash,
+                referee_pubkey: referee_public_key,
                 reward_puzzle_hash: self.reward_puzzle_hash.clone(),
+                reward_payout_signature: reward_payout_sig,
             },
         };
         self.handshake_state =
@@ -1257,6 +1262,15 @@ impl PotatoHandler {
         msg: &HandshakeB,
         env: &mut ChannelHandlerEnv<'_, R>,
     ) -> Result<(ChannelHandler, ChannelHandlerInitiationResult), Error> {
+        if !verify_reward_payout_signature(
+            &msg.referee_pubkey,
+            &msg.reward_puzzle_hash,
+            &msg.reward_payout_signature,
+        ) {
+            return Err(Error::Channel(
+                "Invalid reward payout signature in handshake".to_string(),
+            ));
+        }
         ChannelHandler::new(
             env,
             self.private_keys.clone(),
@@ -1264,8 +1278,9 @@ impl PotatoHandler {
             start_potato,
             msg.channel_public_key.clone(),
             msg.unroll_public_key.clone(),
-            msg.referee_puzzle_hash.clone(),
+            msg.referee_pubkey.clone(),
             msg.reward_puzzle_hash.clone(),
+            msg.reward_payout_signature.clone(),
             self.my_contribution.clone(),
             self.their_contribution.clone(),
             self.unroll_timeout.clone(),
@@ -1332,14 +1347,17 @@ impl PotatoHandler {
                     private_to_public_key(&self.private_keys.my_unroll_coin_private_key);
                 let referee_public_key =
                     private_to_public_key(&self.private_keys.my_referee_private_key);
-                let referee_puzzle_hash =
-                    puzzle_hash_for_pk(env.allocator, &referee_public_key)?;
+                let reward_payout_sig = sign_reward_payout(
+                    &self.private_keys.my_referee_private_key,
+                    &self.reward_puzzle_hash,
+                );
 
                 let our_handshake_data = HandshakeB {
                     channel_public_key,
                     unroll_public_key,
                     reward_puzzle_hash: self.reward_puzzle_hash.clone(),
-                    referee_puzzle_hash,
+                    referee_pubkey: referee_public_key,
+                    reward_payout_signature: reward_payout_sig,
                 };
 
                 {
@@ -1386,14 +1404,17 @@ impl PotatoHandler {
                     private_to_public_key(&channel_handler.unroll_private_key());
                 let referee_public_key =
                     private_to_public_key(&self.private_keys.my_referee_private_key);
-                let referee_puzzle_hash =
-                    puzzle_hash_for_pk(env.allocator, &referee_public_key)?;
+                let reward_payout_sig = sign_reward_payout(
+                    &self.private_keys.my_referee_private_key,
+                    &self.reward_puzzle_hash,
+                );
 
                 let my_hs_info = HandshakeB {
                     channel_public_key,
                     unroll_public_key,
                     reward_puzzle_hash: self.reward_puzzle_hash.clone(),
-                    referee_puzzle_hash,
+                    referee_pubkey: referee_public_key,
+                    reward_payout_signature: reward_payout_sig,
                 };
 
                 self.channel_handler = Some(channel_handler);
@@ -1908,9 +1929,16 @@ impl PotatoHandler {
             let conditions =
                 CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
 
-            let reward_coin = player_ch
-                .find_my_reward_coin(env, unroll_coin, &conditions)
-                .ok();
+            let reward_puzzle_hash = player_ch.get_reward_puzzle_hash(env)?;
+            let unroll_coin_id = unroll_coin.to_coin_id();
+            let reward_coin = conditions.iter().find_map(|c| {
+                if let CoinCondition::CreateCoin(ph, amt) = c {
+                    if *ph == reward_puzzle_hash && *amt > Amount::default() {
+                        return Some(CoinString::from_parts(&unroll_coin_id, ph, amt));
+                    }
+                }
+                None
+            });
             effects.push(Effect::Notification(GameNotification::UnrollCoinSpent { reward_coin }));
 
             let created_coins: Vec<PuzzleHash> = conditions
@@ -2298,19 +2326,6 @@ impl SpendWalletReceiver for PotatoHandler
                 effects.push(Effect::Notification(notification));
                 effects.extend(on_chain.next_action(env)?);
                 return Ok(effects);
-            }
-        }
-
-        if let Some((puzzle, solution)) = puzzle_and_solution {
-            let spend_bundle = {
-                let player_ch = self.channel_handler_mut()?;
-                let conditions =
-                    CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
-                player_ch.handle_reward_spends(env, coin_id, &conditions)?
-            };
-
-            if let Some(spend_bundle) = spend_bundle {
-                effects.extend(Some(Effect::SpendTransaction(spend_bundle)));
             }
         }
 

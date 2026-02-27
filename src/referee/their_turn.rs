@@ -16,10 +16,10 @@ use crate::channel_handler::types::{
 };
 
 use crate::common::constants::CREATE_COIN;
-use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
+use crate::common::standard_coin::{sign_agg_sig_me, ChiaIdentity};
 use crate::common::types::{
-    u64_from_atom, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, Hash,
-    IntoErr, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Spend,
+    u64_from_atom, Aggsig, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error,
+    Hash, IntoErr, Node, Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend,
 };
 use crate::referee::types::{
     GameMoveDetails, GameMoveStateInfo, RMFixed, SlashOutcome, TheirTurnCoinSpentResult,
@@ -27,7 +27,7 @@ use crate::referee::types::{
 };
 use crate::referee::my_turn::{MyTurnReferee, MyTurnRefereeGameState};
 use crate::referee::types::{
-    curry_referee_puzzle, curry_referee_puzzle_hash, IdentityCoinAndSolution,
+    curry_referee_puzzle, curry_referee_puzzle_hash,
     InternalStateUpdateArgs, OnChainRefereeMoveData, OnChainRefereeSlash, OnChainRefereeSlashData,
     OnChainRefereeSolution, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
     REM_CONDITION_FIELDS,
@@ -126,7 +126,9 @@ impl TheirTurnReferee {
         referee_coin_puzzle_hash: PuzzleHash,
         game_start_info: &Rc<dyn GameStartInfoInterface>,
         my_identity: ChiaIdentity,
-        their_puzzle_hash: &PuzzleHash,
+        their_pubkey: &PublicKey,
+        their_reward_puzzle_hash: &PuzzleHash,
+        their_reward_payout_signature: &Aggsig,
         reward_puzzle_hash: &PuzzleHash,
         nonce: usize,
         agg_sig_me_additional_data: &Hash,
@@ -144,8 +146,10 @@ impl TheirTurnReferee {
         let fixed_info = Rc::new(RMFixed {
             referee_coin_puzzle,
             referee_coin_puzzle_hash: referee_coin_puzzle_hash.clone(),
-            their_referee_puzzle_hash: their_puzzle_hash.clone(),
+            their_referee_pubkey: their_pubkey.clone(),
+            their_reward_payout_signature: their_reward_payout_signature.clone(),
             reward_puzzle_hash: reward_puzzle_hash.clone(),
+            their_reward_puzzle_hash: their_reward_puzzle_hash.clone(),
             my_identity: my_identity.clone(),
             timeout: game_start_info.timeout().clone(),
             amount: game_start_info.amount().clone(),
@@ -180,13 +184,13 @@ impl TheirTurnReferee {
         // If this reflects my turn, then we will spend the next parameter set.
         if my_turn {
             assert_eq!(
-                fixed_info.my_identity.puzzle_hash,
-                ref_puzzle_args.mover_puzzle_hash
+                fixed_info.my_identity.public_key,
+                ref_puzzle_args.mover_pubkey
             );
         } else {
             assert_eq!(
-                fixed_info.their_referee_puzzle_hash,
-                ref_puzzle_args.mover_puzzle_hash
+                fixed_info.their_referee_pubkey,
+                ref_puzzle_args.mover_pubkey
             );
         }
         let handler = game_start_info.game_handler();
@@ -442,22 +446,12 @@ impl TheirTurnReferee {
         state: Rc<Program>,
         evidence: Evidence,
     ) -> Result<StateUpdateResult, Error> {
-        let solution = self.fixed.my_identity.standard_solution(
-            allocator,
-            &[(
-                self.fixed.my_identity.puzzle_hash.clone(),
-                Amount::default(),
-            )],
-        )?;
-        let solution_program = Rc::new(Program::from_nodeptr(allocator, solution)?);
         let validator_move_args = InternalStateUpdateArgs {
             validation_program: puzzle_args.validation_program.clone(),
             referee_args: Rc::new(puzzle_args.swap()),
             state_update_args: StateUpdateMoveArgs {
-                evidence: evidence.to_program(),
                 state: state.clone(),
-                mover_puzzle: self.fixed.my_identity.puzzle.to_program(),
-                solution: solution_program,
+                evidence: evidence.to_program(),
             },
         };
         validator_move_args.run(allocator)
@@ -489,16 +483,16 @@ impl TheirTurnReferee {
             Some(puzzle_args.game_move.validation_info_hash.clone())
         };
         let offchain_puzzle_args = Rc::new(RefereePuzzleArgs {
-            mover_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
-            waiter_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
+            mover_pubkey: self.fixed.my_identity.public_key.clone(),
+            waiter_pubkey: self.fixed.their_referee_pubkey.clone(),
             game_move: details.clone(),
             validation_program: validation_program.clone(),
             previous_validation_info_hash: offchain_prev_hash,
             ..ref_puzzle_args.clone()
         });
         let rc_puzzle_args = Rc::new(RefereePuzzleArgs {
-            mover_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
-            waiter_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
+            mover_pubkey: self.fixed.my_identity.public_key.clone(),
+            waiter_pubkey: self.fixed.their_referee_pubkey.clone(),
             game_move: details.clone(),
             validation_program: validation_program.clone(),
             previous_validation_info_hash: Some(puzzle_args.game_move.validation_info_hash.clone()),
@@ -736,8 +730,8 @@ impl TheirTurnReferee {
                 debug!("slash: outcome_ph={expected_ph:?} spent_ph={spent_ph:?} match={}", expected_ph == spent_ph);
 
                 let args = Rc::new(RefereePuzzleArgs {
-                    mover_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
-                    waiter_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
+                    mover_pubkey: self.fixed.my_identity.public_key.clone(),
+                    waiter_pubkey: self.fixed.their_referee_pubkey.clone(),
                     game_move: details.clone(),
                     timeout: self.fixed.timeout.clone(),
                     amount: self.fixed.amount.clone(),
@@ -787,45 +781,45 @@ impl TheirTurnReferee {
             "slash spend: parent coin is {coin_string:?} => {:?}",
             self.fixed.reward_puzzle_hash
         );
-        let slash_conditions = [(
-            CREATE_COIN,
-            (
+
+        let output_conditions_node = (
+            (CREATE_COIN, (
                 self.fixed.reward_puzzle_hash.clone(),
                 (self.fixed.amount.clone(), ()),
-            ),
-        )]
-        .to_clvm(allocator)
-        .into_gen()?;
-        let slash_spend = standard_solution_partial(
-            allocator,
-            &self.fixed.my_identity.synthetic_private_key,
-            &coin_string.to_coin_id(),
-            slash_conditions,
-            &self.fixed.my_identity.synthetic_public_key,
-            &self.fixed.agg_sig_me_additional_data,
-            false,
-        )?;
+            )),
+            (),
+        )
+            .to_clvm(allocator)
+            .into_gen()?;
+        let output_conditions = Rc::new(Program::from_nodeptr(allocator, output_conditions_node)?);
 
-        // Probably readable_info overlaps solution.
-        // Moving handler in that context is the signature.
-        // My reward coin string is the coin that we'll make
-        // after the transaction below has been spent so its
-        // parent is the coin id of that coin.
-        let reward_amount = self.fixed.amount.clone();
-        let mover_coin = IdentityCoinAndSolution {
-            mover_coin_puzzle: self.fixed.my_identity.puzzle.clone(),
-            mover_coin_spend_solution: slash_spend.solution.p(),
-            mover_coin_spend_signature: slash_spend.signature.clone(),
-        };
+        let solution_args_node = (
+            state.clone(),
+            (
+                validation_program.clone(),
+                (evidence.clone(), (output_conditions.clone(), ())),
+            ),
+        )
+            .to_clvm(allocator)
+            .into_gen()?;
+        let message = Node(solution_args_node).sha256tree(allocator);
+        let signature = sign_agg_sig_me(
+            &self.fixed.my_identity.private_key,
+            message.bytes(),
+            &coin_string.to_coin_id(),
+            &self.fixed.agg_sig_me_additional_data,
+        );
 
         let solution = OnChainRefereeSolution::Slash(Rc::new(OnChainRefereeSlash {
             validation_program,
             state,
             evidence,
-            mover_coin,
+            output_conditions,
+            signature: signature.clone(),
         }));
         let slashing_coin_solution = solution.to_nodeptr(allocator, &self.fixed)?;
 
+        let reward_amount = self.fixed.amount.clone();
         let coin_string_of_output_coin = CoinString::from_parts(
             &coin_string.to_coin_id(),
             &self.fixed.reward_puzzle_hash,
@@ -835,12 +829,11 @@ impl TheirTurnReferee {
         Ok(TheirTurnCoinSpentResult::Slash(Box::new(
             SlashOutcome::Reward {
                 transaction: Box::new(CoinSpend {
-                    // Ultimate parent of these coins.
                     coin: coin_string.clone(),
                     bundle: Spend {
                         puzzle: puzzle.clone(),
                         solution: Program::from_nodeptr(allocator, slashing_coin_solution)?.into(),
-                        signature: slash_spend.signature.clone(),
+                        signature,
                     },
                 }),
                 my_reward_coin_string: coin_string_of_output_coin,

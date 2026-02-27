@@ -14,7 +14,8 @@ use crate::channel_handler::types::{
 
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
-    AllocEncoder, Amount, Error, Hash, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree,
+    Aggsig, AllocEncoder, Amount, Error, Hash, Program, ProgramRef, PublicKey, Puzzle, PuzzleHash,
+    Sha256tree,
 };
 use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RMFixed};
 use crate::referee::their_turn::{TheirTurnReferee, TheirTurnRefereeGameState};
@@ -213,7 +214,9 @@ impl MyTurnReferee {
         referee_coin_puzzle_hash: PuzzleHash,
         game_start_info: &Rc<dyn GameStartInfoInterface>,
         my_identity: ChiaIdentity,
-        their_puzzle_hash: &PuzzleHash,
+        their_pubkey: &PublicKey,
+        their_reward_puzzle_hash: &PuzzleHash,
+        their_reward_payout_signature: &Aggsig,
         reward_puzzle_hash: &PuzzleHash,
         nonce: usize,
         agg_sig_me_additional_data: &Hash,
@@ -231,8 +234,10 @@ impl MyTurnReferee {
         let fixed_info = Rc::new(RMFixed {
             referee_coin_puzzle,
             referee_coin_puzzle_hash: referee_coin_puzzle_hash.clone(),
-            their_referee_puzzle_hash: their_puzzle_hash.clone(),
+            their_referee_pubkey: their_pubkey.clone(),
+            their_reward_payout_signature: their_reward_payout_signature.clone(),
             reward_puzzle_hash: reward_puzzle_hash.clone(),
+            their_reward_puzzle_hash: their_reward_puzzle_hash.clone(),
             my_identity: my_identity.clone(),
             timeout: game_start_info.timeout().clone(),
             amount: game_start_info.amount().clone(),
@@ -268,13 +273,13 @@ impl MyTurnReferee {
         // If this reflects my turn, then we will spend the next parameter set.
         if my_turn {
             assert_eq!(
-                fixed_info.my_identity.puzzle_hash,
-                ref_puzzle_args.mover_puzzle_hash
+                fixed_info.my_identity.public_key,
+                ref_puzzle_args.mover_pubkey
             );
         } else {
             assert_eq!(
-                fixed_info.their_referee_puzzle_hash,
-                ref_puzzle_args.mover_puzzle_hash
+                fixed_info.their_referee_pubkey,
+                ref_puzzle_args.mover_pubkey
             );
         }
         let handler = game_start_info.game_handler();
@@ -527,8 +532,8 @@ impl MyTurnReferee {
             Some(ref_puzzle_args.game_move.validation_info_hash.clone())
         };
         let offchain_puzzle_args = Rc::new(RefereePuzzleArgs {
-            mover_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
-            waiter_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
+            mover_pubkey: self.fixed.their_referee_pubkey.clone(),
+            waiter_pubkey: self.fixed.my_identity.public_key.clone(),
             game_move: game_move_details.clone(),
             validation_program: result.outgoing_move_state_update_program.clone(),
             previous_validation_info_hash: offchain_prev_hash,
@@ -542,8 +547,8 @@ impl MyTurnReferee {
         )?;
 
         let rc_puzzle_args = Rc::new(RefereePuzzleArgs {
-            mover_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
-            waiter_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
+            mover_pubkey: self.fixed.their_referee_pubkey.clone(),
+            waiter_pubkey: self.fixed.my_identity.public_key.clone(),
             game_move: game_move_details.clone(),
             validation_program: result.outgoing_move_state_update_program.clone(),
             previous_validation_info_hash: Some(ref_puzzle_args.game_move.validation_info_hash.clone()),
@@ -620,22 +625,12 @@ impl MyTurnReferee {
         state: Rc<Program>,
         evidence: Evidence,
     ) -> Result<Rc<Program>, Error> {
-        let solution = self.fixed.my_identity.standard_solution(
-            allocator,
-            &[(
-                self.fixed.my_identity.puzzle_hash.clone(),
-                Amount::default(),
-            )],
-        )?;
-        let solution_program = Rc::new(Program::from_nodeptr(allocator, solution)?);
         let validator_move_args = InternalStateUpdateArgs {
             validation_program: referee_args.validation_program.clone(),
             referee_args: Rc::new(referee_args.swap()),
             state_update_args: StateUpdateMoveArgs {
                 evidence: evidence.to_program(),
                 state: state.clone(),
-                mover_puzzle: self.fixed.my_identity.puzzle.to_program(),
-                solution: solution_program,
             },
         };
         let result = validator_move_args.run(allocator);

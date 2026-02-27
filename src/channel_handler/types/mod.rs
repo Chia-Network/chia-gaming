@@ -1,7 +1,6 @@
 mod accept_transaction_state;
 mod channel_coin;
 mod channel_handler;
-mod coin_data_for_reward;
 mod coin_identification_by_puzzle_hash;
 mod coin_spent;
 mod evidence;
@@ -24,7 +23,6 @@ pub use channel_handler::{
     ChannelHandlerEnv, ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys,
     ChannelHandlerUnrollSpendInfo, GameStartFailed, StartGameResult,
 };
-pub use coin_data_for_reward::CoinDataForReward;
 pub use coin_identification_by_puzzle_hash::CoinIdentificationByPuzzleHash;
 pub use coin_spent::{
     CoinSpentAccept, CoinSpentDisposition, CoinSpentInformation, CoinSpentMoveUp, CoinSpentResult,

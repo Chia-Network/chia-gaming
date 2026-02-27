@@ -70,6 +70,8 @@ struct Pipe {
 
     #[allow(dead_code)]
     bootstrap_state: Option<WalletBootstrapState>,
+
+    went_on_chain: Option<String>,
 }
 
 #[cfg(test)]
@@ -183,10 +185,11 @@ impl ToLocalUI for Pipe {
     }
 
     fn clean_shutdown_complete(&mut self, _reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
-        todo!();
+        Ok(())
     }
-    fn going_on_chain(&mut self, _reason: &str) -> Result<(), Error> {
-        todo!();
+    fn going_on_chain(&mut self, reason: &str) -> Result<(), Error> {
+        self.went_on_chain = Some(reason.to_string());
+        Ok(())
     }
 }
 
@@ -442,6 +445,8 @@ fn test_peer_smoke() {
         &mut pipe_sender,
     )
     .expect("should work");
+    assert!(pipe_sender[0].went_on_chain.is_none(), "peer 0 went on chain after handshake: {:?}", pipe_sender[0].went_on_chain);
+    assert!(pipe_sender[1].went_on_chain.is_none(), "peer 1 went on chain after handshake: {:?}", pipe_sender[1].went_on_chain);
 
     // Start a game
     let game_ids = {
@@ -498,6 +503,8 @@ fn test_peer_smoke() {
     )
     .expect("should work");
 
+    assert!(pipe_sender[0].went_on_chain.is_none(), "peer 0 went on chain after game start: {:?}", pipe_sender[0].went_on_chain);
+    assert!(pipe_sender[1].went_on_chain.is_none(), "peer 1 went on chain after game start: {:?}", pipe_sender[1].went_on_chain);
     assert!(pipe_sender[0].message_pipe.queue.is_empty());
     assert!(pipe_sender[1].message_pipe.queue.is_empty());
 
@@ -530,6 +537,8 @@ fn test_peer_smoke() {
         .expect("should work");
     }
 
+    assert!(pipe_sender[0].went_on_chain.is_none(), "peer 0 went on chain after moves: {:?}", pipe_sender[0].went_on_chain);
+    assert!(pipe_sender[1].went_on_chain.is_none(), "peer 1 went on chain after moves: {:?}", pipe_sender[1].went_on_chain);
     assert!(pipe_sender[0].message_pipe.queue.is_empty());
     assert!(pipe_sender[1].message_pipe.queue.is_empty());
 
@@ -552,6 +561,8 @@ fn test_peer_smoke() {
     )
     .expect("should work");
 
+    assert!(pipe_sender[0].went_on_chain.is_none(), "peer 0 went on chain after accept: {:?}", pipe_sender[0].went_on_chain);
+    assert!(pipe_sender[1].went_on_chain.is_none(), "peer 1 went on chain after accept: {:?}", pipe_sender[1].went_on_chain);
     assert!(pipe_sender[0].message_pipe.queue.is_empty());
     assert!(pipe_sender[1].message_pipe.queue.is_empty());
 }
