@@ -533,6 +533,52 @@ pub fn assert_event_sequence(events: &[TestEvent], expected: &[ExpectedEvent], p
     }
 }
 
+/// Validates consistency of `reward_coin` across all notifications:
+/// - When `reward_coin` is `Some`, it must be a parseable `CoinString` with amount > 0.
+/// - `our_reward > 0` ↔ `reward_coin.is_some()` for all notification types that
+///   carry both fields.
+pub fn assert_reward_coin_consistency(notifications: &[GameNotification], label: &str) {
+    for n in notifications {
+        match n {
+            GameNotification::WeTimedOut { our_reward, reward_coin, .. }
+            | GameNotification::OpponentTimedOut { our_reward, reward_coin, .. }
+            | GameNotification::OpponentSuccessfullyCheated { our_reward, reward_coin, .. } => {
+                if let Some(rc) = reward_coin {
+                    let parts = rc.to_parts();
+                    assert!(
+                        parts.is_some(),
+                        "{label}: reward_coin is Some but not parseable: {n:?}"
+                    );
+                    let (_, _, amt) = parts.unwrap();
+                    assert!(
+                        amt > Amount::default(),
+                        "{label}: reward_coin is Some but amount is zero: {n:?}"
+                    );
+                }
+                let has_reward = *our_reward > Amount::default();
+                let has_coin = reward_coin.is_some();
+                assert_eq!(
+                    has_reward, has_coin,
+                    "{label}: our_reward/reward_coin mismatch (has_reward={has_reward}, has_coin={has_coin}): {n:?}"
+                );
+            }
+            GameNotification::WeSlashedOpponent { .. } => {
+                // reward_coin is CoinString (not Option); may be default if
+                // find_my_reward_coin failed. No structural assertion here.
+            }
+            GameNotification::UnrollCoinSpent { reward_coin } => {
+                if let Some(rc) = reward_coin {
+                    assert!(
+                        rc.to_parts().is_some(),
+                        "{label}: UnrollCoinSpent reward_coin is Some but not parseable: {n:?}"
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct LocalTestUIReceiver {
     pub handshake_complete: bool,
@@ -2262,6 +2308,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
             let p0_notifs = &outcome.local_uis[0].notifications;
             let p1_notifs = &outcome.local_uis[1].notifications;
+            assert_reward_coin_consistency(p0_notifs, "redo_timeout p0");
+            assert_reward_coin_consistency(p1_notifs, "redo_timeout p1");
             assert!(
                 p0_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
                 "player 0 should get WeTimedOut (redo move couldn't land), got: {p0_notifs:?}"
@@ -2320,6 +2368,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
             let p0_notifs = &outcome.local_uis[0].notifications;
             let p1_notifs = &outcome.local_uis[1].notifications;
+            assert_reward_coin_consistency(p0_notifs, "bob_redo_alice_timeout p0");
+            assert_reward_coin_consistency(p1_notifs, "bob_redo_alice_timeout p1");
             assert!(
                 p0_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
                 "player 0 (alice) should get WeTimedOut (nerfed, couldn't play move 4), got: {p0_notifs:?}"
@@ -2371,6 +2421,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
             let p0_notifs = &outcome.local_uis[0].notifications;
             let p1_notifs = &outcome.local_uis[1].notifications;
+            assert_reward_coin_consistency(p0_notifs, "our_turn_timeout p0");
+            assert_reward_coin_consistency(p1_notifs, "our_turn_timeout p1");
             assert!(
                 p1_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
                 "player 1 should get WeTimedOut (it was our turn, no move queued), got: {p1_notifs:?}"
@@ -2416,6 +2468,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
                 .expect("should finish");
 
             let p0_notifs = &outcome.local_uis[0].notifications;
+            assert_reward_coin_consistency(p0_notifs, "slash_illegal p0");
             assert!(
                 p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentPlayedIllegalMove { .. })),
                 "player 0 should get OpponentPlayedIllegalMove, got: {p0_notifs:?}"
@@ -2462,6 +2515,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
                 .expect("should finish");
 
             let p0_notifs = &outcome.local_uis[0].notifications;
+            let p1_notifs = &outcome.local_uis[1].notifications;
+            assert_reward_coin_consistency(p1_notifs, "opponent_slashed p1");
             assert!(
                 p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentSlashedUs { .. })),
                 "player 0 (cheater) should get OpponentSlashedUs, got: {p0_notifs:?}"
@@ -2519,6 +2574,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             );
 
             let p0_notifs = &outcome.local_uis[0].notifications;
+            assert_reward_coin_consistency(p0_notifs, "funny_share p0");
             assert!(
                 p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentPlayedIllegalMove { .. })),
                 "player 0 should get OpponentPlayedIllegalMove, got: {p0_notifs:?}"
@@ -2596,13 +2652,16 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             );
 
             let p0_notifs = &outcome.local_uis[0].notifications;
+            let p1_notifs = &outcome.local_uis[1].notifications;
+            assert_reward_coin_consistency(p0_notifs, "nerfed_cheat p0");
+            assert_reward_coin_consistency(p1_notifs, "nerfed_cheat p1");
             assert!(
                 p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentPlayedIllegalMove { .. })),
                 "player 0 should get OpponentPlayedIllegalMove, got: {p0_notifs:?}"
             );
             assert!(
-                p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentSuccessfullyCheated { .. })),
-                "player 0 should get OpponentSuccessfullyCheated (slash was nerfed), got: {p0_notifs:?}"
+                p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentSuccessfullyCheated { reward_coin: Some(_), .. })),
+                "player 0 should get OpponentSuccessfullyCheated with reward_coin (mover_share=137), got: {p0_notifs:?}"
             );
 
             assert_event_sequence(&outcome.local_uis[0].events, &[
@@ -2645,6 +2704,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
                 .expect("should finish");
 
             let p0_notifs = &outcome.local_uis[0].notifications;
+            let p1_notifs = &outcome.local_uis[1].notifications;
+            assert_reward_coin_consistency(p0_notifs, "accept_finished p0");
+            assert_reward_coin_consistency(p1_notifs, "accept_finished p1");
             assert!(
                 p0_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
                 "player 0 (who accepted) should get WeTimedOut, got: {p0_notifs:?}"
@@ -2703,10 +2765,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         )
         .expect("should finish");
 
+        let p0_notifs = &outcome.local_uis[0].notifications;
         let p1_notifs = &outcome.local_uis[1].notifications;
+        assert_reward_coin_consistency(p0_notifs, "nerfed_accept p0");
+        assert_reward_coin_consistency(p1_notifs, "nerfed_accept p1");
         assert!(
-            p1_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
-            "Bob (who accepted) should get WeTimedOut, got: {p1_notifs:?}"
+            p1_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOut { reward_coin: Some(_), .. })),
+            "Bob (who accepted) should get WeTimedOut with a non-null reward_coin, got: {p1_notifs:?}"
         );
 
         let (p0_balance, p1_balance) =
@@ -2833,14 +2898,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
             let p0_notifs = &outcome.local_uis[0].notifications;
             let p1_notifs = &outcome.local_uis[1].notifications;
-            let p0_timed_out = p0_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOut { .. }));
-            let p1_timed_out_opponent = p1_notifs.iter().any(|n| matches!(n, GameNotification::OpponentTimedOut { .. }));
+            assert_reward_coin_consistency(p0_notifs, "before_any_moves p0");
+            assert_reward_coin_consistency(p1_notifs, "before_any_moves p1");
             assert!(
-                p0_timed_out,
+                p0_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
                 "player 0 should get WeTimedOut (it was their turn, no move made), got: {p0_notifs:?}"
             );
             assert!(
-                p1_timed_out_opponent,
+                p1_notifs.iter().any(|n| matches!(n, GameNotification::OpponentTimedOut { .. })),
                 "player 1 should get OpponentTimedOut (claimed timeout), got: {p1_notifs:?}"
             );
 
@@ -2879,13 +2944,16 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
                 .expect("should finish");
 
             let p0_notifs = &outcome.local_uis[0].notifications;
+            let p1_notifs = &outcome.local_uis[1].notifications;
+            assert_reward_coin_consistency(p0_notifs, "opp_cheated p0");
+            assert_reward_coin_consistency(p1_notifs, "opp_cheated p1");
             assert!(
                 p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentPlayedIllegalMove { .. })),
                 "player 0 should get OpponentPlayedIllegalMove, got: {p0_notifs:?}"
             );
             assert!(
-                p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentSuccessfullyCheated { .. })),
-                "player 0 should get OpponentSuccessfullyCheated (slash was nerfed), got: {p0_notifs:?}"
+                p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentSuccessfullyCheated { reward_coin: None, .. })),
+                "player 0 should get OpponentSuccessfullyCheated with no reward (cheat mover_share=0), got: {p0_notifs:?}"
             );
 
             assert_event_sequence(&outcome.local_uis[0].events, &[
@@ -3292,6 +3360,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
             let p0_notifs = &outcome.local_uis[0].notifications;
             let p1_notifs = &outcome.local_uis[1].notifications;
+            assert_reward_coin_consistency(p0_notifs, "go_on_chain_then_move p0");
+            assert_reward_coin_consistency(p1_notifs, "go_on_chain_then_move p1");
             assert!(
                 p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentTimedOut { .. })),
                 "alice should get OpponentTimedOut (bob was nerfed), got: {p0_notifs:?}"

@@ -685,11 +685,6 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 return Ok(effects);
             }
 
-            let coin_amount = coin_id
-                .to_parts()
-                .map(|(_, _, amt)| amt)
-                .unwrap_or_default();
-
             if let AcceptTransactionState::Determined(tx) = &game_def.accept {
                 self.have_potato = PotatoState::Present;
 
@@ -704,6 +699,11 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 let reward_coin = self.player_ch
                     .find_my_reward_coin(env, coin_id, &conditions)
                     .ok();
+
+                let our_reward = reward_coin
+                    .as_ref()
+                    .and_then(|rc| rc.amount())
+                    .unwrap_or_default();
 
                 let spend_bundle = {
                     let mut total_spends = vec![CoinSpend {
@@ -727,16 +727,15 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 effects.push(Effect::SpendTransaction(spend_bundle));
 
                 if game_def.our_turn {
-
                     effects.push(Effect::Notification(GameNotification::WeTimedOut {
                         id: game_id.clone(),
-                        our_reward: coin_amount.clone(),
+                        our_reward,
                         reward_coin,
                     }));
                 } else {
                     effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
                         id: game_id.clone(),
-                        our_reward: coin_amount.clone(),
+                        our_reward,
                         reward_coin,
                     }));
                 }
@@ -761,9 +760,22 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 };
 
                 self.have_potato = PotatoState::Present;
-                let reward_coin = if let Some(tx) = result_transaction {
+                let (reward_coin, our_reward) = if let Some(tx) = result_transaction {
                     self.have_potato = PotatoState::Absent;
-                    let rc = Some(tx.coin.clone());
+
+                    let conditions = CoinCondition::from_puzzle_and_solution(
+                        env.allocator,
+                        &tx.bundle.puzzle.to_program(),
+                        &tx.bundle.solution.p(),
+                    )?;
+                    let reward_coin = self.player_ch
+                        .find_my_reward_coin(env, coin_id, &conditions)
+                        .ok();
+                    let our_reward = reward_coin
+                        .as_ref()
+                        .and_then(|rc| rc.amount())
+                        .unwrap_or_default();
+
                     effects.push(Effect::SpendTransaction(SpendBundle {
                         name: Some(format!("{initial_potato} accept transaction")),
                         spends: vec![CoinSpend {
@@ -771,24 +783,24 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                             bundle: tx.bundle.clone(),
                         }],
                     }));
-                    rc
+                    (reward_coin, our_reward)
                 } else {
                     debug!("{initial_potato} Accepted game when our share was zero");
                     debug!("when action queue is {:?}", self.game_action_queue);
-                    None
+                    (None, Amount::default())
                 };
 
                 if !already_notified {
                     if our_turn {
                         effects.push(Effect::Notification(GameNotification::WeTimedOut {
                             id: game_id.clone(),
-                            our_reward: coin_amount.clone(),
+                            our_reward,
                             reward_coin,
                         }));
                     } else {
                         effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
                             id: game_id.clone(),
-                            our_reward: coin_amount.clone(),
+                            our_reward,
                             reward_coin,
                         }));
                     }
