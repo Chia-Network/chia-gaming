@@ -595,11 +595,6 @@ impl PotatoHandler {
                     timeout: timeout.clone(),
                     name: Some("reward"),
                 });
-                effects.push(Effect::RegisterCoin {
-                    coin: coin.clone(),
-                    timeout: timeout.clone(),
-                    name: Some("parent"),
-                });
                 effects.push(Effect::CleanShutdownStarted);
 
                 let puzzle = puzzle_for_synthetic_public_key(
