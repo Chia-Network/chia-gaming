@@ -303,7 +303,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             true,
         )?;
         debug!("post_unroll_data {post_unroll_data:?}");
-        todo!();
+        Err(Error::StrErr("do_on_chain_move not yet implemented".to_string()))
     }
 
     pub fn perform_action(&mut self, action: &GameAction) -> Result<GameActionResult, Error> {
@@ -448,8 +448,10 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
 
                 Ok(GameActionResult::Shutdown)
             }
-            _ => {
-                todo!();
+            action => {
+                Err(Error::StrErr(format!(
+                    "simenv does not handle action: {action:?}"
+                )))
             }
         }
     }

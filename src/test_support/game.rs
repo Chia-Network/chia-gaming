@@ -5,7 +5,7 @@ lazy_static! {
     pub static ref DEFAULT_UNROLL_TIME_LOCK: Timeout = Timeout::new(5);
 }
 
-#[cfg(any(test, feature = "sim-tests"))]
+#[cfg(test)]
 use crate::channel_handler::types::ReadableMove;
 
 // In unit tests (without the `sim-tests` feature), we only need `Timeout` and `Move`.
@@ -104,7 +104,7 @@ mod sim_tests {
                         contributions[id].clone(),
                         contributions[id ^ 1].clone(),
                         unroll_advance_timeout.clone(),
-                        referees[id ^ 1].1.clone(),
+                        referees[id].1.clone(),
                     )
                 };
 

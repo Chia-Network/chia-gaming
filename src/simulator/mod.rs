@@ -1,7 +1,7 @@
 pub mod service;
+#[cfg(test)]
 pub mod tests;
 
-use std::backtrace::Backtrace;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -23,8 +23,11 @@ use crate::common::types::{
 
 use crate::utils::map_m;
 
+#[cfg(test)]
 use crate::simulator::tests::potato_handler_sim::test_funs as potato_handler_sim_tests;
+#[cfg(test)]
 use crate::simulator::tests::simenv::test_funs as simenv_tests;
+#[cfg(test)]
 use crate::test_support::calpoker::test_funs as calpoker_tests;
 
 #[derive(Debug, Clone)]
@@ -408,7 +411,7 @@ impl Simulator {
                 .iter()
                 .map(|(pk, msg)| (pk, msg.as_slice()))
                 .collect();
-            if !aggregate_verify(&aggregate_signature.to_bls(), pairs) {
+            if !aggregate_verify(&aggregate_signature.to_bls(), pairs.clone()) {
                 return Ok(IncludeTransactionResult {
                     code: 3,
                     e: Some(10),
@@ -615,7 +618,9 @@ impl Simulator {
     }
 }
 
+#[cfg(test)]
 pub fn run_simulation_tests() {
+    use std::backtrace::Backtrace;
     std::panic::set_hook(Box::new(|panic_info| {
         if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
             eprintln!("panic payload: {s}");

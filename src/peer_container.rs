@@ -472,7 +472,9 @@ impl BootstrapTowardWallet for SynchronousGameCradleState {
         &mut self,
         _bundle: &SpendBundle,
     ) -> Result<(), Error> {
-        todo!();
+        Err(Error::StrErr(
+            "received_channel_transaction_completion not yet implemented".to_string(),
+        ))
     }
 }
 
@@ -554,7 +556,7 @@ impl SynchronousGameCradle {
         self.peer.has_potato()
     }
 
-    #[cfg(feature = "sim-tests")]
+    #[cfg(test)]
     pub fn corrupt_state_for_testing(&mut self, new_sn: usize) -> Result<(), Error> {
         self.peer.corrupt_state_for_testing(new_sn)
     }

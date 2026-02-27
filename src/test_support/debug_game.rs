@@ -24,7 +24,7 @@ use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::PrivateKey;
 use crate::common::types::{
     atom_from_clvm, chia_dialect, AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Node,
-    Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256tree, Timeout,
+    Program, ProgramRef, PublicKey, PuzzleHash, Sha256tree, Timeout,
 };
 use crate::referee::types::{GameMoveDetails, GameMoveStateInfo};
 use crate::referee::types::{
@@ -548,7 +548,16 @@ impl BareDebugGameHandler {
                 self.state = state.clone().into();
                 debug!("Accepted their turn");
             }
-            _ => todo!(),
+            TheirTurnResult::FinalMove(_) => {
+                return Err(Error::StrErr(
+                    "unexpected FinalMove in their_turn_handler (expected MakeMove)".to_string(),
+                ));
+            }
+            TheirTurnResult::Slash(evidence) => {
+                return Err(Error::StrErr(
+                    format!("unexpected Slash from their_turn_handler: {evidence:?}"),
+                ));
+            }
         }
         Ok(None)
     }

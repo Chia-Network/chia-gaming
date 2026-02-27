@@ -355,7 +355,7 @@ impl PotatoHandler {
         )
     }
 
-    #[cfg(feature = "sim-tests")]
+    #[cfg(test)]
     pub fn corrupt_state_for_testing(&mut self, new_sn: usize) -> Result<(), Error> {
         let ch = self.channel_handler_mut()?;
         ch.corrupt_state_for_testing(new_sn);

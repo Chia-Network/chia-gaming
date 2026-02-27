@@ -286,7 +286,7 @@ pub fn sign_agg_sig_me(
 
 pub fn reward_payout_message(reward_puzzle_hash: &PuzzleHash) -> Vec<u8> {
     let mut message = Vec::with_capacity(33);
-    message.push(0x00);
+    message.push(b'x');
     message.extend(reward_puzzle_hash.bytes());
     message
 }

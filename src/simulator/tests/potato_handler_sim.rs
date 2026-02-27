@@ -208,7 +208,7 @@ impl WalletSpendInterface for SimulatedPeer {
     }
 
     fn request_puzzle_and_solution(&mut self, _coin_id: &CoinString) -> Result<(), Error> {
-        todo!();
+        Err(Error::StrErr("request_puzzle_and_solution not expected during handshake".to_string()))
     }
 }
 
@@ -229,8 +229,7 @@ impl BootstrapTowardWallet for SimulatedPeer {
         &mut self,
         _bundle: &SpendBundle,
     ) -> Result<(), Error> {
-        debug!("received channel transaction completion");
-        todo!();
+        Err(Error::StrErr("received_channel_transaction_completion not expected during handshake".to_string()))
     }
 }
 
@@ -243,8 +242,6 @@ impl ToLocalUI for SimulatedPeer {
         _readable: ReadableMove,
         _my_share: Amount,
     ) -> Result<(), Error> {
-        // We can record stuff here and check that we got what was expected, but there's
-        // no effect on the game mechanics.
         Ok(())
     }
     fn game_message(
@@ -253,7 +250,6 @@ impl ToLocalUI for SimulatedPeer {
         _id: &GameID,
         readable: ReadableMove,
     ) -> Result<(), Error> {
-        // Record for testing, but doens't affect the game.
         self.messages.push(readable);
         Ok(())
     }
@@ -264,13 +260,13 @@ impl ToLocalUI for SimulatedPeer {
         Ok(())
     }
     fn clean_shutdown_started(&mut self) -> Result<(), Error> {
-        todo!();
+        Err(Error::StrErr("clean_shutdown_started not expected during handshake".to_string()))
     }
     fn clean_shutdown_complete(&mut self, _reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
-        todo!();
+        Err(Error::StrErr("clean_shutdown_complete not expected during handshake".to_string()))
     }
-    fn going_on_chain(&mut self, _reason: &str) -> Result<(), Error> {
-        todo!();
+    fn going_on_chain(&mut self, reason: &str) -> Result<(), Error> {
+        Err(Error::StrErr(format!("unexpected going_on_chain during handshake: {reason}")))
     }
 }
 
@@ -370,11 +366,10 @@ pub fn handshake<R: Rng>(
         }
 
         if !pipes[who].outbound_transactions.is_empty() {
-            debug!(
-                "waiting transactions: {:?}",
+            panic!(
+                "unexpected outbound transactions during handshake for peer {who}: {:?}",
                 pipes[who].outbound_transactions
             );
-            todo!();
         }
 
         i += 1;
@@ -967,11 +962,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                         debug!("NERFED tx from player {i}: {:?}", tx.name);
                         continue;
                     }
-                    debug!(
-                        "TX from player {i}: name={:?} coins={:?}",
-                        tx.name,
-                        tx.spends.iter().map(|s| s.coin.to_parts()).collect::<Vec<_>>()
-                    );
                     let included_result = simulator.push_tx(allocator, &tx.spends)?;
                     debug!(
                         "TX result: code={} e={:?} diag={:?}",
@@ -1226,7 +1216,9 @@ fn run_game_container_with_action_list_with_success_predicate(
                             let (game_id, m) = if let PeerMessage::Move(game_id, m) = msg_envelope {
                                 (game_id, m)
                             } else {
-                                todo!();
+                                return Err(Error::StrErr(format!(
+                                    "FakeMove sabotage expected PeerMessage::Move, got {msg_envelope:?}"
+                                )));
                             };
 
                             let mut fake_move = m.clone();
@@ -2639,16 +2631,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
             let (p0_balance, p1_balance) =
                 get_balances_from_outcome(&outcome).expect("should work");
-            // The funny mover_share=137 determines the split: Bob gets 137,
-            // Alice gets 63 (=200-137). Verify this by checking the difference
-            // between the two players' final balances is exactly 200-137=63
-            // (Alice lost her full 100 contribution but recovered 63 from the
-            // game resolution, while Bob lost 100 but recovered 137+63=200...
-            // except Alice couldn't sweep her portion while nerfed).
+            // After Bob cheats with mover_share=137, the keys swap so Alice
+            // becomes the MOVER of the new coin. MOVER_SHARE goes to Alice
+            // (137) and Bob (the WAITER) gets 63. Net: Alice +37, Bob -37.
             assert_eq!(
-                p1_balance - p0_balance, 63,
+                (p0_balance as i64) - (p1_balance as i64), 74,
                 "balance difference should reflect funny mover_share: \
-                 200 - 137 = 63: p0={p0_balance} p1={p1_balance}"
+                 Alice gets 137, Bob gets 63: p0={p0_balance} p1={p1_balance}"
             );
 
             let p0_notifs = &outcome.local_uis[0].notifications;
@@ -2741,7 +2730,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         // 200-unit pot).  Alice then gets nerfed so her transactions are
         // dropped, goes on-chain (disconnecting from Bob), and Bob accepts the
         // result and goes on-chain himself.  Bob's unroll lands and after the
-        // timeout he claims his half.
+        // timeout both players receive their rewards (the referee timeout
+        // creates coins for both mover and waiter in one transaction).
         let moves = [DebugGameTestMove::new(100, 0)];
         let mut sim_setup =
             setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
@@ -2776,11 +2766,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
         let (p0_balance, p1_balance) =
             get_balances_from_outcome(&outcome).expect("should get balances");
-        // Bob claimed his 100.  Alice is still nerfed so her 100 reward sits
-        // unclaimed, leaving her 100 short.
+        // The referee timeout transaction (submitted by Bob) creates reward
+        // coins for both players.  Even though Alice is nerfed, her reward
+        // coin is created on-chain by Bob's timeout spend.
         assert_eq!(
-            p1_balance, p0_balance + 100,
-            "Bob should have claimed his half (p0={p0_balance} p1={p1_balance})"
+            p0_balance, p1_balance,
+            "Both players get their 100 from the referee timeout (p0={p0_balance} p1={p1_balance})"
         );
 
         assert_event_sequence(&outcome.local_uis[0].events, &[

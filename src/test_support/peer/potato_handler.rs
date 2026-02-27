@@ -60,6 +60,7 @@ struct Pipe {
     // Opponent moves
     opponent_moves: Vec<(GameID, ReadableMove, Amount)>,
     opponent_messages: Vec<(GameID, ReadableMove)>,
+    #[allow(dead_code)]
     our_moves: Vec<(GameID, usize, Vec<u8>)>,
 
     // Bootstrap info
@@ -127,7 +128,7 @@ impl WalletSpendInterface for Pipe {
     }
 
     fn request_puzzle_and_solution(&mut self, _coin_id: &CoinString) -> Result<(), Error> {
-        todo!();
+        Err(Error::StrErr("request_puzzle_and_solution not expected in Pipe test helper".to_string()))
     }
 }
 
@@ -147,7 +148,7 @@ impl BootstrapTowardWallet for Pipe {
         &mut self,
         _bundle: &SpendBundle,
     ) -> Result<(), Error> {
-        todo!();
+        Err(Error::StrErr("received_channel_transaction_completion not expected in Pipe test helper".to_string()))
     }
 }
 

@@ -694,13 +694,17 @@ impl TheirTurnReferee {
                     if let Some(prev) = self.slash_infohash_inputs() {
                         prev
                     } else {
-                        todo!();
+                        return Err(Error::StrErr(
+                            "slash: no previous validation info hash inputs available".to_string(),
+                        ));
                     };
 
                 let spent_ph = if let Some((_, ph, _)) = referee_coin_string.to_parts() {
                     ph
                 } else {
-                    todo!();
+                    return Err(Error::StrErr(
+                        "slash: could not extract puzzle hash from referee coin string".to_string(),
+                    ));
                 };
                 let to_spend_ph = if let Some(p) = conditions
                     .iter()
@@ -715,7 +719,9 @@ impl TheirTurnReferee {
                 {
                     p
                 } else {
-                    todo!();
+                    return Err(Error::StrErr(
+                        "slash: no CREATE_COIN condition found in referee spend".to_string(),
+                    ));
                 };
                 let coin_string_to_spend = CoinString::from_parts(
                     &referee_coin_string.to_coin_id(),

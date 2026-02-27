@@ -416,7 +416,9 @@ impl RefereeInterface for Referee {
                 t.my_turn_make_move(allocator, readable_move, new_entropy, state_number)?
             }
             Referee::TheirTurn(_) => {
-                todo!();
+                return Err(Error::StrErr(
+                    "my_turn_make_move called on TheirTurn referee".to_string(),
+                ));
             }
         };
         Ok((Rc::new(replacement), result))
@@ -428,7 +430,9 @@ impl RefereeInterface for Referee {
         message: &[u8],
     ) -> Result<ReadableMove, Error> {
         match self {
-            Referee::MyTurn(_t) => todo!(),
+            Referee::MyTurn(_) => Err(Error::StrErr(
+                "receive_readable called on MyTurn referee".to_string(),
+            )),
             Referee::TheirTurn(t) => t.receive_readable(allocator, message),
         }
     }
@@ -443,7 +447,9 @@ impl RefereeInterface for Referee {
         debug!("their_turn_move_off_chain: state={}", state_number);
         let (new_self, result) = match self {
             Referee::MyTurn(_) => {
-                todo!();
+                return Err(Error::StrErr(
+                    "their_turn_move_off_chain called on MyTurn referee".to_string(),
+                ));
             }
             Referee::TheirTurn(t) => {
                 t.their_turn_move_off_chain(allocator, details, state_number, coin)?
@@ -519,8 +525,10 @@ impl RefereeInterface for Referee {
         }
 
         match self {
-            Referee::MyTurn(_t) => {
-                todo!();
+            Referee::MyTurn(_) => {
+                return Err(Error::StrErr(
+                    "their_turn_coin_spent called on MyTurn referee".to_string(),
+                ));
             }
 
             Referee::TheirTurn(t) => {
@@ -575,17 +583,39 @@ impl RefereeInterface for Referee {
                 (self.on_chain_referee_puzzle(allocator)?, self.fixed().amount.clone())
             };
 
-        let (mover_payout_ph, waiter_payout_ph) = if self.is_my_turn() {
+        let args = if coin_ph.as_ref() == Some(&outcome_ph) && coin_ph.as_ref() != Some(&on_chain_ph) {
+            self.spend_this_coin()
+        } else {
+            self.args_for_this_coin()
+        };
+        let mover_share = args.game_move.basic.mover_share.clone();
+        let waiter_share = Amount::new(
+            self.fixed().amount.to_u64().saturating_sub(mover_share.to_u64()),
+        );
+
+        let i_am_mover = args.mover_pubkey == self.fixed().my_identity.public_key;
+        let (mover_payout_ph, waiter_payout_ph) = if i_am_mover {
             (self.fixed().reward_puzzle_hash.clone(), self.fixed().their_reward_puzzle_hash.clone())
         } else {
             (self.fixed().their_reward_puzzle_hash.clone(), self.fixed().reward_puzzle_hash.clone())
         };
 
-        let my_sig = sign_reward_payout(
-            &self.fixed().my_identity.private_key,
-            &self.fixed().reward_puzzle_hash,
-        );
-        let aggregate_signature = my_sig.aggregate(&self.fixed().their_reward_payout_signature);
+        let (my_share, their_share) = if i_am_mover {
+            (mover_share.clone(), waiter_share.clone())
+        } else {
+            (waiter_share.clone(), mover_share.clone())
+        };
+
+        let mut aggregate_signature = Aggsig::default();
+        if my_share > Amount::default() {
+            aggregate_signature += sign_reward_payout(
+                &self.fixed().my_identity.private_key,
+                &self.fixed().reward_puzzle_hash,
+            );
+        }
+        if their_share > Amount::default() {
+            aggregate_signature += self.fixed().their_reward_payout_signature.clone();
+        }
 
         self.get_transaction(
             allocator,
@@ -666,7 +696,9 @@ impl RefereeInterface for Referee {
         _evidence: Evidence,
         _coin_string: &CoinString,
     ) -> Result<Option<TheirTurnCoinSpentResult>, Error> {
-        todo!();
+        Err(Error::StrErr(
+            "check_their_turn_for_slash not yet implemented".to_string(),
+        ))
     }
 
     fn get_serialized_form(&self) -> RefereeSerializeContainer {

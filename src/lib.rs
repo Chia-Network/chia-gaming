@@ -18,7 +18,7 @@ pub mod shutdown;
 pub mod simulator;
 pub mod utils;
 
-#[cfg(any(test, feature = "sim-tests"))]
+#[cfg(test)]
 pub mod test_support;
 
 #[cfg(test)]

@@ -514,11 +514,10 @@ impl MessageHandler {
         let run_prog = self.0.to_nodeptr(allocator)?;
         let run_result = run_code(allocator, run_prog, args, false);
 
-        if run_result.is_err() {
-            debug!("MESSAGE PARSER RETURNED ERROR {run_result:?}");
-            todo!();
-        }
+        let run_output = run_result.map_err(|e| {
+            Error::StrErr(format!("message parser returned error: {e:?}"))
+        })?;
 
-        ReadableMove::from_nodeptr(allocator, run_result?)
+        ReadableMove::from_nodeptr(allocator, run_output)
     }
 }
