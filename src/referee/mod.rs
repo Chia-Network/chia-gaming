@@ -25,7 +25,6 @@ use crate::referee::types::{
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub enum Referee {
     MyTurn(Rc<MyTurnReferee>),
     TheirTurn(Rc<TheirTurnReferee>),
@@ -158,7 +157,6 @@ pub trait RefereeInterface {
     fn get_serialized_form(&self) -> RefereeSerializeContainer;
 }
 
-#[allow(dead_code)]
 impl Referee {
     #[allow(clippy::too_many_arguments)]
     pub fn new(

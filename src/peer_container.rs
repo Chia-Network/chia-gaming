@@ -101,15 +101,7 @@ impl FullCoinSetAdapter {
 // potato handler tests with simulator.
 #[derive(Default)]
 #[cfg(test)]
-pub struct SimulatedWalletSpend {
-    #[allow(dead_code)]
-    watching_coins: HashMap<CoinString, WatchEntry>,
-
-    #[allow(dead_code)]
-    outbound_transactions: Vec<SpendBundle>,
-    #[allow(dead_code)]
-    channel_puzzle_hash: Option<PuzzleHash>,
-}
+pub struct SimulatedWalletSpend {}
 
 #[derive(Default)]
 pub struct SimulatedPeer<CoinTracker> {

@@ -52,9 +52,7 @@ use crate::common::types::divmod::test_funs as divmod_tests;
 #[derive(Debug, Clone)]
 pub struct IncludeTransactionResult {
     pub code: u32,
-    #[allow(dead_code)]
     pub e: Option<u32>,
-    #[allow(dead_code)]
     pub diagnostic: String,
 }
 

@@ -21,7 +21,7 @@ use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, GameMoveWireData
 use crate::referee::their_turn::{TheirTurnReferee, TheirTurnRefereeGameState};
 use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs,
-    OnChainRefereeMoveData, OnChainRefereeSlashData, RefereePuzzleArgs, StateUpdateMoveArgs,
+    OnChainRefereeMoveData, RefereePuzzleArgs, StateUpdateMoveArgs,
     StateUpdateResult,
 };
 use crate::referee::Referee;
@@ -46,29 +46,10 @@ pub enum MyTurnRefereeGameState {
 
         // How to spend
         move_spend: Option<Rc<OnChainRefereeMoveData>>,
-        #[allow(dead_code)]
-        slash_spend: Rc<OnChainRefereeSlashData>,
     },
 }
 
-#[allow(dead_code)]
 impl MyTurnRefereeGameState {
-    pub fn is_my_turn(&self) -> bool {
-        match self {
-            MyTurnRefereeGameState::Initial { game_handler, .. } => {
-                matches!(game_handler, GameHandler::MyTurnHandler(_))
-            }
-            MyTurnRefereeGameState::AfterTheirTurn { .. } => true,
-        }
-    }
-
-    pub fn processing_my_turn(&self) -> bool {
-        match self {
-            MyTurnRefereeGameState::Initial { .. } => false,
-            MyTurnRefereeGameState::AfterTheirTurn { .. } => false,
-        }
-    }
-
     pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         match self {
             MyTurnRefereeGameState::Initial {
@@ -93,17 +74,6 @@ impl MyTurnRefereeGameState {
         }
     }
 
-    pub fn max_move_size(&self) -> usize {
-        match self {
-            MyTurnRefereeGameState::Initial {
-                initial_puzzle_args,
-                ..
-            } => initial_puzzle_args.game_move.basic.max_move_size,
-            MyTurnRefereeGameState::AfterTheirTurn {
-                spend_this_coin, ..
-            } => spend_this_coin.game_move.basic.max_move_size,
-        }
-    }
 }
 
 /// Referee coin has two inner puzzles.
@@ -197,9 +167,6 @@ pub struct MyTurnReferee {
 
     pub finished: bool,
     pub enable_cheating: Option<(Vec<u8>, Amount)>,
-
-    #[allow(dead_code)]
-    pub message_handler: Option<MessageHandler>,
 
     pub state: Rc<MyTurnRefereeGameState>,
     pub state_number: usize,
@@ -297,7 +264,6 @@ impl MyTurnReferee {
                 finished: false,
                 state,
                 state_number,
-                message_handler: None,
                 parent: None,
                 enable_cheating: None,
             },
@@ -305,42 +271,26 @@ impl MyTurnReferee {
         ))
     }
 
-    #[allow(dead_code)]
-    pub fn parent(&self) -> Option<Rc<TheirTurnReferee>> {
-        self.parent.clone()
-    }
-
-    #[allow(dead_code)]
-    pub fn state(&self) -> Rc<MyTurnRefereeGameState> {
-        self.state.clone()
-    }
-
-    #[allow(dead_code)]
     pub fn state_number(&self) -> usize {
         self.state_number
     }
 
-    #[allow(dead_code)]
     pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         self.state.args_for_this_coin()
     }
 
-    #[allow(dead_code)]
     pub fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         self.state.spend_this_coin()
     }
 
-    #[allow(dead_code)]
     pub fn is_my_turn(&self) -> bool {
         true
     }
 
-    #[allow(dead_code)]
     pub fn processing_my_turn(&self) -> bool {
         false
     }
 
-    #[allow(dead_code)]
     pub fn enable_cheating(&self, make_move: &[u8], mover_share: Amount) -> MyTurnReferee {
         MyTurnReferee {
             enable_cheating: Some((make_move.to_vec(), mover_share)),
@@ -348,22 +298,10 @@ impl MyTurnReferee {
         }
     }
 
-    #[allow(dead_code)]
     pub fn get_game_handler(&self) -> Option<GameHandler> {
         match self.state.borrow() {
             MyTurnRefereeGameState::Initial { game_handler, .. } => Some(game_handler.clone()),
             MyTurnRefereeGameState::AfterTheirTurn { game_handler, .. } => game_handler.clone(),
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn get_game_state(&self) -> Rc<Program> {
-        match self.state.borrow() {
-            MyTurnRefereeGameState::Initial { initial_state, .. } => initial_state.clone(),
-            MyTurnRefereeGameState::AfterTheirTurn {
-                state_after_their_turn,
-                ..
-            } => state_after_their_turn.clone(),
         }
     }
 
@@ -374,12 +312,10 @@ impl MyTurnReferee {
         }
     }
 
-    #[allow(dead_code)]
     pub fn get_amount(&self) -> Amount {
         self.fixed.amount.clone()
     }
 
-    #[allow(dead_code)]
     pub fn get_our_current_share(&self) -> Amount {
         let args = self.spend_this_coin();
         if self.processing_my_turn() {
@@ -389,13 +325,11 @@ impl MyTurnReferee {
         }
     }
 
-    #[allow(dead_code)]
     pub fn get_their_current_share(&self) -> Amount {
         self.fixed.amount.clone() - self.get_our_current_share()
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[allow(dead_code)]
     pub fn accept_this_move(
         &self,
         game_handler: GameHandler,
@@ -444,7 +378,6 @@ impl MyTurnReferee {
 
     // Since we may need to know new_entropy at a higher layer, we'll need to ensure it
     // gets passed in rather than originating it here.
-    #[allow(dead_code)]
     pub fn my_turn_make_move(
         &self,
         allocator: &mut AllocEncoder,
@@ -587,19 +520,16 @@ impl MyTurnReferee {
         ))
     }
 
-    #[allow(dead_code)]
     pub fn on_chain_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
         let args = self.args_for_this_coin();
         curry_referee_puzzle(allocator, &self.fixed.referee_coin_puzzle, &args)
     }
 
-    #[allow(dead_code)]
     pub fn outcome_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
         let args = self.spend_this_coin();
         curry_referee_puzzle(allocator, &self.fixed.referee_coin_puzzle, &args)
     }
 
-    #[allow(dead_code)]
     pub fn on_chain_referee_puzzle_hash(
         &self,
         allocator: &mut AllocEncoder,
@@ -608,7 +538,6 @@ impl MyTurnReferee {
         curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)
     }
 
-    #[allow(dead_code)]
     pub fn outcome_referee_puzzle_hash(
         &self,
         allocator: &mut AllocEncoder,
@@ -617,7 +546,6 @@ impl MyTurnReferee {
         curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)
     }
 
-    #[allow(dead_code)]
     pub fn run_validator_for_my_move(
         &self,
         allocator: &mut AllocEncoder,

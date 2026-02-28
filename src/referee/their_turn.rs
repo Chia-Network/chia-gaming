@@ -28,7 +28,7 @@ use crate::referee::types::{
 use crate::referee::my_turn::{MyTurnReferee, MyTurnRefereeGameState};
 use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash,
-    InternalStateUpdateArgs, OnChainRefereeMoveData, OnChainRefereeSlash, OnChainRefereeSlashData,
+    InternalStateUpdateArgs, OnChainRefereeMoveData, OnChainRefereeSlash,
     OnChainRefereeSolution, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
     REM_CONDITION_FIELDS,
 };
@@ -58,7 +58,6 @@ pub enum TheirTurnRefereeGameState {
     },
 }
 
-#[allow(dead_code)]
 impl TheirTurnRefereeGameState {
     pub fn is_my_turn(&self) -> bool {
         match self {
@@ -117,7 +116,6 @@ pub struct TheirTurnReferee {
     pub parent: Option<Rc<MyTurnReferee>>,
 }
 
-#[allow(dead_code)]
 impl TheirTurnReferee {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -346,18 +344,12 @@ impl TheirTurnReferee {
         debug!("their turn: new_state {new_state:?}");
         debug!("accept their move {details:?}");
 
-        let slash_spend = Rc::new(OnChainRefereeSlashData {
-            state: new_state.clone(),
-            puzzle_args: referee_args.clone(),
-        });
-
         let new_state = MyTurnRefereeGameState::AfterTheirTurn {
             game_handler: game_handler.clone(),
             state_after_their_turn: new_state.clone(),
             create_this_coin: old_args,
             spend_this_coin: referee_args,
             move_spend: self.get_move_info(),
-            slash_spend,
         };
 
         let new_parent = TheirTurnReferee {
@@ -369,7 +361,6 @@ impl TheirTurnReferee {
             fixed: self.fixed.clone(),
             state: Rc::new(new_state),
             state_number,
-            message_handler: self.message_handler.clone(),
             parent: Some(Rc::new(new_parent)),
             enable_cheating: None,
         })
@@ -653,7 +644,6 @@ impl TheirTurnReferee {
                     state_after_their_turn,
                     spend_this_coin,
                     move_spend,
-                    slash_spend,
                     ..
                 } => {
                     let adjusted_state = Rc::new(MyTurnRefereeGameState::AfterTheirTurn {
@@ -662,7 +652,6 @@ impl TheirTurnReferee {
                         create_this_coin: args.clone(),
                         spend_this_coin: spend_this_coin.clone(),
                         move_spend: move_spend.clone(),
-                        slash_spend: slash_spend.clone(),
                     });
                     MyTurnReferee {
                         state: adjusted_state,

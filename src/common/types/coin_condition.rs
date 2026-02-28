@@ -20,7 +20,6 @@ pub fn chia_dialect() -> ChiaDialect {
 pub enum CoinCondition {
     AggSigMe(PublicKey, Vec<u8>),
     AggSigUnsafe(PublicKey, Vec<u8>),
-    #[allow(dead_code)]
     CreateCoin(PuzzleHash, Amount),
     Rem(Vec<Vec<u8>>),
     ReserveFee(Amount),

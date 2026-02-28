@@ -18,7 +18,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     atom_from_clvm, chia_dialect, i64_from_atom, Aggsig, AllocEncoder, Amount, CoinSpend,
-    CoinString, Error, GameID, Hash, IntoErr, Node, Program, PublicKey, Puzzle,
+    CoinString, Error, Hash, IntoErr, Node, Program, PublicKey, Puzzle,
     PuzzleHash, Sha256tree, Spend, Timeout,
 };
 use crate::utils::proper_list;
@@ -114,12 +114,6 @@ pub struct RMFixed {
 // =============================================================================
 
 pub const REM_CONDITION_FIELDS: usize = 4;
-
-#[allow(dead_code)]
-pub struct LiveGameReplay {
-    #[allow(dead_code)]
-    game_id: GameID,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StateUpdateResult {
@@ -396,12 +390,6 @@ impl InternalStateUpdateArgs {
     }
 }
 
-#[allow(dead_code)]
-pub enum Validation {
-    ValidationByState(ValidationInfo),
-    ValidationByStateHash(Hash),
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OnChainRefereeMoveData {
     pub state: Rc<Program>,
@@ -448,21 +436,11 @@ impl OnChainRefereeMoveData {
 
         Ok(OnChainRefereeMove {
             game_move: self.new_move.clone(),
-            before_puzzle_args: self.before_args.clone(),
-            after_puzzle_args: self.after_args.clone(),
             state: self.state.clone(),
             validation_program: self.validation_program.clone(),
             signature,
         })
     }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct OnChainRefereeSlashData {
-    #[allow(dead_code)]
-    pub state: Rc<Program>,
-    #[allow(dead_code)]
-    pub puzzle_args: Rc<RefereePuzzleArgs>,
 }
 
 /// Dynamic arguments passed to the on chain referee to apply a move
@@ -474,11 +452,6 @@ pub struct OnChainRefereeMove {
     pub validation_program: StateUpdateProgram,
     /// State before this validation program ran.
     pub state: Rc<Program>,
-    /// Referee puzzle args
-    #[allow(dead_code)]
-    pub before_puzzle_args: Rc<RefereePuzzleArgs>,
-    #[allow(dead_code)]
-    pub after_puzzle_args: Rc<RefereePuzzleArgs>,
     /// AGG_SIG_ME signature authorizing this move
     pub signature: Aggsig,
 }
@@ -515,7 +488,6 @@ pub enum OnChainRefereeSolution {
         aggregate_signature: Aggsig,
     },
     Move(Rc<OnChainRefereeMove>),
-    #[allow(dead_code)]
     Slash(Rc<OnChainRefereeSlash>),
 }
 

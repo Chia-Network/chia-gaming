@@ -19,7 +19,6 @@ use crate::common::types::{GameID, PrivateKey, Program, Timeout};
 #[cfg(test)]
 use crate::games::poker_collection;
 #[cfg(test)]
-use crate::peer_container::WalletBootstrapState;
 use crate::peer_container::{MessagePeerQueue, MessagePipe};
 #[cfg(test)]
 use crate::potato_handler::start::GameStart;
@@ -60,17 +59,12 @@ struct Pipe {
     // Opponent moves
     opponent_moves: Vec<(GameID, ReadableMove, Amount)>,
     opponent_messages: Vec<(GameID, ReadableMove)>,
-    #[allow(dead_code)]
-    our_moves: Vec<(GameID, usize, Vec<u8>)>,
 
     // Bootstrap info
     channel_puzzle_hash: Option<PuzzleHash>,
 
     // Have other side's offer
     unfunded_offer: Option<SpendBundle>,
-
-    #[allow(dead_code)]
-    bootstrap_state: Option<WalletBootstrapState>,
 
     went_on_chain: Option<String>,
 }

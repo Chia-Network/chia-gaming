@@ -39,7 +39,7 @@ use crate::shutdown::BasicShutdownConditions;
 use crate::simulator::Simulator;
 use crate::test_support::calpoker::{calpoker_ran_all_the_moves_predicate, prefix_test_moves};
 use crate::test_support::debug_game::{
-    make_debug_games, BareDebugGameHandler, DebugGameCurry, DebugGameMoveInfo,
+    make_debug_games, DebugGameCurry,
 };
 use crate::test_support::game::GameAction;
 use crate::test_support::peer::potato_handler::run_move;
@@ -692,7 +692,6 @@ type GameRunEarlySuccessPredicate<'a> = Option<&'a dyn Fn(usize, &[SynchronousGa
 
 pub struct GameRunOutcome {
     pub identities: [ChiaIdentity; 2],
-    #[allow(dead_code)]
     pub cradles: [SynchronousGameCradle; 2],
     pub local_uis: [LocalTestUIReceiver; 2],
     pub simulator: Simulator,
@@ -1540,10 +1539,6 @@ fn check_calpoker_economic_result(
 pub struct DebugGameSimSetup {
     pub private_keys: [ChannelHandlerPrivateKeys; 2],
     pub identities: [ChiaIdentity; 2],
-    #[allow(dead_code)]
-    pub debug_games: [BareDebugGameHandler; 2],
-    #[allow(dead_code)]
-    pub game_moves: Vec<DebugGameMoveInfo>,
     pub game_actions: Vec<GameAction>,
     pub args_program: Rc<Program>,
 }
@@ -1601,7 +1596,6 @@ pub fn setup_debug_test(
     let mut debug_games = make_debug_games(allocator, rng, &private_identities)?;
 
     let mut game_actions = Vec::new();
-    let mut game_moves = Vec::new();
 
     for (i, do_move) in moves.iter().enumerate() {
         let alice_turn = i % 2 == 0;
@@ -1625,7 +1619,6 @@ pub fn setup_debug_test(
         }
 
         game_actions.push(GameAction::Move(i % 2, the_move.ui_move.clone(), true));
-        game_moves.push(the_move);
     }
 
     let args_curry = DebugGameCurry::new(
@@ -1643,8 +1636,6 @@ pub fn setup_debug_test(
     Ok(DebugGameSimSetup {
         private_keys,
         identities,
-        debug_games,
-        game_moves,
         game_actions,
         args_program,
     })

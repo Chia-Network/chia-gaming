@@ -100,7 +100,6 @@ where
 /// When the channel handler game start is reeived, we must receive a matching datum to
 /// the one we receive in the channel handler game start.  If we receive that, we allow
 /// the message through to the channel handler.
-#[allow(dead_code)]
 #[derive(Serialize, Deserialize)]
 pub struct PotatoHandler {
     initiator: bool,

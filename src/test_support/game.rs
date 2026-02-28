@@ -13,10 +13,8 @@ use crate::channel_handler::types::ReadableMove;
 #[derive(Clone)]
 pub enum GameAction {
     /// Do a timeout
-    #[allow(dead_code)]
     Timeout(usize),
     /// Move (player, clvm readable move, was received)
-    #[allow(dead_code)]
     Move(usize, ReadableMove, bool),
 }
 
@@ -167,10 +165,8 @@ mod sim_tests {
     #[derive(Clone)]
     pub enum GameAction {
         /// Do a timeout
-        #[allow(dead_code)]
         Timeout(usize),
         /// Move (player, clvm readable move, was received)
-        #[allow(dead_code)]
         Move(usize, ReadableMove, bool),
         /// Fake move, just calls receive on the indicated side.
         FakeMove(usize, ReadableMove, Vec<u8>),

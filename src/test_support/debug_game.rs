@@ -80,11 +80,7 @@ where
 }
 
 pub struct DebugGameMoveInfo {
-    #[allow(dead_code)]
     pub ui_move: ReadableMove,
-    #[allow(dead_code)]
-    pub move_data: Vec<u8>,
-    #[allow(dead_code)]
     pub slash: Option<Rc<Program>>,
 }
 
@@ -113,7 +109,6 @@ pub struct BareDebugGameHandler {
 
     validation_program_queue: VecDeque<StateUpdateProgram>,
 
-    #[allow(dead_code)]
     handler: GameHandler,
     next_handler: GameHandler,
     start: GameStartInfo,
@@ -430,7 +425,6 @@ impl BareDebugGameHandler {
             slash: slash,
             opponent_mover_share: mover_share.clone(),
             previous_validation_info: self.get_validation_info(allocator, 2),
-            entropy: self.rng[self.move_count].clone(),
         };
 
         self.prime_my_turn(allocator, &emove)?;
@@ -595,7 +589,6 @@ impl BareDebugGameHandler {
         Ok(DebugGameMoveInfo {
             ui_move: predicted_move.get_ui_move(allocator)?,
             slash: move_success_0,
-            move_data,
         })
     }
 }
@@ -662,8 +655,6 @@ pub struct ExhaustiveMoveInputs {
     mover_share: Amount,
     count: usize,
     nonce: usize,
-    #[allow(dead_code)]
-    entropy: Hash,
     slash: u8,
     opponent_mover_share: Amount,
     previous_validation_info: Option<ValidationInfo>,

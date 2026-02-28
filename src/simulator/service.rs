@@ -62,7 +62,6 @@ impl<V> HttpError<V> for Result<V, salvo::http::ParseError> {
     }
 }
 
-#[allow(dead_code)]
 struct GameRunner {
     allocator: AllocEncoder,
     rng: ChaCha8Rng,
