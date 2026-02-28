@@ -30,6 +30,20 @@ pub enum GameNotification {
 
     ChannelCoinSpent,
     UnrollCoinSpent { reward_coin: Option<CoinString> },
+
+    GameProposed {
+        id: GameID,
+        proposed_by_us: bool,
+        my_contribution: Amount,
+        their_contribution: Amount,
+    },
+    GameProposalAccepted { id: GameID },
+    GameProposalCancelled { id: GameID, reason: String },
+    InsufficientBalance {
+        id: GameID,
+        our_balance_short: bool,
+        their_balance_short: bool,
+    },
 }
 
 #[derive(Debug, Clone)]

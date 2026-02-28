@@ -492,6 +492,34 @@ impl PotatoHandler {
                 effects.extend(self.update_channel_coin_after_receive(env, &spend_info)?);
             }
             PeerMessage::Move(game_id, m) => {
+                // Implicit accept: if the game is proposed, the move implicitly accepts it
+                let opponent_self_accepted = {
+                    let ch = self.channel_handler_mut()?;
+                    if ch.is_game_proposed(game_id) {
+                        let proposed_by_us = ch.find_proposal(game_id).unwrap().proposed_by_us;
+                        if !proposed_by_us {
+                            // Opponent proposed it and is now moving in it — self-acceptance
+                            true
+                        } else {
+                            // We proposed it, opponent is accepting via move — OK
+                            ch.accept_proposal_into_live(game_id)?;
+                            effects.push(Effect::Notification(GameNotification::GameProposalAccepted {
+                                id: game_id.clone(),
+                            }));
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                };
+                if opponent_self_accepted {
+                    effects.push(Effect::GoingOnChain {
+                        reason: "opponent self-accepted proposal via move".to_string(),
+                    });
+                    effects.extend(self.go_on_chain(env, true)?);
+                    return Ok(effects);
+                }
+
                 let move_result = {
                     let ch = self.channel_handler_mut()?;
                     ch.received_potato_move(env, game_id, m)?
@@ -545,6 +573,13 @@ impl PotatoHandler {
                 }
                 {
                     let ch = self.channel_handler_mut()?;
+                    let cancelled_ids = ch.cancel_all_proposals();
+                    for id in cancelled_ids {
+                        effects.push(Effect::Notification(GameNotification::GameProposalCancelled {
+                            id,
+                            reason: "clean shutdown".to_string(),
+                        }));
+                    }
                     ch.cancel_just_created_games();
                 }
 
@@ -760,6 +795,97 @@ impl PotatoHandler {
         Ok((false, effects))
     }
 
+    fn have_potato_propose_game<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+        my_gsi: GSI,
+        their_gsi: GSI,
+    ) -> Result<(Vec<Effect>, bool), Error> {
+        let mut effects = Vec::new();
+
+        let sigs = {
+            let ch = self.channel_handler_mut()?;
+            ch.propose_game(env, &my_gsi.0)?
+        };
+
+        let game_id = my_gsi.0.game_id().clone();
+        let my_contribution = my_gsi.0.my_contribution_this_game().clone();
+        let their_contribution = my_gsi.0.their_contribution_this_game().clone();
+
+        effects.push(Effect::Notification(GameNotification::GameProposed {
+            id: game_id,
+            proposed_by_us: true,
+            my_contribution,
+            their_contribution,
+        }));
+
+        self.have_potato = PotatoState::Absent;
+        effects.push(Effect::SendMessage(
+            PeerMessage::ProposeGame(sigs, their_gsi),
+        ));
+
+        Ok((effects, true))
+    }
+
+    fn have_potato_accept_proposal<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+        game_id: &GameID,
+    ) -> Result<Vec<Effect>, Error> {
+        let mut effects = Vec::new();
+
+        let sigs = {
+            let ch = self.channel_handler_mut()?;
+            let proposal = ch.find_proposal(game_id);
+            if proposal.is_none() {
+                return Err(Error::StrErr(format!("no proposal with id {game_id:?}")));
+            }
+            let proposal = proposal.unwrap();
+            if !proposal.proposed_by_us {
+                // ok: accepting opponent's proposal
+            } else {
+                return Err(Error::StrErr("cannot accept own proposal".to_string()));
+            }
+            ch.accept_proposal(env, game_id)?
+        };
+
+        effects.push(Effect::Notification(GameNotification::GameProposalAccepted {
+            id: game_id.clone(),
+        }));
+
+        self.have_potato = PotatoState::Absent;
+        effects.push(Effect::SendMessage(
+            PeerMessage::AcceptProposal(game_id.clone(), sigs),
+        ));
+
+        Ok(effects)
+    }
+
+    fn have_potato_cancel_proposal<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+        game_id: &GameID,
+    ) -> Result<Vec<Effect>, Error> {
+        let mut effects = Vec::new();
+
+        let sigs = {
+            let ch = self.channel_handler_mut()?;
+            ch.cancel_proposal(env, game_id)?
+        };
+
+        effects.push(Effect::Notification(GameNotification::GameProposalCancelled {
+            id: game_id.clone(),
+            reason: "cancelled by us".to_string(),
+        }));
+
+        self.have_potato = PotatoState::Absent;
+        effects.push(Effect::SendMessage(
+            PeerMessage::CancelProposal(game_id.clone(), sigs),
+        ));
+
+        Ok(effects)
+    }
+
     fn send_potato_request_if_needed(&mut self) -> Result<(bool, Option<Effect>), Error> {
         if matches!(self.have_potato, PotatoState::Present) {
             return Ok((true, None));
@@ -787,6 +913,48 @@ impl PotatoHandler {
             }
             Some(GameAction::Move(game_id, readable_move, new_entropy)) => {
                 assert!(matches!(self.have_potato, PotatoState::Present));
+
+                // Implicit accept: if the game is proposed, accept it first
+                let self_accepted = {
+                    let ch = self.channel_handler_mut()?;
+                    if ch.is_game_proposed(&game_id) {
+                        let proposed_by_us = ch.find_proposal(&game_id).unwrap().proposed_by_us;
+                        if proposed_by_us {
+                            Some(true)
+                        } else {
+                            let balance_ok = {
+                                let p = ch.find_proposal(&game_id).unwrap();
+                                p.my_contribution.clone() <= ch.my_out_of_game_balance()
+                                    && p.their_contribution.clone() <= ch.their_out_of_game_balance()
+                            };
+                            if !balance_ok {
+                                let p = ch.find_proposal(&game_id).unwrap();
+                                effects.push(Effect::Notification(GameNotification::InsufficientBalance {
+                                    id: game_id.clone(),
+                                    our_balance_short: p.my_contribution.clone() > ch.my_out_of_game_balance(),
+                                    their_balance_short: p.their_contribution.clone() > ch.their_out_of_game_balance(),
+                                }));
+                                return Ok((false, effects));
+                            }
+
+                            ch.accept_proposal_into_live(&game_id)?;
+                            effects.push(Effect::Notification(GameNotification::GameProposalAccepted {
+                                id: game_id.clone(),
+                            }));
+                            Some(false)
+                        }
+                    } else {
+                        None
+                    }
+                };
+                if self_accepted == Some(true) {
+                    effects.push(Effect::GoingOnChain {
+                        reason: "self-acceptance via move".to_string(),
+                    });
+                    effects.extend(self.go_on_chain(env, true)?);
+                    return Ok((true, effects));
+                }
+
                 let move_result = {
                     let ch = self.channel_handler_mut()?;
                     let game_is_my_turn = ch.game_is_my_turn(&game_id);
@@ -835,6 +1003,13 @@ impl PotatoHandler {
                         return Err(Error::StrErr(
                             "cannot clean-shutdown with active games".to_string(),
                         ));
+                    }
+                    let cancelled_ids = ch.cancel_all_proposals();
+                    for id in cancelled_ids {
+                        effects.push(Effect::Notification(GameNotification::GameProposalCancelled {
+                            id,
+                            reason: "clean shutdown".to_string(),
+                        }));
                     }
                     ch.cancel_just_created_games();
                 }
@@ -891,6 +1066,21 @@ impl PotatoHandler {
             }
             Some(GameAction::SendPotato) => {
                 unreachable!("SendPotato should not be queued");
+            }
+            Some(GameAction::QueuedProposal(my_gsi, their_gsi)) => {
+                let (proposal_effects, _done) = self.have_potato_propose_game(env, my_gsi, their_gsi)?;
+                effects.extend(proposal_effects);
+                Ok((true, effects))
+            }
+            Some(GameAction::QueuedAcceptProposal(game_id)) => {
+                let accept_effects = self.have_potato_accept_proposal(env, &game_id)?;
+                effects.extend(accept_effects);
+                Ok((true, effects))
+            }
+            Some(GameAction::QueuedCancelProposal(game_id)) => {
+                let cancel_effects = self.have_potato_cancel_proposal(env, &game_id)?;
+                effects.extend(cancel_effects);
+                Ok((true, effects))
             }
             None => Ok((false, effects)),
         }
@@ -1212,6 +1402,100 @@ impl PotatoHandler {
         Ok(effects)
     }
 
+    fn received_proposal<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+        sigs: &PotatoSignatures,
+        gsi: &GSI,
+    ) -> Result<Vec<Effect>, Error> {
+        let mut effects = Vec::new();
+
+        let spend_info = {
+            let ch = self.channel_handler_mut()?;
+            ch.received_proposal(env, sigs, &gsi.0)?
+        };
+
+        let game_id = gsi.0.game_id().clone();
+        let my_contribution = gsi.0.my_contribution_this_game().clone();
+        let their_contribution = gsi.0.their_contribution_this_game().clone();
+
+        effects.push(Effect::Notification(GameNotification::GameProposed {
+            id: game_id,
+            proposed_by_us: false,
+            my_contribution,
+            their_contribution,
+        }));
+
+        effects.extend(self.update_channel_coin_after_receive(env, &spend_info)?);
+
+        Ok(effects)
+    }
+
+    fn received_accept_proposal<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+        game_id: &GameID,
+        sigs: &PotatoSignatures,
+    ) -> Result<Vec<Effect>, Error> {
+        let mut effects = Vec::new();
+
+        {
+            let ch = self.channel_handler()?;
+            let proposal = ch.find_proposal(game_id);
+            if let Some(p) = proposal {
+                if p.proposed_by_us {
+                    // Opponent is accepting our proposal — this is correct
+                } else {
+                    // Opponent is accepting their own proposal — protocol violation
+                    effects.push(Effect::GoingOnChain {
+                        reason: "opponent tried to accept their own proposal".to_string(),
+                    });
+                    effects.extend(self.go_on_chain(env, true)?);
+                    return Ok(effects);
+                }
+            } else {
+                return Err(Error::StrErr(format!("received accept for unknown proposal {game_id:?}")));
+            }
+        }
+
+        let spend_info = {
+            let ch = self.channel_handler_mut()?;
+            ch.received_accept_proposal(env, sigs, game_id)?
+        };
+
+        effects.push(Effect::Notification(GameNotification::GameProposalAccepted {
+            id: game_id.clone(),
+        }));
+
+        effects.extend(self.update_channel_coin_after_receive(env, &spend_info)?);
+
+        Ok(effects)
+    }
+
+    fn received_cancel_proposal<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+        game_id: &GameID,
+        sigs: &PotatoSignatures,
+    ) -> Result<Vec<Effect>, Error> {
+        let mut effects = Vec::new();
+
+        let spend_info = {
+            let ch = self.channel_handler_mut()?;
+            ch.received_cancel_proposal(game_id)?;
+            ch.received_empty_potato(env, sigs)?
+        };
+
+        effects.push(Effect::Notification(GameNotification::GameProposalCancelled {
+            id: game_id.clone(),
+            reason: "cancelled by opponent".to_string(),
+        }));
+
+        effects.extend(self.update_channel_coin_after_receive(env, &spend_info)?);
+
+        Ok(effects)
+    }
+
     pub fn received_message<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
@@ -1500,6 +1784,15 @@ impl PotatoHandler {
                     PeerMessage::StartGames(sigs, g) => {
                         effects.extend(self.received_game_start(env, sigs, g)?);
                     }
+                    PeerMessage::ProposeGame(sigs, gsi) => {
+                        effects.extend(self.received_proposal(env, sigs, gsi)?);
+                    }
+                    PeerMessage::AcceptProposal(game_id, sigs) => {
+                        effects.extend(self.received_accept_proposal(env, game_id, sigs)?);
+                    }
+                    PeerMessage::CancelProposal(game_id, sigs) => {
+                        effects.extend(self.received_cancel_proposal(env, game_id, sigs)?);
+                    }
                     _ => {
                         effects.extend(self.pass_on_channel_handler_message(env, msg_envelope)?);
                     }
@@ -1677,15 +1970,22 @@ impl PotatoHandler {
             ));
         }
 
+        let mut effects = Vec::new();
+
         {
             let player_ch = self.channel_handler_mut()?;
             player_ch.set_initiated_on_chain();
             if got_error {
                 player_ch.set_on_chain_for_error();
             }
+            let cancelled_ids = player_ch.cancel_all_proposals();
+            for id in cancelled_ids {
+                effects.push(Effect::Notification(GameNotification::GameProposalCancelled {
+                    id,
+                    reason: "going on chain".to_string(),
+                }));
+            }
         }
-
-        let mut effects = Vec::new();
 
         // If the last potato exchange happened before Finished was set,
         // hs.spend still contains the channel creation bundle.  Patch it
@@ -1858,6 +2158,18 @@ impl PotatoHandler {
             .ok_or_else(|| {
                 Error::StrErr("channel conditions didn't include a coin creation".to_string())
             })?;
+
+        // Cancel all proposals when the channel goes on-chain
+        {
+            let ch = self.channel_handler_mut()?;
+            let cancelled_ids = ch.cancel_all_proposals();
+            for id in cancelled_ids {
+                effects.push(Effect::Notification(GameNotification::GameProposalCancelled {
+                    id,
+                    reason: "channel went on-chain".to_string(),
+                }));
+            }
+        }
 
         effects.push(Effect::Notification(GameNotification::ChannelCoinSpent));
 
@@ -2246,6 +2558,74 @@ impl FromLocalUI for PotatoHandler
         }
 
         Ok((game_id_list, effects))
+    }
+
+    fn propose_game<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+        game: &GameStart,
+    ) -> Result<(Vec<GameID>, Vec<Effect>), Error>
+    {
+        let mut effects = Vec::new();
+        if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
+            return Err(Error::StrErr(format!(
+                "propose_game without finishing handshake: {:?}",
+                self.handshake_state
+            )));
+        }
+
+        self.game_action_queue
+            .retain(|a| !matches!(a, GameAction::CleanShutdown(_)));
+
+        let (my_games, their_games) = self.get_games_by_start_type(env, true, game)?;
+
+        // When my_turn is false, swap perspectives so the receiver moves first.
+        let (my_games, their_games) = if game.my_turn {
+            (my_games, their_games)
+        } else {
+            (their_games, my_games)
+        };
+
+        let game_id_list: Vec<GameID> = my_games.iter().map(|g| g.game_id().clone()).collect();
+
+        for (mine, theirs) in my_games.into_iter().zip(their_games.into_iter()) {
+            self.push_action(GameAction::QueuedProposal(GSI(mine), GSI(theirs)));
+        }
+
+        let (has_potato, effect) = self.send_potato_request_if_needed()?;
+        effects.extend(effect);
+        if has_potato {
+            let (_moved, move_effects) = self.have_potato_move(env)?;
+            effects.extend(move_effects);
+        }
+
+        Ok((game_id_list, effects))
+    }
+
+    fn accept_proposal<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+        game_id: &GameID,
+    ) -> Result<Vec<Effect>, Error>
+    {
+        let (_continued, effects) = self.do_game_action(
+            env,
+            GameAction::QueuedAcceptProposal(game_id.clone()),
+        )?;
+        Ok(effects)
+    }
+
+    fn cancel_proposal<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+        game_id: &GameID,
+    ) -> Result<Vec<Effect>, Error>
+    {
+        let (_continued, effects) = self.do_game_action(
+            env,
+            GameAction::QueuedCancelProposal(game_id.clone()),
+        )?;
+        Ok(effects)
     }
 
     fn make_move<R: Rng>(

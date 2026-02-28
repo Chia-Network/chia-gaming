@@ -40,7 +40,7 @@ use crate::shutdown::BasicShutdownConditions;
 use crate::simulator::Simulator;
 use crate::test_support::calpoker::{calpoker_ran_all_the_moves_predicate, prefix_test_moves};
 use crate::test_support::debug_game::{
-    make_debug_games, BareDebugGameHandler, DebugGameCurry, DebugGameMoveInfo,
+    make_debug_games, make_debug_games_with_contributions, BareDebugGameHandler, DebugGameCurry, DebugGameMoveInfo,
 };
 use crate::test_support::game::GameAction;
 use crate::test_support::peer::potato_handler::run_move;
@@ -407,6 +407,10 @@ pub enum ExpectedNotification {
     UnrollCoinSpent,
     ChannelError,
     GameError,
+    GameProposed,
+    GameProposalAccepted,
+    GameProposalCancelled,
+    InsufficientBalance,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -441,6 +445,10 @@ fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
                 (GameNotification::UnrollCoinSpent { .. }, ExpectedNotification::UnrollCoinSpent) => true,
                 (GameNotification::ChannelError { .. }, ExpectedNotification::ChannelError) => true,
                 (GameNotification::GameError { .. }, ExpectedNotification::GameError) => true,
+                (GameNotification::GameProposed { .. }, ExpectedNotification::GameProposed) => true,
+                (GameNotification::GameProposalAccepted { .. }, ExpectedNotification::GameProposalAccepted) => true,
+                (GameNotification::GameProposalCancelled { .. }, ExpectedNotification::GameProposalCancelled) => true,
+                (GameNotification::InsufficientBalance { .. }, ExpectedNotification::InsufficientBalance) => true,
                 _ => false,
             }
         }
@@ -470,6 +478,10 @@ fn event_shape(actual: &TestEvent) -> String {
             GameNotification::UnrollCoinSpent { .. } => "Notif(UnrollCoinSpent)".to_string(),
             GameNotification::ChannelError { .. } => "Notif(ChannelError)".to_string(),
             GameNotification::GameError { .. } => "Notif(GameError)".to_string(),
+            GameNotification::GameProposed { id, proposed_by_us, .. } => format!("Notif(GameProposed(id={id:?},by_us={proposed_by_us}))"),
+            GameNotification::GameProposalAccepted { id } => format!("Notif(GameProposalAccepted(id={id:?}))"),
+            GameNotification::GameProposalCancelled { id, reason } => format!("Notif(GameProposalCancelled(id={id:?},reason={reason}))"),
+            GameNotification::InsufficientBalance { id, our_balance_short, their_balance_short } => format!("Notif(InsufficientBalance(id={id:?},ours={our_balance_short},theirs={their_balance_short}))"),
         },
     }
 }
@@ -493,6 +505,10 @@ fn expected_shape(expected: &ExpectedEvent) -> String {
             ExpectedNotification::UnrollCoinSpent => "Notif(UnrollCoinSpent)".to_string(),
             ExpectedNotification::ChannelError => "Notif(ChannelError)".to_string(),
             ExpectedNotification::GameError => "Notif(GameError)".to_string(),
+            ExpectedNotification::GameProposed => "Notif(GameProposed)".to_string(),
+            ExpectedNotification::GameProposalAccepted => "Notif(GameProposalAccepted)".to_string(),
+            ExpectedNotification::GameProposalCancelled => "Notif(GameProposalCancelled)".to_string(),
+            ExpectedNotification::InsufficientBalance => "Notif(InsufficientBalance)".to_string(),
         },
     }
 }
@@ -834,6 +850,9 @@ fn run_game_container_with_action_list_with_success_predicate(
                     | GameAction::NerfTransactions(_)
                     | GameAction::UnNerfTransactions
                     | GameAction::ProposeNewGame(_)
+                    | GameAction::ProposeNewGameTheirTurn(_)
+                    | GameAction::AcceptProposal(_)
+                    | GameAction::CancelProposal(_)
                     | GameAction::CorruptStateNumber(_, _)
                     | GameAction::ForceUnroll(_)
                     | GameAction::NerfMessages(_)
@@ -1117,26 +1136,51 @@ fn run_game_container_with_action_list_with_success_predicate(
                             continue;
                         }
                     }
-                    GameAction::ProposeNewGame(who) => {
+                    GameAction::ProposeNewGame(who) | GameAction::ProposeNewGameTheirTurn(who) => {
                         if !handshake_done {
                             move_number -= 1;
                             continue;
                         }
+                        let my_turn = matches!(ga, GameAction::ProposeNewGame(_));
                         let new_game_id = cradles[*who].next_game_id().unwrap();
-                        debug!("ProposeNewGame({who}): game_id={new_game_id:?}");
-                        cradles[*who].start_games(
+                        debug!("ProposeNewGame({who}, my_turn={my_turn}): game_id={new_game_id:?}");
+                        let new_ids = cradles[*who].propose_game(
                             allocator,
                             rng,
-                            true,
                             &GameStart {
                                 game_id: new_game_id,
                                 amount: Amount::new(100),
                                 my_contribution: Amount::new(50),
                                 game_type: GameType(game_type.to_vec()),
                                 timeout: Timeout::new(10),
-                                my_turn: true,
+                                my_turn,
                                 parameters: extras.clone(),
                             },
+                        )?;
+                        game_ids.extend(new_ids);
+                        can_move = true;
+                    }
+                    GameAction::AcceptProposal(who) => {
+                        let proposed_id = game_ids.last().expect(
+                            &format!("AcceptProposal({who}) at move_number={move_number} but game_ids is empty")
+                        ).clone();
+                        debug!("AcceptProposal({who}): game_id={proposed_id:?}");
+                        cradles[*who].accept_proposal(
+                            allocator,
+                            rng,
+                            &proposed_id,
+                        )?;
+                        can_move = true;
+                    }
+                    GameAction::CancelProposal(who) => {
+                        let proposed_id = game_ids.last().expect(
+                            &format!("CancelProposal({who}) at move_number={move_number} but game_ids is empty")
+                        ).clone();
+                        debug!("CancelProposal({who}): game_id={proposed_id:?}");
+                        cradles[*who].cancel_proposal(
+                            allocator,
+                            rng,
+                            &proposed_id,
                         )?;
                         can_move = true;
                     }
@@ -1394,6 +1438,35 @@ pub fn run_calpoker_container_with_action_list(
     moves: &[GameAction],
 ) -> Result<GameRunOutcome, Error> {
     run_calpoker_container_with_action_list_with_success_predicate(allocator, moves, None, None)
+}
+
+pub fn run_calpoker_proposal_only(
+    allocator: &mut AllocEncoder,
+    moves: &[GameAction],
+    predicate: GameRunEarlySuccessPredicate,
+    per_player_balance: Option<u64>,
+) -> Result<GameRunOutcome, Error> {
+    let seed_data: [u8; 32] = [0; 32];
+    let mut rng = ChaCha8Rng::from_seed(seed_data);
+    let pk1: PrivateKey = rng.gen();
+    let id1 = ChiaIdentity::new(allocator, pk1).expect("ok");
+    let pk2: PrivateKey = rng.gen();
+    let id2 = ChiaIdentity::new(allocator, pk2).expect("ok");
+
+    let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.gen();
+    let identities: [ChiaIdentity; 2] = [id1.clone(), id2.clone()];
+    run_game_container_with_action_list_with_success_predicate(
+        allocator,
+        &mut rng,
+        private_keys,
+        &identities,
+        b"calpoker",
+        &Program::from_hex("80")?,
+        moves,
+        predicate,
+        per_player_balance,
+        true,
+    )
 }
 
 fn get_balances_from_outcome(outcome: &GameRunOutcome) -> Result<(u64, u64), Error> {
@@ -2932,19 +3005,21 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         assert!(
-            p0_notifs.iter().any(|n| matches!(n, GameNotification::GameCancelled { .. })),
-            "Alice should get GameCancelled for her uncommitted game, got: {p0_notifs:?}"
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::GameProposalCancelled { .. })),
+            "Alice should get GameProposalCancelled for her proposed game, got: {p0_notifs:?}"
         );
 
         // The deterministic prefix is checked in order; the trailing
         // timeout notifications come from separate game coins and their
         // order is non-deterministic across runs.
+        // With proposals: game B is proposed (not started), so we get
+        // GameProposed + GameProposalCancelled instead of GameStart + GameCancelled.
         assert_event_sequence(&outcome.local_uis[0].events[..5], &[
             game_start(true, 100, 100),
-            game_start(true, 50, 50),
+            ExpectedEvent::Notification(ExpectedNotification::GameProposed),
+            ExpectedEvent::Notification(ExpectedNotification::GameProposalCancelled),
             ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
             ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-            ExpectedEvent::Notification(ExpectedNotification::GameCancelled),
         ], "cancellation_nerfed p0 prefix");
         let p0_tail: Vec<String> = outcome.local_uis[0].events[5..].iter().map(event_shape).collect();
         let mut p0_tail_sorted = p0_tail.clone();
@@ -3486,6 +3561,288 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             ], "go_on_chain_then_move p1");
         },
     ));
+
+    // ──────────────────────────────────────────────────────────────────
+    // Proposal lifecycle tests
+    // ──────────────────────────────────────────────────────────────────
+
+    res.push(("test_proposal_cancel_by_receiver", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        // No initial game — just proposals. Alice proposes (50+50),
+        // Bob has the potato and cancels. After cancel, Alice has the
+        // potato and initiates clean shutdown (no live games to block it).
+        let moves = vec![
+            GameAction::ProposeNewGame(0),
+            GameAction::CancelProposal(1),
+            GameAction::CleanShutdown(0, Rc::new(BasicShutdownConditions)),
+        ];
+
+        let outcome = run_calpoker_proposal_only(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
+
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        assert!(
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::GameProposed { proposed_by_us: true, .. })),
+            "Alice should see GameProposed(by_us=true), got: {p0_notifs:?}"
+        );
+        assert!(
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::GameProposalCancelled { .. })),
+            "Alice should see GameProposalCancelled, got: {p0_notifs:?}"
+        );
+
+        let p1_notifs = &outcome.local_uis[1].notifications;
+        assert!(
+            p1_notifs.iter().any(|n| matches!(n, GameNotification::GameProposed { proposed_by_us: false, .. })),
+            "Bob should see GameProposed(by_us=false), got: {p1_notifs:?}"
+        );
+        assert!(
+            p1_notifs.iter().any(|n| matches!(n, GameNotification::GameProposalCancelled { .. })),
+            "Bob should see GameProposalCancelled, got: {p1_notifs:?}"
+        );
+    }));
+
+    res.push(("test_proposal_accept_then_on_chain", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        // No initial game. Alice proposes (50+50), Bob accepts. A
+        // WaitBlocks gap lets Alice process Bob's accept before going
+        // on-chain. Both sides should see GameProposed + GameProposalAccepted.
+        let moves = vec![
+            GameAction::ProposeNewGame(0),
+            GameAction::AcceptProposal(1),
+            GameAction::WaitBlocks(1, 2),
+            GameAction::GoOnChain(0),
+            GameAction::WaitBlocks(120, 0),
+            GameAction::WaitBlocks(5, 0),
+        ];
+
+        let outcome = run_calpoker_proposal_only(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
+
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        assert!(
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::GameProposed { proposed_by_us: true, .. })),
+            "Alice should see GameProposed, got: {p0_notifs:?}"
+        );
+        assert!(
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::GameProposalAccepted { .. })),
+            "Alice should see GameProposalAccepted, got: {p0_notifs:?}"
+        );
+
+        let p1_notifs = &outcome.local_uis[1].notifications;
+        assert!(
+            p1_notifs.iter().any(|n| matches!(n, GameNotification::GameProposed { proposed_by_us: false, .. })),
+            "Bob should see GameProposed, got: {p1_notifs:?}"
+        );
+        assert!(
+            p1_notifs.iter().any(|n| matches!(n, GameNotification::GameProposalAccepted { .. })),
+            "Bob should see GameProposalAccepted, got: {p1_notifs:?}"
+        );
+    }));
+
+    res.push(("test_proposal_clean_shutdown_cancels_proposals", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        // No initial game. Alice proposes, Bob has the potato and
+        // initiates clean shutdown. The proposal should be cancelled
+        // on both sides.
+        let moves = vec![
+            GameAction::ProposeNewGame(0),
+            GameAction::CleanShutdown(1, Rc::new(BasicShutdownConditions)),
+        ];
+
+        let outcome = run_calpoker_proposal_only(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
+
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        assert!(
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::GameProposed { .. })),
+            "Alice should see GameProposed, got: {p0_notifs:?}"
+        );
+        assert!(
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::GameProposalCancelled { .. })),
+            "Alice should see GameProposalCancelled during shutdown, got: {p0_notifs:?}"
+        );
+
+        let p1_notifs = &outcome.local_uis[1].notifications;
+        assert!(
+            p1_notifs.iter().any(|n| matches!(n, GameNotification::GameProposed { .. })),
+            "Bob should see GameProposed, got: {p1_notifs:?}"
+        );
+        assert!(
+            p1_notifs.iter().any(|n| matches!(n, GameNotification::GameProposalCancelled { .. })),
+            "Bob should see GameProposalCancelled during shutdown, got: {p1_notifs:?}"
+        );
+    }));
+
+    res.push(("test_proposal_cancel_by_proposer", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        // Alice proposes, then Alice cancels her own proposal.
+        // After proposal the potato is with Bob; CancelProposal(0)
+        // queues the cancel and requests the potato back.
+        let moves = vec![
+            GameAction::ProposeNewGame(0),
+            GameAction::CancelProposal(0),
+            GameAction::CleanShutdown(0, Rc::new(BasicShutdownConditions)),
+        ];
+
+        let outcome = run_calpoker_proposal_only(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
+
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        assert!(
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::GameProposed { proposed_by_us: true, .. })),
+            "Alice should see GameProposed(by_us=true), got: {p0_notifs:?}"
+        );
+        assert!(
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::GameProposalCancelled { .. })),
+            "Alice should see GameProposalCancelled, got: {p0_notifs:?}"
+        );
+
+        let p1_notifs = &outcome.local_uis[1].notifications;
+        assert!(
+            p1_notifs.iter().any(|n| matches!(n, GameNotification::GameProposed { proposed_by_us: false, .. })),
+            "Bob should see GameProposed(by_us=false), got: {p1_notifs:?}"
+        );
+        assert!(
+            p1_notifs.iter().any(|n| matches!(n, GameNotification::GameProposalCancelled { .. })),
+            "Bob should see GameProposalCancelled, got: {p1_notifs:?}"
+        );
+    }));
+
+    res.push(("test_proposal_self_accept_via_move", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        // Alice proposes (my_turn=true, so it's her turn). She then
+        // issues a Move on the proposed game. The implicit-accept
+        // check detects self-acceptance and triggers go-on-chain.
+        let nil_move = ReadableMove::from_program(
+            Rc::new(Program::from_hex("80").expect("nil")),
+        );
+        let moves = vec![
+            GameAction::ProposeNewGame(0),
+            GameAction::Move(0, nil_move, false),
+            GameAction::WaitBlocks(120, 0),
+            GameAction::WaitBlocks(5, 0),
+        ];
+
+        let outcome = run_calpoker_proposal_only(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
+
+        let p0_events = &outcome.local_uis[0].events;
+        assert!(
+            p0_events.iter().any(|e| matches!(e, TestEvent::GoingOnChain { reason } if reason.contains("self-acceptance"))),
+            "Alice should see GoingOnChain(self-acceptance), got: {p0_events:?}"
+        );
+    }));
+
+    res.push(("test_proposal_implicit_accept_via_move_debug", &|| {
+        let mut allocator = AllocEncoder::new();
+        let seed_data: [u8; 32] = [0; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed_data);
+        let pk1: PrivateKey = rng.gen();
+        let id1 = ChiaIdentity::new(&mut allocator, pk1).expect("ok");
+        let pk2: PrivateKey = rng.gen();
+        let id2 = ChiaIdentity::new(&mut allocator, pk2).expect("ok");
+        let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.gen();
+        let identities: [ChiaIdentity; 2] = [id1, id2];
+
+        let pid1 = ChiaIdentity::new(
+            &mut allocator, private_keys[0].my_referee_private_key.clone(),
+        ).expect("ok");
+        let pid2 = ChiaIdentity::new(
+            &mut allocator, private_keys[1].my_referee_private_key.clone(),
+        ).expect("ok");
+
+        // Create debug game handlers with Bob (pid2) as first mover and
+        // contributions matching the proposal flow (50+50=100).
+        let mut debug_rng = ChaCha8Rng::from_seed([1u8; 32]);
+        let swapped_identities = [pid2.clone(), pid1.clone()];
+        let mut debug_handlers = make_debug_games_with_contributions(
+            &mut allocator, &mut debug_rng,
+            &swapped_identities, 50, 50,
+        ).expect("should create debug games");
+
+        // handler[0] is the first mover (pid2 = Bob's referee identity).
+        let (first_mover, second_mover) = pair_of_array_mut(&mut debug_handlers);
+        let bob_move_info = first_mover.do_move(
+            &mut allocator, second_mover,
+            Amount::new(0), 0,
+        ).expect("should generate move");
+
+        // CURRY_PACK with MOVER0=Bob's key, WAITER0=Alice's key.
+        let args_curry = DebugGameCurry::new(
+            &mut allocator, &pid2.public_key, &pid1.public_key,
+        ).expect("good");
+        let args = args_curry.to_clvm(&mut allocator).into_gen().expect("ok");
+        let extras = Program::from_nodeptr(&mut allocator, args).expect("ok");
+
+        // Alice proposes with my_turn=false (Bob goes first), then Bob
+        // makes a Move on the proposed game, triggering implicit accept.
+        let moves = vec![
+            GameAction::ProposeNewGameTheirTurn(0),
+            GameAction::Move(1, bob_move_info.ui_move.clone(), false),
+            GameAction::GoOnChain(0),
+            GameAction::WaitBlocks(120, 0),
+            GameAction::WaitBlocks(5, 0),
+        ];
+
+        let outcome = run_game_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &mut rng,
+            private_keys,
+            &identities,
+            b"debug",
+            &extras,
+            &moves,
+            None,
+            Some(200),
+            true,
+        ).expect("should finish");
+
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        let p1_notifs = &outcome.local_uis[1].notifications;
+
+        assert!(
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::GameProposed { proposed_by_us: true, .. })),
+            "Alice should see GameProposed(by_us=true), got: {p0_notifs:?}"
+        );
+        assert!(
+            p1_notifs.iter().any(|n| matches!(n, GameNotification::GameProposed { proposed_by_us: false, .. })),
+            "Bob should see GameProposed(by_us=false), got: {p1_notifs:?}"
+        );
+        assert!(
+            p1_notifs.iter().any(|n| matches!(n, GameNotification::GameProposalAccepted { .. })),
+            "Bob should see GameProposalAccepted from implicit accept via move, got: {p1_notifs:?}"
+        );
+    }));
 
     res
 }

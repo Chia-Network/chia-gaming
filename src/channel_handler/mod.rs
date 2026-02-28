@@ -25,8 +25,9 @@ use crate::channel_handler::types::{
     ChannelHandlerUnrollSpendInfo, CoinSpentAccept, CoinSpentDisposition,
     CoinSpentInformation, CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartFailed,
     GameStartInfoInterface, HandshakeResult, LiveGame, MoveResult, OnChainGameCoin,
-    OnChainGameState, PotatoAcceptCachedData, PotatoMoveCachedData, PotatoSignatures, ReadableMove,
-    StartGameResult, UnrollCoin, UnrollCoinConditionInputs, UnrollTarget,
+    OnChainGameState, PotatoAcceptCachedData, PotatoMoveCachedData, PotatoSignatures,
+    ProposedGame, ReadableMove, StartGameResult, UnrollCoin, UnrollCoinConditionInputs,
+    UnrollTarget,
 };
 
 use crate::common::constants::CREATE_COIN;
@@ -139,6 +140,11 @@ pub struct ChannelHandler {
     // set_state_for_coins and accept_or_timeout_game_on_chain can find them
     // if the channel goes on-chain before the round-trip completes.
     pending_accept_games: Vec<LiveGame>,
+
+    // Games that have been proposed but not yet accepted or cancelled.
+    // These are metadata only — they do not affect the unroll commitment
+    // or player balances until accepted.
+    proposed_games: Vec<ProposedGame>,
 }
 
 pub trait EnvDataForReferee {
@@ -535,6 +541,7 @@ impl ChannelHandler {
 
             live_games: Vec::new(),
             pending_accept_games: Vec::new(),
+            proposed_games: Vec::new(),
 
             private_keys,
         };
@@ -894,6 +901,279 @@ impl ChannelHandler {
         }
 
         Ok(res)
+    }
+
+    pub fn propose_game<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        start_info: &Rc<dyn GameStartInfoInterface>,
+    ) -> Result<PotatoSignatures, Error> {
+        let new_game_nonce = self.next_nonce_number;
+        self.next_nonce_number += 1;
+
+        let referee_identity = ChiaIdentity::new(
+            env.allocator,
+            self.private_keys.my_referee_private_key.clone(),
+        )?;
+        let ref_puzzle = env.referee_coin_puzzle.clone();
+        let ref_ph = env.referee_coin_puzzle_hash.clone();
+        let agg_sig_me = env.agg_sig_me_additional_data.clone();
+        let (r, ph) = Referee::new(
+            env.allocator,
+            ref_puzzle,
+            ref_ph,
+            start_info,
+            referee_identity,
+            &self.their_referee_pubkey,
+            &self.their_reward_puzzle_hash,
+            &self.their_reward_payout_signature,
+            &self.reward_puzzle_hash,
+            new_game_nonce,
+            &agg_sig_me,
+            self.current_state_number,
+        )?;
+
+        self.proposed_games.push(ProposedGame::new(
+            start_info.game_id().clone(),
+            true,
+            ph,
+            Rc::new(r),
+            start_info.my_contribution_this_game().clone(),
+            start_info.their_contribution_this_game().clone(),
+        ));
+
+        self.update_cache_for_potato_send(None);
+        self.update_cached_unroll_state(env)
+    }
+
+    pub fn received_proposal<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        signatures: &PotatoSignatures,
+        start_info: &Rc<dyn GameStartInfoInterface>,
+    ) -> Result<ChannelCoinSpendInfo, Error> {
+        let new_game_nonce = self.next_nonce_number;
+        self.next_nonce_number += 1;
+
+        let referee_identity = ChiaIdentity::new(
+            env.allocator,
+            self.private_keys.my_referee_private_key.clone(),
+        )?;
+        let ref_puzzle = env.referee_coin_puzzle.clone();
+        let ref_ph = env.referee_coin_puzzle_hash.clone();
+        let agg_sig_me = env.agg_sig_me_additional_data.clone();
+        let (r, ph) = Referee::new(
+            env.allocator,
+            ref_puzzle,
+            ref_ph,
+            start_info,
+            referee_identity,
+            &self.their_referee_pubkey,
+            &self.their_reward_puzzle_hash,
+            &self.their_reward_payout_signature,
+            &self.reward_puzzle_hash,
+            new_game_nonce,
+            &agg_sig_me,
+            self.current_state_number,
+        )?;
+
+        self.proposed_games.push(ProposedGame::new(
+            start_info.game_id().clone(),
+            false,
+            ph,
+            Rc::new(r),
+            start_info.my_contribution_this_game().clone(),
+            start_info.their_contribution_this_game().clone(),
+        ));
+
+        let unroll_data =
+            self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
+
+        let spend = self.received_potato_verify_signatures(
+            env,
+            signatures,
+            &self.unroll_coin_condition_inputs(
+                self.my_out_of_game_balance.clone(),
+                self.their_out_of_game_balance.clone(),
+                &unroll_data,
+            ),
+        )?;
+
+        Ok(ChannelCoinSpendInfo {
+            aggsig: spend.signature,
+            solution: spend.solution.p(),
+            conditions: spend.conditions.p(),
+        })
+    }
+
+    pub fn accept_proposal<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        game_id: &GameID,
+    ) -> Result<PotatoSignatures, Error> {
+        let idx = self.proposed_games.iter().position(|p| p.game_id == *game_id)
+            .ok_or_else(|| Error::StrErr(format!("no proposal with id {game_id:?}")))?;
+        let proposal = self.proposed_games.remove(idx);
+
+        if proposal.my_contribution.clone() > self.my_out_of_game_balance
+            || proposal.their_contribution.clone() > self.their_out_of_game_balance
+        {
+            self.proposed_games.insert(idx, proposal);
+            return Err(Error::StrErr("insufficient balance to accept proposal".to_string()));
+        }
+
+        self.my_allocated_balance += proposal.my_contribution.clone();
+        self.their_allocated_balance += proposal.their_contribution.clone();
+        self.my_out_of_game_balance -= proposal.my_contribution.clone();
+        self.their_out_of_game_balance -= proposal.their_contribution.clone();
+
+        self.clear_cached_game_id_for_send();
+
+        let live_game = LiveGame::new(
+            proposal.game_id.clone(),
+            proposal.initial_puzzle_hash,
+            proposal.referee,
+            proposal.my_contribution,
+            proposal.their_contribution,
+        );
+        self.live_games.push(live_game);
+
+        self.update_cache_for_potato_send(None);
+        self.update_cached_unroll_state(env)
+    }
+
+    pub fn received_accept_proposal<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        signatures: &PotatoSignatures,
+        game_id: &GameID,
+    ) -> Result<ChannelCoinSpendInfo, Error> {
+        let idx = self.proposed_games.iter().position(|p| p.game_id == *game_id)
+            .ok_or_else(|| Error::StrErr(format!("no proposal with id {game_id:?}")))?;
+        let proposal = self.proposed_games.remove(idx);
+
+        if proposal.my_contribution.clone() > self.my_out_of_game_balance
+            || proposal.their_contribution.clone() > self.their_out_of_game_balance
+        {
+            self.proposed_games.insert(idx, proposal);
+            return Err(Error::StrErr("insufficient balance to accept proposal".to_string()));
+        }
+
+        self.my_allocated_balance += proposal.my_contribution.clone();
+        self.their_allocated_balance += proposal.their_contribution.clone();
+        self.my_out_of_game_balance -= proposal.my_contribution.clone();
+        self.their_out_of_game_balance -= proposal.their_contribution.clone();
+
+        let live_game = LiveGame::new(
+            proposal.game_id.clone(),
+            proposal.initial_puzzle_hash,
+            proposal.referee,
+            proposal.my_contribution,
+            proposal.their_contribution,
+        );
+        self.live_games.push(live_game);
+
+        let cached_game_ids: Vec<GameID> = Vec::new();
+        let unroll_data =
+            self.compute_unroll_data_for_games(&cached_game_ids, None, &self.live_games)?;
+
+        let spend = self.received_potato_verify_signatures(
+            env,
+            signatures,
+            &self.unroll_coin_condition_inputs(
+                self.my_out_of_game_balance.clone(),
+                self.their_out_of_game_balance.clone(),
+                &unroll_data,
+            ),
+        )?;
+
+        Ok(ChannelCoinSpendInfo {
+            aggsig: spend.signature,
+            solution: spend.solution.p(),
+            conditions: spend.conditions.p(),
+        })
+    }
+
+    pub fn cancel_proposal<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        game_id: &GameID,
+    ) -> Result<PotatoSignatures, Error> {
+        let idx = self.proposed_games.iter().position(|p| p.game_id == *game_id)
+            .ok_or_else(|| Error::StrErr(format!("no proposal with id {game_id:?}")))?;
+        self.proposed_games.remove(idx);
+        self.update_cache_for_potato_send(None);
+        self.update_cached_unroll_state(env)
+    }
+
+    pub fn received_cancel_proposal(
+        &mut self,
+        game_id: &GameID,
+    ) -> Result<(), Error> {
+        let idx = self.proposed_games.iter().position(|p| p.game_id == *game_id)
+            .ok_or_else(|| Error::StrErr(format!("no proposal with id {game_id:?}")))?;
+        self.proposed_games.remove(idx);
+        Ok(())
+    }
+
+    pub fn cancel_all_proposals(&mut self) -> Vec<GameID> {
+        let ids: Vec<GameID> = self.proposed_games.iter().map(|p| p.game_id.clone()).collect();
+        self.proposed_games.clear();
+        ids
+    }
+
+    pub fn find_proposal(&self, game_id: &GameID) -> Option<&ProposedGame> {
+        self.proposed_games.iter().find(|p| p.game_id == *game_id)
+    }
+
+    /// Move a proposal from proposed_games to live_games without updating the
+    /// unroll state. This is used for implicit accept (via Move) where the move
+    /// itself will update the unroll. Deducts balances.
+    pub fn accept_proposal_into_live(
+        &mut self,
+        game_id: &GameID,
+    ) -> Result<(), Error> {
+        let idx = self.proposed_games.iter().position(|p| p.game_id == *game_id)
+            .ok_or_else(|| Error::StrErr(format!("no proposal with id {game_id:?}")))?;
+        let proposal = self.proposed_games.remove(idx);
+
+        if proposal.my_contribution.clone() > self.my_out_of_game_balance
+            || proposal.their_contribution.clone() > self.their_out_of_game_balance
+        {
+            self.proposed_games.insert(idx, proposal);
+            return Err(Error::StrErr("insufficient balance to accept proposal".to_string()));
+        }
+
+        self.my_allocated_balance += proposal.my_contribution.clone();
+        self.their_allocated_balance += proposal.their_contribution.clone();
+        self.my_out_of_game_balance -= proposal.my_contribution.clone();
+        self.their_out_of_game_balance -= proposal.their_contribution.clone();
+
+        let live_game = LiveGame::new(
+            proposal.game_id.clone(),
+            proposal.initial_puzzle_hash,
+            proposal.referee,
+            proposal.my_contribution,
+            proposal.their_contribution,
+        );
+        self.live_games.push(live_game);
+        Ok(())
+    }
+
+    pub fn my_out_of_game_balance(&self) -> Amount {
+        self.my_out_of_game_balance.clone()
+    }
+
+    pub fn their_out_of_game_balance(&self) -> Amount {
+        self.their_out_of_game_balance.clone()
+    }
+
+    pub fn has_proposals(&self) -> bool {
+        !self.proposed_games.is_empty()
+    }
+
+    pub fn is_game_proposed(&self, game_id: &GameID) -> bool {
+        self.proposed_games.iter().any(|p| p.game_id == *game_id)
     }
 
     fn start_game_contributions(
@@ -1930,6 +2210,12 @@ impl ChannelHandler {
         for g in self.live_games.iter() {
             if g.game_id == *game_id {
                 return Some(g.is_my_turn());
+            }
+        }
+
+        for p in self.proposed_games.iter() {
+            if p.game_id == *game_id {
+                return Some(p.referee.is_my_turn());
             }
         }
 

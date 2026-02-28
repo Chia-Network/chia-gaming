@@ -979,6 +979,12 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 Ok(Vec::new())
             }
             GameAction::SendPotato => Ok(Vec::new()),
+            GameAction::QueuedProposal(_, _)
+            | GameAction::QueuedAcceptProposal(_)
+            | GameAction::QueuedCancelProposal(_) => {
+                debug!("ignoring proposal action on chain");
+                Ok(vec![])
+            }
         }
     }
 

@@ -6,6 +6,7 @@ mod coin_spent;
 mod evidence;
 mod game_start_info;
 mod live_game;
+mod proposed_game;
 mod on_chain_game_coin;
 mod on_chain_game_state;
 mod potato;
@@ -32,6 +33,7 @@ pub use game_start_info::{
     GameStartInfo, GameStartInfoInterface, GameStartInfoInterfaceND, ValidationOrUpdateProgram,
 };
 pub use live_game::LiveGame;
+pub use proposed_game::ProposedGame;
 pub use on_chain_game_coin::OnChainGameCoin;
 pub use on_chain_game_state::OnChainGameState;
 pub use potato::{

@@ -28,17 +28,15 @@ without the right flags is error-prone and wastes time.
 
 ### Running tests directly (without scripts)
 
-If you must bypass the scripts:
+If you must bypass the scripts, replicate what `ct` does:
 
 ```bash
-cargo test --features sim-tests -- sim_tests --nocapture 2>&1 \
-  | tee /tmp/test-output.log \
-  | tail -40
+cargo test --features sim-tests -- --nocapture
 ```
 
 To start from a specific test (wraparound):
 ```bash
-SIM_TEST_FROM=accept_finished cargo test --features sim-tests -- sim_tests --nocapture
+SIM_TEST_FROM=accept_finished cargo test --features sim-tests -- --nocapture
 ```
 
 - A single on-chain test takes 30–60s locally; the full sim suite takes 5–8 min.
@@ -71,8 +69,7 @@ Typical durations:
 
 ```bash
 # Summary of all test results:
-cargo test --features sim-tests -- sim_tests --nocapture 2>&1 \
-  | rg "RUNNING TEST|ok|panic"
+./ct 2>&1 | rg "RUNNING TEST|ok|panic"
 ```
 
 This gives you lines like:
@@ -122,11 +119,6 @@ rg "CHANNEL_COIN_SPENT|PREEMPTION|UNROLL" /tmp/test-output.log
 rg "SET_STATE_FOR_COINS|GET_REDO|FINISH_REDO|DO_REDO" /tmp/test-output.log
 ```
 
-**Do NOT:**
-- Read the full terminal file of a running/completed test
-- Use `cat` or `read` on the terminal output file without offset/limit
-- Use `head` with a large number — most of the early output is build noise
-
 ### Test registration
 
 Tests are registered in two places:
@@ -153,13 +145,6 @@ After the unroll coin resolves (timeout or preemption), game coins are created.
 3. **Neither**: Error.
 
 ### Diagnostic output
-
-Key `eprintln!` markers to search for:
-- `SET_STATE_FOR_COINS:` — shows each game coin's PH matching
-- `GET_REDO_FORWARD:` — whether redo PH matched or not
-- `FINISH_REDO_ACTION:` — the redo action being queued
-- `DO_REDO_MOVE:` — the redo transaction being submitted
-- `PREEMPTION:` — preemption path details
 
 ## Timeouts and Timelocks
 
@@ -257,19 +242,6 @@ off-chain moves to ensure the correct player's turn after the redo:
 | 3 | Alice | Bob | `Cheat(1)`, `ForceDestroyCoin` on Bob's turn |
 | 4 | Bob | Alice | `Cheat(0)`, `Accept(0)` |
 
-## previous_validation_info_hash
-
-Game validators may expect `previous_validation_info_hash = None` during the
-initial game state (e.g., the debug game). The Rust code in `my_turn.rs` and
-`their_turn.rs` constructs two sets of `RefereePuzzleArgs`:
-
-- `offchain_puzzle_args`: `None` for initial state, used for validator
-- `rc_puzzle_args`: Always `Some(hash)`, used for on-chain state
-
-If you see `ClvmErr(Raise(...))` during a slash or move validation in the
-initial game state, check whether `previous_validation_info_hash` is being
-set correctly for the off-chain path.
-
 ## Common Errors and What They Mean
 
 | Error | Meaning |
@@ -313,38 +285,32 @@ set correctly for the off-chain path.
 
 ### Finding and interpreting failures
 
-5. **Always grep for `panic` in every test run.** The `panic payload:` line
-   has the actual error message.
-
-6. **Distinguish between the two players' output.** Debug lines from
+4. **Distinguish between the two players' output.** Debug lines from
    `on_chain.rs` are prefixed with `false` or `true` = `is_initial_potato()`.
    `false` = player 0 (Alice), `true` = player 1 (Bob).
 
-7. **For `simulation stalled` panics**, the panic message includes
+5. **For `simulation stalled` panics**, the panic message includes
    `move_number`, `can_move`, and `next_action`. Check whether the next action
    is for the correct player and whether the redo changed the expected turn.
 
 ### Code-level debugging
 
-8. **Add targeted `eprintln!()` calls** to the specific function you're
+6. **Add targeted `eprintln!()` calls** to the specific function you're
    investigating. Use a distinctive prefix (e.g., `MY_DEBUG:`) so you can
    grep for it. Remove after the issue is fixed.
 
-9. **Trace the coin lifecycle** when debugging puzzle hash mismatches:
+7. **Trace the coin lifecycle** when debugging puzzle hash mismatches:
    - What puzzle hash was the coin created with?
    - What do `on_chain_referee_puzzle_hash()` and `outcome_referee_puzzle_hash()` return?
    - Did the coin go through the `Expected` or `Moved` path?
    - Was a redo triggered? Did the PH match?
    - Does `last_referee_puzzle_hash` match the coin PH?
 
-10. **Test entry point**: `run_calpoker_container_with_action_list` is the
-    main function for running calpoker simulation tests.
-
 ### Mistakes to avoid
 
-- **Don't read full terminal output files.** They can be huge.
 - **Don't use `head` to read test output** — early output is build noise.
 - **Don't assume exit code 0 means all tests passed.** Always grep for `panic`.
-- **Don't use `channel_timeout` for game coins.** Use `game_timeout`.
 - **Don't forget `2>&1`** when piping test output. Some output goes to stderr.
-- **Don't add sleep-based polling.** Tee and filter is simpler and more reliable.
+- **Don't run tests in the background.** Run `./ct` or `./cb` in the foreground
+  and wait for them to finish. Background execution with sleep-based polling
+  wastes time and makes output harder to capture.

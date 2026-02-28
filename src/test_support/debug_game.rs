@@ -149,6 +149,23 @@ impl BareDebugGameHandler {
         timeout: Timeout,
         rng_sequence: &[Hash],
     ) -> Result<[BareDebugGameHandler; 2], Error> {
+        Self::new_with_contributions(
+            allocator, game_id, nonce, identities, referee_coin_puzzle_hash,
+            timeout, rng_sequence, 100, 100,
+        )
+    }
+
+    fn new_with_contributions(
+        allocator: &mut AllocEncoder,
+        game_id: GameID,
+        nonce: usize,
+        identities: &[ChiaIdentity],
+        referee_coin_puzzle_hash: &PuzzleHash,
+        timeout: Timeout,
+        rng_sequence: &[Hash],
+        my_contribution: u64,
+        their_contribution: u64,
+    ) -> Result<[BareDebugGameHandler; 2], Error> {
         let args = DebugGameCurry::new(
             allocator,
             &identities[0].public_key,
@@ -163,7 +180,7 @@ impl BareDebugGameHandler {
         .to_clvm(allocator)
         .into_gen()?;
         let curried_prog = Program::from_nodeptr(allocator, curried)?;
-        let args_node = (100, (100, (args, ()))).to_clvm(allocator).into_gen()?;
+        let args_node = (my_contribution, (their_contribution, (args, ()))).to_clvm(allocator).into_gen()?;
         let args_clvm = Rc::new(Program::from_nodeptr(allocator, args_node)?);
         let alice_game = Game::new_program(
             allocator,
@@ -175,8 +192,8 @@ impl BareDebugGameHandler {
         let bob_game =
             Game::new_program(allocator, false, &game_id, curried_prog.into(), args_clvm)?;
         let start_a =
-            alice_game.game_start(&game_id, &Amount::new(100), &Amount::new(100), &timeout);
-        let start_b = bob_game.game_start(&game_id, &Amount::new(100), &Amount::new(100), &timeout);
+            alice_game.game_start(&game_id, &Amount::new(my_contribution), &Amount::new(their_contribution), &timeout);
+        let start_b = bob_game.game_start(&game_id, &Amount::new(their_contribution), &Amount::new(my_contribution), &timeout);
         assert_ne!(start_a.amount, Amount::default());
         assert_ne!(start_b.amount, Amount::default());
         let make_bare_handler = |game_start: &GameStartInfo| -> BareDebugGameHandler {
@@ -603,11 +620,21 @@ pub fn make_debug_games(
     rng: &mut ChaCha8Rng,
     identities: &[ChiaIdentity],
 ) -> Result<[BareDebugGameHandler; 2], Error> {
+    make_debug_games_with_contributions(allocator, rng, identities, 100, 100)
+}
+
+pub fn make_debug_games_with_contributions(
+    allocator: &mut AllocEncoder,
+    rng: &mut ChaCha8Rng,
+    identities: &[ChiaIdentity],
+    my_contribution: u64,
+    their_contribution: u64,
+) -> Result<[BareDebugGameHandler; 2], Error> {
     let rng_seq0: Vec<Hash> = (0..50).map(|_| rng.gen()).collect();
     let gid = GameID::default();
     let referee_coin = read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex")?;
     let ref_coin_hash = referee_coin.sha256tree(allocator);
-    BareDebugGameHandler::new(
+    BareDebugGameHandler::new_with_contributions(
         allocator,
         gid,
         0,
@@ -615,6 +642,8 @@ pub fn make_debug_games(
         &ref_coin_hash,
         Timeout::new(10),
         &rng_seq0,
+        my_contribution,
+        their_contribution,
     )
 }
 

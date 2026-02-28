@@ -235,6 +235,24 @@ pub trait FromLocalUI
         game: &GameStart,
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error>;
 
+    fn propose_game<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+        game: &GameStart,
+    ) -> Result<(Vec<GameID>, Vec<Effect>), Error>;
+
+    fn accept_proposal<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+        game_id: &GameID,
+    ) -> Result<Vec<Effect>, Error>;
+
+    fn cancel_proposal<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+        game_id: &GameID,
+    ) -> Result<Vec<Effect>, Error>;
+
     fn make_move<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
@@ -304,6 +322,9 @@ pub enum PeerMessage {
     CleanShutdownComplete(CoinSpend),
     RequestPotato(()),
     StartGames(PotatoSignatures, Vec<GSI>),
+    ProposeGame(PotatoSignatures, GSI),
+    AcceptProposal(GameID, PotatoSignatures),
+    CancelProposal(GameID, PotatoSignatures),
 }
 
 impl PeerMessage {
@@ -366,6 +387,9 @@ pub enum GameAction {
     CleanShutdown(ShutdownActionHolder),
     LocalStartGame,
     SendPotato,
+    QueuedProposal(GSI, GSI),
+    QueuedAcceptProposal(GameID),
+    QueuedCancelProposal(GameID),
 }
 
 impl std::fmt::Debug for GameAction {
@@ -382,6 +406,9 @@ impl std::fmt::Debug for GameAction {
             GameAction::CleanShutdown(_) => write!(formatter, "CleanShutdown(..)"),
             GameAction::LocalStartGame => write!(formatter, "LocalStartGame"),
             GameAction::SendPotato => write!(formatter, "SendPotato"),
+            GameAction::QueuedProposal(_, _) => write!(formatter, "QueuedProposal(..)"),
+            GameAction::QueuedAcceptProposal(gi) => write!(formatter, "QueuedAcceptProposal({gi:?})"),
+            GameAction::QueuedCancelProposal(gi) => write!(formatter, "QueuedCancelProposal({gi:?})"),
         }
     }
 }

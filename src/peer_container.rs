@@ -199,6 +199,32 @@ pub trait GameCradle {
         game: &GameStart,
     ) -> Result<Vec<GameID>, Error>;
 
+    /// Propose a new game. The game enters the proposed state and is
+    /// communicated to the peer as metadata (no unroll/balance impact).
+    fn propose_game<R: Rng>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+        game: &GameStart,
+    ) -> Result<Vec<GameID>, Error>;
+
+    /// Explicitly accept a proposed game. Moves it from proposed to live,
+    /// deducting balances and updating the unroll commitment.
+    fn accept_proposal<R: Rng>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+        game_id: &GameID,
+    ) -> Result<(), Error>;
+
+    /// Cancel a proposed game.
+    fn cancel_proposal<R: Rng>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+        game_id: &GameID,
+    ) -> Result<(), Error>;
+
     /// Signal making a move.  Forwards to FromLocalUI::make_move.
     fn make_move<R: Rng>(
         &mut self,
@@ -902,6 +928,48 @@ impl GameCradle for SynchronousGameCradle {
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(result)
+    }
+
+    fn propose_game<R: Rng>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+        game: &GameStart,
+    ) -> Result<Vec<GameID>, Error> {
+        let (result, reported_effects) = {
+            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+            self.peer.propose_game(&mut env, game)?
+        };
+        self.process_effects(reported_effects, allocator)?;
+        Ok(result)
+    }
+
+    fn accept_proposal<R: Rng>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+        game_id: &GameID,
+    ) -> Result<(), Error> {
+        let reported_effects = {
+            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+            self.peer.accept_proposal(&mut env, game_id)?
+        };
+        self.process_effects(reported_effects, allocator)?;
+        Ok(())
+    }
+
+    fn cancel_proposal<R: Rng>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+        game_id: &GameID,
+    ) -> Result<(), Error> {
+        let reported_effects = {
+            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+            self.peer.cancel_proposal(&mut env, game_id)?
+        };
+        self.process_effects(reported_effects, allocator)?;
+        Ok(())
     }
 
     fn identity(&self) -> ChiaIdentity {

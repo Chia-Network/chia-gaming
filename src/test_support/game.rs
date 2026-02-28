@@ -191,6 +191,8 @@ mod sim_tests {
         /// Propose a new game from the specified player (initiator side only).
         /// The proposal will be queued and sent on the next potato exchange.
         ProposeNewGame(usize),
+        /// Like ProposeNewGame but with my_turn=false so the receiver moves first.
+        ProposeNewGameTheirTurn(usize),
         /// Go on chain
         GoOnChain(usize),
         /// Go on chain and immediately make the next Move in the action
@@ -215,6 +217,10 @@ mod sim_tests {
         NerfMessages(usize),
         /// Stop nerfing messages.
         UnNerfMessages,
+        /// Explicitly accept a proposed game from the specified player.
+        AcceptProposal(usize),
+        /// Cancel a proposed game from the specified player.
+        CancelProposal(usize),
     }
 
     impl std::fmt::Debug for GameAction {
@@ -231,6 +237,7 @@ mod sim_tests {
                 GameAction::NerfTransactions(p) => write!(formatter, "NerfTransactions({p})"),
                 GameAction::UnNerfTransactions => write!(formatter, "UnNerfTransactions"),
                 GameAction::ProposeNewGame(p) => write!(formatter, "ProposeNewGame({p})"),
+                GameAction::ProposeNewGameTheirTurn(p) => write!(formatter, "ProposeNewGameTheirTurn({p})"),
                 GameAction::GoOnChain(p) => write!(formatter, "GoOnChain({p})"),
                 GameAction::GoOnChainThenMove(p) => {
                     write!(formatter, "GoOnChainThenMove({p})")
@@ -244,6 +251,8 @@ mod sim_tests {
                 GameAction::ForceUnroll(p) => write!(formatter, "ForceUnroll({p})"),
                 GameAction::NerfMessages(p) => write!(formatter, "NerfMessages({p})"),
                 GameAction::UnNerfMessages => write!(formatter, "UnNerfMessages"),
+                GameAction::AcceptProposal(p) => write!(formatter, "AcceptProposal({p})"),
+                GameAction::CancelProposal(p) => write!(formatter, "CancelProposal({p})"),
             }
         }
     }
