@@ -5,14 +5,6 @@ use crate::common::types::{
 use crate::potato_handler::types::PeerMessage;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct GameStartInfo {
-    pub game_id: GameID,
-    pub my_turn: bool,
-    pub my_contribution: Amount,
-    pub their_contribution: Amount,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum GameNotification {
     GameCancelled { id: GameID },
     WeTimedOut { id: GameID, our_reward: Amount, reward_coin: Option<CoinString> },
@@ -62,9 +54,6 @@ pub enum Effect {
     GameMessage {
         id: GameID,
         readable: ReadableMove,
-    },
-    GameStart {
-        games: Vec<GameStartInfo>,
     },
     ResyncMove {
         id: GameID,
@@ -117,9 +106,6 @@ pub fn apply_effects(
             }
             Effect::GameMessage { id, readable } => {
                 system.game_message(allocator, &id, readable)?;
-            }
-            Effect::GameStart { games } => {
-                system.game_start(&games)?;
             }
             Effect::Notification(notification) => {
                 system.game_notification(&notification)?;

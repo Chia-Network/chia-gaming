@@ -175,12 +175,6 @@ impl ToLocalUI for Pipe {
         self.opponent_messages.push((id.clone(), readable));
         Ok(())
     }
-    fn game_start(
-        &mut self,
-        _games: &[crate::potato_handler::effects::GameStartInfo],
-    ) -> Result<(), Error> {
-        Ok(())
-    }
     fn clean_shutdown_started(&mut self) -> Result<(), Error> {
         Ok(())
     }
@@ -448,17 +442,16 @@ pub fn test_peer_smoke() {
     assert!(pipe_sender[0].went_on_chain.is_none(), "peer 0 went on chain after handshake: {:?}", pipe_sender[0].went_on_chain);
     assert!(pipe_sender[1].went_on_chain.is_none(), "peer 1 went on chain after handshake: {:?}", pipe_sender[1].went_on_chain);
 
-    // Start a game
+    // Start a game via propose/accept
     let game_ids = {
-        let (game_ids, effects1, effects0) = {
+        let (game_ids, effects1) = {
             let mut env = ChannelHandlerEnv::new(&mut allocator, &mut rng).expect("should work");
 
             let nil = Program::from_hex("80").unwrap();
             let game_id = peers[1].next_game_id().unwrap();
             let (game_ids, effects1) = peers[1]
-                .start_games(
+                .propose_game(
                     &mut env,
-                    true,
                     &GameStart {
                         game_id: game_id.clone(),
                         amount: Amount::new(200),
@@ -466,33 +459,36 @@ pub fn test_peer_smoke() {
                         game_type: GameType(b"ca1poker".to_vec()),
                         timeout: Timeout::new(10),
                         my_turn: true,
-                        parameters: nil.clone(),
-                    },
-                )
-                .expect("should run");
-
-            let (_other_game_ids, effects0) = peers[0]
-                .start_games(
-                    &mut env,
-                    false,
-                    &GameStart {
-                        game_id,
-                        amount: Amount::new(200),
-                        my_contribution: Amount::new(100),
-                        game_type: GameType(b"ca1poker".to_vec()),
-                        timeout: Timeout::new(10),
-                        my_turn: false,
                         parameters: nil,
                     },
                 )
                 .expect("should run");
-            (game_ids, effects1, effects0)
+            (game_ids, effects1)
         };
         apply_effects(effects1, &mut allocator, &mut pipe_sender[1]).expect("should work");
-        apply_effects(effects0, &mut allocator, &mut pipe_sender[0]).expect("should work");
 
         game_ids
     };
+
+    quiesce(
+        &mut rng,
+        &mut allocator,
+        Amount::new(200),
+        &mut peers,
+        &mut pipe_sender,
+    )
+    .expect("should work");
+
+    // Accept the proposal from peer 0's side
+    {
+        let effects0 = {
+            let mut env = ChannelHandlerEnv::new(&mut allocator, &mut rng).expect("should work");
+            peers[0]
+                .accept_proposal(&mut env, &game_ids[0])
+                .expect("should accept")
+        };
+        apply_effects(effects0, &mut allocator, &mut pipe_sender[0]).expect("should work");
+    }
 
     quiesce(
         &mut rng,

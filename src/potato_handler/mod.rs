@@ -12,7 +12,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys,
-    GameStartInfo, GameStartInfoInterface, PotatoSignatures, ReadableMove, StartGameResult,
+    GameStartInfo, GameStartInfoInterface, ReadableMove,
 };
 use crate::channel_handler::game;
 use crate::channel_handler::ChannelHandler;
@@ -22,17 +22,17 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     chia_dialect, Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error,
-    GameID, GameType, GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash,
+    GameID, GameType, GetCoinStringParts, Hash, IntoErr, Node, Program, ProgramRef, Puzzle, PuzzleHash,
     Sha256Input, Spend, SpendBundle, Timeout,
 };
 use crate::utils::proper_list;
 
-use crate::potato_handler::effects::{Effect, GameNotification, GameStartInfo as GameStartedInfo};
+use crate::potato_handler::effects::{Effect, GameNotification};
 use crate::potato_handler::on_chain::OnChainPotatoHandler;
 use crate::shutdown::{get_conditions_with_channel_handler, ShutdownConditions};
 
 use crate::potato_handler::types::{
-    BootstrapTowardGame, ConditionWaitKind, FromLocalUI, GameAction,
+    BatchAction, BootstrapTowardGame, ConditionWaitKind, FromLocalUI, GameAction,
     GameFactory, PeerMessage, PotatoHandlerImpl, PotatoHandlerInit,
     PotatoState, ShutdownActionHolder, SpendWalletReceiver, GSI,
 };
@@ -40,7 +40,7 @@ use crate::potato_handler::types::{
 use crate::potato_handler::handshake::{
     HandshakeA, HandshakeB, HandshakeState, HandshakeStepInfo, HandshakeStepWithSpend,
 };
-use crate::potato_handler::start::{GameStart, GameStartQueueEntry, MyGameStartQueueEntry};
+use crate::potato_handler::start::GameStart;
 
 pub mod effects;
 pub mod handshake;
@@ -108,11 +108,6 @@ pub struct PotatoHandler {
 
     handshake_state: HandshakeState,
 
-    // Waiting game starts at the peer level.
-    their_start_queue: VecDeque<GameStartQueueEntry>,
-    // Our outgoing game starts.
-    my_start_queue: VecDeque<MyGameStartQueueEntry>,
-
     game_action_queue: VecDeque<GameAction>,
 
     next_game_id: Vec<u8>,
@@ -146,10 +141,6 @@ pub struct PotatoHandler {
     incoming_messages: VecDeque<Rc<PeerMessage>>,
 
     peer_wants_potato: bool,
-
-    // Accepts we sent but haven't been confirmed by the potato returning.
-    // Drained in update_channel_coin_after_receive to emit WeTimedOut.
-    pending_accept_completions: Vec<(GameID, Amount)>,
 
     // Cached from the most recent potato exchange so go_on_chain can fix
     // hs.spend even if the exchange happened before Finished was set.
@@ -201,8 +192,6 @@ impl PotatoHandler {
 
             game_types: phi.game_types,
 
-            their_start_queue: VecDeque::default(),
-            my_start_queue: VecDeque::default(),
             game_action_queue: VecDeque::default(),
 
             next_game_id: Vec::new(),
@@ -222,7 +211,6 @@ impl PotatoHandler {
             my_game_spends: HashSet::default(),
             incoming_messages: VecDeque::default(),
             peer_wants_potato: false,
-            pending_accept_completions: Vec::new(),
             last_channel_coin_spend_info: None,
         }
     }
@@ -445,29 +433,30 @@ impl PotatoHandler {
             }
         }
 
-        for (id, amount) in self.pending_accept_completions.drain(..) {
-            effects.push(Effect::Notification(GameNotification::WeTimedOut { id, our_reward: amount, reward_coin: None }));
+        {
+            let ch = self.channel_handler_mut()?;
+            for (id, amount) in ch.drain_cached_accepts() {
+                effects.push(Effect::Notification(GameNotification::WeTimedOut { id, our_reward: amount, reward_coin: None }));
+            }
         }
 
-        let (started, start_effects) = self.have_potato_start_game(env)?;
-        effects.extend(start_effects);
-        if started {
-            return Ok(effects);
-        }
-
-        let (moved, move_effects) = self.have_potato_move(env)?;
-        effects.extend(move_effects);
-        if moved {
+        let (sent, batch_effects) = self.drain_queue_into_batch(env)?;
+        effects.extend(batch_effects);
+        if sent {
             return Ok(effects);
         }
 
         if self.peer_wants_potato {
             self.peer_wants_potato = false;
-            let nil_msg = {
+            let sigs = {
                 let ch = self.channel_handler_mut()?;
                 ch.send_empty_potato(env)?
             };
-            effects.push(Effect::SendMessage(PeerMessage::Nil(nil_msg)));
+            effects.push(Effect::SendMessage(PeerMessage::Batch {
+                actions: vec![],
+                signatures: sigs,
+                clean_shutdown: None,
+            }));
             self.have_potato = PotatoState::Absent;
             return Ok(effects);
         }
@@ -484,60 +473,181 @@ impl PotatoHandler {
         let timeout = self.channel_timeout.clone();
 
         match msg_envelope.borrow() {
-            PeerMessage::Nil(n) => {
-                let spend_info = {
-                    let ch = self.channel_handler_mut()?;
-                    ch.received_empty_potato(env, n)?
-                };
-                effects.extend(self.update_channel_coin_after_receive(env, &spend_info)?);
-            }
-            PeerMessage::Move(game_id, m) => {
-                // Implicit accept: if the game is proposed, the move implicitly accepts it
-                let opponent_self_accepted = {
-                    let ch = self.channel_handler_mut()?;
-                    if ch.is_game_proposed(game_id) {
-                        let proposed_by_us = ch.find_proposal(game_id).unwrap().proposed_by_us;
-                        if !proposed_by_us {
-                            // Opponent proposed it and is now moving in it — self-acceptance
-                            true
-                        } else {
-                            // We proposed it, opponent is accepting via move — OK
-                            ch.accept_proposal_into_live(game_id)?;
+            PeerMessage::Batch { actions, signatures, clean_shutdown } => {
+                // Apply all actions sequentially
+                for action in actions.iter() {
+                    match action {
+                        BatchAction::ProposeGame(gsi) => {
+                            let ch = self.channel_handler_mut()?;
+                            ch.apply_received_proposal(env, &gsi.0)?;
+                            let game_id = gsi.0.game_id().clone();
+                            let my_contribution = gsi.0.my_contribution_this_game().clone();
+                            let their_contribution = gsi.0.their_contribution_this_game().clone();
+                            effects.push(Effect::Notification(GameNotification::GameProposed {
+                                id: game_id,
+                                proposed_by_us: false,
+                                my_contribution,
+                                their_contribution,
+                            }));
+                        }
+                        BatchAction::AcceptProposal(game_id) => {
+                            let ch = self.channel_handler_mut()?;
+                            ch.apply_received_accept_proposal(game_id)?;
                             effects.push(Effect::Notification(GameNotification::GameProposalAccepted {
                                 id: game_id.clone(),
                             }));
-                            false
                         }
-                    } else {
-                        false
+                        BatchAction::CancelProposal(game_id) => {
+                            let ch = self.channel_handler_mut()?;
+                            ch.received_cancel_proposal(game_id)?;
+                            effects.push(Effect::Notification(GameNotification::GameProposalCancelled {
+                                id: game_id.clone(),
+                                reason: "cancelled by peer".to_string(),
+                            }));
+                        }
+                        BatchAction::Move(game_id, game_move) => {
+                            let move_result = {
+                                let ch = self.channel_handler_mut()?;
+                                ch.apply_received_move(env, game_id, game_move)?
+                            };
+                            let opponent_readable =
+                                ReadableMove::from_program(move_result.readable_their_move);
+                            effects.push(Effect::OpponentMoved {
+                                id: game_id.clone(),
+                                state_number: move_result.state_number,
+                                readable: opponent_readable,
+                                mover_share: move_result.mover_share,
+                            });
+                            if !move_result.message.is_empty() {
+                                effects.push(Effect::SendMessage(
+                                    PeerMessage::Message(game_id.clone(), move_result.message),
+                                ));
+                            }
+                        }
+                        BatchAction::Accept(game_id, amount) => {
+                            let ch = self.channel_handler_mut()?;
+                            ch.apply_received_accept(game_id)?;
+                            effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
+                                id: game_id.clone(),
+                                our_reward: amount.clone(),
+                                reward_coin: None,
+                            }));
+                        }
                     }
-                };
-                if opponent_self_accepted {
-                    effects.push(Effect::GoingOnChain {
-                        reason: "opponent self-accepted proposal via move".to_string(),
+                }
+
+                // Handle clean shutdown if present
+                if let Some((sig, conditions)) = clean_shutdown {
+                    let has_active = {
+                        let ch = self.channel_handler_mut()?;
+                        ch.has_active_games()
+                    };
+                    if has_active {
+                        effects.push(Effect::GoingOnChain { reason: "opponent requested clean shutdown while games are active".to_string() });
+                        effects.extend(self.go_on_chain(env, true)?);
+                        return Ok(effects);
+                    }
+                    {
+                        let ch = self.channel_handler_mut()?;
+                        let cancelled_ids = ch.cancel_all_proposals();
+                        for id in cancelled_ids {
+                            effects.push(Effect::Notification(GameNotification::GameProposalCancelled {
+                                id,
+                                reason: "clean shutdown".to_string(),
+                            }));
+                        }
+                    }
+
+                    let (coin, my_reward, full_spend, channel_puzzle_public_key) = {
+                        let ch = self.channel_handler_mut()?;
+                        let coin = ch.state_channel_coin().clone();
+                        let clvm_conditions = conditions.to_nodeptr(env.allocator)?;
+                        let want_puzzle_hash = ch.get_reward_puzzle_hash(env)?;
+                        let want_amount = ch.clean_shutdown_amount();
+                        if want_amount != Amount::default() {
+                            let condition_list =
+                                CoinCondition::from_nodeptr(env.allocator, clvm_conditions);
+                            let found_conditions = condition_list.iter().any(|cond| {
+                                if let CoinCondition::CreateCoin(ph, amt) = cond {
+                                    *ph == want_puzzle_hash && *amt >= want_amount
+                                } else {
+                                    false
+                                }
+                            });
+
+                            if !found_conditions {
+                                return Err(Error::StrErr(
+                                    "given conditions don't pay our referee puzzle hash what's expected"
+                                        .to_string(),
+                                ));
+                            }
+                        }
+
+                        let my_reward = CoinString::from_parts(
+                            &coin.to_coin_id(),
+                            &want_puzzle_hash,
+                            &want_amount,
+                        );
+                        let full_spend =
+                            ch.received_potato_clean_shutdown(env, sig, clvm_conditions)?;
+                        let channel_puzzle_public_key = ch.get_aggregate_channel_public_key();
+                        (coin, my_reward, full_spend, channel_puzzle_public_key)
+                    };
+
+                    let reward_coin_for_state = if my_reward.to_parts().map(|(_, _, amt)| amt > Amount::default()).unwrap_or(false) {
+                        Some(my_reward.clone())
+                    } else {
+                        None
+                    };
+
+                    {
+                        let ch = self.channel_handler_mut()?;
+                        for (id, amount) in ch.drain_cached_accepts() {
+                            effects.push(Effect::Notification(GameNotification::WeTimedOut { id, our_reward: amount, reward_coin: None }));
+                        }
+                    }
+
+                    effects.push(Effect::RegisterCoin {
+                        coin: my_reward,
+                        timeout: timeout.clone(),
+                        name: Some("reward"),
                     });
-                    effects.extend(self.go_on_chain(env, true)?);
+                    effects.push(Effect::CleanShutdownStarted);
+
+                    let puzzle = puzzle_for_synthetic_public_key(
+                        env.allocator,
+                        &env.standard_puzzle,
+                        &channel_puzzle_public_key,
+                    )?;
+                    let spend = Spend {
+                        solution: full_spend.solution.clone(),
+                        puzzle,
+                        signature: full_spend.signature.clone(),
+                    };
+                    let coin_spend = CoinSpend {
+                        coin: coin.clone(),
+                        bundle: spend,
+                    };
+                    effects.push(Effect::SpendTransaction(SpendBundle {
+                        name: Some("Create unroll".to_string()),
+                        spends: vec![coin_spend.clone()],
+                    }));
+
+                    effects.push(Effect::SendMessage(
+                        PeerMessage::CleanShutdownComplete(coin_spend),
+                    ));
+
+                    self.have_potato = PotatoState::Present;
+                    self.handshake_state = HandshakeState::OnChainWaitingForUnrollSpend(coin.clone(), 0, reward_coin_for_state);
                     return Ok(effects);
                 }
 
-                let move_result = {
+                // Verify signatures against the final state (once for all actions)
+                let spend_info = {
                     let ch = self.channel_handler_mut()?;
-                    ch.received_potato_move(env, game_id, m)?
+                    ch.verify_received_batch_signatures(env, signatures)?
                 };
-                let opponent_readable =
-                    ReadableMove::from_program(move_result.readable_their_move);
-                effects.push(Effect::OpponentMoved {
-                    id: game_id.clone(),
-                    state_number: move_result.state_number,
-                    readable: opponent_readable,
-                    mover_share: move_result.mover_share,
-                });
-                if !move_result.message.is_empty() {
-                    effects.push(Effect::SendMessage(
-                        PeerMessage::Message(game_id.clone(), move_result.message),
-                    ));
-                }
-                effects.extend(self.update_channel_coin_after_receive(env, &move_result.spend_info)?);
+                effects.extend(self.update_channel_coin_after_receive(env, &spend_info)?);
             }
             PeerMessage::Message(game_id, message) => {
                 let decoded_message = {
@@ -548,115 +658,6 @@ impl PotatoHandler {
                     id: game_id.clone(),
                     readable: decoded_message,
                 });
-            }
-            PeerMessage::Accept(game_id, amount, sigs) => {
-                let spend_info = {
-                    let ch = self.channel_handler_mut()?;
-                    ch.received_potato_accept(env, sigs, game_id)?
-                };
-                effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
-                    id: game_id.clone(),
-                    our_reward: amount.clone(),
-                    reward_coin: None,
-                }));
-                effects.extend(self.update_channel_coin_after_receive(env, &spend_info)?);
-            }
-            PeerMessage::CleanShutdown(sig, conditions) => {
-                let has_active = {
-                    let ch = self.channel_handler_mut()?;
-                    ch.has_games_beyond_just_created()
-                };
-                if has_active {
-                    effects.push(Effect::GoingOnChain { reason: "opponent requested clean shutdown while games are active".to_string() });
-                    effects.extend(self.go_on_chain(env, true)?);
-                    return Ok(effects);
-                }
-                {
-                    let ch = self.channel_handler_mut()?;
-                    let cancelled_ids = ch.cancel_all_proposals();
-                    for id in cancelled_ids {
-                        effects.push(Effect::Notification(GameNotification::GameProposalCancelled {
-                            id,
-                            reason: "clean shutdown".to_string(),
-                        }));
-                    }
-                    ch.cancel_just_created_games();
-                }
-
-                let (coin, my_reward, full_spend, channel_puzzle_public_key) = {
-                    let ch = self.channel_handler_mut()?;
-                    let coin = ch.state_channel_coin().clone();
-                    let clvm_conditions = conditions.to_nodeptr(env.allocator)?;
-                    let want_puzzle_hash = ch.get_reward_puzzle_hash(env)?;
-                    let want_amount = ch.clean_shutdown_amount();
-                    if want_amount != Amount::default() {
-                        let condition_list =
-                            CoinCondition::from_nodeptr(env.allocator, clvm_conditions);
-                        let found_conditions = condition_list.iter().any(|cond| {
-                            if let CoinCondition::CreateCoin(ph, amt) = cond {
-                                *ph == want_puzzle_hash && *amt >= want_amount
-                            } else {
-                                false
-                            }
-                        });
-
-                        if !found_conditions {
-                            return Err(Error::StrErr(
-                                "given conditions don't pay our referee puzzle hash what's expected"
-                                    .to_string(),
-                            ));
-                        }
-                    }
-
-                    let my_reward = CoinString::from_parts(
-                        &coin.to_coin_id(),
-                        &want_puzzle_hash,
-                        &want_amount,
-                    );
-                    let full_spend =
-                        ch.received_potato_clean_shutdown(env, sig, clvm_conditions)?;
-                    let channel_puzzle_public_key = ch.get_aggregate_channel_public_key();
-                    (coin, my_reward, full_spend, channel_puzzle_public_key)
-                };
-
-                let reward_coin_for_state = if my_reward.to_parts().map(|(_, _, amt)| amt > Amount::default()).unwrap_or(false) {
-                    Some(my_reward.clone())
-                } else {
-                    None
-                };
-
-                effects.push(Effect::RegisterCoin {
-                    coin: my_reward,
-                    timeout: timeout.clone(),
-                    name: Some("reward"),
-                });
-                effects.push(Effect::CleanShutdownStarted);
-
-                let puzzle = puzzle_for_synthetic_public_key(
-                    env.allocator,
-                    &env.standard_puzzle,
-                    &channel_puzzle_public_key,
-                )?;
-                let spend = Spend {
-                    solution: full_spend.solution.clone(),
-                    puzzle,
-                    signature: full_spend.signature.clone(),
-                };
-                let coin_spend = CoinSpend {
-                    coin: coin.clone(),
-                    bundle: spend,
-                };
-                effects.push(Effect::SpendTransaction(SpendBundle {
-                    name: Some("Create unroll".to_string()),
-                    spends: vec![coin_spend.clone()],
-                }));
-
-                effects.push(Effect::SendMessage(
-                    PeerMessage::CleanShutdownComplete(coin_spend),
-                ));
-
-                self.have_potato = PotatoState::Present;
-                self.handshake_state = HandshakeState::OnChainWaitingForUnrollSpend(coin.clone(), 0, reward_coin_for_state);
             }
             PeerMessage::CleanShutdownComplete(coin_spend) => {
                 effects.push(Effect::SpendTransaction(SpendBundle {
@@ -744,147 +745,7 @@ impl PotatoHandler {
     //
     // This returns bool so that it can be put into the receive potato pipeline so we
     // can automatically send new game starts on the next potato receive.
-    fn have_potato_start_game<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
-    ) -> Result<(bool, Vec<Effect>), Error> {
-        let mut effects = Vec::new();
-        if let Some(desc) = self.my_start_queue.pop_front() {
-            let mut dehydrated_games = Vec::with_capacity(desc.their_games.len());
-
-            let sigs = {
-                let ch = self.channel_handler_mut()?;
-                for game in desc.their_games.iter() {
-                    dehydrated_games.push(game.clone());
-                }
-
-                let unwrapped_games: Vec<Rc<dyn GameStartInfoInterface>> =
-                    desc.my_games.iter().map(|g| g.0.clone()).collect();
-
-                let game_infos: Vec<GameStartedInfo> = desc
-                    .my_games
-                    .iter()
-                    .map(|g| GameStartedInfo {
-                        game_id: g.0.game_id().clone(),
-                        my_turn: desc.my_turn,
-                        my_contribution: g.0.my_contribution_this_game().clone(),
-                        their_contribution: g.0.their_contribution_this_game().clone(),
-                    })
-                    .collect();
-
-                match ch.send_potato_start_game(env, &unwrapped_games)? {
-                    StartGameResult::Failure(_) => {
-                        return Ok((true, effects));
-                    }
-                    StartGameResult::Success(sigs) => {
-                        effects.push(Effect::GameStart {
-                            games: game_infos,
-                        });
-                        sigs
-                    }
-                }
-            };
-
-            self.have_potato = PotatoState::Absent;
-            effects.push(Effect::SendMessage(
-                PeerMessage::StartGames(*sigs, dehydrated_games),
-            ));
-            return Ok((true, effects));
-        }
-
-        Ok((false, effects))
-    }
-
-    fn have_potato_propose_game<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
-        my_gsi: GSI,
-        their_gsi: GSI,
-    ) -> Result<(Vec<Effect>, bool), Error> {
-        let mut effects = Vec::new();
-
-        let sigs = {
-            let ch = self.channel_handler_mut()?;
-            ch.propose_game(env, &my_gsi.0)?
-        };
-
-        let game_id = my_gsi.0.game_id().clone();
-        let my_contribution = my_gsi.0.my_contribution_this_game().clone();
-        let their_contribution = my_gsi.0.their_contribution_this_game().clone();
-
-        effects.push(Effect::Notification(GameNotification::GameProposed {
-            id: game_id,
-            proposed_by_us: true,
-            my_contribution,
-            their_contribution,
-        }));
-
-        self.have_potato = PotatoState::Absent;
-        effects.push(Effect::SendMessage(
-            PeerMessage::ProposeGame(sigs, their_gsi),
-        ));
-
-        Ok((effects, true))
-    }
-
-    fn have_potato_accept_proposal<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
-        game_id: &GameID,
-    ) -> Result<Vec<Effect>, Error> {
-        let mut effects = Vec::new();
-
-        let sigs = {
-            let ch = self.channel_handler_mut()?;
-            let proposal = ch.find_proposal(game_id);
-            if proposal.is_none() {
-                return Err(Error::StrErr(format!("no proposal with id {game_id:?}")));
-            }
-            let proposal = proposal.unwrap();
-            if !proposal.proposed_by_us {
-                // ok: accepting opponent's proposal
-            } else {
-                return Err(Error::StrErr("cannot accept own proposal".to_string()));
-            }
-            ch.accept_proposal(env, game_id)?
-        };
-
-        effects.push(Effect::Notification(GameNotification::GameProposalAccepted {
-            id: game_id.clone(),
-        }));
-
-        self.have_potato = PotatoState::Absent;
-        effects.push(Effect::SendMessage(
-            PeerMessage::AcceptProposal(game_id.clone(), sigs),
-        ));
-
-        Ok(effects)
-    }
-
-    fn have_potato_cancel_proposal<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
-        game_id: &GameID,
-    ) -> Result<Vec<Effect>, Error> {
-        let mut effects = Vec::new();
-
-        let sigs = {
-            let ch = self.channel_handler_mut()?;
-            ch.cancel_proposal(env, game_id)?
-        };
-
-        effects.push(Effect::Notification(GameNotification::GameProposalCancelled {
-            id: game_id.clone(),
-            reason: "cancelled by us".to_string(),
-        }));
-
-        self.have_potato = PotatoState::Absent;
-        effects.push(Effect::SendMessage(
-            PeerMessage::CancelProposal(game_id.clone(), sigs),
-        ));
-
-        Ok(effects)
-    }
+    
 
     fn send_potato_request_if_needed(&mut self) -> Result<(bool, Option<Effect>), Error> {
         if matches!(self.have_potato, PotatoState::Present) {
@@ -899,191 +760,173 @@ impl PotatoHandler {
         Ok((false, None))
     }
 
-    fn have_potato_move<R: Rng>(
+    fn drain_queue_into_batch<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
     ) -> Result<(bool, Vec<Effect>), Error> {
+        assert!(matches!(self.have_potato, PotatoState::Present));
         let mut effects = Vec::new();
-        let action = self.game_action_queue.pop_front();
-        match action {
-            Some(GameAction::LocalStartGame) => {
-                let (_started, start_effects) = self.have_potato_start_game(env)?;
-                effects.extend(start_effects);
-                Ok((true, effects))
-            }
-            Some(GameAction::Move(game_id, readable_move, new_entropy)) => {
-                assert!(matches!(self.have_potato, PotatoState::Present));
+        let mut batch_actions: Vec<BatchAction> = Vec::new();
+        let mut clean_shutdown_data: Option<(Aggsig, ProgramRef)> = None;
+        let mut deferred = VecDeque::new();
 
-                // Implicit accept: if the game is proposed, accept it first
-                let self_accepted = {
-                    let ch = self.channel_handler_mut()?;
-                    if ch.is_game_proposed(&game_id) {
-                        let proposed_by_us = ch.find_proposal(&game_id).unwrap().proposed_by_us;
-                        if proposed_by_us {
-                            Some(true)
-                        } else {
-                            let balance_ok = {
-                                let p = ch.find_proposal(&game_id).unwrap();
-                                p.my_contribution.clone() <= ch.my_out_of_game_balance()
-                                    && p.their_contribution.clone() <= ch.their_out_of_game_balance()
-                            };
-                            if !balance_ok {
-                                let p = ch.find_proposal(&game_id).unwrap();
-                                effects.push(Effect::Notification(GameNotification::InsufficientBalance {
-                                    id: game_id.clone(),
-                                    our_balance_short: p.my_contribution.clone() > ch.my_out_of_game_balance(),
-                                    their_balance_short: p.their_contribution.clone() > ch.their_out_of_game_balance(),
-                                }));
-                                return Ok((false, effects));
-                            }
-
-                            ch.accept_proposal_into_live(&game_id)?;
-                            effects.push(Effect::Notification(GameNotification::GameProposalAccepted {
-                                id: game_id.clone(),
-                            }));
-                            Some(false)
-                        }
-                    } else {
-                        None
-                    }
-                };
-                if self_accepted == Some(true) {
-                    effects.push(Effect::GoingOnChain {
-                        reason: "self-acceptance via move".to_string(),
-                    });
-                    effects.extend(self.go_on_chain(env, true)?);
-                    return Ok((true, effects));
-                }
-
-                let move_result = {
+        while let Some(action) = self.game_action_queue.pop_front() {
+            match action {
+                GameAction::Move(game_id, readable_move, new_entropy) => {
                     let ch = self.channel_handler_mut()?;
                     let game_is_my_turn = ch.game_is_my_turn(&game_id);
                     if let Some(true) = game_is_my_turn {
-                        ch.send_potato_move(env, &game_id, &readable_move, new_entropy)?
+                        let move_result = ch.send_move_no_finalize(env, &game_id, &readable_move, new_entropy)?;
+                        batch_actions.push(BatchAction::Move(game_id, move_result.game_move));
                     } else {
-                        self.game_action_queue.push_front(GameAction::Move(
-                            game_id,
-                            readable_move,
-                            new_entropy,
-                        ));
-                        return Ok((false, effects));
+                        deferred.push_back(GameAction::Move(game_id, readable_move, new_entropy));
                     }
-                };
-
-                effects.push(Effect::SendMessage(PeerMessage::Move(game_id, move_result)));
-                self.have_potato = PotatoState::Absent;
-
-                Ok((true, effects))
-            }
-            Some(GameAction::RedoMove(..)) => {
-                Err(Error::StrErr("redo move when not on chain".to_string()))
-            }
-            Some(GameAction::RedoAccept(_, _, _, _)) => {
-                Err(Error::StrErr("redo accept when not on chain".to_string()))
-            }
-            Some(GameAction::Accept(game_id)) => {
-                let (sigs, amount) = {
-                    let ch = self.channel_handler_mut()?;
-                    ch.send_potato_accept(env, &game_id)?
-                };
-
-                effects.push(Effect::SendMessage(
-                    PeerMessage::Accept(game_id.clone(), amount.clone(), sigs),
-                ));
-                self.have_potato = PotatoState::Absent;
-                self.pending_accept_completions
-                    .push((game_id, amount));
-
-                Ok((true, effects))
-            }
-            Some(GameAction::CleanShutdown(conditions)) => {
-                {
-                    let ch = self.channel_handler_mut()?;
-                    if ch.has_games_beyond_just_created() {
-                        return Err(Error::StrErr(
-                            "cannot clean-shutdown with active games".to_string(),
-                        ));
-                    }
-                    let cancelled_ids = ch.cancel_all_proposals();
-                    for id in cancelled_ids {
-                        effects.push(Effect::Notification(GameNotification::GameProposalCancelled {
-                            id,
-                            reason: "clean shutdown".to_string(),
-                        }));
-                    }
-                    ch.cancel_just_created_games();
                 }
+                GameAction::Accept(game_id) => {
+                    let amount = {
+                        let ch = self.channel_handler_mut()?;
+                        ch.send_accept_no_finalize(&game_id)?
+                    };
+                    batch_actions.push(BatchAction::Accept(game_id, amount));
+                }
+                GameAction::QueuedProposal(my_gsi, their_gsi) => {
+                    let game_id = my_gsi.0.game_id().clone();
+                    let my_contribution = my_gsi.0.my_contribution_this_game().clone();
+                    let their_contribution = my_gsi.0.their_contribution_this_game().clone();
+                    {
+                        let ch = self.channel_handler_mut()?;
+                        ch.send_propose_game(env, &my_gsi.0)?;
+                    }
+                    effects.push(Effect::Notification(GameNotification::GameProposed {
+                        id: game_id,
+                        proposed_by_us: true,
+                        my_contribution,
+                        their_contribution,
+                    }));
+                    batch_actions.push(BatchAction::ProposeGame(their_gsi));
+                }
+                GameAction::QueuedAcceptProposal(game_id) => {
+                    {
+                        let ch = self.channel_handler_mut()?;
+                        let proposal = ch.find_proposal(&game_id);
+                        if proposal.is_none() {
+                            return Err(Error::StrErr(format!("no proposal with id {game_id:?}")));
+                        }
+                        if proposal.unwrap().proposed_by_us {
+                            return Err(Error::StrErr("cannot accept own proposal".to_string()));
+                        }
+                        ch.send_accept_proposal(&game_id)?;
+                    }
+                    effects.push(Effect::Notification(GameNotification::GameProposalAccepted {
+                        id: game_id.clone(),
+                    }));
+                    batch_actions.push(BatchAction::AcceptProposal(game_id));
+                }
+                GameAction::QueuedCancelProposal(game_id) => {
+                    {
+                        let ch = self.channel_handler_mut()?;
+                        ch.send_cancel_proposal(&game_id)?;
+                    }
+                    effects.push(Effect::Notification(GameNotification::GameProposalCancelled {
+                        id: game_id.clone(),
+                        reason: "cancelled by us".to_string(),
+                    }));
+                    batch_actions.push(BatchAction::CancelProposal(game_id));
+                }
+                GameAction::CleanShutdown(conditions) => {
+                    {
+                        let ch = self.channel_handler_mut()?;
+                        if ch.has_active_games() {
+                            return Err(Error::StrErr(
+                                "cannot clean-shutdown with active games".to_string(),
+                            ));
+                        }
+                        let cancelled_ids = ch.cancel_all_proposals();
+                        for id in cancelled_ids {
+                            effects.push(Effect::Notification(GameNotification::GameProposalCancelled {
+                                id,
+                                reason: "clean shutdown".to_string(),
+                            }));
+                        }
+                    }
 
-                let timeout = self.channel_timeout.clone();
-                let real_conditions = {
-                    let ch = self.channel_handler_mut()?;
-                    get_conditions_with_channel_handler(env, ch, conditions.0.borrow())?
-                };
-                let (state_channel_coin, spend, want_puzzle_hash, want_amount) = {
-                    let ch = self.channel_handler_mut()?;
-                    let spend = ch.send_potato_clean_shutdown(env, real_conditions)?;
-                    let want_puzzle_hash = ch.get_reward_puzzle_hash(env)?;
-                    let want_amount = ch.clean_shutdown_amount();
-                    (
-                        ch.state_channel_coin().clone(),
-                        spend,
-                        want_puzzle_hash,
-                        want_amount,
-                    )
-                };
+                    let timeout = self.channel_timeout.clone();
+                    let real_conditions = {
+                        let ch = self.channel_handler_mut()?;
+                        get_conditions_with_channel_handler(env, ch, conditions.0.borrow())?
+                    };
+                    let (state_channel_coin, spend, want_puzzle_hash, want_amount) = {
+                        let ch = self.channel_handler_mut()?;
+                        let spend = ch.send_potato_clean_shutdown(env, real_conditions)?;
+                        let want_puzzle_hash = ch.get_reward_puzzle_hash(env)?;
+                        let want_amount = ch.clean_shutdown_amount();
+                        (
+                            ch.state_channel_coin().clone(),
+                            spend,
+                            want_puzzle_hash,
+                            want_amount,
+                        )
+                    };
 
-                let my_reward = CoinString::from_parts(
-                    &state_channel_coin.to_coin_id(),
-                    &want_puzzle_hash,
-                    &want_amount,
-                );
+                    let my_reward = CoinString::from_parts(
+                        &state_channel_coin.to_coin_id(),
+                        &want_puzzle_hash,
+                        &want_amount,
+                    );
 
-                let reward_coin_for_state = if want_amount > Amount::default() {
-                    Some(my_reward.clone())
-                } else {
-                    None
-                };
+                    let reward_coin_for_state = if want_amount > Amount::default() {
+                        Some(my_reward.clone())
+                    } else {
+                        None
+                    };
 
-                effects.push(Effect::RegisterCoin {
-                    coin: my_reward,
-                    timeout,
-                    name: Some("reward"),
-                });
+                    effects.push(Effect::RegisterCoin {
+                        coin: my_reward,
+                        timeout,
+                        name: Some("reward"),
+                    });
 
-                let shutdown_condition_program =
-                    Rc::new(Program::from_nodeptr(env.allocator, real_conditions)?);
-                effects.push(Effect::SendMessage(
-                    PeerMessage::CleanShutdown(
+                    let shutdown_condition_program =
+                        Rc::new(Program::from_nodeptr(env.allocator, real_conditions)?);
+                    clean_shutdown_data = Some((
                         spend.signature.clone(),
                         shutdown_condition_program.into(),
-                    ),
-                ));
+                    ));
 
-                self.handshake_state =
-                    HandshakeState::OnChainWaitingForUnrollSpend(state_channel_coin.clone(), 0, reward_coin_for_state);
-
-                Ok((true, effects))
+                    self.handshake_state =
+                        HandshakeState::OnChainWaitingForUnrollSpend(state_channel_coin.clone(), 0, reward_coin_for_state);
+                }
+                GameAction::SendPotato => {
+                    unreachable!("SendPotato should not be queued");
+                }
+                GameAction::RedoMove(..) => {
+                    return Err(Error::StrErr("redo move when not on chain".to_string()));
+                }
+                GameAction::RedoAccept(..) => {
+                    return Err(Error::StrErr("redo accept when not on chain".to_string()));
+                }
             }
-            Some(GameAction::SendPotato) => {
-                unreachable!("SendPotato should not be queued");
-            }
-            Some(GameAction::QueuedProposal(my_gsi, their_gsi)) => {
-                let (proposal_effects, _done) = self.have_potato_propose_game(env, my_gsi, their_gsi)?;
-                effects.extend(proposal_effects);
-                Ok((true, effects))
-            }
-            Some(GameAction::QueuedAcceptProposal(game_id)) => {
-                let accept_effects = self.have_potato_accept_proposal(env, &game_id)?;
-                effects.extend(accept_effects);
-                Ok((true, effects))
-            }
-            Some(GameAction::QueuedCancelProposal(game_id)) => {
-                let cancel_effects = self.have_potato_cancel_proposal(env, &game_id)?;
-                effects.extend(cancel_effects);
-                Ok((true, effects))
-            }
-            None => Ok((false, effects)),
         }
+
+        self.game_action_queue = deferred;
+
+        if batch_actions.is_empty() && clean_shutdown_data.is_none() {
+            return Ok((false, effects));
+        }
+
+        let sigs = {
+            let ch = self.channel_handler_mut()?;
+            ch.update_cached_unroll_state(env)?
+        };
+
+        self.have_potato = PotatoState::Absent;
+        effects.push(Effect::SendMessage(PeerMessage::Batch {
+            actions: batch_actions,
+            signatures: sigs,
+            clean_shutdown: clean_shutdown_data,
+        }));
+
+        Ok((true, effects))
     }
 
     fn start_version_0<R: Rng>(
@@ -1340,162 +1183,6 @@ impl PotatoHandler {
         Ok(GameID::from_bytes(&game_id))
     }
 
-    fn received_game_start<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
-        sigs: &PotatoSignatures,
-        games: &[GSI],
-    ) -> Result<Vec<Effect>, Error> {
-        let mut effects = Vec::new();
-        // We must have received a peer layer message indicating that we're waiting for this
-        // game start.
-        let our_entry =
-            if let Some(entry) = self.their_start_queue.pop_front() {
-                entry
-            } else {
-                return Err(Error::StrErr("no waiting games to start".to_string()));
-            };
-        let game_id_set: HashSet<&GameID> = our_entry.game_ids.iter().collect();
-
-        let (game_ids, spend_info) = {
-            let ch = self.channel_handler_mut()?;
-            let mut rehydrated_games = Vec::with_capacity(games.len());
-            for game in games.iter() {
-                rehydrated_games.push(game.0.clone());
-            }
-            let (game_ids, spend_info) =
-                ch.received_potato_start_game(env, sigs, &rehydrated_games)?;
-
-            if game_ids.len() != our_entry.game_ids.len() {
-                return Err(Error::StrErr(format!(
-                    "wrong number of game_ids {game_ids:?} vs {:?}",
-                    our_entry.game_ids
-                )));
-            }
-
-            for g in game_ids.iter() {
-                if !game_id_set.contains(g) {
-                    return Err(Error::StrErr(format!("channel handler got a game id that didn't match one of the game ids we predicted {:?}", g)));
-                }
-            }
-
-            (game_ids, spend_info)
-        };
-
-        let game_infos: Vec<GameStartedInfo> = games
-            .iter()
-            .zip(game_ids.iter())
-            .map(|(g, id)| GameStartedInfo {
-                game_id: id.clone(),
-                my_turn: our_entry.my_turn,
-                my_contribution: g.0.my_contribution_this_game().clone(),
-                their_contribution: g.0.their_contribution_this_game().clone(),
-            })
-            .collect();
-
-        effects.push(Effect::GameStart {
-            games: game_infos,
-        });
-
-        effects.extend(self.update_channel_coin_after_receive(env, &spend_info)?);
-
-        Ok(effects)
-    }
-
-    fn received_proposal<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
-        sigs: &PotatoSignatures,
-        gsi: &GSI,
-    ) -> Result<Vec<Effect>, Error> {
-        let mut effects = Vec::new();
-
-        let spend_info = {
-            let ch = self.channel_handler_mut()?;
-            ch.received_proposal(env, sigs, &gsi.0)?
-        };
-
-        let game_id = gsi.0.game_id().clone();
-        let my_contribution = gsi.0.my_contribution_this_game().clone();
-        let their_contribution = gsi.0.their_contribution_this_game().clone();
-
-        effects.push(Effect::Notification(GameNotification::GameProposed {
-            id: game_id,
-            proposed_by_us: false,
-            my_contribution,
-            their_contribution,
-        }));
-
-        effects.extend(self.update_channel_coin_after_receive(env, &spend_info)?);
-
-        Ok(effects)
-    }
-
-    fn received_accept_proposal<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
-        game_id: &GameID,
-        sigs: &PotatoSignatures,
-    ) -> Result<Vec<Effect>, Error> {
-        let mut effects = Vec::new();
-
-        {
-            let ch = self.channel_handler()?;
-            let proposal = ch.find_proposal(game_id);
-            if let Some(p) = proposal {
-                if p.proposed_by_us {
-                    // Opponent is accepting our proposal — this is correct
-                } else {
-                    // Opponent is accepting their own proposal — protocol violation
-                    effects.push(Effect::GoingOnChain {
-                        reason: "opponent tried to accept their own proposal".to_string(),
-                    });
-                    effects.extend(self.go_on_chain(env, true)?);
-                    return Ok(effects);
-                }
-            } else {
-                return Err(Error::StrErr(format!("received accept for unknown proposal {game_id:?}")));
-            }
-        }
-
-        let spend_info = {
-            let ch = self.channel_handler_mut()?;
-            ch.received_accept_proposal(env, sigs, game_id)?
-        };
-
-        effects.push(Effect::Notification(GameNotification::GameProposalAccepted {
-            id: game_id.clone(),
-        }));
-
-        effects.extend(self.update_channel_coin_after_receive(env, &spend_info)?);
-
-        Ok(effects)
-    }
-
-    fn received_cancel_proposal<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
-        game_id: &GameID,
-        sigs: &PotatoSignatures,
-    ) -> Result<Vec<Effect>, Error> {
-        let mut effects = Vec::new();
-
-        let spend_info = {
-            let ch = self.channel_handler_mut()?;
-            ch.received_cancel_proposal(game_id)?;
-            ch.received_empty_potato(env, sigs)?
-        };
-
-        effects.push(Effect::Notification(GameNotification::GameProposalCancelled {
-            id: game_id.clone(),
-            reason: "cancelled by opponent".to_string(),
-        }));
-
-        effects.extend(self.update_channel_coin_after_receive(env, &spend_info)?);
-
-        Ok(effects)
-    }
-
     pub fn received_message<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
@@ -1640,8 +1327,12 @@ impl PotatoHandler {
                 };
 
                 {
-                    let nil_msg = channel_handler.send_empty_potato(env)?;
-                    effects.push(Effect::SendMessage(PeerMessage::Nil(nil_msg)));
+                    let sigs = channel_handler.send_empty_potato(env)?;
+                    effects.push(Effect::SendMessage(PeerMessage::Batch {
+                        actions: vec![],
+                        signatures: sigs,
+                        clean_shutdown: None,
+                    }));
                 }
 
                 self.next_game_id = init_game_id(parent_coin.to_bytes());
@@ -1712,11 +1403,15 @@ impl PotatoHandler {
                 self.next_game_id = init_game_id(parent_coin.to_bytes());
                 effects.extend(self.pass_on_channel_handler_message(env, msg_envelope)?);
 
-                let nil_msg = {
+                let sigs = {
                     let ch = self.channel_handler_mut()?;
                     ch.send_empty_potato(env)?
                 };
-                effects.push(Effect::SendMessage(PeerMessage::Nil(nil_msg)));
+                effects.push(Effect::SendMessage(PeerMessage::Batch {
+                    actions: vec![],
+                    signatures: sigs,
+                    clean_shutdown: None,
+                }));
             }
 
             HandshakeState::StepF(info) => {
@@ -1772,26 +1467,18 @@ impl PotatoHandler {
                     PeerMessage::RequestPotato(_) => {
                         self.peer_wants_potato = true;
                         if matches!(self.have_potato, PotatoState::Present) {
-                            let nil_msg = {
+                            let sigs = {
                                 let ch = self.channel_handler_mut()?;
                                 ch.send_empty_potato(env)?
                             };
-                            effects.push(Effect::SendMessage(PeerMessage::Nil(nil_msg)));
+                            effects.push(Effect::SendMessage(PeerMessage::Batch {
+                                actions: vec![],
+                                signatures: sigs,
+                                clean_shutdown: None,
+                            }));
                             self.have_potato = PotatoState::Absent;
                             self.peer_wants_potato = false;
                         }
-                    }
-                    PeerMessage::StartGames(sigs, g) => {
-                        effects.extend(self.received_game_start(env, sigs, g)?);
-                    }
-                    PeerMessage::ProposeGame(sigs, gsi) => {
-                        effects.extend(self.received_proposal(env, sigs, gsi)?);
-                    }
-                    PeerMessage::AcceptProposal(game_id, sigs) => {
-                        effects.extend(self.received_accept_proposal(env, game_id, sigs)?);
-                    }
-                    PeerMessage::CancelProposal(game_id, sigs) => {
-                        effects.extend(self.received_cancel_proposal(env, game_id, sigs)?);
                     }
                     _ => {
                         effects.extend(self.pass_on_channel_handler_message(env, msg_envelope)?);
@@ -2063,14 +1750,39 @@ impl PotatoHandler {
         })
     }
 
+    /// If we have the potato and aren't going on-chain, flush the action queue
+    /// into a batch. Otherwise request the potato from the peer.
+    fn flush_or_request_potato<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+    ) -> Result<(bool, Vec<Effect>), Error> {
+        let going_on_chain = self
+            .channel_handler
+            .as_ref()
+            .map_or(false, |ch| ch.initiated_on_chain());
+
+        if going_on_chain {
+            return Ok((false, vec![]));
+        }
+
+        let (has_potato, effect) = self.send_potato_request_if_needed()?;
+        let mut effects: Vec<Effect> = effect.into_iter().collect();
+        if has_potato {
+            let (sent, batch_effects) = self.drain_queue_into_batch(env)?;
+            effects.extend(batch_effects);
+            return Ok((sent, effects));
+        }
+
+        Ok((false, effects))
+    }
+
     fn do_game_action<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
         action: GameAction,
     ) -> Result<(bool, Vec<Effect>), Error> {
-        let mut effects = Vec::new();
         if let HandshakeState::OnChain(on_chain) = &mut self.handshake_state {
-            effects.extend(on_chain.do_on_chain_action(env, action)?);
+            let effects = on_chain.do_on_chain_action(env, action)?;
             return Ok((true, effects));
         }
 
@@ -2083,30 +1795,12 @@ impl PotatoHandler {
                 | HandshakeState::CleanShutdownWaitForConditions(..)
         ) {
             self.push_action(action);
-            return Ok((false, effects));
+            return Ok((false, vec![]));
         }
 
         if matches!(self.handshake_state, HandshakeState::Finished(_)) {
             self.push_action(action);
-
-            let going_on_chain = self
-                .channel_handler
-                .as_ref()
-                .map_or(false, |ch| ch.initiated_on_chain());
-
-            if going_on_chain {
-                return Ok((false, effects));
-            }
-
-            let (has_potato, effect) = self.send_potato_request_if_needed()?;
-            effects.extend(effect);
-            if !has_potato {
-                return Ok((false, effects));
-            }
-
-            let (moved, move_effects) = self.have_potato_move(env)?;
-            effects.extend(move_effects);
-            return Ok((moved, effects));
+            return self.flush_or_request_potato(env);
         }
 
         Err(Error::StrErr(format!(
@@ -2324,7 +2018,15 @@ impl PotatoHandler {
 
         if is_clean_shutdown {
             self.handshake_state = HandshakeState::Completed;
-            return Ok(vec![Effect::CleanShutdownComplete { reward_coin }]);
+            let mut effects = Vec::new();
+            {
+                let ch = self.channel_handler_mut()?;
+                for (id, amount) in ch.drain_cached_accepts() {
+                    effects.push(Effect::Notification(GameNotification::WeTimedOut { id, our_reward: amount, reward_coin: None }));
+                }
+            }
+            effects.push(Effect::CleanShutdownComplete { reward_coin });
+            return Ok(effects);
         }
 
         // An unroll landed instead of the clean shutdown transaction.
@@ -2441,16 +2143,6 @@ impl PotatoHandler {
         let mut on_chain_queue = VecDeque::new();
         while let Some(action) = self.game_action_queue.pop_front() {
             match &action {
-                GameAction::LocalStartGame => {
-                    if let Some(desc) = self.my_start_queue.pop_front() {
-                        for gsi in desc.my_games.iter().chain(desc.their_games.iter()) {
-                            let id = gsi.0.game_id().clone();
-                            effects.push(Effect::Notification(GameNotification::GameCancelled {
-                                id,
-                            }));
-                        }
-                    }
-                }
                 GameAction::CleanShutdown(_) => {}
                 _ => on_chain_queue.push_back(action),
             }
@@ -2505,68 +2197,12 @@ impl PotatoHandler {
 
 impl FromLocalUI for PotatoHandler
 {
-    fn start_games<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
-        i_initiated: bool,
-        game: &GameStart,
-    ) -> Result<(Vec<GameID>, Vec<Effect>), Error>
-    {
-        let mut effects = Vec::new();
-        if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
-            return Err(Error::StrErr(format!(
-                "start games without finishing handshake: {:?}",
-                self.handshake_state
-            )));
-        }
-
-        // Starting a new game cancels any pending clean shutdown request.
-        self.game_action_queue
-            .retain(|a| !matches!(a, GameAction::CleanShutdown(_)));
-
-        let (my_games, their_games) = self.get_games_by_start_type(env, i_initiated, game)?;
-
-        let game_id_list: Vec<GameID> = my_games.iter().map(|g| g.game_id().clone()).collect();
-
-        // This comes to both peers before any game start happens.
-        // In the didn't initiate scenario, we hang onto the game start to ensure that
-        // we know what we're receiving from the remote end.
-        if i_initiated {
-            self.my_start_queue.push_back(MyGameStartQueueEntry {
-                my_games: my_games.into_iter().map(GSI).collect(),
-                their_games: their_games.into_iter().map(GSI).collect(),
-                my_turn: game.my_turn,
-            });
-
-            self.push_action(GameAction::LocalStartGame);
-
-            let (has_potato, effect) = self.send_potato_request_if_needed()?;
-            effects.extend(effect);
-            if !has_potato {
-                return Ok((game_id_list.clone(), effects));
-            }
-
-            let (_moved, move_effects) = self.have_potato_move(env)?;
-            effects.extend(move_effects);
-        } else {
-            // All checking needed is done by channel handler.
-            self.their_start_queue
-                .push_back(GameStartQueueEntry {
-                    game_ids: game_id_list.clone(),
-                    my_turn: game.my_turn,
-                });
-        }
-
-        Ok((game_id_list, effects))
-    }
-
     fn propose_game<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
         game: &GameStart,
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error>
     {
-        let mut effects = Vec::new();
         if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
             return Err(Error::StrErr(format!(
                 "propose_game without finishing handshake: {:?}",
@@ -2579,7 +2215,6 @@ impl FromLocalUI for PotatoHandler
 
         let (my_games, their_games) = self.get_games_by_start_type(env, true, game)?;
 
-        // When my_turn is false, swap perspectives so the receiver moves first.
         let (my_games, their_games) = if game.my_turn {
             (my_games, their_games)
         } else {
@@ -2592,13 +2227,7 @@ impl FromLocalUI for PotatoHandler
             self.push_action(GameAction::QueuedProposal(GSI(mine), GSI(theirs)));
         }
 
-        let (has_potato, effect) = self.send_potato_request_if_needed()?;
-        effects.extend(effect);
-        if has_potato {
-            let (_moved, move_effects) = self.have_potato_move(env)?;
-            effects.extend(move_effects);
-        }
-
+        let (_sent, effects) = self.flush_or_request_potato(env)?;
         Ok((game_id_list, effects))
     }
 

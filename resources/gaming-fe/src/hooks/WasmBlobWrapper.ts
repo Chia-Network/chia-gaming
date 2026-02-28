@@ -409,7 +409,7 @@ export class WasmBlobWrapper {
     }
 
     let result: any = {};
-    let gids = this.cradle?.start_games(!this.iStarted, {
+    let gids = this.cradle?.propose_game({
       game_type: '63616c706f6b6572',
       timeout: 100,
       amount: this.perGameAmount,
@@ -477,8 +477,6 @@ export class WasmBlobWrapper {
             moveNumber: this.moveNumber,
           },
         });
-      },
-      game_started: (_games) => {
       },
       game_notification: (notification_json) => {
         try {

@@ -175,7 +175,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         let game_id = self.parties.game_id.clone();
         let entropy: Hash = self.env.rng.gen();
         let readable_move = ReadableMove::from_nodeptr(self.env.allocator, readable)?;
-        let move_result = self.parties.player(player).ch.send_potato_move(
+        let (sigs, move_result) = self.parties.player(player).ch.send_potato_move(
             &mut self.env,
             &game_id,
             &readable_move,
@@ -184,13 +184,17 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
 
         // XXX allow verification of ui result and message.
         if received {
-            let move_result = self.parties.player(player ^ 1).ch.received_potato_move(
+            let move_result = self.parties.player(player ^ 1).ch.apply_received_move(
                 &mut self.env,
                 &game_id,
-                &move_result,
+                &move_result.game_move,
+            )?;
+            let spend_info = self.parties.player(player ^ 1).ch.verify_received_batch_signatures(
+                &mut self.env,
+                &sigs,
             )?;
             self.parties
-                .update_channel_coin_after_receive(player ^ 1, &move_result.spend_info)?;
+                .update_channel_coin_after_receive(player ^ 1, &spend_info)?;
             let decoded_message = if move_result.message.is_empty() {
                 None
             } else {

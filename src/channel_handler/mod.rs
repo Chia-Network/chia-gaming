@@ -6,7 +6,6 @@ pub mod types;
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::mem::swap;
 use std::rc::Rc;
 
 use rand::prelude::*;
@@ -23,10 +22,10 @@ use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelCoinSpentResult, ChannelHandlerEnv,
     ChannelHandlerInitiationResult, ChannelHandlerMoveResult, ChannelHandlerPrivateKeys,
     ChannelHandlerUnrollSpendInfo, CoinSpentAccept, CoinSpentDisposition,
-    CoinSpentInformation, CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartFailed,
+    CoinSpentInformation, CoinSpentMoveUp, CoinSpentResult, DispositionResult,
     GameStartInfoInterface, HandshakeResult, LiveGame, MoveResult, OnChainGameCoin,
     OnChainGameState, PotatoAcceptCachedData, PotatoMoveCachedData, PotatoSignatures,
-    ProposedGame, ReadableMove, StartGameResult, UnrollCoin, UnrollCoinConditionInputs,
+    ProposedGame, ReadableMove, UnrollCoin, UnrollCoinConditionInputs,
     UnrollTarget,
 };
 
@@ -111,7 +110,7 @@ pub struct ChannelHandler {
     // Specifies the time lock that should be used in the unroll coin's conditions.
     unroll_advance_timeout: Timeout,
 
-    cached_last_action: Option<CachedPotatoRegenerateLastHop>,
+    cached_last_actions: Vec<CachedPotatoRegenerateLastHop>,
 
     // Has a parity between the two players of whether have_potato means odd
     // or even, but odd-ness = have-potato is arbitrary.
@@ -245,20 +244,39 @@ impl ChannelHandler {
         self.their_out_of_game_balance.clone()
     }
 
-    pub fn get_cached_game_id(&self) -> Option<&GameID> {
-        if let Some(CachedPotatoRegenerateLastHop::PotatoAccept(acc)) = &self.cached_last_action {
-            return Some(&acc.game_id);
-        }
-
-        None
+    pub fn get_cached_accept_game_ids(&self) -> Vec<GameID> {
+        self.cached_last_actions
+            .iter()
+            .filter_map(|entry| {
+                if let CachedPotatoRegenerateLastHop::PotatoAccept(acc) = entry {
+                    Some(acc.game_id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     pub fn clear_cached_game_id_for_send(&mut self) {
-        if let Some(game_id) = self.get_cached_game_id() {
-            if let Ok(idx) = self.get_game_by_id(game_id) {
+        for game_id in self.get_cached_accept_game_ids() {
+            if let Ok(idx) = self.get_game_by_id(&game_id) {
                 self.live_games.remove(idx);
             }
         }
+    }
+
+    /// Drain all cached PotatoAccept entries, returning (game_id, our_share_amount) for each.
+    pub fn drain_cached_accepts(&mut self) -> Vec<(GameID, Amount)> {
+        let mut accepts = Vec::new();
+        self.cached_last_actions.retain(|entry| {
+            if let CachedPotatoRegenerateLastHop::PotatoAccept(acc) = entry {
+                accepts.push((acc.game_id.clone(), acc.our_share_amount.clone()));
+                false
+            } else {
+                true
+            }
+        });
+        accepts
     }
 
     pub fn get_reward_puzzle_hash<R: Rng>(
@@ -342,47 +360,8 @@ impl ChannelHandler {
         self.my_out_of_game_balance.clone()
     }
 
-    fn get_just_created_games(&self) -> Vec<GameID> {
-        if let Some(CachedPotatoRegenerateLastHop::PotatoCreatedGame(games, _, _)) =
-            &self.cached_last_action
-        {
-            games.clone()
-        } else {
-            vec![]
-        }
-    }
-
-    /// Returns true if there are active games that weren't just created in the
-    /// most recent potato exchange (and thus can't be cancelled for shutdown).
-    pub fn has_games_beyond_just_created(&self) -> bool {
-        let just_created = self.get_just_created_games();
-        self.live_games
-            .iter()
-            .any(|g| !just_created.contains(&g.game_id))
-    }
-
-    /// Cancel games that were just created (in the most recent potato) by
-    /// restoring their contributions to the out-of-game balances and removing
-    /// them from live_games.  Used before clean shutdown when the only active
-    /// games are ones we just initiated.
-    pub fn cancel_just_created_games(&mut self) {
-        let just_created = self.get_just_created_games();
-        if just_created.is_empty() {
-            return;
-        }
-        for game in self.live_games.iter() {
-            if just_created.contains(&game.game_id) {
-                self.my_out_of_game_balance += game.my_contribution.clone();
-                self.their_out_of_game_balance += game.their_contribution.clone();
-                self.my_allocated_balance =
-                    self.my_allocated_balance.clone() - game.my_contribution.clone();
-                self.their_allocated_balance =
-                    self.their_allocated_balance.clone() - game.their_contribution.clone();
-            }
-        }
-        self.live_games
-            .retain(|g| !just_created.contains(&g.game_id));
-        self.cached_last_action = None;
+    pub fn has_active_games(&self) -> bool {
+        !self.live_games.is_empty()
     }
 
     pub fn create_conditions_and_signature_of_channel_coin<R: Rng>(
@@ -524,7 +503,7 @@ impl ChannelHandler {
             initiated_on_chain: false,
             on_chain_for_error: false,
 
-            cached_last_action: None,
+            cached_last_actions: Vec::new(),
 
             current_state_number: 0,
             next_nonce_number: 0,
@@ -738,9 +717,6 @@ impl ChannelHandler {
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
     ) -> Result<PotatoSignatures, Error> {
-        // We let them spend a state number 1 higher but nothing else changes.
-        self.update_cache_for_potato_send(None);
-
         self.update_cached_unroll_state(env)
     }
 
@@ -834,6 +810,36 @@ impl ChannelHandler {
         })
     }
 
+    /// Verify batch signatures against the current channel state. Called once
+    /// after all apply_received_* methods in a batch.
+    pub fn verify_received_batch_signatures<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        signatures: &PotatoSignatures,
+    ) -> Result<ChannelCoinSpendInfo, Error> {
+        let unroll_data = self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
+
+        let spend = self.received_potato_verify_signatures(
+            env,
+            signatures,
+            &self.unroll_coin_condition_inputs(
+                self.my_out_of_game_balance.clone(),
+                self.their_out_of_game_balance.clone(),
+                &unroll_data,
+            ),
+        )?;
+
+        self.cached_last_actions.retain(|entry| {
+            matches!(entry, CachedPotatoRegenerateLastHop::PotatoAccept(_))
+        });
+
+        Ok(ChannelCoinSpendInfo {
+            aggsig: spend.signature,
+            solution: spend.solution.p(),
+            conditions: spend.conditions.p(),
+        })
+    }
+
     pub fn received_empty_potato<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
@@ -851,7 +857,9 @@ impl ChannelHandler {
             ),
         )?;
 
-        self.cached_last_action = None;
+        self.cached_last_actions.retain(|entry| {
+            matches!(entry, CachedPotatoRegenerateLastHop::PotatoAccept(_))
+        });
 
         Ok(ChannelCoinSpendInfo {
             aggsig: spend.signature,
@@ -903,11 +911,13 @@ impl ChannelHandler {
         Ok(res)
     }
 
-    pub fn propose_game<R: Rng>(
+    /// Mutate state for sending a game proposal. Does NOT finalize signatures.
+    /// Call `update_cached_unroll_state` once after all batch mutations.
+    pub fn send_propose_game<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
         start_info: &Rc<dyn GameStartInfoInterface>,
-    ) -> Result<PotatoSignatures, Error> {
+    ) -> Result<(), Error> {
         let new_game_nonce = self.next_nonce_number;
         self.next_nonce_number += 1;
 
@@ -942,16 +952,25 @@ impl ChannelHandler {
             start_info.their_contribution_this_game().clone(),
         ));
 
-        self.update_cache_for_potato_send(None);
+        Ok(())
+    }
+
+    /// Legacy wrapper: propose + finalize in one call.
+    pub fn propose_game<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        start_info: &Rc<dyn GameStartInfoInterface>,
+    ) -> Result<PotatoSignatures, Error> {
+        self.send_propose_game(env, start_info)?;
         self.update_cached_unroll_state(env)
     }
 
-    pub fn received_proposal<R: Rng>(
+    /// Apply a received proposal without verifying signatures.
+    pub fn apply_received_proposal<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
-        signatures: &PotatoSignatures,
         start_info: &Rc<dyn GameStartInfoInterface>,
-    ) -> Result<ChannelCoinSpendInfo, Error> {
+    ) -> Result<(), Error> {
         let new_game_nonce = self.next_nonce_number;
         self.next_nonce_number += 1;
 
@@ -986,31 +1005,25 @@ impl ChannelHandler {
             start_info.their_contribution_this_game().clone(),
         ));
 
-        let unroll_data =
-            self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
-
-        let spend = self.received_potato_verify_signatures(
-            env,
-            signatures,
-            &self.unroll_coin_condition_inputs(
-                self.my_out_of_game_balance.clone(),
-                self.their_out_of_game_balance.clone(),
-                &unroll_data,
-            ),
-        )?;
-
-        Ok(ChannelCoinSpendInfo {
-            aggsig: spend.signature,
-            solution: spend.solution.p(),
-            conditions: spend.conditions.p(),
-        })
+        Ok(())
     }
 
-    pub fn accept_proposal<R: Rng>(
+    /// Legacy wrapper: apply proposal + verify signatures in one call.
+    pub fn received_proposal<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
+        signatures: &PotatoSignatures,
+        start_info: &Rc<dyn GameStartInfoInterface>,
+    ) -> Result<ChannelCoinSpendInfo, Error> {
+        self.apply_received_proposal(env, start_info)?;
+        self.verify_received_batch_signatures(env, signatures)
+    }
+
+    /// Mutate state for accepting a proposal. Does NOT finalize signatures.
+    pub fn send_accept_proposal(
+        &mut self,
         game_id: &GameID,
-    ) -> Result<PotatoSignatures, Error> {
+    ) -> Result<(), Error> {
         let idx = self.proposed_games.iter().position(|p| p.game_id == *game_id)
             .ok_or_else(|| Error::StrErr(format!("no proposal with id {game_id:?}")))?;
         let proposal = self.proposed_games.remove(idx);
@@ -1037,17 +1050,24 @@ impl ChannelHandler {
             proposal.their_contribution,
         );
         self.live_games.push(live_game);
+        Ok(())
+    }
 
-        self.update_cache_for_potato_send(None);
+    /// Legacy wrapper: accept proposal + finalize in one call.
+    pub fn accept_proposal<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        game_id: &GameID,
+    ) -> Result<PotatoSignatures, Error> {
+        self.send_accept_proposal(game_id)?;
         self.update_cached_unroll_state(env)
     }
 
-    pub fn received_accept_proposal<R: Rng>(
+    /// Apply a received accept-proposal without verifying signatures.
+    pub fn apply_received_accept_proposal(
         &mut self,
-        env: &mut ChannelHandlerEnv<R>,
-        signatures: &PotatoSignatures,
         game_id: &GameID,
-    ) -> Result<ChannelCoinSpendInfo, Error> {
+    ) -> Result<(), Error> {
         let idx = self.proposed_games.iter().position(|p| p.game_id == *game_id)
             .ok_or_else(|| Error::StrErr(format!("no proposal with id {game_id:?}")))?;
         let proposal = self.proposed_games.remove(idx);
@@ -1072,37 +1092,38 @@ impl ChannelHandler {
             proposal.their_contribution,
         );
         self.live_games.push(live_game);
-
-        let cached_game_ids: Vec<GameID> = Vec::new();
-        let unroll_data =
-            self.compute_unroll_data_for_games(&cached_game_ids, None, &self.live_games)?;
-
-        let spend = self.received_potato_verify_signatures(
-            env,
-            signatures,
-            &self.unroll_coin_condition_inputs(
-                self.my_out_of_game_balance.clone(),
-                self.their_out_of_game_balance.clone(),
-                &unroll_data,
-            ),
-        )?;
-
-        Ok(ChannelCoinSpendInfo {
-            aggsig: spend.signature,
-            solution: spend.solution.p(),
-            conditions: spend.conditions.p(),
-        })
+        Ok(())
     }
 
+    /// Legacy wrapper: apply accept-proposal + verify signatures in one call.
+    pub fn received_accept_proposal<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        signatures: &PotatoSignatures,
+        game_id: &GameID,
+    ) -> Result<ChannelCoinSpendInfo, Error> {
+        self.apply_received_accept_proposal(game_id)?;
+        self.verify_received_batch_signatures(env, signatures)
+    }
+
+    /// Mutate state for cancelling a proposal. Does NOT finalize signatures.
+    pub fn send_cancel_proposal(
+        &mut self,
+        game_id: &GameID,
+    ) -> Result<(), Error> {
+        let idx = self.proposed_games.iter().position(|p| p.game_id == *game_id)
+            .ok_or_else(|| Error::StrErr(format!("no proposal with id {game_id:?}")))?;
+        self.proposed_games.remove(idx);
+        Ok(())
+    }
+
+    /// Legacy wrapper: cancel proposal + finalize in one call.
     pub fn cancel_proposal<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
         game_id: &GameID,
     ) -> Result<PotatoSignatures, Error> {
-        let idx = self.proposed_games.iter().position(|p| p.game_id == *game_id)
-            .ok_or_else(|| Error::StrErr(format!("no proposal with id {game_id:?}")))?;
-        self.proposed_games.remove(idx);
-        self.update_cache_for_potato_send(None);
+        self.send_cancel_proposal(game_id)?;
         self.update_cached_unroll_state(env)
     }
 
@@ -1126,40 +1147,6 @@ impl ChannelHandler {
         self.proposed_games.iter().find(|p| p.game_id == *game_id)
     }
 
-    /// Move a proposal from proposed_games to live_games without updating the
-    /// unroll state. This is used for implicit accept (via Move) where the move
-    /// itself will update the unroll. Deducts balances.
-    pub fn accept_proposal_into_live(
-        &mut self,
-        game_id: &GameID,
-    ) -> Result<(), Error> {
-        let idx = self.proposed_games.iter().position(|p| p.game_id == *game_id)
-            .ok_or_else(|| Error::StrErr(format!("no proposal with id {game_id:?}")))?;
-        let proposal = self.proposed_games.remove(idx);
-
-        if proposal.my_contribution.clone() > self.my_out_of_game_balance
-            || proposal.their_contribution.clone() > self.their_out_of_game_balance
-        {
-            self.proposed_games.insert(idx, proposal);
-            return Err(Error::StrErr("insufficient balance to accept proposal".to_string()));
-        }
-
-        self.my_allocated_balance += proposal.my_contribution.clone();
-        self.their_allocated_balance += proposal.their_contribution.clone();
-        self.my_out_of_game_balance -= proposal.my_contribution.clone();
-        self.their_out_of_game_balance -= proposal.their_contribution.clone();
-
-        let live_game = LiveGame::new(
-            proposal.game_id.clone(),
-            proposal.initial_puzzle_hash,
-            proposal.referee,
-            proposal.my_contribution,
-            proposal.their_contribution,
-        );
-        self.live_games.push(live_game);
-        Ok(())
-    }
-
     pub fn my_out_of_game_balance(&self) -> Amount {
         self.my_out_of_game_balance.clone()
     }
@@ -1176,117 +1163,6 @@ impl ChannelHandler {
         self.proposed_games.iter().any(|p| p.game_id == *game_id)
     }
 
-    fn start_game_contributions(
-        &mut self,
-        start_info_list: &[Rc<dyn GameStartInfoInterface>],
-    ) -> (Amount, Amount) {
-        let mut my_full_contribution = Amount::default();
-        let mut their_full_contribution = Amount::default();
-
-        for start in start_info_list.iter() {
-            my_full_contribution += start.my_contribution_this_game().clone();
-            their_full_contribution += start.their_contribution_this_game().clone();
-        }
-
-        (my_full_contribution, their_full_contribution)
-    }
-
-    pub fn send_potato_start_game<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<R>,
-        start_info_list: &[Rc<dyn GameStartInfoInterface>],
-    ) -> Result<StartGameResult, Error> {
-        let (my_full_contribution, their_full_contribution) =
-            self.start_game_contributions(start_info_list);
-
-        if my_full_contribution.clone() > self.my_out_of_game_balance
-            || their_full_contribution.clone() > self.their_out_of_game_balance
-        {
-            return Ok(StartGameResult::Failure(GameStartFailed::OutOfMoney));
-        }
-
-        self.clear_cached_game_id_for_send();
-        self.my_allocated_balance += my_full_contribution.clone();
-        self.their_allocated_balance += their_full_contribution.clone();
-        self.my_out_of_game_balance -= my_full_contribution.clone();
-        self.their_out_of_game_balance -= their_full_contribution.clone();
-
-        // We let them spend a state number 1 higher but nothing else changes.
-        self.update_cache_for_potato_send(Some(CachedPotatoRegenerateLastHop::PotatoCreatedGame(
-            start_info_list
-                .iter()
-                .map(|g| g.game_id().clone())
-                .collect(),
-            my_full_contribution,
-            their_full_contribution,
-        )));
-
-        let mut new_games = self.add_games(env, start_info_list)?;
-        self.live_games.append(&mut new_games);
-
-        Ok(StartGameResult::Success(Box::new(
-            self.update_cached_unroll_state(env)?,
-        )))
-    }
-
-    pub fn received_potato_start_game<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<R>,
-        signatures: &PotatoSignatures,
-        start_info_list: &[Rc<dyn GameStartInfoInterface>],
-    ) -> Result<(Vec<GameID>, ChannelCoinSpendInfo), Error> {
-        let mut new_games = self.add_games(env, start_info_list)?;
-        let result_game_ids: Vec<GameID> = new_games.iter().map(|g| &g.game_id).cloned().collect();
-
-        let (my_full_contribution, their_full_contribution) =
-            self.start_game_contributions(start_info_list);
-
-        if my_full_contribution.clone() > self.my_out_of_game_balance
-            || their_full_contribution.clone() > self.their_out_of_game_balance
-        {
-            return Err(Error::StrErr("out of money".to_string()));
-        }
-
-        self.my_allocated_balance += my_full_contribution.clone();
-        self.their_allocated_balance += their_full_contribution.clone();
-        self.my_out_of_game_balance -= my_full_contribution.clone();
-        self.their_out_of_game_balance -= their_full_contribution.clone();
-
-        // Make a list of all game outputs in order.
-        let cached_game_ids = self
-            .get_cached_game_id()
-            .map(|g| vec![g.clone()])
-            .unwrap_or_default();
-        let mut unroll_data_for_all_games =
-            self.compute_unroll_data_for_games(&cached_game_ids, None, &self.live_games)?;
-        unroll_data_for_all_games.append(&mut self.compute_unroll_data_for_games(
-            &[],
-            None,
-            &new_games,
-        )?);
-
-        // Update an unroll coin to see if we can verify the message.
-        let spend = self.received_potato_verify_signatures(
-            env,
-            signatures,
-            &self.unroll_coin_condition_inputs(
-                self.my_out_of_game_balance.clone(),
-                self.their_out_of_game_balance.clone(),
-                &unroll_data_for_all_games,
-            ),
-        )?;
-        self.live_games.append(&mut new_games);
-
-        Ok((
-            result_game_ids,
-            ChannelCoinSpendInfo {
-                aggsig: spend.signature,
-                solution: spend.solution.p(),
-                conditions: spend.conditions.p(),
-            },
-        ))
-    }
-
     pub fn get_game_by_id(&self, game_id: &GameID) -> Result<usize, Error> {
         self.live_games
             .iter()
@@ -1299,7 +1175,9 @@ impl ChannelHandler {
             })
     }
 
-    pub fn send_potato_move<R: Rng>(
+    /// Apply a send-side move mutation. Does NOT finalize signatures.
+    /// Pushes a cache entry for on-chain redo.
+    pub fn send_move_no_finalize<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
         game_id: &GameID,
@@ -1330,14 +1208,12 @@ impl ChannelHandler {
         self.live_games[game_idx].last_referee_puzzle_hash =
             self.live_games[game_idx].outcome_puzzle_hash(env.allocator)?;
 
-        // Referee is now at S' (post-move). Save it for potential redo after unroll.
         let (saved_referee, saved_ph) = self.live_games[game_idx].save_referee_state();
 
         let puzzle_hash = referee_result.puzzle_hash_for_unroll;
         let amount = referee_result.details.basic.mover_share.clone();
 
-        // We let them spend a state number 1 higher but nothing else changes.
-        self.update_cache_for_potato_send(Some(
+        self.push_cached_action(
             CachedPotatoRegenerateLastHop::PotatoMoveHappening(Rc::new(PotatoMoveCachedData {
                 state_number: self.current_state_number,
                 game_id: game_id.clone(),
@@ -1347,43 +1223,45 @@ impl ChannelHandler {
                 saved_post_move_referee: Some(saved_referee),
                 saved_post_move_last_ph: Some(saved_ph),
             })),
-        ));
-
-        //self.live_games[game_idx]
-        let signatures = self.update_cached_unroll_state(env)?;
+        );
 
         Ok(MoveResult {
-            signatures,
             state_number: self.current_state_number,
             game_move: referee_result.details.clone(),
         })
     }
 
-    pub fn received_potato_move<R: Rng>(
+    /// Legacy wrapper: send move + finalize in one call.
+    /// Returns (signatures, move_result).
+    pub fn send_potato_move<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
         game_id: &GameID,
-        move_result: &MoveResult,
+        readable_move: &ReadableMove,
+        new_entropy: Hash,
+    ) -> Result<(PotatoSignatures, MoveResult), Error> {
+        let result = self.send_move_no_finalize(env, game_id, readable_move, new_entropy)?;
+        let sigs = self.update_cached_unroll_state(env)?;
+        Ok((sigs, result))
+    }
+
+    /// Apply a received move to local state without verifying signatures.
+    /// Call `verify_received_batch_signatures` once after all batch actions are applied.
+    pub fn apply_received_move<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        game_id: &GameID,
+        game_move: &GameMoveDetails,
     ) -> Result<ChannelHandlerMoveResult, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
 
-        // Save referee state so we can restore it if anything goes wrong
-        // (slash detection or signature verification failure).
-        let (saved_referee, saved_last_ph) = self.live_games[game_idx].save_referee_state();
-
         let coin_string = self.state_channel.coin.clone();
-        let their_move_result = match self.live_games[game_idx].internal_their_move(
+        let their_move_result = self.live_games[game_idx].internal_their_move(
             env.allocator,
-            &move_result.game_move,
+            game_move,
             self.current_state_number,
             Some(&coin_string),
-        ) {
-            Ok(r) => r,
-            Err(e) => {
-                self.live_games[game_idx].restore_referee_state(saved_referee, saved_last_ph);
-                return Err(e);
-            }
-        };
+        )?;
 
         let (readable_move, message, mover_share) = match their_move_result.original {
             TheirTurnResult::FinalMove(move_data) => (
@@ -1397,39 +1275,13 @@ impl ChannelHandler {
                 move_data.mover_share.clone(),
             ),
             TheirTurnResult::Slash(_) => {
-                self.live_games[game_idx].restore_referee_state(saved_referee, saved_last_ph);
                 return Err(Error::StrErr(
                     "slash when off chain: go on chain".to_string(),
                 ));
             }
         };
 
-        let unroll_data = self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
-
-        let spend = match self.received_potato_verify_signatures(
-            env,
-            &move_result.signatures,
-            &self.unroll_coin_condition_inputs(
-                self.my_out_of_game_balance.clone(),
-                self.their_out_of_game_balance.clone(),
-                &unroll_data,
-            ),
-        ) {
-            Ok(s) => s,
-            Err(e) => {
-                self.live_games[game_idx].restore_referee_state(saved_referee, saved_last_ph);
-                return Err(e);
-            }
-        };
-
-        self.cached_last_action = None;
-
         Ok(ChannelHandlerMoveResult {
-            spend_info: ChannelCoinSpendInfo {
-                aggsig: spend.signature,
-                solution: spend.solution.p(),
-                conditions: spend.conditions.p(),
-            },
             readable_their_move: readable_move.p(),
             state_number: self.current_state_number,
             message,
@@ -1448,11 +1300,12 @@ impl ChannelHandler {
         self.live_games[game_idx].receive_readable(env.allocator, message)
     }
 
-    pub fn send_potato_accept<R: Rng>(
+    /// Apply a send-side accept mutation. Does NOT finalize signatures.
+    /// Pushes a cache entry for on-chain redo. Returns the amount won.
+    pub fn send_accept_no_finalize(
         &mut self,
-        env: &mut ChannelHandlerEnv<R>,
         game_id: &GameID,
-    ) -> Result<(PotatoSignatures, Amount), Error> {
+    ) -> Result<Amount, Error> {
         assert!(self.have_potato);
         let game_idx = self.get_game_by_id(game_id)?;
 
@@ -1463,10 +1316,6 @@ impl ChannelHandler {
         let amount = live_game.get_our_current_share();
         let at_stake = live_game.get_amount();
 
-        // Keep a copy of the referee so set_state_for_coins and
-        // accept_or_timeout_game_on_chain can find it during on-chain
-        // resolution if the channel goes on-chain before the potato
-        // round-trip completes.
         let (ref_clone, ph_clone) = live_game.save_referee_state();
         self.pending_accept_games.push(LiveGame::new(
             game_id.clone(),
@@ -1479,73 +1328,62 @@ impl ChannelHandler {
         self.my_out_of_game_balance += amount.clone();
         self.their_out_of_game_balance += at_stake.clone() - amount.clone();
 
-        self.update_cache_for_potato_send(if amount == Amount::default() {
-            None
-        } else {
-            Some(CachedPotatoRegenerateLastHop::PotatoAccept(Box::new(
-                PotatoAcceptCachedData {
-                    game_id: game_id.clone(),
-                    puzzle_hash: live_game.last_referee_puzzle_hash.clone(),
-                    live_game,
-                    at_stake_amount: at_stake,
-                    our_share_amount: amount.clone(),
-                },
-            )))
-        });
+        self.push_cached_action(CachedPotatoRegenerateLastHop::PotatoAccept(Box::new(
+            PotatoAcceptCachedData {
+                game_id: game_id.clone(),
+                puzzle_hash: live_game.last_referee_puzzle_hash.clone(),
+                live_game,
+                at_stake_amount: at_stake,
+                our_share_amount: amount.clone(),
+            },
+        )));
 
+        Ok(amount)
+    }
+
+    /// Legacy wrapper: send accept + finalize in one call.
+    pub fn send_potato_accept<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        game_id: &GameID,
+    ) -> Result<(PotatoSignatures, Amount), Error> {
+        let amount = self.send_accept_no_finalize(game_id)?;
         let signatures = self.update_cached_unroll_state(env)?;
-
         Ok((signatures, amount))
     }
 
+    /// Apply a received accept (game finish) without verifying signatures.
+    pub fn apply_received_accept(
+        &mut self,
+        game_id: &GameID,
+    ) -> Result<(), Error> {
+        let game_idx = self.get_game_by_id(game_id)?;
+
+        let game_amount_for_me = self.live_games[game_idx].get_our_current_share();
+        let game_amount_for_them = self.live_games[game_idx].get_amount()
+            - self.live_games[game_idx].get_our_current_share();
+
+        self.my_allocated_balance =
+            self.my_allocated_balance.clone() - self.live_games[game_idx].my_contribution.clone();
+        self.their_allocated_balance = self.their_allocated_balance.clone()
+            - self.live_games[game_idx].their_contribution.clone();
+        self.my_out_of_game_balance += game_amount_for_me;
+        self.their_out_of_game_balance += game_amount_for_them;
+
+        let removed = self.live_games.remove(game_idx);
+        self.pending_accept_games.push(removed);
+        Ok(())
+    }
+
+    /// Legacy wrapper: apply accept + verify signatures in one call.
     pub fn received_potato_accept<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
         signatures: &PotatoSignatures,
         game_id: &GameID,
     ) -> Result<ChannelCoinSpendInfo, Error> {
-        assert!(!self.have_potato);
-        let game_idx = self.get_game_by_id(game_id)?;
-        let unroll_data = self.compute_unroll_data_for_games(
-            // Skip the removed game.
-            std::slice::from_ref(game_id),
-            None,
-            &self.live_games,
-        )?;
-
-        let game_amount_for_me = self.live_games[game_idx].get_our_current_share();
-        let game_amount_for_them = self.live_games[game_idx].get_amount()
-            - self.live_games[game_idx].get_our_current_share();
-
-        let new_my_allocated =
-            self.my_allocated_balance.clone() - self.live_games[game_idx].my_contribution.clone();
-        let new_their_allocated = self.their_allocated_balance.clone()
-            - self.live_games[game_idx].their_contribution.clone();
-        let my_balance = self.my_out_of_game_balance.clone() + game_amount_for_me;
-        let their_balance = self.their_out_of_game_balance.clone() + game_amount_for_them;
-
-        let unroll_condition_inputs = self.unroll_coin_condition_inputs(
-            my_balance.clone(),
-            their_balance.clone(),
-            &unroll_data,
-        );
-        let spend =
-            self.received_potato_verify_signatures(env, signatures, &unroll_condition_inputs)?;
-
-        self.my_allocated_balance = new_my_allocated;
-        self.their_allocated_balance = new_their_allocated;
-
-        self.my_out_of_game_balance = my_balance;
-        self.their_out_of_game_balance = their_balance;
-
-        let removed = self.live_games.remove(game_idx);
-        self.pending_accept_games.push(removed);
-
-        Ok(ChannelCoinSpendInfo {
-            aggsig: spend.signature,
-            solution: spend.solution.p(),
-            conditions: spend.conditions.p(),
-        })
+        self.apply_received_accept(game_id)?;
+        self.verify_received_batch_signatures(env, signatures)
     }
 
     pub fn state_channel_coin_solution_and_signature<R: Rng>(
@@ -1740,7 +1578,7 @@ impl ChannelHandler {
                 signature,
             },
             timeout: false,
-            games_canceled: self.get_just_created_games(),
+            games_canceled: vec![],
             unrolling_state_number: 0,
         })
     }
@@ -1837,7 +1675,7 @@ impl ChannelHandler {
                 signature: self.unroll.coin.get_unroll_coin_signature()?,
             },
             timeout: true,
-            games_canceled: self.get_just_created_games(),
+            games_canceled: vec![],
             unrolling_state_number: 0,
         })
     }
@@ -1935,7 +1773,7 @@ impl ChannelHandler {
                 signature,
             },
             timeout: false,
-            games_canceled: self.get_just_created_games(),
+            games_canceled: vec![],
             unrolling_state_number: 0,
         })
     }
@@ -1951,11 +1789,8 @@ impl ChannelHandler {
     // 5 move happening - outer thing needs to know that this thing is associated
     //    with a specific game.  will spend that game coin.  referee maker up to
     //    date after that.  aware of move relationship to game id.
-    fn update_cache_for_potato_send(
-        &mut self,
-        cache_update: Option<CachedPotatoRegenerateLastHop>,
-    ) {
-        self.cached_last_action = cache_update;
+    pub fn push_cached_action(&mut self, entry: CachedPotatoRegenerateLastHop) {
+        self.cached_last_actions.push(entry);
     }
 
     fn get_cached_disposition_for_spent_result<R: Rng>(
@@ -1970,79 +1805,71 @@ impl ChannelHandler {
             return Err(Error::StrErr("Bad state number".to_string()));
         }
 
-        match self.cached_last_action.as_ref() {
-            None => Ok(None),
-            Some(CachedPotatoRegenerateLastHop::PotatoCreatedGame(
-                ids,
-                our_contrib,
-                _their_contrib,
-            )) => {
-                // Add amount contributed to vanilla balance
-                // Skip game when generating result.
-                Ok(Some(DispositionResult {
-                    disposition: CoinSpentDisposition::CancelledUX(ids.to_vec()),
-                    skip_game: ids.clone(),
-                    skip_coin_id: None,
-                    our_contribution_adjustment: our_contrib.clone(),
-                }))
-            }
-            Some(CachedPotatoRegenerateLastHop::PotatoAccept(cached)) => {
-                let game_coin = CoinString::from_parts(
-                    &unroll_coin.to_coin_id(),
-                    &cached.puzzle_hash,
-                    &cached.at_stake_amount,
-                );
+        if self.cached_last_actions.is_empty() {
+            return Ok(None);
+        }
 
-                let spend_transaction =
-                    cached
-                        .live_game
-                        .get_transaction_for_move(env.allocator, &game_coin, false)?;
+        for entry in self.cached_last_actions.iter() {
+            match entry {
+                CachedPotatoRegenerateLastHop::PotatoAccept(cached) => {
+                    let game_coin = CoinString::from_parts(
+                        &unroll_coin.to_coin_id(),
+                        &cached.puzzle_hash,
+                        &cached.at_stake_amount,
+                    );
 
-                Ok(Some(DispositionResult {
-                    disposition: CoinSpentDisposition::Accept(CoinSpentAccept {
-                        game_id: cached.game_id.clone(),
-                        spend: CoinSpend {
-                            coin: unroll_coin.clone(),
-                            bundle: spend_transaction.bundle.clone(),
-                        },
-                        reward_coin: spend_transaction.coin,
-                    }),
-                    skip_game: Vec::default(),
-                    skip_coin_id: None,
-                    our_contribution_adjustment: Amount::default(),
-                }))
-            }
-            Some(CachedPotatoRegenerateLastHop::PotatoMoveHappening(cached)) => {
-                let game_idx = self.get_game_by_id(&cached.game_id)?;
+                    let spend_transaction =
+                        cached
+                            .live_game
+                            .get_transaction_for_move(env.allocator, &game_coin, false)?;
 
-                let game_coin = CoinString::from_parts(
-                    &unroll_coin.to_coin_id(),
-                    &cached.puzzle_hash,
-                    &cached.amount,
-                );
+                    return Ok(Some(DispositionResult {
+                        disposition: CoinSpentDisposition::Accept(CoinSpentAccept {
+                            game_id: cached.game_id.clone(),
+                            spend: CoinSpend {
+                                coin: unroll_coin.clone(),
+                                bundle: spend_transaction.bundle.clone(),
+                            },
+                            reward_coin: spend_transaction.coin,
+                        }),
+                        skip_game: Vec::default(),
+                        skip_coin_id: None,
+                        our_contribution_adjustment: Amount::default(),
+                    }));
+                }
+                CachedPotatoRegenerateLastHop::PotatoMoveHappening(cached) => {
+                    let game_idx = self.get_game_by_id(&cached.game_id)?;
 
-                let spend_transaction = self.live_games[game_idx].get_transaction_for_move(
-                    env.allocator,
-                    &game_coin,
-                    false,
-                )?;
+                    let game_coin = CoinString::from_parts(
+                        &unroll_coin.to_coin_id(),
+                        &cached.puzzle_hash,
+                        &cached.amount,
+                    );
 
-                // Existing game coin is in the before state.
-                Ok(Some(DispositionResult {
-                    disposition: CoinSpentDisposition::Move(CoinSpentMoveUp {
-                        game_id: cached.game_id.clone(),
-                        spend_before_game_coin: CoinSpend {
-                            coin: game_coin.clone(),
-                            bundle: spend_transaction.bundle.clone(),
-                        },
-                        after_update_game_coin: spend_transaction.coin.clone(),
-                    }),
-                    skip_coin_id: Some(cached.game_id.clone()),
-                    skip_game: Vec::default(),
-                    our_contribution_adjustment: Amount::default(),
-                }))
+                    let spend_transaction = self.live_games[game_idx].get_transaction_for_move(
+                        env.allocator,
+                        &game_coin,
+                        false,
+                    )?;
+
+                    return Ok(Some(DispositionResult {
+                        disposition: CoinSpentDisposition::Move(CoinSpentMoveUp {
+                            game_id: cached.game_id.clone(),
+                            spend_before_game_coin: CoinSpend {
+                                coin: game_coin.clone(),
+                                bundle: spend_transaction.bundle.clone(),
+                            },
+                            after_update_game_coin: spend_transaction.coin.clone(),
+                        }),
+                        skip_coin_id: Some(cached.game_id.clone()),
+                        skip_game: Vec::default(),
+                        our_contribution_adjustment: Amount::default(),
+                    }));
+                }
             }
         }
+
+        Ok(None)
     }
 
     fn get_new_game_coins_on_chain(
@@ -2092,7 +1919,7 @@ impl ChannelHandler {
     /// corresponding live games.  No rewinding.
     ///
     /// Match game coins to live games by amount, then determine the action:
-    ///  (a) coin PH matches `cached_last_action.match_puzzle_hash`
+    ///  (a) coin PH matches a `cached_last_actions` entry's `match_puzzle_hash`
     ///      → we need to replay our cached move on this coin
     ///  (b) coin PH matches the live game's `last_referee_puzzle_hash`
     ///      → game is already at the latest state, nothing to redo
@@ -2107,12 +1934,16 @@ impl ChannelHandler {
     ) -> Result<HashMap<CoinString, OnChainGameState>, Error> {
         let mut res = HashMap::new();
 
-        let (cached_game_id, cached_match_ph) = match &self.cached_last_action {
-            Some(CachedPotatoRegenerateLastHop::PotatoMoveHappening(d)) => {
-                (Some(d.game_id.clone()), Some(d.match_puzzle_hash.clone()))
-            }
-            _ => (None, None),
-        };
+        let cached_moves: Vec<(GameID, PuzzleHash)> = self.cached_last_actions
+            .iter()
+            .filter_map(|entry| {
+                if let CachedPotatoRegenerateLastHop::PotatoMoveHappening(d) = entry {
+                    Some((d.game_id.clone(), d.match_puzzle_hash.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
 
         for game_coin_ph in coins.iter() {
             let mut matched = false;
@@ -2124,8 +1955,9 @@ impl ChannelHandler {
                     &live_game.get_amount(),
                 );
 
-                let needs_redo = cached_game_id.as_ref() == Some(&live_game.game_id)
-                    && cached_match_ph.as_ref() == Some(game_coin_ph);
+                let needs_redo = cached_moves.iter().any(|(gid, mph)| {
+                    *gid == live_game.game_id && *mph == *game_coin_ph
+                });
                 let is_latest = live_game.last_referee_puzzle_hash == *game_coin_ph;
 
                 let game_timeout = live_game.get_game_timeout();
@@ -2272,18 +2104,19 @@ impl ChannelHandler {
     }
 
     /// Extract cached move data (including saved S' referee) from
-    /// `cached_last_action` for a specific game.
+    /// `cached_last_actions` for a specific game, removing that entry.
     pub fn take_cached_move_for_game(
         &mut self,
         game_id: &GameID,
     ) -> Option<Rc<PotatoMoveCachedData>> {
-        if let Some(CachedPotatoRegenerateLastHop::PotatoMoveHappening(move_data)) =
-            &self.cached_last_action
-        {
-            if move_data.game_id == *game_id {
-                let result = move_data.clone();
-                self.cached_last_action = None;
-                return Some(result);
+        let pos = self.cached_last_actions.iter().position(|entry| {
+            matches!(entry, CachedPotatoRegenerateLastHop::PotatoMoveHappening(d) if d.game_id == *game_id)
+        });
+        if let Some(idx) = pos {
+            if let CachedPotatoRegenerateLastHop::PotatoMoveHappening(data) =
+                self.cached_last_actions.remove(idx)
+            {
+                return Some(data);
             }
         }
         None
@@ -2422,39 +2255,34 @@ impl ChannelHandler {
     /// Simple forward-only redo check.  `set_state_for_coins` already matched
     /// the game coin to the live game by amount.  We just check if the cached
     /// action is for the same game and emit the `RedoMove`.
-    fn get_redo_result_forward(
-        &self,
-        cla: &Option<CachedPotatoRegenerateLastHop>,
-        coin: &CoinString,
-    ) -> Result<Option<GameAction>, Error> {
-        if let Some(CachedPotatoRegenerateLastHop::PotatoMoveHappening(move_data)) = cla {
-            let coin_matches = coin
-                .to_parts()
-                .map(|(_, ph, _)| ph == move_data.match_puzzle_hash)
-                .unwrap_or(false);
-            if coin_matches {
-                return Ok(Some(GameAction::RedoMove(
-                    move_data.game_id.clone(),
-                    coin.clone(),
-                    move_data.clone(),
-                )));
-            }
-        }
-        Ok(None)
-    }
-
     pub fn get_redo_action<R: Rng>(
         &mut self,
         _env: &mut ChannelHandlerEnv<R>,
         coin: &CoinString,
     ) -> Result<Option<GameAction>, Error> {
-        let mut cla = None;
-        swap(&mut cla, &mut self.cached_last_action);
-        let result = self.get_redo_result_forward(&cla, coin);
-        if result.as_ref().map(|r| r.is_none()).unwrap_or(false) {
-            swap(&mut cla, &mut self.cached_last_action);
+        let pos = self.cached_last_actions.iter().position(|entry| {
+            if let CachedPotatoRegenerateLastHop::PotatoMoveHappening(move_data) = entry {
+                coin.to_parts()
+                    .map(|(_, ph, _)| ph == move_data.match_puzzle_hash)
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        });
+
+        if let Some(idx) = pos {
+            if let CachedPotatoRegenerateLastHop::PotatoMoveHappening(move_data) =
+                self.cached_last_actions.remove(idx)
+            {
+                return Ok(Some(GameAction::RedoMove(
+                    move_data.game_id.clone(),
+                    coin.clone(),
+                    move_data,
+                )));
+            }
         }
-        result
+
+        Ok(None)
     }
 
     // what our vanilla coin string is

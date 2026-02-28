@@ -140,21 +140,6 @@ impl BareDebugGameHandler {
         }
     }
 
-    fn new(
-        allocator: &mut AllocEncoder,
-        game_id: GameID,
-        nonce: usize,
-        identities: &[ChiaIdentity],
-        referee_coin_puzzle_hash: &PuzzleHash,
-        timeout: Timeout,
-        rng_sequence: &[Hash],
-    ) -> Result<[BareDebugGameHandler; 2], Error> {
-        Self::new_with_contributions(
-            allocator, game_id, nonce, identities, referee_coin_puzzle_hash,
-            timeout, rng_sequence, 100, 100,
-        )
-    }
-
     fn new_with_contributions(
         allocator: &mut AllocEncoder,
         game_id: GameID,

@@ -22,7 +22,7 @@ pub use accept_transaction_state::AcceptTransactionState;
 pub use channel_coin::{ChannelCoinSpendInfo, ChannelCoinSpentResult};
 pub use channel_handler::{
     ChannelHandlerEnv, ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys,
-    ChannelHandlerUnrollSpendInfo, GameStartFailed, StartGameResult,
+    ChannelHandlerUnrollSpendInfo,
 };
 pub use coin_identification_by_puzzle_hash::CoinIdentificationByPuzzleHash;
 pub use coin_spent::{

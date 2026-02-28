@@ -89,9 +89,6 @@ export interface IdleCallbacks {
   game_message?:
     | ((game_id: string, readable_move_hex: string) => void)
     | undefined;
-  game_started?:
-    | ((games: Array<{ game_id: string; my_turn: boolean; my_contribution: number; their_contribution: number }>) => void)
-    | undefined;
   game_notification?: ((notification_json: string) => void) | undefined;
   clean_shutdown_started?: (() => void) | undefined;
   clean_shutdown_complete?: ((coin: string) => void) | undefined;
@@ -131,7 +128,9 @@ export interface WasmConnection {
   convert_chia_public_key_to_puzzle_hash: (public_key: string) => string;
 
   // Game
-  start_games: (cid: number, initiator: boolean, game: any) => any;
+  propose_game: (cid: number, game: any) => any;
+  accept_proposal: (cid: number, game_id: string) => any;
+  cancel_proposal: (cid: number, game_id: string) => any;
   make_move_entropy: (
     cid: number,
     id: string,
@@ -182,8 +181,16 @@ export class ChiaGame {
     this.cradle = cradleId;
   }
 
-  start_games(initiator: boolean, game: any): string[] {
-    return this.wasm.start_games(this.cradle, initiator, game);
+  propose_game(game: any): string[] {
+    return this.wasm.propose_game(this.cradle, game);
+  }
+
+  accept_proposal(game_id: string): void {
+    this.wasm.accept_proposal(this.cradle, game_id);
+  }
+
+  cancel_proposal(game_id: string): void {
+    this.wasm.cancel_proposal(this.cradle, game_id);
   }
 
   amount() {

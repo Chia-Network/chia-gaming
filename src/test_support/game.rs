@@ -38,7 +38,7 @@ mod sim_tests {
     use crate::channel_handler::runner::ChannelHandlerParty;
     use crate::channel_handler::types::{
         ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerPrivateKeys,
-        GameStartInfoInterface, HandshakeResult, StartGameResult,
+        GameStartInfoInterface, HandshakeResult,
     };
     use crate::common::standard_coin::{
         private_to_public_key, puzzle_for_pk, puzzle_hash_for_synthetic_public_key,
@@ -378,31 +378,16 @@ mod sim_tests {
         debug!("our_game_start {:?}", our_game_start);
         debug!("their_game_start {:?}", their_game_start);
 
-        let sigs1 = party.player(0).ch.send_empty_potato(env)?;
-        let spend1 = party.player(1).ch.received_empty_potato(env, &sigs1)?;
-        party.update_channel_coin_after_receive(1, &spend1)?;
-
-        let sigs2 = party.player(1).ch.send_empty_potato(env)?;
-        let spend2 = party.player(0).ch.received_empty_potato(env, &sigs2)?;
-        party.update_channel_coin_after_receive(0, &spend2)?;
-
         let our_start: Rc<dyn GameStartInfoInterface> = Rc::new(our_game_start);
         let their_start: Rc<dyn GameStartInfoInterface> = Rc::new(their_game_start);
 
-        let StartGameResult::Success(start_potato) = party
-            .player(0)
-            .ch
-            .send_potato_start_game(env, &[our_start])?
-        else {
-            return Err(Error::StrErr("game start failed in test".to_string()));
-        };
+        let propose_sigs = party.player(0).ch.propose_game(env, &our_start)?;
+        let recv_propose = party.player(1).ch.received_proposal(env, &propose_sigs, &their_start)?;
+        party.update_channel_coin_after_receive(1, &recv_propose)?;
 
-        let (_, solidified_state) = party.player(1).ch.received_potato_start_game(
-            env,
-            &start_potato,
-            &[their_start],
-        )?;
-        party.update_channel_coin_after_receive(1, &solidified_state)?;
+        let accept_sigs = party.player(1).ch.accept_proposal(env, &game_id)?;
+        let recv_accept = party.player(0).ch.received_accept_proposal(env, &accept_sigs, &game_id)?;
+        party.update_channel_coin_after_receive(0, &recv_accept)?;
 
         Ok((party, state_channel_coin))
     }

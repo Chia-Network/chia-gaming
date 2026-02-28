@@ -15,6 +15,7 @@ For debugging and testing operational guidance, see `DEBUGGING_GUIDE.md`.
   - [Unroll Coin](#unroll-coin)
   - [Game Coin (Referee)](#game-coin-referee)
 - [The Potato Protocol](#the-potato-protocol)
+- [Game Proposals](#game-proposals)
 - [Off-Chain Game Flow](#off-chain-game-flow)
 - [Going On-Chain: Dispute Resolution](#going-on-chain-dispute-resolution)
 - [Clean Shutdown (Advisory)](#clean-shutdown-advisory)
@@ -32,7 +33,7 @@ For debugging and testing operational guidance, see `DEBUGGING_GUIDE.md`.
 - [Key Types](#key-types)
 - [Timeouts](#timeouts)
 - [Peer Disconnect Invariant](#peer-disconnect-invariant)
-- [cached_last_action and the Redo Mechanism](#cached_last_action-and-the-redo-mechanism)
+- [cached_last_actions and the Redo Mechanism](#cached_last_actions-and-the-redo-mechanism)
 - [ResyncMove and the Simulation Loop](#resyncmove-and-the-simulation-loop)
 - [On-Chain Game State Tracking (our_turn)](#on-chain-game-state-tracking-our_turn)
 - [UX Notifications](#ux-notifications)
@@ -161,7 +162,8 @@ The referee enforces game rules on-chain:
 
 Off-chain communication uses a **"potato"** — a turn-taking token that grants
 the holder permission to update state. Only the player holding the potato can:
-- Start a new game
+- Propose a new game
+- Accept or cancel a game proposal
 - Make a move
 - Accept a game result
 - Initiate clean shutdown
@@ -175,6 +177,51 @@ always have the latest co-signed state.
 
 The potato prevents race conditions: since only one player can update state at a
 time, there's no ambiguity about move ordering.
+
+### Batch Protocol
+
+Every potato pass is a single `PeerMessage::Batch` containing:
+
+1. **`actions: Vec<BatchAction>`** — one or more game operations to apply
+   sequentially:
+   - `ProposeGame` — propose a new game
+   - `AcceptProposal` — accept a pending game proposal
+   - `CancelProposal` — cancel a pending proposal
+   - `Move` — make a game move
+   - `Accept` — accept a game result (end game)
+
+2. **`signatures: PotatoSignatures`** — one set of signatures covering the final
+   channel state after all actions in the batch have been applied.
+
+3. **`clean_shutdown: Option<...>`** — optional clean shutdown initiation,
+   always positioned logically after all other actions.
+
+The receiver processes actions sequentially and rejects the entire batch if any
+action fails validation. The sender is responsible for ordering actions correctly
+(e.g., game acceptances before proposal acceptances to ensure funds are available).
+
+Only one move per game is allowed per batch, enforced by the existing turn-taking
+rules (you can't move on your opponent's turn).
+
+The `current_state_number` increments once per batch, not per action.
+
+### Local Action Queueing
+
+When a local action is requested (move, proposal, accept, etc.), it follows a
+unified pattern:
+
+1. The action is placed on an internal queue
+2. `flush_or_request_potato` is called:
+   - If we hold the potato: drain all queued actions into a single batch and send
+   - If we don't hold the potato: send a `RequestPotato` message
+
+This ensures that multiple user actions between potato receives are
+automatically batched together.
+
+### Non-Potato Messages
+
+`PeerMessage::Message` (for in-game readable messages) remains a separate type
+that does not carry the potato and can be sent at any time.
 
 **Key code:** `src/potato_handler/mod.rs` (`PotatoHandler`, `PotatoState`)
 
@@ -191,29 +238,68 @@ Before play begins, the two players execute a multi-step handshake
 
 ---
 
+## Game Proposals
+
+Games are initiated through a propose/accept flow:
+
+1. **Propose:** The potato holder sends a `BatchAction::ProposeGame` containing
+   the `GameStart` descriptor (game type, contributions, timeout, parameters).
+   Both sides record the game in `pre_game_ids` as a pending proposal. The
+   proposer receives a `GameProposed { proposed_by_us: true }` notification;
+   the receiver gets `GameProposed { proposed_by_us: false }`.
+
+2. **Accept:** The receiver (or proposer on a subsequent potato) sends
+   `BatchAction::AcceptProposal`. Both sides instantiate the referee and game
+   handler, moving the game into `live_games`. Both receive
+   `GameProposalAccepted`.
+
+3. **Cancel:** Either side can send `BatchAction::CancelProposal` to withdraw.
+   Both receive `GameProposalCancelled`. If a channel goes on-chain while a
+   proposal is still pending, proposals not reflected in the unroll are
+   automatically cancelled.
+
+Multiple proposals and acceptances can be batched in a single potato pass.
+Acceptances should be ordered before proposals in the batch to ensure funds
+freed by accepted games are available for new proposals.
+
+### WASM Accept-and-Move Convenience
+
+The WASM layer exposes an `accept_and_move` function that atomically accepts
+a proposal and makes the first move. Internally this translates into two
+distinct `BatchAction`s (`AcceptProposal` followed by `Move`) in the same
+batch.
+
+**Key code:** `src/potato_handler/mod.rs` — `propose_game`, `accept_proposal`,
+`cancel_proposal`; `wasm/src/mod.rs` — `accept_and_move`
+
+---
+
 ## Off-Chain Game Flow
 
 Once the channel is open:
 
 ```
-1. Potato holder calls send_potato_start_game
-   → proposes a game, both sides instantiate referee + game handler
+1. Player proposes a game (BatchAction::ProposeGame)
+   → queued and sent with the next potato pass
 
-2. Potato holder calls send_potato_move
+2. Other player accepts the proposal (BatchAction::AcceptProposal)
+   → both sides instantiate referee + game handler
+
+3. Potato holder makes a move (BatchAction::Move)
    → signs the move, updates the unroll commitment, passes potato
 
-3. Other player receives potato, processes move via referee
+4. Other player receives potato, processes move via referee
    → validates the move, updates their own state
    → when ready, makes their move and passes potato back
 
-4. Repeat until game ends
+5. Repeat until game ends
 
-5. Potato holder calls send_potato_accept
+6. Potato holder calls accept (BatchAction::Accept)
    → balances are updated, game moves to pending_accept_games
-   → when the potato comes back, the accept is confirmed
+   → when the potato comes back, WeTimedOut fires for the accepter
 ```
 
-Each move increments the `state_number` and produces a new signed unroll
+Each batch increments the `state_number` once and produces a new signed unroll
 commitment. The `ChannelHandler` tracks `live_games`, `pending_accept_games`,
 player balances (`my_allocated_balance`, `their_allocated_balance`), and the
 current `state_number`. See [Accept Lifecycle](#accept-lifecycle) for details
@@ -269,9 +355,9 @@ state tracking is **forward-only** — there is no rewind logic. Two cases:
    The game coin is at the latest known state. `our_turn` is set based on
    `is_my_turn()`. No redo needed.
 
-2. **Coin PH matches `cached_last_action.match_puzzle_hash`**: The game coin
-   is at the state *before* our last cached move. A redo is needed to replay
-   that move on-chain (see [Redo Mechanism](#cached_last_action-and-the-redo-mechanism)).
+2. **Coin PH matches a `cached_last_actions` entry's `match_puzzle_hash`**: The
+   game coin is at the state *before* our cached move. A redo is needed to
+   replay that move on-chain (see [Redo Mechanism](#cached_last_actions-and-the-redo-mechanism)).
 
 Games that existed off-chain but don't match any created coin are reported as
 `GameCancelled`.
@@ -644,6 +730,7 @@ if Alice misclaims the split.
 | `UnrollCoin` | `channel_handler/types/unroll_coin.rs` | Unroll coin state and puzzle construction |
 | `GameCradle` | `peer_container.rs` | Trait for synchronous game interaction (tests/UI) |
 | `ValidationInfo` | `channel_handler/types/validation_info.rs` | Game validation program + state |
+| `BatchAction` | `potato_handler/types.rs` | Peer-level batch action variants: `ProposeGame`, `AcceptProposal`, `CancelProposal`, `Move`, `Accept` |
 | `GameAction` | `potato_handler/types.rs` | Actions: `Move`, `Accept`, `GoOnChain`, `CleanShutdown`, etc. |
 | `SynchronousGameCradleState` | `peer_container.rs` | Per-peer mutable state: queues, flags, `peer_disconnected` |
 | `OnChainGameState` | `channel_handler/types/on_chain_game_state.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `accepted`, `pending_slash_amount`, `game_timeout` |
@@ -703,44 +790,57 @@ The `initiated_on_chain` flag in `ChannelHandler` serves two purposes:
    `game_action_queue` without executing them off-chain. Incoming peer messages
    are also dropped (`process_incoming_message` returns early). The queued
    actions are drained during `finish_on_chain_transition`, where `CleanShutdown`
-   actions are discarded (on-chain path supersedes the clean shutdown path) and
-   `LocalStartGame` actions emit `GameCancelled`. Remaining actions (moves,
-   accepts) are forwarded to the `OnChainPotatoHandler` for on-chain replay.
+   actions are discarded (on-chain path supersedes the clean shutdown path).
+   Remaining actions (moves, accepts) are forwarded to the
+   `OnChainPotatoHandler` for on-chain replay.
 
 **Key code:** `src/peer_container.rs` — `go_on_chain`, `send_message`,
 `deliver_message`
 
 ---
 
-## cached_last_action and the Redo Mechanism
+## cached_last_actions and the Redo Mechanism
 
 ### Design Principle
 
 All state transitions are **forward-only**. There is no rewind logic. When a
 game goes on-chain, the system either recognizes that the game coin is already
-at the latest state, or it replays a single cached move to advance to the
-latest state. This is the "redo" mechanism.
+at the latest state, or it replays cached moves to advance to the latest state.
+This is the "redo" mechanism.
 
 ### Lifecycle
 
-`cached_last_action` on the `ChannelHandler` stores the data for the most
-recent move that we sent but the opponent has not yet acknowledged:
+`cached_last_actions` on the `ChannelHandler` is a `Vec` that stores data for
+unacknowledged outgoing actions. Because a single batch can contain multiple
+moves and game acceptances across different games, multiple entries may need to
+be redone on-chain.
 
-- **Set** in `update_cache_for_potato_send` — when we send a move, we cache
+There are two kinds of cached entries:
+
+- **`PotatoMove`** — a move we sent but the opponent hasn't acknowledged. Stores
   the move data, the puzzle hash it operates on (`match_puzzle_hash`), and the
   post-move puzzle hash (`saved_post_move_last_ph`).
-- **Cleared** in `received_potato_move` — when we receive any opponent move,
-  the cache is cleared because the opponent's move implicitly acknowledges
-  receipt of ours (the potato changed hands).
-- **Cleared** in `received_empty_potato` — when we receive an explicit
-  acknowledgment (empty potato pass).
+- **`PotatoAccept`** — a game acceptance we sent. Stores the game ID, puzzle
+  hash, live game state, and reward amounts. When the potato returns
+  (acknowledgment), `drain_cached_accepts` emits `WeTimedOut` for each cached
+  accept.
+
+**Set** in `update_cache_for_potato_send` (moves) and `send_accept_no_finalize`
+(accepts).
+
+**Cleared** (selectively) when we receive the potato back:
+- `PotatoMove` entries are cleared in `verify_received_batch_signatures` and
+  `received_empty_potato` (the opponent's response acknowledges our moves).
+- `PotatoAccept` entries are **retained** across those clears and only drained
+  later by `drain_cached_accepts` during `update_channel_coin_after_receive` or
+  clean shutdown, when `WeTimedOut` notifications are emitted.
 
 ### How Redo Works
 
 When game coins are created after an unroll, `set_state_for_coins` checks each
-coin's puzzle hash:
+coin's puzzle hash against all entries in `cached_last_actions`:
 
-1. **Coin PH == `cached_last_action.match_puzzle_hash`**: The game coin is at
+1. **Coin PH matches a `PotatoMove.match_puzzle_hash`**: The game coin is at
    the state our cached move operates on. Queue a `RedoMove` to replay it.
    Set `our_turn = true` (we need to submit the redo transaction).
 
@@ -748,6 +848,9 @@ coin's puzzle hash:
    state. No redo needed. Set `our_turn` based on `is_my_turn()`.
 
 3. **Neither matches**: Error condition (game disappeared or unexpected state).
+
+Multiple games may need redos simultaneously if the batch contained moves for
+different games.
 
 The `RedoMove` action is processed by `OnChainPotatoHandler::do_redo_move`,
 which calls `get_transaction_for_move` using the cached move data and the
@@ -768,22 +871,20 @@ A redo is NOT needed when:
 ### Stale Cache After Peer Disconnect
 
 When `go_on_chain` is called, all incoming peer messages are black-holed (see
-[Peer Disconnect Invariant](#peer-disconnect-invariant)). If we sent a move
-(setting `cached_last_action`) but the peer's response — which would normally
-clear the cache — arrives *after* the disconnect, the cache remains set. This
-is expected and correct: the stale cache causes `set_state_for_coins` to
-detect a redo is needed, which replays our unacknowledged move on-chain. The
-redo is legitimate because the unroll resolves to the pre-move state (the last
-mutually signed state was before our unacknowledged move).
+[Peer Disconnect Invariant](#peer-disconnect-invariant)). If we sent moves
+(adding to `cached_last_actions`) but the peer's response — which would normally
+clear the move entries — arrives *after* the disconnect, the entries remain.
+This is expected and correct: the stale cache causes `set_state_for_coins` to
+detect redos are needed, which replays our unacknowledged moves on-chain.
 
 ### Redo and User-Queued Moves Can Coexist
 
 When a user calls `make_move` after `go_on_chain`, the move is placed directly
 on `game_action_queue` without touching the potato or channel handler (since
-`initiated_on_chain` is true). During `finish_on_chain_transition`, the stale
-`cached_last_action` may also produce a `RedoMove` that is pushed to the
-*front* of the queue. This is correct: the redo replays the previous
-unacknowledged move, and the user's new move follows once the game state has
+`initiated_on_chain` is true). During `finish_on_chain_transition`, stale
+`cached_last_actions` entries may also produce `RedoMove`s that are pushed to
+the *front* of the queue. This is correct: the redos replay previous
+unacknowledged moves, and the user's new move follows once the game state has
 caught up. They are different moves for different game states.
 
 ---
@@ -899,7 +1000,6 @@ both game lifecycle callbacks and `GameNotification` variants (delivered through
 
 | Callback | Parameters | Meaning |
 |----------|------------|---------|
-| `game_start` | `games: &[GameStartInfo]` | One or more games have started. Each `GameStartInfo` contains `game_id`, `my_turn` (whether we move first), `my_contribution`, and `their_contribution`. |
 | `opponent_moved` | `id, state_number, readable, mover_share` | Opponent made a move; `mover_share` is their declared share. |
 | `game_message` | `id, readable` | Informational message from the game (e.g., revealed data). |
 | `going_on_chain` | `reason: &str` | We are automatically going on-chain due to an error. |
@@ -915,6 +1015,14 @@ returned from the `PotatoHandler` and `OnChainPotatoHandler` methods.
 **There is no separate `GameFinished` effect.** Terminal `GameNotification`
 variants are the "game is done" signal — the frontend uses them to trigger UI
 cleanup and game-over transitions.
+
+### Proposal Notifications
+
+| Notification | When | Meaning |
+|--------------|------|---------|
+| `GameProposed { id, proposed_by_us, my_contribution, their_contribution }` | Game proposal sent or received | A new game has been proposed; `proposed_by_us` indicates the direction |
+| `GameProposalAccepted { id }` | Proposal accepted by either side | The game is now live and play can begin |
+| `GameProposalCancelled { id, reason }` | Proposal cancelled or invalidated | The proposal was cancelled explicitly, or automatically due to going on-chain |
 
 ### On-Chain Transition Notifications
 
@@ -946,6 +1054,10 @@ The frontend should treat any of these as the "game ended" signal.
 
 ### Key Invariants
 
+- **Universal timeout invariant.** Every game that reaches `live_games` will
+  eventually receive either `WeTimedOut` or `OpponentTimedOut` as its terminal
+  notification — whether it finishes via off-chain accept, on-chain timeout,
+  or clean shutdown. This is the universal "game is done" signal.
 - **Accept only on our turn.** Calling `accept()` when it is not our turn is an
   assert failure. Accept is an alternative to moving.
 - **Only our redos after unroll.** After an unroll, game coins always land at
@@ -971,15 +1083,25 @@ full lifecycle is:
 
 1. `send_potato_accept` moves the game from `live_games` to
    `pending_accept_games` in the `ChannelHandler` and updates balances.
-2. The accept data is bundled into the next potato pass.
-3. When the potato comes back (acknowledgment), `pending_accept_completions` is
-   drained, emitting `WeTimedOut` for the accepter. The opponent who receives
-   the accept gets `OpponentTimedOut` immediately.
+2. A `PotatoAccept` entry is added to `cached_last_actions` storing the game ID
+   and reward amounts.
+3. The accept data is bundled into the next potato pass (batch).
+4. When the potato comes back (acknowledgment), `drain_cached_accepts` processes
+   the `PotatoAccept` entries in `cached_last_actions`, emitting `WeTimedOut` for
+   each accepted game. The opponent who receives the accept gets
+   `OpponentTimedOut` immediately upon processing the batch.
+
+Multiple game acceptances in a single batch each get their own `PotatoAccept`
+entry, and all fire `WeTimedOut` when the potato returns.
 
 If the channel goes on-chain **before** the round-trip completes, the game
 is still in `pending_accept_games`. The `set_state_for_coins` function
 searches both `live_games` and `pending_accept_games` when matching game
 coins, so accepted-but-unconfirmed games are correctly tracked on-chain.
+
+On clean shutdown, any remaining `PotatoAccept` entries in `cached_last_actions`
+are drained, emitting `WeTimedOut` before the `CleanShutdownComplete`
+notification.
 
 ### On-Chain Accept
 
@@ -998,12 +1120,12 @@ When a game is already on-chain and the player calls `Accept(game_id)`:
    `WeTimedOut` is emitted.
 
 The key invariant: **`WeTimedOut` is never emitted at the time of the accept
-call itself** — only when the game actually resolves on-chain. This makes the
-notification reliable regardless of whether the game finishes via potato
-round-trip or on-chain timeout.
+call itself** — only when the game actually resolves (via potato round-trip,
+on-chain timeout, or clean shutdown).
 
 **Key code:**
-- `src/channel_handler/mod.rs` — `send_potato_accept`, `pending_accept_games`
+- `src/channel_handler/mod.rs` — `send_potato_accept`, `pending_accept_games`,
+  `drain_cached_accepts`
 - `src/potato_handler/on_chain.rs` — `GameAction::Accept`, `handle_game_coin_spent`,
   `coin_timeout_reached`
 
@@ -1044,9 +1166,10 @@ in `src/test_support/game.rs`):
 
 | Action | Effect |
 |--------|--------|
+| `ProposeNewGame(player)` | Player proposes a new game |
 | `GoOnChain(player)` | Player initiates on-chain transition |
 | `Accept(player)` | Player accepts the current game result |
-| `WaitBlocks(n, player)` | Advance `n` blocks, processing coin events for `player` |
+| `WaitBlocks(n, players_bitmask)` | Advance `n` blocks; `players_bitmask` controls whose coin reports are backlogged (0 = nobody blocked, 1 = player 0 blocked, 2 = player 1 blocked, 3 = both blocked) |
 | `NerfTransactions(player)` | Silently drop all outbound transactions for `player` |
 | `UnNerfTransactions` | Stop dropping transactions |
 | `Cheat(player)` | Submit an illegal on-chain move |

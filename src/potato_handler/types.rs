@@ -7,7 +7,7 @@ use serde_json_any_key::*;
 
 use crate::channel_handler::types::{
     ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartInfo,
-    GameStartInfoInterface, MoveResult, PotatoMoveCachedData, PotatoSignatures, ReadableMove,
+    GameStartInfoInterface, PotatoMoveCachedData, PotatoSignatures, ReadableMove,
 };
 use crate::channel_handler::game_start_info;
 use crate::channel_handler::ChannelHandler;
@@ -18,7 +18,7 @@ use crate::common::types::{
 use crate::potato_handler::effects::Effect;
 use crate::potato_handler::handshake::{HandshakeA, HandshakeB};
 use crate::potato_handler::start::GameStart;
-use crate::referee::types::RefereeOnChainTransaction;
+use crate::referee::types::{GameMoveDetails, RefereeOnChainTransaction};
 use crate::shutdown::{BasicShutdownConditions, ShutdownConditions};
 
 // Internal: decide what kind of condition wait we're in.
@@ -203,7 +203,6 @@ pub trait ToLocalUI {
         readable: ReadableMove,
     ) -> Result<(), Error>;
 
-    fn game_start(&mut self, games: &[crate::potato_handler::effects::GameStartInfo]) -> Result<(), Error>;
     fn game_notification(&mut self, _notification: &crate::potato_handler::effects::GameNotification) -> Result<(), Error> {
         Ok(())
     }
@@ -218,23 +217,6 @@ pub trait ToLocalUI {
 
 pub trait FromLocalUI
 {
-    /// Start games requires queueing so that we handle them one at a time only
-    /// when the previous start game.
-    ///
-    /// Queue of games we want to start that are also waiting after this.
-    ///
-    /// We must request the potato if not had.
-    ///
-    /// General flow:
-    ///
-    /// Have queues of games we're starting and other side is starting.
-    fn start_games<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
-        i_initiated: bool,
-        game: &GameStart,
-    ) -> Result<(Vec<GameID>, Vec<Effect>), Error>;
-
     fn propose_game<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
@@ -301,6 +283,15 @@ impl<'de> Deserialize<'de> for GSI {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum BatchAction {
+    ProposeGame(GSI),
+    AcceptProposal(GameID),
+    CancelProposal(GameID),
+    Move(GameID, GameMoveDetails),
+    Accept(GameID, Amount),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum PeerMessage {
     // Fixed in order sequence
     HandshakeA(HandshakeA),
@@ -314,17 +305,14 @@ pub enum PeerMessage {
         bundle: SpendBundle,
     },
 
-    Nil(PotatoSignatures),
-    Move(GameID, MoveResult),
-    Message(GameID, Vec<u8>),
-    Accept(GameID, Amount, PotatoSignatures),
-    CleanShutdown(Aggsig, ProgramRef),
+    Batch {
+        actions: Vec<BatchAction>,
+        signatures: PotatoSignatures,
+        clean_shutdown: Option<(Aggsig, ProgramRef)>,
+    },
     CleanShutdownComplete(CoinSpend),
     RequestPotato(()),
-    StartGames(PotatoSignatures, Vec<GSI>),
-    ProposeGame(PotatoSignatures, GSI),
-    AcceptProposal(GameID, PotatoSignatures),
-    CancelProposal(GameID, PotatoSignatures),
+    Message(GameID, Vec<u8>),
 }
 
 impl PeerMessage {
@@ -385,7 +373,6 @@ pub enum GameAction {
     ),
     Accept(GameID),
     CleanShutdown(ShutdownActionHolder),
-    LocalStartGame,
     SendPotato,
     QueuedProposal(GSI, GSI),
     QueuedAcceptProposal(GameID),
@@ -404,7 +391,6 @@ impl std::fmt::Debug for GameAction {
             }
             GameAction::Accept(gi) => write!(formatter, "Accept({gi:?})"),
             GameAction::CleanShutdown(_) => write!(formatter, "CleanShutdown(..)"),
-            GameAction::LocalStartGame => write!(formatter, "LocalStartGame"),
             GameAction::SendPotato => write!(formatter, "SendPotato"),
             GameAction::QueuedProposal(_, _) => write!(formatter, "QueuedProposal(..)"),
             GameAction::QueuedAcceptProposal(gi) => write!(formatter, "QueuedAcceptProposal({gi:?})"),

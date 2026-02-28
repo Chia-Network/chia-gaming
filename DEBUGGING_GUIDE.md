@@ -7,13 +7,18 @@ tests. It is intended as a reference for future sessions.
 
 ### Use `./cb` and `./ct`
 
-**Always use the helper scripts.** They handle feature flags, output capture,
-log rotation, and wraparound test ordering so you don't have to.
+**Always use `./ct` to run tests. Never use `cargo test` directly.** The `./ct`
+script handles feature flags (`--features sim-tests`), output capture
+(`--nocapture`), log rotation, and wraparound test ordering. Running `cargo test`
+manually is error-prone: you might forget `--features sim-tests`, forget
+`--nocapture`, or use `--filter` which hides output from other tests.
 
 - **`./cb`** — Build with sim-tests feature. Passes extra args to cargo
   (e.g. `./cb --release`).
 - **`./ct`** — Run all sim tests.
-  - `./ct` — runs all tests in normal order.
+  - `./ct` — runs all tests in normal order. **This is the default.** Always
+    run all tests with no filter. The full output includes `--nocapture` so you
+    see all debug output, panics, and event dumps without needing a second run.
   - `./ct accept_finished` — starts at the first test matching `accept_finished`,
     runs through the end, wraps back to the beginning, and finishes right before
     where it started. Every test runs exactly once. Use this when debugging a
@@ -22,9 +27,10 @@ log rotation, and wraparound test ordering so you don't have to.
   - If the argument doesn't match any test name, you get a clear error listing
     all available tests.
 
-Prefer `./ct some_test_name` over raw `cargo test` invocations. The scripts
-set `SIM_TEST_FROM` and `--nocapture` correctly. Running `cargo test` directly
-without the right flags is error-prone and wastes time.
+**Do NOT use `cargo test` with `--filter` or test name arguments.** This runs
+only matching tests and hides output from others, forcing you to re-run just to
+see what happened. Use `./ct` with no arguments to get everything in one pass,
+then grep the output for the specific test or error you care about.
 
 ### Running tests directly (without scripts)
 
@@ -139,8 +145,8 @@ state, or it replays exactly one cached move via `RedoMove`.
 After the unroll coin resolves (timeout or preemption), game coins are created.
 `set_state_for_coins` matches each coin's puzzle hash:
 
-1. **Coin PH == `cached_last_action.match_puzzle_hash`**: Needs redo. The game
-   coin is at the state before our last move. Queue `RedoMove`.
+1. **Coin PH matches a `cached_last_actions` entry's `match_puzzle_hash`**: Needs
+   redo. The game coin is at the state before our cached move. Queue `RedoMove`.
 2. **Coin PH == `last_referee_puzzle_hash`**: Latest state. No redo needed.
 3. **Neither**: Error.
 
@@ -275,7 +281,9 @@ off-chain moves to ensure the correct player's turn after the redo:
 
 ### Process and output management
 
-1. **Use `./ct` and `./cb`.** They handle feature flags and test ordering.
+1. **Always use `./ct` with no filter.** Run the full suite and grep the output.
+   Never use `cargo test` directly or with `--filter` — it hides output you'll
+   need later and forces re-runs.
 
 2. **Pipe through `tee` if you need to re-filter later.** Otherwise the direct
    output is fine — debug spew has been cleaned up.
@@ -308,6 +316,7 @@ off-chain moves to ensure the correct player's turn after the redo:
 
 ### Mistakes to avoid
 
+- **Don't use `cargo test` with filters** — use `./ct` and grep the full output.
 - **Don't use `head` to read test output** — early output is build noise.
 - **Don't assume exit code 0 means all tests passed.** Always grep for `panic`.
 - **Don't forget `2>&1`** when piping test output. Some output goes to stderr.

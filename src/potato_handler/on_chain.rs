@@ -919,10 +919,6 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         debug!("{initial_potato} do_on_chain_action {action:?}");
 
         match action {
-            GameAction::LocalStartGame => {
-                debug!("ignoring LocalStartGame on chain (game was cancelled)");
-                Ok(vec![])
-            }
             GameAction::Move(game_id, readable_move, hash) => {
                 match get_current_coin(&game_id) {
                     Ok(current_coin) => {

@@ -151,11 +151,6 @@ impl<'a> Iterator for RegisteredCoinsIterator<'a> {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct GameStartRecord {
-    pub games: Vec<crate::potato_handler::effects::GameStartInfo>,
-}
-
 #[derive(Default)]
 pub struct IdleResult {
     pub continue_on: bool,
@@ -167,7 +162,6 @@ pub struct IdleResult {
     pub coin_solution_requests: VecDeque<CoinString>,
     pub outbound_messages: VecDeque<Vec<u8>>,
     pub opponent_move: Option<(GameID, usize, ReadableMove)>,
-    pub game_started: Option<GameStartRecord>,
     pub notifications: Vec<GameNotification>,
     pub receive_error: Option<Error>,
     pub action_queue: Vec<String>,
@@ -189,15 +183,6 @@ pub trait GameCradle {
 
     /// Ask whether it's my turn in the indicated game.
     fn my_move_in_game(&self, game_id: &GameID) -> Option<bool>;
-
-    /// Signal game start.  Passes through to FromLocalUI::start_games.
-    fn start_games<R: Rng>(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        rng: &mut R,
-        i_initiated: bool,
-        game: &GameStart,
-    ) -> Result<Vec<GameID>, Error>;
 
     /// Propose a new game. The game enters the proposed state and is
     /// communicated to the peer as metadata (no unroll/balance impact).
@@ -227,6 +212,17 @@ pub trait GameCradle {
 
     /// Signal making a move.  Forwards to FromLocalUI::make_move.
     fn make_move<R: Rng>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+        id: &GameID,
+        readable: Vec<u8>,
+        new_entropy: Hash,
+    ) -> Result<(), Error>;
+
+    /// Accept a proposed game and immediately make a move in it.
+    /// The peer protocol sends these as two separate batch actions.
+    fn accept_and_move<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,
         rng: &mut R,
@@ -358,7 +354,6 @@ struct SynchronousGameCradleState {
     resync: Option<(usize, bool)>,
     opponent_moves: VecDeque<(GameID, usize, ReadableMove, Amount)>,
     game_messages: VecDeque<(GameID, ReadableMove)>,
-    game_started: VecDeque<GameStartRecord>,
     #[serde(skip)]
     pending_notifications: VecDeque<GameNotification>,
     handshake_complete: bool,
@@ -452,7 +447,6 @@ impl SynchronousGameCradle {
                 coin_solution_requests: VecDeque::default(),
                 opponent_moves: VecDeque::default(),
                 game_messages: VecDeque::default(),
-                game_started: VecDeque::default(),
                 pending_notifications: VecDeque::default(),
                 handshake_complete: false,
                 channel_puzzle_hash: None,
@@ -524,12 +518,6 @@ impl ToLocalUI for SynchronousGameCradleState {
         readable: ReadableMove,
     ) -> Result<(), Error> {
         self.game_messages.push_back((id.clone(), readable.clone()));
-        Ok(())
-    }
-    fn game_start(&mut self, games: &[crate::potato_handler::effects::GameStartInfo]) -> Result<(), Error> {
-        self.game_started.push_back(GameStartRecord {
-            games: games.to_vec(),
-        });
         Ok(())
     }
     fn game_notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
@@ -914,22 +902,6 @@ impl GameCradle for SynchronousGameCradle {
         self.peer.handshake_finished()
     }
 
-    /// Signal game start.  Passes through to FromLocalUI::start_games.
-    fn start_games<R: Rng>(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        rng: &mut R,
-        i_initiated: bool,
-        game: &GameStart,
-    ) -> Result<Vec<GameID>, Error> {
-        let (result, reported_effects) = {
-            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-            self.peer.start_games(&mut env, i_initiated, game)?
-        };
-        self.process_effects(reported_effects, allocator)?;
-        Ok(result)
-    }
-
     fn propose_game<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,
@@ -990,6 +962,26 @@ impl GameCradle for SynchronousGameCradle {
             let rehydrated_move = Rc::new(Program::from_bytes(&readable));
             let readable = ReadableMove::from_program(rehydrated_move);
             self.peer.make_move(&mut env, id, &readable, new_entropy)?
+        };
+        self.process_effects(reported_effects, allocator)?;
+        Ok(())
+    }
+
+    fn accept_and_move<R: Rng>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+        id: &GameID,
+        readable: Vec<u8>,
+        new_entropy: Hash,
+    ) -> Result<(), Error> {
+        let reported_effects = {
+            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+            let mut effects = self.peer.accept_proposal(&mut env, id)?;
+            let rehydrated_move = Rc::new(Program::from_bytes(&readable));
+            let readable_move = ReadableMove::from_program(rehydrated_move);
+            effects.extend(self.peer.make_move(&mut env, id, &readable_move, new_entropy)?);
+            effects
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())
@@ -1135,13 +1127,6 @@ impl GameCradle for SynchronousGameCradle {
         if let Some((id, state_number, readable, my_share)) = self.state.opponent_moves.pop_front()
         {
             local_ui.opponent_moved(allocator, &id, state_number, readable, my_share)?;
-            result.continue_on = true;
-            return Ok(Some(result));
-        }
-
-        if let Some(gs) = self.state.game_started.pop_front() {
-            local_ui.game_start(&gs.games)?;
-            result.game_started = Some(gs.clone());
             result.continue_on = true;
             return Ok(Some(result));
         }

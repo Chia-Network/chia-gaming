@@ -1,5 +1,4 @@
 use crate::channel_handler::types::LiveGame;
-use crate::channel_handler::ChannelCoinSpendInfo;
 use crate::common::types::{Aggsig, Amount, GameID, Program, PuzzleHash};
 use crate::referee::types::GameMoveDetails;
 use crate::referee::RefereeInterface;
@@ -66,13 +65,11 @@ impl std::fmt::Debug for PotatoMoveCachedData {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum CachedPotatoRegenerateLastHop {
-    PotatoCreatedGame(Vec<GameID>, Amount, Amount),
     PotatoAccept(Box<PotatoAcceptCachedData>),
     PotatoMoveHappening(Rc<PotatoMoveCachedData>),
 }
 
 pub struct ChannelHandlerMoveResult {
-    pub spend_info: ChannelCoinSpendInfo,
     pub state_number: usize,
     pub readable_their_move: Rc<Program>,
     pub message: Vec<u8>,

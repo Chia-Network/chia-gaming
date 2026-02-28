@@ -512,7 +512,7 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn start_games(cid: i32, initiator: bool, game: JsValue) -> Result<Vec<String>, JsValue> {
+    pub fn propose_game(cid: i32, game: JsValue) -> Result<Vec<String>, JsValue> {
         let js_game_start = serde_wasm_bindgen::from_value::<JsGameStart>(game.clone()).into_js()?;
         let res = with_game(cid, move |cradle: &mut JsCradle| {
             let game_start = GameStart {
@@ -524,15 +524,40 @@ mod gaming_wasm {
                 my_turn: js_game_start.my_turn,
                 parameters: Program::from_bytes(&hex::decode(&js_game_start.parameters).into_gen()?),
             };
-            cradle.cradle.start_games(
+            cradle.cradle.propose_game(
                 &mut cradle.allocator,
                 &mut cradle.rng.0,
-                initiator,
                 &game_start,
             )
         })?;
 
         Ok(res.iter().map(game_id_to_string).collect())
+    }
+
+    #[wasm_bindgen]
+    pub fn accept_proposal(cid: i32, game_id: &str) -> Result<(), JsValue> {
+        let game_id = string_to_game_id(game_id)?;
+        with_game(cid, move |cradle: &mut JsCradle| {
+            cradle.cradle.accept_proposal(
+                &mut cradle.allocator,
+                &mut cradle.rng.0,
+                &game_id,
+            )
+        })?;
+        Ok(())
+    }
+
+    #[wasm_bindgen]
+    pub fn cancel_proposal(cid: i32, game_id: &str) -> Result<(), JsValue> {
+        let game_id = string_to_game_id(game_id)?;
+        with_game(cid, move |cradle: &mut JsCradle| {
+            cradle.cradle.cancel_proposal(
+                &mut cradle.allocator,
+                &mut cradle.rng.0,
+                &game_id,
+            )
+        })?;
+        Ok(())
     }
 
     pub fn make_move_inner(
@@ -573,6 +598,26 @@ mod gaming_wasm {
     #[wasm_bindgen]
     pub fn make_move(cid: i32, id: &str, readable: &str) -> Result<(), JsValue> {
         make_move_inner(cid, id, readable, None)
+    }
+
+    #[wasm_bindgen]
+    pub fn accept_and_move(
+        cid: i32,
+        id: &str,
+        readable: &str,
+    ) -> Result<(), JsValue> {
+        let game_id = string_to_game_id(id)?;
+        let readable_bytes = hex::decode(readable).into_js()?;
+        with_game(cid, move |cradle: &mut JsCradle| {
+            let entropy: Hash = cradle.rng.0.gen();
+            cradle.cradle.accept_and_move(
+                &mut cradle.allocator,
+                &mut cradle.rng.0,
+                &game_id,
+                readable_bytes,
+                entropy,
+            )
+        })
     }
 
     #[wasm_bindgen]
@@ -685,26 +730,6 @@ mod gaming_wasm {
             })
         }
 
-        fn game_start(
-            &mut self,
-            games: &[chia_gaming::potato_handler::effects::GameStartInfo],
-        ) -> Result<(), chia_gaming::common::types::Error> {
-            // game_started(games: Array<{game_id: string, my_turn: boolean, my_contribution: number, their_contribution: number}>)
-            call_javascript_from_collection(&self.callbacks, "game_started", |args_array| {
-                let games_array = Array::new();
-                for (i, game) in games.iter().enumerate() {
-                    let obj = js_sys::Object::new();
-                    js_sys::Reflect::set(&obj, &"game_id".into(), &JsValue::from_str(&game_id_to_string(&game.game_id))).unwrap();
-                    js_sys::Reflect::set(&obj, &"my_turn".into(), &JsValue::from_bool(game.my_turn)).unwrap();
-                    js_sys::Reflect::set(&obj, &"my_contribution".into(), &JsValue::from_f64(game.my_contribution.to_u64() as f64)).unwrap();
-                    js_sys::Reflect::set(&obj, &"their_contribution".into(), &JsValue::from_f64(game.their_contribution.to_u64() as f64)).unwrap();
-                    games_array.set(i as u32, obj.into());
-                }
-                args_array.set(0, games_array.into());
-                Ok(())
-            })
-        }
-
         fn game_notification(
             &mut self,
             notification: &chia_gaming::potato_handler::effects::GameNotification,
@@ -793,19 +818,6 @@ mod gaming_wasm {
     }
 
     #[derive(Serialize)]
-    struct JsGameStartedGame {
-        game_id: String,
-        my_turn: bool,
-        my_contribution: u64,
-        their_contribution: u64,
-    }
-
-    #[derive(Serialize)]
-    struct JsGameStarted {
-        games: Vec<JsGameStartedGame>,
-    }
-
-    #[derive(Serialize)]
     struct JsIdleResult {
         continue_on: bool,
         finished: bool,
@@ -813,7 +825,6 @@ mod gaming_wasm {
         outbound_transactions: Vec<JsSpendBundle>,
         outbound_messages: Vec<String>,
         opponent_move: Option<(String, String)>,
-        game_started: Option<JsGameStarted>,
         handshake_done: bool,
         receive_error: Option<String>,
         action_queue: Vec<String>,
@@ -879,19 +890,6 @@ mod gaming_wasm {
         } else {
             None
         };
-        let game_started = if let Some(gs) = &idle_result.game_started {
-            Some(JsGameStarted {
-                games: gs.games.iter().map(|g| JsGameStartedGame {
-                    game_id: game_id_to_string(&g.game_id),
-                    my_turn: g.my_turn,
-                    my_contribution: g.my_contribution.to_u64(),
-                    their_contribution: g.their_contribution.to_u64(),
-                }).collect(),
-            })
-        } else {
-            None
-        };
-
         serde_wasm_bindgen::to_value(&JsIdleResult {
             continue_on: idle_result.continue_on,
             finished: idle_result.finished,
@@ -907,7 +905,6 @@ mod gaming_wasm {
                 .map(hex::encode)
                 .collect(),
             opponent_move,
-            game_started,
             handshake_done: idle_result.handshake_done,
             action_queue: idle_result.action_queue.clone(),
             incoming_messages: idle_result.incoming_messages.clone(),

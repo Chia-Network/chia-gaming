@@ -20,7 +20,7 @@ pub(crate) mod sim_tests {
     use clvm_traits::ToClvm;
 
     use crate::channel_handler::game_handler::GameHandler;
-    use crate::channel_handler::types::{GameStartInfo, ValidationProgram};
+    use crate::channel_handler::types::{GameStartInfo, GameStartInfoInterface, ValidationProgram};
     use crate::common::types::{CoinID, GameID, Program, PuzzleHash, Timeout};
     use crate::test_support::game::{ChannelHandlerGame, DEFAULT_UNROLL_TIME_LOCK};
 
@@ -279,21 +279,22 @@ pub(crate) mod sim_tests {
 
         let timeout = Timeout::new(1337);
         let game_handler = GameHandler::TheirTurnHandler(game_handler.into());
-        let _game_start_potato_sigs = game.player(1).ch.send_potato_start_game(
+        let start_info: Rc<dyn GameStartInfoInterface> = Rc::new(GameStartInfo {
+            game_id: GameID::new(vec![0]),
+            game_handler,
+            timeout: timeout.clone(),
+            my_contribution_this_game: our_share.clone(),
+            their_contribution_this_game: their_share.clone(),
+            initial_validation_program,
+            initial_state,
+            initial_move: Vec::new(),
+            initial_max_move_size: 1,
+            initial_mover_share: our_share.clone(),
+            amount: our_share + their_share,
+        });
+        let _game_start_potato_sigs = game.player(1).ch.propose_game(
             &mut env,
-            &[Rc::new(GameStartInfo {
-                game_id: GameID::new(vec![0]),
-                game_handler,
-                timeout: timeout.clone(),
-                my_contribution_this_game: our_share.clone(),
-                their_contribution_this_game: their_share.clone(),
-                initial_validation_program,
-                initial_state,
-                initial_move: Vec::new(),
-                initial_max_move_size: 1,
-                initial_mover_share: our_share.clone(),
-                amount: our_share + their_share,
-            })],
+            &start_info,
         );
     }
 }
