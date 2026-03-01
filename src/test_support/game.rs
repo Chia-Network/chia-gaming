@@ -170,12 +170,9 @@ mod sim_tests {
         Move(usize, ReadableMove, bool),
         /// Fake move, just calls receive on the indicated side.
         FakeMove(usize, ReadableMove, Vec<u8>),
-        /// Enable cheating: the next on-chain move for this player will use
-        /// fake move bytes and the given mover_share instead of the real handler output.
-        EnableCheating(usize, Vec<u8>, Amount),
-        /// Cheat: assert on-chain + our turn, then submit a game-rule-violating
-        /// move with the given mover_share. Use a distinctive value to
-        /// differentiate a successful cheat-slash from a timeout.
+        /// Cheat: enable cheating on the referee and queue a move with
+        /// invalid data. The given mover_share controls how much the
+        /// cheater claims. For testing and demonstration only.
         Cheat(usize, Amount),
         /// Force-destroy a game coin: inject a fake deletion into WatchReport
         /// to test impossible spend / game destroyed notifications.
@@ -225,9 +222,6 @@ mod sim_tests {
                 GameAction::Timeout(t) => write!(formatter, "Timeout({t})"),
                 GameAction::Move(p, n, r) => write!(formatter, "Move({p},{n:?},{r})"),
                 GameAction::FakeMove(p, n, v) => write!(formatter, "FakeMove({p},{n:?},{v:?})"),
-                GameAction::EnableCheating(p, v, ms) => {
-                    write!(formatter, "EnableCheating({p},{v:?},{ms:?})")
-                }
                 GameAction::Cheat(p, ms) => write!(formatter, "Cheat({p},{ms:?})"),
                 GameAction::ForceDestroyCoin(p) => write!(formatter, "ForceDestroyCoin({p})"),
                 GameAction::NerfTransactions(p) => write!(formatter, "NerfTransactions({p})"),

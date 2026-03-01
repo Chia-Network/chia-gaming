@@ -82,16 +82,6 @@ impl OnChainPotatoHandler {
         Some(Effect::Notification(notification))
     }
 
-    pub fn enable_cheating_for_game(
-        &mut self,
-        game_id: &GameID,
-        make_move: &[u8],
-        mover_share: Amount,
-    ) -> Result<bool, Error> {
-        self.player_ch
-            .enable_cheating_for_game(game_id, make_move, mover_share)
-    }
-
     pub fn get_game_coin(&self, game_id: &GameID) -> Option<CoinString> {
         self.game_map
             .iter()
@@ -969,6 +959,29 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     }
                     Err(_) => {
                         debug!("{initial_potato} discarding Move for game no longer in game_map");
+                        self.next_action(env)
+                    }
+                }
+            }
+            GameAction::Cheat(game_id, mover_share, entropy) => {
+                match get_current_coin(&game_id) {
+                    Ok(current_coin) => {
+                        let my_turn = self.my_move_in_game(&game_id);
+                        if my_turn == Some(true) {
+                            self.player_ch.enable_cheating_for_game(&game_id, &[0x80], mover_share)?;
+                            let readable_move = ReadableMove::from_program(Rc::new(Program::from_bytes(&[0x80])));
+                            self.do_on_chain_move(env, &current_coin, game_id, readable_move, entropy)
+                        } else if my_turn.is_none() {
+                            debug!("{initial_potato} discarding Cheat for finished/absent game {game_id:?}");
+                            Ok(Vec::new())
+                        } else {
+                            debug!("{initial_potato} Cheat: not our turn, deferring");
+                            self.game_action_queue.push_back(GameAction::Cheat(game_id, mover_share, entropy));
+                            Ok(Vec::new())
+                        }
+                    }
+                    Err(_) => {
+                        debug!("{initial_potato} discarding Cheat for game no longer in game_map");
                         self.next_action(env)
                     }
                 }

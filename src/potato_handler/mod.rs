@@ -238,27 +238,28 @@ impl PotatoHandler {
         matches!(self.handshake_state, HandshakeState::Failed)
     }
 
-    pub fn enable_cheating_for_game(
-        &mut self,
-        game_id: &GameID,
-        make_move: &[u8],
-        mover_share: Amount,
-    ) -> Result<bool, Error> {
-        if let HandshakeState::OnChain(on_chain) = &mut self.handshake_state {
-            on_chain.enable_cheating_for_game(game_id, make_move, mover_share)
-        } else {
-            Err(Error::StrErr(
-                "enable_cheating: game is not on chain".to_string(),
-            ))
-        }
-    }
-
     pub fn get_game_coin(&self, game_id: &GameID) -> Option<CoinString> {
         if let HandshakeState::OnChain(on_chain) = &self.handshake_state {
             on_chain.get_game_coin(game_id)
         } else {
             None
         }
+    }
+
+    pub(crate) fn cheat_game<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+        game_id: &GameID,
+        mover_share: Amount,
+        entropy: Hash,
+    ) -> Result<Vec<Effect>, Error>
+    {
+        let (_continued, effects) = self.do_game_action(
+            env,
+            GameAction::Cheat(game_id.clone(), mover_share, entropy),
+        )?;
+
+        Ok(effects)
     }
 
     pub fn handshake_done(&self) -> bool {
@@ -783,6 +784,21 @@ impl PotatoHandler {
                         batch_actions.push(BatchAction::Move(game_id, move_result.game_move));
                     } else {
                         deferred.push_back(GameAction::Move(game_id, readable_move, new_entropy));
+                    }
+                }
+                GameAction::Cheat(game_id, mover_share, entropy) => {
+                    if insufficient_balance_games.contains(&game_id) {
+                        continue;
+                    }
+                    let ch = self.channel_handler_mut()?;
+                    let game_is_my_turn = ch.game_is_my_turn(&game_id);
+                    if let Some(true) = game_is_my_turn {
+                        ch.enable_cheating_for_game(&game_id, &[0x80], mover_share)?;
+                        let readable_move = ReadableMove::from_program(Rc::new(Program::from_bytes(&[0x80])));
+                        let move_result = ch.send_move_no_finalize(env, &game_id, &readable_move, entropy)?;
+                        batch_actions.push(BatchAction::Move(game_id, move_result.game_move));
+                    } else {
+                        deferred.push_back(GameAction::Cheat(game_id, mover_share, entropy));
                     }
                 }
                 GameAction::Accept(game_id) => {

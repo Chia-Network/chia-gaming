@@ -1118,12 +1118,11 @@ The frontend should treat any of these as the "game ended" signal.
   proposer should receive exactly one of: `GameProposalCancelled`,
   `GameCancelled`, `WeTimedOut`, `OpponentTimedOut`, `WeSlashedOpponent`,
   `OpponentSlashedUs`, `OpponentSuccessfullyCheated`, or `GameError`.
-- **Terminal notification deduplication.** The on-chain resolution path can
-  encounter the same game through multiple coin-spend events (e.g., redos,
-  accept transactions, timeout transactions). The `OnChainPotatoHandler`
-  maintains a `terminal_notified_games: HashSet<GameID>` that ensures at most
-  one terminal notification per game. Duplicate emissions are suppressed with
-  a debug log.
+- **No phantom game-map entries.** During the on-chain transition,
+  `finish_on_chain_transition` filters out both our and the opponent's reward
+  puzzle hashes from the created-coins list before calling
+  `set_state_for_coins`. This prevents reward coins from being incorrectly
+  matched to live games and generating spurious terminal notifications.
 
 **Key code:** `src/potato_handler/effects.rs`
 
@@ -1186,6 +1185,53 @@ on-chain timeout, or clean shutdown).
 
 ---
 
+## Cheat Support
+
+**This feature is for testing and demonstration purposes only.**
+
+The `cheat(game_id, mover_share)` call submits a move containing illegal data
+to the game, allowing tests and demos to exercise the slashing and timeout
+paths. Cheating is a first-class action that flows through the normal
+queue/redo pipeline — there is no separate "enable cheating" step.
+
+### How It Works
+
+When `cheat()` is called on a `GameCradle`:
+
+1. A `GameAction::Cheat(game_id, mover_share, entropy)` is queued internally.
+2. Like a normal `Move`, the `Cheat` action is deferred until it is the
+   player's turn.
+3. When processed (off-chain in `drain_queue_into_batch` or on-chain in
+   `do_on_chain_action`), the handler atomically:
+   - Enables cheating on the `ChannelHandler`'s referee for that game,
+     substituting `0x80` (nil) as the move bytes and the given `mover_share`.
+   - Executes the move through the normal referee path. The referee bypasses
+     validation and produces a game-move with the fake data.
+4. The resulting move is sent to the opponent, who detects the invalid data and
+   can slash on-chain.
+
+### Outcomes
+
+| Scenario | Notification (cheater) | Notification (victim) |
+|----------|------------------------|-----------------------|
+| Opponent detects and slashes | `OpponentSlashedUs` | `WeSlashedOpponent` |
+| Opponent fails to slash in time | `OpponentTimedOut` (with the cheat's `mover_share`) | `OpponentSuccessfullyCheated` |
+
+### WASM Binding
+
+`cheat(cid, id, mover_share)` — `cid` is the cradle ID, `id` is the game ID
+hex string, and `mover_share` is the amount string. Parses and delegates to
+`GameCradle::cheat`.
+
+**Key code:**
+- `src/peer_container.rs` — `SynchronousGameCradle::cheat`
+- `src/potato_handler/types.rs` — `GameAction::Cheat`
+- `src/potato_handler/mod.rs` — `cheat_game`, `drain_queue_into_batch` (Cheat arm)
+- `src/potato_handler/on_chain.rs` — `do_on_chain_action` (Cheat arm)
+- `wasm/src/mod.rs` — WASM `cheat` binding
+
+---
+
 ## Simulator Strictness
 
 The simulator (`src/simulator/mod.rs`) enforces several invariants that the
@@ -1227,8 +1273,7 @@ in `src/test_support/game.rs`):
 | `WaitBlocks(n, players_bitmask)` | Advance `n` blocks; `players_bitmask` controls whose coin reports are backlogged (0 = nobody blocked, 1 = player 0 blocked, 2 = player 1 blocked, 3 = both blocked) |
 | `NerfTransactions(player)` | Silently drop all outbound transactions for `player` |
 | `UnNerfTransactions` | Stop dropping transactions |
-| `Cheat(player)` | Submit an illegal on-chain move |
-| `EnableCheating(player, bytes)` | Set up a fake move for the next on-chain action |
+| `Cheat(player, mover_share)` | Queue a move with illegal data and the specified `mover_share` (see [Cheat Support](#cheat-support)) |
 | `ForceDestroyCoin(player)` | Inject a fake coin deletion to test error handling |
 | `CleanShutdown(player, conditions)` | Initiate clean channel shutdown |
 | `ForceUnroll(player)` | Submit a unroll transaction using the player's cached spend info, bypassing state checks. Simulates a malicious peer unrolling after agreeing to clean shutdown. |

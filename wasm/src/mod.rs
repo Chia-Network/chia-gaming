@@ -600,6 +600,22 @@ mod gaming_wasm {
         make_move_inner(cid, id, readable, None)
     }
 
+    /// Submit a cheating move for testing and demonstration purposes.
+    /// The mover_share controls how much the cheater claims from the pot.
+    #[wasm_bindgen]
+    pub fn cheat(cid: i32, id: &str, mover_share: &str) -> Result<(), JsValue> {
+        let game_id = string_to_game_id(id)?;
+        let share = Amount::new(mover_share.parse::<u64>().into_js()?);
+        with_game(cid, move |cradle: &mut JsCradle| {
+            cradle.cradle.cheat(
+                &mut cradle.allocator,
+                &mut cradle.rng.0,
+                &game_id,
+                share,
+            )
+        })
+    }
+
     #[wasm_bindgen]
     pub fn accept_and_move(
         cid: i32,

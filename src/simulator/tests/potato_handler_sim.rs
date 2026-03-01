@@ -815,7 +815,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                     | GameAction::GoOnChainThenMove(_)
                     | GameAction::Accept(_)
                     | GameAction::Timeout(_)
-                    | GameAction::EnableCheating(_, _, _)
                     | GameAction::Cheat(_, _)
                     | GameAction::ForceDestroyCoin(_)
                     | GameAction::NerfTransactions(_)
@@ -915,17 +914,16 @@ fn run_game_container_with_action_list_with_success_predicate(
                     let saved = move_number;
                     while move_number > 0
                         && (move_number >= moves_input.len()
-                            || !matches!(moves_input[move_number], GameAction::Move(_, _, _) | GameAction::Cheat(_, _)))
+                            || !matches!(moves_input[move_number], GameAction::Move(_, _, _)))
                     {
                         move_number -= 1;
                     }
-                    // Only rewind to a Move/Cheat that belongs to the
-                    // player whose turn it is.  If the nearest action is
-                    // for a different player, restore move_number so the
-                    // sim keeps processing subsequent (non-Move) actions.
+                    // Only rewind to a Move that belongs to the player
+                    // whose turn it is.  If the nearest action is for a
+                    // different player, restore move_number so the sim
+                    // keeps processing subsequent (non-Move) actions.
                     let dominated_by_other = match moves_input.get(move_number) {
                         Some(GameAction::Move(who, _, _)) => *who != i,
-                        Some(GameAction::Cheat(who, _)) => *who != i,
                         _ => true,
                     };
                     if dominated_by_other {
@@ -1257,40 +1255,11 @@ fn run_game_container_with_action_list_with_success_predicate(
                             }
                         })?;
                     }
-                    GameAction::EnableCheating(who, fake_move_bytes, cheat_share) => {
-                        assert!(
-                            !game_ids.is_empty(),
-                            "EnableCheating({who}) at move_number={move_number} but game_ids is empty"
-                        );
-                        if !cradles[*who].is_on_chain() {
-                            move_number -= 1;
-                            continue;
-                        }
-                        debug!(
-                            "EnableCheating: player {who} enabling cheating with {} fake bytes, mover_share={cheat_share:?}",
-                            fake_move_bytes.len()
-                        );
-                        cradles[*who].enable_cheating_for_game(
-                            &game_ids[0],
-                            fake_move_bytes,
-                            cheat_share.clone(),
-                        )?;
-                        can_move = true;
-                    }
                     GameAction::Cheat(who, cheat_share) => {
                         assert!(
                             !game_ids.is_empty(),
                             "Cheat({who}) at move_number={move_number} but game_ids is empty"
                         );
-                        if !cradles[*who].is_on_chain() {
-                            move_number -= 1;
-                            continue;
-                        }
-                        let is_my_turn = cradles[*who].my_move_in_game(&game_ids[0]);
-                        if !matches!(is_my_turn, Some(true)) {
-                            move_number -= 1;
-                            continue;
-                        }
                         cradles[*who].cheat(allocator, rng, &game_ids[0], cheat_share.clone())?;
                         can_move = true;
                     }
