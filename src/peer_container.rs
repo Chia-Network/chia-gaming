@@ -9,9 +9,9 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json_any_key::*;
 
-use crate::channel_handler::types::{
-    ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove,
-};
+#[cfg(test)]
+use crate::channel_handler::types::ChannelCoinSpendInfo;
+use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
     sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
@@ -397,6 +397,7 @@ impl WalletSpendInterface for SynchronousGameCradleState {
 pub struct SynchronousGameCradle {
     state: SynchronousGameCradleState,
     peer: PotatoHandler,
+    #[cfg(test)]
     #[serde(skip)]
     saved_unroll_snapshot: Option<ChannelCoinSpendInfo>,
 }
@@ -452,6 +453,7 @@ impl SynchronousGameCradle {
                 unroll_timeout: config.unroll_timeout,
                 reward_puzzle_hash: config.reward_puzzle_hash,
             }),
+            #[cfg(test)]
             saved_unroll_snapshot: None,
         }
     }

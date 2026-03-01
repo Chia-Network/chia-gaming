@@ -30,7 +30,7 @@ pub struct HandshakeStepWithSpend {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub enum HandshakeState {
+pub enum ChannelState {
     StepA,
     StepB,
     StepC(CoinString, Box<HandshakeA>),

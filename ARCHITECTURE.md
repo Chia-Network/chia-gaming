@@ -233,7 +233,7 @@ Before play begins, the two players execute a multi-step handshake
 1. Exchange public keys (channel keys, unroll keys, referee keys)
 2. Agree on channel parameters (timeout, amounts)
 3. Co-sign the initial channel coin creation
-4. Reach `HandshakeState::Finished`
+4. Reach `ChannelState::Finished`
 
 **Key code:** `src/potato_handler/handshake.rs`, `src/potato_handler/start.rs`
 
