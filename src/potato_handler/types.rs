@@ -25,7 +25,7 @@ use crate::shutdown::{BasicShutdownConditions, ShutdownConditions};
 #[derive(Debug)]
 pub enum ConditionWaitKind {
     Channel(CoinString),
-    Unroll(CoinString),
+    Unroll(CoinString, usize),
     Game,
 }
 

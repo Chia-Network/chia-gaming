@@ -20,6 +20,7 @@ For debugging and testing operational guidance, see `DEBUGGING_GUIDE.md`.
 - [Going On-Chain: Dispute Resolution](#going-on-chain-dispute-resolution)
 - [Clean Shutdown (Advisory)](#clean-shutdown-advisory)
 - [Preemption](#preemption)
+- [Stale Unroll Handling](#stale-unroll-handling)
 - [The Referee](#the-referee)
   - [Referee Puzzle Args](#referee-puzzle-args)
   - [On-Chain Referee Actions](#on-chain-referee-actions)
@@ -502,6 +503,82 @@ coins and reward coins are created. The game code then uses
 
 **Key code:** `src/channel_handler/mod.rs` — `channel_coin_spent`,
 `make_preemption_unroll_spend`
+
+## Stale Unroll Handling
+
+When preemption fails (e.g. the preemption transaction is not mined in time)
+and the opponent's stale unroll succeeds via timeout, the system enters
+**stale unroll handling** rather than treating it as an unrecoverable error.
+
+### Staleness Detection
+
+Staleness is determined by comparing the `on_chain_state` (the sequence number
+extracted from the channel coin's `REM` conditions when the unroll coin was
+created) against `last_received_state` (the sequence number at which we last
+received the potato — i.e. the state we know the opponent acknowledged).
+
+| Condition | Classification |
+|-----------|----------------|
+| `on_chain_state >= last_received_state` (or `== last_sent_state` without potato) | **Current or Redo** — use existing logic |
+| `on_chain_state < last_received_state` | **Stale** — opponent unrolled to an outdated state |
+
+The `last_received_state` field is maintained on `ChannelHandler`, initialized
+to 0, and updated in `received_potato_verify_signatures` just before the state
+number is incremented.  The special case of never having received a potato
+(state 0 right after handshake) is handled by the initial value: state 0 is
+never considered stale.
+
+### Three-Way Dispatch in `finish_on_chain_transition`
+
+When the unroll coin is spent and conditions are available, `finish_on_chain_transition`
+dispatches based on the classification above:
+
+1. **Current state** (`on_chain_state` matches our latest state): All games
+   are assumed active at their current state.  Pending proposal acceptances
+   are assumed to have gone through.  The normal `set_state_for_coins` path
+   applies.
+
+2. **Redo state** (`on_chain_state == last_received_state` and we don't have
+   the potato): Exactly one unacknowledged send is outstanding.  The normal
+   `set_state_for_coins` path applies, and `get_redo_action` publishes
+   on-chain transactions from `cached_last_actions`.  Pending proposal
+   acceptances are cancelled.
+
+3. **Stale state** (`on_chain_state < last_received_state`):
+   - An `OpponentStaleUnroll` notification is emitted, reporting the actual
+     amount in our reward coin (found by scanning the unroll output conditions
+     for our reward puzzle hash).
+   - Each on-chain game coin is matched against live games by amount:
+     - If `coin_ph == live_game.last_referee_puzzle_hash` → game is alive at
+       its current state.
+     - If `coin_ph` matches a `cached_last_actions` entry's
+       `match_puzzle_hash` for the same game → game needs a redo move.
+     - Otherwise → `GameError` for that game (unrecoverable).
+   - Any live game or accepted proposal not found in the unroll outputs
+     receives a `GameCancelled` notification.
+   - The channel handler does **not** enter `Failed` state; remaining games
+     continue on-chain.
+
+### Notifications
+
+| Notification | When |
+|-------------|------|
+| `OpponentStaleUnroll { our_reward, reward_coin }` | Always emitted when `is_stale` is true |
+| `GameError { id, reason }` | Per-game, when a stale game coin can't be matched |
+| `GameCancelled { id }` | Per-game, when an accepted game is absent from stale outputs |
+
+### Key Invariant: `match_puzzle_hash`
+
+When a player makes a move via `send_potato_move`, the `puzzle_hash_for_unroll`
+in the move result is the curried referee puzzle hash of the **pre-move** state
+(computed from `self.spend_this_coin()` before updating the referee).  This
+value is stored as `match_puzzle_hash` in `cached_last_actions`.  It matches
+the puzzle hash that an unroll at the pre-move state would create for that
+game coin — which is exactly the puzzle hash that appears in an opponent's
+stale unroll at that state.
+
+**Key code:** `src/potato_handler/mod.rs` — `finish_on_chain_transition`,
+`src/channel_handler/mod.rs` — `set_state_for_coins`, `get_redo_action`
 
 ---
 

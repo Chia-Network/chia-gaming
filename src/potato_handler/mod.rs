@@ -11,8 +11,8 @@ use rand::Rng;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::channel_handler::types::{
-    ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys,
-    GameStartInfo, GameStartInfoInterface, ReadableMove,
+    AcceptTransactionState, ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerInitiationResult,
+    ChannelHandlerPrivateKeys, GameStartInfo, GameStartInfoInterface, OnChainGameState, ReadableMove,
 };
 use crate::channel_handler::game;
 use crate::channel_handler::ChannelHandler;
@@ -348,6 +348,11 @@ impl PotatoHandler {
         let ch = self.channel_handler_mut()?;
         ch.corrupt_state_for_testing(new_sn);
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn get_last_channel_coin_spend_info(&self) -> Option<&ChannelCoinSpendInfo> {
+        self.last_channel_coin_spend_info.as_ref()
     }
 
     /// Tell whether this peer has the potato.  If it has been sent but not received yet
@@ -1603,8 +1608,9 @@ impl PotatoHandler {
     fn unroll_start_condition_check(
         &mut self,
         coin_id: &CoinString,
+        on_chain_state: usize,
     ) -> Result<Effect, Error> {
-        self.handshake_state = HandshakeState::OnChainWaitingForUnrollConditions(coin_id.clone());
+        self.handshake_state = HandshakeState::OnChainWaitingForUnrollConditions(coin_id.clone(), on_chain_state);
         Ok(Effect::RequestPuzzleAndSolution(coin_id.clone()))
     }
 
@@ -1614,17 +1620,18 @@ impl PotatoHandler {
         &mut self,
         coin_id: &CoinString,
     ) -> Result<(bool, Option<Effect>), Error> {
-        // Channel coin was spent so we're going on chain.
-        let is_unroll_coin = match &self.handshake_state {
-            HandshakeState::OnChainWaitingForUnrollSpend(unroll_coin, ..) => coin_id == unroll_coin,
-            HandshakeState::OnChainWaitingForUnrollTimeoutOrSpend(unroll_coin, _) => {
-                coin_id == unroll_coin
+        let unroll_info = match &self.handshake_state {
+            HandshakeState::OnChainWaitingForUnrollSpend(unroll_coin, sn, ..) if coin_id == unroll_coin => {
+                Some(*sn)
             }
-            _ => false,
+            HandshakeState::OnChainWaitingForUnrollTimeoutOrSpend(unroll_coin, sn) if coin_id == unroll_coin => {
+                Some(*sn)
+            }
+            _ => None,
         };
 
-        if is_unroll_coin {
-            let effect = self.unroll_start_condition_check(coin_id)?;
+        if let Some(on_chain_state) = unroll_info {
+            let effect = self.unroll_start_condition_check(coin_id, on_chain_state)?;
             return Ok((true, Some(effect)));
         }
 
@@ -1787,6 +1794,38 @@ impl PotatoHandler {
         })
     }
 
+    #[cfg(test)]
+    pub fn force_stale_unroll_spend<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+        saved: &ChannelCoinSpendInfo,
+    ) -> Result<SpendBundle, Error> {
+        let (channel_coin, channel_public_key) = {
+            let ch = self.channel_handler()?;
+            (
+                ch.state_channel_coin().clone(),
+                ch.get_aggregate_channel_public_key(),
+            )
+        };
+        let channel_coin_puzzle = puzzle_for_synthetic_public_key(
+            env.allocator,
+            &env.standard_puzzle,
+            &channel_public_key,
+        )?;
+
+        Ok(SpendBundle {
+            name: Some("force stale unroll".to_string()),
+            spends: vec![CoinSpend {
+                coin: channel_coin,
+                bundle: Spend {
+                    solution: saved.solution.clone().into(),
+                    signature: saved.aggsig.clone(),
+                    puzzle: channel_coin_puzzle,
+                },
+            }],
+        })
+    }
+
     /// If we have the potato and aren't going on-chain, flush the action queue
     /// into a batch. Otherwise request the potato from the peer.
     fn flush_or_request_potato<R: Rng>(
@@ -1827,7 +1866,7 @@ impl PotatoHandler {
             &self.handshake_state,
             HandshakeState::OnChainWaitForConditions(_, _)
                 | HandshakeState::OnChainWaitingForUnrollTimeoutOrSpend(..)
-                | HandshakeState::OnChainWaitingForUnrollConditions(_)
+                | HandshakeState::OnChainWaitingForUnrollConditions(..)
                 | HandshakeState::OnChainWaitingForUnrollSpend(..)
                 | HandshakeState::CleanShutdownWaitForConditions(..)
         ) {
@@ -2099,6 +2138,7 @@ impl PotatoHandler {
         env: &mut ChannelHandlerEnv<'_, R>,
         unroll_coin: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
+        on_chain_state: usize,
     ) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
         let (puzzle, solution) = if let Some((puzzle, solution)) = puzzle_and_solution {
@@ -2127,11 +2167,31 @@ impl PotatoHandler {
                 }
                 None
             });
+            let reward_amount = conditions.iter().find_map(|c| {
+                if let CoinCondition::CreateCoin(ph, amt) = c {
+                    if *ph == reward_puzzle_hash {
+                        return Some(amt.clone());
+                    }
+                }
+                None
+            }).unwrap_or_default();
             effects.push(Effect::Notification(GameNotification::UnrollCoinSpent {
                 reward_coin: reward_coin.clone(),
             }));
 
-            let created_coins: Vec<PuzzleHash> = conditions
+            let last_received = player_ch.get_last_received_state();
+            let is_stale = on_chain_state < last_received;
+
+            log::debug!(
+                "finish_on_chain_transition: on_chain_state={}, last_received_state={}, current_state_number={}, have_potato={}, is_stale={}",
+                on_chain_state,
+                last_received,
+                player_ch.get_state_number(),
+                player_ch.have_potato(),
+                is_stale,
+            );
+
+            let created_coins: Vec<(PuzzleHash, Amount)> = conditions
                 .iter()
                 .filter_map(|c| {
                     if let CoinCondition::CreateCoin(ph, amt) = c {
@@ -2139,7 +2199,7 @@ impl PotatoHandler {
                             && *ph != reward_puzzle_hash
                             && *ph != their_reward_puzzle_hash
                         {
-                            return Some(ph.clone());
+                            return Some((ph.clone(), amt.clone()));
                         }
                     }
 
@@ -2147,17 +2207,76 @@ impl PotatoHandler {
                 })
                 .collect();
 
-            let game_map = player_ch.set_state_for_coins(env, unroll_coin, &created_coins)?;
-
-            let surviving_ids: HashSet<GameID> =
-                game_map.values().map(|def| def.game_id.clone()).collect();
-            for cancelled_id in pre_game_ids.difference(&surviving_ids) {
-                effects.push(Effect::Notification(GameNotification::GameCancelled {
-                    id: cancelled_id.clone(),
+            if is_stale {
+                effects.push(Effect::Notification(GameNotification::OpponentStaleUnroll {
+                    our_reward: reward_amount,
+                    reward_coin: reward_coin.clone(),
                 }));
-            }
 
-            (game_map, reward_coin)
+                // Stale unroll: per-game matching.  For each on-chain game
+                // coin, check current PH+amount first, then cached prior
+                // PH+amount for redo, else the game is errored.
+                let (game_map_inner, errored_games) = player_ch.set_state_for_coins(env, unroll_coin, &created_coins)?;
+
+                let surviving_ids: HashSet<GameID> = game_map_inner
+                    .values()
+                    .map(|def| def.game_id.clone())
+                    .chain(errored_games.iter().map(|(gid, _)| gid.clone()))
+                    .collect();
+                for cancelled_id in pre_game_ids.difference(&surviving_ids) {
+                    effects.push(Effect::Notification(GameNotification::GameCancelled {
+                        id: cancelled_id.clone(),
+                    }));
+                }
+
+                for (game_id, _coin) in &errored_games {
+                    effects.push(Effect::Notification(GameNotification::GameError {
+                        id: game_id.clone(),
+                        reason: "game coin at unrecognized state after stale unroll".to_string(),
+                    }));
+                }
+
+                (game_map_inner, reward_coin)
+            } else {
+                // Current or redo case.  Games matched by amount but not
+                // by PH are still live (e.g. the other player's view of
+                // a redo state); keep them in the game_map with our_turn
+                // based on the live game's perspective.
+                let (mut game_map_inner, errored_games) = player_ch.set_state_for_coins(env, unroll_coin, &created_coins)?;
+
+                for (game_id, coin_id) in errored_games {
+                    if let Some(lg) = player_ch.find_live_game(&game_id) {
+                        let game_timeout = lg.get_game_timeout();
+                        game_map_inner.insert(
+                            coin_id,
+                            OnChainGameState {
+                                game_id,
+                                puzzle_hash: PuzzleHash::default(),
+                                our_turn: false,
+                                state_number: player_ch.get_state_number(),
+                                accept: AcceptTransactionState::Waiting,
+                                pending_slash_amount: None,
+                                cheating_move_mover_share: None,
+                                accepted: false,
+                                notification_sent: false,
+                                game_timeout,
+                            },
+                        );
+                    }
+                }
+
+                let surviving_ids: HashSet<GameID> = game_map_inner
+                    .values()
+                    .map(|def| def.game_id.clone())
+                    .collect();
+                for cancelled_id in pre_game_ids.difference(&surviving_ids) {
+                    effects.push(Effect::Notification(GameNotification::GameCancelled {
+                        id: cancelled_id.clone(),
+                    }));
+                }
+
+                (game_map_inner, reward_coin)
+            }
         };
 
         if game_map.is_empty() {
@@ -2430,14 +2549,27 @@ impl SpendWalletReceiver for PotatoHandler
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error>
     {
+        let hs_desc = match &self.handshake_state {
+            HandshakeState::OnChainWaitingForUnrollSpend(uc, sn, _) =>
+                format!("OnChainWaitingForUnrollSpend(coin={uc:?}, sn={sn})"),
+            HandshakeState::OnChainWaitingForUnrollTimeoutOrSpend(uc, sn) =>
+                format!("OnChainWaitingForUnrollTimeoutOrSpend(coin={uc:?}, sn={sn})"),
+            HandshakeState::OnChainWaitingForUnrollConditions(uc, sn) =>
+                format!("OnChainWaitingForUnrollConditions(coin={uc:?}, sn={sn})"),
+            HandshakeState::OnChain(_) => "OnChain".to_string(),
+            HandshakeState::Failed => "Failed".to_string(),
+            other => format!("{:?}", std::mem::discriminant(other)),
+        };
+        log::debug!("coin_spent called: coin_id={coin_id:?} handshake_state={hs_desc}");
         if matches!(self.handshake_state, HandshakeState::Failed) {
             return Ok(vec![]);
         }
         let mut effects = Vec::new();
-        let (_matched, effect) = self.check_channel_spent(coin_id)?;
+        let (matched_ch, effect) = self.check_channel_spent(coin_id)?;
         effects.extend(effect);
 
-        let (_matched, effect) = self.check_unroll_spent(coin_id)?;
+        let (matched_unroll, effect) = self.check_unroll_spent(coin_id)?;
+        log::debug!("check_unroll_spent: matched={matched_unroll} for coin_id={coin_id:?}");
         effects.extend(effect);
 
         let (_matched, effect) = self.check_game_coin_spent(coin_id)?;
@@ -2460,14 +2592,13 @@ impl SpendWalletReceiver for PotatoHandler
         // We'll spend the unroll coin via do_unroll_spend_to_games with the default
         // reveal and go to OnChainWaitingForUnrollSpend, transitioning to OnChain when
         // we receive the unroll coin spend.
-        let unroll_timed_out =
-            if let HandshakeState::OnChainWaitingForUnrollTimeoutOrSpend(unroll, sn) =
-                &self.handshake_state
-            {
-                if coin_id == unroll { Some(*sn) } else { None }
-            } else {
-                None
-            };
+        let unroll_timed_out = match &self.handshake_state {
+            HandshakeState::OnChainWaitingForUnrollTimeoutOrSpend(unroll, sn)
+                if coin_id == unroll => Some(*sn),
+            HandshakeState::OnChainWaitingForUnrollSpend(unroll, sn, _)
+                if coin_id == unroll => Some(*sn),
+            _ => None,
+        };
 
         if let Some(on_chain_state) = unroll_timed_out {
             match self.do_unroll_spend_to_games(env, coin_id, on_chain_state) {
@@ -2548,11 +2679,11 @@ impl SpendWalletReceiver for PotatoHandler
             // During clean shutdown the first field is the channel coin, not
             // an unroll coin.  Ignore it here — the channel coin will be
             // handled via CleanShutdownWaitForConditions after new_block.
-            HandshakeState::OnChainWaitingForUnrollSpend(unroll_id, _, None) => {
-                Some(ConditionWaitKind::Unroll(unroll_id.clone()))
+            HandshakeState::OnChainWaitingForUnrollSpend(unroll_id, sn, None) => {
+                Some(ConditionWaitKind::Unroll(unroll_id.clone(), *sn))
             }
-            HandshakeState::OnChainWaitingForUnrollConditions(unroll_id) => {
-                Some(ConditionWaitKind::Unroll(unroll_id.clone()))
+            HandshakeState::OnChainWaitingForUnrollConditions(unroll_id, sn) => {
+                Some(ConditionWaitKind::Unroll(unroll_id.clone(), *sn))
             }
             _ => None,
         };
@@ -2575,9 +2706,9 @@ impl SpendWalletReceiver for PotatoHandler
                     return Ok(effects);
                 }
             }
-            Some(ConditionWaitKind::Unroll(unroll_coin_id)) => {
+            Some(ConditionWaitKind::Unroll(unroll_coin_id, on_chain_state)) => {
                 if *coin_id == unroll_coin_id {
-                    match self.finish_on_chain_transition(env, coin_id, puzzle_and_solution) {
+                    match self.finish_on_chain_transition(env, coin_id, puzzle_and_solution, on_chain_state) {
                         Ok(transition_effects) => {
                             effects.extend(transition_effects);
                         }

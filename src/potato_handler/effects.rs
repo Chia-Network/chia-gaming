@@ -14,6 +14,10 @@ pub enum GameNotification {
     OpponentSlashedUs { id: GameID },
     OpponentSuccessfullyCheated { id: GameID, our_reward: Amount, reward_coin: Option<CoinString> },
 
+    /// Our preemption lost the race and the opponent's stale unroll resolved.
+    /// Per-game outcomes follow as separate notifications.
+    OpponentStaleUnroll { our_reward: Amount, reward_coin: Option<CoinString> },
+
     /// The channel or unroll coin is in an unrecoverable state.
     /// Everything is lost.
     ChannelError { reason: String },

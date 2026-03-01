@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json_any_key::*;
 
 use crate::channel_handler::types::{
-    ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove,
+    ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
@@ -397,6 +397,8 @@ impl WalletSpendInterface for SynchronousGameCradleState {
 pub struct SynchronousGameCradle {
     state: SynchronousGameCradleState,
     peer: PotatoHandler,
+    #[serde(skip)]
+    saved_unroll_snapshot: Option<ChannelCoinSpendInfo>,
 }
 
 #[derive(Debug, Clone)]
@@ -450,6 +452,7 @@ impl SynchronousGameCradle {
                 unroll_timeout: config.unroll_timeout,
                 reward_puzzle_hash: config.reward_puzzle_hash,
             }),
+            saved_unroll_snapshot: None,
         }
     }
     pub fn new<R: Rng>(rng: &mut R, config: SynchronousGameCradleConfig) -> Self {
@@ -564,6 +567,27 @@ impl SynchronousGameCradle {
     ) -> Result<SpendBundle, Error> {
         let mut env = ChannelHandlerEnv::new(allocator, rng)?;
         self.peer.force_unroll_spend(&mut env)
+    }
+
+    #[cfg(test)]
+    pub fn save_unroll_snapshot(&mut self) {
+        self.saved_unroll_snapshot = self
+            .peer
+            .get_last_channel_coin_spend_info()
+            .cloned();
+    }
+
+    #[cfg(test)]
+    pub fn force_stale_unroll_spend<R: Rng>(
+        &self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+    ) -> Result<SpendBundle, Error> {
+        let saved = self.saved_unroll_snapshot.as_ref().ok_or_else(|| {
+            Error::StrErr("force_stale_unroll_spend: no snapshot saved".to_string())
+        })?;
+        let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+        self.peer.force_stale_unroll_spend(&mut env, saved)
     }
 
     pub fn amount(&self) -> Amount {

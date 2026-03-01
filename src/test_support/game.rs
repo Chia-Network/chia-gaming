@@ -214,6 +214,10 @@ mod sim_tests {
         AcceptProposal(usize),
         /// Cancel a proposed game from the specified player.
         CancelProposal(usize),
+        /// Snapshot the current unroll spend info for later stale unroll.
+        SaveUnrollSnapshot(usize),
+        /// Force-submit a stale unroll using a previously saved snapshot.
+        ForceStaleUnroll(usize),
     }
 
     impl std::fmt::Debug for GameAction {
@@ -243,6 +247,8 @@ mod sim_tests {
                 GameAction::UnNerfMessages => write!(formatter, "UnNerfMessages"),
                 GameAction::AcceptProposal(p) => write!(formatter, "AcceptProposal({p})"),
                 GameAction::CancelProposal(p) => write!(formatter, "CancelProposal({p})"),
+                GameAction::SaveUnrollSnapshot(p) => write!(formatter, "SaveUnrollSnapshot({p})"),
+                GameAction::ForceStaleUnroll(p) => write!(formatter, "ForceStaleUnroll({p})"),
             }
         }
     }

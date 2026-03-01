@@ -115,6 +115,9 @@ pub struct ChannelHandler {
     // Has a parity between the two players of whether have_potato means odd
     // or even, but odd-ness = have-potato is arbitrary.
     current_state_number: usize, //
+    // The state number from the most recent potato we received, starting at 0
+    // after handshake.  Used to determine whether an on-chain unroll is stale.
+    last_received_state: usize,
     // Increments per game started.
     next_nonce_number: usize,
 
@@ -125,6 +128,7 @@ pub struct ChannelHandler {
     // most recent move.
     unroll: ChannelHandlerUnrollSpendInfo,
     timeout: Option<ChannelHandlerUnrollSpendInfo>,
+    old_unrolls: Vec<ChannelHandlerUnrollSpendInfo>,
 
     // Maps state_number → timeout_conditions_hash (DEFAULT_HASH) for each
     // exchange we've participated in.  Needed to reconstruct the unroll coin
@@ -205,6 +209,18 @@ impl ChannelHandler {
         self.current_state_number
     }
 
+    pub fn get_unroll_state_number(&self) -> usize {
+        self.unroll.coin.state_number
+    }
+
+    pub fn get_last_received_state(&self) -> usize {
+        self.last_received_state
+    }
+
+    pub fn have_potato(&self) -> bool {
+        self.have_potato
+    }
+
     /// Corrupt the channel handler's view of state for testing unrecoverable
     /// unroll edge cases.  Sets `current_state_number` to `new_sn`, changes
     /// `unroll.coin.state_number` to match, and clears `timeout` so that
@@ -223,6 +239,10 @@ impl ChannelHandler {
 
     pub fn live_game_ids(&self) -> Vec<GameID> {
         self.live_games.iter().map(|g| g.game_id.clone()).collect()
+    }
+
+    pub fn find_live_game(&self, game_id: &GameID) -> Option<&LiveGame> {
+        self.live_games.iter().find(|g| g.game_id == *game_id)
     }
 
 
@@ -313,10 +333,14 @@ impl ChannelHandler {
         if self.unroll.coin.state_number == state_number {
             return Ok(&self.unroll);
         }
+        if let Some(old) = self.old_unrolls.iter().rev().find(|u| u.coin.state_number == state_number) {
+            return Ok(old);
+        }
         Err(Error::StrErr(format!(
-            "No stored unroll matches on-chain state {state_number} (unroll={}, timeout={:?})",
+            "No stored unroll matches on-chain state {state_number} (unroll={}, timeout={:?}, old_count={})",
             self.unroll.coin.state_number,
             self.timeout.as_ref().map(|t| t.coin.state_number),
+            self.old_unrolls.len(),
         )))
     }
 
@@ -506,6 +530,7 @@ impl ChannelHandler {
             cached_last_actions: Vec::new(),
 
             current_state_number: 0,
+            last_received_state: 0,
             next_nonce_number: 0,
 
             state_channel: CoinSpend {
@@ -515,6 +540,7 @@ impl ChannelHandler {
 
             unroll: ChannelHandlerUnrollSpendInfo::default(),
             timeout: None,
+            old_unrolls: Vec::new(),
 
             state_conditions_hashes: HashMap::new(),
 
@@ -687,6 +713,8 @@ impl ChannelHandler {
             &new_game_coins_on_chain,
         );
 
+        self.old_unrolls.push(self.unroll.clone());
+
         self.current_state_number += 1;
         self.unroll.coin.state_number = self.current_state_number;
 
@@ -791,10 +819,14 @@ impl ChannelHandler {
             self.finish_handshake(env, &signatures.my_channel_half_signature_peer)?;
         }
 
+        self.last_received_state = self.current_state_number;
         self.current_state_number += 1;
         if let Some(ref outcome) = test_unroll.outcome {
             self.state_conditions_hashes
                 .insert(outcome.state_number, outcome.hash.clone());
+        }
+        if let Some(old_timeout) = self.timeout.take() {
+            self.old_unrolls.push(old_timeout);
         }
         self.timeout = Some(ChannelHandlerUnrollSpendInfo {
             coin: test_unroll.clone(),
@@ -1923,16 +1955,20 @@ impl ChannelHandler {
     ///      → we need to replay our cached move on this coin
     ///  (b) coin PH matches the live game's `last_referee_puzzle_hash`
     ///      → game is already at the latest state, nothing to redo
-    ///  (c) coin PH matches neither → the preemption/timeout created the coin
-    ///      from the other player's perspective; if we have a cached action for
-    ///      this game, we still need the redo
+    ///  (c) coin PH matches neither → game is at an unrecognized state
+    ///
+    /// Returns `(game_map, errored_games)` where `errored_games` contains
+    /// games matched by amount but whose PH is unrecognized (e.g. from a
+    /// stale unroll).
     pub fn set_state_for_coins<R: Rng>(
         &mut self,
         _env: &mut ChannelHandlerEnv<R>,
         unroll_coin: &CoinString,
-        coins: &[PuzzleHash],
-    ) -> Result<HashMap<CoinString, OnChainGameState>, Error> {
+        coins: &[(PuzzleHash, Amount)],
+    ) -> Result<(HashMap<CoinString, OnChainGameState>, Vec<(GameID, CoinString)>), Error> {
         let mut res = HashMap::new();
+        let mut errored_games: Vec<(GameID, CoinString)> = Vec::new();
+        let unroll_coin_id = unroll_coin.to_coin_id();
 
         let cached_moves: Vec<(GameID, PuzzleHash)> = self.cached_last_actions
             .iter()
@@ -1945,29 +1981,51 @@ impl ChannelHandler {
             })
             .collect();
 
-        for game_coin_ph in coins.iter() {
-            let mut matched = false;
+        log::debug!(
+            "set_state_for_coins: cached_moves={:?} live_games={} coins={}",
+            cached_moves.iter().map(|(gid, ph)| format!("({gid:?},{ph:?})")).collect::<Vec<_>>(),
+            self.live_games.len(),
+            coins.len(),
+        );
 
-            for live_game in self.live_games.iter_mut() {
-                let coin_id = CoinString::from_parts(
-                    &unroll_coin.to_coin_id(),
-                    game_coin_ph,
-                    &live_game.get_amount(),
-                );
+        for (coin_ph, coin_amt) in coins.iter() {
+            let coin_id = CoinString::from_parts(&unroll_coin_id, coin_ph, coin_amt);
 
+            let live_match = self.live_games.iter().find(|g| g.get_amount() == *coin_amt);
+            if let Some(live_game) = live_match {
                 let needs_redo = cached_moves.iter().any(|(gid, mph)| {
-                    *gid == live_game.game_id && *mph == *game_coin_ph
+                    *gid == live_game.game_id && *mph == *coin_ph
                 });
-                let is_latest = live_game.last_referee_puzzle_hash == *game_coin_ph;
-
+                let is_latest = live_game.last_referee_puzzle_hash == *coin_ph;
+                log::debug!(
+                    "set_state_for_coins: coin_ph={coin_ph:?} coin_amt={coin_amt:?} live_game_id={:?} needs_redo={needs_redo} is_latest={is_latest} last_ref_ph={:?}",
+                    live_game.game_id,
+                    live_game.last_referee_puzzle_hash,
+                );
                 let game_timeout = live_game.get_game_timeout();
 
-                if needs_redo {
+                if is_latest {
                     res.insert(
                         coin_id,
                         OnChainGameState {
                             game_id: live_game.game_id.clone(),
-                            puzzle_hash: game_coin_ph.clone(),
+                            puzzle_hash: coin_ph.clone(),
+                            our_turn: live_game.is_my_turn(),
+                            state_number: self.current_state_number,
+                            accept: AcceptTransactionState::Waiting,
+                            pending_slash_amount: None,
+                            cheating_move_mover_share: None,
+                            accepted: false,
+                            notification_sent: false,
+                            game_timeout,
+                        },
+                    );
+                } else if needs_redo {
+                    res.insert(
+                        coin_id,
+                        OnChainGameState {
+                            game_id: live_game.game_id.clone(),
+                            puzzle_hash: coin_ph.clone(),
                             our_turn: true,
                             state_number: self.current_state_number,
                             accept: AcceptTransactionState::Waiting,
@@ -1978,61 +2036,45 @@ impl ChannelHandler {
                             game_timeout,
                         },
                     );
-                    matched = true;
-                    break;
+                } else {
+                    errored_games.push((live_game.game_id.clone(), coin_id));
                 }
+                continue;
+            }
 
-                let our_turn = is_latest && live_game.is_my_turn();
+            // Try pending_accept games, matching by amount and PH.
+            let pending_match = self.pending_accept_games.iter().find(|p| {
+                p.get_amount() == *coin_amt && p.last_referee_puzzle_hash == *coin_ph
+            });
+            if let Some(pending) = pending_match {
                 res.insert(
                     coin_id,
                     OnChainGameState {
-                        game_id: live_game.game_id.clone(),
-                        puzzle_hash: game_coin_ph.clone(),
-                        our_turn,
+                        game_id: pending.game_id.clone(),
+                        puzzle_hash: coin_ph.clone(),
+                        our_turn: true,
                         state_number: self.current_state_number,
                         accept: AcceptTransactionState::Waiting,
                         pending_slash_amount: None,
                         cheating_move_mover_share: None,
-                        accepted: false,
+                        accepted: true,
                         notification_sent: false,
-                        game_timeout,
+                        game_timeout: pending.get_game_timeout(),
                     },
                 );
-                matched = true;
-                break;
+                continue;
             }
 
-            if !matched {
-                for pending in self.pending_accept_games.iter() {
-                    if pending.last_referee_puzzle_hash != *game_coin_ph {
-                        continue;
-                    }
-                    let coin_id = CoinString::from_parts(
-                        &unroll_coin.to_coin_id(),
-                        game_coin_ph,
-                        &pending.get_amount(),
-                    );
-                    res.insert(
-                        coin_id,
-                        OnChainGameState {
-                            game_id: pending.game_id.clone(),
-                            puzzle_hash: game_coin_ph.clone(),
-                            our_turn: true,
-                            state_number: self.current_state_number,
-                            accept: AcceptTransactionState::Waiting,
-                            pending_slash_amount: None,
-                            cheating_move_mover_share: None,
-                            accepted: true,
-                            notification_sent: false,
-                            game_timeout: pending.get_game_timeout(),
-                        },
-                    );
-                    break;
-                }
+            // Try pending_accept games by amount only (stale unroll case).
+            let pending_amt_match = self.pending_accept_games.iter().find(|p| {
+                p.get_amount() == *coin_amt
+            });
+            if let Some(pending) = pending_amt_match {
+                errored_games.push((pending.game_id.clone(), coin_id));
             }
         }
 
-        Ok(res)
+        Ok((res, errored_games))
     }
 
     pub fn game_is_my_turn(&self, game_id: &GameID) -> Option<bool> {

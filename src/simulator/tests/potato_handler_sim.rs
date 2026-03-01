@@ -395,6 +395,7 @@ pub enum ExpectedNotification {
     WeSlashedOpponent,
     OpponentSlashedUs,
     OpponentSuccessfullyCheated,
+    OpponentStaleUnroll,
     ChannelCoinSpent,
     UnrollCoinSpent,
     ChannelError,
@@ -429,6 +430,7 @@ fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
                 (GameNotification::WeSlashedOpponent { .. }, ExpectedNotification::WeSlashedOpponent) => true,
                 (GameNotification::OpponentSlashedUs { .. }, ExpectedNotification::OpponentSlashedUs) => true,
                 (GameNotification::OpponentSuccessfullyCheated { .. }, ExpectedNotification::OpponentSuccessfullyCheated) => true,
+                (GameNotification::OpponentStaleUnroll { .. }, ExpectedNotification::OpponentStaleUnroll) => true,
                 (GameNotification::ChannelCoinSpent, ExpectedNotification::ChannelCoinSpent) => true,
                 (GameNotification::UnrollCoinSpent { .. }, ExpectedNotification::UnrollCoinSpent) => true,
                 (GameNotification::ChannelError { .. }, ExpectedNotification::ChannelError) => true,
@@ -458,6 +460,7 @@ fn event_shape(actual: &TestEvent) -> String {
             GameNotification::WeSlashedOpponent { .. } => "Notif(WeSlashedOpponent)".to_string(),
             GameNotification::OpponentSlashedUs { .. } => "Notif(OpponentSlashedUs)".to_string(),
             GameNotification::OpponentSuccessfullyCheated { .. } => "Notif(OpponentSuccessfullyCheated)".to_string(),
+            GameNotification::OpponentStaleUnroll { .. } => "Notif(OpponentStaleUnroll)".to_string(),
             GameNotification::ChannelCoinSpent => "Notif(ChannelCoinSpent)".to_string(),
             GameNotification::UnrollCoinSpent { .. } => "Notif(UnrollCoinSpent)".to_string(),
             GameNotification::ChannelError { .. } => "Notif(ChannelError)".to_string(),
@@ -484,6 +487,7 @@ fn expected_shape(expected: &ExpectedEvent) -> String {
             ExpectedNotification::WeSlashedOpponent => "Notif(WeSlashedOpponent)".to_string(),
             ExpectedNotification::OpponentSlashedUs => "Notif(OpponentSlashedUs)".to_string(),
             ExpectedNotification::OpponentSuccessfullyCheated => "Notif(OpponentSuccessfullyCheated)".to_string(),
+            ExpectedNotification::OpponentStaleUnroll => "Notif(OpponentStaleUnroll)".to_string(),
             ExpectedNotification::ChannelCoinSpent => "Notif(ChannelCoinSpent)".to_string(),
             ExpectedNotification::UnrollCoinSpent => "Notif(UnrollCoinSpent)".to_string(),
             ExpectedNotification::ChannelError => "Notif(ChannelError)".to_string(),
@@ -796,6 +800,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     let mut report_backlogs = [Vec::default(), Vec::default()];
     let mut force_destroyed_coins: Vec<CoinString> = Vec::new();
     let mut nerf_transactions_for: u8 = 0;
+    let mut nerfed_tx_backlog: Vec<SpendBundle> = Vec::new();
     let mut nerf_messages_for: u8 = 0;
     let mut start_step = 0;
     let mut initial_game_step: u8 = 0;
@@ -827,11 +832,13 @@ fn run_game_container_with_action_list_with_success_predicate(
                     | GameAction::ForceUnroll(_)
                     | GameAction::NerfMessages(_)
                     | GameAction::UnNerfMessages
+                    | GameAction::SaveUnrollSnapshot(_)
+                    | GameAction::ForceStaleUnroll(_)
             )
     };
     let has_explicit_go_on_chain = moves_input
         .iter()
-        .any(|m| matches!(m, GameAction::GoOnChain(_) | GameAction::GoOnChainThenMove(_)));
+        .any(|m| matches!(m, GameAction::GoOnChain(_) | GameAction::GoOnChainThenMove(_) | GameAction::ForceUnroll(_) | GameAction::ForceStaleUnroll(_)));
 
     while !matches!(ending, Some(0)) {
         num_steps += 1;
@@ -952,6 +959,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 for tx in result.outbound_transactions.iter() {
                     if nerf_transactions_for & (1 << i) != 0 {
                         debug!("NERFED tx from player {i}: {:?}", tx.name);
+                        nerfed_tx_backlog.push(tx.clone());
                         continue;
                     }
                     let included_result = simulator.push_tx(allocator, &tx.spends)?;
@@ -995,7 +1003,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                     debug!("NOTIFICATION player {i}: {n:?}");
                 }
 
-                if !result.continue_on {
+                let processed_requests = !result.coin_solution_requests.is_empty()
+                    || !result.outbound_transactions.is_empty()
+                    || !result.outbound_messages.is_empty();
+                if !result.continue_on && !processed_requests {
                     break;
                 }
             }
@@ -1278,15 +1289,20 @@ fn run_game_container_with_action_list_with_success_predicate(
                     }
                     GameAction::NerfTransactions(who) => {
                         nerf_transactions_for |= 1 << *who;
+                        can_move = true;
                     }
                     GameAction::UnNerfTransactions => {
                         nerf_transactions_for = 0;
+                        nerfed_tx_backlog.clear();
+                        can_move = true;
                     }
                     GameAction::NerfMessages(who) => {
                         nerf_messages_for |= 1 << *who;
+                        can_move = true;
                     }
                     GameAction::UnNerfMessages => {
                         nerf_messages_for = 0;
+                        can_move = true;
                     }
                     GameAction::WaitBlocks(n, players) => {
                         wait_blocks = Some((*n, *players));
@@ -1324,6 +1340,21 @@ fn run_game_container_with_action_list_with_success_predicate(
                         let included_result = simulator.push_tx(allocator, &spend.spends)?;
                         debug!(
                             "ForceUnroll TX result: code={} e={:?} diag={:?}",
+                            included_result.code, included_result.e, included_result.diagnostic
+                        );
+                        can_move = true;
+                    }
+                    GameAction::SaveUnrollSnapshot(who) => {
+                        debug!("SaveUnrollSnapshot({who})");
+                        cradles[*who].save_unroll_snapshot();
+                        can_move = true;
+                    }
+                    GameAction::ForceStaleUnroll(who) => {
+                        debug!("ForceStaleUnroll({who})");
+                        let spend = cradles[*who].force_stale_unroll_spend(allocator, rng)?;
+                        let included_result = simulator.push_tx(allocator, &spend.spends)?;
+                        debug!(
+                            "ForceStaleUnroll TX result: code={} e={:?} diag={:?}",
                             included_result.code, included_result.e, included_result.diagnostic
                         );
                         can_move = true;
@@ -1732,6 +1763,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::GoingOnChain,
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
             ], "piss_off_basic p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 game_proposed(), game_accepted(),
@@ -3400,6 +3432,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 game_proposed(), game_accepted(),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
             ], "state_too_high p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 game_proposed(), game_accepted(),
@@ -3457,6 +3490,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 game_proposed(), game_accepted(),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
             ], "wrong_parity p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 game_proposed(), game_accepted(),
@@ -3760,6 +3794,213 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         assert!(
             p0_notifs.iter().any(|n| matches!(n, GameNotification::GameProposalAccepted { .. })),
             "Alice should see GameProposalAccepted (accept wins the race), got: {p0_notifs:?}"
+        );
+    }));
+
+    res.push(("test_stale_unroll_game_at_current_state", &|| {
+        let mut allocator = AllocEncoder::new();
+        let seed_data: [u8; 32] = [0; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed_data);
+
+        let moves = [DebugGameTestMove::new(100, 0)];
+        let mut sim_setup =
+            setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
+
+        sim_setup.game_actions.push(GameAction::SaveUnrollSnapshot(1));
+        // Proposal round-trip advances player 0's last_received_state past
+        // the snapshot without changing the first game's referee PH.
+        sim_setup.game_actions.push(GameAction::ProposeNewGame(0));
+        sim_setup.game_actions.push(GameAction::AcceptProposal(1));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+        // Nerf both players to prevent preemption during channel coin
+        // spend detection.  After un-nerfing, only the timeout path fires.
+        sim_setup.game_actions.push(GameAction::NerfTransactions(0));
+        sim_setup.game_actions.push(GameAction::NerfTransactions(1));
+        sim_setup.game_actions.push(GameAction::ForceStaleUnroll(1));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(2, 2));
+        sim_setup.game_actions.push(GameAction::UnNerfTransactions);
+        sim_setup.game_actions.push(GameAction::WaitBlocks(120, 2));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+
+        let outcome = run_game_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &mut rng,
+            sim_setup.private_keys.clone(),
+            &sim_setup.identities,
+            b"debug",
+            &sim_setup.args_program,
+            &sim_setup.game_actions,
+            Some(&|_, cradles| {
+                cradles[0].is_on_chain() || cradles[0].is_failed()
+            }),
+            Some(200),
+            false,
+        )
+        .expect("should finish");
+
+        assert!(
+            !outcome.cradles[0].is_failed(),
+            "player 0 should NOT be in Failed state"
+        );
+
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        assert!(
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentStaleUnroll { .. })),
+            "player 0 should get OpponentStaleUnroll, got: {p0_notifs:?}"
+        );
+        assert!(
+            !p0_notifs.iter().any(|n| matches!(n, GameNotification::GameError { .. })),
+            "player 0 should NOT get GameError for the debug game, got: {p0_notifs:?}"
+        );
+        // The accepted proposal's game exists in pre_game_ids but not in the
+        // stale unroll outputs → GameCancelled.
+        assert!(
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::GameCancelled { .. })),
+            "player 0 should get GameCancelled for the accepted second game, got: {p0_notifs:?}"
+        );
+        assert!(
+            !p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelError { .. })),
+            "player 0 should NOT get ChannelError, got: {p0_notifs:?}"
+        );
+    }));
+
+    res.push(("test_stale_unroll_game_at_redo_state", &|| {
+        let mut allocator = AllocEncoder::new();
+        let seed_data: [u8; 32] = [0; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed_data);
+
+        let moves = [
+            DebugGameTestMove::new(100, 0),
+            DebugGameTestMove::new(50, 0),
+            DebugGameTestMove::new(75, 0),
+        ];
+        let mut sim_setup =
+            setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
+
+        let third_move = sim_setup.game_actions.pop().unwrap();
+
+        // Proposal sends potato from player 0 to player 1, updating player 1's
+        // last_channel_coin_spend_info to reflect the state after both moves.
+        sim_setup.game_actions.push(GameAction::ProposeNewGame(0));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(3, 0));
+        // NOW snapshot: player 1 just received the proposal potato, so their
+        // cached spend info includes the correct game PH (after 2 moves).
+        sim_setup.game_actions.push(GameAction::SaveUnrollSnapshot(1));
+        sim_setup.game_actions.push(GameAction::AcceptProposal(1));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+        // Third move with player 1's reply nerfed: player 0 sends the move,
+        // player 1 receives but reply is dropped → cached_last_actions set.
+        sim_setup.game_actions.push(GameAction::NerfMessages(1));
+        sim_setup.game_actions.push(third_move);
+        sim_setup.game_actions.push(GameAction::UnNerfMessages);
+        // Nerf both to prevent preemption during channel coin spend detection.
+        sim_setup.game_actions.push(GameAction::NerfTransactions(0));
+        sim_setup.game_actions.push(GameAction::NerfTransactions(1));
+        sim_setup.game_actions.push(GameAction::ForceStaleUnroll(1));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(2, 2));
+        sim_setup.game_actions.push(GameAction::UnNerfTransactions);
+        sim_setup.game_actions.push(GameAction::WaitBlocks(120, 2));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+
+        let outcome = run_game_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &mut rng,
+            sim_setup.private_keys.clone(),
+            &sim_setup.identities,
+            b"debug",
+            &sim_setup.args_program,
+            &sim_setup.game_actions,
+            Some(&|_, cradles| {
+                cradles[0].is_on_chain() || cradles[0].is_failed()
+            }),
+            Some(200),
+            false,
+        )
+        .expect("should finish");
+
+        assert!(
+            !outcome.cradles[0].is_failed(),
+            "player 0 should NOT be in Failed state"
+        );
+
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        assert!(
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentStaleUnroll { .. })),
+            "player 0 should get OpponentStaleUnroll, got: {p0_notifs:?}"
+        );
+        assert!(
+            !p0_notifs.iter().any(|n| matches!(n, GameNotification::GameError { .. })),
+            "player 0 should NOT get GameError (redo should recover), got: {p0_notifs:?}"
+        );
+        assert!(
+            !p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelError { .. })),
+            "player 0 should NOT get ChannelError, got: {p0_notifs:?}"
+        );
+    }));
+
+    res.push(("test_stale_unroll_game_at_error_state", &|| {
+        let mut allocator = AllocEncoder::new();
+        let seed_data: [u8; 32] = [0; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed_data);
+
+        let moves = [
+            DebugGameTestMove::new(100, 0),
+            DebugGameTestMove::new(50, 0),
+        ];
+        let mut sim_setup =
+            setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
+
+        let second_move = sim_setup.game_actions.pop().unwrap();
+        sim_setup.game_actions.push(GameAction::SaveUnrollSnapshot(1));
+        // Move 2 changes the game PH.
+        sim_setup.game_actions.push(second_move);
+        // Proposal round-trip advances last_received_state past the snapshot
+        // so the stale detection triggers.
+        sim_setup.game_actions.push(GameAction::ProposeNewGame(0));
+        sim_setup.game_actions.push(GameAction::AcceptProposal(1));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+        // Nerf both to prevent preemption during channel coin spend detection.
+        sim_setup.game_actions.push(GameAction::NerfTransactions(0));
+        sim_setup.game_actions.push(GameAction::NerfTransactions(1));
+        sim_setup.game_actions.push(GameAction::ForceStaleUnroll(1));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(2, 2));
+        sim_setup.game_actions.push(GameAction::UnNerfTransactions);
+        sim_setup.game_actions.push(GameAction::WaitBlocks(120, 2));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+
+        let outcome = run_game_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &mut rng,
+            sim_setup.private_keys.clone(),
+            &sim_setup.identities,
+            b"debug",
+            &sim_setup.args_program,
+            &sim_setup.game_actions,
+            Some(&|_, cradles| {
+                cradles[0].is_on_chain() || cradles[0].is_failed()
+            }),
+            Some(200),
+            false,
+        )
+        .expect("should finish");
+
+        assert!(
+            !outcome.cradles[0].is_failed(),
+            "player 0 should NOT be in Failed state"
+        );
+
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        assert!(
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentStaleUnroll { .. })),
+            "player 0 should get OpponentStaleUnroll, got: {p0_notifs:?}"
+        );
+        assert!(
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::GameError { .. })),
+            "player 0 should get GameError for the unrecoverable game, got: {p0_notifs:?}"
+        );
+        assert!(
+            !p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelError { .. })),
+            "player 0 should NOT get ChannelError, got: {p0_notifs:?}"
         );
     }));
 
