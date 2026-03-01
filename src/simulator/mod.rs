@@ -650,63 +650,52 @@ pub fn run_simulation_tests() {
         eprintln!("{trace}");
         std::process::exit(1);
     }));
-    if let Err(e) = std::panic::catch_unwind(|| {
-        let ref_lists: Vec<Vec<(&str, &dyn Fn())>> = vec![
-            divmod_tests(),
-            standard_coin_tests(),
-            chialisp_tests(),
-            calpoker_game_tests(),
-            calpoker_validation_tests(),
-            calpoker_handler_tests(),
-            channel_handler_tests(),
-            debug_game_tests(),
-            potato_handler_tests(),
-            simenv_tests(),
-            calpoker_tests(),
-            potato_handler_sim_tests(),
-        ];
+    let ref_lists: Vec<Vec<(&str, &dyn Fn())>> = vec![
+        divmod_tests(),
+        standard_coin_tests(),
+        chialisp_tests(),
+        calpoker_game_tests(),
+        calpoker_validation_tests(),
+        calpoker_handler_tests(),
+        channel_handler_tests(),
+        debug_game_tests(),
+        potato_handler_tests(),
+        simenv_tests(),
+        calpoker_tests(),
+        potato_handler_sim_tests(),
+    ];
 
-        let from_filter: Option<String> = std::env::var("SIM_TEST_FROM")
-            .ok()
-            .filter(|s| !s.is_empty());
+    let from_filter: Option<String> = std::env::var("SIM_TEST_FROM")
+        .ok()
+        .filter(|s| !s.is_empty());
 
-        let all_tests: Vec<_> = ref_lists.iter()
-            .flat_map(|set| set.iter())
-            .collect();
+    let all_tests: Vec<_> = ref_lists.iter()
+        .flat_map(|set| set.iter())
+        .collect();
 
-        let start_idx = if let Some(ref f) = from_filter {
-            match all_tests.iter().position(|(name, _)| name.contains(f.as_str())) {
-                Some(idx) => idx,
-                None => {
-                    eprintln!("ERROR: no test name contains '{f}'");
-                    eprintln!("Available tests:");
-                    for (name, _) in &all_tests {
-                        eprintln!("  {name}");
-                    }
-                    panic!("SIM_TEST_FROM='{f}' matched no tests");
+    let start_idx = if let Some(ref f) = from_filter {
+        match all_tests.iter().position(|(name, _)| name.contains(f.as_str())) {
+            Some(idx) => idx,
+            None => {
+                eprintln!("ERROR: no test name contains '{f}'");
+                eprintln!("Available tests:");
+                for (name, _) in &all_tests {
+                    eprintln!("  {name}");
                 }
+                panic!("SIM_TEST_FROM='{f}' matched no tests");
             }
-        } else {
-            0
-        };
-
-        let rotated = all_tests[start_idx..].iter()
-            .chain(all_tests[..start_idx].iter());
-
-        for (name, f) in rotated {
-            eprintln!("RUNNING TEST {} ...", name);
-            f();
-            eprintln!("{} ... ok\n", name);
         }
-    }) {
-        if let Some(s) = e.downcast_ref::<&str>() {
-            eprintln!("panic: {s}");
-        } else if let Some(s) = e.downcast_ref::<String>() {
-            eprintln!("panic: {s}");
-        } else {
-            eprintln!("panic: <non-string payload>");
-        }
-        std::process::exit(1);
+    } else {
+        0
+    };
+
+    let rotated = all_tests[start_idx..].iter()
+        .chain(all_tests[..start_idx].iter());
+
+    for (name, f) in rotated {
+        eprintln!("RUNNING TEST {} ...", name);
+        f();
+        eprintln!("{} ... ok\n", name);
     }
 }
 
@@ -716,7 +705,7 @@ mod test {
 
     /// Run simulation tests. Set `SIM_TEST_FROM=<substring>` to start from
     /// the first matching test and wraparound through all tests.
-    /// Use the `ct` script: `ct` runs all, `ct accept_finished` starts there.
+    /// Use `./ct.sh`: `./ct.sh` runs all, `./ct.sh accept_finished` starts there.
     #[test]
     fn sim_tests() {
         run_simulation_tests();

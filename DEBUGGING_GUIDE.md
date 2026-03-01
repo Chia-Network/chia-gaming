@@ -5,36 +5,36 @@ tests. It is intended as a reference for future sessions.
 
 ## Building and Running Tests
 
-### Use `./cb` and `./ct`
+### Use `./cb.sh` and `./ct.sh`
 
-**Always use `./ct` to run tests. Never use `cargo test` directly.** The `./ct`
-script handles feature flags (`--features sim-tests`), output capture
+**Always use `./ct.sh` to run tests. Never use `cargo test` directly.** The
+`./ct.sh` script handles feature flags (`--features sim-tests`), output capture
 (`--nocapture`), log rotation, and wraparound test ordering. Running `cargo test`
 manually is error-prone: you might forget `--features sim-tests`, forget
 `--nocapture`, or use `--filter` which hides output from other tests.
 
-- **`./cb`** — Build with sim-tests feature. Passes extra args to cargo
-  (e.g. `./cb --release`).
-- **`./ct`** — Run all sim tests.
-  - `./ct` — runs all tests in normal order. **This is the default.** Always
+- **`./cb.sh`** — Build with sim-tests feature. Passes extra args to cargo
+  (e.g. `./cb.sh --release`).
+- **`./ct.sh`** — Run all sim tests.
+  - `./ct.sh` — runs all tests in normal order. **This is the default.** Always
     run all tests with no filter. The full output includes `--nocapture` so you
     see all debug output, panics, and event dumps without needing a second run.
-  - `./ct accept_finished` — starts at the first test matching `accept_finished`,
-    runs through the end, wraps back to the beginning, and finishes right before
-    where it started. Every test runs exactly once. Use this when debugging a
-    specific failure: the test you care about runs first, then you confirm nothing
-    else broke.
+  - `./ct.sh accept_finished` — starts at the first test matching
+    `accept_finished`, runs through the end, wraps back to the beginning, and
+    finishes right before where it started. Every test runs exactly once. Use
+    this when debugging a specific failure: the test you care about runs first,
+    then you confirm nothing else broke.
   - If the argument doesn't match any test name, you get a clear error listing
     all available tests.
 
 **Do NOT use `cargo test` with `--filter` or test name arguments.** This runs
 only matching tests and hides output from others, forcing you to re-run just to
-see what happened. Use `./ct` with no arguments to get everything in one pass,
-then grep the output for the specific test or error you care about.
+see what happened. Use `./ct.sh` with no arguments to get everything in one
+pass, then grep the output for the specific test or error you care about.
 
 ### Running tests directly (without scripts)
 
-If you must bypass the scripts, replicate what `ct` does:
+If you must bypass the scripts, replicate what `ct.sh` does:
 
 ```bash
 cargo test --features sim-tests -- --nocapture
@@ -53,12 +53,12 @@ SIM_TEST_FROM=accept_finished cargo test --features sim-tests -- --nocapture
 
 If you need to save test output for later filtering, pipe through `tee`:
 ```bash
-./ct 2>&1 | tee /tmp/test-output.log
+./ct.sh 2>&1 | tee /tmp/test-output.log
 ```
 
 Then filter as needed:
 ```bash
-rg "resync|SEND_POTATO" /tmp/test-output.log
+rg "RUNNING TEST|panic" /tmp/test-output.log
 ```
 
 ### Waiting for test processes to finish
@@ -73,9 +73,13 @@ Typical durations:
 
 ### How to check pass/fail
 
+The test runner's exit code is reliable: nonzero means a test failed. A panic
+kills the process immediately (`std::process::exit(1)` in the panic hook), so
+the failing test is always the last one in the output.
+
 ```bash
 # Summary of all test results:
-./ct 2>&1 | rg "RUNNING TEST|ok|panic"
+./ct.sh 2>&1 | rg "RUNNING TEST|ok|panic"
 ```
 
 This gives you lines like:
@@ -87,15 +91,14 @@ panic payload: tx include failed: ...
 ```
 
 A test that shows `RUNNING TEST` but no `... ok` line (and instead has `panic`
-lines) has failed.
+lines) has failed. Since panics kill the process, the failing test is always the
+last `RUNNING TEST` in the output.
 
 ### How to find panics in the output
 
-**Critical:** The test runner uses `catch_unwind` to prevent panics from killing
-the process. This means:
-- A test can panic (fail) but the runner **continues** to the next test.
-- The overall exit code is nonzero if any test panicked.
-- **Always grep for `panic`** rather than trusting exit code alone.
+The panic hook prints a `panic payload:` line followed by a full backtrace, then
+exits the process immediately. The failing test is always the last one — look at
+the tail of the output.
 
 Panic output looks like this in the log:
 ```
@@ -106,23 +109,21 @@ panic payload: tx include failed: move_number=10 tx_name=Some("false accept tran
 
 The `panic payload:` line has the actual error message.
 
-### How to get targeted debug info without the spew
+### How to get targeted debug info
+
+Internal debug output uses `log::debug!` and only appears when `RUST_LOG` is
+set (e.g., `RUST_LOG=debug`). The test runner itself emits `RUNNING TEST` and
+`panic payload:` lines via `eprintln!`, which are always visible.
+
+For ad-hoc debugging, add targeted `eprintln!()` calls with a distinctive
+prefix so you can grep for them. Remove after the issue is fixed.
 
 ```bash
 # Last 50 lines (usually shows the final result or panic):
 tail -50 /tmp/test-output.log
 
-# Specific debug lines:
-rg "TIMEOUT|SET_STATE|panic" /tmp/test-output.log
-
-# Trace both players' coin spent events:
-rg "COIN-SPENT|THEIR_TURN|TIMEOUT|REDO" /tmp/test-output.log
-
-# Trace unroll/preemption:
-rg "CHANNEL_COIN_SPENT|PREEMPTION|UNROLL" /tmp/test-output.log
-
-# Trace the redo mechanism:
-rg "SET_STATE_FOR_COINS|GET_REDO|FINISH_REDO|DO_REDO" /tmp/test-output.log
+# Find the failing test and its panic:
+rg "RUNNING TEST|panic" /tmp/test-output.log
 ```
 
 ### Test registration
@@ -149,8 +150,6 @@ After the unroll coin resolves (timeout or preemption), game coins are created.
    redo. The game coin is at the state before our cached move. Queue `RedoMove`.
 2. **Coin PH == `last_referee_puzzle_hash`**: Latest state. No redo needed.
 3. **Neither**: Error.
-
-### Diagnostic output
 
 ## Timeouts and Timelocks
 
@@ -194,12 +193,6 @@ number. Each player compares it against their own state:
 
 Preemption is immediate; timeouts wait. This prevents conflicting transactions.
 
-### Diagnostic output
-
-- `CHANNEL_COIN_SPENT: → preemption path` — preemption triggered
-- `CHANNEL_COIN_SPENT: → timeout path` — waiting for timeout
-- `PREEMPTION: old_sn=... unroll_sn=... preempt_source_sn=...`
-
 ## ResyncMove and Simulation Stalls
 
 When a game coin is spent with redo data, `handle_game_coin_spent` emits
@@ -231,9 +224,10 @@ After the fix:
 
 ### How to diagnose stalls
 
-```bash
-rg "SIM_RESYNC|simulation stalled|SIM_MOVE" /tmp/test-output.log
-```
+The `simulation stalled` panic message includes `move_number`, `can_move`, and
+`next_action`. If the stall involves a redo, add `eprintln!` in
+`handle_game_coin_spent` and the resync walkback to trace which player triggered
+it and what action was found.
 
 ### Test design: turn alignment after redo
 
@@ -281,15 +275,15 @@ off-chain moves to ensure the correct player's turn after the redo:
 
 ### Process and output management
 
-1. **Always use `./ct` with no filter.** Run the full suite and grep the output.
-   Never use `cargo test` directly or with `--filter` — it hides output you'll
-   need later and forces re-runs.
+1. **Always use `./ct.sh` with no filter.** Run the full suite and grep the
+   output. Never use `cargo test` directly or with `--filter` — it hides output
+   you'll need later and forces re-runs.
 
 2. **Pipe through `tee` if you need to re-filter later.** Otherwise the direct
    output is fine — debug spew has been cleaned up.
 
-3. **The first panic kills the rest of the test output.** Look at the tail of
-   the output to find the relevant failure.
+3. **A panic kills the process immediately.** The failing test is always the
+   last one in the output. Look at the tail to find it.
 
 ### Finding and interpreting failures
 
@@ -303,9 +297,10 @@ off-chain moves to ensure the correct player's turn after the redo:
 
 ### Code-level debugging
 
-6. **Add targeted `eprintln!()` calls** to the specific function you're
-   investigating. Use a distinctive prefix (e.g., `MY_DEBUG:`) so you can
-   grep for it. Remove after the issue is fixed.
+6. **Add targeted `eprintln!()` calls** with a distinctive prefix (e.g.,
+   `MY_DEBUG:`) to the specific function you're investigating so you can grep
+   for it. Internal debug output uses `log::debug!` and requires `RUST_LOG` to
+   be visible; `eprintln!` is always visible. Remove after the issue is fixed.
 
 7. **Trace the coin lifecycle** when debugging puzzle hash mismatches:
    - What puzzle hash was the coin created with?
@@ -316,10 +311,10 @@ off-chain moves to ensure the correct player's turn after the redo:
 
 ### Mistakes to avoid
 
-- **Don't use `cargo test` with filters** — use `./ct` and grep the full output.
+- **Don't use `cargo test` with filters** — use `./ct.sh` and grep the full output.
 - **Don't use `head` to read test output** — early output is build noise.
-- **Don't assume exit code 0 means all tests passed.** Always grep for `panic`.
+- **Exit code is reliable.** Nonzero means a test panicked.
 - **Don't forget `2>&1`** when piping test output. Some output goes to stderr.
-- **Don't run tests in the background.** Run `./ct` or `./cb` in the foreground
-  and wait for them to finish. Background execution with sleep-based polling
-  wastes time and makes output harder to capture.
+- **Don't run tests in the background.** Run `./ct.sh` or `./cb.sh` in the
+  foreground and wait for them to finish. Background execution with sleep-based
+  polling wastes time and makes output harder to capture.
