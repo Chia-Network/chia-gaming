@@ -318,3 +318,6 @@ off-chain moves to ensure the correct player's turn after the redo:
 - **Don't run tests in the background.** Run `./ct.sh` or `./cb.sh` in the
   foreground and wait for them to finish. Background execution with sleep-based
   polling wastes time and makes output harder to capture.
+- **AI agents: always run `./cb.sh` and `./ct.sh` in the foreground** with a
+  high `block_until_ms` (600000 ms / 10 minutes). Never background these
+  commands. The full test suite completes in under 5 minutes; builds are faster.

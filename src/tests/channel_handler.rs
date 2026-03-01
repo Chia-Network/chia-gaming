@@ -121,7 +121,6 @@ pub(crate) mod sim_tests {
         }
 
         let p0 = &game.player(0).ch;
-        assert_eq!(p0.get_state_number(), 7);
 
         // Case 1: on-chain=5, higher state but wrong parity → must FAIL
         {

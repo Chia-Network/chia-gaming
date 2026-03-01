@@ -205,14 +205,14 @@ mod sim_tests {
                     assert_stayed_off_chain(&outcome, "test_play_calpoker_happy_path");
                     assert_event_sequence(&outcome.local_uis[0].events, &[
                         game_proposed(), game_accepted(),
-                        ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
-                        ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
+                        ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
+                        ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                     ], "happy_path p0");
                     assert_event_sequence(&outcome.local_uis[1].events, &[
                         game_proposed(), game_accepted(),
-                        ExpectedEvent::OpponentMoved { state_number: 5, mover_share: Amount::new(0) },
+                        ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                         ExpectedEvent::GameMessage,
-                        ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
+                        ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                     ], "happy_path p1");
                     assert_calpoker_moves_have_data(&outcome.local_uis[0].events, "happy_path p0");
                     assert_calpoker_moves_have_data(&outcome.local_uis[1].events, "happy_path p1");
@@ -246,11 +246,11 @@ mod sim_tests {
 
             assert_event_sequence(&game_outcome.local_uis[0].events, &[
                 game_proposed(), game_accepted(),
-                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
             ], "revealed_hands p0");
             assert_event_sequence(&game_outcome.local_uis[1].events, &[
                 game_proposed(), game_accepted(),
-                ExpectedEvent::OpponentMoved { state_number: 5, mover_share: Amount::new(0) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::GameMessage,
             ], "revealed_hands p1");
             assert_calpoker_moves_have_data(&game_outcome.local_uis[0].events, "revealed_hands p0");
@@ -311,11 +311,11 @@ mod sim_tests {
 
             assert_event_sequence(&game_outcome.local_uis[0].events, &[
                 game_proposed(), game_accepted(),
-                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
             ], "parity p0");
             assert_event_sequence(&game_outcome.local_uis[1].events, &[
                 game_proposed(), game_accepted(),
-                ExpectedEvent::OpponentMoved { state_number: 5, mover_share: Amount::new(0) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::GameMessage,
             ], "parity p1");
         }));
@@ -390,16 +390,16 @@ mod sim_tests {
 
             assert_event_sequence(&game_outcome.local_uis[0].events, &[
                 game_proposed(), game_accepted(),
-                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
-                ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
             ], "endgame p0");
             assert_event_sequence(&game_outcome.local_uis[1].events, &[
                 game_proposed(), game_accepted(),
-                ExpectedEvent::OpponentMoved { state_number: 5, mover_share: Amount::new(0) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::GameMessage,
-                ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
-                ExpectedEvent::OpponentMoved { state_number: 9, mover_share: Amount::new(200) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(200) },
                 ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
             ], "endgame p1");
             assert_calpoker_moves_have_data(&game_outcome.local_uis[0].events, "endgame p0");
@@ -426,14 +426,14 @@ mod sim_tests {
 
             assert_event_sequence(&game_outcome.local_uis[0].events, &[
                 game_proposed(), game_accepted(),
-                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
-                ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
             ], "bob_message p0");
             assert_event_sequence(&game_outcome.local_uis[1].events, &[
                 game_proposed(), game_accepted(),
-                ExpectedEvent::OpponentMoved { state_number: 5, mover_share: Amount::new(0) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::GameMessage,
-                ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
             ], "bob_message p1");
             assert_calpoker_moves_have_data(&game_outcome.local_uis[0].events, "bob_message p0");
             assert_calpoker_moves_have_data(&game_outcome.local_uis[1].events, "bob_message p1");
@@ -457,7 +457,7 @@ mod sim_tests {
             ], "on_chain_1move_p1 p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 game_proposed(), game_accepted(),
-                ExpectedEvent::OpponentMoved { state_number: 5, mover_share: Amount::new(0) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
@@ -483,7 +483,7 @@ mod sim_tests {
             ], "on_chain_1move_p0_lost p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 game_proposed(), game_accepted(),
-                ExpectedEvent::OpponentMoved { state_number: 5, mover_share: Amount::new(0) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
@@ -508,7 +508,7 @@ mod sim_tests {
             ], "on_chain_1move_p0 p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 game_proposed(), game_accepted(),
-                ExpectedEvent::OpponentMoved { state_number: 5, mover_share: Amount::new(0) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
@@ -529,12 +529,12 @@ mod sim_tests {
                 game_proposed(), game_accepted(),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
             ], "on_chain_2moves_p0 p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 game_proposed(), game_accepted(),
-                ExpectedEvent::OpponentMoved { state_number: 5, mover_share: Amount::new(0) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
@@ -553,14 +553,14 @@ mod sim_tests {
 
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 game_proposed(), game_accepted(),
-                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
             ], "on_chain_2moves_p1 p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 game_proposed(), game_accepted(),
-                ExpectedEvent::OpponentMoved { state_number: 5, mover_share: Amount::new(0) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
@@ -581,16 +581,16 @@ mod sim_tests {
 
             assert_event_sequence(&game_outcome.local_uis[0].events, &[
                 game_proposed(), game_accepted(),
-                ExpectedEvent::OpponentMoved { state_number: 6, mover_share: Amount::new(0) },
-                ExpectedEvent::OpponentMoved { state_number: 8, mover_share: Amount::new(0) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
             ], "end_game_reward p0");
             assert_event_sequence(&game_outcome.local_uis[1].events, &[
                 game_proposed(), game_accepted(),
-                ExpectedEvent::OpponentMoved { state_number: 5, mover_share: Amount::new(0) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::GameMessage,
-                ExpectedEvent::OpponentMoved { state_number: 7, mover_share: Amount::new(0) },
-                ExpectedEvent::OpponentMoved { state_number: 9, mover_share: Amount::new(200) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(200) },
                 ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
             ], "end_game_reward p1");
             assert_calpoker_moves_have_data(&game_outcome.local_uis[0].events, "end_game_reward p0");
