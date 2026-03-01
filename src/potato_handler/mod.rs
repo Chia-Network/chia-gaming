@@ -768,10 +768,14 @@ impl PotatoHandler {
         let mut batch_actions: Vec<BatchAction> = Vec::new();
         let mut clean_shutdown_data: Option<(Aggsig, ProgramRef)> = None;
         let mut deferred = VecDeque::new();
+        let mut insufficient_balance_games: HashSet<GameID> = HashSet::new();
 
         while let Some(action) = self.game_action_queue.pop_front() {
             match action {
                 GameAction::Move(game_id, readable_move, new_entropy) => {
+                    if insufficient_balance_games.contains(&game_id) {
+                        continue;
+                    }
                     let ch = self.channel_handler_mut()?;
                     let game_is_my_turn = ch.game_is_my_turn(&game_id);
                     if let Some(true) = game_is_my_turn {
@@ -809,10 +813,25 @@ impl PotatoHandler {
                         let ch = self.channel_handler_mut()?;
                         let proposal = ch.find_proposal(&game_id);
                         if proposal.is_none() {
-                            return Err(Error::StrErr(format!("no proposal with id {game_id:?}")));
+                            effects.push(Effect::Notification(GameNotification::GameCancelled {
+                                id: game_id.clone(),
+                            }));
+                            continue;
                         }
-                        if proposal.unwrap().proposed_by_us {
+                        let proposal = proposal.unwrap();
+                        if proposal.proposed_by_us {
                             return Err(Error::StrErr("cannot accept own proposal".to_string()));
+                        }
+                        let our_short = proposal.my_contribution > ch.my_out_of_game_balance();
+                        let their_short = proposal.their_contribution > ch.their_out_of_game_balance();
+                        if our_short || their_short {
+                            effects.push(Effect::Notification(GameNotification::InsufficientBalance {
+                                id: game_id.clone(),
+                                our_balance_short: our_short,
+                                their_balance_short: their_short,
+                            }));
+                            insufficient_balance_games.insert(game_id);
+                            continue;
                         }
                         ch.send_accept_proposal(&game_id)?;
                     }
@@ -824,6 +843,9 @@ impl PotatoHandler {
                 GameAction::QueuedCancelProposal(game_id) => {
                     {
                         let ch = self.channel_handler_mut()?;
+                        if !ch.is_game_proposed(&game_id) {
+                            continue;
+                        }
                         ch.send_cancel_proposal(&game_id)?;
                     }
                     effects.push(Effect::Notification(GameNotification::GameProposalCancelled {
@@ -2079,6 +2101,7 @@ impl PotatoHandler {
                 CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
 
             let reward_puzzle_hash = player_ch.get_reward_puzzle_hash(env)?;
+            let their_reward_puzzle_hash = player_ch.get_opponent_reward_puzzle_hash();
             let unroll_coin_id = unroll_coin.to_coin_id();
             let reward_coin = conditions.iter().find_map(|c| {
                 if let CoinCondition::CreateCoin(ph, amt) = c {
@@ -2096,7 +2119,10 @@ impl PotatoHandler {
                 .iter()
                 .filter_map(|c| {
                     if let CoinCondition::CreateCoin(ph, amt) = c {
-                        if *amt > Amount::default() {
+                        if *amt > Amount::default()
+                            && *ph != reward_puzzle_hash
+                            && *ph != their_reward_puzzle_hash
+                        {
                             return Some(ph.clone());
                         }
                     }

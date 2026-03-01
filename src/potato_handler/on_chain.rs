@@ -78,6 +78,10 @@ impl OnChainPotatoHandler {
         }
     }
 
+    fn try_emit_terminal(&self, _game_id: &GameID, notification: GameNotification) -> Option<Effect> {
+        Some(Effect::Notification(notification))
+    }
+
     pub fn enable_cheating_for_game(
         &mut self,
         game_id: &GameID,
@@ -303,10 +307,15 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     None
                 })
                 .unwrap_or_default();
-            effects.push(Effect::Notification(GameNotification::WeSlashedOpponent {
-                id: old_definition.game_id.clone(),
-                reward_coin,
-            }));
+            if let Some(eff) = self.try_emit_terminal(
+                &old_definition.game_id,
+                GameNotification::WeSlashedOpponent {
+                    id: old_definition.game_id.clone(),
+                    reward_coin,
+                },
+            ) {
+                effects.push(eff);
+            }
             effects.extend(self.next_action(env)?);
             return Ok(effects);
         }
@@ -324,17 +333,21 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             if let Some((ph, amt)) = created {
                 if ph == reward_ph {
                     if !old_definition.notification_sent {
-
                         let reward_coin = if amt > Amount::default() {
                             Some(CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt))
                         } else {
                             None
                         };
-                        effects.push(Effect::Notification(GameNotification::WeTimedOut {
-                            id: old_definition.game_id.clone(),
-                            our_reward: amt,
-                            reward_coin,
-                        }));
+                        if let Some(eff) = self.try_emit_terminal(
+                            &old_definition.game_id,
+                            GameNotification::WeTimedOut {
+                                id: old_definition.game_id.clone(),
+                                our_reward: amt,
+                                reward_coin,
+                            },
+                        ) {
+                            effects.push(eff);
+                        }
                     }
                 } else {
                     // The accepted coin was spent by a game move (e.g. the
@@ -382,10 +395,15 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         } else {
             debug!("failed result {result:?}");
             if !game_already_ended {
-                effects.push(Effect::Notification(GameNotification::GameError {
-                    id: old_definition.game_id.clone(),
-                    reason: format!("game_coin_spent failed: {result:?}"),
-                }));
+                if let Some(eff) = self.try_emit_terminal(
+                    &old_definition.game_id,
+                    GameNotification::GameError {
+                        id: old_definition.game_id.clone(),
+                        reason: format!("game_coin_spent failed: {result:?}"),
+                    },
+                ) {
+                    effects.push(eff);
+                }
             }
             effects.extend(self.next_action(env)?);
             return Ok(effects);
@@ -403,10 +421,15 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     | CoinSpentInformation::OurReward(..)
             );
             if !is_expected {
-                effects.push(Effect::Notification(GameNotification::GameError {
-                    id: old_definition.game_id.clone(),
-                    reason: format!("our turn coin spent unexpectedly: {their_turn_result:?}"),
-                }));
+                if let Some(eff) = self.try_emit_terminal(
+                    &old_definition.game_id,
+                    GameNotification::GameError {
+                        id: old_definition.game_id.clone(),
+                        reason: format!("our turn coin spent unexpectedly: {their_turn_result:?}"),
+                    },
+                ) {
+                    effects.push(eff);
+                }
                 effects.extend(self.next_action(env)?);
                 return Ok(effects);
             }
@@ -476,26 +499,28 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     .map(|(_, _, amt)| amt.clone())
                     .unwrap_or_default();
                 if !game_already_ended && !old_definition.notification_sent {
-                    if old_definition.our_turn {
-
-                        effects.push(Effect::Notification(GameNotification::WeTimedOut {
+                    let notif = if old_definition.our_turn {
+                        GameNotification::WeTimedOut {
                             id: old_definition.game_id.clone(),
                             our_reward: amount.clone(),
                             reward_coin: my_reward_coin_string.clone(),
-                        }));
+                        }
                     } else {
                         let has_rem = conditions.iter().any(|c| matches!(c, CoinCondition::Rem(_)));
                         if has_rem {
-                            effects.push(Effect::Notification(GameNotification::OpponentSlashedUs {
+                            GameNotification::OpponentSlashedUs {
                                 id: old_definition.game_id.clone(),
-                            }));
+                            }
                         } else {
-                            effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
+                            GameNotification::OpponentTimedOut {
                                 id: old_definition.game_id.clone(),
                                 our_reward: amount.clone(),
                                 reward_coin: my_reward_coin_string.clone(),
-                            }));
+                            }
                         }
+                    };
+                    if let Some(eff) = self.try_emit_terminal(&old_definition.game_id, notif) {
+                        effects.push(eff);
                     }
                 }
                 unblock_queue = true;
@@ -604,33 +629,40 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                         });
                     }
                     SlashOutcome::NoReward => {
-                        effects.push(Effect::Notification(GameNotification::OpponentSlashedUs {
-                            id: old_definition.game_id.clone(),
-                        }));
+                        if let Some(eff) = self.try_emit_terminal(
+                            &old_definition.game_id,
+                            GameNotification::OpponentSlashedUs {
+                                id: old_definition.game_id.clone(),
+                            },
+                        ) {
+                            effects.push(eff);
+                        }
                     }
                 }
             }
             CoinSpentInformation::OurReward(ph, amt) => {
                 debug!("{initial_potato} our reward coin was spent");
                 if !game_already_ended && !old_definition.notification_sent {
-
                     let reward_coin = if amt > Amount::default() {
                         Some(CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt))
                     } else {
                         None
                     };
-                    if old_definition.our_turn {
-                        effects.push(Effect::Notification(GameNotification::WeTimedOut {
+                    let notif = if old_definition.our_turn {
+                        GameNotification::WeTimedOut {
                             id: old_definition.game_id.clone(),
                             our_reward: amt,
                             reward_coin,
-                        }));
+                        }
                     } else {
-                        effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
+                        GameNotification::OpponentTimedOut {
                             id: old_definition.game_id.clone(),
                             our_reward: amt,
                             reward_coin,
-                        }));
+                        }
+                    };
+                    if let Some(eff) = self.try_emit_terminal(&old_definition.game_id, notif) {
+                        effects.push(eff);
                     }
                 }
                 unblock_queue = true;
@@ -671,11 +703,16 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 } else {
                     None
                 };
-                effects.push(Effect::Notification(GameNotification::OpponentSuccessfullyCheated {
-                    id: game_id.clone(),
-                    our_reward,
-                    reward_coin,
-                }));
+                if let Some(eff) = self.try_emit_terminal(
+                    &game_id,
+                    GameNotification::OpponentSuccessfullyCheated {
+                        id: game_id.clone(),
+                        our_reward,
+                        reward_coin,
+                    },
+                ) {
+                    effects.push(eff);
+                }
                 effects.extend(self.next_action(env)?);
                 return Ok(effects);
             }
@@ -717,18 +754,21 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
 
                 effects.push(Effect::SpendTransaction(spend_bundle));
 
-                if game_def.our_turn {
-                    effects.push(Effect::Notification(GameNotification::WeTimedOut {
+                let notif = if game_def.our_turn {
+                    GameNotification::WeTimedOut {
                         id: game_id.clone(),
                         our_reward,
                         reward_coin,
-                    }));
+                    }
                 } else {
-                    effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
+                    GameNotification::OpponentTimedOut {
                         id: game_id.clone(),
                         our_reward,
                         reward_coin,
-                    }));
+                    }
+                };
+                if let Some(eff) = self.try_emit_terminal(&game_id, notif) {
+                    effects.push(eff);
                 }
             } else {
                 let our_turn = game_def.our_turn;
@@ -791,18 +831,21 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 };
 
                 if !already_notified {
-                    if our_turn {
-                        effects.push(Effect::Notification(GameNotification::WeTimedOut {
+                    let notif = if our_turn {
+                        GameNotification::WeTimedOut {
                             id: game_id.clone(),
                             our_reward,
                             reward_coin,
-                        }));
+                        }
                     } else {
-                        effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
+                        GameNotification::OpponentTimedOut {
                             id: game_id.clone(),
                             our_reward,
                             reward_coin,
-                        }));
+                        }
+                    };
+                    if let Some(eff) = self.try_emit_terminal(&game_id, notif) {
+                        effects.push(eff);
                     }
                 }
             }

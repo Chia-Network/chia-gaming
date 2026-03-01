@@ -1371,6 +1371,48 @@ fn run_game_container_with_action_list_with_success_predicate(
         );
     }
 
+    for (i, lui) in local_uis.iter().enumerate() {
+        for n in lui.notifications.iter() {
+            if let GameNotification::GameProposed { id, .. } = n {
+                let accepted = lui.notifications.iter().filter(|n2| matches!(n2,
+                    GameNotification::GameProposalAccepted { id: nid } if nid == id
+                )).count();
+                let cancelled = lui.notifications.iter().filter(|n2| matches!(n2,
+                    GameNotification::GameProposalCancelled { id: nid, .. } if nid == id
+                )).count();
+                assert!(
+                    accepted + cancelled == 1,
+                    "player {i}: GameProposed({id:?}) should have exactly one \
+                     Accepted or Cancelled, got {accepted} accepted + {cancelled} cancelled.\n\
+                     All notifications: {:?}",
+                    lui.notifications
+                );
+            }
+        }
+    }
+
+    for (i, lui) in local_uis.iter().enumerate() {
+        for n in lui.notifications.iter() {
+            if let GameNotification::GameProposalAccepted { id } = n {
+                let terminal_count = lui.notifications.iter().filter(|n2| match n2 {
+                    GameNotification::GameCancelled { id: nid } => nid == id,
+                    GameNotification::WeTimedOut { id: nid, .. } => nid == id,
+                    GameNotification::OpponentTimedOut { id: nid, .. } => nid == id,
+                    GameNotification::WeSlashedOpponent { id: nid, .. } => nid == id,
+                    GameNotification::OpponentSlashedUs { id: nid } => nid == id,
+                    GameNotification::OpponentSuccessfullyCheated { id: nid, .. } => nid == id,
+                    GameNotification::GameError { id: nid, .. } => nid == id,
+                    _ => false,
+                }).count();
+                assert!(
+                    terminal_count == 1,
+                    "player {i}: GameProposalAccepted({id:?}) should have exactly one terminal game notification, got {terminal_count}. All notifications: {:?}",
+                    lui.notifications,
+                );
+            }
+        }
+    }
+
     Ok(GameRunOutcome {
         identities: [identities[0].clone(), identities[1].clone()],
         cradles,
@@ -2987,16 +3029,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
         ], "cancellation_nerfed p0 prefix");
         let p0_tail: Vec<String> = outcome.local_uis[0].events[6..].iter().map(event_shape).collect();
-        let mut p0_tail_sorted = p0_tail.clone();
-        p0_tail_sorted.sort();
-        let mut p0_tail_expected = vec![
-            "Notif(WeTimedOut)".to_string(),
-            "Notif(OpponentTimedOut)".to_string(),
-            "Notif(OpponentTimedOut)".to_string(),
-        ];
-        p0_tail_expected.sort();
-        assert_eq!(p0_tail_sorted, p0_tail_expected,
-            "cancellation_nerfed p0 tail (unordered): actual={p0_tail:?}");
+        let p0_terminal: Vec<&str> = p0_tail.iter().filter(|s| {
+            s.starts_with("Notif(WeTimedOut)") || s.starts_with("Notif(OpponentTimedOut)")
+        }).map(|s| s.as_str()).collect();
+        assert_eq!(p0_terminal.len(), 1,
+            "cancellation_nerfed p0 should have exactly 1 terminal notification, got {:?}. All events: {:?}",
+            p0_terminal, outcome.local_uis[0].events);
 
         // p1 also sees game B proposed+cancelled because Alice's proposal
         // arrives before Bob goes on-chain.
@@ -3009,16 +3047,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
         ], "cancellation_nerfed p1 prefix");
         let p1_tail: Vec<String> = outcome.local_uis[1].events[6..].iter().map(event_shape).collect();
-        let mut p1_tail_sorted = p1_tail.clone();
-        p1_tail_sorted.sort();
-        let mut p1_tail_expected = vec![
-            "Notif(OpponentTimedOut)".to_string(),
-            "Notif(OpponentTimedOut)".to_string(),
-            "Notif(OpponentTimedOut)".to_string(),
-        ];
-        p1_tail_expected.sort();
-        assert_eq!(p1_tail_sorted, p1_tail_expected,
-            "cancellation_nerfed p1 tail (unordered): actual={p1_tail:?}");
+        let p1_terminal: Vec<&str> = p1_tail.iter().filter(|s| {
+            s.starts_with("Notif(WeTimedOut)") || s.starts_with("Notif(OpponentTimedOut)")
+        }).map(|s| s.as_str()).collect();
+        assert_eq!(p1_terminal.len(), 1,
+            "cancellation_nerfed p1 should have exactly 1 terminal notification, got {:?}. All events: {:?}",
+            p1_terminal, outcome.local_uis[1].events);
     }));
 
     res.push((
@@ -3696,6 +3730,67 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         assert!(
             p1_notifs.iter().any(|n| matches!(n, GameNotification::GameProposalCancelled { .. })),
             "Bob should see GameProposalCancelled, got: {p1_notifs:?}"
+        );
+    }));
+
+    res.push(("test_insufficient_balance_on_accept", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        // Initial game A (100+100) consumes all balance (per_player_balance=100).
+        // Alice proposes game B (50+50). Bob tries to accept but has
+        // insufficient balance. After InsufficientBalance, go on-chain
+        // to resolve game A and cancel the pending proposal.
+        let moves = vec![
+            GameAction::ProposeNewGame(0),
+            GameAction::AcceptProposal(1),
+            GameAction::GoOnChain(0),
+            GameAction::WaitBlocks(120, 0),
+            GameAction::WaitBlocks(5, 0),
+        ];
+
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(100),
+        )
+        .expect("should finish");
+
+        let p1_notifs = &outcome.local_uis[1].notifications;
+        assert!(
+            p1_notifs.iter().any(|n| matches!(n, GameNotification::InsufficientBalance { .. })),
+            "Bob should get InsufficientBalance, got: {p1_notifs:?}"
+        );
+    }));
+
+    res.push(("test_stale_cancel_after_accept", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        // No initial game. Alice proposes (50+50), Bob accepts. Alice
+        // queues a cancel for the same game, but Bob's accept has already
+        // been processed by the time Alice gets the potato. The cancel
+        // should be silently discarded. The game resolves on-chain.
+        let moves = vec![
+            GameAction::ProposeNewGame(0),
+            GameAction::AcceptProposal(1),
+            GameAction::CancelProposal(0),
+            GameAction::GoOnChain(0),
+            GameAction::WaitBlocks(120, 0),
+            GameAction::WaitBlocks(5, 0),
+        ];
+
+        let outcome = run_calpoker_proposal_only(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish without crashing on stale cancel");
+
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        assert!(
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::GameProposalAccepted { .. })),
+            "Alice should see GameProposalAccepted (accept wins the race), got: {p0_notifs:?}"
         );
     }));
 

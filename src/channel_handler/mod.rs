@@ -1982,9 +1982,6 @@ impl ChannelHandler {
                     break;
                 }
 
-                // No cached action: determine our_turn from the referee.
-                // If the coin is at the latest state and the referee
-                // says it's our turn, we can move normally on-chain.
                 let our_turn = is_latest && live_game.is_my_turn();
                 res.insert(
                     coin_id,

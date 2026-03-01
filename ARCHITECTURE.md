@@ -262,6 +262,28 @@ Multiple proposals and acceptances can be batched in a single potato pass.
 Acceptances should be ordered before proposals in the batch to ensure funds
 freed by accepted games are available for new proposals.
 
+### Race Conditions in Proposal Lifecycle
+
+Because cancel and accept requests are queued and only sent when the potato is
+held, several race conditions can occur:
+
+- **Stale cancel:** A player queues `CancelProposal` but the proposal was
+  already accepted or cancelled by the peer before the cancel is sent. The
+  cancel is silently discarded — `drain_queue_into_batch` checks
+  `is_game_proposed()` and skips the cancel if the proposal is gone.
+
+- **Stale accept:** A player queues `AcceptProposal` but the proposal was
+  already cancelled by the peer before the accept is sent. A `GameCancelled`
+  notification is emitted to inform the acceptor that the game will not happen.
+
+- **Insufficient balance on accept:** When the potato arrives and
+  `drain_queue_into_batch` processes a `QueuedAcceptProposal`, it pre-checks
+  both players' available balances. If either player's contribution exceeds
+  their `out_of_game_balance`, an `InsufficientBalance` notification is emitted
+  and the accept is skipped. The proposal remains pending (a future accept can
+  retry once funds are freed). Any queued moves for that game in the same batch
+  are also skipped.
+
 ### WASM Accept-and-Move Convenience
 
 The WASM layer exposes an `accept_and_move` function that atomically accepts
@@ -1036,6 +1058,12 @@ cleanup and game-over transitions.
 unroll. A player who called `go_on_chain` will see `ChannelCoinSpent` when
 their own transaction is mined, exactly as if the opponent had initiated it.
 
+### Acceptance Notifications
+
+| Notification | When | Meaning |
+|--------------|------|---------|
+| `InsufficientBalance { id, our_balance_short, their_balance_short }` | Accept attempted with insufficient funds | The potato holder tried to accept a proposal but one or both players' contributions exceed available balance. The proposal remains pending and can be retried. |
+
 ### Game Outcome Notifications (Terminal)
 
 These are the terminal notifications — each signals that a game is finished.
@@ -1045,7 +1073,7 @@ The frontend should treat any of these as the "game ended" signal.
 |--------------|------|---------|
 | `WeTimedOut { id, our_reward, reward_coin }` | Game resolved in our favor | Includes off-chain accept (fires when potato returns) and on-chain timeout; `our_reward` is the amount we received; `reward_coin` is `Some(CoinString)` when on-chain and reward is nonzero, `None` for off-chain resolution |
 | `OpponentTimedOut { id, our_reward, reward_coin }` | Game resolved in opponent's favor | Includes receiving opponent's off-chain accept; `our_reward` is the amount we received; `reward_coin` is `Some(CoinString)` when on-chain and reward is nonzero, `None` for off-chain |
-| `GameCancelled { id }` | Unroll resolved without this game | Game existed off-chain but wasn't in the unroll conditions |
+| `GameCancelled { id }` | Unroll resolved without this game, or stale accept of already-cancelled proposal | Game existed off-chain but wasn't in the unroll conditions; also emitted when a queued `AcceptProposal` finds the proposal already gone |
 | `WeSlashedOpponent { id, reward_coin }` | Slash transaction confirmed | Opponent's illegal move was proven on-chain; `reward_coin` is the `CoinString` of the reward we received |
 | `OpponentSlashedUs { id }` | Opponent slashed us | Our move was proven illegal on-chain |
 | `OpponentSuccessfullyCheated { id, our_reward }` | Slash coin timed out | Opponent cheated and we failed to challenge in time; `our_reward` is the mover_share from their cheating move (what we actually ended up with) |
@@ -1069,6 +1097,33 @@ The frontend should treat any of these as the "game ended" signal.
 - **Accepted + opponent move is unreachable.** Since accept only happens on our
   turn, and only the mover can advance a game coin, the opponent cannot move on
   a coin where we already accepted. This path is a `debug_assert!` / `GameError`.
+- **Proposal resolution invariant.** Every `GameProposed` notification is
+  eventually followed by **exactly one** of `GameProposalAccepted` or
+  `GameProposalCancelled` for the same game ID. This holds for both the
+  proposer and the receiver. The `cancel_all_proposals()` call on every exit
+  path (go-on-chain, clean shutdown) is the catch-all that ensures no proposal
+  is left unresolved. Enforced by the simulation loop's post-test assertion.
+- **Post-acceptance terminal invariant.** Every `GameProposalAccepted`
+  notification is eventually followed by **exactly one** terminal game
+  notification for the same game ID. The terminal notifications are:
+  `GameCancelled`, `WeTimedOut`, `OpponentTimedOut`, `WeSlashedOpponent`,
+  `OpponentSlashedUs`, `OpponentSuccessfullyCheated`, or `GameError`.
+  Enforced by the simulation loop's post-test assertion.
+- **Acceptor-side resolution invariant.** For every call to `AcceptProposal`,
+  the acceptor should receive exactly one of: `InsufficientBalance`,
+  `GameCancelled` (stale accept), `WeTimedOut`, `OpponentTimedOut`,
+  `WeSlashedOpponent`, `OpponentSlashedUs`, `OpponentSuccessfullyCheated`, or
+  `GameError`. `InsufficientBalance` leaves the proposal pending for retry.
+- **Proposer-side resolution invariant.** For every proposal initiated, the
+  proposer should receive exactly one of: `GameProposalCancelled`,
+  `GameCancelled`, `WeTimedOut`, `OpponentTimedOut`, `WeSlashedOpponent`,
+  `OpponentSlashedUs`, `OpponentSuccessfullyCheated`, or `GameError`.
+- **Terminal notification deduplication.** The on-chain resolution path can
+  encounter the same game through multiple coin-spend events (e.g., redos,
+  accept transactions, timeout transactions). The `OnChainPotatoHandler`
+  maintains a `terminal_notified_games: HashSet<GameID>` that ensures at most
+  one terminal notification per game. Duplicate emissions are suppressed with
+  a debug log.
 
 **Key code:** `src/potato_handler/effects.rs`
 
