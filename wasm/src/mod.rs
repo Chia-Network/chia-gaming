@@ -72,13 +72,10 @@ mod gaming_wasm {
         "puzzle_hash": string,
     };
 
-    export type OpponentMove = [string, string];
-
     export type IdleResult = {
         "continue_on": boolean,
         "outbound_transactions": Array<SpendBundle>,
         "outbound_messages": Array<string>,
-        "opponent_move": OpponentMove | undefined,
     };
 
     export type GameCradleConfig = {
@@ -167,7 +164,6 @@ mod gaming_wasm {
 
     #[derive(Serialize, Deserialize, Default, Debug)]
     struct JsGameFactory {
-        version: i32,
         hex: String,
         #[serde(default)]
         parser_hex: Option<String>,
@@ -207,7 +203,6 @@ mod gaming_wasm {
         Ok((
             name_data,
             GameFactory {
-                version: js_factory.version as usize,
                 program: Program::from_bytes(&byte_data).into(),
                 parser_program,
             },
@@ -288,11 +283,6 @@ mod gaming_wasm {
         fn into_js(self) -> Self::EResult {
             self.map_err(|e| e.into_js())
         }
-    }
-
-    #[wasm_bindgen]
-    pub fn config_scaffold() -> Result<JsValue, JsValue> {
-        serde_wasm_bindgen::to_value(&JsGameCradleConfig::default()).into_js()
     }
 
     #[wasm_bindgen]
@@ -643,14 +633,15 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
+    #[deprecated(note = "Use the game_notification callback in idle() instead of polling state")]
     pub fn get_game_state_id(cid: i32) -> Result<Option<String>, JsValue> {
         with_game(cid, move |cradle: &mut JsCradle| {
             Ok(cradle.cradle.get_game_state_id(&mut cradle.allocator, &mut cradle.rng.0)?.map(|h| hex::encode(&h.bytes())))
         })
     }
 
-    // TODO: Resolve Amount(js+rs), (js)number, i32, u64
     #[wasm_bindgen]
+    #[deprecated(note = "Duplicate of cradle_amount; balance should come from notifications")]
     pub fn get_amount(cid: i32) -> Result<JsValue, JsValue> {
         serde_wasm_bindgen::to_value(&with_game(cid, move |cradle: &mut JsCradle| {
             Ok(JsAmount {
@@ -837,11 +828,8 @@ mod gaming_wasm {
         clean_shutdown_received: bool,
         outbound_transactions: Vec<JsSpendBundle>,
         outbound_messages: Vec<String>,
-        opponent_move: Option<(String, String)>,
         handshake_done: bool,
         receive_error: Option<String>,
-        action_queue: Vec<String>,
-        incoming_messages: Vec<String>,
     }
 
     fn spend_to_js(spend: &Spend) -> JsSpend {
@@ -863,10 +851,6 @@ mod gaming_wasm {
         JsSpendBundle {
             spends: spend_bundle.spends.iter().map(coin_spend_to_js).collect(),
         }
-    }
-
-    fn readable_move_to_hex(rm: &ReadableMove) -> Result<String, types::Error> {
-        Ok(rm.to_program().to_hex())
     }
 
     trait IntoE {
@@ -898,11 +882,6 @@ mod gaming_wasm {
     }
 
     fn idle_result_to_js(idle_result: &IdleResult) -> Result<JsValue, types::Error> {
-        let opponent_move = if let Some((gid, _sn, vs)) = &idle_result.opponent_move {
-            Some((game_id_to_string(gid), readable_move_to_hex(vs)?))
-        } else {
-            None
-        };
         serde_wasm_bindgen::to_value(&JsIdleResult {
             continue_on: idle_result.continue_on,
             finished: idle_result.finished,
@@ -917,10 +896,7 @@ mod gaming_wasm {
                 .iter()
                 .map(hex::encode)
                 .collect(),
-            opponent_move,
             handshake_done: idle_result.handshake_done,
-            action_queue: idle_result.action_queue.clone(),
-            incoming_messages: idle_result.incoming_messages.clone(),
             receive_error: idle_result.receive_error.as_ref().map(|e| format!("{e:?}")),
         })
         .into_e()
@@ -935,6 +911,7 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
+    #[deprecated(note = "Share information should come from game notifications")]
     pub fn cradle_our_share(cid: i32) -> Result<JsValue, JsValue> {
         let amount = with_game(cid, move |cradle: &mut JsCradle| {
             Ok(cradle.cradle.get_our_current_share())
@@ -943,6 +920,7 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
+    #[deprecated(note = "Share information should come from game notifications")]
     pub fn cradle_their_share(cid: i32) -> Result<JsValue, JsValue> {
         let amount = with_game(cid, move |cradle: &mut JsCradle| {
             Ok(cradle.cradle.get_their_current_share())
@@ -1075,16 +1053,6 @@ mod gaming_wasm {
         let pubkey = PublicKey::from_slice(&public_key_bytes).into_js()?;
         let puzzle_hash = puzzle_hash_for_pk(&mut allocator, &pubkey).into_js()?;
         Ok(hex::encode(puzzle_hash.bytes()))
-    }
-
-    #[wasm_bindgen]
-    pub fn test_string() -> JsValue {
-        JsValue::from_str("hi there")
-    }
-
-    #[wasm_bindgen]
-    pub fn test_string_err() -> Result<JsValue, JsValue> {
-        Ok(JsValue::from_str("ok but could have been err"))
     }
 
     #[wasm_bindgen(typescript_type = "IChiaIdentityFun")]

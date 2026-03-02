@@ -152,11 +152,8 @@ pub struct IdleResult {
     pub outbound_transactions: VecDeque<SpendBundle>,
     pub coin_solution_requests: VecDeque<CoinString>,
     pub outbound_messages: VecDeque<Vec<u8>>,
-    pub opponent_move: Option<(GameID, usize, ReadableMove)>,
     pub notifications: Vec<GameNotification>,
     pub receive_error: Option<Error>,
-    pub action_queue: Vec<String>,
-    pub incoming_messages: Vec<String>,
     pub resync: Option<(usize, bool)>,
 }
 
