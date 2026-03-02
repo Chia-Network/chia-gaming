@@ -667,10 +667,38 @@ pub fn run_simulation_tests() {
     let from_filter: Option<String> = std::env::var("SIM_TEST_FROM")
         .ok()
         .filter(|s| !s.is_empty());
+    let only_filter: Option<String> = std::env::var("SIM_TEST_ONLY")
+        .ok()
+        .filter(|s| !s.is_empty());
 
     let all_tests: Vec<_> = ref_lists.iter()
         .flat_map(|set| set.iter())
         .collect();
+
+    if let Some(ref f) = only_filter {
+        let matched: Vec<_> = all_tests.iter()
+            .filter(|(name, _)| name.contains(f.as_str()))
+            .cloned()
+            .collect();
+        if matched.is_empty() {
+            eprintln!("ERROR: no test name contains '{f}'");
+            eprintln!("Available tests:");
+            for (name, _) in &all_tests {
+                eprintln!("  {name}");
+            }
+            panic!("SIM_TEST_ONLY='{f}' matched no tests");
+        }
+        eprintln!("Running {} test(s) matching '{f}'", matched.len());
+        let total_start = std::time::Instant::now();
+        for (name, func) in &matched {
+            eprintln!("RUNNING TEST {name} ...");
+            let start = std::time::Instant::now();
+            func();
+            eprintln!("{name} ... ok ({:.2?})", start.elapsed());
+        }
+        eprintln!("All {} tests passed in {:.2?}", matched.len(), total_start.elapsed());
+        return;
+    }
 
     let start_idx = if let Some(ref f) = from_filter {
         match all_tests.iter().position(|(name, _)| name.contains(f.as_str())) {

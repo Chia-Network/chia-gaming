@@ -32,11 +32,21 @@
   (c (+ 1 COUNT) (r curry-args))
   )
 
+;; Compute shatree(curry-args) using SELF_HASH in place of shatree(SELF_PROG)
+;; curry-args = (COUNT SELF_HASH SELF_PROG MOVER0 WAITER0)
+(defun curry-args-hash ((CURRY_PACK))
+  (sha256 2 (sha256 1 COUNT)
+    (sha256 2 (sha256 1 SELF_HASH)
+      (sha256 2 SELF_HASH
+        (sha256 2 (sha256 1 MOVER0)
+          (sha256 2 (sha256 1 WAITER0) (sha256 1 ()))))))
+  )
+
 (defun validator-hash ((CURRY_PACK))
   (curry_hashes_inline
    SELF_HASH
-   (shatree "validator")
-   (shatree curry-args)
+   (sha256 1 "validator")
+   (curry-args-hash curry-args)
    )
   )
 
@@ -63,7 +73,7 @@
      output_conditions
      )
   (assign
-   pv_hash (shatree (print "doing validation" this_validation_program))
+   pv_hash (validator-hash curry-args)
    move-counter-data
    (concat
     ;; Hashes first
@@ -87,8 +97,6 @@
 
    (if
     (or
-     ;; Self hash doesn't match self prog
-     (not (= (shatree SELF_PROG) SELF_HASH))
      ;; Too short move
      (print (list "have 2 or more bytes than move-counter-data-len which is" move-counter-data-len "have" (strlen MOVE)) (> move-counter-data-len (- (strlen MOVE) 2)))
      ;; Move doesn't repeat the counter data

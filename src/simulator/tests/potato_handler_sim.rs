@@ -840,6 +840,9 @@ fn run_game_container_with_action_list_with_success_predicate(
         .iter()
         .any(|m| matches!(m, GameAction::GoOnChain(_) | GameAction::GoOnChainThenMove(_) | GameAction::ForceUnroll(_) | GameAction::ForceStaleUnroll(_)));
 
+    let timing_enabled = std::env::var("SIM_TIMING").is_ok();
+    let mut step_start = std::time::Instant::now();
+
     while !matches!(ending, Some(0)) {
         num_steps += 1;
         debug!(
@@ -870,11 +873,16 @@ fn run_game_container_with_action_list_with_success_predicate(
             wait_blocks = None;
         }
 
+        let t0 = std::time::Instant::now();
         simulator.farm_block(&neutral_identity.puzzle_hash);
         let current_height = simulator.get_current_height();
         let current_coins = simulator.get_all_coins().expect("should work");
         let mut watch_report = coinset_adapter
             .make_report_from_coin_set_update(current_height as u64, &current_coins)?;
+        if timing_enabled {
+            let farm_elapsed = t0.elapsed();
+            eprintln!("  step {num_steps}: farm_block+report {farm_elapsed:.2?}");
+        }
 
         for coin in force_destroyed_coins.drain(..) {
             watch_report.deleted_watched.insert(coin);
@@ -912,7 +920,14 @@ fn run_game_container_with_action_list_with_success_predicate(
             if reports_blocked(i, &wait_blocks) {
                 report_backlogs[i].push((current_height, watch_report.clone()));
             } else {
+                let t_nb = std::time::Instant::now();
                 cradles[i].new_block(allocator, rng, current_height, &watch_report)?;
+                if timing_enabled {
+                    let nb_elapsed = t_nb.elapsed();
+                    if nb_elapsed.as_millis() > 10 {
+                        eprintln!("  step {num_steps}: p{i} new_block {nb_elapsed:.2?}");
+                    }
+                }
             }
 
             while let Some(result) = cradles[i].idle(allocator, rng, &mut local_uis[i], 0)? {
@@ -962,7 +977,14 @@ fn run_game_container_with_action_list_with_success_predicate(
                         nerfed_tx_backlog.push(tx.clone());
                         continue;
                     }
+                    let t_tx = std::time::Instant::now();
                     let included_result = simulator.push_tx(allocator, &tx.spends)?;
+                    if timing_enabled {
+                        let tx_elapsed = t_tx.elapsed();
+                        if tx_elapsed.as_millis() > 10 {
+                            eprintln!("  step {num_steps}: p{i} push_tx({:?}) {tx_elapsed:.2?}", tx.name);
+                        }
+                    }
                     debug!(
                         "TX result: code={} e={:?} diag={:?}",
                         included_result.code, included_result.e, included_result.diagnostic
@@ -996,7 +1018,14 @@ fn run_game_container_with_action_list_with_success_predicate(
                         debug!("dropping outbound msg from player {i} (peer_disconnected)");
                         continue;
                     }
+                    let t_msg = std::time::Instant::now();
                     cradles[i ^ 1].deliver_message(msg)?;
+                    if timing_enabled {
+                        let msg_elapsed = t_msg.elapsed();
+                        if msg_elapsed.as_millis() > 10 {
+                            eprintln!("  step {num_steps}: p{i}->p{} deliver_message {msg_elapsed:.2?}", i ^ 1);
+                        }
+                    }
                 }
 
                 for n in result.notifications.iter() {
@@ -1011,6 +1040,14 @@ fn run_game_container_with_action_list_with_success_predicate(
                 }
             }
         }
+
+        if timing_enabled {
+            let step_elapsed = step_start.elapsed();
+            if step_elapsed.as_millis() > 50 {
+                eprintln!("  step {num_steps} TOTAL: {step_elapsed:.2?} (move_number={move_number})");
+            }
+        }
+        step_start = std::time::Instant::now();
 
         let all_actions_processed = move_number >= moves_input.len();
         let should_end = cradles.iter().enumerate().all(|(i, c)| {
@@ -1098,6 +1135,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                             let readable_program = readable.to_program();
                             let encoded_readable_move = readable_program.bytes();
                             let entropy = rng.gen();
+                            let t_mv = std::time::Instant::now();
                             cradles[*who].make_move(
                                 allocator,
                                 rng,
@@ -1105,6 +1143,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 encoded_readable_move.to_vec(),
                                 entropy,
                             )?;
+                            if timing_enabled {
+                                let mv_elapsed = t_mv.elapsed();
+                                eprintln!("  step {num_steps}: p{who} make_move(move_number={move_number}) {mv_elapsed:.2?}");
+                            }
                         } else {
                             move_number -= 1;
                             continue;
