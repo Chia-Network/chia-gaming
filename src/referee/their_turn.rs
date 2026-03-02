@@ -3,8 +3,6 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
-use clvm_traits::ToClvm;
-
 use log::debug;
 
 use crate::channel_handler::game_handler::{
@@ -15,11 +13,10 @@ use crate::channel_handler::types::{
     ValidationInfo, ValidationOrUpdateProgram,
 };
 
-use crate::common::constants::CREATE_COIN;
-use crate::common::standard_coin::{sign_agg_sig_me, ChiaIdentity};
+use crate::common::standard_coin::{sign_reward_payout, ChiaIdentity};
 use crate::common::types::{
     u64_from_atom, Aggsig, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error,
-    Hash, IntoErr, Node, Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend,
+    Hash, Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend,
 };
 use crate::referee::types::{
     GameMoveDetails, GameMoveStateInfo, RMFixed, SlashOutcome, TheirTurnCoinSpentResult,
@@ -144,6 +141,10 @@ impl TheirTurnReferee {
             referee_coin_puzzle_hash: referee_coin_puzzle_hash.clone(),
             their_referee_pubkey: their_pubkey.clone(),
             their_reward_payout_signature: their_reward_payout_signature.clone(),
+            my_reward_payout_signature: sign_reward_payout(
+                &my_identity.private_key,
+                reward_puzzle_hash,
+            ),
             reward_puzzle_hash: reward_puzzle_hash.clone(),
             their_reward_puzzle_hash: their_reward_puzzle_hash.clone(),
             my_identity: my_identity.clone(),
@@ -775,39 +776,13 @@ impl TheirTurnReferee {
             self.fixed.reward_puzzle_hash
         );
 
-        let output_conditions_node = (
-            (CREATE_COIN, (
-                self.fixed.reward_puzzle_hash.clone(),
-                (self.fixed.amount.clone(), ()),
-            )),
-            (),
-        )
-            .to_clvm(allocator)
-            .into_gen()?;
-        let output_conditions = Rc::new(Program::from_nodeptr(allocator, output_conditions_node)?);
-
-        let solution_args_node = (
-            state.clone(),
-            (
-                validation_program.clone(),
-                (evidence.clone(), (output_conditions.clone(), ())),
-            ),
-        )
-            .to_clvm(allocator)
-            .into_gen()?;
-        let message = Node(solution_args_node).sha256tree(allocator);
-        let signature = sign_agg_sig_me(
-            &self.fixed.my_identity.private_key,
-            message.bytes(),
-            &coin_string.to_coin_id(),
-            &self.fixed.agg_sig_me_additional_data,
-        );
+        let signature = self.fixed.my_reward_payout_signature.clone();
 
         let solution = OnChainRefereeSolution::Slash(Rc::new(OnChainRefereeSlash {
             validation_program,
             state,
             evidence,
-            output_conditions,
+            reward_puzzle_hash: self.fixed.reward_puzzle_hash.clone(),
             signature: signature.clone(),
         }));
         let slashing_coin_solution = solution.to_nodeptr(allocator, &self.fixed)?;

@@ -4,7 +4,7 @@
 (import std.shatree)
 (import std.prefix)
 (import std.relops)
-(import std.append)
+
 (import std.condition_codes)
 (import std.match)
 (import std.li)
@@ -24,7 +24,7 @@
 ;
 ; If action is timeout args is (mover_payout_ph waiter_payout_ph)
 ;
-; If action is slash args is (previous_state previous_validation_program evidence output_conditions)
+; If action is slash args is (previous_state previous_validation_program evidence mover_payout_ph)
 ;
 ; If action is move args is (new_move infohash_c new_mover_share new_max_move_size)
 ;
@@ -54,24 +54,23 @@
         (l (f (r args)))
         ; slash (2nd arg is previous_validation_program, a list)
         (assign
-            (previous_state previous_validation_program evidence output_conditions) (print "referee slash:" args)
+            (previous_state previous_validation_program evidence mover_payout_ph) (print "referee slash:" args)
             previous_validation_program_hash (print "slash: previous validation program hash" (shatree previous_validation_program))
 
             (assert
                 (print "slash: infohash a match" (= (print "slash: infohash A" INFOHASH_A) (sha256 previous_validation_program_hash (print "slash: infohash a state hash" (shatree
                         previous_state)))))
-
-                (c (list REMARK)
-                    (c (list AGG_SIG_ME MOVER_PUBKEY (shatree args))
-                        (append
-                            (print "slash data:" (f (r (a previous_validation_program
-                                (c previous_validation_program_hash
-                                    all_args
-                                )
-                            ))))
-                            output_conditions
-                        )
+                ; Run validation program to prove slash is valid (must not error)
+                (print "slash data:" (a previous_validation_program
+                    (c previous_validation_program_hash
+                        all_args
                     )
+                ))
+
+                (list
+                    (list REMARK)
+                    (list CREATE_COIN mover_payout_ph AMOUNT)
+                    (list AGG_SIG_UNSAFE MOVER_PUBKEY (concat 0x78 mover_payout_ph))
                 )
             )
         )

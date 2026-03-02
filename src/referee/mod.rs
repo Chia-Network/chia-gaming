@@ -185,6 +185,10 @@ impl Referee {
             referee_coin_puzzle_hash: referee_coin_puzzle_hash.clone(),
             their_referee_pubkey: their_pubkey.clone(),
             their_reward_payout_signature: their_reward_payout_signature.clone(),
+            my_reward_payout_signature: sign_reward_payout(
+                &my_identity.private_key,
+                reward_puzzle_hash,
+            ),
             reward_puzzle_hash: reward_puzzle_hash.clone(),
             their_reward_puzzle_hash: their_reward_puzzle_hash.clone(),
             my_identity: my_identity.clone(),
@@ -606,10 +610,7 @@ impl RefereeInterface for Referee {
 
         let mut aggregate_signature = Aggsig::default();
         if my_share > Amount::default() {
-            aggregate_signature += sign_reward_payout(
-                &self.fixed().my_identity.private_key,
-                &self.fixed().reward_puzzle_hash,
-            );
+            aggregate_signature += self.fixed().my_reward_payout_signature.clone();
         }
         if their_share > Amount::default() {
             aggregate_signature += self.fixed().their_reward_payout_signature.clone();

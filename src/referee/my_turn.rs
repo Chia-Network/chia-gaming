@@ -12,7 +12,7 @@ use crate::channel_handler::types::{
     Evidence, GameStartInfoInterface, ReadableMove, ValidationInfo, ValidationOrUpdateProgram,
 };
 
-use crate::common::standard_coin::ChiaIdentity;
+use crate::common::standard_coin::{sign_reward_payout, ChiaIdentity};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, Error, Hash, Program, ProgramRef, PublicKey, Puzzle, PuzzleHash,
     Sha256tree,
@@ -203,6 +203,10 @@ impl MyTurnReferee {
             referee_coin_puzzle_hash: referee_coin_puzzle_hash.clone(),
             their_referee_pubkey: their_pubkey.clone(),
             their_reward_payout_signature: their_reward_payout_signature.clone(),
+            my_reward_payout_signature: sign_reward_payout(
+                &my_identity.private_key,
+                reward_puzzle_hash,
+            ),
             reward_puzzle_hash: reward_puzzle_hash.clone(),
             their_reward_puzzle_hash: their_reward_puzzle_hash.clone(),
             my_identity: my_identity.clone(),

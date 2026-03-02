@@ -102,6 +102,7 @@ pub struct RMFixed {
 
     pub their_referee_pubkey: PublicKey,
     pub their_reward_payout_signature: Aggsig,
+    pub my_reward_payout_signature: Aggsig,
     pub agg_sig_me_additional_data: Hash,
 
     pub timeout: Timeout,
@@ -187,8 +188,8 @@ impl StateUpdateResult {
 /// If action is timeout, args is (mover_payout_ph waiter_payout_ph).
 ///   Authorized via AGG_SIG_UNSAFE with pre-signed payout signatures.
 ///
-/// If action is slash, args is (state validation_program evidence output_conditions).
-///   Authorized via AGG_SIG_ME MOVER_PUBKEY (shatree args).
+/// If action is slash, args is (state validation_program evidence mover_payout_ph).
+///   Authorized via AGG_SIG_UNSAFE MOVER_PUBKEY (concat 0x78 mover_payout_ph).
 ///
 /// If action is move, args is (new_move infohash_c new_mover_share new_max_move_size).
 ///   Authorized via AGG_SIG_ME MOVER_PUBKEY (shatree args).
@@ -456,7 +457,9 @@ pub struct OnChainRefereeMove {
     pub signature: Aggsig,
 }
 
-/// Dynamic arguments passed to the on chain referee to apply a slash
+/// Dynamic arguments passed to the on chain referee to apply a slash.
+/// The referee puzzle emits CREATE_COIN and AGG_SIG_UNSAFE for the mover's
+/// reward payout, matching the timeout pattern.
 #[derive(Debug, Clone)]
 pub struct OnChainRefereeSlash {
     /// Validation program that relates to this move.
@@ -468,10 +471,10 @@ pub struct OnChainRefereeSlash {
     /// clvm data about the slash.
     pub evidence: Evidence,
 
-    /// Output conditions provided by the slasher (e.g. CREATE_COIN to their wallet)
-    pub output_conditions: Rc<Program>,
+    /// Puzzle hash where the mover receives the full pot.
+    pub reward_puzzle_hash: PuzzleHash,
 
-    /// AGG_SIG_ME signature authorizing this slash
+    /// Pre-cached AGG_SIG_UNSAFE signature for reward payout.
     pub signature: Aggsig,
 }
 
@@ -479,7 +482,7 @@ pub struct OnChainRefereeSlash {
 ///
 /// Timeout: (mover_payout_ph waiter_payout_ph)
 /// Move: (new_move infohash_c new_mover_share new_max_move_size)
-/// Slash: (previous_state previous_validation_program evidence output_conditions)
+/// Slash: (previous_state previous_validation_program evidence mover_payout_ph)
 #[derive(Debug, Clone)]
 pub enum OnChainRefereeSolution {
     Timeout {
@@ -546,7 +549,7 @@ impl OnChainRefereeSolution {
                     refslash.validation_program.clone(),
                     (
                         refslash.evidence.clone(),
-                        (refslash.output_conditions.clone(), ()),
+                        (refslash.reward_puzzle_hash.clone(), ()),
                     ),
                 ),
             )
