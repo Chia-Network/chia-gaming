@@ -71,13 +71,6 @@ pub trait RefereeInterface {
 
     fn get_their_current_share(&self) -> Amount;
 
-    fn suitable_redo(
-        &self,
-        allocator: &mut AllocEncoder,
-        coin: &CoinString,
-        ph: &PuzzleHash,
-    ) -> Result<bool, Error>;
-
     fn enable_cheating(&self, make_move: &[u8], mover_share: Amount) -> Option<Rc<dyn RefereeInterface>>;
 
     fn my_turn_make_move(
@@ -384,15 +377,6 @@ impl RefereeInterface for Referee {
 
     fn get_their_current_share(&self) -> Amount {
         self.fixed().amount.clone() - self.get_our_current_share()
-    }
-
-    fn suitable_redo(
-        &self,
-        _allocator: &mut AllocEncoder,
-        _coin: &CoinString,
-        _ph: &PuzzleHash,
-    ) -> Result<bool, Error> {
-        Ok(!self.is_my_turn())
     }
 
     fn enable_cheating(&self, make_move: &[u8], mover_share: Amount) -> Option<Rc<dyn RefereeInterface>> {

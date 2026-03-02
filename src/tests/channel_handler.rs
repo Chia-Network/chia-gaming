@@ -15,13 +15,9 @@ use crate::common::types::{AllocEncoder, Amount, Hash, Puzzle, Sha256tree};
 pub(crate) mod sim_tests {
     use super::*;
 
-    use std::rc::Rc;
-
     use clvm_traits::ToClvm;
 
-    use crate::channel_handler::game_handler::GameHandler;
-    use crate::channel_handler::types::{GameStartInfo, GameStartInfoInterface, ValidationProgram};
-    use crate::common::types::{CoinID, GameID, Program, PuzzleHash, Timeout};
+    use crate::common::types::{CoinID, GameID};
     use crate::test_support::game::{ChannelHandlerGame, DEFAULT_UNROLL_TIME_LOCK};
 
     /// Helper: create a ChannelHandlerGame with completed handshake.
@@ -165,137 +161,6 @@ pub(crate) mod sim_tests {
         }
     }
 
-    pub(crate) fn test_smoke_can_initiate_channel_handler() {
-        let mut allocator = AllocEncoder::new();
-        let mut rng = ChaCha8Rng::from_seed([0; 32]);
-        let unroll_metapuzzle = read_unroll_metapuzzle(&mut allocator).unwrap();
-        let unroll_puzzle = read_unroll_puzzle(&mut allocator).unwrap();
-        // XXX
-        let nil = allocator.allocator().nil();
-        let ref_puz = Puzzle::from_nodeptr(&mut allocator, nil).expect("should work");
-        let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should load");
-        let mut env = ChannelHandlerEnv {
-            allocator: &mut allocator,
-            rng: &mut rng,
-            referee_coin_puzzle: ref_puz,
-            referee_coin_puzzle_hash: PuzzleHash::from_hash(Hash::default()),
-            unroll_metapuzzle,
-            unroll_puzzle,
-            standard_puzzle,
-            agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
-        };
-        let game_id_data: Hash = env.rng.gen();
-        let game_id = GameID::new(game_id_data.bytes().to_vec());
-        // This coin will be spent (virtually) into the channel coin which supports
-        // half-signatures so that unroll can be initated by either party.
-        let launcher_coin = CoinID::default();
-
-        let mut game = ChannelHandlerGame::new(
-            &mut env,
-            game_id,
-            &launcher_coin,
-            &[Amount::new(100), Amount::new(100)],
-            (*DEFAULT_UNROLL_TIME_LOCK).clone(),
-        )
-        .expect("should build");
-
-        game.finish_handshake(&mut env, 1)
-            .expect("should finish handshake");
-        game.finish_handshake(&mut env, 0)
-            .expect("should finish handshake");
-
-        // Set up for the spend.
-        let shutdown_spend_target = puzzle_hash_for_pk(
-            env.allocator,
-            &game.player(1).ch.clean_shutdown_public_key(),
-        )
-        .expect("should give");
-        let amount_to_take = game.player(1).ch.clean_shutdown_amount();
-        let conditions = ((51, (shutdown_spend_target, (amount_to_take, ()))), ())
-            .to_clvm(env.allocator)
-            .expect("should create conditions");
-        let shutdown_transaction = game
-            .player(1)
-            .ch
-            .send_potato_clean_shutdown(&mut env, conditions)
-            .expect("should give transaction");
-        let _counter_shutdown = game
-            .player(0)
-            .ch
-            .received_potato_clean_shutdown(&mut env, &shutdown_transaction.signature, conditions)
-            .expect("should give counter transaction");
-    }
-
-    pub(crate) fn test_smoke_can_start_game() {
-        let mut allocator = AllocEncoder::new();
-        let mut rng = ChaCha8Rng::from_seed([0; 32]);
-        let unroll_metapuzzle = read_unroll_metapuzzle(&mut allocator).unwrap();
-        let unroll_puzzle = read_unroll_puzzle(&mut allocator).unwrap();
-        // XXX
-        let nil = allocator.allocator().nil();
-        let ref_coin_puz = Puzzle::from_nodeptr(&mut allocator, nil).expect("should work");
-        let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should load");
-        let mut env = ChannelHandlerEnv {
-            allocator: &mut allocator,
-            rng: &mut rng,
-            referee_coin_puzzle: ref_coin_puz,
-            referee_coin_puzzle_hash: PuzzleHash::from_hash(Hash::default()),
-            unroll_metapuzzle,
-            unroll_puzzle,
-            standard_puzzle,
-            agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
-        };
-        let game_id_data: Hash = env.rng.gen();
-        let game_id = GameID::new(game_id_data.bytes().to_vec());
-        // This coin will be spent (virtually) into the channel coin which supports
-        // half-signatures so that unroll can be initated by either party.
-        let launcher_coin = CoinID::default();
-        let mut game = ChannelHandlerGame::new(
-            &mut env,
-            game_id,
-            &launcher_coin,
-            &[Amount::new(100), Amount::new(100)],
-            (*DEFAULT_UNROLL_TIME_LOCK).clone(),
-        )
-        .expect("should work");
-
-        game.finish_handshake(&mut env, 1)
-            .expect("should finish handshake");
-
-        game.finish_handshake(&mut env, 0)
-            .expect("should finish handshake");
-
-        // Set up for the spend.
-        let our_share = Amount::new(100);
-        let their_share = Amount::new(100);
-
-        // Fake
-        let game_handler = Rc::new(Program::from_bytes(&[0x80]));
-        let initial_validation_puzzle = game_handler.clone();
-        let initial_state = Program::from_bytes(&[0x80]).into();
-        let initial_validation_program =
-            ValidationProgram::new(env.allocator, initial_validation_puzzle);
-
-        let timeout = Timeout::new(1337);
-        let game_handler = GameHandler::TheirTurnHandler(game_handler.into());
-        let start_info: Rc<dyn GameStartInfoInterface> = Rc::new(GameStartInfo {
-            game_id: GameID::new(vec![0]),
-            game_handler,
-            timeout: timeout.clone(),
-            my_contribution_this_game: our_share.clone(),
-            their_contribution_this_game: their_share.clone(),
-            initial_validation_program,
-            initial_state,
-            initial_move: Vec::new(),
-            initial_max_move_size: 1,
-            initial_mover_share: our_share.clone(),
-            amount: our_share + their_share,
-        });
-        let _game_start_potato_sigs = game.player(1).ch.propose_game(
-            &mut env,
-            &start_info,
-        );
-    }
 }
 
 pub(crate) fn test_unroll_can_verify_own_signature() {
@@ -376,8 +241,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     #[cfg(feature = "sim-tests")]
     {
         v.push(("test_preemption_parity_constraint", &sim_tests::test_preemption_parity_constraint));
-        v.push(("test_smoke_can_initiate_channel_handler", &sim_tests::test_smoke_can_initiate_channel_handler));
-        v.push(("test_smoke_can_start_game", &sim_tests::test_smoke_can_start_game));
     }
     v
 }
