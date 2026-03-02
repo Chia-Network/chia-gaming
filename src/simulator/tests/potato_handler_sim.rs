@@ -819,7 +819,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                     | GameAction::WaitBlocks(_, _)
                     | GameAction::GoOnChain(_)
                     | GameAction::GoOnChainThenMove(_)
-                    | GameAction::Accept(_)
+                    | GameAction::AcceptTimeout(_)
                     | GameAction::Timeout(_)
                     | GameAction::Cheat(_, _)
                     | GameAction::ForceDestroyCoin(_)
@@ -1354,14 +1354,14 @@ fn run_game_container_with_action_list_with_success_predicate(
                     GameAction::WaitBlocks(n, players) => {
                         wait_blocks = Some((*n, *players));
                     }
-                    GameAction::Accept(who) | GameAction::Timeout(who) => {
+                    GameAction::AcceptTimeout(who) | GameAction::Timeout(who) => {
                         assert!(
                             !game_ids.is_empty(),
                             "Accept/Timeout({who}) at move_number={move_number} but game_ids is empty"
                         );
                         debug!("{who} doing ACCEPT");
                         can_move = true;
-                        cradles[*who].accept(allocator, rng, &game_ids[0])?;
+                        cradles[*who].accept_timeout(allocator, rng, &game_ids[0])?;
                     }
                     GameAction::CleanShutdown(who) => {
                         assert!(
@@ -1690,7 +1690,7 @@ impl DebugGameTestMove {
 }
 
 pub fn add_debug_test_accept_shutdown(test_setup: &mut DebugGameSimSetup, wait: usize) {
-    test_setup.game_actions.push(GameAction::Accept(0));
+    test_setup.game_actions.push(GameAction::AcceptTimeout(0));
     test_setup
         .game_actions
         .push(GameAction::WaitBlocks(wait, 0));
@@ -1873,7 +1873,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         let mut moves = prefix_test_moves(&mut allocator).to_vec();
-        moves.push(GameAction::Accept(0));
+        moves.push(GameAction::AcceptTimeout(0));
         moves.push(GameAction::CleanShutdown(1));
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
             .expect("should finish");
@@ -2004,7 +2004,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let mut allocator = AllocEncoder::new();
 
             let mut moves = prefix_test_moves(&mut allocator).to_vec();
-            moves.push(GameAction::Accept(0));
+            moves.push(GameAction::AcceptTimeout(0));
             moves.push(GameAction::GoOnChain(1));
             moves.push(GameAction::WaitBlocks(20, 1));
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
@@ -2412,7 +2412,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         let mut moves = prefix_test_moves(&mut allocator).to_vec();
-        moves.push(GameAction::Accept(0));
+        moves.push(GameAction::AcceptTimeout(0));
         moves.push(GameAction::NerfTransactions(0));
         moves.push(GameAction::CleanShutdown(1));
 
@@ -2442,7 +2442,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         let mut moves = prefix_test_moves(&mut allocator).to_vec();
-        moves.push(GameAction::Accept(0));
+        moves.push(GameAction::AcceptTimeout(0));
         moves.push(GameAction::NerfTransactions(1));
         moves.push(GameAction::CleanShutdown(1));
 
@@ -2472,7 +2472,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         let mut moves = prefix_test_moves(&mut allocator).to_vec();
-        moves.push(GameAction::Accept(0));
+        moves.push(GameAction::AcceptTimeout(0));
         // Nerf both so the clean shutdown tx is dropped for both sides.
         moves.push(GameAction::NerfTransactions(0));
         moves.push(GameAction::NerfTransactions(1));
@@ -2512,7 +2512,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         let mut moves = prefix_test_moves(&mut allocator).to_vec();
-        moves.push(GameAction::Accept(0));
+        moves.push(GameAction::AcceptTimeout(0));
         // Nerf all transactions so no clean shutdown tx lands.
         moves.push(GameAction::NerfTransactions(0));
         moves.push(GameAction::NerfTransactions(1));
@@ -2973,7 +2973,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let mut moves = prefix_test_moves(&mut allocator).to_vec();
             moves.pop();
             moves.push(GameAction::GoOnChain(0));
-            moves.push(GameAction::Accept(0));
+            moves.push(GameAction::AcceptTimeout(0));
             moves.push(GameAction::WaitBlocks(120, 1));
             moves.push(GameAction::WaitBlocks(5, 0));
 
@@ -3025,7 +3025,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
         sim_setup.game_actions.push(GameAction::NerfTransactions(0));
         sim_setup.game_actions.push(GameAction::GoOnChain(0));
-        sim_setup.game_actions.push(GameAction::Accept(1));
+        sim_setup.game_actions.push(GameAction::AcceptTimeout(1));
         sim_setup.game_actions.push(GameAction::GoOnChain(1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(120, 0));
 

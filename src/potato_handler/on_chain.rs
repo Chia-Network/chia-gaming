@@ -989,7 +989,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             GameAction::RedoMove(game_id, coin, cached_move) => {
                 self.do_on_chain_redo_move(env, game_id, coin, cached_move)
             }
-            GameAction::RedoAccept(_game_id, coin, _new_ph, tx) => {
+            GameAction::RedoAcceptTimeout(_game_id, coin, _new_ph, tx) => {
                 let mut effects = Vec::new();
                 if let Some(def) = self.game_map.get_mut(&coin) {
                     debug!("redoaccept: outcome coin is said to be {coin:?}");
@@ -1007,13 +1007,13 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 }
                 Ok(effects)
             }
-            GameAction::Accept(game_id) => {
+            GameAction::AcceptTimeout(game_id) => {
                 let on_chain_turn = self.my_move_in_game(&game_id);
                 if on_chain_turn != Some(true) {
                     debug!(
-                        "{initial_potato} Accept: not our turn ({on_chain_turn:?}), deferring"
+                        "{initial_potato} AcceptTimeout: not our turn ({on_chain_turn:?}), deferring"
                     );
-                    self.game_action_queue.push_back(GameAction::Accept(game_id));
+                    self.game_action_queue.push_back(GameAction::AcceptTimeout(game_id));
                     return Ok(Vec::new());
                 }
                 let current_coin = get_current_coin(&game_id)?;

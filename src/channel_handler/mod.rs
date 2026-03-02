@@ -1123,7 +1123,7 @@ impl ChannelHandler {
 
     /// Apply a send-side accept mutation. Does NOT finalize signatures.
     /// Pushes a cache entry for on-chain redo. Returns the amount won.
-    pub fn send_accept_no_finalize(
+    pub fn send_accept_timeout_no_finalize(
         &mut self,
         game_id: &GameID,
     ) -> Result<Amount, Error> {
@@ -1163,7 +1163,7 @@ impl ChannelHandler {
     }
 
     /// Apply a received accept (game finish) without verifying signatures.
-    pub fn apply_received_accept(
+    pub fn apply_received_accept_timeout(
         &mut self,
         game_id: &GameID,
     ) -> Result<(), Error> {

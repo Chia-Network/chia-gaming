@@ -195,8 +195,8 @@ mod sim_tests {
         GoOnChainThenMove(usize),
         /// Wait a number of blocks
         WaitBlocks(usize, usize),
-        /// Accept
-        Accept(usize),
+        /// Accept timeout (claim game outcome)
+        AcceptTimeout(usize),
         /// Shut down
         CleanShutdown(usize),
         /// Corrupt a player's current_state_number for testing edge cases.
@@ -236,7 +236,7 @@ mod sim_tests {
                 GameAction::GoOnChainThenMove(p) => {
                     write!(formatter, "GoOnChainThenMove({p})")
                 }
-                GameAction::Accept(p) => write!(formatter, "Accept({p})"),
+                GameAction::AcceptTimeout(p) => write!(formatter, "AcceptTimeout({p})"),
                 GameAction::WaitBlocks(n, p) => write!(formatter, "WaitBlocks({n},{p})"),
                 GameAction::CleanShutdown(p) => write!(formatter, "CleanShutdown({p})"),
                 GameAction::CorruptStateNumber(p, sn) => {
@@ -268,7 +268,7 @@ mod sim_tests {
         MoveResult(ReadableMove, Vec<u8>, Option<ReadableMove>, Hash),
         BrokenMove,
         MoveToOnChain,
-        Accepted,
+        AcceptedTimeout,
         Shutdown,
     }
 

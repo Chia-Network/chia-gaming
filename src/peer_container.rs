@@ -221,9 +221,8 @@ pub trait GameCradle {
 
     fn identity(&self) -> ChiaIdentity;
 
-    /// Signal accepting a game outcome.  Forwards to FromLocalUI::accept.
-    /// Perhaps we should consider reporting the rewards.
-    fn accept<R: Rng>(
+    /// Signal accepting a game outcome.  Forwards to FromLocalUI::accept_timeout.
+    fn accept_timeout<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,
         rng: &mut R,
@@ -974,9 +973,8 @@ impl GameCradle for SynchronousGameCradle {
         Ok(())
     }
 
-    /// Signal accepting a game outcome.  Forwards to FromLocalUI::accept.
-    /// Perhaps we should consider reporting the rewards.
-    fn accept<R: Rng>(
+    /// Signal accepting a game outcome.  Forwards to FromLocalUI::accept_timeout.
+    fn accept_timeout<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,
         rng: &mut R,
@@ -984,7 +982,7 @@ impl GameCradle for SynchronousGameCradle {
     ) -> Result<(), Error> {
         let reported_effects = {
             let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-            self.peer.accept(&mut env, id)?
+            self.peer.accept_timeout(&mut env, id)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())

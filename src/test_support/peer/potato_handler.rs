@@ -537,7 +537,7 @@ pub fn test_peer_smoke() {
     {
         let mut env = ChannelHandlerEnv::new(&mut allocator, &mut rng).expect("should work");
         let effects = peers[have_potato]
-            .accept(&mut env, &game_ids[0])
+            .accept_timeout(&mut env, &game_ids[0])
             .expect("should work");
         apply_effects(effects, &mut allocator, &mut pipe_sender[have_potato]).expect("should work");
     }

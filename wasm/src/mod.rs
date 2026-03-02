@@ -652,12 +652,12 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn accept(cid: i32, id: &str) -> Result<(), JsValue> {
+    pub fn accept_timeout(cid: i32, id: &str) -> Result<(), JsValue> {
         let game_id = string_to_game_id(id)?;
         with_game(cid, move |cradle: &mut JsCradle| {
             cradle
                 .cradle
-                .accept(&mut cradle.allocator, &mut cradle.rng.0, &game_id)
+                .accept_timeout(&mut cradle.allocator, &mut cradle.rng.0, &game_id)
         })
     }
 

@@ -23,7 +23,7 @@ pub use channel_handler::{
 };
 pub use coin_identification_by_puzzle_hash::CoinIdentificationByPuzzleHash;
 pub use coin_spent::{
-    CoinSpentAccept, CoinSpentDisposition, CoinSpentInformation, CoinSpentMoveUp, CoinSpentResult,
+    CoinSpentAcceptTimeout, CoinSpentDisposition, CoinSpentInformation, CoinSpentMoveUp, CoinSpentResult,
 };
 pub use evidence::Evidence;
 pub use live_game::LiveGame;

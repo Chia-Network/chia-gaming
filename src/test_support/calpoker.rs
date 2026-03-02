@@ -337,7 +337,7 @@ mod sim_tests {
         res.push(("test_verify_endgame_data", &|| {
             let mut allocator = AllocEncoder::new();
             let mut moves = prefix_test_moves(&mut allocator).to_vec();
-            moves.push(GameAction::Accept(1));
+            moves.push(GameAction::AcceptTimeout(1));
             moves.push(GameAction::CleanShutdown(0));
             let game_outcome =
                 run_calpoker_container_with_action_list(&mut allocator, &moves)
@@ -569,7 +569,7 @@ mod sim_tests {
         res.push(("test_play_calpoker_end_game_reward", &|| {
             let mut allocator = AllocEncoder::new();
             let mut moves = prefix_test_moves(&mut allocator).to_vec();
-            moves.push(GameAction::Accept(1));
+            moves.push(GameAction::AcceptTimeout(1));
             moves.push(GameAction::CleanShutdown(0));
 
             debug!("running moves {moves:?}");

@@ -532,9 +532,9 @@ impl PotatoHandler {
                                 ));
                             }
                         }
-                        BatchAction::Accept(game_id, amount) => {
+                        BatchAction::AcceptTimeout(game_id, amount) => {
                             let ch = self.channel_handler_mut()?;
-                            ch.apply_received_accept(game_id)?;
+                            ch.apply_received_accept_timeout(game_id)?;
                             effects.push(Effect::Notification(GameNotification::OpponentTimedOut {
                                 id: game_id.clone(),
                                 our_reward: amount.clone(),
@@ -802,12 +802,12 @@ impl PotatoHandler {
                         deferred.push_back(GameAction::Cheat(game_id, mover_share, entropy));
                     }
                 }
-                GameAction::Accept(game_id) => {
+                GameAction::AcceptTimeout(game_id) => {
                     let amount = {
                         let ch = self.channel_handler_mut()?;
-                        ch.send_accept_no_finalize(&game_id)?
+                        ch.send_accept_timeout_no_finalize(&game_id)?
                     };
-                    batch_actions.push(BatchAction::Accept(game_id, amount));
+                    batch_actions.push(BatchAction::AcceptTimeout(game_id, amount));
                 }
                 GameAction::QueuedProposal(my_gsi, their_gsi) => {
                     {
@@ -936,7 +936,7 @@ impl PotatoHandler {
                 GameAction::RedoMove(..) => {
                     return Err(Error::StrErr("redo move when not on chain".to_string()));
                 }
-                GameAction::RedoAccept(..) => {
+                GameAction::RedoAcceptTimeout(..) => {
                     return Err(Error::StrErr("redo accept when not on chain".to_string()));
                 }
             }
@@ -2296,13 +2296,13 @@ impl FromLocalUI for PotatoHandler
         Ok(effects)
     }
 
-    fn accept<R: Rng>(
+    fn accept_timeout<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
         id: &GameID,
     ) -> Result<Vec<Effect>, Error>
     {
-        let (_continued, effects) = self.do_game_action(env, GameAction::Accept(id.clone()))?;
+        let (_continued, effects) = self.do_game_action(env, GameAction::AcceptTimeout(id.clone()))?;
 
         Ok(effects)
     }

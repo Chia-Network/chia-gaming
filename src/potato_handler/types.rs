@@ -241,7 +241,7 @@ pub trait FromLocalUI
         new_entropy: Hash,
     ) -> Result<Vec<Effect>, Error>;
 
-    fn accept<R: Rng>(
+    fn accept_timeout<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
         id: &GameID,
@@ -259,7 +259,8 @@ pub enum BatchAction {
     AcceptProposal(GameID),
     CancelProposal(GameID),
     Move(GameID, GameMoveDetails),
-    Accept(GameID, Amount),
+    #[serde(rename = "Accept")]
+    AcceptTimeout(GameID, Amount),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -313,13 +314,15 @@ pub enum PotatoState {
 pub enum GameAction {
     Move(GameID, ReadableMove, Hash),
     RedoMove(GameID, CoinString, Rc<PotatoMoveCachedData>),
-    RedoAccept(
+    #[serde(rename = "RedoAccept")]
+    RedoAcceptTimeout(
         GameID,
         CoinString,
         PuzzleHash,
         Box<RefereeOnChainTransaction>,
     ),
-    Accept(GameID),
+    #[serde(rename = "Accept")]
+    AcceptTimeout(GameID),
     CleanShutdown,
     SendPotato,
     QueuedProposal(Rc<GameStartInfo>, Rc<GameStartInfo>),
@@ -335,10 +338,10 @@ impl std::fmt::Debug for GameAction {
             GameAction::RedoMove(gi, cs, md) => {
                 write!(formatter, "RedoMove({gi:?},{cs:?},{md:?})")
             }
-            GameAction::RedoAccept(gi, cs, ph, rt) => {
-                write!(formatter, "RedoAccept({gi:?},{cs:?},{ph:?},{rt:?})")
+            GameAction::RedoAcceptTimeout(gi, cs, ph, rt) => {
+                write!(formatter, "RedoAcceptTimeout({gi:?},{cs:?},{ph:?},{rt:?})")
             }
-            GameAction::Accept(gi) => write!(formatter, "Accept({gi:?})"),
+            GameAction::AcceptTimeout(gi) => write!(formatter, "AcceptTimeout({gi:?})"),
             GameAction::CleanShutdown => write!(formatter, "CleanShutdown"),
             GameAction::SendPotato => write!(formatter, "SendPotato"),
             GameAction::QueuedProposal(_, _) => write!(formatter, "QueuedProposal(..)"),
