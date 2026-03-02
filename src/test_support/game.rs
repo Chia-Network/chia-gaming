@@ -179,8 +179,9 @@ mod sim_tests {
         ForceDestroyCoin(usize),
         /// Nerf (silently drop) all outbound transactions for a player.
         NerfTransactions(usize),
-        /// Stop nerfing transactions.
-        UnNerfTransactions,
+        /// Stop nerfing transactions. If true, replay the backlog to the
+        /// simulator; if false, discard it.
+        UnNerfTransactions(bool),
         /// Propose a new game from the specified player (initiator side only).
         /// The proposal will be queued and sent on the next potato exchange.
         ProposeNewGame(usize),
@@ -229,7 +230,7 @@ mod sim_tests {
                 GameAction::Cheat(p, ms) => write!(formatter, "Cheat({p},{ms:?})"),
                 GameAction::ForceDestroyCoin(p) => write!(formatter, "ForceDestroyCoin({p})"),
                 GameAction::NerfTransactions(p) => write!(formatter, "NerfTransactions({p})"),
-                GameAction::UnNerfTransactions => write!(formatter, "UnNerfTransactions"),
+                GameAction::UnNerfTransactions(r) => write!(formatter, "UnNerfTransactions({r})"),
                 GameAction::ProposeNewGame(p) => write!(formatter, "ProposeNewGame({p})"),
                 GameAction::ProposeNewGameTheirTurn(p) => write!(formatter, "ProposeNewGameTheirTurn({p})"),
                 GameAction::GoOnChain(p) => write!(formatter, "GoOnChain({p})"),

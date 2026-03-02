@@ -734,15 +734,16 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     .and_then(|rc| rc.amount())
                     .unwrap_or_default();
 
-                let spend_bundle = SpendBundle {
-                    name: Some("redo accept".to_string()),
-                    spends: vec![CoinSpend {
-                        coin: coin_id.clone(),
-                        bundle: tx.bundle.clone(),
-                    }],
-                };
-
-                effects.push(Effect::SpendTransaction(spend_bundle));
+                if our_reward > Amount::default() {
+                    let spend_bundle = SpendBundle {
+                        name: Some("redo accept".to_string()),
+                        spends: vec![CoinSpend {
+                            coin: coin_id.clone(),
+                            bundle: tx.bundle.clone(),
+                        }],
+                    };
+                    effects.push(Effect::SpendTransaction(spend_bundle));
+                }
 
                 let notif = if game_def.our_turn {
                     GameNotification::WeTimedOut {
@@ -806,13 +807,15 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                         .and_then(|rc| rc.amount())
                         .unwrap_or_default();
 
-                    effects.push(Effect::SpendTransaction(SpendBundle {
-                        name: Some(format!("{initial_potato} accept transaction")),
-                        spends: vec![CoinSpend {
-                            coin: coin_id.clone(),
-                            bundle: tx.bundle.clone(),
-                        }],
-                    }));
+                    if our_reward > Amount::default() {
+                        effects.push(Effect::SpendTransaction(SpendBundle {
+                            name: Some(format!("{initial_potato} accept transaction")),
+                            spends: vec![CoinSpend {
+                                coin: coin_id.clone(),
+                                bundle: tx.bundle.clone(),
+                            }],
+                        }));
+                    }
                     (reward_coin, our_reward)
                 } else {
                     debug!("{initial_potato} Accepted game when our share was zero");

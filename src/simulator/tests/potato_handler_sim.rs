@@ -824,7 +824,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                     | GameAction::Cheat(_, _)
                     | GameAction::ForceDestroyCoin(_)
                     | GameAction::NerfTransactions(_)
-                    | GameAction::UnNerfTransactions
+                    | GameAction::UnNerfTransactions(_)
                     | GameAction::ProposeNewGame(_)
                     | GameAction::ProposeNewGameTheirTurn(_)
                     | GameAction::AcceptProposal(_)
@@ -1338,9 +1338,23 @@ fn run_game_container_with_action_list_with_success_predicate(
                         nerf_transactions_for |= 1 << *who;
                         can_move = true;
                     }
-                    GameAction::UnNerfTransactions => {
+                    GameAction::UnNerfTransactions(replay) => {
                         nerf_transactions_for = 0;
-                        nerfed_tx_backlog.clear();
+                        if *replay {
+                            for tx in nerfed_tx_backlog.drain(..) {
+                                debug!("REPLAYING nerfed tx: {:?}", tx.name);
+                                let included_result =
+                                    simulator.push_tx(allocator, &tx.spends)?;
+                                debug!(
+                                    "REPLAY result: code={} e={:?} diag={:?}",
+                                    included_result.code,
+                                    included_result.e,
+                                    included_result.diagnostic
+                                );
+                            }
+                        } else {
+                            nerfed_tx_backlog.clear();
+                        }
                         can_move = true;
                     }
                     GameAction::NerfMessages(who) => {
@@ -2480,7 +2494,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Let messages and nerfed txs fully drain before un-nerfing.
         moves.push(GameAction::WaitBlocks(3, 0));
         // Un-nerf both so the force-unroll tx and subsequent spends land.
-        moves.push(GameAction::UnNerfTransactions);
+        moves.push(GameAction::UnNerfTransactions(false));
         // Alice force-submits the unroll (simulating a malicious peer).
         moves.push(GameAction::ForceUnroll(0));
         // Wait for the unroll timeout to elapse and reward coins to be created.
@@ -2524,7 +2538,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Drain nerfed txs/msgs.
         moves.push(GameAction::WaitBlocks(3, 0));
         // Un-nerf everything so the force-unroll tx and subsequent spends land.
-        moves.push(GameAction::UnNerfTransactions);
+        moves.push(GameAction::UnNerfTransactions(false));
         moves.push(GameAction::UnNerfMessages);
         // Alice force-submits the unroll.
         moves.push(GameAction::ForceUnroll(0));
@@ -2580,7 +2594,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // Wait long enough for the game coin timeout (100 blocks) to fire.
             // Alice's redo was dropped so the game coin stays at "alice's turn".
             moves.push(GameAction::WaitBlocks(110, 0));
-            moves.push(GameAction::UnNerfTransactions);
+            moves.push(GameAction::UnNerfTransactions(false));
             moves.push(GameAction::WaitBlocks(5, 0));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
@@ -2640,7 +2654,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             moves.push(GameAction::WaitBlocks(4, 0));
             // Wait for game coin timeout (alice can't move).
             moves.push(GameAction::WaitBlocks(110, 0));
-            moves.push(GameAction::UnNerfTransactions);
+            // Replay alice's nerfed backlog so her timeout tx lands (bob's reward
+            // is zero so he skips the transaction).
+            moves.push(GameAction::UnNerfTransactions(true));
             moves.push(GameAction::WaitBlocks(5, 0));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
@@ -2911,7 +2927,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             on_chain_moves.push(GameAction::NerfTransactions(0));
             on_chain_moves.push(GameAction::Cheat(1, Amount::new(137)));
             on_chain_moves.push(GameAction::WaitBlocks(120, 0));
-            on_chain_moves.push(GameAction::UnNerfTransactions);
+            on_chain_moves.push(GameAction::UnNerfTransactions(false));
             on_chain_moves.push(GameAction::WaitBlocks(30, 0));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -3206,7 +3222,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             on_chain_moves.push(GameAction::NerfTransactions(0));
             on_chain_moves.push(GameAction::Cheat(1, Amount::default()));
             on_chain_moves.push(GameAction::WaitBlocks(120, 0));
-            on_chain_moves.push(GameAction::UnNerfTransactions);
+            on_chain_moves.push(GameAction::UnNerfTransactions(false));
             on_chain_moves.push(GameAction::WaitBlocks(30, 0));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -3309,7 +3325,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 GameAction::WaitBlocks(5, 0),
                 GameAction::NerfTransactions(0),
                 GameAction::GoOnChain(1),
-                GameAction::UnNerfTransactions,
+                GameAction::UnNerfTransactions(false),
                 GameAction::WaitBlocks(120, 0),
             ];
 
@@ -3362,7 +3378,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 GameAction::WaitBlocks(5, 0),
                 GameAction::NerfTransactions(1),
                 GameAction::GoOnChain(0),
-                GameAction::UnNerfTransactions,
+                GameAction::UnNerfTransactions(false),
                 GameAction::WaitBlocks(120, 0),
             ];
 
@@ -3900,7 +3916,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         sim_setup.game_actions.push(GameAction::NerfTransactions(1));
         sim_setup.game_actions.push(GameAction::ForceStaleUnroll(1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(2, 2));
-        sim_setup.game_actions.push(GameAction::UnNerfTransactions);
+        sim_setup.game_actions.push(GameAction::UnNerfTransactions(false));
         sim_setup.game_actions.push(GameAction::WaitBlocks(120, 2));
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
 
@@ -3977,7 +3993,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         sim_setup.game_actions.push(GameAction::NerfTransactions(1));
         sim_setup.game_actions.push(GameAction::ForceStaleUnroll(1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(2, 2));
-        sim_setup.game_actions.push(GameAction::UnNerfTransactions);
+        sim_setup.game_actions.push(GameAction::UnNerfTransactions(false));
         sim_setup.game_actions.push(GameAction::WaitBlocks(120, 2));
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
 
@@ -4046,7 +4062,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         sim_setup.game_actions.push(GameAction::NerfTransactions(1));
         sim_setup.game_actions.push(GameAction::ForceStaleUnroll(1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(2, 2));
-        sim_setup.game_actions.push(GameAction::UnNerfTransactions);
+        sim_setup.game_actions.push(GameAction::UnNerfTransactions(false));
         sim_setup.game_actions.push(GameAction::WaitBlocks(120, 2));
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
 
