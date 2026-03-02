@@ -37,16 +37,25 @@ pass, then grep the output for the specific test or error you care about.
 If you must bypass the scripts, replicate what `ct.sh` does:
 
 ```bash
-cargo test --features sim-tests -- --nocapture
+cargo test --lib --features sim-tests -- --nocapture
 ```
+
+The `--lib` flag skips doc-test compilation (which adds ~14s even when there
+are no doc-tests).
 
 To start from a specific test (wraparound):
 ```bash
-SIM_TEST_FROM=accept_finished cargo test --features sim-tests -- --nocapture
+SIM_TEST_FROM=accept_finished cargo test --lib --features sim-tests -- --nocapture
 ```
 
-- A single on-chain test takes 30–60s locally; the full sim suite takes 5–8 min.
-- Each iteration of the simulation loop involves expensive CLVM evaluation, so
+To run a single test by name (useful for profiling):
+```bash
+SIM_TEST_ONLY=test_referee_play_debug_game_alice_slash cargo test --lib --features sim-tests -- --nocapture
+```
+
+- The full sim suite takes ~30s with parallelism on a modern laptop.
+- Individual tests range from ~1–5s each.
+- Each iteration of the simulation loop involves CLVM evaluation, so
   a 200-step stall can take a long time before the assertion fires.
 
 ### Capturing output to a file
@@ -63,13 +72,14 @@ rg "RUNNING TEST|panic" /tmp/test-output.log
 
 ### Waiting for test processes to finish
 
-Typical durations:
+Typical durations (after CLVM and parallelism optimizations):
 
 | Scope | Typical time |
 |-------|-------------|
-| Single simple test | 15–30s |
-| Single on-chain test | 30–60s |
-| Full sim suite | 3–5 minutes |
+| Single simple test | 1–3s |
+| Single on-chain test | 3–5s |
+| Full sim suite (parallel) | ~30s |
+| Build (`./cb.sh`) | ~10–20s (incremental) |
 
 ### How to check pass/fail
 
@@ -126,14 +136,31 @@ tail -50 /tmp/test-output.log
 rg "RUNNING TEST|panic" /tmp/test-output.log
 ```
 
-### Test registration
+### Test registration and parallel execution
 
-Tests are registered in two places:
-- `src/test_support/calpoker.rs` — `sim_tests()` function, calpoker-specific tests
-- `src/simulator/tests/potato_handler_sim.rs` — notification tests, debug game tests, etc.
+Tests are registered in multiple files, each providing a `test_funs()` function
+that returns `Vec<(&'static str, &'static (dyn Fn() + Send + Sync))>`:
 
-Tests are pushed into a `Vec` of `(name, closure)` pairs. To disable a test,
-comment out the `res.push(...)` call.
+- `src/test_support/calpoker.rs` — calpoker-specific tests
+- `src/simulator/tests/potato_handler_sim.rs` — notification tests, debug game tests, stale unroll tests
+- `src/tests/channel_handler.rs` — channel handler unit tests
+
+All test closures are collected into a single `Vec` and executed in parallel
+using `std::thread::scope` with a shared work queue. The number of threads
+is `std::thread::available_parallelism()` (typically the number of CPU cores).
+Each test's name and elapsed time are printed when it completes.
+
+To disable a test, comment out the `res.push(...)` call in the relevant
+`test_funs()` function.
+
+### Environment variables for test debugging
+
+| Variable | Effect |
+|----------|--------|
+| `SIM_TEST_FROM=name` | Start the test rotation at the first test matching `name`, wrap around |
+| `SIM_TEST_ONLY=name` | Run only the single test matching `name` (useful for profiling) |
+| `SIM_TIMING=1` | Print detailed timing diagnostics for each simulation step (farm_block, new_block, push_tx, deliver_message) |
+| `RUST_LOG=debug` | Enable `log::debug!` output (normally suppressed) |
 
 ## The Redo Mechanism (Forward-Only)
 
@@ -319,5 +346,6 @@ off-chain moves to ensure the correct player's turn after the redo:
   foreground and wait for them to finish. Background execution with sleep-based
   polling wastes time and makes output harder to capture.
 - **AI agents: always run `./cb.sh` and `./ct.sh` in the foreground** with a
-  high `block_until_ms` (600000 ms / 10 minutes). Never background these
-  commands. The full test suite completes in under 5 minutes; builds are faster.
+  high `block_until_ms` (120000 ms / 2 minutes). Never background these
+  commands. The full test suite completes in ~30 seconds; builds are faster.
+  Both scripts print overall elapsed time at completion.

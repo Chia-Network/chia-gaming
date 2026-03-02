@@ -548,11 +548,13 @@ dispatches based on the classification above:
    - An `OpponentStaleUnroll` notification is emitted, reporting the actual
      amount in our reward coin (found by scanning the unroll output conditions
      for our reward puzzle hash).
-   - Each on-chain game coin is matched against live games by amount:
-     - If `coin_ph == live_game.last_referee_puzzle_hash` → game is alive at
-       its current state.
+   - Each on-chain game coin is matched against live games strictly by puzzle
+     hash **and** amount:
+     - If `coin_ph == live_game.last_referee_puzzle_hash` and amounts match →
+       game is alive at its current state.
      - If `coin_ph` matches a `cached_last_actions` entry's
-       `match_puzzle_hash` for the same game → game needs a redo move.
+       `match_puzzle_hash` for the same game and amounts match → game needs a
+       redo move.
      - Otherwise → `GameError` for that game (unrecoverable).
    - Any live game or accepted proposal not found in the unroll outputs
      receives a `GameCancelled` notification.
@@ -634,9 +636,13 @@ The referee puzzle (`referee.clsp`) accepts three types of solutions:
    - Creates a new game coin with swapped mover/waiter and updated state
    - Requires `ASSERT_BEFORE_HEIGHT_RELATIVE` (must move before timeout)
 
-3. **Slash** (`args = (previous_state, previous_validation_program, mover_puzzle, solution, evidence)`):
+3. **Slash** (`args = (previous_state, previous_validation_program, evidence, mover_payout_ph)`):
    - Proves a previous move was invalid by running the validation program
-   - If validation raises, the slash succeeds and the slasher takes the funds
+   - If validation raises, the slash succeeds: creates `CREATE_COIN mover_payout_ph AMOUNT`
+     (the slasher takes the full game amount)
+   - Requires `AGG_SIG_UNSAFE MOVER_PUBKEY ("x" || mover_payout_ph)` — the same
+     pre-signed payout authorization used by timeouts, so no additional signing
+     is needed at slash time
 
 ### Referee State Model
 
@@ -696,10 +702,21 @@ proves they authorized their payout destination via `AGG_SIG_UNSAFE`.
      signature
 
 This design means reward puzzle hashes don't need to be curried into every
-game coin — they're only revealed once, in the final timeout spend.
+game coin — they're only revealed once, in the final timeout or slash spend.
+
+Both players' reward payout signatures are **cached** in `RMFixed` at game
+creation time: `my_reward_payout_signature` (signed by us) and
+`their_reward_payout_signature` (received during handshake). This avoids
+redundant BLS signing during timeout and slash construction — the cached
+signatures are simply aggregated into the spend bundle.
+
+The slash path also uses `AGG_SIG_UNSAFE` with the same `"x" || payout_ph`
+format, so the pre-exchanged reward signature covers both timeout and slash
+payouts.
 
 **Key code:** `src/common/standard_coin.rs` — `sign_reward_payout`,
-`reward_payout_message`, `verify_reward_payout_signature`
+`reward_payout_message`, `verify_reward_payout_signature`;
+`src/referee/types.rs` — `RMFixed` (caches both signatures)
 
 ### previous_validation_info_hash and the Initial State
 
@@ -1154,6 +1171,7 @@ The frontend should treat any of these as the "game ended" signal.
 | `WeSlashedOpponent { id, reward_coin }` | Slash transaction confirmed | Opponent's illegal move was proven on-chain; `reward_coin` is the `CoinString` of the reward we received |
 | `OpponentSlashedUs { id }` | Opponent slashed us | Our move was proven illegal on-chain |
 | `OpponentSuccessfullyCheated { id, our_reward }` | Slash coin timed out | Opponent cheated and we failed to challenge in time; `our_reward` is the mover_share from their cheating move (what we actually ended up with) |
+| `OpponentStaleUnroll { our_reward, reward_coin }` | Opponent's unroll resolved to an outdated state | Emitted when `on_chain_state < last_received_state`; `our_reward` is the amount in our change coin, `reward_coin` is the coin if nonzero. Individual games then get their own terminal notifications (still active, redo, or `GameError`). |
 | `GameError { id, reason }` | A single game coin is in an unrecoverable state | Something went wrong with one game |
 | `ChannelError { reason }` | The channel or unroll coin is unrecoverable | Everything is lost |
 
@@ -1165,12 +1183,22 @@ The frontend should treat any of these as the "game ended" signal.
   or clean shutdown. This is the universal "game is done" signal.
 - **Accept only on our turn.** Calling `accept()` when it is not our turn is an
   assert failure. Accept is an alternative to moving.
-- **Only our redos after unroll.** After an unroll, game coins always land at
-  either our latest state or one step behind (needing OUR redo). We always
-  preempt any stale opponent unroll or timeout at the correct state. If the
-  opponent unrolled to an old state that we could not preempt, that is a
-  `ChannelError`. The opponent never needs to make moves on game coins after an
-  unroll we participated in.
+- **Three-way unroll dispatch.** After the unroll coin resolves,
+  `finish_on_chain_transition` classifies the situation based on the on-chain
+  state number vs. `last_received_state` (the state number from the last
+  received potato exchange):
+  - **Current:** `on_chain_state >= last_received_state`. All games assumed
+    active at their latest state; pending accepts assumed through.
+  - **Redo:** `on_chain_state == last_received_state` and we don't have the
+    potato. Publish on-chain transactions from `cached_last_actions`; pending
+    accepts are cancelled.
+  - **Stale:** `on_chain_state < last_received_state`. Emits
+    `OpponentStaleUnroll` and matches each game coin strictly by puzzle hash
+    and amount — first against the current state, then against the prior state
+    (from `cached_last_actions`) for redo. Unmatched games get `GameError`.
+    Pending accepts are cancelled.
+  This replaced the previous behavior where a failed preemption caused a
+  hard `ChannelError`.
 - **Accepted + opponent move is unreachable.** Since accept only happens on our
   turn, and only the mover can advance a game coin, the opponent cannot move on
   a coin where we already accepted. This path is a `debug_assert!` / `GameError`.
@@ -1354,17 +1382,27 @@ in `src/test_support/game.rs`):
 | `ForceDestroyCoin(player)` | Inject a fake coin deletion to test error handling |
 | `CleanShutdown(player, conditions)` | Initiate clean channel shutdown |
 | `ForceUnroll(player)` | Submit a unroll transaction using the player's cached spend info, bypassing state checks. Simulates a malicious peer unrolling after agreeing to clean shutdown. |
+| `AcceptProposal(player)` | Player accepts a pending game proposal |
+| `SaveUnrollSnapshot(player)` | Save the player's current `ChannelCoinSpendInfo` for later use by `ForceStaleUnroll` |
+| `ForceStaleUnroll(player)` | Submit an unroll using a previously saved snapshot (from `SaveUnrollSnapshot`), creating an outdated unroll on-chain |
+| `NerfMessages(player)` | Silently drop all outbound peer messages for `player` |
+| `UnNerfMessages` | Stop dropping peer messages |
 
 `NerfTransactions` is particularly useful for testing asymmetric scenarios —
 e.g., one player's unroll transaction gets dropped (simulating network issues)
 while the other player proceeds normally. Multiple players can be nerfed
 simultaneously (the implementation uses a bitmask).
 
-**Important:** Nerfing only drops a player's *outbound transactions*. It does
-not prevent coins from being created for that player's puzzle hash by another
-player's transaction. In particular, the referee timeout creates reward coins
-for **both** mover and waiter in a single spend, so a nerfed player still
+**Important:** `NerfTransactions` only drops a player's *outbound transactions*.
+It does not prevent coins from being created for that player's puzzle hash by
+another player's transaction. In particular, the referee timeout creates reward
+coins for **both** mover and waiter in a single spend, so a nerfed player still
 receives their reward coin when the non-nerfed player submits the timeout.
+
+`NerfMessages` similarly drops a player's *outbound peer messages*, preventing
+potato exchanges. Combined with `NerfTransactions`, this can fully isolate a
+player to set up stale unroll scenarios where the opponent's state advances
+without the nerfed player's knowledge.
 
 **Key code:**
 - `src/test_support/debug_game.rs` — `DebugGameHandler`, `DebugGameTestMove`
