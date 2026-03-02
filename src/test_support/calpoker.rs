@@ -203,7 +203,7 @@ mod sim_tests {
                 Ok(outcome) => {
                     assert_stayed_off_chain(&outcome, "test_play_calpoker_happy_path");
                     assert_event_sequence(&outcome.local_uis[0].events, &[
-                        game_proposed(), game_accepted(),
+                        game_accepted(),
                         ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                         ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                     ], "happy_path p0");
@@ -244,7 +244,7 @@ mod sim_tests {
             assert_eq!(bob_cards, vec![2usize, 6, 9, 13, 18, 19, 23, 47]);
 
             assert_event_sequence(&game_outcome.local_uis[0].events, &[
-                game_proposed(), game_accepted(),
+                game_accepted(),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
             ], "revealed_hands p0");
             assert_event_sequence(&game_outcome.local_uis[1].events, &[
@@ -309,7 +309,7 @@ mod sim_tests {
             assert_eq!(bob_cards, vec![2usize, 6, 9, 13, 18, 19, 23, 47]);
 
             assert_event_sequence(&game_outcome.local_uis[0].events, &[
-                game_proposed(), game_accepted(),
+                game_accepted(),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
             ], "parity p0");
             assert_event_sequence(&game_outcome.local_uis[1].events, &[
@@ -388,7 +388,7 @@ mod sim_tests {
             }
 
             assert_event_sequence(&game_outcome.local_uis[0].events, &[
-                game_proposed(), game_accepted(),
+                game_accepted(),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
@@ -424,7 +424,7 @@ mod sim_tests {
             debug!("play_result {game_results:?}");
 
             assert_event_sequence(&game_outcome.local_uis[0].events, &[
-                game_proposed(), game_accepted(),
+                game_accepted(),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
             ], "bob_message p0");
@@ -449,7 +449,7 @@ mod sim_tests {
             debug!("play_result {:?}", outcome.local_uis);
 
             assert_event_sequence(&outcome.local_uis[0].events, &[
-                game_proposed(), game_accepted(),
+                game_accepted(),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
@@ -475,7 +475,7 @@ mod sim_tests {
             debug!("play_result {:?}", outcome.local_uis);
 
             assert_event_sequence(&outcome.local_uis[0].events, &[
-                game_proposed(), game_accepted(),
+                game_accepted(),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
@@ -500,7 +500,7 @@ mod sim_tests {
             debug!("play_result {:?}", outcome.local_uis);
 
             assert_event_sequence(&outcome.local_uis[0].events, &[
-                game_proposed(), game_accepted(),
+                game_accepted(),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
@@ -525,7 +525,7 @@ mod sim_tests {
             debug!("play_result {:?}", outcome.local_uis);
 
             assert_event_sequence(&outcome.local_uis[0].events, &[
-                game_proposed(), game_accepted(),
+                game_accepted(),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
@@ -551,7 +551,7 @@ mod sim_tests {
             debug!("play_result {:?}", outcome.local_uis);
 
             assert_event_sequence(&outcome.local_uis[0].events, &[
-                game_proposed(), game_accepted(),
+                game_accepted(),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
@@ -579,7 +579,7 @@ mod sim_tests {
             assert_stayed_off_chain(&game_outcome, "test_play_calpoker_end_game_reward");
 
             assert_event_sequence(&game_outcome.local_uis[0].events, &[
-                game_proposed(), game_accepted(),
+                game_accepted(),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),

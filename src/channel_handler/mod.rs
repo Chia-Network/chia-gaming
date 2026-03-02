@@ -201,6 +201,13 @@ impl ChannelHandler {
         self.live_games.iter().map(|g| g.game_id.clone()).collect()
     }
 
+    pub fn all_game_ids(&self) -> Vec<GameID> {
+        self.live_games.iter()
+            .chain(self.pending_accept_games.iter())
+            .map(|g| g.game_id.clone())
+            .collect()
+    }
+
     pub fn find_live_game(&self, game_id: &GameID) -> Option<&LiveGame> {
         self.live_games.iter().find(|g| g.game_id == *game_id)
     }

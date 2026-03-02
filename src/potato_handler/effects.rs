@@ -29,7 +29,6 @@ pub enum GameNotification {
 
     GameProposed {
         id: GameID,
-        proposed_by_us: bool,
         my_contribution: Amount,
         their_contribution: Amount,
     },

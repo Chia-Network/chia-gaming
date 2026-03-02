@@ -237,6 +237,27 @@ impl PotatoHandler {
         matches!(self.channel_state, ChannelState::Failed)
     }
 
+    fn emit_failure_cleanup(&mut self) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        if let Ok(ch) = self.channel_handler_mut() {
+            let cancelled_ids = ch.cancel_all_proposals();
+            for id in cancelled_ids {
+                effects.push(Effect::Notification(GameNotification::GameProposalCancelled {
+                    id,
+                    reason: "channel error".to_string(),
+                }));
+            }
+            let game_ids = ch.all_game_ids();
+            for id in game_ids {
+                effects.push(Effect::Notification(GameNotification::GameError {
+                    id,
+                    reason: "channel error".to_string(),
+                }));
+            }
+        }
+        effects
+    }
+
     pub fn get_game_coin(&self, game_id: &GameID) -> Option<CoinString> {
         if let ChannelState::OnChain(on_chain) = &self.channel_state {
             on_chain.get_game_coin(game_id)
@@ -473,7 +494,6 @@ impl PotatoHandler {
                             let their_contribution = gsi.their_contribution_this_game.clone();
                             effects.push(Effect::Notification(GameNotification::GameProposed {
                                 id: game_id,
-                                proposed_by_us: false,
                                 my_contribution,
                                 their_contribution,
                             }));
@@ -757,14 +777,10 @@ impl PotatoHandler {
         let mut batch_actions: Vec<BatchAction> = Vec::new();
         let mut clean_shutdown_data: Option<(Aggsig, ProgramRef)> = None;
         let mut deferred = VecDeque::new();
-        let mut insufficient_balance_games: HashSet<GameID> = HashSet::new();
 
         while let Some(action) = self.game_action_queue.pop_front() {
             match action {
                 GameAction::Move(game_id, readable_move, new_entropy) => {
-                    if insufficient_balance_games.contains(&game_id) {
-                        continue;
-                    }
                     let ch = self.channel_handler_mut()?;
                     let game_is_my_turn = ch.game_is_my_turn(&game_id);
                     if let Some(true) = game_is_my_turn {
@@ -775,9 +791,6 @@ impl PotatoHandler {
                     }
                 }
                 GameAction::Cheat(game_id, mover_share, entropy) => {
-                    if insufficient_balance_games.contains(&game_id) {
-                        continue;
-                    }
                     let ch = self.channel_handler_mut()?;
                     let game_is_my_turn = ch.game_is_my_turn(&game_id);
                     if let Some(true) = game_is_my_turn {
@@ -797,19 +810,10 @@ impl PotatoHandler {
                     batch_actions.push(BatchAction::Accept(game_id, amount));
                 }
                 GameAction::QueuedProposal(my_gsi, their_gsi) => {
-                    let game_id = my_gsi.game_id.clone();
-                    let my_contribution = my_gsi.my_contribution_this_game.clone();
-                    let their_contribution = my_gsi.their_contribution_this_game.clone();
                     {
                         let ch = self.channel_handler_mut()?;
                         ch.send_propose_game(env, &my_gsi)?;
                     }
-                    effects.push(Effect::Notification(GameNotification::GameProposed {
-                        id: game_id,
-                        proposed_by_us: true,
-                        my_contribution,
-                        their_contribution,
-                    }));
                     batch_actions.push(BatchAction::ProposeGame(their_gsi));
                 }
                 GameAction::QueuedAcceptProposal(game_id) => {
@@ -834,7 +838,12 @@ impl PotatoHandler {
                                 our_balance_short: our_short,
                                 their_balance_short: their_short,
                             }));
-                            insufficient_balance_games.insert(game_id);
+                            ch.send_cancel_proposal(&game_id)?;
+                            effects.push(Effect::Notification(GameNotification::GameProposalCancelled {
+                                id: game_id.clone(),
+                                reason: "insufficient balance".to_string(),
+                            }));
+                            batch_actions.push(BatchAction::CancelProposal(game_id));
                             continue;
                         }
                         ch.send_accept_proposal(&game_id)?;
@@ -1883,6 +1892,7 @@ impl PotatoHandler {
                 });
             }
             Outcome::Unrecoverable(ref reason) => {
+                effects.extend(self.emit_failure_cleanup());
                 effects.push(Effect::Notification(GameNotification::ChannelError {
                     reason: reason.clone(),
                 }));
@@ -2074,9 +2084,10 @@ impl PotatoHandler {
                     .map(|def| def.game_id.clone())
                     .chain(errored_games.iter().map(|(gid, _)| gid.clone()))
                     .collect();
-                for cancelled_id in pre_game_ids.difference(&surviving_ids) {
-                    effects.push(Effect::Notification(GameNotification::GameCancelled {
-                        id: cancelled_id.clone(),
+                for missing_id in pre_game_ids.difference(&surviving_ids) {
+                    effects.push(Effect::Notification(GameNotification::GameError {
+                        id: missing_id.clone(),
+                        reason: "accepted game absent from stale unroll".to_string(),
                     }));
                 }
 
@@ -2120,9 +2131,10 @@ impl PotatoHandler {
                     .values()
                     .map(|def| def.game_id.clone())
                     .collect();
-                for cancelled_id in pre_game_ids.difference(&surviving_ids) {
-                    effects.push(Effect::Notification(GameNotification::GameCancelled {
-                        id: cancelled_id.clone(),
+                for missing_id in pre_game_ids.difference(&surviving_ids) {
+                    effects.push(Effect::Notification(GameNotification::GameError {
+                        id: missing_id.clone(),
+                        reason: "accepted game absent from unroll".to_string(),
                     }));
                 }
 
@@ -2459,6 +2471,7 @@ impl SpendWalletReceiver for PotatoHandler
                     let reason = format!(
                         "timeout unroll failed for state {on_chain_state}: {e:?}"
                     );
+                    effects.extend(self.emit_failure_cleanup());
                     effects.push(Effect::Notification(GameNotification::ChannelError {
                         reason,
                     }));
@@ -2512,6 +2525,7 @@ impl SpendWalletReceiver for PotatoHandler
                     }
                     Err(e) => {
                         let reason = format!("clean shutdown condition check failed: {e:?}");
+                        effects.extend(self.emit_failure_cleanup());
                         effects.push(Effect::Notification(
                             GameNotification::ChannelError { reason },
                         ));
@@ -2547,6 +2561,7 @@ impl SpendWalletReceiver for PotatoHandler
                         }
                         Err(e) => {
                             let reason = format!("channel coin spent to non-unroll: {e:?}");
+                            effects.extend(self.emit_failure_cleanup());
                             effects.push(Effect::Notification(
                                 GameNotification::ChannelError { reason },
                             ));
@@ -2564,6 +2579,7 @@ impl SpendWalletReceiver for PotatoHandler
                         }
                         Err(e) => {
                             let reason = format!("unroll coin spent with unexpected state: {e:?}");
+                            effects.extend(self.emit_failure_cleanup());
                             effects.push(Effect::Notification(
                                 GameNotification::ChannelError { reason },
                             ));

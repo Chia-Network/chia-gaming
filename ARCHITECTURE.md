@@ -246,8 +246,8 @@ Games are initiated through a propose/accept flow:
 1. **Propose:** The potato holder sends a `BatchAction::ProposeGame` containing
    the `GameStart` descriptor (game type, contributions, timeout, parameters).
    Both sides record the game in `pre_game_ids` as a pending proposal. The
-   proposer receives a `GameProposed { proposed_by_us: true }` notification;
-   the receiver gets `GameProposed { proposed_by_us: false }`.
+   receiver gets a `GameProposed` notification; the proposer does not (the
+   proposer tracks the proposal via the `propose_game` API call itself).
 
 2. **Accept:** The receiver (or proposer on a subsequent potato) sends
    `BatchAction::AcceptProposal`. Both sides instantiate the referee and game
@@ -280,10 +280,11 @@ held, several race conditions can occur:
 - **Insufficient balance on accept:** When the potato arrives and
   `drain_queue_into_batch` processes a `QueuedAcceptProposal`, it pre-checks
   both players' available balances. If either player's contribution exceeds
-  their `out_of_game_balance`, an `InsufficientBalance` notification is emitted
-  and the accept is skipped. The proposal remains pending (a future accept can
-  retry once funds are freed). Any queued moves for that game in the same batch
-  are also skipped.
+  their `out_of_game_balance`, an `InsufficientBalance` notification is emitted,
+  the proposal is automatically cancelled (`CancelProposal` is sent to the
+  peer and `GameProposalCancelled` is emitted locally), and the accept is
+  skipped. `InsufficientBalance` is a terminal condition for the accept-call
+  invariant.
 
 ### WASM Accept-and-Move Convenience
 
@@ -383,7 +384,7 @@ state tracking is **forward-only** — there is no rewind logic. Two cases:
    replay that move on-chain (see [Redo Mechanism](#cached_last_actions-and-the-redo-mechanism)).
 
 Games that existed off-chain but don't match any created coin are reported as
-`GameCancelled`.
+`GameError` (these were accepted games that should have appeared on-chain).
 
 ### Step 4: Redo (if needed)
 
@@ -1136,7 +1137,7 @@ cleanup and game-over transitions.
 
 | Notification | When | Meaning |
 |--------------|------|---------|
-| `GameProposed { id, proposed_by_us, my_contribution, their_contribution }` | Game proposal sent or received | A new game has been proposed; `proposed_by_us` indicates the direction |
+| `GameProposed { id, my_contribution, their_contribution }` | Game proposal received from opponent | A new game has been proposed by the peer. Only fires for the receiver — the proposer does not get this notification. |
 | `GameProposalAccepted { id }` | Proposal accepted by either side | The game is now live and play can begin |
 | `GameProposalCancelled { id, reason }` | Proposal cancelled or invalidated | The proposal was cancelled explicitly, or automatically due to going on-chain |
 
@@ -1156,7 +1157,7 @@ their own transaction is mined, exactly as if the opponent had initiated it.
 
 | Notification | When | Meaning |
 |--------------|------|---------|
-| `InsufficientBalance { id, our_balance_short, their_balance_short }` | Accept attempted with insufficient funds | The potato holder tried to accept a proposal but one or both players' contributions exceed available balance. The proposal remains pending and can be retried. |
+| `InsufficientBalance { id, our_balance_short, their_balance_short }` | Accept attempted with insufficient funds | The potato holder tried to accept a proposal but one or both players' contributions exceed available balance. The proposal is automatically cancelled (`CancelProposal` sent to peer, `GameProposalCancelled` emitted locally). This is a terminal condition for the accept-call invariant. |
 
 ### Game Outcome Notifications (Terminal)
 
@@ -1167,7 +1168,7 @@ The frontend should treat any of these as the "game ended" signal.
 |--------------|------|---------|
 | `WeTimedOut { id, our_reward, reward_coin }` | Game resolved in our favor | Includes off-chain accept (fires when potato returns) and on-chain timeout; `our_reward` is the amount we received; `reward_coin` is `Some(CoinString)` when on-chain and reward is nonzero, `None` for off-chain resolution |
 | `OpponentTimedOut { id, our_reward, reward_coin }` | Game resolved in opponent's favor | Includes receiving opponent's off-chain accept; `our_reward` is the amount we received; `reward_coin` is `Some(CoinString)` when on-chain and reward is nonzero, `None` for off-chain |
-| `GameCancelled { id }` | Unroll resolved without this game, or stale accept of already-cancelled proposal | Game existed off-chain but wasn't in the unroll conditions; also emitted when a queued `AcceptProposal` finds the proposal already gone |
+| `GameCancelled { id }` | Stale accept of already-cancelled proposal | Emitted when a queued `AcceptProposal` finds the proposal already gone. Post-acceptance game disappearance uses `GameError`, not `GameCancelled`. |
 | `WeSlashedOpponent { id, reward_coin }` | Slash transaction confirmed | Opponent's illegal move was proven on-chain; `reward_coin` is the `CoinString` of the reward we received |
 | `OpponentSlashedUs { id }` | Opponent slashed us | Our move was proven illegal on-chain |
 | `OpponentSuccessfullyCheated { id, our_reward }` | Slash coin timed out | Opponent cheated and we failed to challenge in time; `our_reward` is the mover_share from their cheating move (what we actually ended up with) |
@@ -1177,59 +1178,69 @@ The frontend should treat any of these as the "game ended" signal.
 
 ### Key Invariants
 
-- **Universal timeout invariant.** Every game that reaches `live_games` will
-  eventually receive either `WeTimedOut` or `OpponentTimedOut` as its terminal
-  notification — whether it finishes via off-chain accept, on-chain timeout,
-  or clean shutdown. This is the universal "game is done" signal.
+The system enforces four notification lifecycle invariants. All four hold even
+through `ChannelError` — when the channel enters `Failed` state, cleanup
+notifications (`GameProposalCancelled` for pending proposals, `GameError` for
+live games) are emitted before `ChannelError`, ensuring every open item is
+explicitly resolved.
+
+1. **Proposal-sent invariant.** Every `propose_game` call yields exactly one
+   `GameProposalAccepted` or `GameProposalCancelled` for the proposer. The
+   `cancel_all_proposals()` call on every exit path (go-on-chain, clean
+   shutdown, channel error) is the catch-all that ensures no proposal is left
+   unresolved. Enforced by the simulation loop's post-test assertion.
+
+2. **Proposal-received invariant.** Every `GameProposed` notification (received
+   from the opponent) yields exactly one `GameProposalAccepted` or
+   `GameProposalCancelled` for the receiver. Enforced by the simulation loop's
+   post-test assertion.
+
+3. **Accept-call invariant.** Every `AcceptProposal` call yields exactly one
+   terminal game notification: `InsufficientBalance`, `GameCancelled` (stale
+   accept where the proposal was already cancelled), `WeTimedOut`,
+   `OpponentTimedOut`, `WeSlashedOpponent`, `OpponentSlashedUs`,
+   `OpponentSuccessfullyCheated`, or `GameError`. Note:
+   `InsufficientBalance` is terminal (it auto-cancels the proposal).
+   Enforced by the simulation loop's post-test assertion.
+
+4. **Post-acceptance invariant.** Every `GameProposalAccepted` notification
+   yields exactly one terminal game notification: `WeTimedOut`,
+   `OpponentTimedOut`, `WeSlashedOpponent`, `OpponentSlashedUs`,
+   `OpponentSuccessfullyCheated`, or `GameError`. Note: `GameCancelled` is
+   **not** in this list — once a proposal is accepted, it cannot be cancelled;
+   any disappearance is a `GameError`. Enforced by the simulation loop's
+   post-test assertion.
+
+### Additional Design Rules
+
+These are not lifecycle invariants but important rules enforced in the code:
+
 - **Accept only on our turn.** Calling `accept()` when it is not our turn is an
   assert failure. Accept is an alternative to moving.
-- **Three-way unroll dispatch.** After the unroll coin resolves,
-  `finish_on_chain_transition` classifies the situation based on the on-chain
-  state number vs. `last_received_state` (the state number from the last
-  received potato exchange):
-  - **Current:** `on_chain_state >= last_received_state`. All games assumed
-    active at their latest state; pending accepts assumed through.
-  - **Redo:** `on_chain_state == last_received_state` and we don't have the
-    potato. Publish on-chain transactions from `cached_last_actions`; pending
-    accepts are cancelled.
-  - **Stale:** `on_chain_state < last_received_state`. Emits
-    `OpponentStaleUnroll` and matches each game coin strictly by puzzle hash
-    and amount — first against the current state, then against the prior state
-    (from `cached_last_actions`) for redo. Unmatched games get `GameError`.
-    Pending accepts are cancelled.
-  This replaced the previous behavior where a failed preemption caused a
-  hard `ChannelError`.
-- **Accepted + opponent move is unreachable.** Since accept only happens on our
-  turn, and only the mover can advance a game coin, the opponent cannot move on
-  a coin where we already accepted. This path is a `debug_assert!` / `GameError`.
-- **Proposal resolution invariant.** Every `GameProposed` notification is
-  eventually followed by **exactly one** of `GameProposalAccepted` or
-  `GameProposalCancelled` for the same game ID. This holds for both the
-  proposer and the receiver. The `cancel_all_proposals()` call on every exit
-  path (go-on-chain, clean shutdown) is the catch-all that ensures no proposal
-  is left unresolved. Enforced by the simulation loop's post-test assertion.
-- **Post-acceptance terminal invariant.** Every `GameProposalAccepted`
-  notification is eventually followed by **exactly one** terminal game
-  notification for the same game ID. The terminal notifications are:
-  `GameCancelled`, `WeTimedOut`, `OpponentTimedOut`, `WeSlashedOpponent`,
-  `OpponentSlashedUs`, `OpponentSuccessfullyCheated`, or `GameError`.
-  Enforced by the simulation loop's post-test assertion.
-- **Acceptor-side resolution invariant.** For every call to `AcceptProposal`,
-  the acceptor should receive exactly one of: `InsufficientBalance`,
-  `GameCancelled` (stale accept), `WeTimedOut`, `OpponentTimedOut`,
-  `WeSlashedOpponent`, `OpponentSlashedUs`, `OpponentSuccessfullyCheated`, or
-  `GameError`. `InsufficientBalance` leaves the proposal pending for retry.
-- **Proposer-side resolution invariant.** For every proposal initiated, the
-  proposer should receive exactly one of: `GameProposalCancelled`,
-  `GameCancelled`, `WeTimedOut`, `OpponentTimedOut`, `WeSlashedOpponent`,
-  `OpponentSlashedUs`, `OpponentSuccessfullyCheated`, or `GameError`.
+
+- **Accepted + opponent move is an untested path.** Since accept only happens on
+  our turn, and only the mover can advance a game coin, the opponent cannot move
+  on a coin where we already accepted. The `accept_and_move` API exists but has
+  not been tested end-to-end; Calpoker's move direction may prevent it from
+  triggering in practice. This path emits `GameError`.
+
 - **No phantom game-map entries.** During the on-chain transition,
   `finish_on_chain_transition` filters out both our and the opponent's reward
   puzzle hashes from the created-coins list before calling
   `set_state_for_coins`. This prevents reward coins from being incorrectly
   matched to live games and generating spurious terminal notifications.
 
-**Key code:** `src/potato_handler/effects.rs`
+- **Three-way unroll dispatch.** After the unroll coin resolves,
+  `finish_on_chain_transition` classifies the situation based on the on-chain
+  state number vs. `last_received_state`:
+  - **Current:** `on_chain_state >= last_received_state`.
+  - **Redo:** `on_chain_state == last_received_state` and we don't have the
+    potato.
+  - **Stale:** `on_chain_state < last_received_state`.
+  See [Stale Unroll Handling](#stale-unroll-handling) for details.
+
+**Key code:** `src/potato_handler/effects.rs`, `src/potato_handler/mod.rs`
+(`emit_failure_cleanup`)
 
 ---
 
