@@ -826,7 +826,7 @@ pub fn test_debug_game_validation_move() {
         .expect("ok");
 }
 
-pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
+pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
         ("test_debug_game_factory", &test_debug_game_factory),
         ("test_debug_game_validation_move", &test_debug_game_validation_move),

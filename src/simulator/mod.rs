@@ -649,7 +649,7 @@ pub fn run_simulation_tests() {
         eprintln!("{trace}");
         std::process::exit(1);
     }));
-    let ref_lists: Vec<Vec<(&str, &dyn Fn())>> = vec![
+    let ref_lists: Vec<Vec<(&str, &(dyn Fn() + Send + Sync))>> = vec![
         divmod_tests(),
         standard_coin_tests(),
         chialisp_tests(),
@@ -688,14 +688,42 @@ pub fn run_simulation_tests() {
         0
     };
 
-    let rotated = all_tests[start_idx..].iter()
-        .chain(all_tests[..start_idx].iter());
+    let rotated: Vec<_> = all_tests[start_idx..].iter()
+        .chain(all_tests[..start_idx].iter())
+        .cloned()
+        .collect();
 
-    for (name, f) in rotated {
-        eprintln!("RUNNING TEST {} ...", name);
-        f();
-        eprintln!("{} ... ok\n", name);
-    }
+    let n_threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    eprintln!("Running {} tests with {} threads", rotated.len(), n_threads);
+
+    let queue = std::sync::Arc::new(std::sync::Mutex::new(rotated));
+    let total_start = std::time::Instant::now();
+
+    std::thread::scope(|s| {
+        let handles: Vec<_> = (0..n_threads)
+            .map(|_| {
+                let queue = std::sync::Arc::clone(&queue);
+                s.spawn(move || {
+                    loop {
+                        let task = queue.lock().unwrap().pop();
+                        let Some((name, f)) = task else { break };
+                        eprintln!("RUNNING TEST {name} ...");
+                        let start = std::time::Instant::now();
+                        f();
+                        let elapsed = start.elapsed();
+                        eprintln!("{name} ... ok ({elapsed:.2?})");
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+    });
+
+    eprintln!("All {} tests passed in {:.2?}", all_tests.len(), total_start.elapsed());
 }
 
 #[cfg(test)]

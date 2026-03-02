@@ -297,7 +297,7 @@ fn test_standard_puzzle_solution_maker() {
         .verify(&public_key, quoted_conditions_hash.bytes()));
 }
 
-pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
+pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
         ("test_puzzle_for_pk", &test_puzzle_for_pk),
         ("test_calculate_synthetic_offset", &test_calculate_synthetic_offset),

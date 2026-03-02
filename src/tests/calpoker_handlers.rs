@@ -612,7 +612,7 @@ fn test_calpoker_handlers_evil_path() {
     run_handler_game(&mut allocator, &setup, &moves);
 }
 
-pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
+pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
         ("test_calpoker_handlers_happy_path", &test_calpoker_handlers_happy_path),
         ("test_calpoker_handlers_evil_path", &test_calpoker_handlers_evil_path),

@@ -470,8 +470,8 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
     }
 }
 
-pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
-    let mut res: Vec<(&'static str, &'static dyn Fn())> = Vec::new();
+pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
+    let mut res: Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> = Vec::new();
     res.push(("test_sim", &|| {
         let seed: [u8; 32] = [0; 32];
         let mut rng = ChaCha8Rng::from_seed(seed);

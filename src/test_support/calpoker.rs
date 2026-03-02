@@ -188,8 +188,8 @@ mod sim_tests {
         }
     }
 
-    pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
-        let mut res: Vec<(&'static str, &'static dyn Fn())> = Vec::new();
+    pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
+        let mut res: Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> = Vec::new();
 
         res.push(("test_play_calpoker_happy_path", &|| {
             let mut allocator = AllocEncoder::new();

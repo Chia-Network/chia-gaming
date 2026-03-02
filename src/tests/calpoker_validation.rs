@@ -648,7 +648,7 @@ fn test_calpoker_e_bad_evidence_exception() {
     run_step_and_check(&mut a, &lib, &after, &make_step(&m, 100, Some(&[0xFF]), MoveCode::ClvmException, false, "e"));
 }
 
-pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
+pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
         ("test_calpoker_validator_hashes", &test_calpoker_validator_hashes),
         ("test_calpoker_a_slash_too_short", &test_calpoker_a_slash_too_short),

@@ -580,7 +580,7 @@ fn test_decode_calpoker_readable_outcome_matches() {
 }
 
 #[cfg(test)]
-pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
+pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
         ("test_simple_hand_values", &test_simple_hand_values),
         ("test_decode_calpoker_readable", &test_decode_calpoker_readable),

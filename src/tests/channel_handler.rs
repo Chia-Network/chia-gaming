@@ -369,8 +369,8 @@ pub(crate) fn test_unroll_can_verify_own_signature() {
         .expect("should verify"));
 }
 
-pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
-    let mut v: Vec<(&'static str, &'static dyn Fn())> = vec![
+pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
+    let mut v: Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> = vec![
         ("test_unroll_can_verify_own_signature", &test_unroll_can_verify_own_signature),
     ];
     #[cfg(feature = "sim-tests")]
