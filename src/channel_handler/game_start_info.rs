@@ -7,9 +7,7 @@ use clvmr::allocator::NodePtr;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::game_handler::GameHandler;
-use crate::channel_handler::types::{
-    GameStartInfoInterface, GameStartInfoInterfaceND, StateUpdateProgram, ValidationOrUpdateProgram,
-};
+use crate::channel_handler::types::StateUpdateProgram;
 use crate::common::types::{
     atom_from_clvm, usize_from_atom, AllocEncoder, Amount, Error, GameID, Hash, Program,
     ProgramRef, Timeout,
@@ -29,60 +27,9 @@ pub struct GameStartInfo {
     pub initial_max_move_size: usize,
     pub initial_mover_share: Amount,
 
-    // Can be left out.
     pub game_id: GameID,
     pub timeout: Timeout,
 }
-
-impl GameStartInfoInterfaceND for GameStartInfo {
-    fn version(&self) -> usize {
-        1
-    }
-    fn serialize(&self) -> Result<bson::Bson, bson::ser::Error> {
-        bson::to_bson(self)
-    }
-
-    fn amount(&self) -> &Amount {
-        &self.amount
-    }
-    fn game_handler(&self) -> GameHandler {
-        self.game_handler.clone()
-    }
-
-    fn my_contribution_this_game(&self) -> &Amount {
-        &self.my_contribution_this_game
-    }
-    fn their_contribution_this_game(&self) -> &Amount {
-        &self.their_contribution_this_game
-    }
-
-    fn initial_validation_program(&self) -> ValidationOrUpdateProgram {
-        ValidationOrUpdateProgram::StateUpdate(self.initial_validation_program.clone())
-    }
-
-    fn initial_state(&self) -> ProgramRef {
-        self.initial_state.clone()
-    }
-    fn initial_move(&self) -> &[u8] {
-        &self.initial_move
-    }
-    fn initial_max_move_size(&self) -> usize {
-        self.initial_max_move_size
-    }
-    fn initial_mover_share(&self) -> &Amount {
-        &self.initial_mover_share
-    }
-
-    // Can be left out.
-    fn game_id(&self) -> &GameID {
-        &self.game_id
-    }
-    fn timeout(&self) -> &Timeout {
-        &self.timeout
-    }
-}
-
-impl GameStartInfoInterface for GameStartInfo {}
 
 impl GameStartInfo {
     pub fn is_my_turn(&self) -> bool {

@@ -4,7 +4,6 @@ mod gaming_wasm {
 
     use std::cell::RefCell;
     use std::collections::{BTreeMap, HashMap};
-    use std::rc::Rc;
     use std::sync::atomic::{AtomicI32, Ordering};
 
     use hex::FromHexError;
@@ -32,7 +31,6 @@ mod gaming_wasm {
     };
     use chia_gaming::potato_handler::types::{GameFactory, ToLocalUI};
     use chia_gaming::potato_handler::start::GameStart;
-    use chia_gaming::shutdown::BasicShutdownConditions;
 
     #[cfg(target_arch = "wasm32")]
     use lol_alloc::{FreeListAllocator, LockedAllocator};
@@ -678,7 +676,6 @@ mod gaming_wasm {
             cradle.cradle.shut_down(
                 &mut cradle.allocator,
                 &mut cradle.rng.0,
-                Rc::new(BasicShutdownConditions),
             )
         })
     }

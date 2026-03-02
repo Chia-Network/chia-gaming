@@ -34,9 +34,10 @@ mod sim_tests {
 
     use crate::channel_handler::game::Game;
     use crate::channel_handler::runner::ChannelHandlerParty;
+    use crate::channel_handler::game_start_info::GameStartInfo;
     use crate::channel_handler::types::{
         ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerPrivateKeys,
-        GameStartInfoInterface, HandshakeResult,
+        HandshakeResult,
     };
     use crate::common::standard_coin::{
         private_to_public_key, puzzle_for_pk, puzzle_hash_for_synthetic_public_key,
@@ -46,7 +47,6 @@ mod sim_tests {
         Aggsig, Amount, CoinID, CoinString, Error, GameID, Hash, PublicKey, Puzzle, PuzzleHash,
         Sha256tree,
     };
-    use crate::shutdown::ShutdownConditions;
     use crate::simulator::Simulator;
     use log::debug;
     use rand::prelude::*;
@@ -198,7 +198,7 @@ mod sim_tests {
         /// Accept
         Accept(usize),
         /// Shut down
-        CleanShutdown(usize, Rc<dyn ShutdownConditions>),
+        CleanShutdown(usize),
         /// Corrupt a player's current_state_number for testing edge cases.
         /// (player, new_state_number)
         CorruptStateNumber(usize, usize),
@@ -238,7 +238,7 @@ mod sim_tests {
                 }
                 GameAction::Accept(p) => write!(formatter, "Accept({p})"),
                 GameAction::WaitBlocks(n, p) => write!(formatter, "WaitBlocks({n},{p})"),
-                GameAction::CleanShutdown(p, _) => write!(formatter, "CleanShutdown({p},..)"),
+                GameAction::CleanShutdown(p) => write!(formatter, "CleanShutdown({p})"),
                 GameAction::CorruptStateNumber(p, sn) => {
                     write!(formatter, "CorruptStateNumber({p},{sn})")
                 }
@@ -374,8 +374,8 @@ mod sim_tests {
         debug!("our_game_start {:?}", our_game_start);
         debug!("their_game_start {:?}", their_game_start);
 
-        let our_start: Rc<dyn GameStartInfoInterface> = Rc::new(our_game_start);
-        let their_start: Rc<dyn GameStartInfoInterface> = Rc::new(their_game_start);
+        let our_start: Rc<GameStartInfo> = Rc::new(our_game_start);
+        let their_start: Rc<GameStartInfo> = Rc::new(their_game_start);
 
         let propose_sigs = party.player(0).ch.propose_game(env, &our_start)?;
         party.player(1).ch.apply_received_proposal(env, &their_start)?;

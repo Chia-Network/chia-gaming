@@ -1027,7 +1027,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
 
                 Ok(Vec::new())
             }
-            GameAction::CleanShutdown(_) => {
+            GameAction::CleanShutdown => {
                 Ok(Vec::new())
             }
             GameAction::SendPotato => Ok(Vec::new()),

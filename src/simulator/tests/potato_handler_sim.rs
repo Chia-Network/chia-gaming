@@ -35,7 +35,6 @@ use crate::potato_handler::types::{
 };
 use crate::potato_handler::PotatoHandler;
 
-use crate::shutdown::BasicShutdownConditions;
 use crate::simulator::Simulator;
 use crate::test_support::calpoker::{calpoker_ran_all_the_moves_predicate, prefix_test_moves};
 use crate::test_support::debug_game::{
@@ -814,7 +813,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         move_number < moves.len()
             && matches!(
                 &moves[move_number],
-                GameAction::CleanShutdown(_, _)
+                GameAction::CleanShutdown(_)
                     | GameAction::WaitBlocks(_, _)
                     | GameAction::GoOnChain(_)
                     | GameAction::GoOnChainThenMove(_)
@@ -1358,7 +1357,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                         can_move = true;
                         cradles[*who].accept(allocator, rng, &game_ids[0])?;
                     }
-                    GameAction::CleanShutdown(who, conditions) => {
+                    GameAction::CleanShutdown(who) => {
                         assert!(
                             !cradles[*who].is_on_chain(),
                             "CleanShutdown({who}) called while on chain; on-chain completion is automatic"
@@ -1370,7 +1369,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                         }
                         debug!("CleanShutdown({who}) processing");
                         can_move = true;
-                        cradles[*who].shut_down(allocator, rng, conditions.clone())?;
+                        cradles[*who].shut_down(allocator, rng)?;
                     }
                     GameAction::CorruptStateNumber(who, new_sn) => {
                         debug!("CorruptStateNumber({who}, {new_sn})");
@@ -1648,7 +1647,7 @@ pub fn add_debug_test_accept_shutdown(test_setup: &mut DebugGameSimSetup, wait: 
         .push(GameAction::WaitBlocks(wait, 1));
     test_setup
         .game_actions
-        .push(GameAction::CleanShutdown(1, Rc::new(BasicShutdownConditions)));
+        .push(GameAction::CleanShutdown(1));
 }
 
 pub fn add_debug_test_slash_shutdown(test_setup: &mut DebugGameSimSetup, wait: usize) {
@@ -1823,7 +1822,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let mut moves = prefix_test_moves(&mut allocator).to_vec();
         moves.push(GameAction::Accept(0));
-        moves.push(GameAction::CleanShutdown(1, Rc::new(BasicShutdownConditions)));
+        moves.push(GameAction::CleanShutdown(1));
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
             .expect("should finish");
 
@@ -2363,7 +2362,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut moves = prefix_test_moves(&mut allocator).to_vec();
         moves.push(GameAction::Accept(0));
         moves.push(GameAction::NerfTransactions(0));
-        moves.push(GameAction::CleanShutdown(1, Rc::new(BasicShutdownConditions)));
+        moves.push(GameAction::CleanShutdown(1));
 
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
             .expect("should finish");
@@ -2393,7 +2392,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut moves = prefix_test_moves(&mut allocator).to_vec();
         moves.push(GameAction::Accept(0));
         moves.push(GameAction::NerfTransactions(1));
-        moves.push(GameAction::CleanShutdown(1, Rc::new(BasicShutdownConditions)));
+        moves.push(GameAction::CleanShutdown(1));
 
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
             .expect("should finish");
@@ -2425,7 +2424,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Nerf both so the clean shutdown tx is dropped for both sides.
         moves.push(GameAction::NerfTransactions(0));
         moves.push(GameAction::NerfTransactions(1));
-        moves.push(GameAction::CleanShutdown(1, Rc::new(BasicShutdownConditions)));
+        moves.push(GameAction::CleanShutdown(1));
         // Let messages and nerfed txs fully drain before un-nerfing.
         moves.push(GameAction::WaitBlocks(3, 0));
         // Un-nerf both so the force-unroll tx and subsequent spends land.
@@ -2469,7 +2468,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // the initiator (player 1).  Player 1 is in the "started the
         // attempt but hasn't gotten the response" state.
         moves.push(GameAction::NerfMessages(0));
-        moves.push(GameAction::CleanShutdown(1, Rc::new(BasicShutdownConditions)));
+        moves.push(GameAction::CleanShutdown(1));
         // Drain nerfed txs/msgs.
         moves.push(GameAction::WaitBlocks(3, 0));
         // Un-nerf everything so the force-unroll tx and subsequent spends land.
@@ -3621,7 +3620,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let moves = vec![
             GameAction::ProposeNewGame(0),
             GameAction::CancelProposal(1),
-            GameAction::CleanShutdown(0, Rc::new(BasicShutdownConditions)),
+            GameAction::CleanShutdown(0),
         ];
 
         let outcome = run_calpoker_proposal_only(
@@ -3705,7 +3704,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // on both sides.
         let moves = vec![
             GameAction::ProposeNewGame(0),
-            GameAction::CleanShutdown(1, Rc::new(BasicShutdownConditions)),
+            GameAction::CleanShutdown(1),
         ];
 
         let outcome = run_calpoker_proposal_only(
@@ -3746,7 +3745,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let moves = vec![
             GameAction::ProposeNewGame(0),
             GameAction::CancelProposal(0),
-            GameAction::CleanShutdown(0, Rc::new(BasicShutdownConditions)),
+            GameAction::CleanShutdown(0),
         ];
 
         let outcome = run_calpoker_proposal_only(

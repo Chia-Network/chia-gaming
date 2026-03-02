@@ -221,7 +221,8 @@ impl GameHandler {
         }
 
         let name_atom = &atom_from_clvm(allocator, pl[0]).unwrap_or_default();
-        let name = std::str::from_utf8(name_atom).expect("remove this in the final version");
+        let name = std::str::from_utf8(name_atom)
+            .map_err(|e| Error::StrErr(format!("game handler name is not valid UTF-8: {e}")))?;
         let max_move_size =
             if let Some(mm) = atom_from_clvm(allocator, pl[6]).and_then(|a| usize_from_atom(&a)) {
                 mm

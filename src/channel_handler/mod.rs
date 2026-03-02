@@ -17,12 +17,13 @@ use clvmr::allocator::NodePtr;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::game_handler::TheirTurnResult;
+use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::channel_handler::types::{
     prepend_rem_conditions, AcceptTransactionState, CachedPotatoRegenerateLastHop,
     ChannelCoinSpendInfo, ChannelCoinSpentResult, ChannelHandlerEnv,
     ChannelHandlerInitiationResult, ChannelHandlerMoveResult, ChannelHandlerPrivateKeys,
     ChannelHandlerUnrollSpendInfo, CoinSpentInformation,
-    GameStartInfoInterface, HandshakeResult, LiveGame, MoveResult, OnChainGameCoin,
+    HandshakeResult, LiveGame, MoveResult, OnChainGameCoin,
     OnChainGameState, PotatoAcceptCachedData, PotatoMoveCachedData, PotatoSignatures,
     ProposedGame, ReadableMove, UnrollCoin, UnrollCoinConditionInputs,
 };
@@ -785,7 +786,7 @@ impl ChannelHandler {
     pub fn send_propose_game<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
-        start_info: &Rc<dyn GameStartInfoInterface>,
+        start_info: &Rc<GameStartInfo>,
     ) -> Result<(), Error> {
         let new_game_nonce = self.next_nonce_number;
         self.next_nonce_number += 1;
@@ -813,12 +814,12 @@ impl ChannelHandler {
         )?;
 
         self.proposed_games.push(ProposedGame::new(
-            start_info.game_id().clone(),
+            start_info.game_id.clone(),
             true,
             ph,
             Rc::new(r),
-            start_info.my_contribution_this_game().clone(),
-            start_info.their_contribution_this_game().clone(),
+            start_info.my_contribution_this_game.clone(),
+            start_info.their_contribution_this_game.clone(),
         ));
 
         Ok(())
@@ -828,7 +829,7 @@ impl ChannelHandler {
     pub fn propose_game<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
-        start_info: &Rc<dyn GameStartInfoInterface>,
+        start_info: &Rc<GameStartInfo>,
     ) -> Result<PotatoSignatures, Error> {
         self.send_propose_game(env, start_info)?;
         self.update_cached_unroll_state(env)
@@ -838,7 +839,7 @@ impl ChannelHandler {
     pub fn apply_received_proposal<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
-        start_info: &Rc<dyn GameStartInfoInterface>,
+        start_info: &Rc<GameStartInfo>,
     ) -> Result<(), Error> {
         let new_game_nonce = self.next_nonce_number;
         self.next_nonce_number += 1;
@@ -866,12 +867,12 @@ impl ChannelHandler {
         )?;
 
         self.proposed_games.push(ProposedGame::new(
-            start_info.game_id().clone(),
+            start_info.game_id.clone(),
             false,
             ph,
             Rc::new(r),
-            start_info.my_contribution_this_game().clone(),
-            start_info.their_contribution_this_game().clone(),
+            start_info.my_contribution_this_game.clone(),
+            start_info.their_contribution_this_game.clone(),
         ));
 
         Ok(())

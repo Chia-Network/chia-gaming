@@ -2,14 +2,13 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use rand::Rng;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use serde_json_any_key::*;
 
 use crate::channel_handler::types::{
-    ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartInfo,
-    GameStartInfoInterface, PotatoMoveCachedData, PotatoSignatures, ReadableMove,
+    ChannelHandlerEnv, ChannelHandlerPrivateKeys, PotatoMoveCachedData, PotatoSignatures, ReadableMove,
 };
-use crate::channel_handler::game_start_info;
+use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, Program,
@@ -19,7 +18,6 @@ use crate::potato_handler::effects::Effect;
 use crate::potato_handler::handshake::{HandshakeA, HandshakeB};
 use crate::potato_handler::start::GameStart;
 use crate::referee::types::{GameMoveDetails, RefereeOnChainTransaction};
-use crate::shutdown::{BasicShutdownConditions, ShutdownConditions};
 
 // Internal: decide what kind of condition wait we're in.
 #[derive(Debug)]
@@ -252,39 +250,12 @@ pub trait FromLocalUI
     fn shut_down<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
-        condition: Rc<dyn ShutdownConditions>,
     ) -> Result<Vec<Effect>, Error>;
-}
-
-#[derive(Debug, Clone)]
-pub struct GSI(pub Rc<dyn GameStartInfoInterface>);
-impl Serialize for GSI {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let doc = self.0.serialize().unwrap(); // deal with returning error
-        doc.serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for GSI {
-    fn deserialize<D>(deserializer: D) -> Result<GSI, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let bson_data: bson::Bson = bson::Bson::deserialize(deserializer)?;
-        if let Ok(gsi) = bson::from_bson::<GameStartInfo>(bson_data.clone()) {
-            return Ok(GSI(Rc::new(gsi)));
-        }
-        let gsi: game_start_info::GameStartInfo = bson::from_bson(bson_data).unwrap(); // deal with error
-        Ok(GSI(Rc::new(gsi)))
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum BatchAction {
-    ProposeGame(GSI),
+    ProposeGame(Rc<GameStartInfo>),
     AcceptProposal(GameID),
     CancelProposal(GameID),
     Move(GameID, GameMoveDetails),
@@ -338,29 +309,6 @@ pub enum PotatoState {
     Present,
 }
 
-/// For now, just pay to the reward puzzle hash if we come back from serialization.
-/// This gives the coins to the user and ensures we're not permanaently deadlocked.
-pub struct ShutdownActionHolder(pub Rc<dyn ShutdownConditions>);
-
-impl Serialize for ShutdownActionHolder {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        BasicShutdownConditions.serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for ShutdownActionHolder {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let deserialized = BasicShutdownConditions::deserialize(deserializer)?;
-        Ok(ShutdownActionHolder(Rc::new(deserialized)))
-    }
-}
-
 #[derive(Serialize, Deserialize)]
 pub enum GameAction {
     Move(GameID, ReadableMove, Hash),
@@ -372,9 +320,9 @@ pub enum GameAction {
         Box<RefereeOnChainTransaction>,
     ),
     Accept(GameID),
-    CleanShutdown(ShutdownActionHolder),
+    CleanShutdown,
     SendPotato,
-    QueuedProposal(GSI, GSI),
+    QueuedProposal(Rc<GameStartInfo>, Rc<GameStartInfo>),
     QueuedAcceptProposal(GameID),
     QueuedCancelProposal(GameID),
     Cheat(GameID, Amount, Hash),
@@ -391,7 +339,7 @@ impl std::fmt::Debug for GameAction {
                 write!(formatter, "RedoAccept({gi:?},{cs:?},{ph:?},{rt:?})")
             }
             GameAction::Accept(gi) => write!(formatter, "Accept({gi:?})"),
-            GameAction::CleanShutdown(_) => write!(formatter, "CleanShutdown(..)"),
+            GameAction::CleanShutdown => write!(formatter, "CleanShutdown"),
             GameAction::SendPotato => write!(formatter, "SendPotato"),
             GameAction::QueuedProposal(_, _) => write!(formatter, "QueuedProposal(..)"),
             GameAction::QueuedAcceptProposal(gi) => write!(formatter, "QueuedAcceptProposal({gi:?})"),

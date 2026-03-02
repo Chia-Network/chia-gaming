@@ -8,9 +8,9 @@ use log::debug;
 use crate::channel_handler::game_handler::{
     GameHandler, MessageHandler, MessageInputs, TheirTurnMoveData, TheirTurnResult, TheirTurnInputs,
 };
+use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::channel_handler::types::{
-    Evidence, GameStartInfoInterface, ReadableMove, StateUpdateProgram,
-    ValidationInfo, ValidationOrUpdateProgram,
+    Evidence, ReadableMove, StateUpdateProgram, ValidationInfo,
 };
 
 use crate::common::standard_coin::{sign_reward_payout, ChiaIdentity};
@@ -119,7 +119,7 @@ impl TheirTurnReferee {
         allocator: &mut AllocEncoder,
         referee_coin_puzzle: Puzzle,
         referee_coin_puzzle_hash: PuzzleHash,
-        game_start_info: &Rc<dyn GameStartInfoInterface>,
+        game_start_info: &Rc<GameStartInfo>,
         my_identity: ChiaIdentity,
         their_pubkey: &PublicKey,
         their_reward_puzzle_hash: &PuzzleHash,
@@ -130,11 +130,11 @@ impl TheirTurnReferee {
         state_number: usize,
     ) -> Result<(Self, PuzzleHash), Error> {
         let initial_move = GameMoveStateInfo {
-            mover_share: game_start_info.initial_mover_share().clone(),
-            move_made: game_start_info.initial_move().to_vec(),
-            max_move_size: game_start_info.initial_max_move_size(),
+            mover_share: game_start_info.initial_mover_share.clone(),
+            move_made: game_start_info.initial_move.clone(),
+            max_move_size: game_start_info.initial_max_move_size,
         };
-        let my_turn = game_start_info.game_handler().is_my_turn();
+        let my_turn = game_start_info.game_handler.is_my_turn();
 
         let fixed_info = Rc::new(RMFixed {
             referee_coin_puzzle,
@@ -148,25 +148,17 @@ impl TheirTurnReferee {
             reward_puzzle_hash: reward_puzzle_hash.clone(),
             their_reward_puzzle_hash: their_reward_puzzle_hash.clone(),
             my_identity: my_identity.clone(),
-            timeout: game_start_info.timeout().clone(),
-            amount: game_start_info.amount().clone(),
+            timeout: game_start_info.timeout.clone(),
+            amount: game_start_info.amount.clone(),
             nonce,
             agg_sig_me_additional_data: agg_sig_me_additional_data.clone(),
         });
 
-        let ip = match game_start_info.initial_validation_program() {
-            ValidationOrUpdateProgram::StateUpdate(su) => su,
-            ValidationOrUpdateProgram::Validation(_) => {
-                return Err(Error::StrErr(
-                    "Expected StateUpdate for initial_validation_program. This is wrong version."
-                        .to_string(),
-                ));
-            }
-        };
+        let ip = game_start_info.initial_validation_program.clone();
         let validation_info_hash = ValidationInfo::new_state_update(
             allocator,
             ip.clone(),
-            game_start_info.initial_state().p(),
+            game_start_info.initial_state.p(),
         );
         let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
             &fixed_info,
@@ -190,9 +182,9 @@ impl TheirTurnReferee {
                 ref_puzzle_args.mover_pubkey
             );
         }
-        let handler = game_start_info.game_handler();
+        let handler = game_start_info.game_handler.clone();
         let state = Rc::new(TheirTurnRefereeGameState::Initial {
-            initial_state: game_start_info.initial_state().p(),
+            initial_state: game_start_info.initial_state.p(),
             initial_validation_program: ip.clone(),
             initial_puzzle_args: ref_puzzle_args.clone(),
             game_handler: handler.clone(),

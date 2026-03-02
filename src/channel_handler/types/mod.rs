@@ -4,7 +4,6 @@ mod channel_handler;
 mod coin_identification_by_puzzle_hash;
 mod coin_spent;
 mod evidence;
-mod game_start_info;
 mod live_game;
 mod proposed_game;
 mod on_chain_game_coin;
@@ -16,8 +15,6 @@ mod result;
 mod state_update_program;
 mod unroll_coin;
 mod validation_info;
-mod validation_program;
-
 pub use accept_transaction_state::AcceptTransactionState;
 pub use channel_coin::{ChannelCoinSpendInfo, ChannelCoinSpentResult};
 pub use channel_handler::{
@@ -29,9 +26,6 @@ pub use coin_spent::{
     CoinSpentAccept, CoinSpentDisposition, CoinSpentInformation, CoinSpentMoveUp, CoinSpentResult,
 };
 pub use evidence::Evidence;
-pub use game_start_info::{
-    GameStartInfo, GameStartInfoInterface, GameStartInfoInterfaceND, ValidationOrUpdateProgram,
-};
 pub use live_game::LiveGame;
 pub use proposed_game::ProposedGame;
 pub use on_chain_game_coin::OnChainGameCoin;
@@ -48,4 +42,3 @@ pub use unroll_coin::{
     prepend_rem_conditions, UnrollCoin, UnrollCoinConditionInputs, UnrollCoinOutcome, UnrollTarget,
 };
 pub use validation_info::ValidationInfo;
-pub use validation_program::ValidationProgram;

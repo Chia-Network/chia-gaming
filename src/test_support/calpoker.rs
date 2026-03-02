@@ -100,7 +100,6 @@ mod sim_tests {
         decode_calpoker_readable,
         RawCalpokerHandValue as RawCalpokerHandValueV1,
     };
-    use crate::shutdown::BasicShutdownConditions;
     use crate::simulator::tests::potato_handler_sim::{
         assert_event_sequence, game_accepted, game_proposed, run_calpoker_container_with_action_list,
         run_calpoker_container_with_action_list_with_success_predicate, ExpectedEvent,
@@ -339,7 +338,7 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
             let mut moves = prefix_test_moves(&mut allocator).to_vec();
             moves.push(GameAction::Accept(1));
-            moves.push(GameAction::CleanShutdown(0, Rc::new(BasicShutdownConditions)));
+            moves.push(GameAction::CleanShutdown(0));
             let game_outcome =
                 run_calpoker_container_with_action_list(&mut allocator, &moves)
                     .expect("game should complete");
@@ -571,7 +570,7 @@ mod sim_tests {
             let mut allocator = AllocEncoder::new();
             let mut moves = prefix_test_moves(&mut allocator).to_vec();
             moves.push(GameAction::Accept(1));
-            moves.push(GameAction::CleanShutdown(0, Rc::new(BasicShutdownConditions)));
+            moves.push(GameAction::CleanShutdown(0));
 
             debug!("running moves {moves:?}");
             let game_outcome =

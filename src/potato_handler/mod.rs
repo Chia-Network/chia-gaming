@@ -10,9 +10,10 @@ use rand::Rng;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::channel_handler::types::{
     AcceptTransactionState, ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerInitiationResult,
-    ChannelHandlerPrivateKeys, GameStartInfoInterface, OnChainGameState, ReadableMove,
+    ChannelHandlerPrivateKeys, OnChainGameState, ReadableMove,
 };
 use crate::channel_handler::game;
 use crate::channel_handler::ChannelHandler;
@@ -27,12 +28,12 @@ use crate::common::types::{
 };
 use crate::potato_handler::effects::{Effect, GameNotification};
 use crate::potato_handler::on_chain::OnChainPotatoHandler;
-use crate::shutdown::{get_conditions_with_channel_handler, ShutdownConditions};
+use crate::shutdown::get_conditions_with_channel_handler;
 
 use crate::potato_handler::types::{
     BatchAction, BootstrapTowardGame, ConditionWaitKind, FromLocalUI, GameAction,
     GameFactory, PeerMessage, PotatoHandlerImpl, PotatoHandlerInit,
-    PotatoState, ShutdownActionHolder, SpendWalletReceiver, GSI,
+    PotatoState, SpendWalletReceiver,
 };
 
 use crate::potato_handler::handshake::{
@@ -47,8 +48,8 @@ pub mod start;
 pub mod types;
 
 pub type GameStartInfoPair = (
-    Vec<Rc<dyn GameStartInfoInterface>>,
-    Vec<Rc<dyn GameStartInfoInterface>>,
+    Vec<Rc<GameStartInfo>>,
+    Vec<Rc<GameStartInfo>>,
 );
 
 fn serialize_game_type_map<S: Serializer>(
@@ -466,10 +467,10 @@ impl PotatoHandler {
                     match action {
                         BatchAction::ProposeGame(gsi) => {
                             let ch = self.channel_handler_mut()?;
-                            ch.apply_received_proposal(env, &gsi.0)?;
-                            let game_id = gsi.0.game_id().clone();
-                            let my_contribution = gsi.0.my_contribution_this_game().clone();
-                            let their_contribution = gsi.0.their_contribution_this_game().clone();
+                            ch.apply_received_proposal(env, gsi)?;
+                            let game_id = gsi.game_id.clone();
+                            let my_contribution = gsi.my_contribution_this_game.clone();
+                            let their_contribution = gsi.their_contribution_this_game.clone();
                             effects.push(Effect::Notification(GameNotification::GameProposed {
                                 id: game_id,
                                 proposed_by_us: false,
@@ -796,12 +797,12 @@ impl PotatoHandler {
                     batch_actions.push(BatchAction::Accept(game_id, amount));
                 }
                 GameAction::QueuedProposal(my_gsi, their_gsi) => {
-                    let game_id = my_gsi.0.game_id().clone();
-                    let my_contribution = my_gsi.0.my_contribution_this_game().clone();
-                    let their_contribution = my_gsi.0.their_contribution_this_game().clone();
+                    let game_id = my_gsi.game_id.clone();
+                    let my_contribution = my_gsi.my_contribution_this_game.clone();
+                    let their_contribution = my_gsi.their_contribution_this_game.clone();
                     {
                         let ch = self.channel_handler_mut()?;
-                        ch.send_propose_game(env, &my_gsi.0)?;
+                        ch.send_propose_game(env, &my_gsi)?;
                     }
                     effects.push(Effect::Notification(GameNotification::GameProposed {
                         id: game_id,
@@ -857,7 +858,7 @@ impl PotatoHandler {
                     }));
                     batch_actions.push(BatchAction::CancelProposal(game_id));
                 }
-                GameAction::CleanShutdown(conditions) => {
+                GameAction::CleanShutdown => {
                     {
                         let ch = self.channel_handler_mut()?;
                         if ch.has_active_games() {
@@ -877,7 +878,7 @@ impl PotatoHandler {
                     let timeout = self.channel_timeout.clone();
                     let real_conditions = {
                         let ch = self.channel_handler_mut()?;
-                        get_conditions_with_channel_handler(env, ch, conditions.0.borrow())?
+                        get_conditions_with_channel_handler(env, ch)?
                     };
                     let (state_channel_coin, spend, want_puzzle_hash, want_amount) = {
                         let ch = self.channel_handler_mut()?;
@@ -979,19 +980,16 @@ impl PotatoHandler {
                 Some(parser_prog.clone().into()),
                 &game_start.my_contribution,
             )?;
-            let alice_result: Vec<Rc<dyn GameStartInfoInterface>> = alice_game
+            let alice_result: Vec<Rc<GameStartInfo>> = alice_game
                 .starts
                 .iter()
-                .map(|g| {
-                    let rc: Rc<dyn GameStartInfoInterface> = Rc::new(g.game_start(
-                        &game_start.game_id,
-                        &game_start.amount,
-                        &game_start.timeout,
-                        &game_start.my_contribution,
-                        &their_contribution,
-                    ));
-                    rc
-                })
+                .map(|g| Rc::new(g.game_start(
+                    &game_start.game_id,
+                    &game_start.amount,
+                    &game_start.timeout,
+                    &game_start.my_contribution,
+                    &their_contribution,
+                )))
                 .collect();
             let bob_game = game::Game::new_from_proposal(
                 env.allocator,
@@ -1001,19 +999,16 @@ impl PotatoHandler {
                 Some(parser_prog.clone().into()),
                 &game_start.my_contribution,
             )?;
-            let bob_result: Vec<Rc<dyn GameStartInfoInterface>> = bob_game
+            let bob_result: Vec<Rc<GameStartInfo>> = bob_game
                 .starts
                 .iter()
-                .map(|g| {
-                    let rc: Rc<dyn GameStartInfoInterface> = Rc::new(g.game_start(
-                        &game_start.game_id,
-                        &game_start.amount,
-                        &game_start.timeout,
-                        &their_contribution,
-                        &game_start.my_contribution,
-                    ));
-                    rc
-                })
+                .map(|g| Rc::new(g.game_start(
+                    &game_start.game_id,
+                    &game_start.amount,
+                    &game_start.timeout,
+                    &their_contribution,
+                    &game_start.my_contribution,
+                )))
                 .collect();
             Ok((alice_result, bob_result))
         } else {
@@ -1031,19 +1026,16 @@ impl PotatoHandler {
                 starter.program.clone().into(),
                 params_prog.clone(),
             )?;
-            let alice_result: Vec<Rc<dyn GameStartInfoInterface>> = alice_game
+            let alice_result: Vec<Rc<GameStartInfo>> = alice_game
                 .starts
                 .iter()
-                .map(|g| {
-                    let rc: Rc<dyn GameStartInfoInterface> = Rc::new(g.game_start(
-                        &game_start.game_id,
-                        &game_start.amount,
-                        &game_start.timeout,
-                        &game_start.my_contribution,
-                        &their_contribution,
-                    ));
-                    rc
-                })
+                .map(|g| Rc::new(g.game_start(
+                    &game_start.game_id,
+                    &game_start.amount,
+                    &game_start.timeout,
+                    &game_start.my_contribution,
+                    &their_contribution,
+                )))
                 .collect();
             let bob_game = game::Game::new_program(
                 env.allocator,
@@ -1052,19 +1044,16 @@ impl PotatoHandler {
                 starter.program.clone().into(),
                 params_prog,
             )?;
-            let bob_result: Vec<Rc<dyn GameStartInfoInterface>> = bob_game
+            let bob_result: Vec<Rc<GameStartInfo>> = bob_game
                 .starts
                 .iter()
-                .map(|g| {
-                    let rc: Rc<dyn GameStartInfoInterface> = Rc::new(g.game_start(
-                        &game_start.game_id,
-                        &game_start.amount,
-                        &game_start.timeout,
-                        &their_contribution,
-                        &game_start.my_contribution,
-                    ));
-                    rc
-                })
+                .map(|g| Rc::new(g.game_start(
+                    &game_start.game_id,
+                    &game_start.amount,
+                    &game_start.timeout,
+                    &their_contribution,
+                    &game_start.my_contribution,
+                )))
                 .collect();
             Ok((alice_result, bob_result))
         }
@@ -2165,7 +2154,7 @@ impl PotatoHandler {
         let mut on_chain_queue = VecDeque::new();
         while let Some(action) = self.game_action_queue.pop_front() {
             match &action {
-                GameAction::CleanShutdown(_) => {}
+                GameAction::CleanShutdown => {}
                 _ => on_chain_queue.push_back(action),
             }
         }
@@ -2233,7 +2222,7 @@ impl FromLocalUI for PotatoHandler
         }
 
         self.game_action_queue
-            .retain(|a| !matches!(a, GameAction::CleanShutdown(_)));
+            .retain(|a| !matches!(a, GameAction::CleanShutdown));
 
         let (my_games, their_games) = self.get_games_by_start_type(env, true, game)?;
 
@@ -2243,10 +2232,10 @@ impl FromLocalUI for PotatoHandler
             (their_games, my_games)
         };
 
-        let game_id_list: Vec<GameID> = my_games.iter().map(|g| g.game_id().clone()).collect();
+        let game_id_list: Vec<GameID> = my_games.iter().map(|g| g.game_id.clone()).collect();
 
         for (mine, theirs) in my_games.into_iter().zip(their_games.into_iter()) {
-            self.push_action(GameAction::QueuedProposal(GSI(mine), GSI(theirs)));
+            self.push_action(GameAction::QueuedProposal(mine, theirs));
         }
 
         let (_sent, effects) = self.flush_or_request_potato(env)?;
@@ -2309,7 +2298,6 @@ impl FromLocalUI for PotatoHandler
     fn shut_down<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
-        conditions: Rc<dyn ShutdownConditions>,
     ) -> Result<Vec<Effect>, Error>
     {
         if matches!(self.channel_state, ChannelState::OnChain(_)) {
@@ -2326,7 +2314,7 @@ impl FromLocalUI for PotatoHandler
         }
 
         let (_continued, effects) =
-            self.do_game_action(env, GameAction::CleanShutdown(ShutdownActionHolder(conditions)))?;
+            self.do_game_action(env, GameAction::CleanShutdown)?;
         Ok(effects)
     }
 }
