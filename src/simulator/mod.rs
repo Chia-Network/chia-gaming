@@ -25,7 +25,7 @@ use crate::utils::map_m;
 #[cfg(test)]
 use crate::simulator::tests::potato_handler_sim::test_funs as potato_handler_sim_tests;
 #[cfg(test)]
-use crate::simulator::tests::simenv::test_funs as simenv_tests;
+use crate::simulator::tests::simulator_tests::test_funs as simulator_tests;
 #[cfg(test)]
 use crate::test_support::calpoker::test_funs as calpoker_tests;
 
@@ -659,7 +659,7 @@ pub fn run_simulation_tests() {
         channel_handler_tests(),
         debug_game_tests(),
         potato_handler_tests(),
-        simenv_tests(),
+        simulator_tests(),
         calpoker_tests(),
         potato_handler_sim_tests(),
     ];

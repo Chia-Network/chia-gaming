@@ -403,7 +403,6 @@ impl std::fmt::Debug for GameAction {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameFactory {
-    pub version: usize,
     pub program: Rc<Program>,
     /// The parser program used by the responder.
     /// The `program` field holds the proposal (make_proposal) program.

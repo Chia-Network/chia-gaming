@@ -4,7 +4,7 @@ use std::mem::swap;
 use std::rc::Rc;
 
 use clvm_traits::ToClvm;
-use clvmr::{run_program, Allocator, NodePtr};
+use clvmr::{run_program, NodePtr};
 
 use rand::Rng;
 
@@ -12,7 +12,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::channel_handler::types::{
     AcceptTransactionState, ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerInitiationResult,
-    ChannelHandlerPrivateKeys, GameStartInfo, GameStartInfoInterface, OnChainGameState, ReadableMove,
+    ChannelHandlerPrivateKeys, GameStartInfoInterface, OnChainGameState, ReadableMove,
 };
 use crate::channel_handler::game;
 use crate::channel_handler::ChannelHandler;
@@ -21,12 +21,10 @@ use crate::common::standard_coin::{
     sign_reward_payout, verify_reward_payout_signature,
 };
 use crate::common::types::{
-    chia_dialect, Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error,
-    GameID, GameType, GetCoinStringParts, Hash, IntoErr, Node, Program, ProgramRef, Puzzle, PuzzleHash,
+    chia_dialect, Aggsig, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error,
+    GameID, GameType, GetCoinStringParts, Hash, IntoErr, Program, ProgramRef, Puzzle, PuzzleHash,
     Sha256Input, Spend, SpendBundle, Timeout,
 };
-use crate::utils::proper_list;
-
 use crate::potato_handler::effects::{Effect, GameNotification};
 use crate::potato_handler::on_chain::OnChainPotatoHandler;
 use crate::shutdown::{get_conditions_with_channel_handler, ShutdownConditions};
@@ -971,118 +969,30 @@ impl PotatoHandler {
         Ok((true, effects))
     }
 
-    fn start_version_0<R: Rng>(
+    fn get_games_by_start_type<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
         i_initiated: bool,
         game_start: &GameStart,
-        starter_clvm: NodePtr,
-        params_clvm: NodePtr,
     ) -> Result<GameStartInfoPair, Error> {
-        let program_run_args = (
-            i_initiated,
-            (
-                game_start.my_contribution.clone(),
-                (
-                    game_start.amount.clone() - game_start.my_contribution.clone(),
-                    (Node(params_clvm), ()),
-                ),
-            ),
-        )
-            .to_clvm(env.allocator)
-            .into_gen()?;
-
-        let program_output = run_program(
-            env.allocator.allocator(),
-            &chia_dialect(),
-            starter_clvm,
-            program_run_args,
-            0,
-        )
-        .into_gen()?
-        .1;
-
-        let to_list =
-            |allocator: &mut Allocator, node: NodePtr, err: &str| -> Result<Vec<NodePtr>, Error> {
-                if let Some(p) = proper_list(allocator, node, true) {
-                    Ok(p)
-                } else {
-                    Err(Error::StrErr(format!("bad factory output: {err}")))
-                }
-            };
-
-        // The result is two parallel lists of opposite sides of game starts.
-        // Well re-glue these together into a list of pairs.
-        let pair_of_output_lists = to_list(
-            env.allocator.allocator(),
-            program_output,
-            "not a pair of lists",
-        )?;
-
-        if pair_of_output_lists.len() != 2 {
-            return Err(Error::StrErr("output wasn't a list of 2 items".to_string()));
-        }
-
-        let my_info_list = to_list(
-            env.allocator.allocator(),
-            pair_of_output_lists[0],
-            "not a list (first)",
-        )?;
-        let their_info_list = to_list(
-            env.allocator.allocator(),
-            pair_of_output_lists[1],
-            "not a list (second)",
-        )?;
-
-        if their_info_list.len() != my_info_list.len() {
-            return Err(Error::StrErr(
-                "mismatched my and their game starts".to_string(),
-            ));
-        }
-
-        let game_ids = [game_start.game_id.clone()];
-        let convert_info_list = |allocator: &mut AllocEncoder,
-                                 my_info_list: &[NodePtr]|
-         -> Result<Vec<Rc<dyn GameStartInfoInterface>>, Error> {
-            let mut result_start_info: Vec<Rc<dyn GameStartInfoInterface>> =
-                Vec::with_capacity(my_info_list.len());
-            for (i, node) in my_info_list.iter().enumerate() {
-                let new_game = GameStartInfo::from_clvm(allocator, *node)?;
-                // Timeout and game_id are supplied here.
-                result_start_info.push(Rc::new(GameStartInfo {
-                    game_id: game_ids[i].clone(),
-                    timeout: game_start.timeout.clone(),
-                    ..new_game
-                }));
-            }
-            Ok(result_start_info)
+        let starter = if let Some(starter) = self.game_types.get(&game_start.game_type) {
+            starter
+        } else {
+            return Err(Error::StrErr(format!(
+                "no such game {:?}",
+                game_start.game_type
+            )));
         };
 
-        let my_result_start_info = convert_info_list(env.allocator, &my_info_list)?;
-        let their_result_start_info = convert_info_list(env.allocator, &their_info_list)?;
-
-        Ok((my_result_start_info, their_result_start_info))
-    }
-
-    fn start_version_1<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
-        i_initiated: bool,
-        game_start: &GameStart,
-        proposal_program: Rc<Program>,
-        parser_program: Option<Rc<Program>>,
-    ) -> Result<GameStartInfoPair, Error> {
         let their_contribution = game_start.amount.clone() - game_start.my_contribution.clone();
 
-        if let Some(parser_prog) = parser_program {
-            // New proposal/parser path
-            let parser_puzzle: Puzzle = parser_prog.into();
+        if let Some(parser_prog) = &starter.parser_program {
             let alice_game = game::Game::new_from_proposal(
                 env.allocator,
                 i_initiated,
                 &game_start.game_id,
-                proposal_program.clone().into(),
-                Some(parser_puzzle.clone()),
+                starter.program.clone().into(),
+                Some(parser_prog.clone().into()),
                 &game_start.my_contribution,
             )?;
             let alice_result: Vec<Rc<dyn GameStartInfoInterface>> = alice_game
@@ -1103,8 +1013,8 @@ impl PotatoHandler {
                 env.allocator,
                 !i_initiated,
                 &game_start.game_id,
-                proposal_program.into(),
-                Some(parser_puzzle),
+                starter.program.clone().into(),
+                Some(parser_prog.clone().into()),
                 &game_start.my_contribution,
             )?;
             let bob_result: Vec<Rc<dyn GameStartInfoInterface>> = bob_game
@@ -1123,7 +1033,6 @@ impl PotatoHandler {
                 .collect();
             Ok((alice_result, bob_result))
         } else {
-            // Old factory path (debug game)
             let program_run_args = (
                 game_start.my_contribution.clone(),
                 (their_contribution.clone(), (Rc::new(game_start.parameters.clone()), ())),
@@ -1135,7 +1044,7 @@ impl PotatoHandler {
                 env.allocator,
                 i_initiated,
                 &game_start.game_id,
-                proposal_program.clone().into(),
+                starter.program.clone().into(),
                 params_prog.clone(),
             )?;
             let alice_result: Vec<Rc<dyn GameStartInfoInterface>> = alice_game
@@ -1156,7 +1065,7 @@ impl PotatoHandler {
                 env.allocator,
                 !i_initiated,
                 &game_start.game_id,
-                proposal_program.into(),
+                starter.program.clone().into(),
                 params_prog,
             )?;
             let bob_result: Vec<Rc<dyn GameStartInfoInterface>> = bob_game
@@ -1174,37 +1083,6 @@ impl PotatoHandler {
                 })
                 .collect();
             Ok((alice_result, bob_result))
-        }
-    }
-
-    fn get_games_by_start_type<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
-        i_initiated: bool,
-        game_start: &GameStart,
-    ) -> Result<GameStartInfoPair, Error> {
-        let starter = if let Some(starter) = self.game_types.get(&game_start.game_type) {
-            starter
-        } else {
-            return Err(Error::StrErr(format!(
-                "no such game {:?}",
-                game_start.game_type
-            )));
-        };
-
-        if starter.version == 0 {
-            let starter_clvm = starter.program.to_clvm(env.allocator).into_gen()?;
-            let params_clvm = game_start.parameters.to_clvm(env.allocator).into_gen()?;
-
-            self.start_version_0(env, i_initiated, game_start, starter_clvm, params_clvm)
-        } else {
-            self.start_version_1(
-                env,
-                i_initiated,
-                game_start,
-                starter.program.clone(),
-                starter.parser_program.clone(),
-            )
         }
     }
 

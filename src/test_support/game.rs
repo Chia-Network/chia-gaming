@@ -378,11 +378,14 @@ mod sim_tests {
         let their_start: Rc<dyn GameStartInfoInterface> = Rc::new(their_game_start);
 
         let propose_sigs = party.player(0).ch.propose_game(env, &our_start)?;
-        let recv_propose = party.player(1).ch.received_proposal(env, &propose_sigs, &their_start)?;
+        party.player(1).ch.apply_received_proposal(env, &their_start)?;
+        let recv_propose = party.player(1).ch.verify_received_batch_signatures(env, &propose_sigs)?;
         party.update_channel_coin_after_receive(1, &recv_propose)?;
 
-        let accept_sigs = party.player(1).ch.accept_proposal(env, &game_id)?;
-        let recv_accept = party.player(0).ch.received_accept_proposal(env, &accept_sigs, &game_id)?;
+        party.player(1).ch.send_accept_proposal(&game_id)?;
+        let accept_sigs = party.player(1).ch.update_cached_unroll_state(env)?;
+        party.player(0).ch.apply_received_accept_proposal(&game_id)?;
+        let recv_accept = party.player(0).ch.verify_received_batch_signatures(env, &accept_sigs)?;
         party.update_channel_coin_after_receive(0, &recv_accept)?;
 
         Ok((party, state_channel_coin))

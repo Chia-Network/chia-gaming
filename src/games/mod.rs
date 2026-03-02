@@ -33,7 +33,6 @@ pub fn poker_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, Game
     game_type_map.insert(
         GameType(b"calpoker".to_vec()),
         GameFactory {
-            version: 1,
             program: calpoker_make_proposal.to_program(),
             parser_program: Some(calpoker_parser.to_program()),
         },
@@ -41,7 +40,6 @@ pub fn poker_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, Game
     game_type_map.insert(
         GameType(b"ca1poker".to_vec()),
         GameFactory {
-            version: 1,
             program: calpoker_make_proposal.to_program(),
             parser_program: Some(calpoker_parser.to_program()),
         },
@@ -49,7 +47,6 @@ pub fn poker_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, Game
     game_type_map.insert(
         GameType(b"debug".to_vec()),
         GameFactory {
-            version: 1,
             program: debug_game.into(),
             parser_program: None,
         },

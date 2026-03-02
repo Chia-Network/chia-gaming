@@ -829,7 +829,7 @@ impl ChannelHandler {
         Ok(())
     }
 
-    /// Legacy wrapper: propose + finalize in one call.
+    /// Propose a game and finalize unroll signatures in one call.
     pub fn propose_game<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
@@ -882,17 +882,6 @@ impl ChannelHandler {
         Ok(())
     }
 
-    /// Legacy wrapper: apply proposal + verify signatures in one call.
-    pub fn received_proposal<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<R>,
-        signatures: &PotatoSignatures,
-        start_info: &Rc<dyn GameStartInfoInterface>,
-    ) -> Result<ChannelCoinSpendInfo, Error> {
-        self.apply_received_proposal(env, start_info)?;
-        self.verify_received_batch_signatures(env, signatures)
-    }
-
     /// Mutate state for accepting a proposal. Does NOT finalize signatures.
     pub fn send_accept_proposal(
         &mut self,
@@ -927,16 +916,6 @@ impl ChannelHandler {
         Ok(())
     }
 
-    /// Legacy wrapper: accept proposal + finalize in one call.
-    pub fn accept_proposal<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<R>,
-        game_id: &GameID,
-    ) -> Result<PotatoSignatures, Error> {
-        self.send_accept_proposal(game_id)?;
-        self.update_cached_unroll_state(env)
-    }
-
     /// Apply a received accept-proposal without verifying signatures.
     pub fn apply_received_accept_proposal(
         &mut self,
@@ -969,17 +948,6 @@ impl ChannelHandler {
         Ok(())
     }
 
-    /// Legacy wrapper: apply accept-proposal + verify signatures in one call.
-    pub fn received_accept_proposal<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<R>,
-        signatures: &PotatoSignatures,
-        game_id: &GameID,
-    ) -> Result<ChannelCoinSpendInfo, Error> {
-        self.apply_received_accept_proposal(game_id)?;
-        self.verify_received_batch_signatures(env, signatures)
-    }
-
     /// Mutate state for cancelling a proposal. Does NOT finalize signatures.
     pub fn send_cancel_proposal(
         &mut self,
@@ -989,16 +957,6 @@ impl ChannelHandler {
             .ok_or_else(|| Error::StrErr(format!("no proposal with id {game_id:?}")))?;
         self.proposed_games.remove(idx);
         Ok(())
-    }
-
-    /// Legacy wrapper: cancel proposal + finalize in one call.
-    pub fn cancel_proposal<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<R>,
-        game_id: &GameID,
-    ) -> Result<PotatoSignatures, Error> {
-        self.send_cancel_proposal(game_id)?;
-        self.update_cached_unroll_state(env)
     }
 
     pub fn received_cancel_proposal(
@@ -1220,7 +1178,6 @@ impl ChannelHandler {
         Ok(())
     }
 
-    /// Legacy wrapper: apply accept + verify signatures in one call.
     /// Uses the channel coin key to post standard format coin generation to the
     /// real blockchain via a Spend.
     pub fn send_potato_clean_shutdown<R: Rng>(
