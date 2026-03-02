@@ -106,7 +106,11 @@ impl LiveGame {
         state_number: usize,
         coin: Option<&CoinString>,
     ) -> Result<TheirTurnMoveResult, Error> {
-        assert!(!self.referee_maker.is_my_turn());
+        if self.referee_maker.is_my_turn() {
+            return Err(Error::Channel(
+                "received opponent move but it is our turn".to_string(),
+            ));
+        }
         let (new_ref, their_move_result) = self.referee_maker.their_turn_move_off_chain(
             allocator,
             game_move,

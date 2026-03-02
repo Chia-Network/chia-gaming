@@ -372,28 +372,28 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             return Ok(effects);
         }
 
+        if !self.player_ch.has_live_game(&old_definition.game_id) {
+            debug!("game {:?} already ended, skipping coin spent", old_definition.game_id);
+            effects.extend(self.next_action(env)?);
+            return Ok(effects);
+        }
+
         let result =
             self.player_ch
                 .game_coin_spent(env, &old_definition.game_id, coin_id, &conditions);
 
-        let game_already_ended = matches!(
-            &result,
-            Err(Error::StrErr(msg)) if msg.contains("nonexistent game id")
-        );
         let their_turn_result = if let Ok(result) = result {
             result
         } else {
             debug!("failed result {result:?}");
-            if !game_already_ended {
-                if let Some(eff) = self.try_emit_terminal(
-                    &old_definition.game_id,
-                    GameNotification::GameError {
-                        id: old_definition.game_id.clone(),
-                        reason: format!("game_coin_spent failed: {result:?}"),
-                    },
-                ) {
-                    effects.push(eff);
-                }
+            if let Some(eff) = self.try_emit_terminal(
+                &old_definition.game_id,
+                GameNotification::GameError {
+                    id: old_definition.game_id.clone(),
+                    reason: format!("game_coin_spent failed: {result:?}"),
+                },
+            ) {
+                effects.push(eff);
             }
             effects.extend(self.next_action(env)?);
             return Ok(effects);
@@ -488,7 +488,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     .and_then(|c| c.to_parts())
                     .map(|(_, _, amt)| amt.clone())
                     .unwrap_or_default();
-                if !game_already_ended && !old_definition.notification_sent {
+                if !old_definition.notification_sent {
                     let notif = if old_definition.our_turn {
                         GameNotification::WeTimedOut {
                             id: old_definition.game_id.clone(),
@@ -632,7 +632,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             }
             CoinSpentInformation::OurReward(ph, amt) => {
                 debug!("{initial_potato} our reward coin was spent");
-                if !game_already_ended && !old_definition.notification_sent {
+                if !old_definition.notification_sent {
                     let reward_coin = if amt > Amount::default() {
                         Some(CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt))
                     } else {

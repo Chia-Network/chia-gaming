@@ -987,6 +987,10 @@ impl ChannelHandler {
         self.proposed_games.iter().any(|p| p.game_id == *game_id)
     }
 
+    pub fn has_live_game(&self, game_id: &GameID) -> bool {
+        self.live_games.iter().any(|g| &g.game_id == game_id)
+    }
+
     pub fn get_game_by_id(&self, game_id: &GameID) -> Result<usize, Error> {
         self.live_games
             .iter()
@@ -994,7 +998,7 @@ impl ChannelHandler {
             .map(Ok)
             .unwrap_or_else(|| {
                 Err(Error::StrErr(
-                    "send potato move for nonexistent game id".to_string(),
+                    "no live game with the given game id".to_string(),
                 ))
             })
     }

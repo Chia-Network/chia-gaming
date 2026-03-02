@@ -197,14 +197,14 @@ impl Referee {
         }))
     }
 
-    fn get_my_turn_move_spend(&self) -> Result<Rc<OnChainRefereeMoveData>, Error> {
+    fn get_last_move_spend(&self) -> Result<Rc<OnChainRefereeMoveData>, Error> {
         let move_spend = match self {
             Referee::TheirTurn(t) => {
-                debug!("get_my_turn_move_spend: right phase");
+                debug!("get_last_move_spend: right phase");
                 t.get_move_info()
             }
             Referee::MyTurn(t) => {
-                debug!("get_my_turn_move_spend: wrong phase");
+                debug!("get_last_move_spend: wrong phase");
                 t.get_move_info()
             }
         };
@@ -268,7 +268,7 @@ impl Referee {
                 t.my_turn_make_move(allocator, readable_move, new_entropy, state_number)?
             }
             Referee::TheirTurn(_) => {
-                return Err(Error::StrErr(
+                return Err(Error::Channel(
                     "my_turn_make_move called on TheirTurn referee".to_string(),
                 ));
             }
@@ -282,7 +282,7 @@ impl Referee {
         message: &[u8],
     ) -> Result<ReadableMove, Error> {
         match self {
-            Referee::MyTurn(_) => Err(Error::StrErr(
+            Referee::MyTurn(_) => Err(Error::Channel(
                 "receive_readable called on MyTurn referee".to_string(),
             )),
             Referee::TheirTurn(t) => t.receive_readable(allocator, message),
@@ -299,7 +299,7 @@ impl Referee {
         debug!("their_turn_move_off_chain: state={}", state_number);
         let (new_self, result) = match self {
             Referee::MyTurn(_) => {
-                return Err(Error::StrErr(
+                return Err(Error::Channel(
                     "their_turn_move_off_chain called on MyTurn referee".to_string(),
                 ));
             }
@@ -375,7 +375,7 @@ impl Referee {
 
         match self {
             Referee::MyTurn(_) => {
-                Err(Error::StrErr(
+                Err(Error::Channel(
                     "their_turn_coin_spent called on MyTurn referee".to_string(),
                 ))
             }
@@ -508,7 +508,7 @@ impl Referee {
         coin_string: &CoinString,
         _on_chain: bool,
     ) -> Result<RefereeOnChainTransaction, Error> {
-        let my_turn_spend = self.get_my_turn_move_spend()?;
+        let my_turn_spend = self.get_last_move_spend()?;
         let args = my_turn_spend.before_args.clone();
         let spend_puzzle =
             curry_referee_puzzle(allocator, &self.fixed().referee_coin_puzzle, &args)?;
