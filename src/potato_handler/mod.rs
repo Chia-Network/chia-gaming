@@ -444,7 +444,7 @@ impl PotatoHandler {
 
         {
             let ch = self.channel_handler_mut()?;
-            for (id, amount) in ch.drain_cached_accepts() {
+            for (id, amount) in ch.drain_cached_accept_timeouts() {
                 effects.push(Effect::Notification(GameNotification::WeTimedOut { id, our_reward: amount, reward_coin: None }));
             }
         }
@@ -610,7 +610,7 @@ impl PotatoHandler {
 
                     {
                         let ch = self.channel_handler_mut()?;
-                        for (id, amount) in ch.drain_cached_accepts() {
+                        for (id, amount) in ch.drain_cached_accept_timeouts() {
                             effects.push(Effect::Notification(GameNotification::WeTimedOut { id, our_reward: amount, reward_coin: None }));
                         }
                     }
@@ -1958,7 +1958,7 @@ impl PotatoHandler {
             let mut effects = Vec::new();
             {
                 let ch = self.channel_handler_mut()?;
-                for (id, amount) in ch.drain_cached_accepts() {
+                for (id, amount) in ch.drain_cached_accept_timeouts() {
                     effects.push(Effect::Notification(GameNotification::WeTimedOut { id, our_reward: amount, reward_coin: None }));
                 }
             }

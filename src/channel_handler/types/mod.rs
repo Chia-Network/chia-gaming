@@ -31,7 +31,7 @@ pub use proposed_game::ProposedGame;
 pub use on_chain_game_coin::OnChainGameCoin;
 pub use on_chain_game_state::OnChainGameState;
 pub use potato::{
-    CachedPotatoRegenerateLastHop, ChannelHandlerMoveResult, PotatoAcceptCachedData,
+    CachedPotatoRegenerateLastHop, ChannelHandlerMoveResult, PotatoAcceptTimeoutCachedData,
     PotatoMoveCachedData, PotatoSignatures,
 };
 pub use read::{read_unroll_metapuzzle, read_unroll_puzzle};

@@ -24,7 +24,7 @@ use crate::channel_handler::types::{
     ChannelHandlerInitiationResult, ChannelHandlerMoveResult, ChannelHandlerPrivateKeys,
     ChannelHandlerUnrollSpendInfo, CoinSpentInformation,
     HandshakeResult, LiveGame, MoveResult, OnChainGameCoin,
-    OnChainGameState, PotatoAcceptCachedData, PotatoMoveCachedData, PotatoSignatures,
+    OnChainGameState, PotatoAcceptTimeoutCachedData, PotatoMoveCachedData, PotatoSignatures,
     ProposedGame, ReadableMove, UnrollCoin, UnrollCoinConditionInputs,
 };
 
@@ -136,11 +136,11 @@ pub struct ChannelHandler {
     // Live games
     live_games: Vec<LiveGame>,
 
-    // Games removed by send_potato_accept / received_potato_accept that
+    // Games removed by send_accept_timeout_no_finalize / apply_received_accept_timeout that
     // haven't been confirmed by a full potato round-trip yet.  Kept so
     // set_state_for_coins and accept_or_timeout_game_on_chain can find them
     // if the channel goes on-chain before the round-trip completes.
-    pending_accept_games: Vec<LiveGame>,
+    pending_accept_timeouts: Vec<LiveGame>,
 
     // Games that have been proposed but not yet accepted or cancelled.
     // These are metadata only — they do not affect the unroll commitment
@@ -203,7 +203,7 @@ impl ChannelHandler {
 
     pub fn all_game_ids(&self) -> Vec<GameID> {
         self.live_games.iter()
-            .chain(self.pending_accept_games.iter())
+            .chain(self.pending_accept_timeouts.iter())
             .map(|g| g.game_id.clone())
             .collect()
     }
@@ -235,7 +235,7 @@ impl ChannelHandler {
         self.cached_last_actions
             .iter()
             .filter_map(|entry| {
-                if let CachedPotatoRegenerateLastHop::PotatoAccept(acc) = entry {
+                if let CachedPotatoRegenerateLastHop::PotatoAcceptTimeout(acc) = entry {
                     Some(acc.game_id.clone())
                 } else {
                     None
@@ -252,11 +252,11 @@ impl ChannelHandler {
         }
     }
 
-    /// Drain all cached PotatoAccept entries, returning (game_id, our_share_amount) for each.
-    pub fn drain_cached_accepts(&mut self) -> Vec<(GameID, Amount)> {
+    /// Drain all cached PotatoAcceptTimeout entries, returning (game_id, our_share_amount) for each.
+    pub fn drain_cached_accept_timeouts(&mut self) -> Vec<(GameID, Amount)> {
         let mut accepts = Vec::new();
         self.cached_last_actions.retain(|entry| {
-            if let CachedPotatoRegenerateLastHop::PotatoAccept(acc) = entry {
+            if let CachedPotatoRegenerateLastHop::PotatoAcceptTimeout(acc) = entry {
                 accepts.push((acc.game_id.clone(), acc.our_share_amount.clone()));
                 false
             } else {
@@ -433,7 +433,7 @@ impl ChannelHandler {
             state_conditions_hashes: HashMap::new(),
 
             live_games: Vec::new(),
-            pending_accept_games: Vec::new(),
+            pending_accept_timeouts: Vec::new(),
             proposed_games: Vec::new(),
 
             private_keys,
@@ -672,7 +672,7 @@ impl ChannelHandler {
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
         // The potato just arrived, so any prior pending accepts are now
         // confirmed by the round-trip.
-        self.pending_accept_games.clear();
+        self.pending_accept_timeouts.clear();
 
         // Unroll coin section.
         let mut test_unroll = self.unroll.coin.clone();
@@ -750,7 +750,7 @@ impl ChannelHandler {
         )?;
 
         self.cached_last_actions.retain(|entry| {
-            matches!(entry, CachedPotatoRegenerateLastHop::PotatoAccept(_))
+            matches!(entry, CachedPotatoRegenerateLastHop::PotatoAcceptTimeout(_))
         });
 
         Ok(ChannelCoinSpendInfo {
@@ -778,7 +778,7 @@ impl ChannelHandler {
         )?;
 
         self.cached_last_actions.retain(|entry| {
-            matches!(entry, CachedPotatoRegenerateLastHop::PotatoAccept(_))
+            matches!(entry, CachedPotatoRegenerateLastHop::PotatoAcceptTimeout(_))
         });
 
         Ok(ChannelCoinSpendInfo {
@@ -1138,7 +1138,7 @@ impl ChannelHandler {
         let at_stake = live_game.get_amount();
 
         let (ref_clone, ph_clone) = live_game.save_referee_state();
-        self.pending_accept_games.push(LiveGame::new(
+        self.pending_accept_timeouts.push(LiveGame::new(
             game_id.clone(),
             ph_clone,
             ref_clone,
@@ -1149,8 +1149,8 @@ impl ChannelHandler {
         self.my_out_of_game_balance += amount.clone();
         self.their_out_of_game_balance += at_stake.clone() - amount.clone();
 
-        self.push_cached_action(CachedPotatoRegenerateLastHop::PotatoAccept(Box::new(
-            PotatoAcceptCachedData {
+        self.push_cached_action(CachedPotatoRegenerateLastHop::PotatoAcceptTimeout(Box::new(
+            PotatoAcceptTimeoutCachedData {
                 game_id: game_id.clone(),
                 puzzle_hash: live_game.last_referee_puzzle_hash.clone(),
                 live_game,
@@ -1181,7 +1181,7 @@ impl ChannelHandler {
         self.their_out_of_game_balance += game_amount_for_them;
 
         let removed = self.live_games.remove(game_idx);
-        self.pending_accept_games.push(removed);
+        self.pending_accept_timeouts.push(removed);
         Ok(())
     }
 
@@ -1630,7 +1630,7 @@ impl ChannelHandler {
             }
 
             // Try pending_accept games, matching by amount and PH.
-            let pending_match = self.pending_accept_games.iter().find(|p| {
+            let pending_match = self.pending_accept_timeouts.iter().find(|p| {
                 p.get_amount() == *coin_amt && p.last_referee_puzzle_hash == *coin_ph
             });
             if let Some(pending) = pending_match {
@@ -1653,7 +1653,7 @@ impl ChannelHandler {
             }
 
             // Try pending_accept games by amount only (stale unroll case).
-            let pending_amt_match = self.pending_accept_games.iter().find(|p| {
+            let pending_amt_match = self.pending_accept_timeouts.iter().find(|p| {
                 p.get_amount() == *coin_amt
             });
             if let Some(pending) = pending_amt_match {
@@ -1903,13 +1903,13 @@ impl ChannelHandler {
             self.live_games.remove(game_idx);
             Ok(tx)
         } else if let Some(idx) = self
-            .pending_accept_games
+            .pending_accept_timeouts
             .iter()
             .position(|g| g.game_id == *game_id)
         {
-            let tx = self.pending_accept_games[idx]
+            let tx = self.pending_accept_timeouts[idx]
                 .get_transaction_for_timeout(env.allocator, coin)?;
-            self.pending_accept_games.remove(idx);
+            self.pending_accept_timeouts.remove(idx);
             Ok(tx)
         } else {
             Ok(None)

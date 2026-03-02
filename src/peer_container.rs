@@ -210,7 +210,7 @@ pub trait GameCradle {
 
     /// Accept a proposed game and immediately make a move in it.
     /// The peer protocol sends these as two separate batch actions.
-    fn accept_and_move<R: Rng>(
+    fn accept_proposal_and_move<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,
         rng: &mut R,
@@ -953,7 +953,7 @@ impl GameCradle for SynchronousGameCradle {
         Ok(())
     }
 
-    fn accept_and_move<R: Rng>(
+    fn accept_proposal_and_move<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,
         rng: &mut R,

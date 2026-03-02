@@ -38,7 +38,7 @@ For debugging and testing operational guidance, see `DEBUGGING_GUIDE.md`.
 - [ResyncMove and the Simulation Loop](#resyncmove-and-the-simulation-loop)
 - [On-Chain Game State Tracking (our_turn)](#on-chain-game-state-tracking-our_turn)
 - [UX Notifications](#ux-notifications)
-- [Accept Lifecycle](#accept-lifecycle)
+- [Accept-Timeout Lifecycle](#accept-timeout-lifecycle)
 - [Simulator Strictness](#simulator-strictness)
 - [Test Infrastructure](#test-infrastructure)
 
@@ -170,7 +170,7 @@ the holder permission to update state. Only the player holding the potato can:
 - Propose a new game
 - Accept or cancel a game proposal
 - Make a move
-- Accept a game result
+- Accept a game result (accept_timeout)
 - Initiate clean shutdown
 
 When a player wants to act but doesn't have the potato, they **request** it.
@@ -193,7 +193,7 @@ Every potato pass is a single `PeerMessage::Batch` containing:
    - `AcceptProposal` — accept a pending game proposal
    - `CancelProposal` — cancel a pending proposal
    - `Move` — make a game move
-   - `Accept` — accept a game result (end game)
+   - `AcceptTimeout` — accept a game result (end game)
 
 2. **`signatures: PotatoSignatures`** — one set of signatures covering the final
    channel state after all actions in the batch have been applied.
@@ -292,13 +292,13 @@ held, several race conditions can occur:
 
 ### WASM Accept-and-Move Convenience
 
-The WASM layer exposes an `accept_and_move` function that atomically accepts
+The WASM layer exposes an `accept_proposal_and_move` function that atomically accepts
 a proposal and makes the first move. Internally this translates into two
 distinct `BatchAction`s (`AcceptProposal` followed by `Move`) in the same
 batch.
 
 **Key code:** `src/potato_handler/mod.rs` — `propose_game`, `accept_proposal`,
-`cancel_proposal`; `wasm/src/mod.rs` — `accept_and_move`
+`cancel_proposal`; `wasm/src/mod.rs` — `accept_proposal_and_move`
 
 ---
 
@@ -322,16 +322,16 @@ Once the channel is open:
 
 5. Repeat until game ends
 
-6. Potato holder calls accept (BatchAction::Accept)
-   → balances are updated, game moves to pending_accept_games
+6. Potato holder calls accept_timeout (BatchAction::AcceptTimeout)
+   → balances are updated, game moves to pending_accept_timeouts
    → when the potato comes back, WeTimedOut fires for the accepter
 ```
 
 Each batch increments the `state_number` once and produces a new signed unroll
-commitment. The `ChannelHandler` tracks `live_games`, `pending_accept_games`,
+commitment. The `ChannelHandler` tracks `live_games`, `pending_accept_timeouts`,
 player balances (`my_allocated_balance`, `their_allocated_balance`), and the
-current `state_number`. See [Accept Lifecycle](#accept-lifecycle) for details
-on what happens when accept hasn't been confirmed before going on-chain.
+current `state_number`. See [Accept-Timeout Lifecycle](#accept-timeout-lifecycle) for details
+on what happens when accept_timeout hasn't been confirmed before going on-chain.
 
 ---
 
@@ -376,7 +376,7 @@ When the unroll coin spend is detected, `UnrollCoinSpent` is emitted.
 
 `ChannelHandler::set_state_for_coins` matches each created game coin's puzzle
 hash against known states. It searches both `live_games` and
-`pending_accept_games` (see [Accept Lifecycle](#accept-lifecycle) below). All
+`pending_accept_timeouts` (see [Accept-Timeout Lifecycle](#accept-timeout-lifecycle) below). All
 state tracking is **forward-only** — there is no rewind logic. Two cases:
 
 1. **Coin PH matches `last_referee_puzzle_hash`** (the outcome/post-move PH):
@@ -397,13 +397,13 @@ If the game coin landed at the pre-move state, `get_redo_action` returns a
 move data and the actual on-chain coin ID to construct the transaction. After
 the redo, the game is at the latest known state.
 
-### Step 5: Accept / Timeout
+### Step 5: Accept-Timeout
 
 Once all moves are replayed, `coin_timeout_reached` generates a timeout
 transaction that ends the game and distributes funds based on `mover_share`.
 Timeout transactions are submitted as soon as the `game_timeout` relative
 timelock allows. The `WeTimedOut` notification is emitted only at this point
-— not when accept is first called.
+— not when accept_timeout is first called.
 
 ### Step 6: Clean Shutdown
 
@@ -847,8 +847,8 @@ if Alice misclaims the split.
 | `UnrollCoin` | `channel_handler/types/unroll_coin.rs` | Unroll coin state and puzzle construction |
 | `GameCradle` | `peer_container.rs` | Trait for synchronous game interaction (tests/UI) |
 | `ValidationInfo` | `channel_handler/types/validation_info.rs` | Game validation program + state |
-| `BatchAction` | `potato_handler/types.rs` | Peer-level batch action variants: `ProposeGame`, `AcceptProposal`, `CancelProposal`, `Move`, `Accept` |
-| `GameAction` | `potato_handler/types.rs` | Actions: `Move`, `Accept`, `GoOnChain`, `CleanShutdown`, etc. |
+| `BatchAction` | `potato_handler/types.rs` | Peer-level batch action variants: `ProposeGame`, `AcceptProposal`, `CancelProposal`, `Move`, `AcceptTimeout` |
+| `GameAction` | `potato_handler/types.rs` | Actions: `Move`, `AcceptTimeout`, `GoOnChain`, `CleanShutdown`, etc. |
 | `SynchronousGameCradleState` | `peer_container.rs` | Per-peer mutable state: queues, flags, `peer_disconnected` |
 | `OnChainGameState` | `channel_handler/types/on_chain_game_state.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `accepted`, `pending_slash_amount`, `game_timeout` |
 | `GameNotification` | `potato_handler/effects.rs` | Notifications to the UI: `ChannelCoinSpent`, `UnrollCoinSpent`, `WeTimedOut`, etc. |
@@ -937,19 +937,19 @@ There are two kinds of cached entries:
 - **`PotatoMove`** — a move we sent but the opponent hasn't acknowledged. Stores
   the move data, the puzzle hash it operates on (`match_puzzle_hash`), and the
   post-move puzzle hash (`saved_post_move_last_ph`).
-- **`PotatoAccept`** — a game acceptance we sent. Stores the game ID, puzzle
+- **`PotatoAcceptTimeout`** — a game acceptance we sent. Stores the game ID, puzzle
   hash, live game state, and reward amounts. When the potato returns
-  (acknowledgment), `drain_cached_accepts` emits `WeTimedOut` for each cached
+  (acknowledgment), `drain_cached_accept_timeouts` emits `WeTimedOut` for each cached
   accept.
 
-**Set** in `update_cache_for_potato_send` (moves) and `send_accept_no_finalize`
-(accepts).
+**Set** in `update_cache_for_potato_send` (moves) and
+`send_accept_timeout_no_finalize` (accept-timeouts).
 
 **Cleared** (selectively) when we receive the potato back:
 - `PotatoMove` entries are cleared in `verify_received_batch_signatures` and
   `received_empty_potato` (the opponent's response acknowledges our moves).
-- `PotatoAccept` entries are **retained** across those clears and only drained
-  later by `drain_cached_accepts` during `update_channel_coin_after_receive` or
+- `PotatoAcceptTimeout` entries are **retained** across those clears and only drained
+  later by `drain_cached_accept_timeouts` during `update_channel_coin_after_receive` or
   clean shutdown, when `WeTimedOut` notifications are emitted.
 
 ### How Redo Works
@@ -1047,9 +1047,9 @@ Alice/Bob):
 |-------------|-------------|----------------------|---------|
 | 2 (a,b) | Bob | Alice | `ForceDestroyCoin`, `OurTurnCoinSpentUnexpectedly` |
 | 3 (a,b,c) | Alice | Bob | `Cheat(1)`, `ForceDestroyCoin` (opponent's turn) |
-| 4 (a,b,c,d) | Bob | Alice | `Cheat(0)`, `Accept(0)` |
+| 4 (a,b,c,d) | Bob | Alice | `Cheat(0)`, `AcceptTimeout(0)` |
 
-When designing tests with `Cheat(N)` or `Accept(N)`, ensure the number of
+When designing tests with `Cheat(N)` or `AcceptTimeout(N)`, ensure the number of
 off-chain moves results in the correct player's turn after the redo completes.
 
 ---
@@ -1166,8 +1166,8 @@ The frontend should treat any of these as the "game ended" signal.
 
 | Notification | When | Meaning |
 |--------------|------|---------|
-| `WeTimedOut { id, our_reward, reward_coin }` | Game resolved in our favor | Includes off-chain accept (fires when potato returns) and on-chain timeout; `our_reward` is the amount we received; `reward_coin` is `Some(CoinString)` when on-chain and reward is nonzero, `None` for off-chain resolution |
-| `OpponentTimedOut { id, our_reward, reward_coin }` | Game resolved in opponent's favor | Includes receiving opponent's off-chain accept; `our_reward` is the amount we received; `reward_coin` is `Some(CoinString)` when on-chain and reward is nonzero, `None` for off-chain |
+| `WeTimedOut { id, our_reward, reward_coin }` | Game resolved in our favor | Includes off-chain accept-timeout (fires when potato returns) and on-chain timeout; `our_reward` is the amount we received; `reward_coin` is `Some(CoinString)` when on-chain and reward is nonzero, `None` for off-chain resolution |
+| `OpponentTimedOut { id, our_reward, reward_coin }` | Game resolved in opponent's favor | Includes receiving opponent's off-chain accept-timeout; `our_reward` is the amount we received; `reward_coin` is `Some(CoinString)` when on-chain and reward is nonzero, `None` for off-chain |
 | `GameCancelled { id }` | Stale accept of already-cancelled proposal | Emitted when a queued `AcceptProposal` finds the proposal already gone. Post-acceptance game disappearance uses `GameError`, not `GameCancelled`. |
 | `WeSlashedOpponent { id, reward_coin }` | Slash transaction confirmed | Opponent's illegal move was proven on-chain; `reward_coin` is the `CoinString` of the reward we received |
 | `OpponentSlashedUs { id }` | Opponent slashed us | Our move was proven illegal on-chain |
@@ -1215,12 +1215,12 @@ explicitly resolved.
 
 These are not lifecycle invariants but important rules enforced in the code:
 
-- **Accept only on our turn.** Calling `accept()` when it is not our turn is an
-  assert failure. Accept is an alternative to moving.
+- **Accept only on our turn.** Calling `accept_timeout()` when it is not our
+  turn is an assert failure. Accept-timeout is an alternative to moving.
 
-- **Accepted + opponent move is an untested path.** Since accept only happens on
-  our turn, and only the mover can advance a game coin, the opponent cannot move
-  on a coin where we already accepted. The `accept_and_move` API exists but has
+- **Accepted + opponent move is an untested path.** Since accept_timeout only
+  happens on our turn, and only the mover can advance a game coin, the opponent
+  cannot move on a coin where we already accepted. The `accept_proposal_and_move` API exists but has
   not been tested end-to-end; Calpoker's move direction may prevent it from
   triggering in practice. This path emits `GameError`.
 
@@ -1244,38 +1244,38 @@ These are not lifecycle invariants but important rules enforced in the code:
 
 ---
 
-## Accept Lifecycle
+## Accept-Timeout Lifecycle
 
-Calling `accept()` off-chain does **not** immediately finalize the game. The
-full lifecycle is:
+Calling `accept_timeout()` off-chain does **not** immediately finalize the
+game. The full lifecycle is:
 
-### Off-Chain Accept
+### Off-Chain Accept-Timeout
 
-1. `send_potato_accept` moves the game from `live_games` to
-   `pending_accept_games` in the `ChannelHandler` and updates balances.
-2. A `PotatoAccept` entry is added to `cached_last_actions` storing the game ID
+1. `send_accept_timeout_no_finalize` moves the game from `live_games` to
+   `pending_accept_timeouts` in the `ChannelHandler` and updates balances.
+2. A `PotatoAcceptTimeout` entry is added to `cached_last_actions` storing the game ID
    and reward amounts.
-3. The accept data is bundled into the next potato pass (batch).
-4. When the potato comes back (acknowledgment), `drain_cached_accepts` processes
-   the `PotatoAccept` entries in `cached_last_actions`, emitting `WeTimedOut` for
-   each accepted game. The opponent who receives the accept gets
+3. The accept-timeout data is bundled into the next potato pass (batch).
+4. When the potato comes back (acknowledgment), `drain_cached_accept_timeouts` processes
+   the `PotatoAcceptTimeout` entries in `cached_last_actions`, emitting `WeTimedOut` for
+   each accepted game. The opponent who receives the accept-timeout gets
    `OpponentTimedOut` immediately upon processing the batch.
 
-Multiple game acceptances in a single batch each get their own `PotatoAccept`
+Multiple game acceptances in a single batch each get their own `PotatoAcceptTimeout`
 entry, and all fire `WeTimedOut` when the potato returns.
 
 If the channel goes on-chain **before** the round-trip completes, the game
-is still in `pending_accept_games`. The `set_state_for_coins` function
-searches both `live_games` and `pending_accept_games` when matching game
+is still in `pending_accept_timeouts`. The `set_state_for_coins` function
+searches both `live_games` and `pending_accept_timeouts` when matching game
 coins, so accepted-but-unconfirmed games are correctly tracked on-chain.
 
-On clean shutdown, any remaining `PotatoAccept` entries in `cached_last_actions`
+On clean shutdown, any remaining `PotatoAcceptTimeout` entries in `cached_last_actions`
 are drained, emitting `WeTimedOut` before the `CleanShutdownComplete`
 notification.
 
-### On-Chain Accept
+### On-Chain Accept-Timeout
 
-When a game is already on-chain and the player calls `Accept(game_id)`:
+When a game is already on-chain and the player calls `AcceptTimeout(game_id)`:
 
 1. `OnChainPotatoHandler` asserts it is our turn, then sets `accepted = true`
    on the `OnChainGameState` entry. No transaction is submitted and no
@@ -1289,14 +1289,14 @@ When a game is already on-chain and the player calls `Accept(game_id)`:
 3. When `coin_timeout_reached` fires, the timeout transaction is submitted and
    `WeTimedOut` is emitted.
 
-The key invariant: **`WeTimedOut` is never emitted at the time of the accept
-call itself** — only when the game actually resolves (via potato round-trip,
+The key invariant: **`WeTimedOut` is never emitted at the time of the
+accept_timeout call itself** — only when the game actually resolves (via potato round-trip,
 on-chain timeout, or clean shutdown).
 
 **Key code:**
-- `src/channel_handler/mod.rs` — `send_potato_accept`, `pending_accept_games`,
-  `drain_cached_accepts`
-- `src/potato_handler/on_chain.rs` — `GameAction::Accept`, `handle_game_coin_spent`,
+- `src/channel_handler/mod.rs` — `send_accept_timeout_no_finalize`,
+  `pending_accept_timeouts`, `drain_cached_accept_timeouts`
+- `src/potato_handler/on_chain.rs` — `GameAction::AcceptTimeout`, `handle_game_coin_spent`,
   `coin_timeout_reached`
 
 ---
@@ -1372,7 +1372,7 @@ real blockchain would enforce, catching bugs early in tests:
 The debug game (`b"debug"`, defined in `src/test_support/debug_game.rs`) is a
 minimal game used for tests that need precise control over `mover_share`. A
 `DebugGameTestMove::new(mover_share, slash)` creates a single-move game where
-Alice moves and Bob must accept, with the specified `mover_share` split. This
+Alice moves and Bob must accept_timeout, with the specified `mover_share` split. This
 avoids the complexity of Calpoker's commit-reveal protocol when testing
 channel/on-chain mechanics.
 
@@ -1385,10 +1385,10 @@ in `src/test_support/game.rs`):
 |--------|--------|
 | `ProposeNewGame(player)` | Player proposes a new game |
 | `GoOnChain(player)` | Player initiates on-chain transition |
-| `Accept(player)` | Player accepts the current game result |
+| `AcceptTimeout(player)` | Player accepts the current game result |
 | `WaitBlocks(n, players_bitmask)` | Advance `n` blocks; `players_bitmask` controls whose coin reports are backlogged (0 = nobody blocked, 1 = player 0 blocked, 2 = player 1 blocked, 3 = both blocked) |
 | `NerfTransactions(player)` | Silently drop all outbound transactions for `player` |
-| `UnNerfTransactions` | Stop dropping transactions |
+| `UnNerfTransactions(replay)` | Stop dropping transactions; if `replay` is true, replay the backlog to the simulator; if false, discard it |
 | `Cheat(player, mover_share)` | Queue a move with illegal data and the specified `mover_share` (see [Cheat Support](#cheat-support)) |
 | `ForceDestroyCoin(player)` | Inject a fake coin deletion to test error handling |
 | `CleanShutdown(player, conditions)` | Initiate clean channel shutdown |

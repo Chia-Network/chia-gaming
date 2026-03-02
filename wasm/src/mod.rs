@@ -605,7 +605,7 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn accept_and_move(
+    pub fn accept_proposal_and_move(
         cid: i32,
         id: &str,
         readable: &str,
@@ -614,7 +614,7 @@ mod gaming_wasm {
         let readable_bytes = hex::decode(readable).into_js()?;
         with_game(cid, move |cradle: &mut JsCradle| {
             let entropy: Hash = cradle.rng.0.gen();
-            cradle.cradle.accept_and_move(
+            cradle.cradle.accept_proposal_and_move(
                 &mut cradle.allocator,
                 &mut cradle.rng.0,
                 &game_id,

@@ -14,7 +14,7 @@ pub struct PotatoSignatures {
 
 #[derive(Serialize, Deserialize)]
 
-pub struct PotatoAcceptCachedData {
+pub struct PotatoAcceptTimeoutCachedData {
     pub game_id: GameID,
     pub puzzle_hash: PuzzleHash,
     pub live_game: LiveGame,
@@ -22,9 +22,9 @@ pub struct PotatoAcceptCachedData {
     pub our_share_amount: Amount,
 }
 
-impl std::fmt::Debug for PotatoAcceptCachedData {
+impl std::fmt::Debug for PotatoAcceptTimeoutCachedData {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(formatter, "PotatoAcceptCachedData {{ game_id: {:?}, puzzle_hash: {:?}, live_game: .., at_stake_amount: {:?}, our_share_amount: {:?} }}", self.game_id, self.puzzle_hash, self.at_stake_amount, self.our_share_amount)
+        write!(formatter, "PotatoAcceptTimeoutCachedData {{ game_id: {:?}, puzzle_hash: {:?}, live_game: .., at_stake_amount: {:?}, our_share_amount: {:?} }}", self.game_id, self.puzzle_hash, self.at_stake_amount, self.our_share_amount)
     }
 }
 
@@ -57,7 +57,8 @@ impl std::fmt::Debug for PotatoMoveCachedData {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum CachedPotatoRegenerateLastHop {
-    PotatoAccept(Box<PotatoAcceptCachedData>),
+    #[serde(rename = "PotatoAccept")]
+    PotatoAcceptTimeout(Box<PotatoAcceptTimeoutCachedData>),
     PotatoMoveHappening(Rc<PotatoMoveCachedData>),
 }
 
