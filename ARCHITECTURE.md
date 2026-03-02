@@ -130,13 +130,17 @@ The unroll coin implements the **optimistic rollback** mechanism:
 - **Preemption path** (challenge): The opponent provides a solution with a
   **higher sequence number** (with correct parity). The unroll puzzle verifies
   the new sequence number is greater than the old one and has the right parity
-  bit (determined by which player published), then applies the challenger's
-  conditions instead.
+  bit, then applies the challenger's conditions instead.
 
-The **parity rule** (odd/even sequence numbers) ensures that each player can
-only preempt with states they legitimately signed. Player A uses even numbers,
-player B uses odd (or vice versa) — so player A can't replay player B's
-signatures.
+**Parity rule.** Each player only ever sends half-signed states of one parity
+to the opponent (based on `started_with_potato`), so each player can only
+fully sign states of the parity they *receive*. The unroll puzzle requires
+that a preempting state has the opposite parity from the published unroll.
+This prevents a rollback attack: without the rule, a malicious player could
+publish a very old unroll and immediately preempt it with a less-old-but-still-
+stale state of the same parity — one they can fully sign — effectively rolling
+back to a favorable earlier state. The parity constraint means you cannot both
+publish and preempt; only your opponent can preempt your unroll.
 
 **Key code:** `src/channel_handler/types/unroll_coin.rs`,
 `clsp/unroll/unroll_puzzle.clsp`
@@ -489,14 +493,10 @@ Preemption is **immediate** — no timelock. This is by design: the preempting
 player gets first-mover advantage because they're correcting an out-of-date
 unroll. Timeouts require waiting for `unroll_timeout` blocks.
 
-### Parity
-
-Each player "owns" state numbers of a particular parity (odd or even), based on
-`started_with_potato`. A player can only preempt with a state number of the
-correct parity. This prevents replay attacks where a player submits the
-opponent's signatures.
-
 ### After Preemption or Timeout
+
+(See the **Parity rule** in the Unroll Coin section above for why only the
+opponent can preempt a given unroll.)
 
 Regardless of which path resolved the unroll coin, the result is the same: game
 coins and reward coins are created. The game code then uses
