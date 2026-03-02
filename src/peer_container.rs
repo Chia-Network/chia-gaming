@@ -262,7 +262,6 @@ pub trait GameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
         local_ui: &mut dyn ToLocalUI,
-        flags: u32,
     ) -> Result<Option<IdleResult>, Error>;
 
     /// Cheat in a game: enable cheating on the referee (substituting fake
@@ -1048,7 +1047,6 @@ impl GameCradle for SynchronousGameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
         local_ui: &mut dyn ToLocalUI,
-        flags: u32,
     ) -> Result<Option<IdleResult>, Error> {
         if self.state.clean_shutdown.is_some() {
             if !self.state.pending_notifications.is_empty() {
@@ -1067,17 +1065,6 @@ impl GameCradle for SynchronousGameCradle {
             clean_shutdown_received: self.state.clean_shutdown_received,
             ..IdleResult::default()
         };
-
-        if (flags & 1) != 0 {
-            self.peer.examine_game_action_queue(|actions| {
-                actions.map(|a| format!("{a:?}")).collect::<Vec<String>>()
-            });
-        }
-        if (flags & 2) != 0 {
-            self.peer.examine_incoming_messages(|messages| {
-                messages.map(|m| format!("{m:?}")).collect::<Vec<String>>()
-            });
-        }
 
         result.handshake_done = self.peer.handshake_done();
         if self.state.handshake_complete {

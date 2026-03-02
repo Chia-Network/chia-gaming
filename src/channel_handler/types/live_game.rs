@@ -4,7 +4,6 @@ use log::debug;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::types::Evidence;
 use crate::channel_handler::ReadableMove;
 use crate::common::types::{
     AllocEncoder, Amount, CoinCondition, CoinString, Error, GameID, Hash, PuzzleHash, Timeout,
@@ -13,17 +12,13 @@ use crate::referee::types::{
     GameMoveDetails, GameMoveWireData, RefereeOnChainTransaction, TheirTurnCoinSpentResult,
     TheirTurnMoveResult,
 };
-use crate::referee::{deserialize_referee, serialize_referee, RefereeInterface};
+use crate::referee::Referee;
 
 #[derive(Serialize, Deserialize)]
 pub struct LiveGame {
     pub game_id: GameID,
     pub last_referee_puzzle_hash: PuzzleHash,
-    #[serde(
-        serialize_with = "serialize_referee",
-        deserialize_with = "deserialize_referee"
-    )]
-    referee_maker: Rc<dyn RefereeInterface>,
+    referee_maker: Rc<Referee>,
     pub my_contribution: Amount,
     pub their_contribution: Amount,
 }
@@ -32,7 +27,7 @@ impl LiveGame {
     pub fn new(
         game_id: GameID,
         last_referee_puzzle_hash: PuzzleHash,
-        referee_maker: Rc<dyn RefereeInterface>,
+        referee_maker: Rc<Referee>,
         my_contribution: Amount,
         their_contribution: Amount,
     ) -> LiveGame {
@@ -45,10 +40,6 @@ impl LiveGame {
         }
     }
 
-    pub fn version(&self) -> usize {
-        self.referee_maker.version()
-    }
-
     pub fn is_my_turn(&self) -> bool {
         self.referee_maker.is_my_turn()
     }
@@ -57,19 +48,15 @@ impl LiveGame {
         self.referee_maker.get_game_timeout()
     }
 
-    pub fn processing_my_turn(&self) -> bool {
-        self.referee_maker.processing_my_turn()
-    }
-
     pub fn last_puzzle_hash(&self) -> PuzzleHash {
         self.last_referee_puzzle_hash.clone()
     }
 
-    pub fn save_referee_state(&self) -> (Rc<dyn RefereeInterface>, PuzzleHash) {
+    pub fn save_referee_state(&self) -> (Rc<Referee>, PuzzleHash) {
         (self.referee_maker.clone(), self.last_referee_puzzle_hash.clone())
     }
 
-    pub fn restore_referee_state(&mut self, referee: Rc<dyn RefereeInterface>, last_ph: PuzzleHash) {
+    pub fn restore_referee_state(&mut self, referee: Rc<Referee>, last_ph: PuzzleHash) {
         self.referee_maker = referee;
         self.last_referee_puzzle_hash = last_ph;
     }
@@ -135,16 +122,6 @@ impl LiveGame {
             debug!("ACCEPT MOVE: last_ref_ph={:?}", self.last_referee_puzzle_hash);
         }
         Ok(their_move_result)
-    }
-
-    pub fn check_their_turn_for_slash(
-        &self,
-        allocator: &mut AllocEncoder,
-        evidence: Evidence,
-        coin_string: &CoinString,
-    ) -> Result<Option<TheirTurnCoinSpentResult>, Error> {
-        self.referee_maker
-            .check_their_turn_for_slash(allocator, evidence, coin_string)
     }
 
     pub fn get_amount(&self) -> Amount {

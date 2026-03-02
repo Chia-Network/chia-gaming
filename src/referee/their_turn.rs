@@ -9,7 +9,7 @@ use crate::channel_handler::game_handler::{
     GameHandler, MessageHandler, MessageInputs, TheirTurnMoveData, TheirTurnResult, TheirTurnInputs,
 };
 use crate::channel_handler::types::{
-    Evidence, GameStartInfoInterface, HasStateUpdateProgram, ReadableMove, StateUpdateProgram,
+    Evidence, GameStartInfoInterface, ReadableMove, StateUpdateProgram,
     ValidationInfo, ValidationOrUpdateProgram,
 };
 
@@ -251,16 +251,6 @@ impl TheirTurnReferee {
         }
     }
 
-    pub fn get_game_state(&self) -> Rc<Program> {
-        match self.state.borrow() {
-            TheirTurnRefereeGameState::Initial { initial_state, .. } => initial_state.clone(),
-            TheirTurnRefereeGameState::AfterOurTurn {
-                state_after_our_turn,
-                ..
-            } => state_after_our_turn.clone(),
-        }
-    }
-
     pub fn get_validation_program_for_their_move(
         &self,
     ) -> Result<(Rc<Program>, StateUpdateProgram), Error> {
@@ -284,19 +274,6 @@ impl TheirTurnReferee {
                 state_after_our_turn.clone(),
                 their_turn_validation_program.clone(),
             )),
-        }
-    }
-
-    pub fn get_validation_program(&self) -> Result<Rc<Program>, Error> {
-        match self.state.borrow() {
-            TheirTurnRefereeGameState::Initial {
-                initial_validation_program,
-                ..
-            } => Ok(initial_validation_program.p().to_program().clone()),
-            TheirTurnRefereeGameState::AfterOurTurn {
-                their_turn_validation_program,
-                ..
-            } => Ok(their_turn_validation_program.p().to_program()),
         }
     }
 

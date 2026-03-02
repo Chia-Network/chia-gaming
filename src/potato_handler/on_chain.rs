@@ -24,13 +24,13 @@ use crate::potato_handler::types::{
     GameAction, PotatoHandlerImpl, PotatoState,
 };
 use crate::referee::types::{RefereeOnChainTransaction, SlashOutcome, TheirTurnCoinSpentResult};
-use crate::referee::RefereeInterface;
+use crate::referee::Referee;
 
 enum PendingMoveKind {
     /// From do_on_chain_move: we computed the move locally and can restore the
     /// post-move referee if our tx wins, or re-queue the move if preempted.
     OurMove {
-        post_move_referee: Rc<dyn RefereeInterface>,
+        post_move_referee: Rc<Referee>,
         post_move_last_ph: PuzzleHash,
     },
 }

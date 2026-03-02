@@ -93,10 +93,6 @@ impl UnrollCoin {
         }
     }
 
-    pub fn get_old_state_number_public(&self) -> Result<usize, Error> {
-        self.get_old_state_number()
-    }
-
     pub fn get_conditions_for_unroll_coin_spend(&self) -> Result<ProgramRef, Error> {
         if let Some(r) = self.outcome.as_ref() {
             Ok(r.conditions.clone())

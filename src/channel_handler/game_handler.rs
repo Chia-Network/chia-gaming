@@ -142,12 +142,6 @@ impl GameHandler {
             Program::from_nodeptr(allocator, n)?.into(),
         ))
     }
-    pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
-        match self {
-            GameHandler::MyTurnHandler(n) => n.to_nodeptr(allocator),
-            GameHandler::TheirTurnHandler(n) => n.to_nodeptr(allocator),
-        }
-    }
     pub fn is_my_turn(&self) -> bool {
         matches!(self, GameHandler::MyTurnHandler(_))
     }

@@ -960,7 +960,7 @@ mod gaming_wasm {
             if let Some(idle_result) =
                 cradle
                     .cradle
-                    .idle(&mut cradle.allocator, &mut cradle.rng.0, &mut local_ui, 3)?
+                    .idle(&mut cradle.allocator, &mut cradle.rng.0, &mut local_ui)?
             // Give extras
             {
                 idle_result_to_js(&idle_result)

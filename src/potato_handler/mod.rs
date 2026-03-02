@@ -274,22 +274,6 @@ impl PotatoHandler {
         )
     }
 
-    pub fn examine_game_action_queue<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&mut dyn Iterator<Item = &GameAction>) -> R,
-    {
-        let mut iter = self.game_action_queue.iter();
-        f(&mut iter)
-    }
-
-    pub fn examine_incoming_messages<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&mut dyn Iterator<Item = Rc<PeerMessage>>) -> R,
-    {
-        let mut iter = self.incoming_messages.iter().cloned();
-        f(&mut iter)
-    }
-
     pub fn push_action(&mut self, action: GameAction) {
         self.game_action_queue.push_back(action);
     }

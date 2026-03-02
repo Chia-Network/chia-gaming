@@ -1,6 +1,6 @@
 use crate::channel_handler::types::LiveGame;
 use crate::common::types::{Aggsig, Amount, GameID, Program, PuzzleHash};
-use crate::referee::RefereeInterface;
+use crate::referee::Referee;
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 
@@ -36,7 +36,7 @@ pub struct PotatoMoveCachedData {
     pub match_puzzle_hash: PuzzleHash,
     pub amount: Amount,
     #[serde(skip)]
-    pub saved_post_move_referee: Option<Rc<dyn RefereeInterface>>,
+    pub saved_post_move_referee: Option<Rc<Referee>>,
     #[serde(skip)]
     pub saved_post_move_last_ph: Option<PuzzleHash>,
 }

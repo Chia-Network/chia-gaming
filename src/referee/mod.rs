@@ -6,10 +6,10 @@ use std::rc::Rc;
 
 use log::debug;
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::types::{
-    Evidence, GameStartInfoInterface, ReadableMove, ValidationInfo, ValidationOrUpdateProgram,
+    GameStartInfoInterface, ReadableMove, ValidationInfo, ValidationOrUpdateProgram,
 };
 use crate::common::standard_coin::{sign_reward_payout, ChiaIdentity};
 use crate::common::types::{
@@ -28,126 +28,6 @@ use crate::referee::types::{
 pub enum Referee {
     MyTurn(Rc<MyTurnReferee>),
     TheirTurn(Rc<TheirTurnReferee>),
-}
-
-#[derive(Serialize, Deserialize)]
-pub enum RefereeSerializeContainer {
-    V1(Referee),
-}
-
-impl RefereeSerializeContainer {
-    fn into_rc(self) -> Rc<dyn RefereeInterface> {
-        match self {
-            RefereeSerializeContainer::V1(r) => Rc::new(r),
-        }
-    }
-}
-
-pub fn serialize_referee<S: Serializer>(
-    x: &Rc<dyn RefereeInterface>,
-    s: S,
-) -> Result<S::Ok, S::Error> {
-    x.get_serialized_form().serialize(s)
-}
-
-pub fn deserialize_referee<'de, D>(deserializer: D) -> Result<Rc<dyn RefereeInterface>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let to_check = RefereeSerializeContainer::deserialize(deserializer)?;
-    Ok(to_check.into_rc())
-}
-
-pub trait RefereeInterface {
-    fn version(&self) -> usize;
-
-    fn is_my_turn(&self) -> bool;
-
-    fn processing_my_turn(&self) -> bool;
-
-    fn state_number(&self) -> usize;
-
-    fn get_amount(&self) -> Amount;
-
-    fn get_their_current_share(&self) -> Amount;
-
-    fn enable_cheating(&self, make_move: &[u8], mover_share: Amount) -> Option<Rc<dyn RefereeInterface>>;
-
-    fn my_turn_make_move(
-        &self,
-        allocator: &mut AllocEncoder,
-        readable_move: &ReadableMove,
-        new_entropy: Hash,
-        state_number: usize,
-    ) -> Result<(Rc<dyn RefereeInterface>, GameMoveWireData), Error>;
-
-    fn receive_readable(
-        &self,
-        allocator: &mut AllocEncoder,
-        message: &[u8],
-    ) -> Result<ReadableMove, Error>;
-
-    fn get_transaction_for_move(
-        &self,
-        allocator: &mut AllocEncoder,
-        coin_string: &CoinString,
-        on_chain: bool,
-    ) -> Result<RefereeOnChainTransaction, Error>;
-
-    fn their_turn_move_off_chain(
-        &self,
-        allocator: &mut AllocEncoder,
-        details: &GameMoveDetails,
-        state_number: usize,
-        coin: Option<&CoinString>,
-    ) -> Result<(Option<Rc<dyn RefereeInterface>>, TheirTurnMoveResult), Error>;
-
-    fn their_turn_coin_spent(
-        &self,
-        allocator: &mut AllocEncoder,
-        coin_string: &CoinString,
-        conditions: &[CoinCondition],
-        state_number: usize,
-    ) -> Result<(Option<Rc<dyn RefereeInterface>>, TheirTurnCoinSpentResult), Error>;
-
-    fn check_their_turn_for_slash(
-        &self,
-        allocator: &mut AllocEncoder,
-        evidence: Evidence,
-        coin_string: &CoinString,
-    ) -> Result<Option<TheirTurnCoinSpentResult>, Error>;
-
-    fn get_our_current_share(&self) -> Amount;
-
-    /// Output coin_string:
-    /// Parent is hash of current_coin
-    /// Puzzle hash is my_referee_puzzle_hash.
-    ///
-    /// Timeout unlike other actions applies to the current ph, not the one at the
-    /// start of a turn proper.
-    fn get_transaction_for_timeout(
-        &self,
-        allocator: &mut AllocEncoder,
-        coin_string: &CoinString,
-    ) -> Result<Option<RefereeOnChainTransaction>, Error>;
-
-    fn get_game_timeout(&self) -> Timeout;
-
-    fn on_chain_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error>;
-
-    fn outcome_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error>;
-
-    fn on_chain_referee_puzzle_hash(
-        &self,
-        allocator: &mut AllocEncoder,
-    ) -> Result<PuzzleHash, Error>;
-
-    fn outcome_referee_puzzle_hash(
-        &self,
-        allocator: &mut AllocEncoder,
-    ) -> Result<PuzzleHash, Error>;
-
-    fn get_serialized_form(&self) -> RefereeSerializeContainer;
 }
 
 impl Referee {
@@ -346,40 +226,35 @@ impl Referee {
             ))
         }
     }
-}
 
-impl RefereeInterface for Referee {
-    fn version(&self) -> usize {
-        1
-    }
-    fn is_my_turn(&self) -> bool {
+    pub fn is_my_turn(&self) -> bool {
         matches!(self, Referee::MyTurn(_))
     }
 
-    fn processing_my_turn(&self) -> bool {
+    pub fn processing_my_turn(&self) -> bool {
         matches!(self, Referee::TheirTurn(_))
     }
 
-    fn state_number(&self) -> usize {
+    pub fn state_number(&self) -> usize {
         match self {
             Referee::MyTurn(t) => t.state_number(),
             Referee::TheirTurn(t) => t.state_number(),
         }
     }
 
-    fn get_amount(&self) -> Amount {
+    pub fn get_amount(&self) -> Amount {
         self.fixed().amount.clone()
     }
 
-    fn get_game_timeout(&self) -> Timeout {
+    pub fn get_game_timeout(&self) -> Timeout {
         self.fixed().timeout.clone()
     }
 
-    fn get_their_current_share(&self) -> Amount {
+    pub fn get_their_current_share(&self) -> Amount {
         self.fixed().amount.clone() - self.get_our_current_share()
     }
 
-    fn enable_cheating(&self, make_move: &[u8], mover_share: Amount) -> Option<Rc<dyn RefereeInterface>> {
+    pub fn enable_cheating(&self, make_move: &[u8], mover_share: Amount) -> Option<Rc<Referee>> {
         if let Referee::MyTurn(t) = self {
             return Some(Rc::new(Referee::MyTurn(Rc::new(
                 t.enable_cheating(make_move, mover_share),
@@ -389,13 +264,13 @@ impl RefereeInterface for Referee {
         None
     }
 
-    fn my_turn_make_move(
+    pub fn my_turn_make_move(
         &self,
         allocator: &mut AllocEncoder,
         readable_move: &ReadableMove,
         new_entropy: Hash,
         state_number: usize,
-    ) -> Result<(Rc<dyn RefereeInterface>, GameMoveWireData), Error> {
+    ) -> Result<(Rc<Referee>, GameMoveWireData), Error> {
         debug!("my_turn_make_move: state={}", state_number);
         let (replacement, result) = match self {
             Referee::MyTurn(t) => {
@@ -410,7 +285,7 @@ impl RefereeInterface for Referee {
         Ok((Rc::new(replacement), result))
     }
 
-    fn receive_readable(
+    pub fn receive_readable(
         &self,
         allocator: &mut AllocEncoder,
         message: &[u8],
@@ -423,13 +298,13 @@ impl RefereeInterface for Referee {
         }
     }
 
-    fn their_turn_move_off_chain(
+    pub fn their_turn_move_off_chain(
         &self,
         allocator: &mut AllocEncoder,
         details: &GameMoveDetails,
         state_number: usize,
         coin: Option<&CoinString>,
-    ) -> Result<(Option<Rc<dyn RefereeInterface>>, TheirTurnMoveResult), Error> {
+    ) -> Result<(Option<Rc<Referee>>, TheirTurnMoveResult), Error> {
         debug!("their_turn_move_off_chain: state={}", state_number);
         let (new_self, result) = match self {
             Referee::MyTurn(_) => {
@@ -443,21 +318,18 @@ impl RefereeInterface for Referee {
         };
 
         Ok((
-            new_self.map(|r| {
-                let rc: Rc<dyn RefereeInterface> = Rc::new(Referee::MyTurn(Rc::new(r)));
-                rc
-            }),
+            new_self.map(|r| Rc::new(Referee::MyTurn(Rc::new(r)))),
             result,
         ))
     }
 
-    fn their_turn_coin_spent(
+    pub fn their_turn_coin_spent(
         &self,
         allocator: &mut AllocEncoder,
         referee_coin_string: &CoinString,
         conditions: &[CoinCondition],
         state_number: usize,
-    ) -> Result<(Option<Rc<dyn RefereeInterface>>, TheirTurnCoinSpentResult), Error> {
+    ) -> Result<(Option<Rc<Referee>>, TheirTurnCoinSpentResult), Error> {
         debug!("their_turn_coin_spent: state={}", state_number);
 
         if let Some((_, on_chain_ph, _)) = referee_coin_string.to_parts() {
@@ -512,9 +384,9 @@ impl RefereeInterface for Referee {
 
         match self {
             Referee::MyTurn(_) => {
-                return Err(Error::StrErr(
+                Err(Error::StrErr(
                     "their_turn_coin_spent called on MyTurn referee".to_string(),
-                ));
+                ))
             }
 
             Referee::TheirTurn(t) => {
@@ -525,16 +397,13 @@ impl RefereeInterface for Referee {
                     state_number,
                     &rem_conditions,
                 )?;
-                let new_ref_rc = new_ref.map(|r| {
-                    let rc: Rc<dyn RefereeInterface> = Rc::new(r);
-                    rc
-                });
+                let new_ref_rc = new_ref.map(|r| Rc::new(r));
                 Ok((new_ref_rc, res))
             }
         }
     }
 
-    fn get_our_current_share(&self) -> Amount {
+    pub fn get_our_current_share(&self) -> Amount {
         let args = self.spend_this_coin();
         if self.is_my_turn() {
             args.game_move.basic.mover_share.clone()
@@ -543,7 +412,9 @@ impl RefereeInterface for Referee {
         }
     }
 
-    fn get_transaction_for_timeout(
+    /// Timeout unlike other actions applies to the current ph, not the one at the
+    /// start of a turn proper.
+    pub fn get_transaction_for_timeout(
         &self,
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
@@ -614,17 +485,17 @@ impl RefereeInterface for Referee {
         )
     }
 
-    fn on_chain_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
+    pub fn on_chain_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
         let args = self.args_for_this_coin();
         curry_referee_puzzle(allocator, &self.fixed().referee_coin_puzzle, &args)
     }
 
-    fn outcome_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
+    pub fn outcome_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
         let args = self.spend_this_coin();
         curry_referee_puzzle(allocator, &self.fixed().referee_coin_puzzle, &args)
     }
 
-    fn on_chain_referee_puzzle_hash(
+    pub fn on_chain_referee_puzzle_hash(
         &self,
         allocator: &mut AllocEncoder,
     ) -> Result<PuzzleHash, Error> {
@@ -632,7 +503,7 @@ impl RefereeInterface for Referee {
         curry_referee_puzzle_hash(allocator, &self.fixed().referee_coin_puzzle_hash, &args)
     }
 
-    fn outcome_referee_puzzle_hash(
+    pub fn outcome_referee_puzzle_hash(
         &self,
         allocator: &mut AllocEncoder,
     ) -> Result<PuzzleHash, Error> {
@@ -640,7 +511,7 @@ impl RefereeInterface for Referee {
         curry_referee_puzzle_hash(allocator, &self.fixed().referee_coin_puzzle_hash, &args)
     }
 
-    fn get_transaction_for_move(
+    pub fn get_transaction_for_move(
         &self,
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
@@ -671,20 +542,5 @@ impl RefereeInterface for Referee {
                 "no transaction returned when doing on chain move".to_string(),
             ))
         }
-    }
-
-    fn check_their_turn_for_slash(
-        &self,
-        _allocator: &mut AllocEncoder,
-        _evidence: Evidence,
-        _coin_string: &CoinString,
-    ) -> Result<Option<TheirTurnCoinSpentResult>, Error> {
-        Err(Error::StrErr(
-            "check_their_turn_for_slash not yet implemented".to_string(),
-        ))
-    }
-
-    fn get_serialized_form(&self) -> RefereeSerializeContainer {
-        RefereeSerializeContainer::V1(self.clone())
     }
 }

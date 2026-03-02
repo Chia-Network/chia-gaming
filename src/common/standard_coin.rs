@@ -14,15 +14,13 @@ use clvmr::NodePtr;
 
 use crate::utils::{number_from_u8, u8_from_number};
 
-use crate::utils::map_m;
-
 use crate::common::constants::{
-    A_KW, CREATE_COIN, C_KW, DEFAULT_HIDDEN_PUZZLE_HASH, DEFAULT_PUZZLE_HASH, GROUP_ORDER, ONE,
+    A_KW, C_KW, DEFAULT_HIDDEN_PUZZLE_HASH, DEFAULT_PUZZLE_HASH, GROUP_ORDER, ONE,
     Q_KW, Q_KW_TREEHASH, TWO,
 };
 use crate::common::types;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, Hash, IntoErr,
+    Aggsig, AllocEncoder, BrokenOutCoinSpendInfo, CoinCondition, CoinID, Hash, IntoErr,
     Node, PrivateKey, Program, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree,
     ToQuotedProgram,
 };
@@ -476,22 +474,4 @@ impl ChiaIdentity {
         })
     }
 
-    pub fn standard_solution(
-        &self,
-        allocator: &mut AllocEncoder,
-        targets: &[(PuzzleHash, Amount)],
-    ) -> Result<NodePtr, types::Error> {
-        let conditions: Vec<Node> = map_m(
-            |(ph, amt)| {
-                Ok(Node(
-                    (CREATE_COIN, (ph.clone(), (amt.clone(), ())))
-                        .to_clvm(allocator)
-                        .into_gen()?,
-                ))
-            },
-            targets,
-        )?;
-        let conditions_converted = conditions.to_clvm(allocator).into_gen()?;
-        solution_for_conditions(allocator, conditions_converted)
-    }
 }

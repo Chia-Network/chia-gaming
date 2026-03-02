@@ -930,7 +930,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 }
             }
 
-            while let Some(result) = cradles[i].idle(allocator, rng, &mut local_uis[i], 0)? {
+            while let Some(result) = cradles[i].idle(allocator, rng, &mut local_uis[i])? {
                 if matches!(result.resync, Some((_, true))) {
                     can_move = true;
                     let saved = move_number;
@@ -2340,7 +2340,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         for i in 0..100 {
             for c in 0..2 {
                 while let Some(result) = outcome.cradles[c]
-                    .idle(&mut allocator, &mut rng, &mut outcome.local_uis[c], 0)
+                    .idle(&mut allocator, &mut rng, &mut outcome.local_uis[c])
                     .unwrap()
                 {
                     for msg in result.outbound_messages.iter() {

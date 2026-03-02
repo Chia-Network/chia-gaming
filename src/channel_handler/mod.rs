@@ -41,7 +41,7 @@ use crate::common::types::{
 };
 use crate::potato_handler::types::GameAction;
 use crate::referee::types::{GameMoveDetails, RefereeOnChainTransaction, TheirTurnCoinSpentResult};
-use crate::referee::{Referee, RefereeInterface};
+use crate::referee::Referee;
 
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.
@@ -310,11 +310,6 @@ impl ChannelHandler {
 
     pub fn state_channel_coin(&self) -> &CoinString {
         &self.state_channel.coin
-    }
-
-    /// Return the right public key to use for a clean shutdown.
-    pub fn clean_shutdown_public_key(&self) -> PublicKey {
-        private_to_public_key(&self.private_keys.my_channel_coin_private_key)
     }
 
     /// Return the right amount to use for a clean shutdown coin output.
@@ -1686,7 +1681,7 @@ impl ChannelHandler {
     pub fn save_game_state(
         &self,
         game_id: &GameID,
-    ) -> Result<(Rc<dyn RefereeInterface>, PuzzleHash), Error> {
+    ) -> Result<(Rc<Referee>, PuzzleHash), Error> {
         let idx = self.get_game_by_id(game_id)?;
         Ok(self.live_games[idx].save_referee_state())
     }
@@ -1694,7 +1689,7 @@ impl ChannelHandler {
     pub fn restore_game_state(
         &mut self,
         game_id: &GameID,
-        referee: Rc<dyn RefereeInterface>,
+        referee: Rc<Referee>,
         last_ph: PuzzleHash,
     ) -> Result<(), Error> {
         let idx = self.get_game_by_id(game_id)?;
@@ -1913,13 +1908,7 @@ impl ChannelHandler {
     // this returns spends which allow them to be consolidated by spending the
     // reward coins.
     //
-    // From here, they're spent to the puzzle hash given.
-    // Makes a single coin whose puzzle hash is the specified one and amount is
-    // equal to all the inputs.
-    //
-    // Inititate a simple on chain spend.
     pub fn get_game_state_id<R: Rng>(&self, env: &mut ChannelHandlerEnv<R>) -> Result<Hash, Error> {
-        // Each puzzle hash is typically 32 bytes; pre-allocate to avoid repeated growth.
         let mut bytes: Vec<u8> = Vec::with_capacity(self.live_games.len() * 32);
         for l in self.live_games.iter() {
             let ph = l.current_puzzle_hash(env.allocator)?;

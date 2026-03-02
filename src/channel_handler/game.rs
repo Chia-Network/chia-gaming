@@ -8,7 +8,6 @@ use crate::utils::{non_nil, proper_list};
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::channel_handler::types::StateUpdateProgram;
-use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
     GameID, Hash, IntoErr, Program, Puzzle, Timeout,
@@ -334,17 +333,6 @@ impl Game {
         }
 
         Ok(Game { starts })
-    }
-
-    pub fn new(
-        allocator: &mut AllocEncoder,
-        as_alice: bool,
-        game_id: &GameID,
-        game_hex_file: &str,
-        args: Rc<Program>,
-    ) -> Result<Game, Error> {
-        let poker_generator = read_hex_puzzle(allocator, game_hex_file)?;
-        Game::new_program(allocator, as_alice, game_id, poker_generator.clone(), args)
     }
 
     /// Return a pair of GameStartInfo which can be used as the starts for two
