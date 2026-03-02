@@ -195,11 +195,24 @@ Every potato pass is a single `PeerMessage::Batch` containing:
    - `Move` — make a game move
    - `AcceptTimeout` — accept a game result (end game)
 
-2. **`signatures: PotatoSignatures`** — one set of signatures covering the final
-   channel state after all actions in the batch have been applied.
+2. **`signatures: PotatoSignatures`** — two half-signatures covering the final
+   channel state after all actions in the batch have been applied:
+   - A half-signature of the **channel coin** spend committing to the new unroll
+     coin (so both players can unroll to the latest agreed state).
+   - A half-signature for **preempting the unroll coin** to this state (so the
+     recipient can prove they have a more recent state if the opponent publishes
+     a stale unroll).
+   Both are half-signatures because the channel coin and unroll coin are 2-of-2
+   constructions — each potato pass carries the sender's half, and the receiver
+   combines it with their own to form the full aggregate signature.
 
-3. **`clean_shutdown: Option<...>`** — optional clean shutdown initiation,
-   always positioned logically after all other actions.
+3. **`clean_shutdown: Option<(Aggsig, ProgramRef)>`** — optional clean shutdown
+   initiation, always positioned logically after all other actions. Contains the
+   initiator's half-signature of the channel coin spend directly to reward coins
+   (bypassing unroll and game coins entirely), plus the conditions program. The
+   responder replies with a separate `PeerMessage::CleanShutdownComplete(CoinSpend)`
+   message — not another batch — carrying their half-signature combined into a
+   complete `CoinSpend` ready for on-chain submission.
 
 The receiver processes actions sequentially and rejects the entire batch if any
 action fails validation. The sender is responsible for ordering actions correctly
@@ -424,6 +437,18 @@ be closed.
 Clean shutdown is the cooperative channel closure path: both players agree to
 spend the channel coin directly to reward coins, bypassing the unroll/game-coin
 mechanism entirely.
+
+### Protocol Exchange
+
+1. The initiator includes `clean_shutdown: Some((half_sig, conditions))` in
+   their next `Batch` message. The half-signature signs the channel coin spend
+   to reward conditions (each player's balance goes directly to their reward
+   puzzle hash, with no game coins).
+2. The responder receives the batch, processes any actions, then combines the
+   initiator's half-signature with their own to produce a complete `CoinSpend`.
+   They reply with `PeerMessage::CleanShutdownComplete(coin_spend)` — a
+   standalone message outside the normal potato flow.
+3. Either side can then submit the completed spend on-chain.
 
 ### Why "Advisory"
 
