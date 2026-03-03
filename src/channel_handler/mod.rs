@@ -116,8 +116,11 @@ pub struct ChannelHandler {
     // The state number from the most recent potato we received, starting at 0
     // after handshake.  Used to determine whether an on-chain unroll is stale.
     last_received_state: usize,
-    // Increments per game started.
-    next_nonce_number: usize,
+    // Role-namespaced nonces for game proposals.  Initiator uses even
+    // values (0, 2, 4, …), responder uses odd (1, 3, 5, …).  The nonce
+    // doubles as the GameID.
+    my_next_nonce: usize,
+    their_next_nonce: usize,
 
     state_channel: CoinSpend,
 
@@ -171,6 +174,18 @@ impl ChannelHandler {
 
     pub fn set_on_chain_for_error(&mut self) {
         self.on_chain_for_error = true;
+    }
+
+    pub fn allocate_my_nonce(&mut self) -> usize {
+        let n = self.my_next_nonce;
+        self.my_next_nonce += 2;
+        n
+    }
+
+    pub fn is_our_nonce_parity(&self, game_id: &GameID) -> bool {
+        game_id.to_nonce()
+            .map(|n| n % 2 == self.my_next_nonce % 2)
+            .unwrap_or(false)
     }
 
     pub fn get_state_number(&self) -> usize {
@@ -433,7 +448,8 @@ impl ChannelHandler {
 
             current_state_number: 0,
             last_received_state: 0,
-            next_nonce_number: 0,
+            my_next_nonce: if we_start_with_potato { 0 } else { 1 },
+            their_next_nonce: if we_start_with_potato { 1 } else { 0 },
 
             state_channel: CoinSpend {
                 coin: channel_coin_parent,
@@ -809,8 +825,8 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         start_info: &Rc<GameStartInfo>,
     ) -> Result<(), Error> {
-        let new_game_nonce = self.next_nonce_number;
-        self.next_nonce_number += 1;
+        let new_game_nonce = start_info.game_id.to_nonce()
+            .ok_or_else(|| Error::StrErr("game_id is not a valid nonce".to_string()))?;
 
         let referee_identity = ChiaIdentity::new(
             env.allocator,
@@ -836,7 +852,6 @@ impl ChannelHandler {
 
         self.proposed_games.push(ProposedGame::new(
             start_info.game_id.clone(),
-            true,
             ph,
             Rc::new(r),
             start_info.my_contribution_this_game.clone(),
@@ -862,8 +877,21 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         start_info: &Rc<GameStartInfo>,
     ) -> Result<(), Error> {
-        let new_game_nonce = self.next_nonce_number;
-        self.next_nonce_number += 1;
+        let new_game_nonce = start_info.game_id.to_nonce()
+            .ok_or_else(|| Error::StrErr("received game_id is not a valid nonce".to_string()))?;
+        let expected_parity = self.their_next_nonce % 2;
+        if new_game_nonce % 2 != expected_parity {
+            return Err(Error::StrErr(format!(
+                "received nonce {new_game_nonce} has wrong parity (expected {expected_parity})"
+            )));
+        }
+        if new_game_nonce < self.their_next_nonce {
+            return Err(Error::StrErr(format!(
+                "received nonce {new_game_nonce} < minimum expected {}",
+                self.their_next_nonce
+            )));
+        }
+        self.their_next_nonce = new_game_nonce + 2;
 
         let referee_identity = ChiaIdentity::new(
             env.allocator,
@@ -889,7 +917,6 @@ impl ChannelHandler {
 
         self.proposed_games.push(ProposedGame::new(
             start_info.game_id.clone(),
-            false,
             ph,
             Rc::new(r),
             start_info.my_contribution_this_game.clone(),

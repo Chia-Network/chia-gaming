@@ -11,9 +11,3 @@ pub struct GameStart {
     pub my_turn: bool,
     pub parameters: Program,
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WireGameStart {
-    pub game_ids: Vec<GameID>,
-    pub start: GameStart,
-}

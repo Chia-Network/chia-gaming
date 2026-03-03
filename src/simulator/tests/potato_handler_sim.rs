@@ -1743,7 +1743,10 @@ pub fn setup_debug_test(
     let pid2 = ChiaIdentity::new(allocator, private_keys[1].my_referee_private_key.clone())?;
     let private_identities: [ChiaIdentity; 2] = [pid1, pid2];
 
-    let mut debug_games = make_debug_games(allocator, rng, &private_identities)?;
+    // Player 0 (have_potato=true) gets ChannelHandler with we_start_with_potato=false,
+    // so my_next_nonce=1. The first ProposeNewGame(0) allocates nonce 1.
+    let first_game_nonce = 1;
+    let mut debug_games = make_debug_games(allocator, rng, &private_identities, first_game_nonce)?;
 
     let mut game_actions = Vec::new();
 
@@ -4121,16 +4124,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         sim_setup.game_actions.push(GameAction::ProposeNewGame(0));
         sim_setup.game_actions.push(GameAction::AcceptProposal(1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
-        // Player 1 proposes and cancels dummy games to burn IDs that would
-        // collide with player 0's IDs (both players' ID counters start from
-        // the same value; we need to advance player 1 past the IDs player 0
-        // has already used for games 1 and 2).
-        sim_setup.game_actions.push(GameAction::ProposeNewGame(1));
-        sim_setup.game_actions.push(GameAction::CancelProposal(1));
-        sim_setup.game_actions.push(GameAction::ProposeNewGame(1));
-        sim_setup.game_actions.push(GameAction::CancelProposal(1));
-        sim_setup.game_actions.push(GameAction::WaitBlocks(3, 0));
-        // Player 1 proposes a real third game; player 0 will accept it.
+        // Player 1 proposes a third game; player 0 will accept it.
+        // No ID collision possible: role-namespaced nonces ensure each
+        // player's game IDs use distinct parity (odd vs even).
         sim_setup.game_actions.push(GameAction::ProposeNewGame(1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(3, 0));
         // Nerf player 1's messages so the accept response never reaches

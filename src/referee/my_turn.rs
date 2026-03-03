@@ -565,11 +565,18 @@ impl MyTurnReferee {
                     Err(e)
                 }
             }
-            Ok(StateUpdateResult::Slash(_)) => {
+            Ok(StateUpdateResult::Slash(slash_evidence)) => {
                 if self.enable_cheating.is_some() {
                     Ok(state.clone())
                 } else {
-                    Err(Error::StrErr("our own move was slashed by us".to_string()))
+                    Err(Error::StrErr(format!(
+                        "pre-send validation rejected our move: nonce={}, move_len={}, mover_share={:?}, state={:?}, slash_evidence={:?}",
+                        referee_args.nonce,
+                        referee_args.game_move.basic.move_made.len(),
+                        referee_args.game_move.basic.mover_share,
+                        state,
+                        slash_evidence,
+                    )))
                 }
             }
             Ok(StateUpdateResult::MoveOk(new_state)) => Ok(new_state.clone()),

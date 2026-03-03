@@ -656,7 +656,7 @@ RefereePuzzleArgs {
     },
     previous_validation_info_hash,  // hash from the prior move (None for initial state)
     validation_program,     // the chialisp program that validates moves
-    nonce,                  // unique identifier for this game instance
+    nonce,                  // role-namespaced counter; also serves as the GameID
     referee_coin_puzzle_hash, // puzzle hash of the referee puzzle itself
 }
 ```
@@ -665,6 +665,26 @@ Players are identified by **public keys** (not puzzle hashes) in the referee
 args. The reward destination puzzle hashes are not curried into the referee —
 instead they are revealed at timeout via `AGG_SIG_UNSAFE` (see
 [Reward Payout Signatures](#reward-payout-signatures)).
+
+### Game IDs and Nonces
+
+A game's `nonce` field serves double duty as both the referee puzzle
+differentiator and the canonical `GameID` used by the API and UI. The nonce is
+encoded as minimal unsigned big-endian bytes (e.g. nonce 0 → empty, nonce 1 →
+`[0x01]`, nonce 256 → `[0x01, 0x00]`) and wrapped in `GameID`.
+
+Nonces are **role-namespaced**: the initiator (the player who starts with the
+potato) allocates even nonces (0, 2, 4, …) and the responder allocates odd
+nonces (1, 3, 5, …). Each player increments by 2, so their nonces never
+collide with the opponent's. Because the nonce is curried into the referee
+puzzle, distinct nonces guarantee distinct puzzle hashes even for otherwise
+identical game parameters.
+
+When receiving a proposal, the `ChannelHandler` validates that the incoming
+nonce has the correct parity for the sender's role and is monotonically
+non-decreasing (nonces may be skipped if the sender proposed and cancelled
+a game before the potato arrived). Both players derive the same `GameID` from
+the nonce and refer to the game by that ID for its entire lifecycle.
 
 ### On-Chain Referee Actions
 

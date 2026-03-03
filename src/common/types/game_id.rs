@@ -32,6 +32,26 @@ impl GameID {
     pub fn to_bytes(&self) -> &[u8] {
         &self.0
     }
+
+    pub fn from_nonce(n: usize) -> GameID {
+        if n == 0 {
+            return GameID(Vec::new());
+        }
+        let bytes = (n as u64).to_be_bytes();
+        let start = bytes.iter().position(|&b| b != 0).unwrap();
+        GameID(bytes[start..].to_vec())
+    }
+
+    pub fn to_nonce(&self) -> Option<usize> {
+        if self.0.len() > 8 {
+            return None;
+        }
+        let mut result: u64 = 0;
+        for &b in &self.0 {
+            result = (result << 8) | (b as u64);
+        }
+        Some(result as usize)
+    }
 }
 
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for GameID {

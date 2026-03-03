@@ -24,7 +24,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     chia_dialect, Aggsig, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error,
     GameID, GameType, GetCoinStringParts, Hash, IntoErr, Program, ProgramRef, Puzzle, PuzzleHash,
-    Sha256Input, Spend, SpendBundle, Timeout,
+    Spend, SpendBundle, Timeout,
 };
 use crate::potato_handler::effects::{Effect, GameNotification};
 use crate::potato_handler::on_chain::OnChainPotatoHandler;
@@ -108,8 +108,6 @@ pub struct PotatoHandler {
 
     game_action_queue: VecDeque<GameAction>,
 
-    next_game_id: Vec<u8>,
-
     channel_handler: Option<ChannelHandler>,
     channel_initiation_transaction: Option<SpendBundle>,
     channel_finished_transaction: Option<SpendBundle>,
@@ -144,13 +142,6 @@ pub struct PotatoHandler {
     // hs.spend even if the exchange happened before Finished was set.
     #[serde(skip)]
     last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
-}
-
-fn init_game_id(parent_coin_string: &[u8]) -> Vec<u8> {
-    Sha256Input::Bytes(parent_coin_string)
-        .hash()
-        .bytes()
-        .to_vec()
 }
 
 /// Peer interface for high level opaque messages.
@@ -191,8 +182,6 @@ impl PotatoHandler {
             game_types: phi.game_types,
 
             game_action_queue: VecDeque::default(),
-
-            next_game_id: Vec::new(),
 
             channel_handler: None,
             channel_initiation_transaction: None,
@@ -827,7 +816,7 @@ impl PotatoHandler {
                             continue;
                         }
                         let proposal = proposal.unwrap();
-                        if proposal.proposed_by_us {
+                        if ch.is_our_nonce_parity(&game_id) {
                             return Err(Error::StrErr("cannot accept own proposal".to_string()));
                         }
                         let our_short = proposal.my_contribution > ch.my_out_of_game_balance();
@@ -1069,20 +1058,9 @@ impl PotatoHandler {
     }
 
     pub fn next_game_id(&mut self) -> Result<GameID, Error> {
-        if self.next_game_id.is_empty() {
-            return Err(Error::StrErr("no game id set".to_string()));
-        }
-
-        let game_id = self.next_game_id.clone();
-        for b in self.next_game_id.iter_mut() {
-            *b += 1;
-
-            if *b != 0 {
-                break;
-            }
-        }
-
-        Ok(GameID::from_bytes(&game_id))
+        let ch = self.channel_handler_mut()?;
+        let nonce = ch.allocate_my_nonce();
+        Ok(GameID::from_nonce(nonce))
     }
 
     pub fn received_message<R: Rng>(
@@ -1237,7 +1215,6 @@ impl PotatoHandler {
                     }));
                 }
 
-                self.next_game_id = init_game_id(parent_coin.to_bytes());
                 self.channel_handler = Some(channel_handler);
 
                 self.channel_state = ChannelState::StepE(Box::new(HandshakeStepInfo {
@@ -1299,10 +1276,8 @@ impl PotatoHandler {
             }
 
             ChannelState::StepD(info) => {
-                let parent_coin = info.first_player_hs_info.parent.clone();
                 self.channel_state = ChannelState::StepF(info.clone());
 
-                self.next_game_id = init_game_id(parent_coin.to_bytes());
                 effects.extend(self.pass_on_channel_handler_message(env, msg_envelope)?);
 
                 let sigs = {

@@ -597,8 +597,9 @@ pub fn make_debug_games(
     allocator: &mut AllocEncoder,
     rng: &mut ChaCha8Rng,
     identities: &[ChiaIdentity],
+    nonce: usize,
 ) -> Result<[BareDebugGameHandler; 2], Error> {
-    make_debug_games_with_contributions(allocator, rng, identities, 100, 100)
+    make_debug_games_with_contributions(allocator, rng, identities, 100, 100, nonce)
 }
 
 pub fn make_debug_games_with_contributions(
@@ -607,15 +608,16 @@ pub fn make_debug_games_with_contributions(
     identities: &[ChiaIdentity],
     my_contribution: u64,
     their_contribution: u64,
+    nonce: usize,
 ) -> Result<[BareDebugGameHandler; 2], Error> {
     let rng_seq0: Vec<Hash> = (0..50).map(|_| rng.gen()).collect();
-    let gid = GameID::default();
+    let gid = GameID::from_nonce(nonce);
     let referee_coin = read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex")?;
     let ref_coin_hash = referee_coin.sha256tree(allocator);
     BareDebugGameHandler::new_with_contributions(
         allocator,
         gid,
-        0,
+        nonce,
         identities,
         &ref_coin_hash,
         Timeout::new(10),
@@ -634,7 +636,7 @@ pub fn test_debug_game_factory() {
     let id0 = ChiaIdentity::new(&mut allocator, pk0).expect("ok");
     let id1 = ChiaIdentity::new(&mut allocator, pk1).expect("ok");
     let identities: [ChiaIdentity; 2] = [id0, id1];
-    let debug_games = make_debug_games(&mut allocator, &mut rng, &identities).expect("good");
+    let debug_games = make_debug_games(&mut allocator, &mut rng, &identities, 0).expect("good");
     assert_eq!(512, debug_games[0].game.starts[0].initial_max_move_size);
     assert_eq!(
         debug_games[0].game.starts[0].initial_max_move_size,
@@ -802,7 +804,7 @@ pub fn test_debug_game_validation_move() {
     let id0 = ChiaIdentity::new(&mut allocator, pk0).expect("ok");
     let id1 = ChiaIdentity::new(&mut allocator, pk1).expect("ok");
     let identities: [ChiaIdentity; 2] = [id0, id1];
-    let mut debug_games = make_debug_games(&mut allocator, &mut rng, &identities).expect("good");
+    let mut debug_games = make_debug_games(&mut allocator, &mut rng, &identities, 0).expect("good");
     let debug_games = pair_of_array_mut(&mut debug_games);
 
     assert_eq!(
