@@ -208,6 +208,20 @@ impl ChannelHandler {
             .collect()
     }
 
+    /// Game IDs of proposal accepts whose potato round-trip hasn't completed.
+    pub fn pending_proposal_accept_game_ids(&self) -> Vec<GameID> {
+        self.cached_last_actions
+            .iter()
+            .filter_map(|entry| {
+                if let CachedPotatoRegenerateLastHop::ProposalAccepted(gid) = entry {
+                    Some(gid.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     pub fn find_live_game(&self, game_id: &GameID) -> Option<&LiveGame> {
         self.live_games.iter().find(|g| g.game_id == *game_id)
     }
@@ -907,6 +921,7 @@ impl ChannelHandler {
         self.their_out_of_game_balance -= proposal.their_contribution.clone();
 
         self.clear_cached_game_id_for_send();
+        self.push_cached_action(CachedPotatoRegenerateLastHop::ProposalAccepted(game_id.clone()));
 
         let live_game = LiveGame::new(
             proposal.game_id.clone(),

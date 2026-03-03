@@ -1498,7 +1498,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     }
 
     // Invariant 4: post-acceptance — every GameProposalAccepted yields exactly
-    // one terminal game notification (GameCancelled is NOT in this list).
+    // one terminal game notification.
     for (i, lui) in local_uis.iter().enumerate() {
         for n in lui.notifications.iter() {
             if let GameNotification::GameProposalAccepted { id } = n {
@@ -1508,6 +1508,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                     GameNotification::WeSlashedOpponent { id: nid, .. } => nid == id,
                     GameNotification::OpponentSlashedUs { id: nid } => nid == id,
                     GameNotification::OpponentSuccessfullyCheated { id: nid, .. } => nid == id,
+                    GameNotification::GameCancelled { id: nid } => nid == id,
                     GameNotification::GameError { id: nid, .. } => nid == id,
                     _ => false,
                 }).count();
@@ -3946,12 +3947,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentStaleUnroll { .. })),
             "player 0 should get OpponentStaleUnroll, got: {p0_notifs:?}"
         );
-        // The accepted proposal's game exists in pre_game_ids but not in the
-        // stale unroll outputs → GameError (post-acceptance disappearance).
+        // The accept round-tripped, so the second game is fully live (not a
+        // pending accept). It's absent from the stale unroll → GameError.
         let game_errors: Vec<_> = p0_notifs.iter().filter(|n| matches!(n, GameNotification::GameError { .. })).collect();
         assert!(
             game_errors.len() == 1,
-            "player 0 should get exactly one GameError for the accepted second game, got: {game_errors:?}, all: {p0_notifs:?}"
+            "player 0 should get exactly one GameError for the fully-live second game, got: {game_errors:?}, all: {p0_notifs:?}"
         );
         assert!(
             !p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelError { .. })),
@@ -4023,12 +4024,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentStaleUnroll { .. })),
             "player 0 should get OpponentStaleUnroll, got: {p0_notifs:?}"
         );
-        // The redo recovers the first game, but the accepted second game
-        // (proposed after the snapshot) is absent from the stale unroll → GameError.
+        // The redo recovers the first game, but the second game's accept
+        // round-tripped (fully live), absent from the stale unroll → GameError.
         let game_errors: Vec<_> = p0_notifs.iter().filter(|n| matches!(n, GameNotification::GameError { .. })).collect();
         assert!(
             game_errors.len() == 1,
-            "player 0 should get exactly one GameError for the accepted second game, got: {game_errors:?}, all: {p0_notifs:?}"
+            "player 0 should get exactly one GameError for the fully-live second game, got: {game_errors:?}, all: {p0_notifs:?}"
         );
         assert!(
             !p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelError { .. })),
@@ -4092,9 +4093,97 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentStaleUnroll { .. })),
             "player 0 should get OpponentStaleUnroll, got: {p0_notifs:?}"
         );
+        // First game: coin present but at an old PH → GameError.
+        // Second game: accept round-tripped (fully live), absent from stale unroll → GameError.
+        let game_errors: Vec<_> = p0_notifs.iter().filter(|n| matches!(n, GameNotification::GameError { .. })).collect();
         assert!(
-            p0_notifs.iter().any(|n| matches!(n, GameNotification::GameError { .. })),
-            "player 0 should get GameError for the unrecoverable game, got: {p0_notifs:?}"
+            game_errors.len() >= 1,
+            "player 0 should get at least one GameError, got: {game_errors:?}, all: {p0_notifs:?}"
+        );
+        assert!(
+            !p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelError { .. })),
+            "player 0 should NOT get ChannelError, got: {p0_notifs:?}"
+        );
+    }));
+
+    res.push(("test_stale_unroll_pending_accept_cancelled", &|| {
+        let mut allocator = AllocEncoder::new();
+        let seed_data: [u8; 32] = [0; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed_data);
+
+        let moves = [DebugGameTestMove::new(100, 0)];
+        let mut sim_setup =
+            setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
+
+        sim_setup.game_actions.push(GameAction::SaveUnrollSnapshot(1));
+        // Proposal round-trip advances player 0's last_received_state past
+        // the snapshot so that the stale detection triggers.
+        sim_setup.game_actions.push(GameAction::ProposeNewGame(0));
+        sim_setup.game_actions.push(GameAction::AcceptProposal(1));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+        // Player 1 proposes and cancels dummy games to burn IDs that would
+        // collide with player 0's IDs (both players' ID counters start from
+        // the same value; we need to advance player 1 past the IDs player 0
+        // has already used for games 1 and 2).
+        sim_setup.game_actions.push(GameAction::ProposeNewGame(1));
+        sim_setup.game_actions.push(GameAction::CancelProposal(1));
+        sim_setup.game_actions.push(GameAction::ProposeNewGame(1));
+        sim_setup.game_actions.push(GameAction::CancelProposal(1));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(3, 0));
+        // Player 1 proposes a real third game; player 0 will accept it.
+        sim_setup.game_actions.push(GameAction::ProposeNewGame(1));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(3, 0));
+        // Nerf player 1's messages so the accept response never reaches
+        // player 0 — the third game stays in cached_last_actions as ProposalAccepted.
+        sim_setup.game_actions.push(GameAction::NerfMessages(1));
+        sim_setup.game_actions.push(GameAction::AcceptProposal(0));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(3, 0));
+        sim_setup.game_actions.push(GameAction::UnNerfMessages);
+        sim_setup.game_actions.push(GameAction::NerfTransactions(0));
+        sim_setup.game_actions.push(GameAction::NerfTransactions(1));
+        sim_setup.game_actions.push(GameAction::ForceStaleUnroll(1));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(2, 2));
+        sim_setup.game_actions.push(GameAction::UnNerfTransactions(false));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(120, 2));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+
+        let outcome = run_game_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &mut rng,
+            sim_setup.private_keys.clone(),
+            &sim_setup.identities,
+            b"debug",
+            &sim_setup.args_program,
+            &sim_setup.game_actions,
+            Some(&|_, cradles| {
+                cradles[0].is_on_chain() || cradles[0].is_failed()
+            }),
+            Some(300),
+            false,
+        )
+        .expect("should finish");
+
+        assert!(
+            !outcome.cradles[0].is_failed(),
+            "player 0 should NOT be in Failed state"
+        );
+
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        assert!(
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentStaleUnroll { .. })),
+            "player 0 should get OpponentStaleUnroll, got: {p0_notifs:?}"
+        );
+        // The second game (fully live, round-tripped) is absent → GameError.
+        let game_errors: Vec<_> = p0_notifs.iter().filter(|n| matches!(n, GameNotification::GameError { .. })).collect();
+        assert!(
+            game_errors.len() == 1,
+            "player 0 should get exactly one GameError for the fully-live second game, got: {game_errors:?}, all: {p0_notifs:?}"
+        );
+        // The third game (in-flight proposal accept) is absent → GameCancelled.
+        let game_cancels: Vec<_> = p0_notifs.iter().filter(|n| matches!(n, GameNotification::GameCancelled { .. })).collect();
+        assert!(
+            game_cancels.len() == 1,
+            "player 0 should get exactly one GameCancelled for the in-flight accept, got: {game_cancels:?}, all: {p0_notifs:?}"
         );
         assert!(
             !p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelError { .. })),

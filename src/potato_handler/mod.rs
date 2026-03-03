@@ -2011,8 +2011,11 @@ impl PotatoHandler {
         let (game_map, on_chain_reward_coin) = {
             let player_ch = self.channel_handler_mut()?;
 
-            let pre_game_ids: HashSet<GameID> =
+            let mut pre_game_ids: HashSet<GameID> =
                 player_ch.live_game_ids().into_iter().collect();
+            let in_flight_proposal_ids: HashSet<GameID> =
+                player_ch.pending_proposal_accept_game_ids().into_iter().collect();
+            pre_game_ids.extend(in_flight_proposal_ids.iter().cloned());
 
             let conditions =
                 CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
@@ -2085,10 +2088,16 @@ impl PotatoHandler {
                     .chain(errored_games.iter().map(|(gid, _)| gid.clone()))
                     .collect();
                 for missing_id in pre_game_ids.difference(&surviving_ids) {
-                    effects.push(Effect::Notification(GameNotification::GameError {
-                        id: missing_id.clone(),
-                        reason: "accepted game absent from stale unroll".to_string(),
-                    }));
+                    if in_flight_proposal_ids.contains(missing_id) {
+                        effects.push(Effect::Notification(GameNotification::GameCancelled {
+                            id: missing_id.clone(),
+                        }));
+                    } else {
+                        effects.push(Effect::Notification(GameNotification::GameError {
+                            id: missing_id.clone(),
+                            reason: "live game absent from stale unroll".to_string(),
+                        }));
+                    }
                 }
 
                 for (game_id, _coin) in &errored_games {
@@ -2132,10 +2141,16 @@ impl PotatoHandler {
                     .map(|def| def.game_id.clone())
                     .collect();
                 for missing_id in pre_game_ids.difference(&surviving_ids) {
-                    effects.push(Effect::Notification(GameNotification::GameError {
-                        id: missing_id.clone(),
-                        reason: "accepted game absent from unroll".to_string(),
-                    }));
+                    if in_flight_proposal_ids.contains(missing_id) {
+                        effects.push(Effect::Notification(GameNotification::GameCancelled {
+                            id: missing_id.clone(),
+                        }));
+                    } else {
+                        effects.push(Effect::Notification(GameNotification::GameError {
+                            id: missing_id.clone(),
+                            reason: "live game absent from unroll".to_string(),
+                        }));
+                    }
                 }
 
                 (game_map_inner, reward_coin)

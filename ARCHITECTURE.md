@@ -285,10 +285,14 @@ freed by accepted games are available for new proposals.
 Because cancel and accept requests are queued and only sent when the potato is
 held, several race conditions can occur:
 
-- **Stale cancel:** A player queues `CancelProposal` but the proposal was
-  already accepted or cancelled by the peer before the cancel is sent. The
-  cancel is silently discarded — `drain_queue_into_batch` checks
-  `is_game_proposed()` and skips the cancel if the proposal is gone.
+- **Stale cancel:** A player queues `CancelProposal` but by the time they hold
+  the potato the proposal is already gone (accepted or cancelled by the peer).
+  The cancel is silently discarded — `drain_queue_into_batch` checks
+  `is_game_proposed()` and skips it. Note: cancellation by the **receiver** is
+  authoritative (they are the only one who can accept, so deciding to cancel
+  resolves it). Cancellation by the **proposer** is best-effort: the receiver
+  may have already accepted on a previous potato pass, in which case the
+  proposer's cancel evaporates and a `GameProposalAccepted` arrives instead.
 
 - **Stale accept:** A player queues `AcceptProposal` but the proposal was
   already cancelled by the peer before the accept is sent. A `GameCancelled`
@@ -317,34 +321,36 @@ batch.
 
 ## Off-Chain Game Flow
 
-Once the channel is open:
+A single game's lifecycle, independent of other concurrent games:
 
 ```
-1. Player proposes a game (BatchAction::ProposeGame)
-   → queued and sent with the next potato pass
+1. Propose  (BatchAction::ProposeGame)
+   → game enters proposed_games on both sides
 
-2. Other player accepts the proposal (BatchAction::AcceptProposal)
-   → both sides instantiate referee + game handler
+2. Accept   (BatchAction::AcceptProposal)
+   → referee + game handler instantiated, game moves to live_games
+   → both sides receive GameProposalAccepted
 
-3. Potato holder makes a move (BatchAction::Move)
-   → signs the move, updates the unroll commitment, passes potato
+3. Play     (BatchAction::Move, alternating turns)
+   → each move updates the referee state and mover_share
 
-4. Other player receives potato, processes move via referee
-   → validates the move, updates their own state
-   → when ready, makes their move and passes potato back
-
-5. Repeat until game ends
-
-6. Potato holder calls accept_timeout (BatchAction::AcceptTimeout)
-   → balances are updated, game moves to pending_accept_timeouts
-   → when the potato comes back, WeTimedOut fires for the accepter
+4. Finish   (BatchAction::AcceptTimeout)
+   → balances updated, game moves to pending_accept_timeouts
+   → WeTimedOut / OpponentTimedOut emitted once confirmed
 ```
 
-Each batch increments the `state_number` once and produces a new signed unroll
-commitment. The `ChannelHandler` tracks `live_games`, `pending_accept_timeouts`,
+All of these actions are delivered via the
+[potato batch protocol](#the-potato-protocol): they are queued locally and sent
+when the potato is held, potentially alongside actions for other games. Multiple
+games can be in flight simultaneously, and any potato pass may carry actions
+for several of them.
+
+The `ChannelHandler` tracks `live_games`, `pending_accept_timeouts`,
 player balances (`my_allocated_balance`, `their_allocated_balance`), and the
-current `state_number`. See [Accept-Timeout Lifecycle](#accept-timeout-lifecycle) for details
-on what happens when accept_timeout hasn't been confirmed before going on-chain.
+current `state_number`. Each batch increments the `state_number` once and
+produces a new signed unroll commitment.
+See [Accept-Timeout Lifecycle](#accept-timeout-lifecycle) for details on what
+happens when accept_timeout hasn't been confirmed before going on-chain.
 
 ---
 
@@ -406,17 +412,37 @@ Games that existed off-chain but don't match any created coin are reported as
 ### Step 4: Redo (if needed)
 
 If the game coin landed at the pre-move state, `get_redo_action` returns a
-`RedoMove` that replays the cached move on-chain. The redo uses the cached
-move data and the actual on-chain coin ID to construct the transaction. After
-the redo, the game is at the latest known state.
+redo action that replays the cached action on-chain. There are two redo
+variants:
 
-### Step 5: Accept-Timeout
+- **`RedoMove`**: The cached action was a game move. The redo replays the move
+  using the cached move data and the actual on-chain coin ID. After the redo,
+  the game coin advances to the latest known state.
+- **`RedoAcceptTimeout`**: The cached action was an off-chain accept_timeout.
+  The redo replays the pre-computed accept transaction. After the redo, the
+  game is resolved and timeout handling proceeds as below.
 
-Once all moves are replayed, `coin_timeout_reached` generates a timeout
-transaction that ends the game and distributes funds based on `mover_share`.
-Timeout transactions are submitted as soon as the `game_timeout` relative
-timelock allows. The `WeTimedOut` notification is emitted only at this point
-— not when accept_timeout is first called.
+### Step 5: Timeout Resolution
+
+Once the game coin is at the latest known state, `coin_timeout_reached`
+handles resolution when the `game_timeout` relative timelock expires. The
+behavior depends on whose turn it is:
+
+- **Our turn, already accepted off-chain** (`accepted == true`): We already
+  decided to accept the current `mover_share` split. A timeout transaction is
+  submitted (if our reward is nonzero) and `WeTimedOut` is emitted. The
+  `WeTimedOut` notification fires here, not when accept_timeout was originally
+  called — the off-chain call only records intent.
+- **Our turn, not yet accepted**: The game waits for a local `AcceptTimeout`
+  action from the UI before submitting.
+- **Opponent's turn**: The opponent hasn't moved within the timelock. We claim
+  the timeout by submitting the timeout transaction (if our reward is nonzero)
+  and `OpponentTimedOut` is emitted.
+
+**Zero-reward skip**: In both our-turn and opponent-turn cases, if our reward
+is zero the timeout transaction is not submitted (avoiding a pointless
+transaction fee). The notification still fires so the game lifecycle is cleanly
+resolved; the opponent is expected to claim their reward.
 
 ### Step 6: Clean Shutdown
 
@@ -438,61 +464,57 @@ Clean shutdown is the cooperative channel closure path: both players agree to
 spend the channel coin directly to reward coins, bypassing the unroll/game-coin
 mechanism entirely.
 
+### Preconditions
+
+Clean shutdown requires that **no games are active** (`has_active_games()` is
+false). The initiator's `drain_queue_into_batch` enforces this — attempting
+`CleanShutdown` with active games is an error. Any pending proposals are
+cancelled automatically before the shutdown signature is produced.
+
+On the receiver side, if the batch carries `clean_shutdown` but the receiver
+still has active games (e.g., due to a misbehaving peer), the receiver
+immediately goes on-chain instead of cooperating.
+
 ### Protocol Exchange
 
 1. The initiator includes `clean_shutdown: Some((half_sig, conditions))` in
    their next `Batch` message. The half-signature signs the channel coin spend
    to reward conditions (each player's balance goes directly to their reward
-   puzzle hash, with no game coins).
+   puzzle hash, with no game coins). The `clean_shutdown` field is separate
+   from the `actions` list, so it is structurally processed after all actions
+   on the receive side.
 2. The responder receives the batch, processes any actions, then combines the
    initiator's half-signature with their own to produce a complete `CoinSpend`.
    They reply with `PeerMessage::CleanShutdownComplete(coin_spend)` — a
    standalone message outside the normal potato flow.
 3. Either side can then submit the completed spend on-chain.
 
-### Why "Advisory"
+### Why "Advisory" — Race Handling
 
-A clean shutdown attempt is **advisory, not authoritative**. Both players
-exchange messages agreeing to close and submit a clean shutdown transaction,
-but a race condition exists: one player might simultaneously submit an unroll
-transaction that spends the same channel coin. Only one of these conflicting
-transactions can land on-chain.
+Clean shutdown is **advisory, not authoritative**. Both players produce the
+same transaction (spending the channel coin directly to reward coins), so
+duplicate submissions between them are harmless. The real race is between the
+clean shutdown transaction and an **unroll transaction** — either side might
+initiate an unroll (via `go_on_chain`) around the same time. Both spend the
+channel coin, so only one can land on-chain.
 
-Because of this race, the system **never blindly trusts** that a clean shutdown
-succeeded. Instead, it always inspects the actual spend of the channel coin to
-determine what really happened.
+Because of this, the system never blindly trusts that the clean shutdown
+landed. When the channel coin is detected as spent, the handler transitions
+to `CleanShutdownWaitForConditions` and inspects the actual spend conditions:
 
-### State Machine
-
-When the channel coin is detected as spent during a clean shutdown attempt, the
-handler transitions to `CleanShutdownWaitForConditions` and requests the
-puzzle and solution of the spent coin via `RequestPuzzleAndSolution`. The
-spend conditions are then inspected:
-
-1. **Clean shutdown succeeded:** The conditions contain a `CreateCoin` matching
+1. **Clean shutdown landed:** The conditions contain a `CreateCoin` matching
    the expected reward coin (puzzle hash and amount). The handler transitions
    to `Completed` and emits `CleanShutdownComplete`.
 
-2. **An unroll landed instead:** The conditions do not contain the expected
-   reward coin (or, when the player's expected reward is zero, the conditions
-   contain a `Rem` — which clean shutdown conditions never include). The
-   handler falls through to the standard unroll handling path: extract the
-   unroll coin from the conditions, determine preempt vs timeout, and proceed
-   with on-chain dispute resolution.
-
-### Fallback to Unroll Handling
-
-When an unroll is detected during a clean shutdown attempt, the same code path
-used for normal on-chain dispute resolution handles it. The
-`handle_unroll_from_channel_conditions` helper (shared with the normal
-`handle_channel_coin_spent` path) compares the on-chain state number against
-the channel handler's current state to determine whether to preempt or wait
-for timeout.
-
-Since clean shutdown only happens when no games are active, the unroll
-resolution creates only reward coins (no game coins). When
-`finish_on_chain_transition` finds an empty game map, it skips the
-`OnChainPotatoHandler` entirely and transitions directly to `Completed`.
+2. **An unroll landed instead:** The conditions do not match (or, when the
+   player's expected reward is zero, they contain a `Rem` — which clean
+   shutdown conditions never include). The handler falls through to the
+   standard `handle_unroll_from_channel_conditions` path, which compares the
+   on-chain state number against the local state to decide preempt vs timeout.
+   Since no games are active, the unroll creates only reward coins;
+   `finish_on_chain_transition` finds an empty game map, skips the
+   `OnChainPotatoHandler`, and transitions directly to `Completed`. The
+   outcome is the same correct balances, just with more on-chain transactions.
 
 ### Key Code
 
@@ -550,50 +572,51 @@ received the potato — i.e. the state we know the opponent acknowledged).
 
 The `last_received_state` field is maintained on `ChannelHandler`, initialized
 to 0, and updated in `received_potato_verify_signatures` just before the state
-number is incremented.  The special case of never having received a potato
-(state 0 right after handshake) is handled by the initial value: state 0 is
-never considered stale.
+number is incremented.  Right after handshake, both players have
+`last_received_state = 0`, so no on-chain state can appear stale (the check
+is strictly less-than).  Once the first potato is received,
+`last_received_state` advances to 1 and state 0 *can* be considered stale
+from that point on.
 
-### Three-Way Dispatch in `finish_on_chain_transition`
+### Dispatch in `finish_on_chain_transition`
 
-When the unroll coin is spent and conditions are available, `finish_on_chain_transition`
-dispatches based on the classification above:
+Current and redo states use the normal on-chain flow described above (Steps
+3–5).  When the state is **stale**, `finish_on_chain_transition` takes a
+different path:
 
-1. **Current state** (`on_chain_state` matches our latest state): All games
-   are assumed active at their current state.  Pending proposal acceptances
-   are assumed to have gone through.  The normal `set_state_for_coins` path
-   applies.
-
-2. **Redo state** (`on_chain_state == last_received_state` and we don't have
-   the potato): Exactly one unacknowledged send is outstanding.  The normal
-   `set_state_for_coins` path applies, and `get_redo_action` publishes
-   on-chain transactions from `cached_last_actions`.  Pending proposal
-   acceptances are cancelled.
-
-3. **Stale state** (`on_chain_state < last_received_state`):
-   - An `OpponentStaleUnroll` notification is emitted, reporting the actual
-     amount in our reward coin (found by scanning the unroll output conditions
-     for our reward puzzle hash).
-   - Each on-chain game coin is matched against live games strictly by puzzle
-     hash **and** amount:
-     - If `coin_ph == live_game.last_referee_puzzle_hash` and amounts match →
-       game is alive at its current state.
-     - If `coin_ph` matches a `cached_last_actions` entry's
-       `match_puzzle_hash` for the same game and amounts match → game needs a
-       redo move.
-     - Otherwise → `GameError` for that game (unrecoverable).
-   - Any live game or accepted proposal not found in the unroll outputs
-     receives a `GameCancelled` notification.
-   - The channel handler does **not** enter `Failed` state; remaining games
-     continue on-chain.
+- An `OpponentStaleUnroll` notification is emitted, reporting the actual
+  amount in our reward coin (found by scanning the unroll output conditions
+  for our reward puzzle hash).
+- Each on-chain game coin is matched against live games and pending accepts
+  by puzzle hash **and** amount:
+  - If `coin_ph == live_game.last_referee_puzzle_hash` and amounts match →
+    game is alive at its current state.
+  - If `coin_ph` matches a `cached_last_actions` entry's
+    `match_puzzle_hash` for the same game and amounts match → game needs a
+    redo move.
+  - Otherwise → `GameError` (the coin is present but we can't identify what
+    state it's in).
+- Games not found in the unroll outputs receive one of two notifications
+  depending on whether the game was fully established or still in-flight:
+  - **`GameCancelled`** — the game was a recently accepted proposal whose
+    potato round-trip hadn't completed (tracked as a `ProposalAccepted`
+    entry in `cached_last_actions`). The opponent hadn't acknowledged the
+    accept when they published the stale unroll, so the game coin never
+    existed in that state. The accept was simply rolled back.
+  - **`GameError`** — the game was an established live game (its accept
+    was acknowledged by a complete round-trip) that should have been
+    present in the unroll but wasn't. This indicates genuinely adversarial
+    or buggy behavior.
+- The channel handler does **not** enter `Failed` state; remaining games
+  continue on-chain.
 
 ### Notifications
 
 | Notification | When |
 |-------------|------|
 | `OpponentStaleUnroll { our_reward, reward_coin }` | Always emitted when `is_stale` is true |
-| `GameError { id, reason }` | Per-game, when a stale game coin can't be matched |
-| `GameCancelled { id }` | Per-game, when an accepted game is absent from stale outputs |
+| `GameError { id, reason }` | Per-game: coin present but unrecognizable, or established live game missing from outputs |
+| `GameCancelled { id }` | Per-game: pending accept (in-flight) absent from outputs — the accept was rolled back |
 
 ### Key Invariant: `match_puzzle_hash`
 

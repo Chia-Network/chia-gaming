@@ -60,6 +60,7 @@ pub enum CachedPotatoRegenerateLastHop {
     #[serde(rename = "PotatoAccept")]
     PotatoAcceptTimeout(Box<PotatoAcceptTimeoutCachedData>),
     PotatoMoveHappening(Rc<PotatoMoveCachedData>),
+    ProposalAccepted(GameID),
 }
 
 pub struct ChannelHandlerMoveResult {
