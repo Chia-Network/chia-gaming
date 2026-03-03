@@ -4,6 +4,9 @@ This document explains the architecture of the `chia_gaming` codebase — a syst
 for playing two-player games over Chia state channels. It is written to give a
 future reader (human or AI) the conceptual foundation needed to work on this code.
 
+**Alpha status:** This project is in alpha. No on-chain wire formats, persistence
+formats, or external APIs are stable yet. Breaking changes should be expected.
+
 For debugging and testing operational guidance, see `DEBUGGING_GUIDE.md`.
 
 ## Table of Contents
@@ -618,16 +621,6 @@ different path:
 | `GameError { id, reason }` | Per-game: coin present but unrecognizable, or established live game missing from outputs |
 | `GameCancelled { id }` | Per-game: pending accept (in-flight) absent from outputs — the accept was rolled back |
 
-### Key Invariant: `match_puzzle_hash`
-
-When a player makes a move via `send_potato_move`, the `puzzle_hash_for_unroll`
-in the move result is the curried referee puzzle hash of the **pre-move** state
-(computed from `self.spend_this_coin()` before updating the referee).  This
-value is stored as `match_puzzle_hash` in `cached_last_actions`.  It matches
-the puzzle hash that an unroll at the pre-move state would create for that
-game coin — which is exactly the puzzle hash that appears in an opponent's
-stale unroll at that state.
-
 **Key code:** `src/potato_handler/mod.rs` — `finish_on_chain_transition`,
 `src/channel_handler/mod.rs` — `set_state_for_coins`, `get_redo_action`
 
@@ -662,16 +655,20 @@ RefereePuzzleArgs {
 ```
 
 Players are identified by **public keys** (not puzzle hashes) in the referee
-args. The reward destination puzzle hashes are not curried into the referee —
-instead they are revealed at timeout via `AGG_SIG_UNSAFE` (see
+args. After each move, the new game coin swaps `mover_pubkey` and
+`waiter_pubkey` — the previous mover becomes the waiter, and vice versa. This
+is how the referee enforces alternating turns.
+
+The reward destination puzzle hashes are not curried into the referee — instead
+they are revealed at timeout or slash via `AGG_SIG_UNSAFE` (see
 [Reward Payout Signatures](#reward-payout-signatures)).
 
 ### Game IDs and Nonces
 
-A game's `nonce` field serves double duty as both the referee puzzle
-differentiator and the canonical `GameID` used by the API and UI. The nonce is
-encoded as minimal unsigned big-endian bytes (e.g. nonce 0 → empty, nonce 1 →
-`[0x01]`, nonce 256 → `[0x01, 0x00]`) and wrapped in `GameID`.
+A `GameID` *is* the nonce — a `u64` that serves as both the referee puzzle
+differentiator and the canonical identifier used by the API and UI. When
+serialized to CLVM for referee puzzle hashes, it goes through the standard
+CLVM integer encoding (the same encoding `usize::to_clvm` uses).
 
 Nonces are **role-namespaced**: the initiator (the player who starts with the
 potato) allocates even nonces (0, 2, 4, …) and the responder allocates odd
@@ -682,9 +679,9 @@ identical game parameters.
 
 When receiving a proposal, the `ChannelHandler` validates that the incoming
 nonce has the correct parity for the sender's role and is monotonically
-non-decreasing (nonces may be skipped if the sender proposed and cancelled
-a game before the potato arrived). Both players derive the same `GameID` from
-the nonce and refer to the game by that ID for its entire lifecycle.
+increasing (nonces may be skipped if the sender proposed and cancelled
+a game before the potato arrived). Both players use the same `GameID` to
+refer to the game for its entire lifecycle.
 
 ### On-Chain Referee Actions
 
@@ -906,7 +903,7 @@ if Alice misclaims the split.
 |------|----------|---------|
 | `CoinString` | `common/types/coin_string.rs` | Serialized coin: `parent_id ‖ puzzle_hash ‖ amount` |
 | `PuzzleHash` | `common/types/puzzle_hash.rs` | 32-byte hash identifying a puzzle |
-| `GameID` | `common/types/game_id.rs` | Nonce-derived game identifier; see [Game IDs and Nonces](#game-ids-and-nonces) |
+| `GameID` | `common/types/game_id.rs` | A `u64` nonce that uniquely identifies a game; see [Game IDs and Nonces](#game-ids-and-nonces) |
 | `SpendBundle` | (chia types) | Collection of `CoinSpend`s forming an atomic transaction |
 | `RefereePuzzleArgs` | `referee/types.rs` | All args curried into the referee puzzle |
 | `Referee` | `referee/mod.rs` | Enum: `MyTurn` / `TheirTurn` |
@@ -1044,6 +1041,16 @@ coin's puzzle hash against all entries in `cached_last_actions`:
    state. No redo needed. Set `our_turn` based on `is_my_turn()`.
 
 3. **Neither matches**: Error condition (game disappeared or unexpected state).
+
+**Why `match_puzzle_hash` is the right value.** When a player makes a move via
+`send_potato_move`, the `puzzle_hash_for_unroll` in the move result is the
+curried referee puzzle hash of the **pre-move** state (computed from
+`self.spend_this_coin()` before updating the referee). This value is stored as
+`match_puzzle_hash` in `cached_last_actions`. It corresponds to the puzzle
+hash the unroll coin would create for this game coin if the unroll resolved
+at the state *before* our move — which is exactly the puzzle hash that
+appears on-chain in both the non-stale redo case and in a stale unroll at
+that state.
 
 Multiple games may need redos simultaneously if the batch contained moves for
 different games.

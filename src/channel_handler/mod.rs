@@ -181,10 +181,7 @@ impl ChannelHandler {
     }
 
     pub fn is_our_nonce_parity(&self, game_id: &GameID) -> bool {
-        game_id
-            .to_nonce()
-            .map(|n| n % 2 == self.my_next_nonce % 2)
-            .unwrap_or(false)
+        game_id.0 as usize % 2 == self.my_next_nonce % 2
     }
 
     pub fn get_state_number(&self) -> usize {
@@ -830,10 +827,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         start_info: &Rc<GameStartInfo>,
     ) -> Result<(), Error> {
-        let new_game_nonce = start_info
-            .game_id
-            .to_nonce()
-            .ok_or_else(|| Error::StrErr("game_id is not a valid nonce".to_string()))?;
+        let new_game_nonce = start_info.game_id.0 as usize;
 
         let referee_identity = ChiaIdentity::new(
             env.allocator,
@@ -884,10 +878,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         start_info: &Rc<GameStartInfo>,
     ) -> Result<(), Error> {
-        let new_game_nonce = start_info
-            .game_id
-            .to_nonce()
-            .ok_or_else(|| Error::StrErr("received game_id is not a valid nonce".to_string()))?;
+        let new_game_nonce = start_info.game_id.0 as usize;
         let expected_parity = self.their_next_nonce % 2;
         if new_game_nonce % 2 != expected_parity {
             return Err(Error::StrErr(format!(

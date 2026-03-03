@@ -21,9 +21,10 @@ pub(crate) mod sim_tests {
     use crate::test_support::game::{ChannelHandlerGame, DEFAULT_UNROLL_TIME_LOCK};
 
     /// Helper: create a ChannelHandlerGame with completed handshake.
-    fn setup_handshake(env: &mut ChannelHandlerEnv<impl rand::Rng>) -> ChannelHandlerGame {
-        let game_id_data: Hash = env.rng.gen();
-        let game_id = GameID::new(game_id_data.bytes().to_vec());
+    fn setup_handshake(
+        env: &mut ChannelHandlerEnv<impl rand::Rng>,
+    ) -> ChannelHandlerGame {
+        let game_id = GameID(42);
         let launcher_coin = CoinID::default();
 
         let mut game = ChannelHandlerGame::new(

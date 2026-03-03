@@ -492,11 +492,11 @@ mod gaming_wasm {
     }
 
     fn game_id_to_string(id: &GameID) -> String {
-        hex::encode(id.to_bytes())
+        id.0.to_string()
     }
 
     fn string_to_game_id(id: &str) -> Result<GameID, JsValue> {
-        Ok(GameID::from_bytes(&hex::decode(id).into_js()?))
+        Ok(GameID(id.parse::<u64>().map_err(|e| JsValue::from_str(&format!("bad game id: {e}")))?))
     }
 
     #[wasm_bindgen]
