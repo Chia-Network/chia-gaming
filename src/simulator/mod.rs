@@ -1,3 +1,5 @@
+#[cfg(feature = "sim-tests")]
+pub mod service;
 #[cfg(test)]
 pub mod tests;
 
