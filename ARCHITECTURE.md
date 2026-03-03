@@ -262,7 +262,7 @@ Games are initiated through a propose/accept flow:
 
 1. **Propose:** The potato holder sends a `BatchAction::ProposeGame` containing
    the `GameStart` descriptor (game type, contributions, timeout, parameters).
-   Both sides record the game in `pre_game_ids` as a pending proposal. The
+   Both sides record the game in `proposed_games` as a pending proposal. The
    receiver gets a `GameProposed` notification; the proposer does not (the
    proposer tracks the proposal via the `propose_game` API call itself).
 
@@ -885,6 +885,7 @@ if Alice misclaims the split.
 | `clsp/referee/onchain/referee.clsp` | Game coin: move / timeout / slash enforcement |
 | `clsp/games/calpoker/onchain/a-e.clsp` | Calpoker validation programs (one per protocol step) |
 | `clsp/games/calpoker/calpoker_generate.clinc` | Off-chain calpoker handlers (Alice & Bob sides) |
+| `clsp/test/debug_game.clsp` | Debug game: validator, my-turn, their-turn, and factory |
 
 ### Test infrastructure
 
@@ -905,6 +906,7 @@ if Alice misclaims the split.
 |------|----------|---------|
 | `CoinString` | `common/types/coin_string.rs` | Serialized coin: `parent_id ‖ puzzle_hash ‖ amount` |
 | `PuzzleHash` | `common/types/puzzle_hash.rs` | 32-byte hash identifying a puzzle |
+| `GameID` | `common/types/game_id.rs` | Nonce-derived game identifier; see [Game IDs and Nonces](#game-ids-and-nonces) |
 | `SpendBundle` | (chia types) | Collection of `CoinSpend`s forming an atomic transaction |
 | `RefereePuzzleArgs` | `referee/types.rs` | All args curried into the referee puzzle |
 | `Referee` | `referee/mod.rs` | Enum: `MyTurn` / `TheirTurn` |
@@ -912,9 +914,11 @@ if Alice misclaims the split.
 | `PotatoHandler` | `potato_handler/mod.rs` | Turn-taking protocol over the wire |
 | `OnChainPotatoHandler` | `potato_handler/on_chain.rs` | Drives on-chain dispute flow |
 | `LiveGame` | `channel_handler/types/live_game.rs` | Wraps referee for a single active game |
+| `ProposedGame` | `channel_handler/types/proposed_game.rs` | Pending game proposal (stored in `proposed_games`) |
 | `UnrollCoin` | `channel_handler/types/unroll_coin.rs` | Unroll coin state and puzzle construction |
 | `GameCradle` | `peer_container.rs` | Trait for synchronous game interaction (tests/UI) |
 | `ValidationInfo` | `channel_handler/types/validation_info.rs` | Game validation program + state |
+| `CachedPotatoRegenerateLastHop` | `channel_handler/types/potato.rs` | Enum for `cached_last_actions` entries: `PotatoMoveHappening`, `PotatoAcceptTimeout`, `ProposalAccepted` |
 | `BatchAction` | `potato_handler/types.rs` | Peer-level batch action variants: `ProposeGame`, `AcceptProposal`, `CancelProposal`, `Move`, `AcceptTimeout` |
 | `GameAction` | `potato_handler/types.rs` | Actions: `Move`, `AcceptTimeout`, `GoOnChain`, `CleanShutdown`, etc. |
 | `SynchronousGameCradleState` | `peer_container.rs` | Per-peer mutable state: queues, flags, `peer_disconnected` |
@@ -995,27 +999,34 @@ This is the "redo" mechanism.
 
 ### Lifecycle
 
-`cached_last_actions` on the `ChannelHandler` is a `Vec` that stores data for
-unacknowledged outgoing actions. Because a single batch can contain multiple
-moves and game acceptances across different games, multiple entries may need to
-be redone on-chain.
+`cached_last_actions` on the `ChannelHandler` is a
+`Vec<CachedPotatoRegenerateLastHop>` (defined in
+`src/channel_handler/types/potato.rs`) that stores data for unacknowledged
+outgoing actions. Because a single batch can contain multiple moves and game
+acceptances across different games, multiple entries may need to be redone
+on-chain.
 
-There are two kinds of cached entries:
+There are three kinds of cached entries:
 
-- **`PotatoMove`** — a move we sent but the opponent hasn't acknowledged. Stores
-  the move data, the puzzle hash it operates on (`match_puzzle_hash`), and the
-  post-move puzzle hash (`saved_post_move_last_ph`).
+- **`PotatoMoveHappening`** — a move we sent but the opponent hasn't acknowledged.
+  Stores the move data, the puzzle hash it operates on (`match_puzzle_hash`),
+  and the post-move puzzle hash (`saved_post_move_last_ph`).
 - **`PotatoAcceptTimeout`** — a game acceptance we sent. Stores the game ID, puzzle
   hash, live game state, and reward amounts. When the potato returns
   (acknowledgment), `drain_cached_accept_timeouts` emits `WeTimedOut` for each cached
   accept.
+- **`ProposalAccepted`** — a proposal acceptance we sent. Stores the game ID.
+  Used during stale unroll handling to distinguish in-flight proposal accepts
+  (which get `GameCancelled`) from fully established games (which get
+  `GameError`).
 
 **Set** in `update_cache_for_potato_send` (moves) and
 `send_accept_timeout_no_finalize` (accept-timeouts).
 
 **Cleared** (selectively) when we receive the potato back:
-- `PotatoMove` entries are cleared in `verify_received_batch_signatures` and
-  `received_empty_potato` (the opponent's response acknowledges our moves).
+- `PotatoMoveHappening` entries are cleared in `verify_received_batch_signatures`
+  and `received_empty_potato` (the opponent's response acknowledges our moves).
+- `ProposalAccepted` entries are also cleared on potato receive.
 - `PotatoAcceptTimeout` entries are **retained** across those clears and only drained
   later by `drain_cached_accept_timeouts` during `update_channel_coin_after_receive` or
   clean shutdown, when `WeTimedOut` notifications are emitted.
@@ -1025,7 +1036,7 @@ There are two kinds of cached entries:
 When game coins are created after an unroll, `set_state_for_coins` checks each
 coin's puzzle hash against all entries in `cached_last_actions`:
 
-1. **Coin PH matches a `PotatoMove.match_puzzle_hash`**: The game coin is at
+1. **Coin PH matches a `PotatoMoveHappening.match_puzzle_hash`**: The game coin is at
    the state our cached move operates on. Queue a `RedoMove` to replay it.
    Set `our_turn = true` (we need to submit the redo transaction).
 
@@ -1215,7 +1226,7 @@ cleanup and game-over transitions.
 |--------------|------|---------|
 | `ChannelCoinSpent` | Channel coin spend detected on-chain | The channel is being unrolled (by either player) |
 | `UnrollCoinSpent { reward_coin }` | Unroll coin spend detected on-chain | Game coins and reward coins are now live; `reward_coin` is `Some(CoinString)` for our change/reward coin from the unroll, `None` if our balance is zero |
-| `GoingOnChain { reason }` | Error detected in peer message | We are automatically going on-chain due to an error; `reason` describes what went wrong (e.g., invalid peer message, opponent requested clean shutdown while games are active) |
+| `GoingOnChain { reason }` (Effect, not GameNotification) | Error detected in peer message | We are automatically going on-chain due to an error; `reason` describes what went wrong (e.g., invalid peer message, opponent requested clean shutdown while games are active) |
 
 `ChannelCoinSpent` and `UnrollCoinSpent` fire regardless of who initiated the
 unroll. A player who called `go_on_chain` will see `ChannelCoinSpent` when
@@ -1239,7 +1250,8 @@ The frontend should treat any of these as the "game ended" signal.
 | `GameCancelled { id }` | Stale accept of already-cancelled proposal | Emitted when a queued `AcceptProposal` finds the proposal already gone. Post-acceptance game disappearance uses `GameError`, not `GameCancelled`. |
 | `WeSlashedOpponent { id, reward_coin }` | Slash transaction confirmed | Opponent's illegal move was proven on-chain; `reward_coin` is the `CoinString` of the reward we received |
 | `OpponentSlashedUs { id }` | Opponent slashed us | Our move was proven illegal on-chain |
-| `OpponentSuccessfullyCheated { id, our_reward }` | Slash coin timed out | Opponent cheated and we failed to challenge in time; `our_reward` is the mover_share from their cheating move (what we actually ended up with) |
+| `OpponentSuccessfullyCheated { id, our_reward, reward_coin }` | Slash coin timed out | Opponent cheated and we failed to challenge in time; `our_reward` is the mover_share from their cheating move (what we actually ended up with) |
+| `OpponentPlayedIllegalMove { id }` | Opponent's on-chain move detected as illegal | Emitted before submitting the slash transaction; precedes `WeSlashedOpponent` (if slash succeeds) or `OpponentSuccessfullyCheated` (if slash times out) |
 | `OpponentStaleUnroll { our_reward, reward_coin }` | Opponent's unroll resolved to an outdated state | Emitted when `on_chain_state < last_received_state`; `our_reward` is the amount in our change coin, `reward_coin` is the coin if nonzero. Individual games then get their own terminal notifications (still active, redo, or `GameError`). |
 | `GameError { id, reason }` | A single game coin is in an unrecoverable state | Something went wrong with one game |
 | `ChannelError { reason }` | The channel or unroll coin is unrecoverable | Everything is lost |
