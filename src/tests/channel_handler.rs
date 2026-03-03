@@ -21,9 +21,7 @@ pub(crate) mod sim_tests {
     use crate::test_support::game::{ChannelHandlerGame, DEFAULT_UNROLL_TIME_LOCK};
 
     /// Helper: create a ChannelHandlerGame with completed handshake.
-    fn setup_handshake(
-        env: &mut ChannelHandlerEnv<impl rand::Rng>,
-    ) -> ChannelHandlerGame {
+    fn setup_handshake(env: &mut ChannelHandlerEnv<impl rand::Rng>) -> ChannelHandlerGame {
         let game_id_data: Hash = env.rng.gen();
         let game_id = GameID::new(game_id_data.bytes().to_vec());
         let launcher_coin = CoinID::default();
@@ -49,14 +47,24 @@ pub(crate) mod sim_tests {
         env: &mut ChannelHandlerEnv<impl rand::Rng>,
         sender: usize,
     ) {
-        let sigs_a = game.player(sender).ch.send_empty_potato(env)
+        let sigs_a = game
+            .player(sender)
+            .ch
+            .send_empty_potato(env)
             .expect("send_empty_potato");
-        game.player(sender ^ 1).ch.received_empty_potato(env, &sigs_a)
+        game.player(sender ^ 1)
+            .ch
+            .received_empty_potato(env, &sigs_a)
             .expect("received_empty_potato");
 
-        let sigs_b = game.player(sender ^ 1).ch.send_empty_potato(env)
+        let sigs_b = game
+            .player(sender ^ 1)
+            .ch
+            .send_empty_potato(env)
             .expect("send_empty_potato");
-        game.player(sender).ch.received_empty_potato(env, &sigs_b)
+        game.player(sender)
+            .ch
+            .received_empty_potato(env, &sigs_b)
             .expect("received_empty_potato");
     }
 
@@ -160,7 +168,6 @@ pub(crate) mod sim_tests {
             );
         }
     }
-
 }
 
 pub(crate) fn test_unroll_can_verify_own_signature() {
@@ -235,12 +242,16 @@ pub(crate) fn test_unroll_can_verify_own_signature() {
 }
 
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
-    let mut v: Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> = vec![
-        ("test_unroll_can_verify_own_signature", &test_unroll_can_verify_own_signature),
-    ];
+    let mut v: Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> = vec![(
+        "test_unroll_can_verify_own_signature",
+        &test_unroll_can_verify_own_signature,
+    )];
     #[cfg(feature = "sim-tests")]
     {
-        v.push(("test_preemption_parity_constraint", &sim_tests::test_preemption_parity_constraint));
+        v.push((
+            "test_preemption_parity_constraint",
+            &sim_tests::test_preemption_parity_constraint,
+        ));
     }
     v
 }

@@ -20,8 +20,8 @@ use crate::common::types::{
     AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr, Program,
     PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
-use crate::potato_handler::start::GameStart;
 use crate::potato_handler::effects::{apply_effects, Effect, GameNotification};
+use crate::potato_handler::start::GameStart;
 use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameFactory, PacketSender,
     PeerMessage, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
@@ -230,11 +230,8 @@ pub trait GameCradle {
     ) -> Result<(), Error>;
 
     /// Signal shutdown.  Forwards to FromLocalUI::shut_down.
-    fn shut_down<R: Rng>(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        rng: &mut R,
-    ) -> Result<(), Error>;
+    fn shut_down<R: Rng>(&mut self, allocator: &mut AllocEncoder, rng: &mut R)
+        -> Result<(), Error>;
 
     /// Tell the game cradle that a new block arrived, giving a watch report.
     fn new_block<R: Rng>(
@@ -510,7 +507,10 @@ impl ToLocalUI for SynchronousGameCradleState {
         self.clean_shutdown_received = true;
         Ok(())
     }
-    fn clean_shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
+    fn clean_shutdown_complete(
+        &mut self,
+        reward_coin_string: Option<&CoinString>,
+    ) -> Result<(), Error> {
         self.clean_shutdown = reward_coin_string.cloned();
         self.finished = true;
         Ok(())
@@ -565,10 +565,7 @@ impl SynchronousGameCradle {
 
     #[cfg(test)]
     pub fn save_unroll_snapshot(&mut self) {
-        self.saved_unroll_snapshot = self
-            .peer
-            .get_last_channel_coin_spend_info()
-            .cloned();
+        self.saved_unroll_snapshot = self.peer.get_last_channel_coin_spend_info().cloned();
     }
 
     #[cfg(test)]
@@ -615,7 +612,12 @@ impl SynchronousGameCradle {
     ) -> Result<(), Error> {
         let mut filtered = Vec::with_capacity(effects.len());
         for effect in effects {
-            if let Effect::ResyncMove { state_number, is_my_turn, .. } = &effect {
+            if let Effect::ResyncMove {
+                state_number,
+                is_my_turn,
+                ..
+            } = &effect
+            {
                 self.state.resync = Some((*state_number, *is_my_turn));
             } else {
                 filtered.push(effect);
@@ -815,7 +817,8 @@ impl GameCradle for SynchronousGameCradle {
         let entropy: Hash = rng.gen();
         let reported_effects = {
             let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-            self.peer.cheat_game(&mut env, game_id, mover_share, entropy)?
+            self.peer
+                .cheat_game(&mut env, game_id, mover_share, entropy)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())
@@ -966,7 +969,10 @@ impl GameCradle for SynchronousGameCradle {
             let mut effects = self.peer.accept_proposal(&mut env, id)?;
             let rehydrated_move = Rc::new(Program::from_bytes(&readable));
             let readable_move = ReadableMove::from_program(rehydrated_move);
-            effects.extend(self.peer.make_move(&mut env, id, &readable_move, new_entropy)?);
+            effects.extend(
+                self.peer
+                    .make_move(&mut env, id, &readable_move, new_entropy)?,
+            );
             effects
         };
         self.process_effects(reported_effects, allocator)?;
@@ -1082,7 +1088,6 @@ impl GameCradle for SynchronousGameCradle {
         );
 
         swap(&mut result.resync, &mut self.state.resync);
-        
 
         self.state.coin_solution_requests.clear();
 

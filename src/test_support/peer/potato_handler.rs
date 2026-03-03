@@ -20,12 +20,12 @@ use crate::common::types::{GameID, PrivateKey, Program, Timeout};
 use crate::games::poker_collection;
 #[cfg(test)]
 use crate::peer_container::{MessagePeerQueue, MessagePipe};
+use crate::potato_handler::effects::{apply_effects, Effect};
 #[cfg(test)]
 use crate::potato_handler::start::GameStart;
-use crate::potato_handler::effects::{apply_effects, Effect};
 use crate::potato_handler::types::{
-    BootstrapTowardGame, BootstrapTowardWallet, PacketSender, PeerMessage,
-    SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
+    BootstrapTowardGame, BootstrapTowardWallet, PacketSender, PeerMessage, SpendWalletReceiver,
+    ToLocalUI, WalletSpendInterface,
 };
 #[cfg(test)]
 use crate::potato_handler::types::{FromLocalUI, PotatoHandlerInit};
@@ -122,7 +122,9 @@ impl WalletSpendInterface for Pipe {
     }
 
     fn request_puzzle_and_solution(&mut self, _coin_id: &CoinString) -> Result<(), Error> {
-        Err(Error::StrErr("request_puzzle_and_solution not expected in Pipe test helper".to_string()))
+        Err(Error::StrErr(
+            "request_puzzle_and_solution not expected in Pipe test helper".to_string(),
+        ))
     }
 }
 
@@ -142,7 +144,9 @@ impl BootstrapTowardWallet for Pipe {
         &mut self,
         _bundle: &SpendBundle,
     ) -> Result<(), Error> {
-        Err(Error::StrErr("received_channel_transaction_completion not expected in Pipe test helper".to_string()))
+        Err(Error::StrErr(
+            "received_channel_transaction_completion not expected in Pipe test helper".to_string(),
+        ))
     }
 }
 
@@ -173,7 +177,10 @@ impl ToLocalUI for Pipe {
         Ok(())
     }
 
-    fn clean_shutdown_complete(&mut self, _reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
+    fn clean_shutdown_complete(
+        &mut self,
+        _reward_coin_string: Option<&CoinString>,
+    ) -> Result<(), Error> {
         Ok(())
     }
     fn going_on_chain(&mut self, reason: &str) -> Result<(), Error> {
@@ -316,7 +323,15 @@ where
 
         let who = i % 2;
 
-        run_move(allocator, rng, Amount::new(200), pipes, &mut peers[who], who).expect("should send");
+        run_move(
+            allocator,
+            rng,
+            Amount::new(200),
+            pipes,
+            &mut peers[who],
+            who,
+        )
+        .expect("should send");
 
         i += 1;
 
@@ -433,8 +448,16 @@ pub fn test_peer_smoke() {
         &mut pipe_sender,
     )
     .expect("should work");
-    assert!(pipe_sender[0].went_on_chain.is_none(), "peer 0 went on chain after handshake: {:?}", pipe_sender[0].went_on_chain);
-    assert!(pipe_sender[1].went_on_chain.is_none(), "peer 1 went on chain after handshake: {:?}", pipe_sender[1].went_on_chain);
+    assert!(
+        pipe_sender[0].went_on_chain.is_none(),
+        "peer 0 went on chain after handshake: {:?}",
+        pipe_sender[0].went_on_chain
+    );
+    assert!(
+        pipe_sender[1].went_on_chain.is_none(),
+        "peer 1 went on chain after handshake: {:?}",
+        pipe_sender[1].went_on_chain
+    );
 
     // Start a game via propose/accept
     let game_ids = {
@@ -493,8 +516,16 @@ pub fn test_peer_smoke() {
     )
     .expect("should work");
 
-    assert!(pipe_sender[0].went_on_chain.is_none(), "peer 0 went on chain after game start: {:?}", pipe_sender[0].went_on_chain);
-    assert!(pipe_sender[1].went_on_chain.is_none(), "peer 1 went on chain after game start: {:?}", pipe_sender[1].went_on_chain);
+    assert!(
+        pipe_sender[0].went_on_chain.is_none(),
+        "peer 0 went on chain after game start: {:?}",
+        pipe_sender[0].went_on_chain
+    );
+    assert!(
+        pipe_sender[1].went_on_chain.is_none(),
+        "peer 1 went on chain after game start: {:?}",
+        pipe_sender[1].went_on_chain
+    );
     assert!(pipe_sender[0].message_pipe.queue.is_empty());
     assert!(pipe_sender[1].message_pipe.queue.is_empty());
 
@@ -527,8 +558,16 @@ pub fn test_peer_smoke() {
         .expect("should work");
     }
 
-    assert!(pipe_sender[0].went_on_chain.is_none(), "peer 0 went on chain after moves: {:?}", pipe_sender[0].went_on_chain);
-    assert!(pipe_sender[1].went_on_chain.is_none(), "peer 1 went on chain after moves: {:?}", pipe_sender[1].went_on_chain);
+    assert!(
+        pipe_sender[0].went_on_chain.is_none(),
+        "peer 0 went on chain after moves: {:?}",
+        pipe_sender[0].went_on_chain
+    );
+    assert!(
+        pipe_sender[1].went_on_chain.is_none(),
+        "peer 1 went on chain after moves: {:?}",
+        pipe_sender[1].went_on_chain
+    );
     assert!(pipe_sender[0].message_pipe.queue.is_empty());
     assert!(pipe_sender[1].message_pipe.queue.is_empty());
 
@@ -551,14 +590,20 @@ pub fn test_peer_smoke() {
     )
     .expect("should work");
 
-    assert!(pipe_sender[0].went_on_chain.is_none(), "peer 0 went on chain after accept: {:?}", pipe_sender[0].went_on_chain);
-    assert!(pipe_sender[1].went_on_chain.is_none(), "peer 1 went on chain after accept: {:?}", pipe_sender[1].went_on_chain);
+    assert!(
+        pipe_sender[0].went_on_chain.is_none(),
+        "peer 0 went on chain after accept: {:?}",
+        pipe_sender[0].went_on_chain
+    );
+    assert!(
+        pipe_sender[1].went_on_chain.is_none(),
+        "peer 1 went on chain after accept: {:?}",
+        pipe_sender[1].went_on_chain
+    );
     assert!(pipe_sender[0].message_pipe.queue.is_empty());
     assert!(pipe_sender[1].message_pipe.queue.is_empty());
 }
 
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
-    vec![
-        ("test_peer_smoke", &test_peer_smoke),
-    ]
+    vec![("test_peer_smoke", &test_peer_smoke)]
 }

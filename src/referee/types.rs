@@ -18,8 +18,8 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     atom_from_clvm, chia_dialect, i64_from_atom, Aggsig, AllocEncoder, Amount, CoinSpend,
-    CoinString, Error, Hash, IntoErr, Node, Program, PublicKey, Puzzle,
-    PuzzleHash, Sha256tree, Spend, Timeout,
+    CoinString, Error, Hash, IntoErr, Node, Program, PublicKey, Puzzle, PuzzleHash, Sha256tree,
+    Spend, Timeout,
 };
 use crate::utils::proper_list;
 
@@ -415,7 +415,9 @@ impl OnChainRefereeMoveData {
             self.state.clone(),
         );
         let solution_args_node = (
-            allocator.encode_atom(clvm_traits::Atom::Borrowed(&self.new_move.basic.move_made)).into_gen()?,
+            allocator
+                .encode_atom(clvm_traits::Atom::Borrowed(&self.new_move.basic.move_made))
+                .into_gen()?,
             (
                 infohash_c.hash(),
                 (
@@ -497,9 +499,10 @@ pub enum OnChainRefereeSolution {
 impl OnChainRefereeSolution {
     pub fn get_signature(&self) -> Option<Aggsig> {
         match self {
-            OnChainRefereeSolution::Timeout { aggregate_signature, .. } => {
-                Some(aggregate_signature.clone())
-            }
+            OnChainRefereeSolution::Timeout {
+                aggregate_signature,
+                ..
+            } => Some(aggregate_signature.clone()),
             OnChainRefereeSolution::Move(refmove) => Some(refmove.signature.clone()),
             OnChainRefereeSolution::Slash(refslash) => Some(refslash.signature.clone()),
         }

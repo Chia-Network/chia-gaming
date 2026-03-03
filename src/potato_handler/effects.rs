@@ -1,39 +1,73 @@
 use crate::channel_handler::types::ReadableMove;
-use crate::common::types::{
-    Amount, CoinString, GameID, PuzzleHash, SpendBundle, Timeout,
-};
+use crate::common::types::{Amount, CoinString, GameID, PuzzleHash, SpendBundle, Timeout};
 use crate::potato_handler::types::PeerMessage;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum GameNotification {
-    GameCancelled { id: GameID },
-    WeTimedOut { id: GameID, our_reward: Amount, reward_coin: Option<CoinString> },
-    OpponentTimedOut { id: GameID, our_reward: Amount, reward_coin: Option<CoinString> },
-    OpponentPlayedIllegalMove { id: GameID },
-    WeSlashedOpponent { id: GameID, reward_coin: CoinString },
-    OpponentSlashedUs { id: GameID },
-    OpponentSuccessfullyCheated { id: GameID, our_reward: Amount, reward_coin: Option<CoinString> },
+    GameCancelled {
+        id: GameID,
+    },
+    WeTimedOut {
+        id: GameID,
+        our_reward: Amount,
+        reward_coin: Option<CoinString>,
+    },
+    OpponentTimedOut {
+        id: GameID,
+        our_reward: Amount,
+        reward_coin: Option<CoinString>,
+    },
+    OpponentPlayedIllegalMove {
+        id: GameID,
+    },
+    WeSlashedOpponent {
+        id: GameID,
+        reward_coin: CoinString,
+    },
+    OpponentSlashedUs {
+        id: GameID,
+    },
+    OpponentSuccessfullyCheated {
+        id: GameID,
+        our_reward: Amount,
+        reward_coin: Option<CoinString>,
+    },
 
     /// Our preemption lost the race and the opponent's stale unroll resolved.
     /// Per-game outcomes follow as separate notifications.
-    OpponentStaleUnroll { our_reward: Amount, reward_coin: Option<CoinString> },
+    OpponentStaleUnroll {
+        our_reward: Amount,
+        reward_coin: Option<CoinString>,
+    },
 
     /// The channel or unroll coin is in an unrecoverable state.
     /// Everything is lost.
-    ChannelError { reason: String },
+    ChannelError {
+        reason: String,
+    },
     /// A single game coin is in an unrecoverable state.
-    GameError { id: GameID, reason: String },
+    GameError {
+        id: GameID,
+        reason: String,
+    },
 
     ChannelCoinSpent,
-    UnrollCoinSpent { reward_coin: Option<CoinString> },
+    UnrollCoinSpent {
+        reward_coin: Option<CoinString>,
+    },
 
     GameProposed {
         id: GameID,
         my_contribution: Amount,
         their_contribution: Amount,
     },
-    GameProposalAccepted { id: GameID },
-    GameProposalCancelled { id: GameID, reason: String },
+    GameProposalAccepted {
+        id: GameID,
+    },
+    GameProposalCancelled {
+        id: GameID,
+        reason: String,
+    },
     InsufficientBalance {
         id: GameID,
         our_balance_short: bool,

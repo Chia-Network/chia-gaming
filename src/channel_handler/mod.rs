@@ -22,23 +22,21 @@ use crate::channel_handler::types::{
     prepend_rem_conditions, AcceptTransactionState, CachedPotatoRegenerateLastHop,
     ChannelCoinSpendInfo, ChannelCoinSpentResult, ChannelHandlerEnv,
     ChannelHandlerInitiationResult, ChannelHandlerMoveResult, ChannelHandlerPrivateKeys,
-    ChannelHandlerUnrollSpendInfo, CoinSpentInformation,
-    HandshakeResult, LiveGame, MoveResult, OnChainGameCoin,
-    OnChainGameState, PotatoAcceptTimeoutCachedData, PotatoMoveCachedData, PotatoSignatures,
-    ProposedGame, ReadableMove, UnrollCoin, UnrollCoinConditionInputs,
+    ChannelHandlerUnrollSpendInfo, CoinSpentInformation, HandshakeResult, LiveGame, MoveResult,
+    OnChainGameCoin, OnChainGameState, PotatoAcceptTimeoutCachedData, PotatoMoveCachedData,
+    PotatoSignatures, ProposedGame, ReadableMove, UnrollCoin, UnrollCoinConditionInputs,
 };
 
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
-    private_to_public_key, puzzle_for_pk,
-    puzzle_for_synthetic_public_key, puzzle_hash_for_synthetic_public_key,
-    standard_solution_partial, ChiaIdentity,
+    private_to_public_key, puzzle_for_pk, puzzle_for_synthetic_public_key,
+    puzzle_hash_for_synthetic_public_key, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::Sha256Input;
 use crate::common::types::{
     usize_from_atom, Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID,
-    CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey,
-    Program, PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend, Timeout,
+    CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey,
+    Puzzle, PuzzleHash, Sha256tree, Spend, Timeout,
 };
 use crate::potato_handler::types::GameAction;
 use crate::referee::types::{GameMoveDetails, RefereeOnChainTransaction, TheirTurnCoinSpentResult};
@@ -183,7 +181,8 @@ impl ChannelHandler {
     }
 
     pub fn is_our_nonce_parity(&self, game_id: &GameID) -> bool {
-        game_id.to_nonce()
+        game_id
+            .to_nonce()
             .map(|n| n % 2 == self.my_next_nonce % 2)
             .unwrap_or(false)
     }
@@ -217,7 +216,8 @@ impl ChannelHandler {
     }
 
     pub fn all_game_ids(&self) -> Vec<GameID> {
-        self.live_games.iter()
+        self.live_games
+            .iter()
             .chain(self.pending_accept_timeouts.iter())
             .map(|g| g.game_id.clone())
             .collect()
@@ -240,7 +240,6 @@ impl ChannelHandler {
     pub fn find_live_game(&self, game_id: &GameID) -> Option<&LiveGame> {
         self.live_games.iter().find(|g| g.game_id == *game_id)
     }
-
 
     pub fn amount(&self, on_chain: bool) -> Amount {
         let allocated = self.my_allocated_balance.clone() + self.their_allocated_balance.clone();
@@ -308,7 +307,10 @@ impl ChannelHandler {
 
     /// Return whichever stored UnrollCoin matches the given on-chain state
     /// number.  Checks `self.timeout` first, then `self.unroll`.
-    pub fn get_unroll_for_state(&self, state_number: usize) -> Result<&ChannelHandlerUnrollSpendInfo, Error> {
+    pub fn get_unroll_for_state(
+        &self,
+        state_number: usize,
+    ) -> Result<&ChannelHandlerUnrollSpendInfo, Error> {
         if let Some(t) = self.timeout.as_ref() {
             if t.coin.state_number == state_number {
                 return Ok(t);
@@ -317,7 +319,12 @@ impl ChannelHandler {
         if self.unroll.coin.state_number == state_number {
             return Ok(&self.unroll);
         }
-        if let Some(old) = self.old_unrolls.iter().rev().find(|u| u.coin.state_number == state_number) {
+        if let Some(old) = self
+            .old_unrolls
+            .iter()
+            .rev()
+            .find(|u| u.coin.state_number == state_number)
+        {
             return Ok(old);
         }
         Err(Error::StrErr(format!(
@@ -779,9 +786,8 @@ impl ChannelHandler {
             ),
         )?;
 
-        self.cached_last_actions.retain(|entry| {
-            matches!(entry, CachedPotatoRegenerateLastHop::PotatoAcceptTimeout(_))
-        });
+        self.cached_last_actions
+            .retain(|entry| matches!(entry, CachedPotatoRegenerateLastHop::PotatoAcceptTimeout(_)));
 
         Ok(ChannelCoinSpendInfo {
             aggsig: spend.signature,
@@ -807,9 +813,8 @@ impl ChannelHandler {
             ),
         )?;
 
-        self.cached_last_actions.retain(|entry| {
-            matches!(entry, CachedPotatoRegenerateLastHop::PotatoAcceptTimeout(_))
-        });
+        self.cached_last_actions
+            .retain(|entry| matches!(entry, CachedPotatoRegenerateLastHop::PotatoAcceptTimeout(_)));
 
         Ok(ChannelCoinSpendInfo {
             aggsig: spend.signature,
@@ -825,7 +830,9 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         start_info: &Rc<GameStartInfo>,
     ) -> Result<(), Error> {
-        let new_game_nonce = start_info.game_id.to_nonce()
+        let new_game_nonce = start_info
+            .game_id
+            .to_nonce()
             .ok_or_else(|| Error::StrErr("game_id is not a valid nonce".to_string()))?;
 
         let referee_identity = ChiaIdentity::new(
@@ -877,7 +884,9 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         start_info: &Rc<GameStartInfo>,
     ) -> Result<(), Error> {
-        let new_game_nonce = start_info.game_id.to_nonce()
+        let new_game_nonce = start_info
+            .game_id
+            .to_nonce()
             .ok_or_else(|| Error::StrErr("received game_id is not a valid nonce".to_string()))?;
         let expected_parity = self.their_next_nonce % 2;
         if new_game_nonce % 2 != expected_parity {
@@ -927,11 +936,11 @@ impl ChannelHandler {
     }
 
     /// Mutate state for accepting a proposal. Does NOT finalize signatures.
-    pub fn send_accept_proposal(
-        &mut self,
-        game_id: &GameID,
-    ) -> Result<(), Error> {
-        let idx = self.proposed_games.iter().position(|p| p.game_id == *game_id)
+    pub fn send_accept_proposal(&mut self, game_id: &GameID) -> Result<(), Error> {
+        let idx = self
+            .proposed_games
+            .iter()
+            .position(|p| p.game_id == *game_id)
             .ok_or_else(|| Error::StrErr(format!("no proposal with id {game_id:?}")))?;
         let proposal = self.proposed_games.remove(idx);
 
@@ -939,7 +948,9 @@ impl ChannelHandler {
             || proposal.their_contribution.clone() > self.their_out_of_game_balance
         {
             self.proposed_games.insert(idx, proposal);
-            return Err(Error::StrErr("insufficient balance to accept proposal".to_string()));
+            return Err(Error::StrErr(
+                "insufficient balance to accept proposal".to_string(),
+            ));
         }
 
         self.my_allocated_balance += proposal.my_contribution.clone();
@@ -948,7 +959,9 @@ impl ChannelHandler {
         self.their_out_of_game_balance -= proposal.their_contribution.clone();
 
         self.clear_cached_game_id_for_send();
-        self.push_cached_action(CachedPotatoRegenerateLastHop::ProposalAccepted(game_id.clone()));
+        self.push_cached_action(CachedPotatoRegenerateLastHop::ProposalAccepted(
+            game_id.clone(),
+        ));
 
         let live_game = LiveGame::new(
             proposal.game_id.clone(),
@@ -962,11 +975,11 @@ impl ChannelHandler {
     }
 
     /// Apply a received accept-proposal without verifying signatures.
-    pub fn apply_received_accept_proposal(
-        &mut self,
-        game_id: &GameID,
-    ) -> Result<(), Error> {
-        let idx = self.proposed_games.iter().position(|p| p.game_id == *game_id)
+    pub fn apply_received_accept_proposal(&mut self, game_id: &GameID) -> Result<(), Error> {
+        let idx = self
+            .proposed_games
+            .iter()
+            .position(|p| p.game_id == *game_id)
             .ok_or_else(|| Error::StrErr(format!("no proposal with id {game_id:?}")))?;
         let proposal = self.proposed_games.remove(idx);
 
@@ -974,7 +987,9 @@ impl ChannelHandler {
             || proposal.their_contribution.clone() > self.their_out_of_game_balance
         {
             self.proposed_games.insert(idx, proposal);
-            return Err(Error::StrErr("insufficient balance to accept proposal".to_string()));
+            return Err(Error::StrErr(
+                "insufficient balance to accept proposal".to_string(),
+            ));
         }
 
         self.my_allocated_balance += proposal.my_contribution.clone();
@@ -994,28 +1009,32 @@ impl ChannelHandler {
     }
 
     /// Mutate state for cancelling a proposal. Does NOT finalize signatures.
-    pub fn send_cancel_proposal(
-        &mut self,
-        game_id: &GameID,
-    ) -> Result<(), Error> {
-        let idx = self.proposed_games.iter().position(|p| p.game_id == *game_id)
+    pub fn send_cancel_proposal(&mut self, game_id: &GameID) -> Result<(), Error> {
+        let idx = self
+            .proposed_games
+            .iter()
+            .position(|p| p.game_id == *game_id)
             .ok_or_else(|| Error::StrErr(format!("no proposal with id {game_id:?}")))?;
         self.proposed_games.remove(idx);
         Ok(())
     }
 
-    pub fn received_cancel_proposal(
-        &mut self,
-        game_id: &GameID,
-    ) -> Result<(), Error> {
-        let idx = self.proposed_games.iter().position(|p| p.game_id == *game_id)
+    pub fn received_cancel_proposal(&mut self, game_id: &GameID) -> Result<(), Error> {
+        let idx = self
+            .proposed_games
+            .iter()
+            .position(|p| p.game_id == *game_id)
             .ok_or_else(|| Error::StrErr(format!("no proposal with id {game_id:?}")))?;
         self.proposed_games.remove(idx);
         Ok(())
     }
 
     pub fn cancel_all_proposals(&mut self) -> Vec<GameID> {
-        let ids: Vec<GameID> = self.proposed_games.iter().map(|p| p.game_id.clone()).collect();
+        let ids: Vec<GameID> = self
+            .proposed_games
+            .iter()
+            .map(|p| p.game_id.clone())
+            .collect();
         self.proposed_games.clear();
         ids
     }
@@ -1090,8 +1109,8 @@ impl ChannelHandler {
         let puzzle_hash = referee_result.puzzle_hash_for_unroll;
         let amount = referee_result.details.basic.mover_share.clone();
 
-        self.push_cached_action(
-            CachedPotatoRegenerateLastHop::PotatoMoveHappening(Rc::new(PotatoMoveCachedData {
+        self.push_cached_action(CachedPotatoRegenerateLastHop::PotatoMoveHappening(Rc::new(
+            PotatoMoveCachedData {
                 state_number: self.current_state_number,
                 game_id: game_id.clone(),
                 match_puzzle_hash,
@@ -1099,8 +1118,8 @@ impl ChannelHandler {
                 amount,
                 saved_post_move_referee: Some(saved_referee),
                 saved_post_move_last_ph: Some(saved_ph),
-            })),
-        );
+            },
+        )));
 
         Ok(MoveResult {
             state_number: self.current_state_number,
@@ -1165,10 +1184,7 @@ impl ChannelHandler {
 
     /// Apply a send-side accept mutation. Does NOT finalize signatures.
     /// Pushes a cache entry for on-chain redo. Returns the amount won.
-    pub fn send_accept_timeout_no_finalize(
-        &mut self,
-        game_id: &GameID,
-    ) -> Result<Amount, Error> {
+    pub fn send_accept_timeout_no_finalize(&mut self, game_id: &GameID) -> Result<Amount, Error> {
         assert!(self.have_potato);
         let game_idx = self.get_game_by_id(game_id)?;
 
@@ -1191,24 +1207,21 @@ impl ChannelHandler {
         self.my_out_of_game_balance += amount.clone();
         self.their_out_of_game_balance += at_stake.clone() - amount.clone();
 
-        self.push_cached_action(CachedPotatoRegenerateLastHop::PotatoAcceptTimeout(Box::new(
-            PotatoAcceptTimeoutCachedData {
+        self.push_cached_action(CachedPotatoRegenerateLastHop::PotatoAcceptTimeout(
+            Box::new(PotatoAcceptTimeoutCachedData {
                 game_id: game_id.clone(),
                 puzzle_hash: live_game.last_referee_puzzle_hash.clone(),
                 live_game,
                 at_stake_amount: at_stake,
                 our_share_amount: amount.clone(),
-            },
-        )));
+            }),
+        ));
 
         Ok(amount)
     }
 
     /// Apply a received accept (game finish) without verifying signatures.
-    pub fn apply_received_accept_timeout(
-        &mut self,
-        game_id: &GameID,
-    ) -> Result<(), Error> {
+    pub fn apply_received_accept_timeout(&mut self, game_id: &GameID) -> Result<(), Error> {
         let game_idx = self.get_game_by_id(game_id)?;
 
         let game_amount_for_me = self.live_games[game_idx].get_our_current_share();
@@ -1448,7 +1461,10 @@ impl ChannelHandler {
     ) -> Result<ChannelCoinSpentResult, Error> {
         let agg_key = self.get_aggregate_unroll_public_key();
         let curried_puzzle = self.unroll.coin.make_curried_unroll_puzzle(env, &agg_key)?;
-        let solution = self.unroll.coin.make_unroll_puzzle_solution(env, &agg_key)?;
+        let solution = self
+            .unroll
+            .coin
+            .make_unroll_puzzle_solution(env, &agg_key)?;
 
         Ok(ChannelCoinSpentResult {
             transaction: Spend {
@@ -1542,11 +1558,16 @@ impl ChannelHandler {
         .into_gen()?;
 
         // SOLUTION: from the preemption source (our newer state).
-        let solution = preempt_source.coin.make_unroll_puzzle_solution(env, &agg_key)?;
+        let solution = preempt_source
+            .coin
+            .make_unroll_puzzle_solution(env, &agg_key)?;
 
         // SIGNATURE: aggregate of both halves from the preemption source.
         let mut signature = preempt_source.coin.get_unroll_coin_signature()?;
-        signature += preempt_source.signatures.my_unroll_half_signature_peer.clone();
+        signature += preempt_source
+            .signatures
+            .my_unroll_half_signature_peer
+            .clone();
 
         Ok(ChannelCoinSpentResult {
             transaction: Spend {
@@ -1594,12 +1615,19 @@ impl ChannelHandler {
         _env: &mut ChannelHandlerEnv<R>,
         unroll_coin: &CoinString,
         coins: &[(PuzzleHash, Amount)],
-    ) -> Result<(HashMap<CoinString, OnChainGameState>, Vec<(GameID, CoinString)>), Error> {
+    ) -> Result<
+        (
+            HashMap<CoinString, OnChainGameState>,
+            Vec<(GameID, CoinString)>,
+        ),
+        Error,
+    > {
         let mut res = HashMap::new();
         let mut errored_games: Vec<(GameID, CoinString)> = Vec::new();
         let unroll_coin_id = unroll_coin.to_coin_id();
 
-        let cached_moves: Vec<(GameID, PuzzleHash)> = self.cached_last_actions
+        let cached_moves: Vec<(GameID, PuzzleHash)> = self
+            .cached_last_actions
             .iter()
             .filter_map(|entry| {
                 if let CachedPotatoRegenerateLastHop::PotatoMoveHappening(d) = entry {
@@ -1612,7 +1640,10 @@ impl ChannelHandler {
 
         log::debug!(
             "set_state_for_coins: cached_moves={:?} live_games={} coins={}",
-            cached_moves.iter().map(|(gid, ph)| format!("({gid:?},{ph:?})")).collect::<Vec<_>>(),
+            cached_moves
+                .iter()
+                .map(|(gid, ph)| format!("({gid:?},{ph:?})"))
+                .collect::<Vec<_>>(),
             self.live_games.len(),
             coins.len(),
         );
@@ -1622,9 +1653,9 @@ impl ChannelHandler {
 
             let live_match = self.live_games.iter().find(|g| g.get_amount() == *coin_amt);
             if let Some(live_game) = live_match {
-                let needs_redo = cached_moves.iter().any(|(gid, mph)| {
-                    *gid == live_game.game_id && *mph == *coin_ph
-                });
+                let needs_redo = cached_moves
+                    .iter()
+                    .any(|(gid, mph)| *gid == live_game.game_id && *mph == *coin_ph);
                 let is_latest = live_game.last_referee_puzzle_hash == *coin_ph;
                 log::debug!(
                     "set_state_for_coins: coin_ph={coin_ph:?} coin_amt={coin_amt:?} live_game_id={:?} needs_redo={needs_redo} is_latest={is_latest} last_ref_ph={:?}",
@@ -1672,9 +1703,10 @@ impl ChannelHandler {
             }
 
             // Try pending_accept games, matching by amount and PH.
-            let pending_match = self.pending_accept_timeouts.iter().find(|p| {
-                p.get_amount() == *coin_amt && p.last_referee_puzzle_hash == *coin_ph
-            });
+            let pending_match = self
+                .pending_accept_timeouts
+                .iter()
+                .find(|p| p.get_amount() == *coin_amt && p.last_referee_puzzle_hash == *coin_ph);
             if let Some(pending) = pending_match {
                 res.insert(
                     coin_id,
@@ -1695,9 +1727,10 @@ impl ChannelHandler {
             }
 
             // Try pending_accept games by amount only (stale unroll case).
-            let pending_amt_match = self.pending_accept_timeouts.iter().find(|p| {
-                p.get_amount() == *coin_amt
-            });
+            let pending_amt_match = self
+                .pending_accept_timeouts
+                .iter()
+                .find(|p| p.get_amount() == *coin_amt);
             if let Some(pending) = pending_amt_match {
                 errored_games.push((pending.game_id.clone(), coin_id));
             }
@@ -1732,10 +1765,7 @@ impl ChannelHandler {
         Ok(self.live_games[game_idx].enable_cheating(make_move, mover_share))
     }
 
-    pub fn save_game_state(
-        &self,
-        game_id: &GameID,
-    ) -> Result<(Rc<Referee>, PuzzleHash), Error> {
+    pub fn save_game_state(&self, game_id: &GameID) -> Result<(Rc<Referee>, PuzzleHash), Error> {
         let idx = self.get_game_by_id(game_id)?;
         Ok(self.live_games[idx].save_referee_state())
     }
@@ -1882,12 +1912,7 @@ impl ChannelHandler {
             if !matches_spent {
                 self.live_games[live_game_idx].last_referee_puzzle_hash = ph.clone();
                 return Ok(CoinSpentInformation::TheirSpend(
-                    TheirTurnCoinSpentResult::Expected(
-                        self.current_state_number,
-                        ph,
-                        amt,
-                        None,
-                    ),
+                    TheirTurnCoinSpentResult::Expected(self.current_state_number, ph, amt, None),
                 ));
             }
         }

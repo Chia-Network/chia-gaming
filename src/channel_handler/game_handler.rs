@@ -177,7 +177,10 @@ impl GameHandler {
                 inputs.amount.clone(),
                 (
                     inputs.state.clone(),
-                    (inputs.last_mover_share.clone(), (inputs.entropy.clone(), ())),
+                    (
+                        inputs.last_mover_share.clone(),
+                        (inputs.entropy.clone(), ()),
+                    ),
                 ),
             ),
         )
@@ -194,7 +197,11 @@ impl GameHandler {
                 "error {e:?} from clvm during my turn handler: node_len={} node_prefix={}{}",
                 failing_hex.len(),
                 failing_prefix,
-                if failing_hex.len() > failing_prefix.len() { "..." } else { "" }
+                if failing_hex.len() > failing_prefix.len() {
+                    "..."
+                } else {
+                    ""
+                }
             );
         }
 
@@ -509,9 +516,8 @@ impl MessageHandler {
         let run_prog = self.0.to_nodeptr(allocator)?;
         let run_result = run_code(allocator, run_prog, args, false);
 
-        let run_output = run_result.map_err(|e| {
-            Error::StrErr(format!("message parser returned error: {e:?}"))
-        })?;
+        let run_output = run_result
+            .map_err(|e| Error::StrErr(format!("message parser returned error: {e:?}")))?;
 
         ReadableMove::from_nodeptr(allocator, run_output)
     }

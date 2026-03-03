@@ -10,12 +10,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::types::ChannelHandlerEnv;
 use crate::common::constants::{ASSERT_HEIGHT_RELATIVE, CREATE_COIN, REM};
-use crate::common::standard_coin::{
-    private_to_public_key, unsafe_sign_partial,
-};
+use crate::common::standard_coin::{private_to_public_key, unsafe_sign_partial};
 use crate::common::types::{
-    Aggsig, Amount, Error, IntoErr, Node, PrivateKey, Program, ProgramRef, PublicKey,
-    PuzzleHash, Sha256tree,
+    Aggsig, Amount, Error, IntoErr, Node, PrivateKey, Program, ProgramRef, PublicKey, PuzzleHash,
+    Sha256tree,
 };
 
 /// Represents the unroll coin which will come to exist if the channel coin
@@ -178,9 +176,7 @@ impl UnrollCoin {
         env: &mut ChannelHandlerEnv<R>,
     ) -> Result<NodePtr, Error> {
         let timeout_conditions = self.get_conditions_for_unroll_coin_spend()?;
-        let solution = (timeout_conditions, ())
-            .to_clvm(env.allocator)
-            .into_gen()?;
+        let solution = (timeout_conditions, ()).to_clvm(env.allocator).into_gen()?;
         Ok(solution)
     }
 
@@ -205,7 +201,10 @@ impl UnrollCoin {
 
         let our_first_coin = (
             CREATE_COIN,
-            (inputs.my_reward_puzzle_hash.clone(), (inputs.my_balance.clone(), ())),
+            (
+                inputs.my_reward_puzzle_hash.clone(),
+                (inputs.my_balance.clone(), ()),
+            ),
         );
 
         let (start_coin_one, start_coin_two) = if self.started_with_potato {
@@ -255,7 +254,10 @@ impl UnrollCoin {
             let timelock_cond = (ASSERT_HEIGHT_RELATIVE, (inputs.unroll_timeout, ()))
                 .to_clvm(env.allocator)
                 .into_gen()?;
-            let timeout_node = (Node(timelock_cond), Node(base_conditions.to_nodeptr(env.allocator)?))
+            let timeout_node = (
+                Node(timelock_cond),
+                Node(base_conditions.to_nodeptr(env.allocator)?),
+            )
                 .to_clvm(env.allocator)
                 .into_gen()?;
             ProgramRef::new(Rc::new(Program::from_nodeptr(env.allocator, timeout_node)?))
@@ -267,11 +269,8 @@ impl UnrollCoin {
         let base_hash = base_conditions.sha256tree(env.allocator);
         let unroll_public_key = private_to_public_key(unroll_private_key);
         let unroll_aggregate_key = unroll_public_key.clone() + their_unroll_coin_public_key.clone();
-        let unroll_signature = unsafe_sign_partial(
-            unroll_private_key,
-            &unroll_aggregate_key,
-            base_hash.bytes(),
-        );
+        let unroll_signature =
+            unsafe_sign_partial(unroll_private_key, &unroll_aggregate_key, base_hash.bytes());
         self.outcome = Some(UnrollCoinOutcome {
             conditions: timeout_conditions,
             conditions_without_hash: base_conditions,

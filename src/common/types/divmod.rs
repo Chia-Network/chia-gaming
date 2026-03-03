@@ -33,7 +33,5 @@ fn test_local_divmod() {
 
 #[cfg(test)]
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
-    vec![
-        ("test_local_divmod", &test_local_divmod),
-    ]
+    vec![("test_local_divmod", &test_local_divmod)]
 }

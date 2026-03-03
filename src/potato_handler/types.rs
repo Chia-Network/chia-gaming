@@ -5,10 +5,11 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json_any_key::*;
 
-use crate::channel_handler::types::{
-    ChannelHandlerEnv, ChannelHandlerPrivateKeys, PotatoMoveCachedData, PotatoSignatures, ReadableMove,
-};
 use crate::channel_handler::game_start_info::GameStartInfo;
+use crate::channel_handler::types::{
+    ChannelHandlerEnv, ChannelHandlerPrivateKeys, PotatoMoveCachedData, PotatoSignatures,
+    ReadableMove,
+};
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, Program,
@@ -34,8 +35,7 @@ pub enum ConditionWaitKind {
 /// to not take place in the potato handler.  The injected wallet bootstrap
 /// dependency must be stateful enough that it can cope with receiving a partly
 /// funded offer spend bundle and fully fund it if needed.
-pub trait BootstrapTowardGame
-{
+pub trait BootstrapTowardGame {
     /// Gives a partly signed offer to the wallet bootstrap.
     ///
     /// Intended use: channel_puzzle_hash delivers the desired puzzle hash and this
@@ -142,8 +142,7 @@ pub trait BootstrapTowardWallet {
 }
 
 /// Spend wallet receiver
-pub trait SpendWalletReceiver
-{
+pub trait SpendWalletReceiver {
     fn coin_created<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
@@ -201,7 +200,10 @@ pub trait ToLocalUI {
         readable: ReadableMove,
     ) -> Result<(), Error>;
 
-    fn game_notification(&mut self, _notification: &crate::potato_handler::effects::GameNotification) -> Result<(), Error> {
+    fn game_notification(
+        &mut self,
+        _notification: &crate::potato_handler::effects::GameNotification,
+    ) -> Result<(), Error> {
         Ok(())
     }
 
@@ -209,12 +211,14 @@ pub trait ToLocalUI {
         Ok(())
     }
     fn clean_shutdown_started(&mut self) -> Result<(), Error>;
-    fn clean_shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error>;
+    fn clean_shutdown_complete(
+        &mut self,
+        reward_coin_string: Option<&CoinString>,
+    ) -> Result<(), Error>;
     fn going_on_chain(&mut self, reason: &str) -> Result<(), Error>;
 }
 
-pub trait FromLocalUI
-{
+pub trait FromLocalUI {
     fn propose_game<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
@@ -345,8 +349,12 @@ impl std::fmt::Debug for GameAction {
             GameAction::CleanShutdown => write!(formatter, "CleanShutdown"),
             GameAction::SendPotato => write!(formatter, "SendPotato"),
             GameAction::QueuedProposal(_, _) => write!(formatter, "QueuedProposal(..)"),
-            GameAction::QueuedAcceptProposal(gi) => write!(formatter, "QueuedAcceptProposal({gi:?})"),
-            GameAction::QueuedCancelProposal(gi) => write!(formatter, "QueuedCancelProposal({gi:?})"),
+            GameAction::QueuedAcceptProposal(gi) => {
+                write!(formatter, "QueuedAcceptProposal({gi:?})")
+            }
+            GameAction::QueuedCancelProposal(gi) => {
+                write!(formatter, "QueuedCancelProposal({gi:?})")
+            }
             GameAction::Cheat(gi, ms, _) => write!(formatter, "Cheat({gi:?},{ms:?})"),
         }
     }

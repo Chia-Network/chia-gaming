@@ -53,7 +53,10 @@ impl LiveGame {
     }
 
     pub fn save_referee_state(&self) -> (Rc<Referee>, PuzzleHash) {
-        (self.referee_maker.clone(), self.last_referee_puzzle_hash.clone())
+        (
+            self.referee_maker.clone(),
+            self.last_referee_puzzle_hash.clone(),
+        )
     }
 
     pub fn restore_referee_state(&mut self, referee: Rc<Referee>, last_ph: PuzzleHash) {
@@ -123,7 +126,10 @@ impl LiveGame {
         if their_move_result.puzzle_hash_for_unroll.is_some() {
             self.last_referee_puzzle_hash =
                 self.referee_maker.outcome_referee_puzzle_hash(allocator)?;
-            debug!("ACCEPT MOVE: last_ref_ph={:?}", self.last_referee_puzzle_hash);
+            debug!(
+                "ACCEPT MOVE: last_ref_ph={:?}",
+                self.last_referee_puzzle_hash
+            );
         }
         Ok(their_move_result)
     }

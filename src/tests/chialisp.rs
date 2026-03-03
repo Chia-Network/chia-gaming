@@ -877,11 +877,19 @@ fn test_handcalc() {
         read_hex_puzzle(&mut allocator, "clsp/test/deep_compare.hex").expect("should read");
 
     let to_mod52 = |cards: Vec<(i32, i32)>| -> Vec<i32> {
-        cards.iter().map(|(rank, suit)| (rank - 2) * 4 + (suit - 1)).collect()
+        cards
+            .iter()
+            .map(|(rank, suit)| (rank - 2) * 4 + (suit - 1))
+            .collect()
     };
 
     let mut test_handcalc_with_example =
-        |(expected_relationship, explanation, ex_data_1, ex_data_2): (&str, Vec<&str>, Vec<(i32, i32)>, Vec<(i32, i32)>)| {
+        |(expected_relationship, explanation, ex_data_1, ex_data_2): (
+            &str,
+            Vec<&str>,
+            Vec<(i32, i32)>,
+            Vec<(i32, i32)>,
+        )| {
             let source_data_1 = ("handcalc", (to_mod52(ex_data_1), ()))
                 .to_clvm(&mut allocator)
                 .expect("should build");

@@ -72,7 +72,11 @@ impl GameSeed {
         let bob_seed = sha256_bytes(format!("bob{int_seed}").as_bytes())[..16].to_vec();
         let amount_byte: u8 = 200;
         let seed = sha256_concat(&[&alice_seed, &bob_seed, &[amount_byte]])[..].to_vec();
-        GameSeed { alice_seed, bob_seed, seed }
+        GameSeed {
+            alice_seed,
+            bob_seed,
+            seed,
+        }
     }
 }
 
@@ -103,7 +107,11 @@ fn int_from_atom(allocator: &mut AllocEncoder, node: NodePtr) -> i64 {
 fn parse_validator_output(allocator: &mut AllocEncoder, result: NodePtr) -> MoveResult {
     let items = proper_list(allocator.allocator(), result, true)
         .expect("validator output should be a proper list");
-    assert!(items.len() >= 2, "validator output too short: {}", items.len());
+    assert!(
+        items.len() >= 2,
+        "validator output too short: {}",
+        items.len()
+    );
 
     let code_int = int_from_atom(allocator, items[0]);
     let move_code = match code_int {
@@ -139,7 +147,13 @@ fn parse_validator_output(allocator: &mut AllocEncoder, result: NodePtr) -> Move
     }
 }
 
-fn build_curry_args(allocator: &mut AllocEncoder, on_chain: bool, move_node: NodePtr, max_move_size: i64, mover_share: i64) -> NodePtr {
+fn build_curry_args(
+    allocator: &mut AllocEncoder,
+    on_chain: bool,
+    move_node: NodePtr,
+    max_move_size: i64,
+    mover_share: i64,
+) -> NodePtr {
     let waiter_ph: NodePtr = if on_chain {
         1i64.to_clvm(allocator).unwrap()
     } else {
@@ -205,17 +219,32 @@ fn run_validator_step(
     previous_state: NodePtr,
     evidence: Option<&[u8]>,
 ) -> Result<MoveResult, String> {
-    let info = lib.by_hash.get(validator_hash)
+    let info = lib
+        .by_hash
+        .get(validator_hash)
         .unwrap_or_else(|| panic!("unknown validator hash: {}", hex::encode(validator_hash)));
 
     let program_clvm = info.puzzle.to_clvm(allocator).unwrap();
 
     let args = build_validator_args(
-        allocator, validator_hash, on_chain, move_bytes,
-        max_move_size, mover_share, previous_state, program_clvm, evidence,
+        allocator,
+        validator_hash,
+        on_chain,
+        move_bytes,
+        max_move_size,
+        mover_share,
+        previous_state,
+        program_clvm,
+        evidence,
     );
 
-    match run_program(allocator.allocator(), &chia_dialect(), program_clvm, args, 0) {
+    match run_program(
+        allocator.allocator(),
+        &chia_dialect(),
+        program_clvm,
+        args,
+        0,
+    ) {
         Ok(reduction) => Ok(parse_validator_output(allocator, reduction.1)),
         Err(e) => Err(format!("CLVM error: {e:?}")),
     }
@@ -239,11 +268,21 @@ fn run_step_and_check(
     let vh = last.next_validator_hash.as_ref()?;
 
     let info = lib.by_hash.get(vh).unwrap();
-    assert_eq!(info.name, spec.validator_name, "expected validator {}, got {}", spec.validator_name, info.name);
+    assert_eq!(
+        info.name, spec.validator_name,
+        "expected validator {}, got {}",
+        spec.validator_name, info.name
+    );
 
     let result = run_validator_step(
-        allocator, lib, vh, spec.on_chain, &spec.move_bytes,
-        last.next_max_move_size, spec.mover_share, last.state,
+        allocator,
+        lib,
+        vh,
+        spec.on_chain,
+        &spec.move_bytes,
+        last.next_max_move_size,
+        spec.mover_share,
+        last.state,
         spec.evidence.as_deref(),
     );
 
@@ -254,8 +293,16 @@ fn run_step_and_check(
         }
         expected => {
             let r = result.unwrap_or_else(|e| panic!("unexpected CLVM error: {e}"));
-            assert_eq!(r.move_code, expected, "step {}: expected {:?}, got {:?}", spec.validator_name, expected, r.move_code);
-            if r.move_code == MoveCode::Slash { None } else { Some(r) }
+            assert_eq!(
+                r.move_code, expected,
+                "step {}: expected {:?}, got {:?}",
+                spec.validator_name, expected, r.move_code
+            );
+            if r.move_code == MoveCode::Slash {
+                None
+            } else {
+                Some(r)
+            }
         }
     }
 }
@@ -290,12 +337,21 @@ fn run_sequence(
     Some(current)
 }
 
-fn make_step(move_bytes: &[u8], mover_share: i64, evidence: Option<&[u8]>, expected: MoveCode, on_chain: bool, validator_name: &'static str) -> StepSpec {
+fn make_step(
+    move_bytes: &[u8],
+    mover_share: i64,
+    evidence: Option<&[u8]>,
+    expected: MoveCode,
+    on_chain: bool,
+    validator_name: &'static str,
+) -> StepSpec {
     StepSpec {
         move_bytes: move_bytes.to_vec(),
         mover_share,
         evidence: evidence.map(|e| e.to_vec()),
-        expected, on_chain, validator_name,
+        expected,
+        on_chain,
+        validator_name,
     }
 }
 
@@ -329,9 +385,16 @@ fn build_test_data() -> TestData {
         v
     };
     TestData {
-        seed, first_move, good_c_move, alice_discards_salt, alice_discards_byte,
-        bob_discards_byte, alice_good_selections, alice_loss_selections,
-        bob_good_selections, bob_loss_selections,
+        seed,
+        first_move,
+        good_c_move,
+        alice_discards_salt,
+        alice_discards_byte,
+        bob_discards_byte,
+        alice_good_selections,
+        alice_loss_selections,
+        bob_good_selections,
+        bob_loss_selections,
     }
 }
 
@@ -340,7 +403,14 @@ fn happy_path_through_d(td: &TestData) -> Vec<StepSpec> {
         make_step(&td.first_move, 0, None, MoveCode::MakeMove, false, "a"),
         make_step(&td.seed.bob_seed, 0, None, MoveCode::MakeMove, false, "b"),
         make_step(&td.good_c_move, 0, None, MoveCode::MakeMove, false, "c"),
-        make_step(&td.bob_discards_byte, 0, None, MoveCode::MakeMove, false, "d"),
+        make_step(
+            &td.bob_discards_byte,
+            0,
+            None,
+            MoveCode::MakeMove,
+            false,
+            "d",
+        ),
     ]
 }
 
@@ -368,7 +438,12 @@ fn test_calpoker_a_slash_too_short() {
     let lib = load_validators(&mut a);
     let td = build_test_data();
     let init = initial_move_result(&lib);
-    run_step_and_check(&mut a, &lib, &init, &make_step(&td.first_move[1..], 0, None, MoveCode::Slash, false, "a"));
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &init,
+        &make_step(&td.first_move[1..], 0, None, MoveCode::Slash, false, "a"),
+    );
 }
 
 fn test_calpoker_a_slash_too_long() {
@@ -376,8 +451,14 @@ fn test_calpoker_a_slash_too_long() {
     let lib = load_validators(&mut a);
     let td = build_test_data();
     let init = initial_move_result(&lib);
-    let mut long = td.first_move.clone(); long.push(b'b');
-    run_step_and_check(&mut a, &lib, &init, &make_step(&long, 0, None, MoveCode::Slash, false, "a"));
+    let mut long = td.first_move.clone();
+    long.push(b'b');
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &init,
+        &make_step(&long, 0, None, MoveCode::Slash, false, "a"),
+    );
 }
 
 fn test_calpoker_b_slash_too_short() {
@@ -385,8 +466,26 @@ fn test_calpoker_b_slash_too_short() {
     let lib = load_validators(&mut a);
     let td = build_test_data();
     let init = initial_move_result(&lib);
-    let after = run_sequence(&mut a, &lib, &init, &[make_step(&td.first_move, 0, None, MoveCode::MakeMove, false, "a")]).unwrap();
-    run_step_and_check(&mut a, &lib, &after, &make_step(&td.seed.bob_seed[1..], 0, None, MoveCode::Slash, false, "b"));
+    let after = run_sequence(
+        &mut a,
+        &lib,
+        &init,
+        &[make_step(
+            &td.first_move,
+            0,
+            None,
+            MoveCode::MakeMove,
+            false,
+            "a",
+        )],
+    )
+    .unwrap();
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(&td.seed.bob_seed[1..], 0, None, MoveCode::Slash, false, "b"),
+    );
 }
 
 fn test_calpoker_b_slash_too_long() {
@@ -394,9 +493,28 @@ fn test_calpoker_b_slash_too_long() {
     let lib = load_validators(&mut a);
     let td = build_test_data();
     let init = initial_move_result(&lib);
-    let after = run_sequence(&mut a, &lib, &init, &[make_step(&td.first_move, 0, None, MoveCode::MakeMove, false, "a")]).unwrap();
-    let mut long = td.seed.bob_seed.clone(); long.push(b'a');
-    run_step_and_check(&mut a, &lib, &after, &make_step(&long, 0, None, MoveCode::Slash, false, "b"));
+    let after = run_sequence(
+        &mut a,
+        &lib,
+        &init,
+        &[make_step(
+            &td.first_move,
+            0,
+            None,
+            MoveCode::MakeMove,
+            false,
+            "a",
+        )],
+    )
+    .unwrap();
+    let mut long = td.seed.bob_seed.clone();
+    long.push(b'a');
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(&long, 0, None, MoveCode::Slash, false, "b"),
+    );
 }
 
 fn test_calpoker_c_slash_too_short() {
@@ -404,11 +522,22 @@ fn test_calpoker_c_slash_too_short() {
     let lib = load_validators(&mut a);
     let td = build_test_data();
     let init = initial_move_result(&lib);
-    let after = run_sequence(&mut a, &lib, &init, &[
-        make_step(&td.first_move, 0, None, MoveCode::MakeMove, false, "a"),
-        make_step(&td.seed.bob_seed, 0, None, MoveCode::MakeMove, false, "b"),
-    ]).unwrap();
-    run_step_and_check(&mut a, &lib, &after, &make_step(&td.good_c_move[1..], 0, None, MoveCode::Slash, false, "c"));
+    let after = run_sequence(
+        &mut a,
+        &lib,
+        &init,
+        &[
+            make_step(&td.first_move, 0, None, MoveCode::MakeMove, false, "a"),
+            make_step(&td.seed.bob_seed, 0, None, MoveCode::MakeMove, false, "b"),
+        ],
+    )
+    .unwrap();
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(&td.good_c_move[1..], 0, None, MoveCode::Slash, false, "c"),
+    );
 }
 
 fn test_calpoker_c_slash_too_long() {
@@ -416,12 +545,24 @@ fn test_calpoker_c_slash_too_long() {
     let lib = load_validators(&mut a);
     let td = build_test_data();
     let init = initial_move_result(&lib);
-    let after = run_sequence(&mut a, &lib, &init, &[
-        make_step(&td.first_move, 0, None, MoveCode::MakeMove, false, "a"),
-        make_step(&td.seed.bob_seed, 0, None, MoveCode::MakeMove, false, "b"),
-    ]).unwrap();
-    let mut long = td.good_c_move.clone(); long.push(b'b');
-    run_step_and_check(&mut a, &lib, &after, &make_step(&long, 0, None, MoveCode::Slash, false, "c"));
+    let after = run_sequence(
+        &mut a,
+        &lib,
+        &init,
+        &[
+            make_step(&td.first_move, 0, None, MoveCode::MakeMove, false, "a"),
+            make_step(&td.seed.bob_seed, 0, None, MoveCode::MakeMove, false, "b"),
+        ],
+    )
+    .unwrap();
+    let mut long = td.good_c_move.clone();
+    long.push(b'b');
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(&long, 0, None, MoveCode::Slash, false, "c"),
+    );
 }
 
 fn test_calpoker_c_slash_bad_alice_reveal() {
@@ -429,14 +570,26 @@ fn test_calpoker_c_slash_bad_alice_reveal() {
     let lib = load_validators(&mut a);
     let td = build_test_data();
     let init = initial_move_result(&lib);
-    let after = run_sequence(&mut a, &lib, &init, &[
-        make_step(&td.first_move, 0, None, MoveCode::MakeMove, false, "a"),
-        make_step(&td.seed.bob_seed, 0, None, MoveCode::MakeMove, false, "b"),
-    ]).unwrap();
+    let after = run_sequence(
+        &mut a,
+        &lib,
+        &init,
+        &[
+            make_step(&td.first_move, 0, None, MoveCode::MakeMove, false, "a"),
+            make_step(&td.seed.bob_seed, 0, None, MoveCode::MakeMove, false, "b"),
+        ],
+    )
+    .unwrap();
     let bad_seed = b"0000000000000000";
     let commit = sha256_concat(&[&td.alice_discards_salt, &td.alice_discards_byte]);
-    let mut bad = bad_seed.to_vec(); bad.extend_from_slice(&commit);
-    run_step_and_check(&mut a, &lib, &after, &make_step(&bad, 0, None, MoveCode::Slash, false, "c"));
+    let mut bad = bad_seed.to_vec();
+    bad.extend_from_slice(&commit);
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(&bad, 0, None, MoveCode::Slash, false, "c"),
+    );
 }
 
 fn test_calpoker_d_slash_too_short() {
@@ -444,12 +597,23 @@ fn test_calpoker_d_slash_too_short() {
     let lib = load_validators(&mut a);
     let td = build_test_data();
     let init = initial_move_result(&lib);
-    let after = run_sequence(&mut a, &lib, &init, &[
-        make_step(&td.first_move, 0, None, MoveCode::MakeMove, false, "a"),
-        make_step(&td.seed.bob_seed, 0, None, MoveCode::MakeMove, false, "b"),
-        make_step(&td.good_c_move, 0, None, MoveCode::MakeMove, false, "c"),
-    ]).unwrap();
-    run_step_and_check(&mut a, &lib, &after, &make_step(&[], 0, None, MoveCode::Slash, false, "d"));
+    let after = run_sequence(
+        &mut a,
+        &lib,
+        &init,
+        &[
+            make_step(&td.first_move, 0, None, MoveCode::MakeMove, false, "a"),
+            make_step(&td.seed.bob_seed, 0, None, MoveCode::MakeMove, false, "b"),
+            make_step(&td.good_c_move, 0, None, MoveCode::MakeMove, false, "c"),
+        ],
+    )
+    .unwrap();
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(&[], 0, None, MoveCode::Slash, false, "d"),
+    );
 }
 
 fn test_calpoker_d_slash_too_long() {
@@ -457,12 +621,23 @@ fn test_calpoker_d_slash_too_long() {
     let lib = load_validators(&mut a);
     let td = build_test_data();
     let init = initial_move_result(&lib);
-    let after = run_sequence(&mut a, &lib, &init, &[
-        make_step(&td.first_move, 0, None, MoveCode::MakeMove, false, "a"),
-        make_step(&td.seed.bob_seed, 0, None, MoveCode::MakeMove, false, "b"),
-        make_step(&td.good_c_move, 0, None, MoveCode::MakeMove, false, "c"),
-    ]).unwrap();
-    run_step_and_check(&mut a, &lib, &after, &make_step(b"ab", 0, None, MoveCode::Slash, false, "d"));
+    let after = run_sequence(
+        &mut a,
+        &lib,
+        &init,
+        &[
+            make_step(&td.first_move, 0, None, MoveCode::MakeMove, false, "a"),
+            make_step(&td.seed.bob_seed, 0, None, MoveCode::MakeMove, false, "b"),
+            make_step(&td.good_c_move, 0, None, MoveCode::MakeMove, false, "c"),
+        ],
+    )
+    .unwrap();
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(b"ab", 0, None, MoveCode::Slash, false, "d"),
+    );
 }
 
 fn test_calpoker_d_slash_too_few_bits() {
@@ -470,12 +645,23 @@ fn test_calpoker_d_slash_too_few_bits() {
     let lib = load_validators(&mut a);
     let td = build_test_data();
     let init = initial_move_result(&lib);
-    let after = run_sequence(&mut a, &lib, &init, &[
-        make_step(&td.first_move, 0, None, MoveCode::MakeMove, false, "a"),
-        make_step(&td.seed.bob_seed, 0, None, MoveCode::MakeMove, false, "b"),
-        make_step(&td.good_c_move, 0, None, MoveCode::MakeMove, false, "c"),
-    ]).unwrap();
-    run_step_and_check(&mut a, &lib, &after, &make_step(&[0b00000111], 0, None, MoveCode::Slash, false, "d"));
+    let after = run_sequence(
+        &mut a,
+        &lib,
+        &init,
+        &[
+            make_step(&td.first_move, 0, None, MoveCode::MakeMove, false, "a"),
+            make_step(&td.seed.bob_seed, 0, None, MoveCode::MakeMove, false, "b"),
+            make_step(&td.good_c_move, 0, None, MoveCode::MakeMove, false, "c"),
+        ],
+    )
+    .unwrap();
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(&[0b00000111], 0, None, MoveCode::Slash, false, "d"),
+    );
 }
 
 fn test_calpoker_d_slash_too_many_bits() {
@@ -483,12 +669,23 @@ fn test_calpoker_d_slash_too_many_bits() {
     let lib = load_validators(&mut a);
     let td = build_test_data();
     let init = initial_move_result(&lib);
-    let after = run_sequence(&mut a, &lib, &init, &[
-        make_step(&td.first_move, 0, None, MoveCode::MakeMove, false, "a"),
-        make_step(&td.seed.bob_seed, 0, None, MoveCode::MakeMove, false, "b"),
-        make_step(&td.good_c_move, 0, None, MoveCode::MakeMove, false, "c"),
-    ]).unwrap();
-    run_step_and_check(&mut a, &lib, &after, &make_step(&[0b00011111], 0, None, MoveCode::Slash, false, "d"));
+    let after = run_sequence(
+        &mut a,
+        &lib,
+        &init,
+        &[
+            make_step(&td.first_move, 0, None, MoveCode::MakeMove, false, "a"),
+            make_step(&td.seed.bob_seed, 0, None, MoveCode::MakeMove, false, "b"),
+            make_step(&td.good_c_move, 0, None, MoveCode::MakeMove, false, "c"),
+        ],
+    )
+    .unwrap();
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(&[0b00011111], 0, None, MoveCode::Slash, false, "d"),
+    );
 }
 
 fn test_calpoker_e_slash_too_short() {
@@ -498,7 +695,19 @@ fn test_calpoker_e_slash_too_short() {
     let init = initial_move_result(&lib);
     let after = run_sequence(&mut a, &lib, &init, &happy_path_through_d(&td)).unwrap();
     let em = e_move(&td);
-    run_step_and_check(&mut a, &lib, &after, &make_step(&em[1..], 100, Some(&td.bob_good_selections), MoveCode::Slash, false, "e"));
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(
+            &em[1..],
+            100,
+            Some(&td.bob_good_selections),
+            MoveCode::Slash,
+            false,
+            "e",
+        ),
+    );
 }
 
 fn test_calpoker_e_slash_too_long() {
@@ -507,8 +716,21 @@ fn test_calpoker_e_slash_too_long() {
     let td = build_test_data();
     let init = initial_move_result(&lib);
     let after = run_sequence(&mut a, &lib, &init, &happy_path_through_d(&td)).unwrap();
-    let mut em = e_move(&td); em.push(b'a');
-    run_step_and_check(&mut a, &lib, &after, &make_step(&em, 100, Some(&td.bob_good_selections), MoveCode::Slash, false, "e"));
+    let mut em = e_move(&td);
+    em.push(b'a');
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(
+            &em,
+            100,
+            Some(&td.bob_good_selections),
+            MoveCode::Slash,
+            false,
+            "e",
+        ),
+    );
 }
 
 fn test_calpoker_e_slash_bad_reveal() {
@@ -520,7 +742,19 @@ fn test_calpoker_e_slash_bad_reveal() {
     let mut bad = td.alice_discards_salt.clone();
     bad.extend_from_slice(&td.alice_discards_byte);
     bad.push(0x00);
-    run_step_and_check(&mut a, &lib, &after, &make_step(&bad, 100, Some(&td.bob_good_selections), MoveCode::Slash, false, "e"));
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(
+            &bad,
+            100,
+            Some(&td.bob_good_selections),
+            MoveCode::Slash,
+            false,
+            "e",
+        ),
+    );
 }
 
 fn test_calpoker_e_slash_too_few_discards() {
@@ -529,8 +763,22 @@ fn test_calpoker_e_slash_too_few_discards() {
     let td = build_test_data();
     let init = initial_move_result(&lib);
     let after = run_sequence(&mut a, &lib, &init, &happy_path_through_d(&td)).unwrap();
-    let mut bad = td.alice_discards_salt.clone(); bad.push(0b00000111); bad.extend_from_slice(&td.alice_good_selections);
-    run_step_and_check(&mut a, &lib, &after, &make_step(&bad, 100, Some(&td.bob_good_selections), MoveCode::Slash, false, "e"));
+    let mut bad = td.alice_discards_salt.clone();
+    bad.push(0b00000111);
+    bad.extend_from_slice(&td.alice_good_selections);
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(
+            &bad,
+            100,
+            Some(&td.bob_good_selections),
+            MoveCode::Slash,
+            false,
+            "e",
+        ),
+    );
 }
 
 fn test_calpoker_e_slash_too_many_discards() {
@@ -539,8 +787,22 @@ fn test_calpoker_e_slash_too_many_discards() {
     let td = build_test_data();
     let init = initial_move_result(&lib);
     let after = run_sequence(&mut a, &lib, &init, &happy_path_through_d(&td)).unwrap();
-    let mut bad = td.alice_discards_salt.clone(); bad.push(0b00111111); bad.extend_from_slice(&td.alice_good_selections);
-    run_step_and_check(&mut a, &lib, &after, &make_step(&bad, 100, Some(&td.bob_good_selections), MoveCode::Slash, false, "e"));
+    let mut bad = td.alice_discards_salt.clone();
+    bad.push(0b00111111);
+    bad.extend_from_slice(&td.alice_good_selections);
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(
+            &bad,
+            100,
+            Some(&td.bob_good_selections),
+            MoveCode::Slash,
+            false,
+            "e",
+        ),
+    );
 }
 
 fn test_calpoker_e_slash_too_few_selections() {
@@ -549,8 +811,22 @@ fn test_calpoker_e_slash_too_few_selections() {
     let td = build_test_data();
     let init = initial_move_result(&lib);
     let after = run_sequence(&mut a, &lib, &init, &happy_path_through_d(&td)).unwrap();
-    let mut bad = td.alice_discards_salt.clone(); bad.extend_from_slice(&td.alice_discards_byte); bad.push(0b00001111);
-    run_step_and_check(&mut a, &lib, &after, &make_step(&bad, 100, Some(&td.bob_good_selections), MoveCode::Slash, false, "e"));
+    let mut bad = td.alice_discards_salt.clone();
+    bad.extend_from_slice(&td.alice_discards_byte);
+    bad.push(0b00001111);
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(
+            &bad,
+            100,
+            Some(&td.bob_good_selections),
+            MoveCode::Slash,
+            false,
+            "e",
+        ),
+    );
 }
 
 fn test_calpoker_e_slash_too_many_selections() {
@@ -559,8 +835,22 @@ fn test_calpoker_e_slash_too_many_selections() {
     let td = build_test_data();
     let init = initial_move_result(&lib);
     let after = run_sequence(&mut a, &lib, &init, &happy_path_through_d(&td)).unwrap();
-    let mut bad = td.alice_discards_salt.clone(); bad.extend_from_slice(&td.alice_discards_byte); bad.push(0b00111111);
-    run_step_and_check(&mut a, &lib, &after, &make_step(&bad, 100, Some(&td.bob_good_selections), MoveCode::Slash, false, "e"));
+    let mut bad = td.alice_discards_salt.clone();
+    bad.extend_from_slice(&td.alice_discards_byte);
+    bad.push(0b00111111);
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(
+            &bad,
+            100,
+            Some(&td.bob_good_selections),
+            MoveCode::Slash,
+            false,
+            "e",
+        ),
+    );
 }
 
 fn test_calpoker_happy_path() {
@@ -569,8 +859,18 @@ fn test_calpoker_happy_path() {
     let td = build_test_data();
     let init = initial_move_result(&lib);
     let mut steps = happy_path_through_d(&td);
-    steps.push(make_step(&e_move(&td), 100, Some(&td.bob_good_selections), MoveCode::MakeMove, false, "e"));
-    assert!(run_sequence(&mut a, &lib, &init, &steps).is_some(), "happy path should complete");
+    steps.push(make_step(
+        &e_move(&td),
+        100,
+        Some(&td.bob_good_selections),
+        MoveCode::MakeMove,
+        false,
+        "e",
+    ));
+    assert!(
+        run_sequence(&mut a, &lib, &init, &steps).is_some(),
+        "happy path should complete"
+    );
 }
 
 fn test_calpoker_e_mover_share_zero_slash() {
@@ -579,7 +879,19 @@ fn test_calpoker_e_mover_share_zero_slash() {
     let td = build_test_data();
     let init = initial_move_result(&lib);
     let after = run_sequence(&mut a, &lib, &init, &happy_path_through_d(&td)).unwrap();
-    run_step_and_check(&mut a, &lib, &after, &make_step(&e_move(&td), 0, Some(&td.bob_good_selections), MoveCode::Slash, false, "e"));
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(
+            &e_move(&td),
+            0,
+            Some(&td.bob_good_selections),
+            MoveCode::Slash,
+            false,
+            "e",
+        ),
+    );
 }
 
 fn test_calpoker_e_alice_loss_slash() {
@@ -588,8 +900,22 @@ fn test_calpoker_e_alice_loss_slash() {
     let td = build_test_data();
     let init = initial_move_result(&lib);
     let after = run_sequence(&mut a, &lib, &init, &happy_path_through_d(&td)).unwrap();
-    let mut m = td.alice_discards_salt.clone(); m.extend_from_slice(&td.alice_discards_byte); m.extend_from_slice(&td.alice_loss_selections);
-    run_step_and_check(&mut a, &lib, &after, &make_step(&m, 0, Some(&td.bob_good_selections), MoveCode::Slash, false, "e"));
+    let mut m = td.alice_discards_salt.clone();
+    m.extend_from_slice(&td.alice_discards_byte);
+    m.extend_from_slice(&td.alice_loss_selections);
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(
+            &m,
+            0,
+            Some(&td.bob_good_selections),
+            MoveCode::Slash,
+            false,
+            "e",
+        ),
+    );
 }
 
 fn test_calpoker_e_alice_loss_mover_share_100_slash() {
@@ -598,8 +924,22 @@ fn test_calpoker_e_alice_loss_mover_share_100_slash() {
     let td = build_test_data();
     let init = initial_move_result(&lib);
     let after = run_sequence(&mut a, &lib, &init, &happy_path_through_d(&td)).unwrap();
-    let mut m = td.alice_discards_salt.clone(); m.extend_from_slice(&td.alice_discards_byte); m.extend_from_slice(&td.alice_loss_selections);
-    run_step_and_check(&mut a, &lib, &after, &make_step(&m, 100, Some(&td.bob_good_selections), MoveCode::Slash, false, "e"));
+    let mut m = td.alice_discards_salt.clone();
+    m.extend_from_slice(&td.alice_discards_byte);
+    m.extend_from_slice(&td.alice_loss_selections);
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(
+            &m,
+            100,
+            Some(&td.bob_good_selections),
+            MoveCode::Slash,
+            false,
+            "e",
+        ),
+    );
 }
 
 fn test_calpoker_e_bob_loss_make_move() {
@@ -608,7 +948,19 @@ fn test_calpoker_e_bob_loss_make_move() {
     let td = build_test_data();
     let init = initial_move_result(&lib);
     let after = run_sequence(&mut a, &lib, &init, &happy_path_through_d(&td)).unwrap();
-    run_step_and_check(&mut a, &lib, &after, &make_step(&e_move(&td), 100, Some(&td.bob_loss_selections), MoveCode::MakeMove, false, "e"));
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(
+            &e_move(&td),
+            100,
+            Some(&td.bob_loss_selections),
+            MoveCode::MakeMove,
+            false,
+            "e",
+        ),
+    );
 }
 
 fn test_calpoker_e_bob_loss_zero_make_move() {
@@ -617,7 +969,19 @@ fn test_calpoker_e_bob_loss_zero_make_move() {
     let td = build_test_data();
     let init = initial_move_result(&lib);
     let after = run_sequence(&mut a, &lib, &init, &happy_path_through_d(&td)).unwrap();
-    run_step_and_check(&mut a, &lib, &after, &make_step(&e_move(&td), 0, Some(&td.bob_loss_selections), MoveCode::MakeMove, false, "e"));
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(
+            &e_move(&td),
+            0,
+            Some(&td.bob_loss_selections),
+            MoveCode::MakeMove,
+            false,
+            "e",
+        ),
+    );
 }
 
 fn test_calpoker_e_nil_evidence_offchain() {
@@ -626,7 +990,12 @@ fn test_calpoker_e_nil_evidence_offchain() {
     let td = build_test_data();
     let init = initial_move_result(&lib);
     let after = run_sequence(&mut a, &lib, &init, &happy_path_through_d(&td)).unwrap();
-    run_step_and_check(&mut a, &lib, &after, &make_step(&e_move(&td), 100, None, MoveCode::MakeMove, false, "e"));
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(&e_move(&td), 100, None, MoveCode::MakeMove, false, "e"),
+    );
 }
 
 fn test_calpoker_e_nil_evidence_onchain_exception() {
@@ -635,7 +1004,12 @@ fn test_calpoker_e_nil_evidence_onchain_exception() {
     let td = build_test_data();
     let init = initial_move_result(&lib);
     let after = run_sequence(&mut a, &lib, &init, &happy_path_through_d(&td)).unwrap();
-    run_step_and_check(&mut a, &lib, &after, &make_step(&e_move(&td), 100, None, MoveCode::ClvmException, true, "e"));
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(&e_move(&td), 100, None, MoveCode::ClvmException, true, "e"),
+    );
 }
 
 fn test_calpoker_e_bad_evidence_exception() {
@@ -644,39 +1018,127 @@ fn test_calpoker_e_bad_evidence_exception() {
     let td = build_test_data();
     let init = initial_move_result(&lib);
     let after = run_sequence(&mut a, &lib, &init, &happy_path_through_d(&td)).unwrap();
-    let mut m = td.alice_discards_salt.clone(); m.extend_from_slice(&td.alice_discards_byte); m.extend_from_slice(&td.alice_loss_selections);
-    run_step_and_check(&mut a, &lib, &after, &make_step(&m, 100, Some(&[0xFF]), MoveCode::ClvmException, false, "e"));
+    let mut m = td.alice_discards_salt.clone();
+    m.extend_from_slice(&td.alice_discards_byte);
+    m.extend_from_slice(&td.alice_loss_selections);
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after,
+        &make_step(&m, 100, Some(&[0xFF]), MoveCode::ClvmException, false, "e"),
+    );
 }
 
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
-        ("test_calpoker_validator_hashes", &test_calpoker_validator_hashes),
-        ("test_calpoker_a_slash_too_short", &test_calpoker_a_slash_too_short),
-        ("test_calpoker_a_slash_too_long", &test_calpoker_a_slash_too_long),
-        ("test_calpoker_b_slash_too_short", &test_calpoker_b_slash_too_short),
-        ("test_calpoker_b_slash_too_long", &test_calpoker_b_slash_too_long),
-        ("test_calpoker_c_slash_too_short", &test_calpoker_c_slash_too_short),
-        ("test_calpoker_c_slash_too_long", &test_calpoker_c_slash_too_long),
-        ("test_calpoker_c_slash_bad_alice_reveal", &test_calpoker_c_slash_bad_alice_reveal),
-        ("test_calpoker_d_slash_too_short", &test_calpoker_d_slash_too_short),
-        ("test_calpoker_d_slash_too_long", &test_calpoker_d_slash_too_long),
-        ("test_calpoker_d_slash_too_few_bits", &test_calpoker_d_slash_too_few_bits),
-        ("test_calpoker_d_slash_too_many_bits", &test_calpoker_d_slash_too_many_bits),
-        ("test_calpoker_e_slash_too_short", &test_calpoker_e_slash_too_short),
-        ("test_calpoker_e_slash_too_long", &test_calpoker_e_slash_too_long),
-        ("test_calpoker_e_slash_bad_reveal", &test_calpoker_e_slash_bad_reveal),
-        ("test_calpoker_e_slash_too_few_discards", &test_calpoker_e_slash_too_few_discards),
-        ("test_calpoker_e_slash_too_many_discards", &test_calpoker_e_slash_too_many_discards),
-        ("test_calpoker_e_slash_too_few_selections", &test_calpoker_e_slash_too_few_selections),
-        ("test_calpoker_e_slash_too_many_selections", &test_calpoker_e_slash_too_many_selections),
+        (
+            "test_calpoker_validator_hashes",
+            &test_calpoker_validator_hashes,
+        ),
+        (
+            "test_calpoker_a_slash_too_short",
+            &test_calpoker_a_slash_too_short,
+        ),
+        (
+            "test_calpoker_a_slash_too_long",
+            &test_calpoker_a_slash_too_long,
+        ),
+        (
+            "test_calpoker_b_slash_too_short",
+            &test_calpoker_b_slash_too_short,
+        ),
+        (
+            "test_calpoker_b_slash_too_long",
+            &test_calpoker_b_slash_too_long,
+        ),
+        (
+            "test_calpoker_c_slash_too_short",
+            &test_calpoker_c_slash_too_short,
+        ),
+        (
+            "test_calpoker_c_slash_too_long",
+            &test_calpoker_c_slash_too_long,
+        ),
+        (
+            "test_calpoker_c_slash_bad_alice_reveal",
+            &test_calpoker_c_slash_bad_alice_reveal,
+        ),
+        (
+            "test_calpoker_d_slash_too_short",
+            &test_calpoker_d_slash_too_short,
+        ),
+        (
+            "test_calpoker_d_slash_too_long",
+            &test_calpoker_d_slash_too_long,
+        ),
+        (
+            "test_calpoker_d_slash_too_few_bits",
+            &test_calpoker_d_slash_too_few_bits,
+        ),
+        (
+            "test_calpoker_d_slash_too_many_bits",
+            &test_calpoker_d_slash_too_many_bits,
+        ),
+        (
+            "test_calpoker_e_slash_too_short",
+            &test_calpoker_e_slash_too_short,
+        ),
+        (
+            "test_calpoker_e_slash_too_long",
+            &test_calpoker_e_slash_too_long,
+        ),
+        (
+            "test_calpoker_e_slash_bad_reveal",
+            &test_calpoker_e_slash_bad_reveal,
+        ),
+        (
+            "test_calpoker_e_slash_too_few_discards",
+            &test_calpoker_e_slash_too_few_discards,
+        ),
+        (
+            "test_calpoker_e_slash_too_many_discards",
+            &test_calpoker_e_slash_too_many_discards,
+        ),
+        (
+            "test_calpoker_e_slash_too_few_selections",
+            &test_calpoker_e_slash_too_few_selections,
+        ),
+        (
+            "test_calpoker_e_slash_too_many_selections",
+            &test_calpoker_e_slash_too_many_selections,
+        ),
         ("test_calpoker_happy_path", &test_calpoker_happy_path),
-        ("test_calpoker_e_mover_share_zero_slash", &test_calpoker_e_mover_share_zero_slash),
-        ("test_calpoker_e_alice_loss_slash", &test_calpoker_e_alice_loss_slash),
-        ("test_calpoker_e_alice_loss_mover_share_100_slash", &test_calpoker_e_alice_loss_mover_share_100_slash),
-        ("test_calpoker_e_bob_loss_make_move", &test_calpoker_e_bob_loss_make_move),
-        ("test_calpoker_e_bob_loss_zero_make_move", &test_calpoker_e_bob_loss_zero_make_move),
-        ("test_calpoker_e_nil_evidence_offchain", &test_calpoker_e_nil_evidence_offchain),
-        ("test_calpoker_e_nil_evidence_onchain_exception", &test_calpoker_e_nil_evidence_onchain_exception),
-        ("test_calpoker_e_bad_evidence_exception", &test_calpoker_e_bad_evidence_exception),
+        (
+            "test_calpoker_e_mover_share_zero_slash",
+            &test_calpoker_e_mover_share_zero_slash,
+        ),
+        (
+            "test_calpoker_e_alice_loss_slash",
+            &test_calpoker_e_alice_loss_slash,
+        ),
+        (
+            "test_calpoker_e_alice_loss_mover_share_100_slash",
+            &test_calpoker_e_alice_loss_mover_share_100_slash,
+        ),
+        (
+            "test_calpoker_e_bob_loss_make_move",
+            &test_calpoker_e_bob_loss_make_move,
+        ),
+        (
+            "test_calpoker_e_bob_loss_zero_make_move",
+            &test_calpoker_e_bob_loss_zero_make_move,
+        ),
+        (
+            "test_calpoker_e_nil_evidence_offchain",
+            &test_calpoker_e_nil_evidence_offchain,
+        ),
+        (
+            "test_calpoker_e_nil_evidence_onchain_exception",
+            &test_calpoker_e_nil_evidence_onchain_exception,
+        ),
+        (
+            "test_calpoker_e_bad_evidence_exception",
+            &test_calpoker_e_bad_evidence_exception,
+        ),
     ]
 }

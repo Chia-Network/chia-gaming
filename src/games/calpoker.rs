@@ -269,10 +269,7 @@ pub fn card_list_to_clvm(
     allocator: &mut AllocEncoder,
     cards: &[Card],
 ) -> Result<Vec<NodePtr>, Error> {
-    map_m(
-        &mut |card: &Card| card.to_clvm(allocator).into_gen(),
-        cards,
-    )
+    map_m(&mut |card: &Card| card.to_clvm(allocator).into_gen(), cards)
 }
 
 pub fn card_list_from_clvm(
@@ -583,7 +580,13 @@ fn test_decode_calpoker_readable_outcome_matches() {
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
         ("test_simple_hand_values", &test_simple_hand_values),
-        ("test_decode_calpoker_readable", &test_decode_calpoker_readable),
-        ("test_decode_calpoker_readable_outcome_matches", &test_decode_calpoker_readable_outcome_matches),
+        (
+            "test_decode_calpoker_readable",
+            &test_decode_calpoker_readable,
+        ),
+        (
+            "test_decode_calpoker_readable_outcome_matches",
+            &test_decode_calpoker_readable_outcome_matches,
+        ),
     ]
 }

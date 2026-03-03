@@ -300,16 +300,31 @@ fn test_standard_puzzle_solution_maker() {
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
         ("test_puzzle_for_pk", &test_puzzle_for_pk),
-        ("test_calculate_synthetic_offset", &test_calculate_synthetic_offset),
-        ("test_calculate_synthetic_public_key", &test_calculate_synthetic_public_key),
-        ("test_puzzle_for_synthetic_public_key", &test_puzzle_for_synthetic_public_key),
+        (
+            "test_calculate_synthetic_offset",
+            &test_calculate_synthetic_offset,
+        ),
+        (
+            "test_calculate_synthetic_public_key",
+            &test_calculate_synthetic_public_key,
+        ),
+        (
+            "test_puzzle_for_synthetic_public_key",
+            &test_puzzle_for_synthetic_public_key,
+        ),
         ("test_standard_puzzle", &test_standard_puzzle),
         ("test_public_key_add", &test_public_key_add),
         ("test_bram_2_of_2_signature", &test_bram_2_of_2_signature),
         ("test_partial_signer", &test_partial_signer),
         ("test_standard_puzzle_form", &test_standard_puzzle_form),
-        ("test_calculate_synthetic_public_key_interface", &test_calculate_synthetic_public_key_interface),
+        (
+            "test_calculate_synthetic_public_key_interface",
+            &test_calculate_synthetic_public_key_interface,
+        ),
         ("test_curry_and_treehash", &test_curry_and_treehash),
-        ("test_standard_puzzle_solution_maker", &test_standard_puzzle_solution_maker),
+        (
+            "test_standard_puzzle_solution_maker",
+            &test_standard_puzzle_solution_maker,
+        ),
     ]
 }

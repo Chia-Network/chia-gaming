@@ -15,14 +15,13 @@ use clvmr::NodePtr;
 use crate::utils::{number_from_u8, u8_from_number};
 
 use crate::common::constants::{
-    A_KW, C_KW, DEFAULT_HIDDEN_PUZZLE_HASH, DEFAULT_PUZZLE_HASH, GROUP_ORDER, ONE,
-    Q_KW, Q_KW_TREEHASH, TWO,
+    A_KW, C_KW, DEFAULT_HIDDEN_PUZZLE_HASH, DEFAULT_PUZZLE_HASH, GROUP_ORDER, ONE, Q_KW,
+    Q_KW_TREEHASH, TWO,
 };
 use crate::common::types;
 use crate::common::types::{
-    Aggsig, AllocEncoder, BrokenOutCoinSpendInfo, CoinCondition, CoinID, Hash, IntoErr,
-    Node, PrivateKey, Program, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree,
-    ToQuotedProgram,
+    Aggsig, AllocEncoder, BrokenOutCoinSpendInfo, CoinCondition, CoinID, Hash, IntoErr, Node,
+    PrivateKey, Program, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, ToQuotedProgram,
 };
 
 pub fn get_standard_coin_puzzle(allocator: &mut AllocEncoder) -> Result<Puzzle, types::Error> {
@@ -289,10 +288,7 @@ pub fn reward_payout_message(reward_puzzle_hash: &PuzzleHash) -> Vec<u8> {
     message
 }
 
-pub fn sign_reward_payout(
-    secret_key: &PrivateKey,
-    reward_puzzle_hash: &PuzzleHash,
-) -> Aggsig {
+pub fn sign_reward_payout(secret_key: &PrivateKey, reward_puzzle_hash: &PuzzleHash) -> Aggsig {
     let message = reward_payout_message(reward_puzzle_hash);
     let public_key = private_to_public_key(secret_key);
     let signed = secret_key.sign(&message);
@@ -473,5 +469,4 @@ impl ChiaIdentity {
             synthetic_public_key,
         })
     }
-
 }

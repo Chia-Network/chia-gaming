@@ -593,7 +593,8 @@ mod gaming_wasm {
     #[wasm_bindgen]
     pub fn cheat(cid: i32, id: &str, mover_share: &str) -> Result<(), JsValue> {
         let game_id = string_to_game_id(id)?;
-        let share = Amount::new(mover_share.parse::<u64>().into_js()?);
+        let share =
+            Amount::new(mover_share.parse::<u64>().map_err(|e| JsValue::from_str(&e.to_string()))?);
         with_game(cid, move |cradle: &mut JsCradle| {
             cradle.cradle.cheat(
                 &mut cradle.allocator,

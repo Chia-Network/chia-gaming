@@ -374,11 +374,9 @@ impl Referee {
         }
 
         match self {
-            Referee::MyTurn(_) => {
-                Err(Error::Channel(
-                    "their_turn_coin_spent called on MyTurn referee".to_string(),
-                ))
-            }
+            Referee::MyTurn(_) => Err(Error::Channel(
+                "their_turn_coin_spent called on MyTurn referee".to_string(),
+            )),
 
             Referee::TheirTurn(t) => {
                 let (new_ref, res) = t.their_turn_coin_spent(
@@ -422,30 +420,46 @@ impl Referee {
                     "TIMEOUT: coin matches outcome_ph {:?}, using spend_this_coin args",
                     outcome_ph
                 );
-                (self.outcome_referee_puzzle(allocator)?, self.fixed().amount.clone())
+                (
+                    self.outcome_referee_puzzle(allocator)?,
+                    self.fixed().amount.clone(),
+                )
             } else {
                 debug!(
                     "TIMEOUT: coin matches on_chain_ph {:?} (or fallback)",
                     on_chain_ph
                 );
-                (self.on_chain_referee_puzzle(allocator)?, self.fixed().amount.clone())
+                (
+                    self.on_chain_referee_puzzle(allocator)?,
+                    self.fixed().amount.clone(),
+                )
             };
 
-        let args = if coin_ph.as_ref() == Some(&outcome_ph) && coin_ph.as_ref() != Some(&on_chain_ph) {
-            self.spend_this_coin()
-        } else {
-            self.args_for_this_coin()
-        };
+        let args =
+            if coin_ph.as_ref() == Some(&outcome_ph) && coin_ph.as_ref() != Some(&on_chain_ph) {
+                self.spend_this_coin()
+            } else {
+                self.args_for_this_coin()
+            };
         let mover_share = args.game_move.basic.mover_share.clone();
         let waiter_share = Amount::new(
-            self.fixed().amount.to_u64().saturating_sub(mover_share.to_u64()),
+            self.fixed()
+                .amount
+                .to_u64()
+                .saturating_sub(mover_share.to_u64()),
         );
 
         let i_am_mover = args.mover_pubkey == self.fixed().my_identity.public_key;
         let (mover_payout_ph, waiter_payout_ph) = if i_am_mover {
-            (self.fixed().reward_puzzle_hash.clone(), self.fixed().their_reward_puzzle_hash.clone())
+            (
+                self.fixed().reward_puzzle_hash.clone(),
+                self.fixed().their_reward_puzzle_hash.clone(),
+            )
         } else {
-            (self.fixed().their_reward_puzzle_hash.clone(), self.fixed().reward_puzzle_hash.clone())
+            (
+                self.fixed().their_reward_puzzle_hash.clone(),
+                self.fixed().reward_puzzle_hash.clone(),
+            )
         };
 
         let (my_share, their_share) = if i_am_mover {

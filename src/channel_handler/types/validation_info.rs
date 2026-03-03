@@ -44,8 +44,9 @@ impl ValidationInfo {
     }
     pub fn hash(&self) -> &Hash {
         match self {
-            ValidationInfo::FromStateUpdate { hash, .. }
-            | ValidationInfo::FromHash { hash } => hash,
+            ValidationInfo::FromStateUpdate { hash, .. } | ValidationInfo::FromHash { hash } => {
+                hash
+            }
         }
     }
 }

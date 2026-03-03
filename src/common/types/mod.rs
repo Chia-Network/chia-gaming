@@ -32,7 +32,6 @@ pub use self::error::{ErrToError, Error, IntoErr};
 pub use self::game_id::GameID;
 pub use self::game_type::GameType;
 pub use self::int_utils::{i64_from_atom, u64_from_atom, usize_from_atom};
-pub use crate::utils::map_m;
 pub use self::node::Node;
 pub use self::private_key::PrivateKey;
 pub use self::program::{Program, Sha256tree, ToQuotedProgram};
@@ -47,3 +46,4 @@ pub use self::spend::{
     CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord, Spend, SpendBundle,
 };
 pub use self::timeout::Timeout;
+pub use crate::utils::map_m;

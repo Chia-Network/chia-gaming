@@ -6,28 +6,25 @@ use serde::{Deserialize, Serialize};
 use log::debug;
 
 use crate::channel_handler::game_handler::{
-    GameHandler, MessageHandler, MessageInputs, TheirTurnMoveData, TheirTurnResult, TheirTurnInputs,
+    GameHandler, MessageHandler, MessageInputs, TheirTurnInputs, TheirTurnMoveData, TheirTurnResult,
 };
 use crate::channel_handler::game_start_info::GameStartInfo;
-use crate::channel_handler::types::{
-    Evidence, ReadableMove, StateUpdateProgram, ValidationInfo,
-};
+use crate::channel_handler::types::{Evidence, ReadableMove, StateUpdateProgram, ValidationInfo};
 
 use crate::common::standard_coin::{sign_reward_payout, ChiaIdentity};
 use crate::common::types::{
-    u64_from_atom, Aggsig, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error,
-    Hash, Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend,
+    u64_from_atom, Aggsig, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, Hash,
+    Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend,
+};
+use crate::referee::my_turn::{MyTurnReferee, MyTurnRefereeGameState};
+use crate::referee::types::{
+    curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs,
+    OnChainRefereeMoveData, OnChainRefereeSlash, OnChainRefereeSolution, RefereePuzzleArgs,
+    StateUpdateMoveArgs, StateUpdateResult, REM_CONDITION_FIELDS,
 };
 use crate::referee::types::{
     GameMoveDetails, GameMoveStateInfo, RMFixed, SlashOutcome, TheirTurnCoinSpentResult,
     TheirTurnMoveResult,
-};
-use crate::referee::my_turn::{MyTurnReferee, MyTurnRefereeGameState};
-use crate::referee::types::{
-    curry_referee_puzzle, curry_referee_puzzle_hash,
-    InternalStateUpdateArgs, OnChainRefereeMoveData, OnChainRefereeSlash,
-    OnChainRefereeSolution, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
-    REM_CONDITION_FIELDS,
 };
 use crate::referee::Referee;
 
@@ -435,7 +432,10 @@ impl TheirTurnReferee {
         let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
         let (state, validation_program) = self.get_validation_program_for_their_move()?;
         let pre_state_nodeptr = state.to_nodeptr(allocator)?;
-        let is_initial = matches!(self.state.borrow(), TheirTurnRefereeGameState::Initial { .. });
+        let is_initial = matches!(
+            self.state.borrow(),
+            TheirTurnRefereeGameState::Initial { .. }
+        );
         let offchain_prev_hash = if is_initial {
             None
         } else {
@@ -457,8 +457,12 @@ impl TheirTurnReferee {
             previous_validation_info_hash: Some(puzzle_args.game_move.validation_info_hash.clone()),
             ..ref_puzzle_args.clone()
         });
-        let state_update =
-            self.run_state_update(allocator, offchain_puzzle_args.clone(), state.clone(), evidence)?;
+        let state_update = self.run_state_update(
+            allocator,
+            offchain_puzzle_args.clone(),
+            state.clone(),
+            evidence,
+        )?;
 
         // Retrieve evidence from their turn handler.
         let new_state = match &state_update {
@@ -690,7 +694,10 @@ impl TheirTurnReferee {
                 debug!("their turn: slash specified {:?}", evidence);
                 let after_args = self.spend_this_coin();
                 let expected_ph = self.outcome_referee_puzzle_hash(allocator)?;
-                debug!("slash: outcome_ph={expected_ph:?} spent_ph={spent_ph:?} match={}", expected_ph == spent_ph);
+                debug!(
+                    "slash: outcome_ph={expected_ph:?} spent_ph={spent_ph:?} match={}",
+                    expected_ph == spent_ph
+                );
 
                 let args = Rc::new(RefereePuzzleArgs {
                     mover_pubkey: self.fixed.my_identity.public_key.clone(),

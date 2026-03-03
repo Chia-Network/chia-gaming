@@ -11,13 +11,13 @@ use clvmr::{run_program, NodePtr};
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
 
+use crate::channel_handler::game::Game;
 use crate::channel_handler::game_handler::TheirTurnResult;
+use crate::channel_handler::game_handler::{GameHandler, MyTurnInputs, TheirTurnInputs};
+use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::channel_handler::types::{
     Evidence, HasStateUpdateProgram, ReadableMove, StateUpdateProgram, ValidationInfo,
 };
-use crate::channel_handler::game::Game;
-use crate::channel_handler::game_handler::{GameHandler, MyTurnInputs, TheirTurnInputs};
-use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::standard_coin::ChiaIdentity;
 #[cfg(test)]
@@ -160,7 +160,9 @@ impl BareDebugGameHandler {
         .to_clvm(allocator)
         .into_gen()?;
         let curried_prog = Program::from_nodeptr(allocator, curried)?;
-        let args_node = (my_contribution, (their_contribution, (args, ()))).to_clvm(allocator).into_gen()?;
+        let args_node = (my_contribution, (their_contribution, (args, ())))
+            .to_clvm(allocator)
+            .into_gen()?;
         let args_clvm = Rc::new(Program::from_nodeptr(allocator, args_node)?);
         let alice_game = Game::new_program(
             allocator,
@@ -171,9 +173,18 @@ impl BareDebugGameHandler {
         )?;
         let bob_game =
             Game::new_program(allocator, false, &game_id, curried_prog.into(), args_clvm)?;
-        let start_a =
-            alice_game.game_start(&game_id, &Amount::new(my_contribution), &Amount::new(their_contribution), &timeout);
-        let start_b = bob_game.game_start(&game_id, &Amount::new(their_contribution), &Amount::new(my_contribution), &timeout);
+        let start_a = alice_game.game_start(
+            &game_id,
+            &Amount::new(my_contribution),
+            &Amount::new(their_contribution),
+            &timeout,
+        );
+        let start_b = bob_game.game_start(
+            &game_id,
+            &Amount::new(their_contribution),
+            &Amount::new(my_contribution),
+            &timeout,
+        );
         assert_ne!(start_a.amount, Amount::default());
         assert_ne!(start_b.amount, Amount::default());
         let make_bare_handler = |game_start: &GameStartInfo| -> BareDebugGameHandler {
@@ -550,9 +561,9 @@ impl BareDebugGameHandler {
                 ));
             }
             TheirTurnResult::Slash(evidence) => {
-                return Err(Error::StrErr(
-                    format!("unexpected Slash from their_turn_handler: {evidence:?}"),
-                ));
+                return Err(Error::StrErr(format!(
+                    "unexpected Slash from their_turn_handler: {evidence:?}"
+                )));
             }
         }
         Ok(None)
@@ -831,6 +842,9 @@ pub fn test_debug_game_validation_move() {
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
         ("test_debug_game_factory", &test_debug_game_factory),
-        ("test_debug_game_validation_move", &test_debug_game_validation_move),
+        (
+            "test_debug_game_validation_move",
+            &test_debug_game_validation_move,
+        ),
     ]
 }

@@ -33,11 +33,10 @@ mod sim_tests {
     use super::*;
 
     use crate::channel_handler::game::Game;
-    use crate::channel_handler::runner::ChannelHandlerParty;
     use crate::channel_handler::game_start_info::GameStartInfo;
+    use crate::channel_handler::runner::ChannelHandlerParty;
     use crate::channel_handler::types::{
-        ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerPrivateKeys,
-        HandshakeResult,
+        ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerPrivateKeys, HandshakeResult,
     };
     use crate::common::standard_coin::{
         private_to_public_key, puzzle_for_pk, puzzle_hash_for_synthetic_public_key,
@@ -68,18 +67,19 @@ mod sim_tests {
         ) -> Result<ChannelHandlerGame, Error> {
             let private_keys: [ChannelHandlerPrivateKeys; 2] = env.rng.gen();
 
-            let make_ref_info = |env: &mut ChannelHandlerEnv<R>,
-                                 id: usize|
-             -> Result<(Rc<Puzzle>, PuzzleHash, PublicKey, Aggsig), Error> {
-                let ref_key = private_to_public_key(&private_keys[id].my_referee_private_key);
-                let referee = puzzle_for_pk(env.allocator, &ref_key)?;
-                let ref_puzzle_hash = referee.sha256tree(env.allocator);
-                let reward_sig = sign_reward_payout(
-                    &private_keys[id].my_referee_private_key,
-                    &ref_puzzle_hash,
-                );
-                Ok((Rc::new(referee), ref_puzzle_hash, ref_key, reward_sig))
-            };
+            let make_ref_info =
+                |env: &mut ChannelHandlerEnv<R>,
+                 id: usize|
+                 -> Result<(Rc<Puzzle>, PuzzleHash, PublicKey, Aggsig), Error> {
+                    let ref_key = private_to_public_key(&private_keys[id].my_referee_private_key);
+                    let referee = puzzle_for_pk(env.allocator, &ref_key)?;
+                    let ref_puzzle_hash = referee.sha256tree(env.allocator);
+                    let reward_sig = sign_reward_payout(
+                        &private_keys[id].my_referee_private_key,
+                        &ref_puzzle_hash,
+                    );
+                    Ok((Rc::new(referee), ref_puzzle_hash, ref_key, reward_sig))
+                };
 
             let ref1 = make_ref_info(env, 0)?;
             let ref2 = make_ref_info(env, 1)?;
@@ -232,7 +232,9 @@ mod sim_tests {
                 GameAction::NerfTransactions(p) => write!(formatter, "NerfTransactions({p})"),
                 GameAction::UnNerfTransactions(r) => write!(formatter, "UnNerfTransactions({r})"),
                 GameAction::ProposeNewGame(p) => write!(formatter, "ProposeNewGame({p})"),
-                GameAction::ProposeNewGameTheirTurn(p) => write!(formatter, "ProposeNewGameTheirTurn({p})"),
+                GameAction::ProposeNewGameTheirTurn(p) => {
+                    write!(formatter, "ProposeNewGameTheirTurn({p})")
+                }
                 GameAction::GoOnChain(p) => write!(formatter, "GoOnChain({p})"),
                 GameAction::GoOnChainThenMove(p) => {
                     write!(formatter, "GoOnChainThenMove({p})")
@@ -359,18 +361,10 @@ mod sim_tests {
 
         let timeout = Timeout::new(10);
 
-        let our_game_start = alice_game.game_start(
-            game_id,
-            &contributions[0],
-            &contributions[1],
-            &timeout,
-        );
-        let their_game_start = bob_game.game_start(
-            game_id,
-            &contributions[1],
-            &contributions[0],
-            &timeout,
-        );
+        let our_game_start =
+            alice_game.game_start(game_id, &contributions[0], &contributions[1], &timeout);
+        let their_game_start =
+            bob_game.game_start(game_id, &contributions[1], &contributions[0], &timeout);
 
         debug!("our_game_start {:?}", our_game_start);
         debug!("their_game_start {:?}", their_game_start);
@@ -379,14 +373,26 @@ mod sim_tests {
         let their_start: Rc<GameStartInfo> = Rc::new(their_game_start);
 
         let propose_sigs = party.player(0).ch.propose_game(env, &our_start)?;
-        party.player(1).ch.apply_received_proposal(env, &their_start)?;
-        let recv_propose = party.player(1).ch.verify_received_batch_signatures(env, &propose_sigs)?;
+        party
+            .player(1)
+            .ch
+            .apply_received_proposal(env, &their_start)?;
+        let recv_propose = party
+            .player(1)
+            .ch
+            .verify_received_batch_signatures(env, &propose_sigs)?;
         party.update_channel_coin_after_receive(1, &recv_propose)?;
 
         party.player(1).ch.send_accept_proposal(&game_id)?;
         let accept_sigs = party.player(1).ch.update_cached_unroll_state(env)?;
-        party.player(0).ch.apply_received_accept_proposal(&game_id)?;
-        let recv_accept = party.player(0).ch.verify_received_batch_signatures(env, &accept_sigs)?;
+        party
+            .player(0)
+            .ch
+            .apply_received_accept_proposal(&game_id)?;
+        let recv_accept = party
+            .player(0)
+            .ch
+            .verify_received_batch_signatures(env, &accept_sigs)?;
         party.update_channel_coin_after_receive(0, &recv_accept)?;
 
         Ok((party, state_channel_coin))

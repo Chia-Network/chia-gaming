@@ -132,7 +132,11 @@ impl Game {
             0,
         )
         .into_gen()
-        .map_err(|e| Error::StrErr(format!("make_proposal failed: bet_size={bet_size:?} error={e:?}")))?
+        .map_err(|e| {
+            Error::StrErr(format!(
+                "make_proposal failed: bet_size={bet_size:?} error={e:?}"
+            ))
+        })?
         .1;
 
         // Result is (wire_data local_data)
@@ -264,8 +268,11 @@ impl Game {
         };
 
         let validation_prog = Rc::new(Program::from_nodeptr(allocator, validator_node)?);
-        let initial_validation_program =
-            StateUpdateProgram::new_hash(validation_prog, "initial", spec.initial_validation_program_hash.clone());
+        let initial_validation_program = StateUpdateProgram::new_hash(
+            validation_prog,
+            "initial",
+            spec.initial_validation_program_hash.clone(),
+        );
 
         let start = GameStart {
             id: game_id.clone(),
@@ -278,7 +285,9 @@ impl Game {
             initial_mover_share: spec.initial_mover_share,
         };
 
-        Ok(Game { starts: vec![start] })
+        Ok(Game {
+            starts: vec![start],
+        })
     }
 
     pub fn new_program(
@@ -311,13 +320,14 @@ impl Game {
                 )));
             }
         };
-        let template_list = if let Some(lst) = proper_list(allocator.allocator(), template_clvm, true) {
-            lst
-        } else {
-            return Err(Error::StrErr(
-                "poker program didn't return a list".to_string(),
-            ));
-        };
+        let template_list =
+            if let Some(lst) = proper_list(allocator.allocator(), template_clvm, true) {
+                lst
+            } else {
+                return Err(Error::StrErr(
+                    "poker program didn't return a list".to_string(),
+                ));
+            };
         if template_list.is_empty() {
             return Err(Error::StrErr("not even one game returned".to_string()));
         }

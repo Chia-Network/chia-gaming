@@ -30,23 +30,23 @@ use crate::simulator::tests::simulator_tests::test_funs as simulator_tests;
 use crate::test_support::calpoker::test_funs as calpoker_tests;
 
 #[cfg(test)]
-use crate::tests::calpoker_validation::test_funs as calpoker_validation_tests;
+use crate::common::types::divmod::test_funs as divmod_tests;
+#[cfg(test)]
+use crate::games::calpoker::test_funs as calpoker_game_tests;
+#[cfg(test)]
+use crate::test_support::debug_game::test_funs as debug_game_tests;
+#[cfg(test)]
+use crate::test_support::peer::potato_handler::test_funs as potato_handler_tests;
 #[cfg(test)]
 use crate::tests::calpoker_handlers::test_funs as calpoker_handler_tests;
+#[cfg(test)]
+use crate::tests::calpoker_validation::test_funs as calpoker_validation_tests;
 #[cfg(test)]
 use crate::tests::channel_handler::test_funs as channel_handler_tests;
 #[cfg(test)]
 use crate::tests::chialisp::test_funs as chialisp_tests;
 #[cfg(test)]
 use crate::tests::standard_coin::test_funs as standard_coin_tests;
-#[cfg(test)]
-use crate::test_support::debug_game::test_funs as debug_game_tests;
-#[cfg(test)]
-use crate::test_support::peer::potato_handler::test_funs as potato_handler_tests;
-#[cfg(test)]
-use crate::games::calpoker::test_funs as calpoker_game_tests;
-#[cfg(test)]
-use crate::common::types::divmod::test_funs as divmod_tests;
 
 #[derive(Debug, Clone)]
 pub struct IncludeTransactionResult {
@@ -95,7 +95,13 @@ impl SimulatorState {
         }
     }
 
-    fn add_coin(&mut self, parent_id: &CoinID, puzzle_hash: &PuzzleHash, amount: &Amount, coinbase: bool) {
+    fn add_coin(
+        &mut self,
+        parent_id: &CoinID,
+        puzzle_hash: &PuzzleHash,
+        amount: &Amount,
+        coinbase: bool,
+    ) {
         let coin = CoinString::from_parts(parent_id, puzzle_hash, amount);
         let coin_id = coin.to_coin_id();
         self.coins.insert(
@@ -129,8 +135,18 @@ impl SimulatorState {
         let pool_parent = Self::reward_parent_id(b"pool_reward", next_height);
         let farmer_parent = Self::reward_parent_id(b"farmer_reward", next_height);
 
-        self.add_coin(&pool_parent, puzzle_hash, &Amount::new(POOL_REWARD_AMOUNT), true);
-        self.add_coin(&farmer_parent, puzzle_hash, &Amount::new(FARMER_REWARD_AMOUNT), true);
+        self.add_coin(
+            &pool_parent,
+            puzzle_hash,
+            &Amount::new(POOL_REWARD_AMOUNT),
+            true,
+        );
+        self.add_coin(
+            &farmer_parent,
+            puzzle_hash,
+            &Amount::new(FARMER_REWARD_AMOUNT),
+            true,
+        );
 
         let pending: Vec<PendingSpend> = self.mempool.drain(..).collect();
         for spend in pending {
@@ -154,7 +170,8 @@ impl SimulatorState {
                 );
             }
             for (coin_id, puzzle, solution) in spend.puzzle_solutions {
-                self.spent_puzzle_solutions.insert(coin_id, (puzzle, solution));
+                self.spent_puzzle_solutions
+                    .insert(coin_id, (puzzle, solution));
             }
         }
 
@@ -221,10 +238,7 @@ impl Simulator {
                 return Ok(None);
             }
         }
-        Ok(state
-            .spent_puzzle_solutions
-            .get(coin_id)
-            .cloned())
+        Ok(state.spent_puzzle_solutions.get(coin_id).cloned())
     }
 
     pub fn push_tx(
@@ -284,8 +298,7 @@ impl Simulator {
                 );
             }
             let solution_bytes = tx.bundle.solution.to_clvm(allocator).into_gen()?;
-            let solution_program =
-                Program::from_nodeptr(allocator, solution_bytes)?;
+            let solution_program = Program::from_nodeptr(allocator, solution_bytes)?;
 
             let conditions = match CoinCondition::from_puzzle_and_solution(
                 allocator,
@@ -346,11 +359,7 @@ impl Simulator {
             }
 
             removals.push(coin_id.clone());
-            puzzle_solutions.push((
-                coin_id,
-                puzzle_program,
-                solution_program,
-            ));
+            puzzle_solutions.push((coin_id, puzzle_program, solution_program));
 
             if i == 0 {
                 aggregate_signature = tx.bundle.signature.clone();
@@ -671,12 +680,11 @@ pub fn run_simulation_tests() {
         .ok()
         .filter(|s| !s.is_empty());
 
-    let all_tests: Vec<_> = ref_lists.iter()
-        .flat_map(|set| set.iter())
-        .collect();
+    let all_tests: Vec<_> = ref_lists.iter().flat_map(|set| set.iter()).collect();
 
     if let Some(ref f) = only_filter {
-        let matched: Vec<_> = all_tests.iter()
+        let matched: Vec<_> = all_tests
+            .iter()
             .filter(|(name, _)| name.contains(f.as_str()))
             .cloned()
             .collect();
@@ -696,12 +704,19 @@ pub fn run_simulation_tests() {
             func();
             eprintln!("{name} ... ok ({:.2?})", start.elapsed());
         }
-        eprintln!("All {} tests passed in {:.2?}", matched.len(), total_start.elapsed());
+        eprintln!(
+            "All {} tests passed in {:.2?}",
+            matched.len(),
+            total_start.elapsed()
+        );
         return;
     }
 
     let start_idx = if let Some(ref f) = from_filter {
-        match all_tests.iter().position(|(name, _)| name.contains(f.as_str())) {
+        match all_tests
+            .iter()
+            .position(|(name, _)| name.contains(f.as_str()))
+        {
             Some(idx) => idx,
             None => {
                 eprintln!("ERROR: no test name contains '{f}'");
@@ -716,7 +731,8 @@ pub fn run_simulation_tests() {
         0
     };
 
-    let rotated: Vec<_> = all_tests[start_idx..].iter()
+    let rotated: Vec<_> = all_tests[start_idx..]
+        .iter()
         .chain(all_tests[..start_idx].iter())
         .cloned()
         .collect();
@@ -733,16 +749,14 @@ pub fn run_simulation_tests() {
         let handles: Vec<_> = (0..n_threads)
             .map(|_| {
                 let queue = std::sync::Arc::clone(&queue);
-                s.spawn(move || {
-                    loop {
-                        let task = queue.lock().unwrap().pop();
-                        let Some((name, f)) = task else { break };
-                        eprintln!("RUNNING TEST {name} ...");
-                        let start = std::time::Instant::now();
-                        f();
-                        let elapsed = start.elapsed();
-                        eprintln!("{name} ... ok ({elapsed:.2?})");
-                    }
+                s.spawn(move || loop {
+                    let task = queue.lock().unwrap().pop();
+                    let Some((name, f)) = task else { break };
+                    eprintln!("RUNNING TEST {name} ...");
+                    let start = std::time::Instant::now();
+                    f();
+                    let elapsed = start.elapsed();
+                    eprintln!("{name} ... ok ({elapsed:.2?})");
                 })
             })
             .collect();
@@ -751,7 +765,11 @@ pub fn run_simulation_tests() {
         }
     });
 
-    eprintln!("All {} tests passed in {:.2?}", all_tests.len(), total_start.elapsed());
+    eprintln!(
+        "All {} tests passed in {:.2?}",
+        all_tests.len(),
+        total_start.elapsed()
+    );
 }
 
 #[cfg(test)]
