@@ -1118,7 +1118,7 @@ impl PotatoHandler {
     pub fn next_game_id(&mut self) -> Result<GameID, Error> {
         let ch = self.channel_handler_mut()?;
         let nonce = ch.allocate_my_nonce();
-        Ok(GameID::from_nonce(nonce))
+        Ok(GameID(nonce as u64))
     }
 
     pub fn received_message<R: Rng>(

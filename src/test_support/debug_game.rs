@@ -622,7 +622,7 @@ pub fn make_debug_games_with_contributions(
     nonce: usize,
 ) -> Result<[BareDebugGameHandler; 2], Error> {
     let rng_seq0: Vec<Hash> = (0..50).map(|_| rng.gen()).collect();
-    let gid = GameID::from_nonce(nonce);
+    let gid = GameID(nonce as u64);
     let referee_coin = read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex")?;
     let ref_coin_hash = referee_coin.sha256tree(allocator);
     BareDebugGameHandler::new_with_contributions(
