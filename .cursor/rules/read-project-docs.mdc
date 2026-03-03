@@ -1,0 +1,13 @@
+---
+description: Read ARCHITECTURE.MD and DEBUGGING_GUIDE.md at the start of every session for project context
+alwaysApply: true
+---
+
+# Project Documentation
+
+At the start of every conversation, read these two files before doing any work:
+
+1. `ARCHITECTURE.MD` — system design, invariants, key types, and how the components fit together
+2. `DEBUGGING_GUIDE.md` — how to build (`./cb.sh`), run tests (`./ct.sh`), and debug failures
+
+Always use `./cb.sh` and `./ct.sh` for building and testing. Never use `cargo test` directly.

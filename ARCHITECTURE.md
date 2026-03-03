@@ -721,14 +721,20 @@ The referee maintains two sets of args at all times:
   used to curry the puzzle of the **next** coin (created when this coin is
   spent). This is what `outcome_referee_puzzle_hash()` computes.
 
-**Off-chain**, these stay in sync because the unroll commitment is updated at
-each move.
+**Off-chain**, game coins are *virtual*: they don't exist on the blockchain,
+but their spends are validated by running real chialisp execution exactly as
+if they were on-chain. The two sets of args stay in sync because the unroll
+commitment is updated at each move. If the channel unrolls, these virtual
+coins become real on-chain coins.
 
-**On-chain after moves**, the actual coin's puzzle hash may correspond to
-`outcome_referee_puzzle_hash()` rather than `on_chain_referee_puzzle_hash()`.
-This happens because on-chain moves create coins with the "next state" args,
-but the referee's internal `create_this_coin` may still reflect the "unroll
-state" args.
+**On-chain after unroll**, the real coin is created at the state captured by
+the last unroll commitment. But off-chain moves may have advanced the virtual
+coin beyond that point. A *redo* replays those subsequent moves on-chain to
+bring the real coin up to date. After a redo, the actual coin's puzzle hash
+corresponds to `outcome_referee_puzzle_hash()` rather than
+`on_chain_referee_puzzle_hash()`, because the on-chain moves create coins
+with the "next state" args while the referee's internal `create_this_coin`
+still reflects the original unroll-state args.
 
 The `get_transaction_for_timeout` function handles this by checking the coin's
 actual puzzle hash against both accessors and using whichever matches.
@@ -741,8 +747,12 @@ whether the game coin is at the latest state or needs a redo.
 ### Reward Payout Signatures
 
 Reward destination puzzle hashes are **not** curried into the referee puzzle.
-Instead, they are revealed at timeout as solution arguments, and each player
-proves they authorized their payout destination via `AGG_SIG_UNSAFE`.
+Instead, they are revealed at timeout or slash as solution arguments, and each
+player proves they authorized their payout destination via `AGG_SIG_UNSAFE`.
+Each player caches the opponent's signature during the handshake, so either
+player can submit the timeout transaction and it will pay both sides correctly.
+A player cannot redirect the opponent's reward because only the opponent's
+private key can produce a valid signature for a given puzzle hash.
 
 **How it works:**
 
@@ -784,24 +794,26 @@ payouts.
 `reward_payout_message`, `verify_reward_payout_signature`;
 `src/referee/types.rs` — `RMFixed` (caches both signatures)
 
-### previous_validation_info_hash and the Initial State
+### Off-Chain Validation Signal and Initial State
 
-`RefereePuzzleArgs` contains a `previous_validation_info_hash` field. For
-**on-chain** use (stored in state, used for slash evidence), this is always
-`Some(hash)`. However, some game validators (e.g., the debug game) expect this
-field to be `None` during the **initial** game state when validating off-chain.
+When running the chialisp validator off-chain, the `off_chain()` method on
+`RefereePuzzleArgs` sets `waiter_pubkey` to nil. This is a deliberate signal
+to the puzzle that it is running in off-chain validation mode rather than as
+a real on-chain spend. `waiter_pubkey` was chosen for this because it is the
+argument least likely to be needed for real validation logic.
 
-To handle this, `make_move` (in `my_turn.rs`) and `their_turn_move_off_chain`
-(in `their_turn.rs`) construct **two** sets of puzzle args:
+`RefereePuzzleArgs` also contains a `previous_validation_info_hash` field,
+which records the hash of the previous move's validation program (used by
+slash to prove a prior move was invalid). At the initial game state there is
+no previous move, so this field is `None`. When the first move is made, the
+off-chain validation args keep `None` (there is no prior move to slash), but
+the on-chain args use `Some(hash)` because the chialisp referee puzzle
+always propagates the current validation info hash (`INFOHASH_B`) into the
+new coin's `previous_validation_info_hash` (`INFOHASH_A`).
 
-- `offchain_puzzle_args`: Has `previous_validation_info_hash = None` when the
-  game state is `Initial`, used for running the off-chain validator.
-- `rc_puzzle_args`: Always has `previous_validation_info_hash = Some(hash)`,
-  used for on-chain state persistence via `accept_this_move` /
-  `accept_their_move`.
-
-**Key code:** `src/referee/mod.rs`, `src/referee/my_turn.rs`,
-`src/referee/their_turn.rs`, `src/referee/types.rs`
+**Key code:** `src/referee/types.rs` — `RefereePuzzleArgs::off_chain()`,
+`src/referee/my_turn.rs`, `src/referee/their_turn.rs`,
+`clsp/referee/onchain/referee.clsp`
 
 ---
 
