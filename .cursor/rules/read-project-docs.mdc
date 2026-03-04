@@ -1,13 +1,15 @@
 ---
-description: Read ARCHITECTURE.MD and DEBUGGING_GUIDE.md at the start of every session for project context
+description: MANDATORY first action — read project docs before ANY response
 alwaysApply: true
 ---
 
-# Project Documentation
+# MANDATORY: Read Project Docs First
 
-At the start of every conversation, read these two files before doing any work:
+**Your FIRST tool call in every conversation MUST be reading these two files. No exceptions. Do not respond to the user's message, do not think about the task, do not do anything else until both files have been read.**
 
-1. `ARCHITECTURE.MD` — system design, invariants, key types, and how the components fit together
-2. `DEBUGGING_GUIDE.md` — how to build (`./cb.sh`), run tests (`./ct.sh`), and debug failures
+1. `ARCHITECTURE.MD`
+2. `DEBUGGING_GUIDE.md`
 
-Always use `./cb.sh` and `./ct.sh` for building and testing. Never use `cargo test` directly.
+Read both files in your very first response, before addressing anything the user said.
+
+**Build/test commands:** Always use `./cb.sh` and `./ct.sh`. Never use `cargo test` directly.

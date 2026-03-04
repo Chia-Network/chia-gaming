@@ -13,7 +13,8 @@ homepage = "https://github.com/Chia-Network/chia-gaming/"
 repository = "https://github.com/Chia-Network/chia-gaming/"
 
 [features]
-sim-tests = ["dep:tokio","dep:salvo"]
+sim-tests = []
+sim-server = ["sim-tests", "dep:tokio", "dep:salvo"]
 used_linker = []
 
 [dependencies]
@@ -60,7 +61,7 @@ toml = "0.8.14"
 [[bin]]
 name = "chia-gaming-sim"
 path = "src/bin/simulator.rs"
-required-features = ["sim-tests"]
+required-features = ["sim-server"]
 
 [lib]
 name = "chia_gaming"

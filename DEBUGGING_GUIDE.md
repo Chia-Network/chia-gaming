@@ -220,11 +220,12 @@ number. Each player compares it against their own state:
 
 Preemption is immediate; timeouts wait. This prevents conflicting transactions.
 
-## ResyncMove and Simulation Stalls
+## Resync and Simulation Stalls
 
-When a game coin is spent with redo data, `handle_game_coin_spent` emits
-`Effect::ResyncMove`. The simulation loop responds by walking `move_number`
-backward to find the last `Move` or `Cheat` action.
+When a game coin is spent with redo data, `handle_game_coin_spent` returns
+resync info (a `ResyncInfo` value separate from the effects list). The
+simulation loop responds by walking `move_number` backward to find the last
+`Move` or `Cheat` action.
 
 ### The player-check fix
 

@@ -26,7 +26,7 @@ use crate::common::types::{
     GameType, GetCoinStringParts, Hash, IntoErr, Program, ProgramRef, Puzzle, PuzzleHash, Spend,
     SpendBundle, Timeout,
 };
-use crate::potato_handler::effects::{Effect, GameNotification};
+use crate::potato_handler::effects::{Effect, GameNotification, ResyncInfo};
 use crate::potato_handler::on_chain::OnChainGameHandler;
 use crate::shutdown::get_conditions_with_channel_handler;
 
@@ -723,7 +723,7 @@ impl PotatoHandler {
                 spend,
             }));
 
-            return Ok(vec![send_effect, Effect::HandshakeComplete]);
+            return Ok(vec![send_effect]);
         }
 
         Ok(vec![])
@@ -2140,7 +2140,7 @@ impl PotatoHandler {
 
             if is_stale {
                 effects.push(Effect::Notification(
-                    GameNotification::OpponentStaleUnroll {
+                    GameNotification::StaleChannelUnroll {
                         our_reward: reward_amount,
                         reward_coin: reward_coin.clone(),
                     },
@@ -2456,25 +2456,32 @@ impl SpendWalletReceiver for PotatoHandler {
         _env: &mut ChannelHandlerEnv<'_, R>,
         _coin: &CoinString,
     ) -> Result<Option<Vec<Effect>>, Error> {
-        if let ChannelState::PostStepF(info) = &self.channel_state {
-            let channel_coin_created = self
-                .channel_handler()
-                .ok()
-                .map(|ch| ch.state_channel_coin());
-
-            if channel_coin_created.is_some() {
-                self.waiting_to_start = false;
-                let effects = self.try_complete_step_f(
-                    info.first_player_hs_info.clone(),
-                    info.second_player_hs_info.clone(),
-                )?;
-                if !effects.is_empty() {
-                    return Ok(Some(effects));
-                }
-            }
+        if !self.waiting_to_start {
+            return Ok(None);
         }
 
-        Ok(None)
+        let has_channel_coin = self
+            .channel_handler()
+            .ok()
+            .map(|ch| ch.state_channel_coin())
+            .is_some();
+
+        if !has_channel_coin {
+            return Ok(None);
+        }
+
+        self.waiting_to_start = false;
+
+        if let ChannelState::PostStepF(info) = &self.channel_state {
+            let mut effects = self.try_complete_step_f(
+                info.first_player_hs_info.clone(),
+                info.second_player_hs_info.clone(),
+            )?;
+            effects.push(Effect::ChannelCreated);
+            return Ok(Some(effects));
+        }
+
+        Ok(Some(vec![Effect::ChannelCreated]))
     }
 
     fn coin_spent<R: Rng>(
@@ -2569,15 +2576,17 @@ impl SpendWalletReceiver for PotatoHandler {
         env: &mut ChannelHandlerEnv<'_, R>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<Vec<Effect>, Error> {
+    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
         if matches!(self.channel_state, ChannelState::Failed) {
-            return Ok(vec![]);
+            return Ok((vec![], None));
         }
         let mut effects = Vec::new();
         if let ChannelState::OnChain(on_chain) = &mut self.channel_state {
             if let Some((p, s)) = puzzle_and_solution {
-                effects.extend(on_chain.handle_game_coin_spent(env, coin_id, p, s)?);
-                return Ok(effects);
+                let (game_effects, resync) =
+                    on_chain.handle_game_coin_spent(env, coin_id, p, s)?;
+                effects.extend(game_effects);
+                return Ok((effects, resync));
             } else if let Some((game_id, our_turn)) = on_chain.remove_game_coin_info(coin_id) {
                 let reason = if our_turn {
                     "our turn coin spent unexpectedly".to_string()
@@ -2590,7 +2599,7 @@ impl SpendWalletReceiver for PotatoHandler {
                 };
                 effects.push(Effect::Notification(notification));
                 effects.extend(on_chain.next_action(env)?);
-                return Ok(effects);
+                return Ok((effects, None));
             }
         }
 
@@ -2611,7 +2620,7 @@ impl SpendWalletReceiver for PotatoHandler {
                         self.channel_state = ChannelState::Failed;
                     }
                 }
-                return Ok(effects);
+                return Ok((effects, None));
             }
         }
 
@@ -2647,7 +2656,7 @@ impl SpendWalletReceiver for PotatoHandler {
                             self.channel_state = ChannelState::Failed;
                         }
                     }
-                    return Ok(effects);
+                    return Ok((effects, None));
                 }
             }
             Some(ConditionWaitKind::Unroll(unroll_coin_id, on_chain_state)) => {
@@ -2670,12 +2679,12 @@ impl SpendWalletReceiver for PotatoHandler {
                             self.channel_state = ChannelState::Failed;
                         }
                     }
-                    return Ok(effects);
+                    return Ok((effects, None));
                 }
             }
             _ => {}
         }
 
-        Ok(effects)
+        Ok((effects, None))
     }
 }

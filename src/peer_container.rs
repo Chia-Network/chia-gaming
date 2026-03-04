@@ -148,7 +148,7 @@ pub struct IdleResult {
     pub finished: bool,
     pub clean_shutdown_received: bool,
     pub handshake_done: bool,
-    pub handshake_complete: bool,
+    pub channel_created: bool,
     pub outbound_transactions: VecDeque<SpendBundle>,
     pub coin_solution_requests: VecDeque<CoinString>,
     pub outbound_messages: VecDeque<Vec<u8>>,
@@ -326,7 +326,7 @@ struct SynchronousGameCradleState {
     game_messages: VecDeque<(GameID, ReadableMove)>,
     #[serde(skip)]
     pending_notifications: VecDeque<GameNotification>,
-    handshake_complete: bool,
+    channel_created: bool,
     clean_shutdown_received: bool,
     finished: bool,
     clean_shutdown: Option<CoinString>,
@@ -421,7 +421,7 @@ impl SynchronousGameCradle {
                 opponent_moves: VecDeque::default(),
                 game_messages: VecDeque::default(),
                 pending_notifications: VecDeque::default(),
-                handshake_complete: false,
+                channel_created: false,
                 channel_puzzle_hash: None,
                 funding_coin: None,
                 unfunded_offer: None,
@@ -499,8 +499,8 @@ impl ToLocalUI for SynchronousGameCradleState {
         self.pending_notifications.push_back(notification.clone());
         Ok(())
     }
-    fn handshake_complete(&mut self) -> Result<(), Error> {
-        self.handshake_complete = true;
+    fn channel_created(&mut self) -> Result<(), Error> {
+        self.channel_created = true;
         Ok(())
     }
     fn clean_shutdown_started(&mut self) -> Result<(), Error> {
@@ -610,20 +610,7 @@ impl SynchronousGameCradle {
         effects: Vec<Effect>,
         allocator: &mut AllocEncoder,
     ) -> Result<(), Error> {
-        let mut filtered = Vec::with_capacity(effects.len());
-        for effect in effects {
-            if let Effect::ResyncMove {
-                state_number,
-                is_my_turn,
-                ..
-            } = &effect
-            {
-                self.state.resync = Some((*state_number, *is_my_turn));
-            } else {
-                filtered.push(effect);
-            }
-        }
-        apply_effects(filtered, allocator, &mut self.state)
+        apply_effects(effects, allocator, &mut self.state)
     }
 
     fn create_partial_spend_for_channel_coin<R: Rng>(
@@ -1064,10 +1051,10 @@ impl GameCradle for SynchronousGameCradle {
         };
 
         result.handshake_done = self.peer.handshake_done();
-        if self.state.handshake_complete {
-            result.handshake_complete = true;
-            self.state.handshake_complete = false;
-            local_ui.handshake_complete()?;
+        if self.state.channel_created {
+            result.channel_created = true;
+            self.state.channel_created = false;
+            local_ui.channel_created()?;
         }
 
         swap(
@@ -1171,11 +1158,14 @@ impl GameCradle for SynchronousGameCradle {
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(), Error> {
-        let reported_effects = {
+        let (reported_effects, resync) = {
             let mut env = ChannelHandlerEnv::new(allocator, rng)?;
             self.peer
                 .coin_puzzle_and_solution(&mut env, coin_id, puzzle_and_solution)?
         };
+        if let Some(info) = resync {
+            self.state.resync = Some((info.state_number, info.is_my_turn));
+        }
         self.process_effects(reported_effects, allocator)?;
         Ok(())
     }

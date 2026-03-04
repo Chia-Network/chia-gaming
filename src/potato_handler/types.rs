@@ -15,7 +15,7 @@ use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, Program,
     ProgramRef, PuzzleHash, SpendBundle, Timeout,
 };
-use crate::potato_handler::effects::Effect;
+use crate::potato_handler::effects::{Effect, ResyncInfo};
 use crate::potato_handler::handshake::{HandshakeA, HandshakeB};
 use crate::potato_handler::start::GameStart;
 use crate::referee::types::{GameMoveDetails, RefereeOnChainTransaction};
@@ -163,7 +163,7 @@ pub trait SpendWalletReceiver {
         env: &mut ChannelHandlerEnv<'_, R>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<Vec<Effect>, Error>;
+    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error>;
 }
 
 /// Unroll time wallet interface.
@@ -207,7 +207,7 @@ pub trait ToLocalUI {
         Ok(())
     }
 
-    fn handshake_complete(&mut self) -> Result<(), Error> {
+    fn channel_created(&mut self) -> Result<(), Error> {
         Ok(())
     }
     fn clean_shutdown_started(&mut self) -> Result<(), Error>;
@@ -413,7 +413,7 @@ pub trait PotatoHandlerImpl {
         coin_id: &CoinString,
         puzzle: &Program,
         solution: &Program,
-    ) -> Result<Vec<Effect>, Error>;
+    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error>;
 
     fn coin_timeout_reached<R: Rng>(
         &mut self,

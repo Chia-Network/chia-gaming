@@ -2,6 +2,11 @@ use crate::channel_handler::types::ReadableMove;
 use crate::common::types::{Amount, CoinString, GameID, PuzzleHash, SpendBundle, Timeout};
 use crate::potato_handler::types::PeerMessage;
 
+pub struct ResyncInfo {
+    pub state_number: usize,
+    pub is_my_turn: bool,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum GameNotification {
     GameCancelled {
@@ -35,7 +40,7 @@ pub enum GameNotification {
 
     /// Our preemption lost the race and the opponent's stale unroll resolved.
     /// Per-game outcomes follow as separate notifications.
-    OpponentStaleUnroll {
+    StaleChannelUnroll {
         our_reward: Amount,
         reward_coin: Option<CoinString>,
     },
@@ -92,12 +97,7 @@ pub enum Effect {
         id: GameID,
         readable: ReadableMove,
     },
-    ResyncMove {
-        id: GameID,
-        state_number: usize,
-        is_my_turn: bool,
-    },
-    HandshakeComplete,
+    ChannelCreated,
     CleanShutdownStarted,
     CleanShutdownComplete {
         reward_coin: Option<CoinString>,
@@ -147,11 +147,8 @@ pub fn apply_effects(
             Effect::Notification(notification) => {
                 system.game_notification(&notification)?;
             }
-            Effect::ResyncMove { .. } => {
-                // Handled internally by peer_container before reaching apply_effects
-            }
-            Effect::HandshakeComplete => {
-                system.handshake_complete()?;
+            Effect::ChannelCreated => {
+                system.channel_created()?;
             }
             Effect::CleanShutdownStarted => {
                 system.clean_shutdown_started()?;
