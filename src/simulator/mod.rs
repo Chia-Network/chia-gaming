@@ -243,6 +243,15 @@ impl Simulator {
         Ok(state.spent_puzzle_solutions.get(coin_id).cloned())
     }
 
+    pub fn is_coin_spendable(&self, coin: &CoinString) -> bool {
+        let state = self.state.borrow();
+        let coin_id = coin.to_coin_id();
+        match state.coins.get(&coin_id) {
+            Some(r) => r.spent_height.is_none(),
+            None => false,
+        }
+    }
+
     pub fn push_tx(
         &self,
         allocator: &mut AllocEncoder,
@@ -272,6 +281,11 @@ impl Simulator {
             let record = match state.coins.get(&coin_id) {
                 Some(r) => r,
                 None => {
+                    if self.strict {
+                        panic!(
+                            "Strict mode: Coin not found: {coin_id:?}",
+                        );
+                    }
                     return Ok(IncludeTransactionResult {
                         code: 3,
                         e: Some(5),
@@ -281,6 +295,11 @@ impl Simulator {
             };
 
             if record.spent_height.is_some() {
+                if self.strict {
+                    panic!(
+                        "Strict mode: Coin already spent: {coin_id:?}",
+                    );
+                }
                 return Ok(IncludeTransactionResult {
                     code: 3,
                     e: Some(5),
@@ -399,6 +418,13 @@ impl Simulator {
         }
 
         if total_output > total_input {
+            if self.strict {
+                panic!(
+                    "Strict mode: Minting coins: outputs ({}) exceed inputs ({})",
+                    total_output.to_u64(),
+                    total_input.to_u64(),
+                );
+            }
             return Ok(IncludeTransactionResult {
                 code: 3,
                 e: Some(20),
@@ -412,6 +438,13 @@ impl Simulator {
 
         let implicit_fee = Amount::new(total_input.to_u64() - total_output.to_u64());
         if total_reserve_fee > implicit_fee {
+            if self.strict {
+                panic!(
+                    "Strict mode: RESERVE_FEE not satisfied: declared {} but only {} available",
+                    total_reserve_fee.to_u64(),
+                    implicit_fee.to_u64(),
+                );
+            }
             return Ok(IncludeTransactionResult {
                 code: 3,
                 e: Some(21),

@@ -1044,6 +1044,13 @@ fn run_game_container_with_action_list_with_success_predicate(
                         nerfed_tx_backlog.push(tx.clone());
                         continue;
                     }
+                    let any_stale = tx.spends.iter().any(|cs| {
+                        !simulator.is_coin_spendable(&cs.coin)
+                    });
+                    if any_stale {
+                        debug!("step {num_steps}: p{i} skipping stale tx {:?}", tx.name);
+                        continue;
+                    }
                     let t_tx = std::time::Instant::now();
                     let included_result = simulator.push_tx(allocator, &tx.spends)?;
                     if timing_enabled {
@@ -1418,6 +1425,13 @@ fn run_game_container_with_action_list_with_success_predicate(
                         nerf_transactions_for = 0;
                         if *replay {
                             for tx in nerfed_tx_backlog.drain(..) {
+                                let any_stale = tx.spends.iter().any(|cs| {
+                                    !simulator.is_coin_spendable(&cs.coin)
+                                });
+                                if any_stale {
+                                    debug!("REPLAY: skipping stale nerfed tx {:?}", tx.name);
+                                    continue;
+                                }
                                 debug!("REPLAYING nerfed tx: {:?}", tx.name);
                                 let included_result = simulator.push_tx(allocator, &tx.spends)?;
                                 debug!(

@@ -511,12 +511,12 @@ pub fn report_coin_changes_to_peer<R: Rng>(
     watch_report: &WatchReport,
 ) -> Result<Vec<Effect>, Error> {
     let mut effects = Vec::new();
-    for t in watch_report.timed_out.iter() {
-        effects.extend(peer.coin_timeout_reached(env, t)?);
-    }
-
     for d in watch_report.deleted_watched.iter() {
         effects.extend(peer.coin_spent(env, d)?);
+    }
+
+    for t in watch_report.timed_out.iter() {
+        effects.extend(peer.coin_timeout_reached(env, t)?);
     }
 
     for c in watch_report.created_watched.iter() {

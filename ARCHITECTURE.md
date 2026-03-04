@@ -1496,10 +1496,10 @@ there is a bug.
 | **CLVM execution error**         | Puzzle/solution fails to run. Means the code submitted a malformed transaction.                                                |
 | **Aggregate signature failure**  | Spend bundle's aggregate signature does not verify. Means signing logic has a bug.                                             |
 | **Implicit fees**                | Outputs total less than inputs but no matching `RESERVE_FEE`. Catches accidental value leakage (the real chain keeps the fee). |
-
-Other standard checks (coin not found, already spent, minting) return
-rejection codes in all modes — these match real chain behavior and are not
-notable.
+| **Coin not found**               | Spending a coin that doesn't exist. Means stale state or a logic error in coin tracking.                                       |
+| **Already spent**                | Spending a coin that was spent in a prior block. Means stale timeout or duplicate submission.                                  |
+| **Minting**                      | Outputs exceed inputs (creating value from nothing). Means incorrect amount calculation.                                       |
+| **RESERVE_FEE not satisfied**    | Declared fee exceeds available implicit fee. Means the fee arithmetic is wrong.                                                |
 
 **Key code:** `src/simulator/mod.rs` — `push_tx`
 
