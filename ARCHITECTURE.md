@@ -360,7 +360,17 @@ happens when accept_timeout hasn't been confirmed before going on-chain.
 ## Going On-Chain: Dispute Resolution
 
 When something goes wrong (opponent offline, invalid move detected, explicit
-`GoOnChain` action), the flow is:
+`GoOnChain` action), the off-chain `PotatoHandler` — which manages the potato
+protocol, peer messages, and batch exchanges — is effectively done. A
+fundamentally different component, `OnChainGameHandler`, takes over. It is
+driven entirely by blockchain coin-watching events (coin created, coin spent,
+timeout reached) rather than peer messages. The `PotatoHandler`'s
+`ChannelState` transitions through several intermediate states and ultimately
+reaches `OnChain(OnChainGameHandler)`, at which point all game actions
+(moves, accept-timeouts) are routed to the on-chain handler. It maintains its
+own `game_map` tracking each game coin's state. There is no potato, no
+batching, no turn-taking — just monitoring the blockchain and submitting
+transactions in response to what it sees.
 
 ### Unified Path
 
@@ -455,7 +465,7 @@ be closed.
 **Key code:**
 - `src/potato_handler/mod.rs` — `go_on_chain`, `handle_channel_coin_spent`,
   `finish_on_chain_transition`
-- `src/potato_handler/on_chain.rs` — `OnChainPotatoHandler`
+- `src/potato_handler/on_chain.rs` — `OnChainGameHandler`
 - `src/channel_handler/mod.rs` — `set_state_for_coins`,
   `accept_or_timeout_game_on_chain`, `game_coin_spent`
 
@@ -516,7 +526,7 @@ to `CleanShutdownWaitForConditions` and inspects the actual spend conditions:
    on-chain state number against the local state to decide preempt vs timeout.
    Since no games are active, the unroll creates only reward coins;
    `finish_on_chain_transition` finds an empty game map, skips the
-   `OnChainPotatoHandler`, and transitions directly to `Completed`. The
+   `OnChainGameHandler`, and transitions directly to `Completed`. The
    outcome is the same correct balances, just with more on-chain transactions.
 
 ### Key Code
@@ -866,7 +876,40 @@ step of the commit-reveal protocol:
 At step **e**, Bob can submit his card selections as **evidence** for a slash
 if Alice misclaims the split.
 
+### Advisory Messages (Symmetric UX)
+
+The commit-reveal protocol is inherently sequential — Alice and Bob take strict
+turns. Without help, Bob would see nothing while Alice deliberates her move.
+The game handler framework provides an **advisory message** mechanism that
+lets the player who just processed a move immediately send derived information
+back to the opponent, outside the logical flow of the game.
+
+When Alice processes Bob's step **b** (his seed), her `their_turn_handler`
+derives the card deal and produces an optional `message_data` blob. This is
+sent back to Bob immediately as a `PeerMessage::Message`. Bob's
+`message_parser` (a CLVM program returned by his earlier `my_turn_handler`)
+decodes the blob into a `ReadableMove` that the UI can display. Bob sees his
+cards and can start contemplating discards while Alice is still thinking.
+
+The message is purely advisory: it carries no authority, doesn't change game
+state, and cannot be used for cheating — the recipient will independently
+derive the same information once the real move arrives. Because it is
+advisory, there is no reason to bundle it with an authoritative potato pass.
+And because the information it contains will be derivable by the recipient
+anyway, sending it early does no strategic damage to the sender — it simply
+lets the opponent start thinking sooner, making the UX feel simultaneous
+even though the underlying protocol is turn-based.
+
+The same mechanism is available to any game, not just calpoker. The
+`my_turn_handler` returns a `message_parser` (or nil if the game doesn't use
+advisory messages), and the `their_turn_handler` returns `message_data` as an
+optional fourth element of its result.
+
 **Key code:**
+- `src/channel_handler/game_handler.rs` — `MyTurnResult::message_parser`,
+  `TheirTurnResult::MakeMove` (message field), `MessageHandler`
+- `src/potato_handler/mod.rs` — sends `PeerMessage::Message` on receive;
+  dispatches incoming messages via `received_message`
 - `clsp/games/calpoker/onchain/a.clsp` through `e.clsp`
 - `clsp/games/calpoker/calpoker_generate.clinc` — off-chain handlers
 - `src/games/calpoker.rs` — Rust-side decoding
@@ -882,7 +925,8 @@ if Alice misclaims the split.
 | **Types & Utilities** | `src/common/` | `CoinString`, `PuzzleHash`, `Amount`, `Hash`, `AllocEncoder`, etc. |
 | **Referee** | `src/referee/` | Per-game state machine: moves, timeouts, slashes |
 | **Channel Handler** | `src/channel_handler/` | Channel/unroll/game coin management, balance tracking |
-| **Potato Handler** | `src/potato_handler/` | Turn-taking protocol, handshake, on-chain transitions |
+| **Potato Handler** | `src/potato_handler/` | Turn-taking protocol, handshake |
+| **On-Chain Game Handler** | `src/potato_handler/on_chain.rs` | Post-unroll dispute resolution: coin watching, timeouts, slashes (no potato) |
 | **Peer Container** | `src/peer_container.rs` | Synchronous test adapter (`GameCradle` trait) |
 | **Simulator** | `src/simulator/` | Block-level simulation for integration tests |
 
@@ -921,7 +965,7 @@ if Alice misclaims the split.
 | `Referee` | `referee/mod.rs` | Enum: `MyTurn` / `TheirTurn` |
 | `ChannelHandler` | `channel_handler/mod.rs` | Manages channel state, unroll, live games |
 | `PotatoHandler` | `potato_handler/mod.rs` | Turn-taking protocol over the wire |
-| `OnChainPotatoHandler` | `potato_handler/on_chain.rs` | Drives on-chain dispute flow |
+| `OnChainGameHandler` | `potato_handler/on_chain.rs` | Drives on-chain dispute flow |
 | `LiveGame` | `channel_handler/types/live_game.rs` | Wraps referee for a single active game |
 | `ProposedGame` | `channel_handler/types/proposed_game.rs` | Pending game proposal (stored in `proposed_games`) |
 | `UnrollCoin` | `channel_handler/types/unroll_coin.rs` | Unroll coin state and puzzle construction |
@@ -990,7 +1034,7 @@ The `initiated_on_chain` flag in `ChannelHandler` serves two purposes:
    actions are drained during `finish_on_chain_transition`, where `CleanShutdown`
    actions are discarded (on-chain path supersedes the clean shutdown path).
    Remaining actions (moves, accepts) are forwarded to the
-   `OnChainPotatoHandler` for on-chain replay.
+   `OnChainGameHandler` for on-chain replay.
 
 **Key code:** `src/peer_container.rs` — `go_on_chain`, `send_message`,
 `deliver_message`
@@ -1067,7 +1111,7 @@ that state.
 Multiple games may need redos simultaneously if the batch contained moves for
 different games.
 
-The `RedoMove` action is processed by `OnChainPotatoHandler::do_redo_move`,
+The `RedoMove` action is processed by `OnChainGameHandler::do_redo_move`,
 which calls `get_transaction_for_move` using the cached move data and the
 actual on-chain coin ID. After the redo succeeds, the game coin advances to the
 latest state and normal play/timeout continues.
@@ -1078,6 +1122,16 @@ A redo is triggered when:
 - We sent a move that wasn't acknowledged before going on-chain
 - The unroll/preemption resolved to the state *before* that move
 
+Similarly, an **accept-timeout redo** is triggered when we sent an
+`AcceptTimeout` that wasn't acknowledged. This follows a parallel but distinct
+path: the `PotatoAcceptTimeout` entry in `cached_last_actions` produces a
+`RedoAcceptTimeout` action, which replays the timeout claim transaction against
+the actual on-chain coin rather than replaying a game move.
+
+A third case involves **in-flight proposal acceptances** (`ProposalAccepted`
+entries in `cached_last_actions`). These don't trigger a redo — if the game coin
+never materialized on-chain, the game is cancelled (`GameCancelled`).
+
 A redo is NOT needed when:
 - The preemption or timeout resolved to the latest state (our move was already
   included in the unroll data)
@@ -1086,21 +1140,32 @@ A redo is NOT needed when:
 ### Stale Cache After Peer Disconnect
 
 When `go_on_chain` is called, all incoming peer messages are black-holed (see
-[Peer Disconnect Invariant](#peer-disconnect-invariant)). If we sent moves
+[Peer Disconnect Invariant](#peer-disconnect-invariant)). If we sent actions
 (adding to `cached_last_actions`) but the peer's response — which would normally
-clear the move entries — arrives *after* the disconnect, the entries remain.
+clear the entries — arrives *after* the disconnect, the entries remain.
 This is expected and correct: the stale cache causes `set_state_for_coins` to
-detect redos are needed, which replays our unacknowledged moves on-chain.
+detect that redos or cancellations are needed, replaying our unacknowledged
+moves and timeout claims on-chain.
 
 ### Redo and User-Queued Moves Can Coexist
 
-When a user calls `make_move` after `go_on_chain`, the move is placed directly
-on `game_action_queue` without touching the potato or channel handler (since
-`initiated_on_chain` is true). During `finish_on_chain_transition`, stale
-`cached_last_actions` entries may also produce `RedoMove`s that are pushed to
-the *front* of the queue. This is correct: the redos replay previous
-unacknowledged moves, and the user's new move follows once the game state has
-caught up. They are different moves for different game states.
+There are two sources of on-chain actions after `go_on_chain`:
+
+- **Redo actions** (from `cached_last_actions`): moves or accept-timeouts we
+  already sent with the last potato but that weren't acknowledged before going
+  on-chain. These apply to games where **it was our turn and we acted**.
+- **User-queued actions** (from `game_action_queue`): moves the user queued
+  (via `make_move`) while waiting for the potato or after going on-chain. These
+  apply to games where **it was the opponent's turn** (so we couldn't have sent
+  anything yet), or actions queued after the transition.
+
+Because moves alternate, a single game cannot have entries in both lists — you
+can't have an unacknowledged move you sent (it was your turn) and a queued move
+waiting to send (it was their turn) for the same game. But with multiple games
+running simultaneously, some games may need redos while others have queued
+moves. Both are placed on `game_action_queue` and processed independently; any
+sequencing within a single game (e.g. redo a move then claim a timeout) is
+enforced by on-chain coin dependencies, not queue order.
 
 ---
 
@@ -1109,7 +1174,7 @@ caught up. They are different moves for different game states.
 ### What ResyncMove Does
 
 `Effect::ResyncMove { id, state_number, is_my_turn }` is emitted by
-`OnChainPotatoHandler::handle_game_coin_spent` when a game coin is spent with
+`OnChainGameHandler::handle_game_coin_spent` when a game coin is spent with
 a result that carries redo data. It is internal plumbing — not a UX
 notification. `SynchronousGameCradle::process_effects` intercepts it before
 `apply_effects` runs and stores `(state_number, is_my_turn)` in
@@ -1154,7 +1219,7 @@ off-chain moves results in the correct player's turn after the redo completes.
 
 ## On-Chain Game State Tracking (our_turn)
 
-The `OnChainPotatoHandler` maintains a `game_map: HashMap<CoinString,
+The `OnChainGameHandler` maintains a `game_map: HashMap<CoinString,
 OnChainGameState>` that tracks each game coin's state, including an `our_turn`
 flag.
 
@@ -1225,7 +1290,7 @@ both game lifecycle callbacks and `GameNotification` variants (delivered through
 
 The `GameNotification` enum is the sole mechanism for reporting game outcomes to
 the UI layer. All notifications are emitted as `Effect::Notification(...)` values
-returned from the `PotatoHandler` and `OnChainPotatoHandler` methods.
+returned from the `PotatoHandler` and `OnChainGameHandler` methods.
 
 **There is no separate `GameFinished` effect.** Terminal `GameNotification`
 variants are the "game is done" signal — the frontend uses them to trigger UI
@@ -1376,7 +1441,7 @@ notification.
 
 When a game is already on-chain and the player calls `AcceptTimeout(game_id)`:
 
-1. `OnChainPotatoHandler` asserts it is our turn, then sets `accepted = true`
+1. `OnChainGameHandler` asserts it is our turn, then sets `accepted = true`
    on the `OnChainGameState` entry. No transaction is submitted and no
    notification is emitted yet.
 2. When the game coin is spent on-chain, `handle_game_coin_spent` checks the
