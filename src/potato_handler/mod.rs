@@ -2140,7 +2140,7 @@ impl PotatoHandler {
 
             if is_stale {
                 effects.push(Effect::Notification(
-                    GameNotification::OpponentStaleUnroll {
+                    GameNotification::StaleChannelUnroll {
                         our_reward: reward_amount,
                         reward_coin: reward_coin.clone(),
                     },

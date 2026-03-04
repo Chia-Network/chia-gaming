@@ -596,7 +596,7 @@ Current and redo states use the normal on-chain flow described above (Steps
 3–5).  When the state is **stale**, `finish_on_chain_transition` takes a
 different path:
 
-- An `OpponentStaleUnroll` notification is emitted, reporting the actual
+- An `StaleChannelUnroll` notification is emitted, reporting the actual
 amount in our reward coin (found by scanning the unroll output conditions
 for our reward puzzle hash).
 - Each on-chain game coin is matched against live games and pending accepts
@@ -627,7 +627,7 @@ continue on-chain.
 
 | Notification                                      | When                                                                                     |
 | ------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `OpponentStaleUnroll { our_reward, reward_coin }` | Always emitted when `is_stale` is true                                                   |
+| `StaleChannelUnroll { our_reward, reward_coin }` | Always emitted when `is_stale` is true                                                   |
 | `GameError { id, reason }`                        | Per-game: coin present but unrecognizable, or established live game missing from outputs |
 | `GameCancelled { id }`                            | Per-game: pending accept (in-flight) absent from outputs — the accept was rolled back    |
 
@@ -1254,6 +1254,7 @@ failure.
 | `clean_shutdown_complete` (callback)                     | `ToLocalUI`      | Channel fully closed                 | Channel closed; optional reward coin returned                                                                                                                                  |
 | `ChannelCoinSpent`                                       | GameNotification | Channel coin spend detected on-chain | The channel is being unrolled (by either player)                                                                                                                               |
 | `UnrollCoinSpent { reward_coin }`                        | GameNotification | Unroll coin spend detected on-chain  | Game coins and reward coins are now live; `reward_coin` is `Some(CoinString)` for our change/reward coin from the unroll, `None` if our balance is zero                        |
+| `StaleChannelUnroll { our_reward, reward_coin }`        | GameNotification | Opponent's stale unroll resolved     | Emitted when `on_chain_state < last_received_state`; `our_reward` is the amount in our change coin, `reward_coin` is the coin if nonzero. Per-game outcomes follow separately. |
 | `ChannelError { reason }`                                | GameNotification | Channel or unroll coin unrecoverable | Everything is lost                                                                                                                                                             |
 
 `going_on_chain` and `clean_shutdown_started` are notable for not corresponding
@@ -1306,7 +1307,6 @@ The frontend should treat any of these as the "game ended" signal.
 | `WeSlashedOpponent { id, reward_coin }`                       | Slash transaction confirmed                     | Opponent's illegal move was proven on-chain; `reward_coin` is the `CoinString` of the reward we received                                                                                                                                   |
 | `OpponentSlashedUs { id }`                                    | Opponent slashed us                             | Our move was proven illegal on-chain                                                                                                                                                                                                       |
 | `OpponentSuccessfullyCheated { id, our_reward, reward_coin }` | Slash coin timed out                            | Opponent cheated and we failed to challenge in time; `our_reward` is the mover_share from their cheating move (what we actually ended up with)                                                                                             |
-| `OpponentStaleUnroll { our_reward, reward_coin }`             | Opponent's unroll resolved to an outdated state | Emitted when `on_chain_state < last_received_state`; `our_reward` is the amount in our change coin, `reward_coin` is the coin if nonzero. Individual games then get their own terminal notifications (still active, redo, or `GameError`). |
 | `GameError { id, reason }`                                    | A single game coin is in an unrecoverable state | Something went wrong with one game                                                                                                                                                                                                         |
 
 

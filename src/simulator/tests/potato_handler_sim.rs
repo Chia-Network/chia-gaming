@@ -413,7 +413,7 @@ pub enum ExpectedNotification {
     WeSlashedOpponent,
     OpponentSlashedUs,
     OpponentSuccessfullyCheated,
-    OpponentStaleUnroll,
+    StaleChannelUnroll,
     ChannelCoinSpent,
     UnrollCoinSpent,
     ChannelError,
@@ -474,8 +474,8 @@ fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
                     ExpectedNotification::OpponentSuccessfullyCheated,
                 ) => true,
                 (
-                    GameNotification::OpponentStaleUnroll { .. },
-                    ExpectedNotification::OpponentStaleUnroll,
+                    GameNotification::StaleChannelUnroll { .. },
+                    ExpectedNotification::StaleChannelUnroll,
                 ) => true,
                 (GameNotification::ChannelCoinSpent, ExpectedNotification::ChannelCoinSpent) => {
                     true
@@ -520,7 +520,7 @@ fn event_shape(actual: &TestEvent) -> String {
             GameNotification::WeSlashedOpponent { .. } => "Notif(WeSlashedOpponent)".to_string(),
             GameNotification::OpponentSlashedUs { .. } => "Notif(OpponentSlashedUs)".to_string(),
             GameNotification::OpponentSuccessfullyCheated { .. } => "Notif(OpponentSuccessfullyCheated)".to_string(),
-            GameNotification::OpponentStaleUnroll { .. } => "Notif(OpponentStaleUnroll)".to_string(),
+            GameNotification::StaleChannelUnroll { .. } => "Notif(StaleChannelUnroll)".to_string(),
             GameNotification::ChannelCoinSpent => "Notif(ChannelCoinSpent)".to_string(),
             GameNotification::UnrollCoinSpent { .. } => "Notif(UnrollCoinSpent)".to_string(),
             GameNotification::ChannelError { .. } => "Notif(ChannelError)".to_string(),
@@ -553,7 +553,7 @@ fn expected_shape(expected: &ExpectedEvent) -> String {
             ExpectedNotification::OpponentSuccessfullyCheated => {
                 "Notif(OpponentSuccessfullyCheated)".to_string()
             }
-            ExpectedNotification::OpponentStaleUnroll => "Notif(OpponentStaleUnroll)".to_string(),
+            ExpectedNotification::StaleChannelUnroll => "Notif(StaleChannelUnroll)".to_string(),
             ExpectedNotification::ChannelCoinSpent => "Notif(ChannelCoinSpent)".to_string(),
             ExpectedNotification::UnrollCoinSpent => "Notif(UnrollCoinSpent)".to_string(),
             ExpectedNotification::ChannelError => "Notif(ChannelError)".to_string(),
@@ -4482,8 +4482,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         assert!(
-            p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentStaleUnroll { .. })),
-            "player 0 should get OpponentStaleUnroll, got: {p0_notifs:?}"
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::StaleChannelUnroll { .. })),
+            "player 0 should get StaleChannelUnroll, got: {p0_notifs:?}"
         );
         // The accept round-tripped, so the second game is fully live (not a
         // pending accept). It's absent from the stale unroll → GameError.
@@ -4559,8 +4559,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         assert!(
-            p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentStaleUnroll { .. })),
-            "player 0 should get OpponentStaleUnroll, got: {p0_notifs:?}"
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::StaleChannelUnroll { .. })),
+            "player 0 should get StaleChannelUnroll, got: {p0_notifs:?}"
         );
         // The redo recovers the first game, but the second game's accept
         // round-tripped (fully live), absent from the stale unroll → GameError.
@@ -4631,8 +4631,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::OpponentStaleUnroll { .. })),
-            "player 0 should get OpponentStaleUnroll, got: {p0_notifs:?}"
+                .any(|n| matches!(n, GameNotification::StaleChannelUnroll { .. })),
+            "player 0 should get StaleChannelUnroll, got: {p0_notifs:?}"
         );
         // First game: coin present but at an old PH → GameError.
         // Second game: accept round-tripped (fully live), absent from stale unroll → GameError.
@@ -4709,8 +4709,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         assert!(
-            p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentStaleUnroll { .. })),
-            "player 0 should get OpponentStaleUnroll, got: {p0_notifs:?}"
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::StaleChannelUnroll { .. })),
+            "player 0 should get StaleChannelUnroll, got: {p0_notifs:?}"
         );
         // The second game (fully live, round-tripped) is absent → GameError.
         let game_errors: Vec<_> = p0_notifs.iter().filter(|n| matches!(n, GameNotification::GameError { .. })).collect();

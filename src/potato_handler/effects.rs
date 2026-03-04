@@ -40,7 +40,7 @@ pub enum GameNotification {
 
     /// Our preemption lost the race and the opponent's stale unroll resolved.
     /// Per-game outcomes follow as separate notifications.
-    OpponentStaleUnroll {
+    StaleChannelUnroll {
         our_reward: Amount,
         reward_coin: Option<CoinString>,
     },
