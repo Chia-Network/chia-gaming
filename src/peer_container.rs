@@ -610,20 +610,7 @@ impl SynchronousGameCradle {
         effects: Vec<Effect>,
         allocator: &mut AllocEncoder,
     ) -> Result<(), Error> {
-        let mut filtered = Vec::with_capacity(effects.len());
-        for effect in effects {
-            if let Effect::ResyncMove {
-                state_number,
-                is_my_turn,
-                ..
-            } = &effect
-            {
-                self.state.resync = Some((*state_number, *is_my_turn));
-            } else {
-                filtered.push(effect);
-            }
-        }
-        apply_effects(filtered, allocator, &mut self.state)
+        apply_effects(effects, allocator, &mut self.state)
     }
 
     fn create_partial_spend_for_channel_coin<R: Rng>(
@@ -1171,11 +1158,14 @@ impl GameCradle for SynchronousGameCradle {
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(), Error> {
-        let reported_effects = {
+        let (reported_effects, resync) = {
             let mut env = ChannelHandlerEnv::new(allocator, rng)?;
             self.peer
                 .coin_puzzle_and_solution(&mut env, coin_id, puzzle_and_solution)?
         };
+        if let Some(info) = resync {
+            self.state.resync = Some((info.state_number, info.is_my_turn));
+        }
         self.process_effects(reported_effects, allocator)?;
         Ok(())
     }

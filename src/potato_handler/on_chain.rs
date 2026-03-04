@@ -19,7 +19,7 @@ use crate::common::types::{
     Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, Program, PuzzleHash,
     SpendBundle, Timeout,
 };
-use crate::potato_handler::effects::{Effect, GameNotification};
+use crate::potato_handler::effects::{Effect, GameNotification, ResyncInfo};
 use crate::potato_handler::types::{GameAction, PotatoHandlerImpl, PotatoState};
 use crate::referee::types::{RefereeOnChainTransaction, SlashOutcome, TheirTurnCoinSpentResult};
 use crate::referee::Referee;
@@ -207,8 +207,9 @@ impl PotatoHandlerImpl for OnChainGameHandler {
         coin_id: &CoinString,
         puzzle: &Program,
         solution: &Program,
-    ) -> Result<Vec<Effect>, Error> {
+    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
         let mut effects = Vec::new();
+        let mut resync_info: Option<ResyncInfo> = None;
         let mut unblock_queue = false;
         let initial_potato = self.player_ch.is_initial_potato();
 
@@ -268,7 +269,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                         name: Some("our on-chain move confirmed"),
                     });
                     effects.extend(self.next_action(env)?);
-                    return Ok(effects);
+                    return Ok((effects, None));
                 }
 
                 // Our transaction lost the race (preempted by opponent).
@@ -290,7 +291,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
             old_definition
         } else {
             debug!("coin spent for coin {coin_id:?} not in game map");
-            return Ok(effects);
+            return Ok((effects, None));
         };
 
         if old_definition.pending_slash_amount.is_some() {
@@ -320,7 +321,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 effects.push(eff);
             }
             effects.extend(self.next_action(env)?);
-            return Ok(effects);
+            return Ok((effects, None));
         }
 
         let conditions = CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
@@ -379,7 +380,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
             }
 
             effects.extend(self.next_action(env)?);
-            return Ok(effects);
+            return Ok((effects, None));
         }
 
         if !self.player_ch.has_live_game(&old_definition.game_id) {
@@ -388,7 +389,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 old_definition.game_id
             );
             effects.extend(self.next_action(env)?);
-            return Ok(effects);
+            return Ok((effects, None));
         }
 
         let result =
@@ -409,7 +410,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 effects.push(eff);
             }
             effects.extend(self.next_action(env)?);
-            return Ok(effects);
+            return Ok((effects, None));
         };
 
         debug!(
@@ -434,7 +435,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                     effects.push(eff);
                 }
                 effects.extend(self.next_action(env)?);
-                return Ok(effects);
+                return Ok((effects, None));
             }
         }
 
@@ -486,8 +487,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                         "expected spend - their turn"
                     }),
                 });
-                effects.push(Effect::ResyncMove {
-                    id: game_id,
+                resync_info = Some(ResyncInfo {
                     state_number,
                     is_my_turn,
                 });
@@ -687,7 +687,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
             effects.extend(self.next_action(env)?);
         }
 
-        Ok(effects)
+        Ok((effects, resync_info))
     }
 
     fn coin_timeout_reached<R: Rng>(
