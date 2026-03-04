@@ -1234,31 +1234,45 @@ timeout.
 
 ## UX Notifications
 
-The UI layer receives events via the `ToLocalUI` trait callbacks. These include
-both game lifecycle callbacks and `GameNotification` variants (delivered through
-`game_notification`).
-
-### Game Lifecycle Callbacks
-
-
-| Callback                  | Parameters                                | Meaning                                                      |
-| ------------------------- | ----------------------------------------- | ------------------------------------------------------------ |
-| `opponent_moved`          | `id, state_number, readable, mover_share` | Opponent made a move; `mover_share` is their declared share. |
-| `game_message`            | `id, readable`                            | Informational message from the game (e.g., revealed data).   |
-| `going_on_chain`          | `reason: &str`                            | We are automatically going on-chain due to an error.         |
-| `clean_shutdown_started`  | (none)                                    | Clean shutdown sequence has begun.                           |
-| `clean_shutdown_complete` | `reward_coin_string`                      | Channel fully closed; optional reward coin.                  |
-
-
-### Game Notifications
-
-The `GameNotification` enum is the sole mechanism for reporting game outcomes to
-the UI layer. All notifications are emitted as `Effect::Notification(...)` values
-returned from the `PotatoHandler` and `OnChainGameHandler` methods.
+The UI layer receives events via the `ToLocalUI` trait callbacks and
+`GameNotification` variants (delivered through `game_notification`).
 
 **There is no separate `GameFinished` effect.** Terminal `GameNotification`
 variants are the "game is done" signal — the frontend uses them to trigger UI
 cleanup and game-over transitions.
+
+### Channel Lifecycle Notifications
+
+These track the state of the channel itself, from creation through shutdown or
+failure.
+
+| Event                                                    | Delivery         | When                                 | Meaning                                                                                                                                                                        |
+| -------------------------------------------------------- | ---------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `channel_created` (callback)                             | `ToLocalUI`      | Channel coin confirmed on-chain      | The channel coin has been created on-chain and the channel is ready to use                                                                                                     |
+| `going_on_chain` (callback)                              | `ToLocalUI`      | Error detected in peer message       | We are automatically going on-chain due to an error; `reason` describes what went wrong (e.g., invalid peer message, opponent requested clean shutdown while games are active) |
+| `clean_shutdown_started` (callback)                      | `ToLocalUI`      | Clean shutdown sequence begun        | Clean shutdown has been initiated (advisory protocol, not yet on-chain)                                                                                                        |
+| `clean_shutdown_complete` (callback)                     | `ToLocalUI`      | Channel fully closed                 | Channel closed; optional reward coin returned                                                                                                                                  |
+| `ChannelCoinSpent`                                       | GameNotification | Channel coin spend detected on-chain | The channel is being unrolled (by either player)                                                                                                                               |
+| `UnrollCoinSpent { reward_coin }`                        | GameNotification | Unroll coin spend detected on-chain  | Game coins and reward coins are now live; `reward_coin` is `Some(CoinString)` for our change/reward coin from the unroll, `None` if our balance is zero                        |
+| `ChannelError { reason }`                                | GameNotification | Channel or unroll coin unrecoverable | Everything is lost                                                                                                                                                             |
+
+`going_on_chain` and `clean_shutdown_started` are notable for not corresponding
+directly to transactions on chain — they are locally-initiated signals about
+protocol state transitions.
+
+`ChannelCoinSpent` and `UnrollCoinSpent` fire regardless of who initiated the
+unroll. A player who called `go_on_chain` will see `ChannelCoinSpent` when
+their own transaction is mined, exactly as if the opponent had initiated it.
+
+### Game Lifecycle Notifications
+
+These fire during active gameplay (after a game proposal has been accepted).
+
+| Event                                                        | Delivery         | When                                         | Meaning                                                                                                                                                     |
+| ------------------------------------------------------------ | ---------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `opponent_moved` (callback)                                  | `ToLocalUI`      | Opponent made a move                         | `mover_share` is their declared share                                                                                                                       |
+| `game_message` (callback)                                    | `ToLocalUI`      | Informational message from the game          | E.g., revealed data during commit-reveal                                                                                                                    |
+| `OpponentPlayedIllegalMove { id }`                           | GameNotification | Opponent's on-chain move detected as illegal | Emitted before submitting the slash transaction; precedes `WeSlashedOpponent` (if slash succeeds) or `OpponentSuccessfullyCheated` (if slash times out)      |
 
 ### Proposal Notifications
 
@@ -1269,20 +1283,6 @@ cleanup and game-over transitions.
 | `GameProposalAccepted { id }`                              | Proposal accepted by either side     | The game is now live and play can begin                                                                              |
 | `GameProposalCancelled { id, reason }`                     | Proposal cancelled or invalidated    | The proposal was cancelled explicitly, or automatically due to going on-chain                                        |
 
-
-### On-Chain Transition Notifications
-
-
-| Notification                                             | When                                 | Meaning                                                                                                                                                                        |
-| -------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ChannelCoinSpent`                                       | Channel coin spend detected on-chain | The channel is being unrolled (by either player)                                                                                                                               |
-| `UnrollCoinSpent { reward_coin }`                        | Unroll coin spend detected on-chain  | Game coins and reward coins are now live; `reward_coin` is `Some(CoinString)` for our change/reward coin from the unroll, `None` if our balance is zero                        |
-| `GoingOnChain { reason }` (Effect, not GameNotification) | Error detected in peer message       | We are automatically going on-chain due to an error; `reason` describes what went wrong (e.g., invalid peer message, opponent requested clean shutdown while games are active) |
-
-
-`ChannelCoinSpent` and `UnrollCoinSpent` fire regardless of who initiated the
-unroll. A player who called `go_on_chain` will see `ChannelCoinSpent` when
-their own transaction is mined, exactly as if the opponent had initiated it.
 
 ### Acceptance Notifications
 
@@ -1306,10 +1306,8 @@ The frontend should treat any of these as the "game ended" signal.
 | `WeSlashedOpponent { id, reward_coin }`                       | Slash transaction confirmed                     | Opponent's illegal move was proven on-chain; `reward_coin` is the `CoinString` of the reward we received                                                                                                                                   |
 | `OpponentSlashedUs { id }`                                    | Opponent slashed us                             | Our move was proven illegal on-chain                                                                                                                                                                                                       |
 | `OpponentSuccessfullyCheated { id, our_reward, reward_coin }` | Slash coin timed out                            | Opponent cheated and we failed to challenge in time; `our_reward` is the mover_share from their cheating move (what we actually ended up with)                                                                                             |
-| `OpponentPlayedIllegalMove { id }`                            | Opponent's on-chain move detected as illegal    | Emitted before submitting the slash transaction; precedes `WeSlashedOpponent` (if slash succeeds) or `OpponentSuccessfullyCheated` (if slash times out)                                                                                    |
 | `OpponentStaleUnroll { our_reward, reward_coin }`             | Opponent's unroll resolved to an outdated state | Emitted when `on_chain_state < last_received_state`; `our_reward` is the amount in our change coin, `reward_coin` is the coin if nonzero. Individual games then get their own terminal notifications (still active, redo, or `GameError`). |
 | `GameError { id, reason }`                                    | A single game coin is in an unrecoverable state | Something went wrong with one game                                                                                                                                                                                                         |
-| `ChannelError { reason }`                                     | The channel or unroll coin is unrecoverable     | Everything is lost                                                                                                                                                                                                                         |
 
 
 ### Key Invariants

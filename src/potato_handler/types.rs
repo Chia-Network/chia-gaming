@@ -207,7 +207,7 @@ pub trait ToLocalUI {
         Ok(())
     }
 
-    fn handshake_complete(&mut self) -> Result<(), Error> {
+    fn channel_created(&mut self) -> Result<(), Error> {
         Ok(())
     }
     fn clean_shutdown_started(&mut self) -> Result<(), Error>;

@@ -97,7 +97,7 @@ pub enum Effect {
         id: GameID,
         readable: ReadableMove,
     },
-    HandshakeComplete,
+    ChannelCreated,
     CleanShutdownStarted,
     CleanShutdownComplete {
         reward_coin: Option<CoinString>,
@@ -147,8 +147,8 @@ pub fn apply_effects(
             Effect::Notification(notification) => {
                 system.game_notification(&notification)?;
             }
-            Effect::HandshakeComplete => {
-                system.handshake_complete()?;
+            Effect::ChannelCreated => {
+                system.channel_created()?;
             }
             Effect::CleanShutdownStarted => {
                 system.clean_shutdown_started()?;

@@ -659,7 +659,7 @@ pub fn assert_reward_coin_consistency(notifications: &[GameNotification], label:
 
 #[derive(Default, Debug)]
 pub struct LocalTestUIReceiver {
-    pub handshake_complete: bool,
+    pub channel_created: bool,
     pub clean_shutdown_complete: bool,
     pub opponent_moved: bool,
     pub go_on_chain: bool,
@@ -673,10 +673,10 @@ pub struct LocalTestUIReceiver {
 }
 
 impl LocalTestUIReceiver {
-    fn assert_handshake_complete(&self, method: &str) {
+    fn assert_channel_created(&self, method: &str) {
         assert!(
-            self.handshake_complete,
-            "ToLocalUI::{method} called before handshake_complete notification"
+            self.channel_created,
+            "ToLocalUI::{method} called before channel_created notification"
         );
     }
 
@@ -710,8 +710,8 @@ impl LocalTestUIReceiver {
 }
 
 impl ToLocalUI for LocalTestUIReceiver {
-    fn handshake_complete(&mut self) -> Result<(), Error> {
-        self.handshake_complete = true;
+    fn channel_created(&mut self) -> Result<(), Error> {
+        self.channel_created = true;
         Ok(())
     }
 
@@ -723,7 +723,7 @@ impl ToLocalUI for LocalTestUIReceiver {
         readable: ReadableMove,
         my_share: Amount,
     ) -> Result<(), Error> {
-        self.assert_handshake_complete("opponent_moved");
+        self.assert_channel_created("opponent_moved");
         self.opponent_moved = true;
         self.opponent_moves
             .push((id.clone(), state_number, readable.clone(), my_share.clone()));
@@ -742,7 +742,7 @@ impl ToLocalUI for LocalTestUIReceiver {
         id: &GameID,
         readable: ReadableMove,
     ) -> Result<(), Error> {
-        self.assert_handshake_complete("game_message");
+        self.assert_channel_created("game_message");
         self.opponent_messages.push(OpponentMessageInfo {
             opponent_move_size: self.opponent_moves.len(),
             opponent_message: readable.clone(),
@@ -755,7 +755,7 @@ impl ToLocalUI for LocalTestUIReceiver {
     }
 
     fn game_notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
-        self.assert_handshake_complete("game_notification");
+        self.assert_channel_created("game_notification");
         self.notifications.push(notification.clone());
         self.events
             .push(TestEvent::Notification(notification.clone()));
@@ -763,7 +763,7 @@ impl ToLocalUI for LocalTestUIReceiver {
     }
 
     fn clean_shutdown_started(&mut self) -> Result<(), Error> {
-        self.assert_handshake_complete("clean_shutdown_started");
+        self.assert_channel_created("clean_shutdown_started");
         Ok(())
     }
 
@@ -771,7 +771,7 @@ impl ToLocalUI for LocalTestUIReceiver {
         &mut self,
         _reward_coin_string: Option<&CoinString>,
     ) -> Result<(), Error> {
-        self.assert_handshake_complete("clean_shutdown_complete");
+        self.assert_channel_created("clean_shutdown_complete");
         self.clean_shutdown_complete = true;
         self.events.push(TestEvent::CleanShutdownComplete);
         Ok(())
@@ -1537,8 +1537,8 @@ fn run_game_container_with_action_list_with_success_predicate(
 
     for (i, lui) in local_uis.iter().enumerate() {
         assert!(
-            lui.handshake_complete,
-            "player {i} never received handshake_complete notification"
+            lui.channel_created,
+            "player {i} never received channel_created notification"
         );
     }
 

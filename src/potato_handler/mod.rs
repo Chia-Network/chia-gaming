@@ -723,7 +723,7 @@ impl PotatoHandler {
                 spend,
             }));
 
-            return Ok(vec![send_effect, Effect::HandshakeComplete]);
+            return Ok(vec![send_effect]);
         }
 
         Ok(vec![])
@@ -2456,25 +2456,32 @@ impl SpendWalletReceiver for PotatoHandler {
         _env: &mut ChannelHandlerEnv<'_, R>,
         _coin: &CoinString,
     ) -> Result<Option<Vec<Effect>>, Error> {
-        if let ChannelState::PostStepF(info) = &self.channel_state {
-            let channel_coin_created = self
-                .channel_handler()
-                .ok()
-                .map(|ch| ch.state_channel_coin());
-
-            if channel_coin_created.is_some() {
-                self.waiting_to_start = false;
-                let effects = self.try_complete_step_f(
-                    info.first_player_hs_info.clone(),
-                    info.second_player_hs_info.clone(),
-                )?;
-                if !effects.is_empty() {
-                    return Ok(Some(effects));
-                }
-            }
+        if !self.waiting_to_start {
+            return Ok(None);
         }
 
-        Ok(None)
+        let has_channel_coin = self
+            .channel_handler()
+            .ok()
+            .map(|ch| ch.state_channel_coin())
+            .is_some();
+
+        if !has_channel_coin {
+            return Ok(None);
+        }
+
+        self.waiting_to_start = false;
+
+        if let ChannelState::PostStepF(info) = &self.channel_state {
+            let mut effects = self.try_complete_step_f(
+                info.first_player_hs_info.clone(),
+                info.second_player_hs_info.clone(),
+            )?;
+            effects.push(Effect::ChannelCreated);
+            return Ok(Some(effects));
+        }
+
+        Ok(Some(vec![Effect::ChannelCreated]))
     }
 
     fn coin_spent<R: Rng>(
