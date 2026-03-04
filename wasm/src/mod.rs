@@ -479,6 +479,15 @@ mod gaming_wasm {
         })
     }
 
+    #[wasm_bindgen]
+    pub fn get_watched_coins(cid: i32) -> Result<JsValue, JsValue> {
+        with_game(cid, move |cradle: &mut JsCradle| {
+            let coin_ids = cradle.cradle.get_watched_coins();
+            serde_wasm_bindgen::to_value(&coin_ids)
+                .map_err(|e| types::Error::StrErr(e.to_string()))
+        })
+    }
+
     #[derive(Deserialize)]
     struct JsGameStart {
         // Game name

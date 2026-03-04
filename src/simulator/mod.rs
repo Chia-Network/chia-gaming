@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use chia_bls::signature::aggregate_verify;
 use clvm_traits::{ClvmEncoder, ToClvm};
 use log::debug;
+use serde::Serialize;
 
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::constants::CREATE_COIN;
@@ -78,6 +79,18 @@ struct SimulatorState {
     mempool: Vec<PendingSpend>,
     spent_puzzle_solutions: HashMap<CoinID, (Program, Program)>,
     height: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CoinRecordInfo {
+    pub parent_coin_info: String,
+    pub puzzle_hash: String,
+    pub amount: u64,
+    pub confirmed_block_index: u32,
+    pub spent_block_index: u32,
+    pub spent: bool,
+    pub coinbase: bool,
+    pub timestamp: u64,
 }
 
 pub struct Simulator {
@@ -226,6 +239,23 @@ impl Simulator {
             .filter(|r| r.spent_height.is_none() && &r.puzzle_hash == puzzle_hash)
             .map(|r| r.coin.clone())
             .collect())
+    }
+
+    pub fn get_coin_record(&self, coin_id: &CoinID) -> Option<CoinRecordInfo> {
+        let state = self.state.borrow();
+        state.coins.get(coin_id).and_then(|r| {
+            let (parent, ph, amt) = r.coin.to_parts()?;
+            Some(CoinRecordInfo {
+                parent_coin_info: hex::encode(parent.bytes()),
+                puzzle_hash: hex::encode(ph.bytes()),
+                amount: amt.to_u64(),
+                confirmed_block_index: r.created_height,
+                spent_block_index: r.spent_height.unwrap_or(0),
+                spent: r.spent_height.is_some(),
+                coinbase: r.coinbase,
+                timestamp: 0,
+            })
+        })
     }
 
     pub fn get_puzzle_and_solution(

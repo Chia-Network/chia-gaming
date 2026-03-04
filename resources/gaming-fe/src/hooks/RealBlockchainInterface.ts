@@ -59,18 +59,7 @@ export class RealBlockchainInterface {
   }
 
   startMonitoring() {
-    if (this.ws) {
-      return;
-    }
-
-    this.ws = new ReconnectingWebSocket(wsUrl(this.baseUrl));
-    this.ws?.addEventListener('message', (m: any) => {
-      const json = JSON.parse(m.data);
-      if (json.type === 'peak') {
-        this.peak = json.data.height;
-        this.pushEvent({ checkPeak: true });
-      }
-    });
+    // CoinWatcher now handles all block monitoring via WalletConnect polling.
   }
 
   getObservable() {
@@ -340,6 +329,86 @@ export function connectRealBlockchain(baseUrl: string) {
 	    getBalance: balanceResult.spendableBalance
 	  });
         });
+      } else if (evt.getWallets) {
+        rpc.getWallets({ includeData: evt.getWallets.includeData })
+          .then((wallets) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              getWallets: wallets,
+            });
+          })
+          .catch((e: any) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              error: e?.toString?.() ?? JSON.stringify(e),
+            });
+          });
+      } else if (evt.getHeightInfo) {
+        rpc.getHeightInfo({})
+          .then((result) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              getHeightInfo: result,
+            });
+          })
+          .catch((e: any) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              error: e?.toString?.() ?? JSON.stringify(e),
+            });
+          });
+      } else if (evt.getCoinRecordsByNames) {
+        const req = evt.getCoinRecordsByNames;
+        rpc.getCoinRecordsByNames({
+            names: req.names,
+            startHeight: req.startHeight,
+            endHeight: req.endHeight,
+            includeSpentCoins: req.includeSpentCoins ?? true,
+          })
+          .then((result) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              getCoinRecordsByNames: result,
+            });
+          })
+          .catch((e: any) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              error: e?.toString?.() ?? JSON.stringify(e),
+            });
+          });
+      } else if (evt.createNewRemoteWallet) {
+        rpc.createNewRemoteWallet({})
+          .then((result) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              createNewRemoteWallet: result,
+            });
+          })
+          .catch((e: any) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              error: e?.toString?.() ?? JSON.stringify(e),
+            });
+          });
+      } else if (evt.registerRemoteCoins) {
+        const req = evt.registerRemoteCoins;
+        rpc.registerRemoteCoins({
+            walletId: req.walletId,
+            coinIds: req.coinIds,
+          })
+          .then((result) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              registerRemoteCoins: result,
+            });
+          })
+          .catch((e: any) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              error: e?.toString?.() ?? JSON.stringify(e),
+            });
+          });
       } else {
         console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);
         blockchainConnector.replyEmitter({

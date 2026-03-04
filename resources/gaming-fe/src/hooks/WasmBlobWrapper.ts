@@ -17,6 +17,8 @@ import {
   encode_clvm_list_of_bytes,
   empty,
 } from '../util';
+import { CoinWatcher } from './CoinWatcher';
+import { ChildFrameBlockchainInterface } from './ChildFrameBlockchainInterface';
 
 function combine_reports(old_report: WatchReport, new_report: WatchReport) {
   for (const item of new_report.created_watched) {
@@ -85,6 +87,8 @@ export class WasmBlobWrapper {
   uiUpdates: any;
   currentSave: string | undefined;
   timeoutHandles: ReturnType<typeof setTimeout>[];
+  coinWatcher: CoinWatcher | undefined;
+  childBlockchain: ChildFrameBlockchainInterface | undefined;
 
   constructor(
     blockchain: InternalBlockchainInterface,
@@ -146,6 +150,9 @@ export class WasmBlobWrapper {
     this.storedMessages = [];
     this.gameIds = [];
 
+    this.coinWatcher?.stop();
+    this.coinWatcher = undefined;
+
     this.timeoutHandles.forEach((handle) => clearTimeout(handle));
     this.timeoutHandles = [];
     this.rxjsMessageSingleton.complete();
@@ -178,9 +185,25 @@ export class WasmBlobWrapper {
     this.spillStoredMessages();
   }
 
+  setChildBlockchain(blockchain: ChildFrameBlockchainInterface) {
+    this.childBlockchain = blockchain;
+  }
+
   activateSpend(coin: string) {
     if (!this.wc) { throw new Error("this.wc is falsey") }
     this.cradle?.opening_coin(coin);
+
+    if (this.wc && this.cradle && this.childBlockchain) {
+      this.coinWatcher = new CoinWatcher(
+        this.wc,
+        this.cradle.getCradleId(),
+        this.childBlockchain,
+        (peak, blocks, report) => {
+          this.blockNotification(peak, blocks, report);
+        },
+      );
+      this.coinWatcher.start();
+    }
 
     this.rxjsEmitter?.next({
       setGameConnectionState: {

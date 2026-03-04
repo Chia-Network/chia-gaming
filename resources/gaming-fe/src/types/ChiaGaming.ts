@@ -126,6 +126,7 @@ export interface WasmConnection {
     amount: any,
   ) => string;
   convert_chia_public_key_to_puzzle_hash: (public_key: string) => string;
+  get_watched_coins: (cid: number) => string[];
 
   // Game
   propose_game: (cid: number, game: any) => any;
@@ -179,6 +180,10 @@ export class ChiaGame {
     this.waiting_messages = [];
     this.private_key = private_key;
     this.cradle = cradleId;
+  }
+
+  getCradleId(): number {
+    return this.cradle;
   }
 
   propose_game(game: any): string[] {

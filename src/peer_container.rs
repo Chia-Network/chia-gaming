@@ -450,6 +450,14 @@ impl SynchronousGameCradle {
         let private_keys: ChannelHandlerPrivateKeys = rng.gen();
         SynchronousGameCradle::new_with_keys(config, private_keys)
     }
+
+    pub fn get_watched_coins(&self) -> Vec<String> {
+        self.state
+            .watching_coins
+            .keys()
+            .map(|cs| hex::encode(cs.to_coin_id().bytes()))
+            .collect()
+    }
 }
 
 impl BootstrapTowardWallet for SynchronousGameCradleState {

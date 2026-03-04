@@ -325,6 +325,67 @@ export function connectSimulatorBlockchain() {
         fakeBlockchainInfo.getBalance().then((balance) => {
           blockchainConnector.replyEmitter({ responseId: evt.requestId, getBalance: balance });
         });
+      } else if (evt.getWallets) {
+        blockchainConnector.replyEmitter({
+          responseId: evt.requestId,
+          getWallets: [
+            { id: 1, name: 'Simulator Wallet', type: 0, data: '', meta: {} },
+            { id: 2, name: 'Remote Wallet', type: 205 as any, data: '', meta: {} },
+          ] as any,
+        });
+      } else if (evt.getHeightInfo) {
+        fetch(`${BLOCKCHAIN_SERVICE_URL}/get_peak`, { method: 'POST' })
+          .then((res) => res.json())
+          .then((peak) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              getHeightInfo: { height: peak },
+            });
+          })
+          .catch((e: any) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              error: e?.toString?.() ?? JSON.stringify(e),
+            });
+          });
+      } else if (evt.getCoinRecordsByNames) {
+        const req = evt.getCoinRecordsByNames;
+        fetch(
+          `${BLOCKCHAIN_SERVICE_URL}/get_coin_records_by_names`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              names: req.names,
+              start_height: req.startHeight,
+              end_height: req.endHeight,
+              include_spent_coins: req.includeSpentCoins ?? true,
+            }),
+          },
+        )
+          .then((res) => res.json())
+          .then((result) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              getCoinRecordsByNames: result,
+            });
+          })
+          .catch((e: any) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              error: e?.toString?.() ?? JSON.stringify(e),
+            });
+          });
+      } else if (evt.createNewRemoteWallet) {
+        blockchainConnector.replyEmitter({
+          responseId: evt.requestId,
+          createNewRemoteWallet: { walletId: 2 },
+        });
+      } else if (evt.registerRemoteCoins) {
+        blockchainConnector.replyEmitter({
+          responseId: evt.requestId,
+          registerRemoteCoins: { success: true },
+        });
       } else {
         console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);
         blockchainConnector.replyEmitter({

@@ -4,6 +4,11 @@ import {
   DoInitialSpendResult,
   BlockchainInboundAddressResult,
 } from '../types/ChiaGaming';
+import { GetCoinRecordsByNamesResponse } from '../types/rpc/GetCoinRecordsByNames';
+import { CreateNewRemoteWalletResponse } from '../types/rpc/CreateNewRemoteWallet';
+import { GetHeightInfoResponse } from '../types/rpc/GetHeightInfo';
+import { RegisterRemoteCoinsResponse } from '../types/rpc/RegisterRemoteCoins';
+import { GetWalletsResponse } from '../types/rpc/GetWallets';
 
 import {
   blockchainConnector,
@@ -95,6 +100,76 @@ export class ChildFrameBlockchainInterface {
       (e: any) => e.getBalance,
       requestId,
       request
+    );
+  }
+
+  getWallets(includeData: boolean = false): Promise<GetWalletsResponse> {
+    const requestId = requestNumber++;
+    const request = {
+      requestId,
+      getWallets: { includeData },
+    };
+    return performTransaction((e: any) => e.getWallets, requestId, request);
+  }
+
+  getHeightInfo(): Promise<GetHeightInfoResponse> {
+    const requestId = requestNumber++;
+    const request = {
+      requestId,
+      getHeightInfo: {},
+    };
+    return performTransaction((e: any) => e.getHeightInfo, requestId, request);
+  }
+
+  getCoinRecordsByNames(
+    names: string[],
+    startHeight?: number,
+    endHeight?: number,
+    includeSpentCoins: boolean = true,
+  ): Promise<GetCoinRecordsByNamesResponse> {
+    const requestId = requestNumber++;
+    const request = {
+      requestId,
+      getCoinRecordsByNames: {
+        names,
+        startHeight,
+        endHeight,
+        includeSpentCoins,
+      },
+    };
+    return performTransaction(
+      (e: any) => e.getCoinRecordsByNames,
+      requestId,
+      request,
+    );
+  }
+
+  createNewRemoteWallet(): Promise<CreateNewRemoteWalletResponse> {
+    const requestId = requestNumber++;
+    const request = {
+      requestId,
+      createNewRemoteWallet: {},
+    };
+    return performTransaction(
+      (e: any) => e.createNewRemoteWallet,
+      requestId,
+      request,
+    );
+  }
+
+  registerRemoteCoins(
+    walletId: number,
+    coinIds: string[],
+  ): Promise<RegisterRemoteCoinsResponse> {
+    const requestId = requestNumber++;
+    const request = {
+      requestId,
+      registerRemoteCoins: { walletId, coinIds },
+    };
+    return performTransaction(
+      (e: any) => e.registerRemoteCoins,
+      requestId,
+      request,
     );
   }
 

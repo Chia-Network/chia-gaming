@@ -197,6 +197,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     iStarted,
     setState,
   );
+  gameObject.setChildBlockchain(blockchain);
 
   const setCardSelections = useCallback(
     (selections: number[]) => {
@@ -212,7 +213,9 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
   useEffect(() => {
     const subscription = blockchain.getObservable().subscribe({
       next: (e: BlockchainReport) => {
-        gameObject?.blockNotification(e.peak, e.block, e.report);
+        if (!gameObject?.coinWatcher) {
+          gameObject?.blockNotification(e.peak, e.block, e.report);
+        }
       },
     });
 

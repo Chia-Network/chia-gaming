@@ -11,4 +11,5 @@ export enum WalletType {
   PoolingWallet,
   Nft,
   DataLayer,
+  Remote = 205,
 }

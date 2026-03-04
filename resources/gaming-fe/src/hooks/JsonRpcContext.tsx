@@ -36,9 +36,25 @@ import {
   GetCatWalletInfoResponse,
 } from '../types/rpc/GetCatWalletInfo';
 import {
+  GetCoinRecordsByNamesRequest,
+  GetCoinRecordsByNamesResponse,
+} from '../types/rpc/GetCoinRecordsByNames';
+import {
+  CreateNewRemoteWalletRequest,
+  CreateNewRemoteWalletResponse,
+} from '../types/rpc/CreateNewRemoteWallet';
+import {
   GetCurrentAddressRequest,
   GetCurrentAddressResponse,
 } from '../types/rpc/GetCurrentAddress';
+import {
+  GetHeightInfoRequest,
+  GetHeightInfoResponse,
+} from '../types/rpc/GetHeightInfo';
+import {
+  RegisterRemoteCoinsRequest,
+  RegisterRemoteCoinsResponse,
+} from '../types/rpc/RegisterRemoteCoins';
 import {
   GetNextAddressRequest,
   GetNextAddressResponse,
@@ -131,6 +147,18 @@ interface _JsonRpc {
   getCurrentAddress: (
     data: GetCurrentAddressRequest,
   ) => Promise<GetCurrentAddressResponse>;
+  getHeightInfo: (
+    data: GetHeightInfoRequest,
+  ) => Promise<GetHeightInfoResponse>;
+  getCoinRecordsByNames: (
+    data: GetCoinRecordsByNamesRequest,
+  ) => Promise<GetCoinRecordsByNamesResponse>;
+  createNewRemoteWallet: (
+    data: CreateNewRemoteWalletRequest,
+  ) => Promise<CreateNewRemoteWalletResponse>;
+  registerRemoteCoins: (
+    data: RegisterRemoteCoinsRequest,
+  ) => Promise<RegisterRemoteCoinsResponse>;
   sendTransaction: (
     data: SendTransactionRequest,
   ) => Promise<SendTransactionResponse>;
@@ -280,6 +308,31 @@ async function getCurrentAddress(data: GetCurrentAddressRequest) {
 async function sendTransaction(data: SendTransactionRequest) {
   return await request<SendTransactionResponse>(
     ChiaMethod.SendTransaction,
+    data,
+  );
+}
+
+async function getHeightInfo(data: GetHeightInfoRequest) {
+  return await request<GetHeightInfoResponse>(ChiaMethod.GetHeightInfo, data);
+}
+
+async function getCoinRecordsByNames(data: GetCoinRecordsByNamesRequest) {
+  return await request<GetCoinRecordsByNamesResponse>(
+    ChiaMethod.GetCoinRecordsByNames,
+    data,
+  );
+}
+
+async function createNewRemoteWallet(data: CreateNewRemoteWalletRequest) {
+  return await request<CreateNewRemoteWalletResponse>(
+    ChiaMethod.CreateNewRemoteWallet,
+    data,
+  );
+}
+
+async function registerRemoteCoins(data: RegisterRemoteCoinsRequest) {
+  return await request<RegisterRemoteCoinsResponse>(
+    ChiaMethod.RegisterRemoteCoins,
     data,
   );
 }
@@ -447,6 +500,10 @@ export const rpc = {
   getTransaction,
   getWalletBalance,
   getCurrentAddress,
+  getHeightInfo,
+  getCoinRecordsByNames,
+  createNewRemoteWallet,
+  registerRemoteCoins,
   sendTransaction,
   signMessageById,
   signMessageByAddress,

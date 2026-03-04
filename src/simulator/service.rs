@@ -89,6 +89,7 @@ enum WebRequest {
     WaitBlock,                            // Return when a new block arrives
     BlockSpends(u64),                     // Get block spends in coinset.org style
     PushTx(CoinsetSpendBundle),           // Spend with a coinset.org spend
+    GetCoinRecordsByNames(Vec<String>, bool), // Get coin records for given coin IDs
 }
 
 type StringWithError = Result<String, Error>;
@@ -327,6 +328,65 @@ impl GameRunner {
         self.spend_list_of_spends(&spends)
     }
 
+    fn get_coin_records_by_names(
+        &self,
+        names: &[String],
+        include_spent: bool,
+    ) -> StringWithError {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct JsCoinRecord {
+            coin: JsCoin,
+            confirmed_block_index: u32,
+            spent_block_index: u32,
+            spent: bool,
+            coinbase: bool,
+            timestamp: u64,
+        }
+
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct JsCoin {
+            parent_coin_info: String,
+            puzzle_hash: String,
+            amount: u64,
+        }
+
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct JsResponse {
+            coin_records: Vec<JsCoinRecord>,
+        }
+
+        let mut records = Vec::new();
+        for name in names {
+            let bytes = hex_to_bytes(name)?;
+            let coin_id = CoinID::new(Hash::from_slice(&bytes));
+            if let Some(info) = self.simulator.get_coin_record(&coin_id) {
+                if !include_spent && info.spent {
+                    continue;
+                }
+                records.push(JsCoinRecord {
+                    coin: JsCoin {
+                        parent_coin_info: info.parent_coin_info,
+                        puzzle_hash: info.puzzle_hash,
+                        amount: info.amount,
+                    },
+                    confirmed_block_index: info.confirmed_block_index,
+                    spent_block_index: info.spent_block_index,
+                    spent: info.spent,
+                    coinbase: info.coinbase,
+                    timestamp: info.timestamp,
+                });
+            }
+        }
+
+        let response = JsResponse {
+            coin_records: records,
+        };
+        Ok(serde_json::to_string(&response).into_gen()?)
+    }
+
     fn block_spends(&mut self, height: u64) -> StringWithError {
         let spends = self.sim_record.get(&height).map(|report| {
             let block_spend_data: Vec<CoinsetSpendRecord> = report
@@ -525,6 +585,37 @@ struct PushTxRequest {
     spend_bundle: CoinsetSpendBundle,
 }
 
+#[derive(Extractible, Serialize, Deserialize)]
+#[salvo(extract(default_source(from = "body")))]
+struct GetCoinRecordsByNamesRequest {
+    names: Vec<String>,
+    #[serde(default)]
+    start_height: Option<u64>,
+    #[serde(default)]
+    end_height: Option<u64>,
+    #[serde(default = "default_true")]
+    include_spent_coins: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[handler]
+async fn get_coin_records_by_names(
+    req: &mut Request,
+    response: &mut Response,
+    salvo_depot: &mut Depot,
+) -> Result<(), String> {
+    let decoded: GetCoinRecordsByNamesRequest =
+        req.extract(salvo_depot).await.report_err()?;
+    pass_on_request(
+        req,
+        response,
+        WebRequest::GetCoinRecordsByNames(decoded.names, decoded.include_spent_coins),
+    )
+}
+
 #[handler]
 async fn push_tx(
     req: &mut Request,
@@ -584,6 +675,8 @@ fn service_main_inner() {
             .push(Router::with_path("spend").post(spend))
             .push(Router::with_path("create_spendable").options(cors))
             .push(Router::with_path("create_spendable").post(create_spendable))
+            .push(Router::with_path("get_coin_records_by_names").options(cors))
+            .push(Router::with_path("get_coin_records_by_names").post(get_coin_records_by_names))
             .push(Router::with_path("block_spends").post(block_spends))
             .push(Router::with_path("push_tx").post(push_tx));
         let acceptor = TcpListener::new("0.0.0.0:5800").bind().await;
@@ -636,6 +729,9 @@ fn service_main_inner() {
                             WebRequest::Spend(blob) => game_runner.spend(&blob),
                             WebRequest::BlockSpends(height) => game_runner.block_spends(height),
                             WebRequest::PushTx(spend_data) => game_runner.push_tx(&spend_data),
+                            WebRequest::GetCoinRecordsByNames(names, include_spent) => {
+                                game_runner.get_coin_records_by_names(&names, include_spent)
+                            }
                             WebRequest::Reset => game_runner.reset_sim(),
                         }
                     };
