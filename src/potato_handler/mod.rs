@@ -227,19 +227,17 @@ impl PotatoHandler {
         if let Ok(ch) = self.channel_handler_mut() {
             let cancelled_ids = ch.cancel_all_proposals();
             for id in cancelled_ids {
-                effects.push(Effect::Notification(
-                    GameNotification::GameProposalCancelled {
-                        id,
-                        reason: "channel error".to_string(),
-                    },
-                ));
+                effects.push(Effect::GameProposalCancelled {
+                    id,
+                    reason: "channel error".to_string(),
+                });
             }
             let game_ids = ch.all_game_ids();
             for id in game_ids {
-                effects.push(Effect::Notification(GameNotification::GameError {
+                effects.push(Effect::GameError {
                     id,
                     reason: "channel error".to_string(),
-                }));
+                });
             }
         }
         effects
@@ -432,11 +430,11 @@ impl PotatoHandler {
         {
             let ch = self.channel_handler_mut()?;
             for (id, amount) in ch.drain_cached_accept_timeouts() {
-                effects.push(Effect::Notification(GameNotification::WeTimedOut {
+                effects.push(Effect::WeTimedOut {
                     id,
                     our_reward: amount,
                     reward_coin: None,
-                }));
+                });
             }
         }
 
@@ -487,30 +485,26 @@ impl PotatoHandler {
                             let game_id = gsi.game_id.clone();
                             let my_contribution = gsi.my_contribution_this_game.clone();
                             let their_contribution = gsi.their_contribution_this_game.clone();
-                            effects.push(Effect::Notification(GameNotification::GameProposed {
+                            effects.push(Effect::GameProposed {
                                 id: game_id,
                                 my_contribution,
                                 their_contribution,
-                            }));
+                            });
                         }
                         BatchAction::AcceptProposal(game_id) => {
                             let ch = self.channel_handler_mut()?;
                             ch.apply_received_accept_proposal(game_id)?;
-                            effects.push(Effect::Notification(
-                                GameNotification::GameProposalAccepted {
-                                    id: game_id.clone(),
-                                },
-                            ));
+                            effects.push(Effect::GameProposalAccepted {
+                                id: game_id.clone(),
+                            });
                         }
                         BatchAction::CancelProposal(game_id) => {
                             let ch = self.channel_handler_mut()?;
                             ch.received_cancel_proposal(game_id)?;
-                            effects.push(Effect::Notification(
-                                GameNotification::GameProposalCancelled {
-                                    id: game_id.clone(),
-                                    reason: "cancelled by peer".to_string(),
-                                },
-                            ));
+                            effects.push(Effect::GameProposalCancelled {
+                                id: game_id.clone(),
+                                reason: "cancelled by peer".to_string(),
+                            });
                         }
                         BatchAction::Move(game_id, game_move) => {
                             let move_result = {
@@ -535,13 +529,11 @@ impl PotatoHandler {
                         BatchAction::AcceptTimeout(game_id, amount) => {
                             let ch = self.channel_handler_mut()?;
                             ch.apply_received_accept_timeout(game_id)?;
-                            effects.push(Effect::Notification(
-                                GameNotification::OpponentTimedOut {
-                                    id: game_id.clone(),
-                                    our_reward: amount.clone(),
-                                    reward_coin: None,
-                                },
-                            ));
+                            effects.push(Effect::OpponentTimedOut {
+                                id: game_id.clone(),
+                                our_reward: amount.clone(),
+                                reward_coin: None,
+                            });
                         }
                     }
                 }
@@ -564,12 +556,10 @@ impl PotatoHandler {
                         let ch = self.channel_handler_mut()?;
                         let cancelled_ids = ch.cancel_all_proposals();
                         for id in cancelled_ids {
-                            effects.push(Effect::Notification(
-                                GameNotification::GameProposalCancelled {
-                                    id,
-                                    reason: "clean shutdown".to_string(),
-                                },
-                            ));
+                            effects.push(Effect::GameProposalCancelled {
+                                id,
+                                reason: "clean shutdown".to_string(),
+                            });
                         }
                     }
 
@@ -622,11 +612,11 @@ impl PotatoHandler {
                     {
                         let ch = self.channel_handler_mut()?;
                         for (id, amount) in ch.drain_cached_accept_timeouts() {
-                            effects.push(Effect::Notification(GameNotification::WeTimedOut {
+                            effects.push(Effect::WeTimedOut {
                                 id,
                                 our_reward: amount,
                                 reward_coin: None,
-                            }));
+                            });
                         }
                     }
 
@@ -708,7 +698,7 @@ impl PotatoHandler {
         second_player_hs_info: HandshakeB,
         maybe_transaction: Option<SpendBundle>,
         ctor: F,
-    ) -> Result<Vec<Effect>, Error>
+    ) -> Result<Option<Effect>, Error>
     where
         F: FnOnce(&SpendBundle) -> Result<PeerMessage, Error>,
     {
@@ -723,17 +713,17 @@ impl PotatoHandler {
                 spend,
             }));
 
-            return Ok(vec![send_effect]);
+            return Ok(Some(send_effect));
         }
 
-        Ok(vec![])
+        Ok(None)
     }
 
     pub fn try_complete_step_e(
         &mut self,
         first_player_hs_info: HandshakeA,
         second_player_hs_info: HandshakeB,
-    ) -> Result<Vec<Effect>, Error> {
+    ) -> Result<Option<Effect>, Error> {
         self.try_complete_step_body(
             first_player_hs_info,
             second_player_hs_info,
@@ -750,9 +740,9 @@ impl PotatoHandler {
         &mut self,
         first_player_hs_info: HandshakeA,
         second_player_hs_info: HandshakeB,
-    ) -> Result<Vec<Effect>, Error> {
+    ) -> Result<Option<Effect>, Error> {
         if self.waiting_to_start {
-            return Ok(vec![]);
+            return Ok(None);
         }
 
         self.try_complete_step_body(
@@ -845,9 +835,9 @@ impl PotatoHandler {
                         let ch = self.channel_handler_mut()?;
                         let proposal = ch.find_proposal(&game_id);
                         if proposal.is_none() {
-                            effects.push(Effect::Notification(GameNotification::GameCancelled {
+                            effects.push(Effect::GameCancelled {
                                 id: game_id.clone(),
-                            }));
+                            });
                             continue;
                         }
                         let proposal = proposal.unwrap();
@@ -858,30 +848,24 @@ impl PotatoHandler {
                         let their_short =
                             proposal.their_contribution > ch.their_out_of_game_balance();
                         if our_short || their_short {
-                            effects.push(Effect::Notification(
-                                GameNotification::InsufficientBalance {
-                                    id: game_id.clone(),
-                                    our_balance_short: our_short,
-                                    their_balance_short: their_short,
-                                },
-                            ));
+                            effects.push(Effect::InsufficientBalance {
+                                id: game_id.clone(),
+                                our_balance_short: our_short,
+                                their_balance_short: their_short,
+                            });
                             ch.send_cancel_proposal(&game_id)?;
-                            effects.push(Effect::Notification(
-                                GameNotification::GameProposalCancelled {
-                                    id: game_id.clone(),
-                                    reason: "insufficient balance".to_string(),
-                                },
-                            ));
+                            effects.push(Effect::GameProposalCancelled {
+                                id: game_id.clone(),
+                                reason: "insufficient balance".to_string(),
+                            });
                             batch_actions.push(BatchAction::CancelProposal(game_id));
                             continue;
                         }
                         ch.send_accept_proposal(&game_id)?;
                     }
-                    effects.push(Effect::Notification(
-                        GameNotification::GameProposalAccepted {
-                            id: game_id.clone(),
-                        },
-                    ));
+                    effects.push(Effect::GameProposalAccepted {
+                        id: game_id.clone(),
+                    });
                     batch_actions.push(BatchAction::AcceptProposal(game_id));
                 }
                 GameAction::QueuedCancelProposal(game_id) => {
@@ -892,12 +876,10 @@ impl PotatoHandler {
                         }
                         ch.send_cancel_proposal(&game_id)?;
                     }
-                    effects.push(Effect::Notification(
-                        GameNotification::GameProposalCancelled {
-                            id: game_id.clone(),
-                            reason: "cancelled by us".to_string(),
-                        },
-                    ));
+                    effects.push(Effect::GameProposalCancelled {
+                        id: game_id.clone(),
+                        reason: "cancelled by us".to_string(),
+                    });
                     batch_actions.push(BatchAction::CancelProposal(game_id));
                 }
                 GameAction::CleanShutdown => {
@@ -910,12 +892,10 @@ impl PotatoHandler {
                         }
                         let cancelled_ids = ch.cancel_all_proposals();
                         for id in cancelled_ids {
-                            effects.push(Effect::Notification(
-                                GameNotification::GameProposalCancelled {
-                                    id,
-                                    reason: "clean shutdown".to_string(),
-                                },
-                            ));
+                            effects.push(Effect::GameProposalCancelled {
+                                id,
+                                reason: "clean shutdown".to_string(),
+                            });
                         }
                     }
 
@@ -1612,12 +1592,10 @@ impl PotatoHandler {
             }
             let cancelled_ids = player_ch.cancel_all_proposals();
             for id in cancelled_ids {
-                effects.push(Effect::Notification(
-                    GameNotification::GameProposalCancelled {
-                        id,
-                        reason: "going on chain".to_string(),
-                    },
-                ));
+                effects.push(Effect::GameProposalCancelled {
+                    id,
+                    reason: "going on chain".to_string(),
+                });
             }
         }
 
@@ -1836,16 +1814,14 @@ impl PotatoHandler {
             let ch = self.channel_handler_mut()?;
             let cancelled_ids = ch.cancel_all_proposals();
             for id in cancelled_ids {
-                effects.push(Effect::Notification(
-                    GameNotification::GameProposalCancelled {
-                        id,
-                        reason: "channel went on-chain".to_string(),
-                    },
-                ));
+                effects.push(Effect::GameProposalCancelled {
+                    id,
+                    reason: "channel went on-chain".to_string(),
+                });
             }
         }
 
-        effects.push(Effect::Notification(GameNotification::ChannelCoinSpent));
+        effects.push(Effect::ChannelCoinSpent);
 
         effects.extend(self.handle_unroll_from_channel_conditions(
             env,
@@ -1946,9 +1922,9 @@ impl PotatoHandler {
             }
             Outcome::Unrecoverable(ref reason) => {
                 effects.extend(self.emit_failure_cleanup());
-                effects.push(Effect::Notification(GameNotification::ChannelError {
+                effects.push(Effect::ChannelError {
                     reason: reason.clone(),
-                }));
+                });
                 self.channel_state = ChannelState::Failed;
             }
         }
@@ -2016,11 +1992,11 @@ impl PotatoHandler {
             {
                 let ch = self.channel_handler_mut()?;
                 for (id, amount) in ch.drain_cached_accept_timeouts() {
-                    effects.push(Effect::Notification(GameNotification::WeTimedOut {
+                    effects.push(Effect::WeTimedOut {
                         id,
                         our_reward: amount,
                         reward_coin: None,
-                    }));
+                    });
                 }
             }
             effects.push(Effect::CleanShutdownComplete { reward_coin });
@@ -2043,7 +2019,7 @@ impl PotatoHandler {
                 Error::StrErr("channel conditions didn't include a coin creation".to_string())
             })?;
 
-        effects.push(Effect::Notification(GameNotification::ChannelCoinSpent));
+        effects.push(Effect::ChannelCoinSpent);
 
         effects.extend(self.handle_unroll_from_channel_conditions(
             env,
@@ -2106,9 +2082,9 @@ impl PotatoHandler {
                     None
                 })
                 .unwrap_or_default();
-            effects.push(Effect::Notification(GameNotification::UnrollCoinSpent {
+            effects.push(Effect::UnrollCoinSpent {
                 reward_coin: reward_coin.clone(),
-            }));
+            });
 
             let last_received = player_ch.get_last_received_state();
             let is_stale = on_chain_state < last_received;
@@ -2139,12 +2115,11 @@ impl PotatoHandler {
                 .collect();
 
             if is_stale {
-                effects.push(Effect::Notification(
-                    GameNotification::StaleChannelUnroll {
+                effects.push(Effect::StaleChannelUnroll {
                         our_reward: reward_amount,
                         reward_coin: reward_coin.clone(),
                     },
-                ));
+                );
 
                 // Stale unroll: per-game matching.  For each on-chain game
                 // coin, check current PH+amount first, then cached prior
@@ -2159,22 +2134,22 @@ impl PotatoHandler {
                     .collect();
                 for missing_id in pre_game_ids.difference(&surviving_ids) {
                     if in_flight_proposal_ids.contains(missing_id) {
-                        effects.push(Effect::Notification(GameNotification::GameCancelled {
+                        effects.push(Effect::GameCancelled {
                             id: missing_id.clone(),
-                        }));
+                        });
                     } else {
-                        effects.push(Effect::Notification(GameNotification::GameError {
+                        effects.push(Effect::GameError {
                             id: missing_id.clone(),
                             reason: "live game absent from stale unroll".to_string(),
-                        }));
+                        });
                     }
                 }
 
                 for (game_id, _coin) in &errored_games {
-                    effects.push(Effect::Notification(GameNotification::GameError {
+                    effects.push(Effect::GameError {
                         id: game_id.clone(),
                         reason: "game coin at unrecognized state after stale unroll".to_string(),
-                    }));
+                    });
                 }
 
                 (game_map_inner, reward_coin)
@@ -2213,14 +2188,14 @@ impl PotatoHandler {
                     .collect();
                 for missing_id in pre_game_ids.difference(&surviving_ids) {
                     if in_flight_proposal_ids.contains(missing_id) {
-                        effects.push(Effect::Notification(GameNotification::GameCancelled {
+                        effects.push(Effect::GameCancelled {
                             id: missing_id.clone(),
-                        }));
+                        });
                     } else {
-                        effects.push(Effect::Notification(GameNotification::GameError {
+                        effects.push(Effect::GameError {
                             id: missing_id.clone(),
                             reason: "live game absent from unroll".to_string(),
-                        }));
+                        });
                     }
                 }
 
@@ -2413,17 +2388,14 @@ impl BootstrapTowardGame for PotatoHandler {
         &mut self,
         _env: &mut ChannelHandlerEnv<'_, R>,
         bundle: SpendBundle,
-    ) -> Result<Option<Vec<Effect>>, Error> {
+    ) -> Result<Option<Effect>, Error> {
         self.channel_initiation_transaction = Some(bundle);
 
         if let ChannelState::PostStepE(info) = &self.channel_state {
-            let effects = self.try_complete_step_e(
+            return self.try_complete_step_e(
                 info.first_player_hs_info.clone(),
                 info.second_player_hs_info.clone(),
-            )?;
-            if !effects.is_empty() {
-                return Ok(Some(effects));
-            }
+            );
         }
 
         Ok(None)
@@ -2433,17 +2405,14 @@ impl BootstrapTowardGame for PotatoHandler {
         &mut self,
         _env: &mut ChannelHandlerEnv<'_, R>,
         bundle: &SpendBundle,
-    ) -> Result<Option<Vec<Effect>>, Error> {
+    ) -> Result<Option<Effect>, Error> {
         self.channel_finished_transaction = Some(bundle.clone());
 
         if let ChannelState::PostStepF(info) = &self.channel_state {
-            let effects = self.try_complete_step_f(
+            return self.try_complete_step_f(
                 info.first_player_hs_info.clone(),
                 info.second_player_hs_info.clone(),
-            )?;
-            if !effects.is_empty() {
-                return Ok(Some(effects));
-            }
+            );
         }
 
         Ok(None)
@@ -2473,10 +2442,10 @@ impl SpendWalletReceiver for PotatoHandler {
         self.waiting_to_start = false;
 
         if let ChannelState::PostStepF(info) = &self.channel_state {
-            let mut effects = self.try_complete_step_f(
+            let mut effects: Vec<Effect> = self.try_complete_step_f(
                 info.first_player_hs_info.clone(),
                 info.second_player_hs_info.clone(),
-            )?;
+            )?.into_iter().collect();
             effects.push(Effect::ChannelCreated);
             return Ok(Some(effects));
         }
@@ -2554,9 +2523,9 @@ impl SpendWalletReceiver for PotatoHandler {
                 Err(e) => {
                     let reason = format!("timeout unroll failed for state {on_chain_state}: {e:?}");
                     effects.extend(self.emit_failure_cleanup());
-                    effects.push(Effect::Notification(GameNotification::ChannelError {
+                    effects.push(Effect::ChannelError {
                         reason,
-                    }));
+                    });
                     self.channel_state = ChannelState::Failed;
                 }
             }
@@ -2597,7 +2566,7 @@ impl SpendWalletReceiver for PotatoHandler {
                     id: game_id.clone(),
                     reason,
                 };
-                effects.push(Effect::Notification(notification));
+                effects.push(Effect::from(notification));
                 effects.extend(on_chain.next_action(env)?);
                 return Ok((effects, None));
             }
@@ -2614,9 +2583,9 @@ impl SpendWalletReceiver for PotatoHandler {
                     Err(e) => {
                         let reason = format!("clean shutdown condition check failed: {e:?}");
                         effects.extend(self.emit_failure_cleanup());
-                        effects.push(Effect::Notification(GameNotification::ChannelError {
+                        effects.push(Effect::ChannelError {
                             reason,
-                        }));
+                        });
                         self.channel_state = ChannelState::Failed;
                     }
                 }
@@ -2650,9 +2619,9 @@ impl SpendWalletReceiver for PotatoHandler {
                         Err(e) => {
                             let reason = format!("channel coin spent to non-unroll: {e:?}");
                             effects.extend(self.emit_failure_cleanup());
-                            effects.push(Effect::Notification(GameNotification::ChannelError {
+                            effects.push(Effect::ChannelError {
                                 reason,
-                            }));
+                            });
                             self.channel_state = ChannelState::Failed;
                         }
                     }
@@ -2673,9 +2642,9 @@ impl SpendWalletReceiver for PotatoHandler {
                         Err(e) => {
                             let reason = format!("unroll coin spent with unexpected state: {e:?}");
                             effects.extend(self.emit_failure_cleanup());
-                            effects.push(Effect::Notification(GameNotification::ChannelError {
+                            effects.push(Effect::ChannelError {
                                 reason,
-                            }));
+                            });
                             self.channel_state = ChannelState::Failed;
                         }
                     }

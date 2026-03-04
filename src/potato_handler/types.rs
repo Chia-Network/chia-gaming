@@ -12,7 +12,7 @@ use crate::channel_handler::types::{
 };
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, Program,
+    Aggsig, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, Program,
     ProgramRef, PuzzleHash, SpendBundle, Timeout,
 };
 use crate::potato_handler::effects::{Effect, ResyncInfo};
@@ -76,7 +76,7 @@ pub trait BootstrapTowardGame {
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
         bundle: SpendBundle,
-    ) -> Result<Option<Vec<Effect>>, Error>;
+    ) -> Result<Option<Effect>, Error>;
 
     /// Gives the fully signed offer to the wallet bootstrap.
     /// Causes bob to send this spend bundle down the wire to the other peer.
@@ -101,7 +101,7 @@ pub trait BootstrapTowardGame {
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
         bundle: &SpendBundle,
-    ) -> Result<Option<Vec<Effect>>, Error>;
+    ) -> Result<Option<Effect>, Error>;
 }
 
 /// Async interface implemented by Peer to receive notifications about wallet
@@ -185,37 +185,10 @@ pub trait WalletSpendInterface {
 }
 
 pub trait ToLocalUI {
-    fn opponent_moved(
+    fn notification(
         &mut self,
-        allocator: &mut AllocEncoder,
-        id: &GameID,
-        state_number: usize,
-        readable: ReadableMove,
-        mover_share: Amount,
+        notification: &crate::potato_handler::effects::GameNotification,
     ) -> Result<(), Error>;
-    fn game_message(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        id: &GameID,
-        readable: ReadableMove,
-    ) -> Result<(), Error>;
-
-    fn game_notification(
-        &mut self,
-        _notification: &crate::potato_handler::effects::GameNotification,
-    ) -> Result<(), Error> {
-        Ok(())
-    }
-
-    fn channel_created(&mut self) -> Result<(), Error> {
-        Ok(())
-    }
-    fn clean_shutdown_started(&mut self) -> Result<(), Error>;
-    fn clean_shutdown_complete(
-        &mut self,
-        reward_coin_string: Option<&CoinString>,
-    ) -> Result<(), Error>;
-    fn going_on_chain(&mut self, reason: &str) -> Result<(), Error>;
 }
 
 pub trait FromLocalUI {
@@ -433,7 +406,7 @@ pub trait PotatoHandlerImpl {
         game_id: GameID,
         readable_move: ReadableMove,
         entropy: Hash,
-    ) -> Result<Vec<Effect>, Error>;
+    ) -> Result<Option<Effect>, Error>;
 
     fn do_on_chain_action<R: Rng>(
         &mut self,

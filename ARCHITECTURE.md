@@ -1265,15 +1265,15 @@ protocol state transitions.
 unroll. A player who called `go_on_chain` will see `ChannelCoinSpent` when
 their own transaction is mined, exactly as if the opponent had initiated it.
 
-### Game Lifecycle Notifications
+### Gameplay Notifications
 
 These fire during active gameplay (after a game proposal has been accepted).
 
 | Event                                                        | Delivery         | When                                         | Meaning                                                                                                                                                     |
 | ------------------------------------------------------------ | ---------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `opponent_moved` (callback)                                  | `ToLocalUI`      | Opponent made a move                         | `mover_share` is their declared share                                                                                                                       |
-| `game_message` (callback)                                    | `ToLocalUI`      | Informational message from the game          | E.g., revealed data during commit-reveal                                                                                                                    |
 | `OpponentPlayedIllegalMove { id }`                           | GameNotification | Opponent's on-chain move detected as illegal | Emitted before submitting the slash transaction; precedes `WeSlashedOpponent` (if slash succeeds) or `OpponentSuccessfullyCheated` (if slash times out)      |
+| `game_message` (callback)                                    | `ToLocalUI`      | Informational message from the game          | E.g., revealed data during commit-reveal                                                                                                                    |
 
 ### Proposal Notifications
 
@@ -1285,28 +1285,21 @@ These fire during active gameplay (after a game proposal has been accepted).
 | `GameProposalCancelled { id, reason }`                     | Proposal cancelled or invalidated    | The proposal was cancelled explicitly, or automatically due to going on-chain                                        |
 
 
-### Acceptance Notifications
-
-
-| Notification                                                         | When                                     | Meaning                                                                                                                                                                                                                                                                                     |
-| -------------------------------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `InsufficientBalance { id, our_balance_short, their_balance_short }` | Accept attempted with insufficient funds | The potato holder tried to accept a proposal but one or both players' contributions exceed available balance. The proposal is automatically cancelled (`CancelProposal` sent to peer, `GameProposalCancelled` emitted locally). This is a terminal condition for the accept-call invariant. |
-
-
 ### Game Outcome Notifications (Terminal)
 
 These are the terminal notifications — each signals that a game is finished.
 The frontend should treat any of these as the "game ended" signal.
 
 
-| Notification                                                  | When                                            | Meaning                                                                                                                                                                                                                                    |
-| ------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `WeTimedOut { id, our_reward, reward_coin }`                  | Game resolved in our favor                      | Includes off-chain accept-timeout (fires when potato returns) and on-chain timeout; `our_reward` is the amount we received; `reward_coin` is `Some(CoinString)` when on-chain and reward is nonzero, `None` for off-chain resolution       |
+| Notification                                                         | When                                            | Meaning                                                                                                                                                                                                                                                                                     |
+| -------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `InsufficientBalance { id, our_balance_short, their_balance_short }` | Accept attempted with insufficient funds        | The potato holder tried to accept a proposal but one or both players' contributions exceed available balance. The proposal is automatically cancelled (`CancelProposal` sent to peer, `GameProposalCancelled` emitted locally). This is a terminal condition for the accept-call invariant. |
+| `WeTimedOut { id, our_reward, reward_coin }`                         | Game resolved in our favor                      | Includes off-chain accept-timeout (fires when potato returns) and on-chain timeout; `our_reward` is the amount we received; `reward_coin` is `Some(CoinString)` when on-chain and reward is nonzero, `None` for off-chain resolution                                                       |
 | `OpponentTimedOut { id, our_reward, reward_coin }`            | Game resolved in opponent's favor               | Includes receiving opponent's off-chain accept-timeout; `our_reward` is the amount we received; `reward_coin` is `Some(CoinString)` when on-chain and reward is nonzero, `None` for off-chain                                              |
 | `GameCancelled { id }`                                        | Stale accept of already-cancelled proposal      | Emitted when a queued `AcceptProposal` finds the proposal already gone. Post-acceptance game disappearance uses `GameError`, not `GameCancelled`.                                                                                          |
 | `WeSlashedOpponent { id, reward_coin }`                       | Slash transaction confirmed                     | Opponent's illegal move was proven on-chain; `reward_coin` is the `CoinString` of the reward we received                                                                                                                                   |
 | `OpponentSlashedUs { id }`                                    | Opponent slashed us                             | Our move was proven illegal on-chain                                                                                                                                                                                                       |
-| `OpponentSuccessfullyCheated { id, our_reward, reward_coin }` | Slash coin timed out                            | Opponent cheated and we failed to challenge in time; `our_reward` is the mover_share from their cheating move (what we actually ended up with)                                                                                             |
+| `OpponentSuccessfullyCheated { id, our_reward, reward_coin }` | Illegal-move coin timed out before we slashed   | Opponent made an illegal move on-chain and we failed to slash before they claimed a timeout; `our_reward` is the mover_share from their cheating move (what we actually ended up with)                                                      |
 | `GameError { id, reason }`                                    | A single game coin is in an unrecoverable state | Something went wrong with one game                                                                                                                                                                                                         |
 
 

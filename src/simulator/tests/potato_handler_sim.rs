@@ -147,7 +147,7 @@ fn handle_received_channel_puzzle_hash<R: Rng>(
             }],
         },
     )
-    .map(|effect| effect.unwrap_or_default())
+    .map(|effect| effect.into_iter().collect())
 }
 
 impl PacketSender for SimulatedPeer {
@@ -230,42 +230,24 @@ impl BootstrapTowardWallet for SimulatedPeer {
 }
 
 impl ToLocalUI for SimulatedPeer {
-    fn opponent_moved(
-        &mut self,
-        _allocator: &mut AllocEncoder,
-        _id: &GameID,
-        _state_number: usize,
-        _readable: ReadableMove,
-        _my_share: Amount,
-    ) -> Result<(), Error> {
-        Ok(())
-    }
-    fn game_message(
-        &mut self,
-        _allocator: &mut AllocEncoder,
-        _id: &GameID,
-        readable: ReadableMove,
-    ) -> Result<(), Error> {
-        self.messages.push(readable);
-        Ok(())
-    }
-    fn clean_shutdown_started(&mut self) -> Result<(), Error> {
-        Err(Error::StrErr(
-            "clean_shutdown_started not expected during handshake".to_string(),
-        ))
-    }
-    fn clean_shutdown_complete(
-        &mut self,
-        _reward_coin_string: Option<&CoinString>,
-    ) -> Result<(), Error> {
-        Err(Error::StrErr(
-            "clean_shutdown_complete not expected during handshake".to_string(),
-        ))
-    }
-    fn going_on_chain(&mut self, reason: &str) -> Result<(), Error> {
-        Err(Error::StrErr(format!(
-            "unexpected going_on_chain during handshake: {reason}"
-        )))
+    fn notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
+        match notification {
+            GameNotification::GameMessage { readable, .. } => {
+                self.messages.push(readable.clone());
+                Ok(())
+            }
+            GameNotification::OpponentMoved { .. } | GameNotification::ChannelCreated => Ok(()),
+            GameNotification::CleanShutdownStarted => Err(Error::StrErr(
+                "clean_shutdown_started not expected during handshake".to_string(),
+            )),
+            GameNotification::CleanShutdownComplete { .. } => Err(Error::StrErr(
+                "clean_shutdown_complete not expected during handshake".to_string(),
+            )),
+            GameNotification::GoingOnChain { reason } => Err(Error::StrErr(format!(
+                "unexpected going_on_chain during handshake: {reason}"
+            ))),
+            _ => Ok(()),
+        }
     }
 }
 
@@ -322,12 +304,12 @@ pub fn handshake<R: Rng>(
                 identities[who].synthetic_private_key
             );
 
-            let reported_effects = {
+            let reported_effect = {
                 let mut env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
                 peers[who].channel_transaction_completion(&mut env, &u)?
             };
-            if let Some(effects) = reported_effects {
-                apply_effects(effects, allocator, &mut pipes[who])?;
+            if let Some(effect) = reported_effect {
+                apply_effects(vec![effect], allocator, &mut pipes[who])?;
             }
 
             let env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
@@ -529,6 +511,12 @@ fn event_shape(actual: &TestEvent) -> String {
             GameNotification::GameProposalAccepted { id } => format!("Notif(GameProposalAccepted(id={id:?}))"),
             GameNotification::GameProposalCancelled { id, reason } => format!("Notif(GameProposalCancelled(id={id:?},reason={reason}))"),
             GameNotification::InsufficientBalance { id, our_balance_short, their_balance_short } => format!("Notif(InsufficientBalance(id={id:?},ours={our_balance_short},theirs={their_balance_short}))"),
+            GameNotification::OpponentMoved { .. } => "Notif(OpponentMoved)".to_string(),
+            GameNotification::GameMessage { .. } => "Notif(GameMessage)".to_string(),
+            GameNotification::ChannelCreated => "Notif(ChannelCreated)".to_string(),
+            GameNotification::CleanShutdownStarted => "Notif(CleanShutdownStarted)".to_string(),
+            GameNotification::CleanShutdownComplete { .. } => "Notif(CleanShutdownComplete)".to_string(),
+            GameNotification::GoingOnChain { reason } => format!("Notif(GoingOnChain(reason={reason}))"),
         },
     }
 }
@@ -710,79 +698,56 @@ impl LocalTestUIReceiver {
 }
 
 impl ToLocalUI for LocalTestUIReceiver {
-    fn channel_created(&mut self) -> Result<(), Error> {
-        self.channel_created = true;
-        Ok(())
-    }
-
-    fn opponent_moved(
-        &mut self,
-        _allocator: &mut AllocEncoder,
-        id: &GameID,
-        state_number: usize,
-        readable: ReadableMove,
-        my_share: Amount,
-    ) -> Result<(), Error> {
-        self.assert_channel_created("opponent_moved");
-        self.opponent_moved = true;
-        self.opponent_moves
-            .push((id.clone(), state_number, readable.clone(), my_share.clone()));
-        self.events.push(TestEvent::OpponentMoved {
-            id: id.clone(),
-            state_number,
-            readable,
-            mover_share: my_share,
-        });
-        Ok(())
-    }
-
-    fn game_message(
-        &mut self,
-        _allocator: &mut AllocEncoder,
-        id: &GameID,
-        readable: ReadableMove,
-    ) -> Result<(), Error> {
-        self.assert_channel_created("game_message");
-        self.opponent_messages.push(OpponentMessageInfo {
-            opponent_move_size: self.opponent_moves.len(),
-            opponent_message: readable.clone(),
-        });
-        self.events.push(TestEvent::GameMessage {
-            id: id.clone(),
-            readable,
-        });
-        Ok(())
-    }
-
-    fn game_notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
-        self.assert_channel_created("game_notification");
-        self.notifications.push(notification.clone());
-        self.events
-            .push(TestEvent::Notification(notification.clone()));
-        Ok(())
-    }
-
-    fn clean_shutdown_started(&mut self) -> Result<(), Error> {
-        self.assert_channel_created("clean_shutdown_started");
-        Ok(())
-    }
-
-    fn clean_shutdown_complete(
-        &mut self,
-        _reward_coin_string: Option<&CoinString>,
-    ) -> Result<(), Error> {
-        self.assert_channel_created("clean_shutdown_complete");
-        self.clean_shutdown_complete = true;
-        self.events.push(TestEvent::CleanShutdownComplete);
-        Ok(())
-    }
-
-    fn going_on_chain(&mut self, reason: &str) -> Result<(), Error> {
-        self.go_on_chain = true;
-        self.got_error = true;
-        self.events.push(TestEvent::GoingOnChain {
-            reason: reason.to_string(),
-        });
+    fn notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
+        match notification {
+            GameNotification::ChannelCreated => {
+                self.channel_created = true;
+            }
+            GameNotification::OpponentMoved { id, state_number, readable, mover_share } => {
+                self.assert_channel_created("opponent_moved");
+                self.opponent_moved = true;
+                self.opponent_moves
+                    .push((id.clone(), *state_number, readable.clone(), mover_share.clone()));
+                self.events.push(TestEvent::OpponentMoved {
+                    id: id.clone(),
+                    state_number: *state_number,
+                    readable: readable.clone(),
+                    mover_share: mover_share.clone(),
+                });
+            }
+            GameNotification::GameMessage { id, readable } => {
+                self.assert_channel_created("game_message");
+                self.opponent_messages.push(OpponentMessageInfo {
+                    opponent_move_size: self.opponent_moves.len(),
+                    opponent_message: readable.clone(),
+                });
+                self.events.push(TestEvent::GameMessage {
+                    id: id.clone(),
+                    readable: readable.clone(),
+                });
+            }
+            GameNotification::CleanShutdownStarted => {
+                self.assert_channel_created("clean_shutdown_started");
+            }
+            GameNotification::CleanShutdownComplete { .. } => {
+                self.assert_channel_created("clean_shutdown_complete");
+                self.clean_shutdown_complete = true;
+                self.events.push(TestEvent::CleanShutdownComplete);
+            }
+            GameNotification::GoingOnChain { reason } => {
+                self.go_on_chain = true;
+                self.got_error = true;
+                self.events.push(TestEvent::GoingOnChain {
+                    reason: reason.clone(),
+                });
+            }
+            other => {
+                self.assert_channel_created("game_notification");
+                self.notifications.push(other.clone());
+                self.events
+                    .push(TestEvent::Notification(other.clone()));
+            }
+        }
         Ok(())
     }
 }
