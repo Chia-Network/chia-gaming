@@ -294,7 +294,7 @@ off-chain moves to ensure the correct player's turn after the redo:
 | `src/channel_handler/types/on_chain_game_state.rs` | `OnChainGameState`: `our_turn`, `game_timeout`, etc. |
 | `src/channel_handler/types/unroll_coin.rs` | Unroll coin puzzle/solution generation |
 | `src/potato_handler/mod.rs` | `PotatoHandler`, handshake, `do_channel_spend_to_unroll` |
-| `src/potato_handler/on_chain.rs` | `OnChainPotatoHandler`, `handle_game_coin_spent`, `coin_timeout_reached` |
+| `src/potato_handler/on_chain.rs` | `OnChainGameHandler`, `handle_game_coin_spent`, `coin_timeout_reached` |
 | `src/simulator/tests/potato_handler_sim.rs` | Test infrastructure, `run_calpoker_container_with_action_list` |
 | `src/test_support/calpoker.rs` | Calpoker-specific test setup and registration |
 

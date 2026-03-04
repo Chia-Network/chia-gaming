@@ -41,7 +41,7 @@ struct PendingMoveSavedState {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct OnChainPotatoHandler {
+pub struct OnChainGameHandler {
     have_potato: PotatoState,
     channel_timeout: Timeout,
     player_ch: ChannelHandler,
@@ -52,13 +52,13 @@ pub struct OnChainPotatoHandler {
     pending_move: Option<PendingMoveSavedState>,
 }
 
-impl std::fmt::Debug for OnChainPotatoHandler {
+impl std::fmt::Debug for OnChainGameHandler {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(formatter, "OnChainPotatoHandler(..)")
+        write!(formatter, "OnChainGameHandler(..)")
     }
 }
 
-impl OnChainPotatoHandler {
+impl OnChainGameHandler {
     pub fn new(
         have_potato: PotatoState,
         channel_timeout: Timeout,
@@ -66,7 +66,7 @@ impl OnChainPotatoHandler {
         game_action_queue: VecDeque<GameAction>,
         game_map: HashMap<CoinString, OnChainGameState>,
     ) -> Self {
-        OnChainPotatoHandler {
+        OnChainGameHandler {
             have_potato,
             channel_timeout,
             player_ch,
@@ -155,7 +155,7 @@ impl OnChainPotatoHandler {
     }
 }
 
-impl PotatoHandlerImpl for OnChainPotatoHandler {
+impl PotatoHandlerImpl for OnChainGameHandler {
     fn channel_handler(&self) -> &ChannelHandler {
         &self.player_ch
     }

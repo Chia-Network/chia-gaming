@@ -27,7 +27,7 @@ use crate::common::types::{
     SpendBundle, Timeout,
 };
 use crate::potato_handler::effects::{Effect, GameNotification};
-use crate::potato_handler::on_chain::OnChainPotatoHandler;
+use crate::potato_handler::on_chain::OnChainGameHandler;
 use crate::shutdown::get_conditions_with_channel_handler;
 
 use crate::potato_handler::types::{
@@ -2262,7 +2262,7 @@ impl PotatoHandler {
         let mut swap_player_ch: Option<ChannelHandler> = None;
         swap(&mut self.channel_handler, &mut swap_player_ch);
         if let Some(channel_handler) = swap_player_ch {
-            let mut on_chain = OnChainPotatoHandler::new(
+            let mut on_chain = OnChainGameHandler::new(
                 PotatoState::Present,
                 self.channel_timeout.clone(),
                 channel_handler,
