@@ -925,7 +925,8 @@ optional fourth element of its result.
 | **Types & Utilities** | `src/common/` | `CoinString`, `PuzzleHash`, `Amount`, `Hash`, `AllocEncoder`, etc. |
 | **Referee** | `src/referee/` | Per-game state machine: moves, timeouts, slashes |
 | **Channel Handler** | `src/channel_handler/` | Channel/unroll/game coin management, balance tracking |
-| **Potato Handler** | `src/potato_handler/` | Turn-taking protocol, handshake, on-chain transitions |
+| **Potato Handler** | `src/potato_handler/` | Turn-taking protocol, handshake |
+| **On-Chain Game Handler** | `src/potato_handler/on_chain.rs` | Post-unroll dispute resolution: coin watching, timeouts, slashes (no potato) |
 | **Peer Container** | `src/peer_container.rs` | Synchronous test adapter (`GameCradle` trait) |
 | **Simulator** | `src/simulator/` | Block-level simulation for integration tests |
 
@@ -1121,6 +1122,16 @@ A redo is triggered when:
 - We sent a move that wasn't acknowledged before going on-chain
 - The unroll/preemption resolved to the state *before* that move
 
+Similarly, an **accept-timeout redo** is triggered when we sent an
+`AcceptTimeout` that wasn't acknowledged. This follows a parallel but distinct
+path: the `PotatoAcceptTimeout` entry in `cached_last_actions` produces a
+`RedoAcceptTimeout` action, which replays the timeout claim transaction against
+the actual on-chain coin rather than replaying a game move.
+
+A third case involves **in-flight proposal acceptances** (`ProposalAccepted`
+entries in `cached_last_actions`). These don't trigger a redo — if the game coin
+never materialized on-chain, the game is cancelled (`GameCancelled`).
+
 A redo is NOT needed when:
 - The preemption or timeout resolved to the latest state (our move was already
   included in the unroll data)
@@ -1129,21 +1140,32 @@ A redo is NOT needed when:
 ### Stale Cache After Peer Disconnect
 
 When `go_on_chain` is called, all incoming peer messages are black-holed (see
-[Peer Disconnect Invariant](#peer-disconnect-invariant)). If we sent moves
+[Peer Disconnect Invariant](#peer-disconnect-invariant)). If we sent actions
 (adding to `cached_last_actions`) but the peer's response — which would normally
-clear the move entries — arrives *after* the disconnect, the entries remain.
+clear the entries — arrives *after* the disconnect, the entries remain.
 This is expected and correct: the stale cache causes `set_state_for_coins` to
-detect redos are needed, which replays our unacknowledged moves on-chain.
+detect that redos or cancellations are needed, replaying our unacknowledged
+moves and timeout claims on-chain.
 
 ### Redo and User-Queued Moves Can Coexist
 
-When a user calls `make_move` after `go_on_chain`, the move is placed directly
-on `game_action_queue` without touching the potato or channel handler (since
-`initiated_on_chain` is true). During `finish_on_chain_transition`, stale
-`cached_last_actions` entries may also produce `RedoMove`s that are pushed to
-the *front* of the queue. This is correct: the redos replay previous
-unacknowledged moves, and the user's new move follows once the game state has
-caught up. They are different moves for different game states.
+There are two sources of on-chain actions after `go_on_chain`:
+
+- **Redo actions** (from `cached_last_actions`): moves or accept-timeouts we
+  already sent with the last potato but that weren't acknowledged before going
+  on-chain. These apply to games where **it was our turn and we acted**.
+- **User-queued actions** (from `game_action_queue`): moves the user queued
+  (via `make_move`) while waiting for the potato or after going on-chain. These
+  apply to games where **it was the opponent's turn** (so we couldn't have sent
+  anything yet), or actions queued after the transition.
+
+Because moves alternate, a single game cannot have entries in both lists — you
+can't have an unacknowledged move you sent (it was your turn) and a queued move
+waiting to send (it was their turn) for the same game. But with multiple games
+running simultaneously, some games may need redos while others have queued
+moves. Both are placed on `game_action_queue` and processed independently; any
+sequencing within a single game (e.g. redo a move then claim a timeout) is
+enforced by on-chain coin dependencies, not queue order.
 
 ---
 

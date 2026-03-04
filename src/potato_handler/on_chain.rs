@@ -458,7 +458,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 let mut on_chain_our_turn = is_my_turn;
                 if !is_my_turn {
                     if let Some(cached) = self.player_ch.take_cached_move_for_game(&game_id) {
-                        self.game_action_queue.push_front(GameAction::RedoMove(
+                        self.game_action_queue.push_back(GameAction::RedoMove(
                             game_id.clone(),
                             new_coin_id.clone(),
                             cached,
@@ -568,7 +568,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 // If we had a cached move, check if it's now stale.
                 if let Some(cached) = self.player_ch.take_cached_move_for_game(&game_id) {
                     if cached.match_puzzle_hash == puzzle_hash {
-                        self.game_action_queue.push_front(GameAction::RedoMove(
+                        self.game_action_queue.push_back(GameAction::RedoMove(
                             game_id.clone(),
                             new_coin_string.clone(),
                             cached,
@@ -897,7 +897,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
         if my_turn == Some(false) {
             debug!("{initial_potato} trying to do game action when not my turn {readable_move:?}");
             self.game_action_queue
-                .push_front(GameAction::Move(game_id, readable_move, entropy));
+                .push_back(GameAction::Move(game_id, readable_move, entropy));
             return Ok(Vec::new());
         }
 
