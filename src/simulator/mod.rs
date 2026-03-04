@@ -1,4 +1,4 @@
-#[cfg(feature = "sim-tests")]
+#[cfg(feature = "sim-server")]
 pub mod service;
 #[cfg(test)]
 pub mod tests;
