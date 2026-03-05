@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
-if [ -n "$1" ]; then
+if [ "$1" = "-o" ] && [ -n "$2" ]; then
+    export SIM_TEST_ONLY="$2"
+elif [ -n "$1" ]; then
     export SIM_TEST_FROM="$1"
 fi
 SECONDS=0

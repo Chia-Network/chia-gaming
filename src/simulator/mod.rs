@@ -34,8 +34,6 @@ use crate::test_support::calpoker::test_funs as calpoker_tests;
 #[cfg(test)]
 use crate::common::types::divmod::test_funs as divmod_tests;
 #[cfg(test)]
-use crate::games::calpoker::test_funs as calpoker_game_tests;
-#[cfg(test)]
 use crate::test_support::debug_game::test_funs as debug_game_tests;
 #[cfg(test)]
 use crate::test_support::peer::potato_handler::test_funs as potato_handler_tests;
@@ -742,7 +740,6 @@ pub fn run_simulation_tests() {
         divmod_tests(),
         standard_coin_tests(),
         chialisp_tests(),
-        calpoker_game_tests(),
         calpoker_validation_tests(),
         calpoker_handler_tests(),
         channel_handler_tests(),

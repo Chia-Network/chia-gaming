@@ -13,9 +13,10 @@ tests. It is intended as a reference for future sessions.
 manually is error-prone: you might forget `--features sim-tests`, forget
 `--nocapture`, or use `--filter` which hides output from other tests.
 
-- **`./cb.sh`** — Build with sim-tests feature. Passes extra args to cargo
-  (e.g. `./cb.sh --release`).
-- **`./ct.sh`** — Run all sim tests.
+- **`./cb.sh`** — Build the test binary without running tests. Passes extra
+  args to cargo (e.g. `./cb.sh --release`). Uses the same compilation profile
+  as `./ct.sh`, so running `./ct.sh` after `./cb.sh` does not recompile.
+- **`./ct.sh`** — Run sim tests.
   - `./ct.sh` — runs all tests in normal order. **This is the default.** Always
     run all tests with no filter. The full output includes `--nocapture` so you
     see all debug output, panics, and event dumps without needing a second run.
@@ -24,6 +25,8 @@ manually is error-prone: you might forget `--features sim-tests`, forget
     finishes right before where it started. Every test runs exactly once. Use
     this when debugging a specific failure: the test you care about runs first,
     then you confirm nothing else broke.
+  - `./ct.sh -o accept_finished` — runs **only** test(s) matching
+    `accept_finished`. Useful for isolating a single test's output or profiling.
   - If the argument doesn't match any test name, you get a clear error listing
     all available tests.
 
@@ -48,9 +51,9 @@ To start from a specific test (wraparound):
 SIM_TEST_FROM=accept_finished cargo test --lib --features sim-tests -- --nocapture
 ```
 
-To run a single test by name (useful for profiling):
+To run only matching test(s):
 ```bash
-SIM_TEST_ONLY=test_referee_play_debug_game_alice_slash cargo test --lib --features sim-tests -- --nocapture
+SIM_TEST_ONLY=accept_finished cargo test --lib --features sim-tests -- --nocapture
 ```
 
 - The full sim suite takes ~30s with parallelism on a modern laptop.
@@ -157,8 +160,8 @@ To disable a test, comment out the `res.push(...)` call in the relevant
 
 | Variable | Effect |
 |----------|--------|
-| `SIM_TEST_FROM=name` | Start the test rotation at the first test matching `name`, wrap around |
-| `SIM_TEST_ONLY=name` | Run only the single test matching `name` (useful for profiling) |
+| `SIM_TEST_FROM=name` | Start the test rotation at the first test matching `name`, wrap around (`./ct.sh name`) |
+| `SIM_TEST_ONLY=name` | Run only test(s) matching `name` (`./ct.sh -o name`) |
 | `SIM_TIMING=1` | Print detailed timing diagnostics for each simulation step (farm_block, new_block, push_tx, deliver_message) |
 | `RUST_LOG=debug` | Enable `log::debug!` output (normally suppressed) |
 

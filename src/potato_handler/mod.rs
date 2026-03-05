@@ -13,8 +13,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::channel_handler::game;
 use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::channel_handler::types::{
-    AcceptTransactionState, ChannelCoinSpendInfo, ChannelHandlerEnv,
-    ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, OnChainGameState, ReadableMove,
+    ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerInitiationResult,
+    ChannelHandlerPrivateKeys, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::{
@@ -2120,87 +2120,34 @@ impl PotatoHandler {
                         reward_coin: reward_coin.clone(),
                     },
                 );
+            }
 
-                // Stale unroll: per-game matching.  For each on-chain game
-                // coin, check current PH+amount first, then cached prior
-                // PH+amount for redo, else the game is errored.
-                let (game_map_inner, errored_games) =
-                    player_ch.set_state_for_coins(env, unroll_coin, &created_coins)?;
+            let game_map_inner =
+                player_ch.set_state_for_coins(env, unroll_coin, &created_coins)?;
 
-                let surviving_ids: HashSet<GameID> = game_map_inner
-                    .values()
-                    .map(|def| def.game_id.clone())
-                    .chain(errored_games.iter().map(|(gid, _)| gid.clone()))
-                    .collect();
-                for missing_id in pre_game_ids.difference(&surviving_ids) {
-                    if in_flight_proposal_ids.contains(missing_id) {
-                        effects.push(Effect::GameCancelled {
-                            id: missing_id.clone(),
-                        });
+            let surviving_ids: HashSet<GameID> = game_map_inner
+                .values()
+                .map(|def| def.game_id.clone())
+                .collect();
+            for missing_id in pre_game_ids.difference(&surviving_ids) {
+                if in_flight_proposal_ids.contains(missing_id) {
+                    effects.push(Effect::GameCancelled {
+                        id: missing_id.clone(),
+                    });
+                } else {
+                    let reason = if is_stale {
+                        "live game absent from stale unroll"
                     } else {
-                        effects.push(Effect::GameError {
-                            id: missing_id.clone(),
-                            reason: "live game absent from stale unroll".to_string(),
-                        });
-                    }
-                }
-
-                for (game_id, _coin) in &errored_games {
+                        "live game absent from unroll"
+                    };
                     effects.push(Effect::GameError {
-                        id: game_id.clone(),
-                        reason: "game coin at unrecognized state after stale unroll".to_string(),
+                        id: missing_id.clone(),
+                        reason: reason.to_string(),
                     });
                 }
-
-                (game_map_inner, reward_coin)
-            } else {
-                // Current or redo case.  Games matched by amount but not
-                // by PH are still live (e.g. the other player's view of
-                // a redo state); keep them in the game_map with our_turn
-                // based on the live game's perspective.
-                let (mut game_map_inner, errored_games) =
-                    player_ch.set_state_for_coins(env, unroll_coin, &created_coins)?;
-
-                for (game_id, coin_id) in errored_games {
-                    if let Some(lg) = player_ch.find_live_game(&game_id) {
-                        let game_timeout = lg.get_game_timeout();
-                        game_map_inner.insert(
-                            coin_id,
-                            OnChainGameState {
-                                game_id,
-                                puzzle_hash: PuzzleHash::default(),
-                                our_turn: false,
-                                state_number: player_ch.get_state_number(),
-                                accept: AcceptTransactionState::Waiting,
-                                pending_slash_amount: None,
-                                cheating_move_mover_share: None,
-                                accepted: false,
-                                notification_sent: false,
-                                game_timeout,
-                            },
-                        );
-                    }
-                }
-
-                let surviving_ids: HashSet<GameID> = game_map_inner
-                    .values()
-                    .map(|def| def.game_id.clone())
-                    .collect();
-                for missing_id in pre_game_ids.difference(&surviving_ids) {
-                    if in_flight_proposal_ids.contains(missing_id) {
-                        effects.push(Effect::GameCancelled {
-                            id: missing_id.clone(),
-                        });
-                    } else {
-                        effects.push(Effect::GameError {
-                            id: missing_id.clone(),
-                            reason: "live game absent from unroll".to_string(),
-                        });
-                    }
-                }
-
-                (game_map_inner, reward_coin)
             }
+
+            (game_map_inner, reward_coin)
         };
 
         if game_map.is_empty() {

@@ -1,5 +1,3 @@
-pub mod calpoker;
-
 use clvm_traits::{clvm_curried_args, ToClvm};
 use clvm_utils::CurriedProgram;
 

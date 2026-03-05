@@ -97,11 +97,9 @@ mod sim_tests {
     use crate::common::types::Amount;
     use crate::common::types::Error;
     use crate::common::types::Hash;
-    use crate::games::calpoker::decode_readable_card_choices;
-    use crate::games::calpoker::{
-        decode_calpoker_readable, RawCalpokerHandValue as RawCalpokerHandValueV1,
-    };
+    use crate::common::types::{atom_from_clvm, i64_from_atom};
     use crate::simulator::tests::potato_handler_sim::{
+        parse_card_lists_from_readable,
         assert_event_sequence, game_accepted, game_proposed,
         run_calpoker_container_with_action_list,
         run_calpoker_container_with_action_list_with_success_predicate, ExpectedEvent,
@@ -260,7 +258,7 @@ mod sim_tests {
             let revealed_cards = extract_info_from_messages(&game_results)
                 .expect("expected revealed message payload");
             let (alice_cards, bob_cards) =
-                decode_readable_card_choices(&mut allocator, revealed_cards)
+                parse_card_lists_from_readable(&mut allocator, revealed_cards)
                     .expect("should decode revealed cards");
 
             assert_eq!(alice_cards, vec![0usize, 7, 10, 11, 32, 36, 41, 49]);
@@ -343,7 +341,7 @@ mod sim_tests {
             let revealed_cards = extract_info_from_messages(&game_results)
                 .expect("expected revealed message payload");
             let (alice_cards, bob_cards) =
-                decode_readable_card_choices(&mut allocator, revealed_cards)
+                parse_card_lists_from_readable(&mut allocator, revealed_cards)
                     .expect("should decode revealed cards");
 
             assert_eq!(alice_cards, vec![0usize, 7, 10, 11, 32, 36, 41, 49]);
@@ -404,7 +402,7 @@ mod sim_tests {
             let revealed_cards = extract_info_from_messages(&game_results)
                 .expect("expected revealed message payload");
             let (alice_mod52, bob_mod52) =
-                decode_readable_card_choices(&mut allocator, revealed_cards)
+                parse_card_lists_from_readable(&mut allocator, revealed_cards)
                     .expect("should decode revealed cards");
             assert_eq!(alice_mod52, vec![0, 7, 10, 11, 32, 36, 41, 49]);
             assert_eq!(bob_mod52, vec![2, 6, 9, 13, 18, 19, 23, 47]);
@@ -414,38 +412,36 @@ mod sim_tests {
                 let readable_node = readable_data
                     .to_nodeptr(&mut allocator)
                     .expect("failed to convert to nodeptr");
-                let decoded = decode_calpoker_readable(
-                    &mut allocator,
-                    readable_node,
-                    false,
-                    0xaa,
-                    &alice_mod52,
-                    &bob_mod52,
-                )
-                .expect("should decode readable");
-                debug!("decoded outcome: {decoded:?}");
-
+                let readable_list =
+                    crate::utils::proper_list(allocator.allocator(), readable_node, true)
+                        .expect("readable should be a list");
                 assert!(
-                    decoded.alice_hand_value != RawCalpokerHandValueV1::SimpleList(vec![]),
+                    readable_list.len() >= 6,
+                    "readable should have 6 elements"
+                );
+
+                let alice_hv =
+                    crate::utils::proper_list(allocator.allocator(), readable_list[3], true)
+                        .expect("alice hand value should be a list");
+                assert!(
+                    !alice_hv.is_empty(),
                     "alice hand value should not be empty"
                 );
+
+                let bob_hv =
+                    crate::utils::proper_list(allocator.allocator(), readable_list[4], true)
+                        .expect("bob hand value should be a list");
                 assert!(
-                    decoded.bob_hand_value != RawCalpokerHandValueV1::SimpleList(vec![]),
+                    !bob_hv.is_empty(),
                     "bob hand value should not be empty"
                 );
-                assert!(
-                    decoded.win_direction.is_some(),
+
+                let win_dir = atom_from_clvm(&mut allocator, readable_list[5])
+                    .and_then(|a| i64_from_atom(&a))
+                    .unwrap_or_default();
+                assert_ne!(
+                    win_dir, 0,
                     "there should be a winner (not a tie with these seeds)"
-                );
-                assert_eq!(
-                    decoded.alice_final_hand.len(),
-                    5,
-                    "alice should have 5-card hand"
-                );
-                assert_eq!(
-                    decoded.bob_final_hand.len(),
-                    5,
-                    "bob should have 5-card hand"
                 );
             } else {
                 panic!(

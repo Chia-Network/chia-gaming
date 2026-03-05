@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use clvm_traits::ToClvm;
+use clvmr::NodePtr;
 use log::debug;
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
@@ -16,8 +17,9 @@ use crate::common::types::{
     AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, IntoErr, Node,
     PrivateKey, Program, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
-use crate::games::calpoker::{decode_calpoker_readable, decode_readable_card_choices};
+use crate::common::types::{atom_from_clvm, i64_from_atom, usize_from_atom};
 use crate::games::poker_collection;
+use crate::utils::proper_list;
 use crate::peer_container::{
     report_coin_changes_to_peer, FullCoinSetAdapter, GameCradle, MessagePeerQueue, MessagePipe,
     SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
@@ -1732,6 +1734,51 @@ fn get_balances_from_outcome(outcome: &GameRunOutcome) -> Result<(u64, u64), Err
     Ok((p1_balance, p2_balance))
 }
 
+pub fn parse_card_lists_from_readable(
+    allocator: &mut AllocEncoder,
+    readable: ReadableMove,
+) -> Result<(Vec<usize>, Vec<usize>), Error> {
+    let nodeptr = readable.to_nodeptr(allocator)?;
+    let list = proper_list(allocator.allocator(), nodeptr, true)
+        .ok_or_else(|| Error::StrErr("expected list of card lists".to_string()))?;
+    if list.len() != 2 {
+        return Err(Error::StrErr(format!(
+            "expected 2 card lists, got {}",
+            list.len()
+        )));
+    }
+    let mut result = Vec::new();
+    for &card_list_node in &list {
+        let cards: Vec<usize> = proper_list(allocator.allocator(), card_list_node, true)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|n| atom_from_clvm(allocator, *n).and_then(|a| usize_from_atom(&a)))
+            .filter(|n| *n < 52)
+            .collect();
+        result.push(cards);
+    }
+    Ok((result.remove(0), result.remove(0)))
+}
+
+fn parse_win_direction_from_readable(
+    allocator: &mut AllocEncoder,
+    readable_node: NodePtr,
+    is_alice: bool,
+) -> Result<i64, Error> {
+    let list = proper_list(allocator.allocator(), readable_node, true)
+        .ok_or_else(|| Error::StrErr("expected readable list".to_string()))?;
+    if list.len() < 6 {
+        return Err(Error::StrErr("readable too short".to_string()));
+    }
+    let mut win_dir = atom_from_clvm(allocator, list[5])
+        .and_then(|a| i64_from_atom(&a))
+        .unwrap_or_default();
+    if is_alice {
+        win_dir = -win_dir;
+    }
+    Ok(win_dir)
+}
+
 fn check_calpoker_economic_result(
     allocator: &mut AllocEncoder,
     p0_view_of_cards: &(GameID, usize, ReadableMove, Amount),
@@ -1752,57 +1799,36 @@ fn check_calpoker_economic_result(
         }
     }
 
-    // Decode card choices from both players' views and verify they match.
-    let alice_cards = decode_readable_card_choices(allocator, p0_view_of_cards.2.clone())
+    let alice_cards = parse_card_lists_from_readable(allocator, p0_view_of_cards.2.clone())
         .expect("should get cards from p0 view");
-    let bob_cards = decode_readable_card_choices(allocator, p1_view_of_cards.2.clone())
+    let bob_cards = parse_card_lists_from_readable(allocator, p1_view_of_cards.2.clone())
         .expect("should get cards from p1 view");
     assert_eq!(
         alice_cards, bob_cards,
         "both players should see the same dealt cards"
     );
 
-    let (alice_initial, bob_initial) = &alice_cards;
-
-    // Decode Bob's outcome to get win direction for balance verification.
-    // Use 0xaa as Bob's discard bitfield (matching the deterministic test fixture).
     let bob_outcome_node = bob_outcome_move
         .2
         .to_nodeptr(allocator)
         .expect("should work");
-    let bob_outcome = decode_calpoker_readable(
-        allocator,
-        bob_outcome_node,
-        false, // bob's perspective
-        0xaa,
-        alice_initial,
-        bob_initial,
-    )
-    .expect("should decode bob outcome");
+    let bob_win_dir =
+        parse_win_direction_from_readable(allocator, bob_outcome_node, false)
+            .expect("should parse bob win direction");
 
-    // Also decode Alice's outcome for debugging.
     let alice_outcome_node = alice_outcome_move
         .2
         .to_nodeptr(allocator)
         .expect("should work");
-    let alice_outcome = decode_calpoker_readable(
-        allocator,
-        alice_outcome_node,
-        true, // alice's perspective
-        0x55,
-        alice_initial,
-        bob_initial,
-    )
-    .expect("should decode alice outcome");
+    let alice_win_dir =
+        parse_win_direction_from_readable(allocator, alice_outcome_node, true)
+            .expect("should parse alice win direction");
 
-    debug!("alice outcome {alice_outcome:?}");
-    debug!("bob outcome {bob_outcome:?}");
+    debug!("alice win_dir={alice_win_dir} bob win_dir={bob_win_dir}");
     debug!("p1 balance {p1_balance:?} p2 {p2_balance:?}");
-    if bob_outcome.raw_win_direction == 1 {
-        // Bob wins: p2 (Bob) should have 200 more than p1 (Alice)
+    if bob_win_dir == 1 {
         assert_eq!(p1_balance + 200, p2_balance);
-    } else if bob_outcome.raw_win_direction == -1 {
-        // Alice wins: p1 (Alice) should have 200 more than p2 (Bob)
+    } else if bob_win_dir == -1 {
         assert_eq!(p2_balance + 200, p1_balance);
     } else {
         assert_eq!(p2_balance, p1_balance);
@@ -2938,15 +2964,18 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     res.push(("test_notification_we_timed_out_during_redo", &|| {
         let mut allocator = AllocEncoder::new();
 
-        // Keep first 3 calpoker moves (alice commit, bob seed, alice reveal).
-        // After alice's reveal, cached_last_action is set. GoOnChain immediately
-        // so go_on_chain runs before the response clears cached_last_action.
-        // The unroll uses the previous fully-signed state (before alice's reveal),
-        // so it's alice's turn on chain and she needs to redo her reveal.
-        let mut moves = prefix_test_moves(&mut allocator).to_vec();
-        moves.truncate(3);
+        // Play alice commit and bob seed normally.  Nerf Alice's messages
+        // before the reveal so the reveal potato never reaches Bob.
+        // hs.spend stays at pre-reveal (post-seed) state.  Alice's reveal
+        // is cached for redo.  The unroll is NOT stale from Bob's view.
+        let all_moves = prefix_test_moves(&mut allocator);
+        let mut moves = Vec::new();
+        moves.push(all_moves[0].clone()); // alice commit
+        moves.push(all_moves[1].clone()); // bob seed
+        moves.push(GameAction::NerfMessages(0));
+        moves.push(all_moves[2].clone()); // alice reveal — potato dropped
 
-        // Go on chain right after alice's reveal; she still has cached_last_action.
+        // Go on chain; hs.spend is pre-reveal.
         moves.push(GameAction::GoOnChain(0));
         // Nerf bob so he can't interfere during the unroll process.
         moves.push(GameAction::NerfTransactions(1));
@@ -3004,10 +3033,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::GameMessage,
-                ExpectedEvent::OpponentMoved {
-                    mover_share: Amount::new(0),
-                },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
@@ -3021,16 +3046,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         &|| {
             let mut allocator = AllocEncoder::new();
 
-            // 4 calpoker moves: alice commit(0), bob seed(1), alice reveal(2),
-            // bob discard(3).  GoOnChain immediately after bob's discard so bob
-            // still has cached_last_action (the go_on_chain check fires before
-            // his idle processes Alice's ack).  The unroll lands before bob's
-            // move 3 (after alice's move 2), making it bob's turn on-chain.
-            // Bob redoes move 3.  After the redo it's alice's turn (move 4).
-            // Alice is nerfed so she can't play and times out.
-            let mut moves = prefix_test_moves(&mut allocator).to_vec();
-            moves.truncate(4);
-            // GoOnChain right after bob's last move so cached_last_action is set.
+            // 3 calpoker moves normally (commit, seed, reveal), then nerf
+            // Bob's messages before his discard so Alice never receives it.
+            // Bob's discard is cached for redo.  The unroll is NOT stale from
+            // Alice's view (she never got the discard).  Bob redoes move 3
+            // on-chain.  After the redo it's alice's turn (move 4).  Alice
+            // is nerfed so she can't play and times out.
+            let all_moves = prefix_test_moves(&mut allocator);
+            let mut moves = Vec::new();
+            moves.push(all_moves[0].clone()); // alice commit
+            moves.push(all_moves[1].clone()); // bob seed
+            moves.push(all_moves[2].clone()); // alice reveal
+            moves.push(GameAction::NerfMessages(1));
+            moves.push(all_moves[3].clone()); // bob discard — potato dropped
             moves.push(GameAction::GoOnChain(1));
             // Nerf alice so she can't respond on-chain after bob's redo.
             moves.push(GameAction::NerfTransactions(0));
@@ -3062,9 +3090,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 game_accepted(),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
-                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
             ], "bob_redo_alice_timeout p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
@@ -4117,16 +4145,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     res.push(("test_go_on_chain_then_move_queued_and_replayed", &|| {
         let mut allocator = AllocEncoder::new();
 
-        // After moves 0 (alice commit) and 1 (bob seed), it's alice's
-        // turn for move 2 (reveal).  GoOnChainThenMove calls go_on_chain
-        // and then make_move in the same tick, before any blockchain
-        // events.  The move must be queued (initiated_on_chain blocks
-        // off-chain execution) and replayed once on-chain.  Bob is
-        // nerfed so he can't respond; alice times him out.
+        // Nerf Alice's messages so her commit potato never reaches Bob.
+        // Alice's local state advances (commit cached for redo) but
+        // hs.spend stays pre-commit because Bob never acknowledged.
+        // GoOnChainThenMove broadcasts the pre-commit unroll and queues
+        // the reveal.  The unroll is NOT stale from Bob's perspective
+        // (he never got the commit).  Alice redoes her commit on-chain,
+        // then it's Bob's turn for the seed.  Bob is nerfed so he
+        // times out.  The queued reveal never fires (game ends first).
         let all_moves = prefix_test_moves(&mut allocator);
         let mut moves = Vec::new();
-        moves.push(all_moves[0].clone()); // alice commit
-        moves.push(all_moves[1].clone()); // bob seed
+        moves.push(GameAction::WaitBlocks(5, 0));
+        moves.push(GameAction::NerfMessages(0));
+        moves.push(all_moves[0].clone()); // alice commit — potato dropped
         moves.push(GameAction::GoOnChainThenMove(0));
         moves.push(all_moves[2].clone()); // alice reveal — consumed by GoOnChainThenMove
         moves.push(GameAction::NerfTransactions(1));
@@ -4181,11 +4212,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &[
                 game_proposed(),
                 game_accepted(),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
             ],
             "go_on_chain_then_move p1",

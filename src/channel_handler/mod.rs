@@ -5,7 +5,7 @@ pub mod runner;
 pub mod types;
 
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use rand::prelude::*;
@@ -1587,34 +1587,23 @@ impl ChannelHandler {
         self.cached_last_actions.push(entry);
     }
 
-    // Reset our state so that we generate the indicated puzzles from the live games.
     /// After an unroll completes, map on-chain game coin puzzle hashes to the
-    /// corresponding live games.  No rewinding.
+    /// corresponding live games.
     ///
-    /// Match game coins to live games by amount, then determine the action:
-    ///  (a) coin PH matches a `cached_last_actions` entry's `match_puzzle_hash`
-    ///      → we need to replay our cached move on this coin
-    ///  (b) coin PH matches the live game's `last_referee_puzzle_hash`
-    ///      → game is already at the latest state, nothing to redo
-    ///  (c) coin PH matches neither → game is at an unrecognized state
+    /// Each game has up to two known puzzle hashes:
+    ///  - `last_referee_puzzle_hash` (the current/latest state)
+    ///  - a cached move's `match_puzzle_hash` (the pre-move state needing redo)
     ///
-    /// Returns `(game_map, errored_games)` where `errored_games` contains
-    /// games matched by amount but whose PH is unrecognized (e.g. from a
-    /// stale unroll).
+    /// Matching is strictly by puzzle hash.  Each game matches at most one
+    /// coin.  Games with no PH match will not appear in the returned map;
+    /// the caller is responsible for emitting terminal errors for them.
     pub fn set_state_for_coins<R: Rng>(
         &mut self,
         _env: &mut ChannelHandlerEnv<R>,
         unroll_coin: &CoinString,
         coins: &[(PuzzleHash, Amount)],
-    ) -> Result<
-        (
-            HashMap<CoinString, OnChainGameState>,
-            Vec<(GameID, CoinString)>,
-        ),
-        Error,
-    > {
+    ) -> Result<HashMap<CoinString, OnChainGameState>, Error> {
         let mut res = HashMap::new();
-        let mut errored_games: Vec<(GameID, CoinString)> = Vec::new();
         let unroll_coin_id = unroll_coin.to_coin_id();
 
         let cached_moves: Vec<(GameID, PuzzleHash)> = self
@@ -1639,65 +1628,81 @@ impl ChannelHandler {
             coins.len(),
         );
 
+        let mut matched_game_ids: HashSet<GameID> = HashSet::new();
+
         for (coin_ph, coin_amt) in coins.iter() {
             let coin_id = CoinString::from_parts(&unroll_coin_id, coin_ph, coin_amt);
 
-            let live_match = self.live_games.iter().find(|g| g.get_amount() == *coin_amt);
-            if let Some(live_game) = live_match {
-                let needs_redo = cached_moves
-                    .iter()
-                    .any(|(gid, mph)| *gid == live_game.game_id && *mph == *coin_ph);
-                let is_latest = live_game.last_referee_puzzle_hash == *coin_ph;
-                log::debug!(
-                    "set_state_for_coins: coin_ph={coin_ph:?} coin_amt={coin_amt:?} live_game_id={:?} needs_redo={needs_redo} is_latest={is_latest} last_ref_ph={:?}",
-                    live_game.game_id,
-                    live_game.last_referee_puzzle_hash,
-                );
-                let game_timeout = live_game.get_game_timeout();
+            let live_latest = self.live_games.iter().find(|g| {
+                !matched_game_ids.contains(&g.game_id)
+                    && g.last_referee_puzzle_hash == *coin_ph
+            });
+            let live_redo = if live_latest.is_none() {
+                cached_moves.iter().find_map(|(gid, mph)| {
+                    if *mph == *coin_ph && !matched_game_ids.contains(gid) {
+                        self.live_games.iter().find(|g| g.game_id == *gid)
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                None
+            };
 
-                if is_latest {
-                    res.insert(
-                        coin_id,
-                        OnChainGameState {
-                            game_id: live_game.game_id.clone(),
-                            puzzle_hash: coin_ph.clone(),
-                            our_turn: live_game.is_my_turn(),
-                            state_number: self.current_state_number,
-                            accept: AcceptTransactionState::Waiting,
-                            pending_slash_amount: None,
-                            cheating_move_mover_share: None,
-                            accepted: false,
-                            notification_sent: false,
-                            game_timeout,
-                        },
-                    );
-                } else if needs_redo {
-                    res.insert(
-                        coin_id,
-                        OnChainGameState {
-                            game_id: live_game.game_id.clone(),
-                            puzzle_hash: coin_ph.clone(),
-                            our_turn: true,
-                            state_number: self.current_state_number,
-                            accept: AcceptTransactionState::Waiting,
-                            pending_slash_amount: None,
-                            cheating_move_mover_share: None,
-                            accepted: false,
-                            notification_sent: false,
-                            game_timeout,
-                        },
-                    );
-                } else {
-                    errored_games.push((live_game.game_id.clone(), coin_id));
-                }
+            if let Some(live_game) = live_latest {
+                log::debug!(
+                    "set_state_for_coins: coin_ph={coin_ph:?} coin_amt={coin_amt:?} → latest match game_id={:?} (amount_ok={})",
+                    live_game.game_id,
+                    live_game.get_amount() == *coin_amt,
+                );
+                matched_game_ids.insert(live_game.game_id.clone());
+                res.insert(
+                    coin_id,
+                    OnChainGameState {
+                        game_id: live_game.game_id.clone(),
+                        puzzle_hash: coin_ph.clone(),
+                        our_turn: live_game.is_my_turn(),
+                        state_number: self.current_state_number,
+                        accept: AcceptTransactionState::Waiting,
+                        pending_slash_amount: None,
+                        cheating_move_mover_share: None,
+                        accepted: false,
+                        notification_sent: false,
+                        game_timeout: live_game.get_game_timeout(),
+                    },
+                );
                 continue;
             }
 
-            // Try pending_accept games, matching by amount and PH.
+            if let Some(live_game) = live_redo {
+                log::debug!(
+                    "set_state_for_coins: coin_ph={coin_ph:?} coin_amt={coin_amt:?} → redo match game_id={:?} (amount_ok={})",
+                    live_game.game_id,
+                    live_game.get_amount() == *coin_amt,
+                );
+                matched_game_ids.insert(live_game.game_id.clone());
+                res.insert(
+                    coin_id,
+                    OnChainGameState {
+                        game_id: live_game.game_id.clone(),
+                        puzzle_hash: coin_ph.clone(),
+                        our_turn: true,
+                        state_number: self.current_state_number,
+                        accept: AcceptTransactionState::Waiting,
+                        pending_slash_amount: None,
+                        cheating_move_mover_share: None,
+                        accepted: false,
+                        notification_sent: false,
+                        game_timeout: live_game.get_game_timeout(),
+                    },
+                );
+                continue;
+            }
+
             let pending_match = self
                 .pending_accept_timeouts
                 .iter()
-                .find(|p| p.get_amount() == *coin_amt && p.last_referee_puzzle_hash == *coin_ph);
+                .find(|p| p.last_referee_puzzle_hash == *coin_ph && p.get_amount() == *coin_amt);
             if let Some(pending) = pending_match {
                 res.insert(
                     coin_id,
@@ -1717,17 +1722,20 @@ impl ChannelHandler {
                 continue;
             }
 
-            // Try pending_accept games by amount only (stale unroll case).
-            let pending_amt_match = self
-                .pending_accept_timeouts
-                .iter()
-                .find(|p| p.get_amount() == *coin_amt);
-            if let Some(pending) = pending_amt_match {
-                errored_games.push((pending.game_id.clone(), coin_id));
+            log::debug!(
+                "set_state_for_coins: coin_ph={coin_ph:?} coin_amt={coin_amt:?} → NO MATCH among {} live games and {} pending",
+                self.live_games.len(),
+                self.pending_accept_timeouts.len(),
+            );
+            for g in &self.live_games {
+                log::debug!(
+                    "  live game {:?}: last_ref_ph={:?} amount={:?}",
+                    g.game_id, g.last_referee_puzzle_hash, g.get_amount(),
+                );
             }
         }
 
-        Ok((res, errored_games))
+        Ok(res)
     }
 
     pub fn game_is_my_turn(&self, game_id: &GameID) -> Option<bool> {
