@@ -914,7 +914,7 @@ impl ChannelHandler {
     }
 
     /// Mutate state for accepting a proposal. Does NOT finalize signatures.
-    pub fn send_accept_proposal(&mut self, game_id: &GameID) -> Result<(), Error> {
+    fn accept_proposal_inner(&mut self, game_id: &GameID) -> Result<(), Error> {
         let idx = self
             .proposed_games
             .iter()
@@ -937,10 +937,6 @@ impl ChannelHandler {
             self.my_out_of_game_balance.checked_sub(&proposal.my_contribution)?;
         self.their_out_of_game_balance =
             self.their_out_of_game_balance.checked_sub(&proposal.their_contribution)?;
-
-        self.push_cached_action(CachedPotatoRegenerateLastHop::ProposalAccepted(
-            game_id.clone(),
-        ));
 
         let live_game = LiveGame::new(
             proposal.game_id.clone(),
@@ -953,40 +949,17 @@ impl ChannelHandler {
         Ok(())
     }
 
+    pub fn send_accept_proposal(&mut self, game_id: &GameID) -> Result<(), Error> {
+        self.accept_proposal_inner(game_id)?;
+        self.push_cached_action(CachedPotatoRegenerateLastHop::ProposalAccepted(
+            game_id.clone(),
+        ));
+        Ok(())
+    }
+
     /// Apply a received accept-proposal without verifying signatures.
     pub fn apply_received_accept_proposal(&mut self, game_id: &GameID) -> Result<(), Error> {
-        let idx = self
-            .proposed_games
-            .iter()
-            .position(|p| p.game_id == *game_id)
-            .ok_or_else(|| Error::StrErr(format!("no proposal with id {game_id:?}")))?;
-        let proposal = self.proposed_games.remove(idx);
-
-        if proposal.my_contribution.clone() > self.my_out_of_game_balance
-            || proposal.their_contribution.clone() > self.their_out_of_game_balance
-        {
-            self.proposed_games.insert(idx, proposal);
-            return Err(Error::StrErr(
-                "insufficient balance to accept proposal".to_string(),
-            ));
-        }
-
-        self.my_allocated_balance += proposal.my_contribution.clone();
-        self.their_allocated_balance += proposal.their_contribution.clone();
-        self.my_out_of_game_balance =
-            self.my_out_of_game_balance.checked_sub(&proposal.my_contribution)?;
-        self.their_out_of_game_balance =
-            self.their_out_of_game_balance.checked_sub(&proposal.their_contribution)?;
-
-        let live_game = LiveGame::new(
-            proposal.game_id.clone(),
-            proposal.initial_puzzle_hash,
-            proposal.referee,
-            proposal.my_contribution,
-            proposal.their_contribution,
-        );
-        self.live_games.push(live_game);
-        Ok(())
+        self.accept_proposal_inner(game_id)
     }
 
     /// Mutate state for cancelling a proposal. Does NOT finalize signatures.

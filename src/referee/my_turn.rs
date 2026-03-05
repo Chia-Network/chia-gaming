@@ -11,12 +11,13 @@ use crate::channel_handler::game_handler::{
 use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo};
 
-use crate::common::standard_coin::{sign_reward_payout, ChiaIdentity};
+use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, Error, Hash, Program, ProgramRef, PublicKey, Puzzle, PuzzleHash,
     Sha256tree,
 };
 use crate::referee::their_turn::{TheirTurnReferee, TheirTurnRefereeGameState};
+use crate::referee::referee_initial_setup;
 use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs,
     OnChainRefereeMoveData, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
@@ -187,80 +188,37 @@ impl MyTurnReferee {
         state_number: usize,
     ) -> Result<(Self, PuzzleHash), Error> {
         debug!("referee maker: game start {:?}", game_start_info);
-        let initial_move = GameMoveStateInfo {
-            mover_share: game_start_info.initial_mover_share.clone(),
-            move_made: game_start_info.initial_move.clone(),
-            max_move_size: game_start_info.initial_max_move_size,
-        };
-        let my_turn = game_start_info.game_handler.is_my_turn();
-        debug!("referee maker: my_turn {my_turn}");
-
-        let fixed_info = Rc::new(RMFixed {
-            referee_coin_puzzle,
-            referee_coin_puzzle_hash: referee_coin_puzzle_hash.clone(),
-            their_referee_pubkey: their_pubkey.clone(),
-            their_reward_payout_signature: their_reward_payout_signature.clone(),
-            my_reward_payout_signature: sign_reward_payout(
-                &my_identity.private_key,
-                reward_puzzle_hash,
-            ),
-            reward_puzzle_hash: reward_puzzle_hash.clone(),
-            their_reward_puzzle_hash: their_reward_puzzle_hash.clone(),
-            my_identity: my_identity.clone(),
-            timeout: game_start_info.timeout.clone(),
-            amount: game_start_info.amount.clone(),
-            nonce,
-            agg_sig_me_additional_data: agg_sig_me_additional_data.clone(),
-        });
-
-        let ip = game_start_info.initial_validation_program.clone();
-        let validation_info_hash = ValidationInfo::new_state_update(
+        let setup = referee_initial_setup(
             allocator,
-            ip.clone(),
-            game_start_info.initial_state.p(),
-        );
-        let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
-            &fixed_info,
-            &GameMoveDetails {
-                basic: initial_move.clone(),
-                validation_info_hash: validation_info_hash.hash().clone(),
-            },
-            None,
-            ip.clone(),
-            my_turn,
-        ));
-        if my_turn {
-            game_assert_eq!(
-                fixed_info.my_identity.public_key,
-                ref_puzzle_args.mover_pubkey,
-                "MyTurnReferee::new: my_turn but mover_pubkey != my pubkey"
-            );
-        } else {
-            game_assert_eq!(
-                fixed_info.their_referee_pubkey,
-                ref_puzzle_args.mover_pubkey,
-                "MyTurnReferee::new: their_turn but mover_pubkey != their pubkey"
-            );
-        }
-        let handler = game_start_info.game_handler.clone();
+            referee_coin_puzzle,
+            referee_coin_puzzle_hash,
+            game_start_info,
+            my_identity,
+            their_pubkey,
+            their_reward_puzzle_hash,
+            their_reward_payout_signature,
+            reward_puzzle_hash,
+            nonce,
+            agg_sig_me_additional_data,
+        )?;
+        debug!("referee maker: my_turn {}", setup.my_turn);
+
         let state = Rc::new(MyTurnRefereeGameState::Initial {
             initial_state: game_start_info.initial_state.p(),
-            initial_puzzle_args: ref_puzzle_args.clone(),
-            game_handler: handler,
+            initial_puzzle_args: setup.ref_puzzle_args,
+            game_handler: game_start_info.game_handler.clone(),
         });
-        let puzzle_hash =
-            curry_referee_puzzle_hash(allocator, &referee_coin_puzzle_hash, &ref_puzzle_args)?;
 
         Ok((
             MyTurnReferee {
-                fixed: fixed_info,
+                fixed: setup.fixed,
                 finished: false,
                 state,
                 state_number,
                 parent: None,
                 enable_cheating: None,
             },
-            puzzle_hash,
+            setup.puzzle_hash,
         ))
     }
 
