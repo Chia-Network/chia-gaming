@@ -303,7 +303,6 @@ impl Referee {
         allocator: &mut AllocEncoder,
         details: &GameMoveDetails,
         state_number: usize,
-        coin: Option<&CoinString>,
     ) -> Result<(Option<Rc<Referee>>, TheirTurnMoveResult), Error> {
         debug!("their_turn_move_off_chain: state={}", state_number);
         let (new_self, result) = match self {
@@ -313,7 +312,7 @@ impl Referee {
                 ));
             }
             Referee::TheirTurn(t) => {
-                t.their_turn_move_off_chain(allocator, details, state_number, coin)?
+                t.their_turn_move_off_chain(allocator, details, state_number)?
             }
         };
 

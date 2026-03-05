@@ -1129,12 +1129,10 @@ impl ChannelHandler {
         }
         let state_number = self.current_state_number();
 
-        let coin_string = self.state_channel.coin.clone();
         let their_move_result = self.live_games[game_idx].internal_their_move(
             env.allocator,
             game_move,
             state_number,
-            Some(&coin_string),
         )?;
 
         let (readable_move, message, mover_share) = match their_move_result.original {
@@ -1840,12 +1838,8 @@ impl ChannelHandler {
         let game_idx = self.get_game_by_id(game_id)?;
 
         let last_puzzle_hash = self.live_games[game_idx].last_puzzle_hash();
-        let _start_puzzle_hash = self.live_games[game_idx].current_puzzle_hash(env.allocator)?;
         let state_number = self.current_state_number();
 
-        // assert_eq!(start_puzzle_hash, existing_ph);
-
-        // assert_eq!(self.game_is_my_turn(game_id), Some(true));
         let move_result = self.live_games[game_idx].internal_make_move(
             env.allocator,
             readable_move,

@@ -107,7 +107,6 @@ impl LiveGame {
         allocator: &mut AllocEncoder,
         game_move: &GameMoveDetails,
         state_number: usize,
-        coin: Option<&CoinString>,
     ) -> Result<TheirTurnMoveResult, Error> {
         if self.referee_maker.is_my_turn() {
             return Err(Error::Channel(
@@ -118,7 +117,6 @@ impl LiveGame {
             allocator,
             game_move,
             state_number,
-            coin,
         )?;
         if let Some(r) = new_ref {
             self.referee_maker = r;

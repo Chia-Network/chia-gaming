@@ -325,8 +325,6 @@ impl TheirTurnReferee {
             ));
         };
 
-        // self.message_handler = None;
-
         Ok(result)
     }
 
@@ -381,7 +379,6 @@ impl TheirTurnReferee {
         allocator: &mut AllocEncoder,
         details: &GameMoveDetails,
         state_number: usize,
-        _coin: Option<&CoinString>,
     ) -> Result<(Option<MyTurnReferee>, TheirTurnMoveResult), Error> {
         // Did we get a slash?
 
@@ -562,7 +559,7 @@ impl TheirTurnReferee {
         };
 
         let (new_self, result) =
-            self.their_turn_move_off_chain(allocator, &details, state_number, None)?;
+            self.their_turn_move_off_chain(allocator, &details, state_number)?;
 
         let finish_result = |allocator: &mut AllocEncoder, move_data: &TheirTurnMoveData| {
             let new_self = if let Some(new_self) = new_self {
