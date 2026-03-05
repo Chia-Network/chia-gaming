@@ -298,24 +298,26 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
             let reward_ph = self.player_ch.get_reward_puzzle_hash(env)?;
             let parent_coin_id = coin_id.to_coin_id();
-            let reward_coin = conditions
-                .iter()
-                .find_map(|c| {
-                    if let CoinCondition::CreateCoin(ph, amt) = c {
-                        if *ph == reward_ph && *amt > Amount::default() {
-                            return Some(CoinString::from_parts(&parent_coin_id, ph, amt));
-                        }
+            let reward_coin = conditions.iter().find_map(|c| {
+                if let CoinCondition::CreateCoin(ph, amt) = c {
+                    if *ph == reward_ph && *amt > Amount::default() {
+                        return Some(CoinString::from_parts(&parent_coin_id, ph, amt));
                     }
-                    None
-                })
-                .unwrap_or_default();
-            if let Some(eff) = self.try_emit_terminal(
-                &old_definition.game_id,
+                }
+                None
+            });
+            let notification = if let Some(reward_coin) = reward_coin {
                 GameNotification::WeSlashedOpponent {
                     id: old_definition.game_id.clone(),
                     reward_coin,
-                },
-            ) {
+                }
+            } else {
+                GameNotification::GameError {
+                    id: old_definition.game_id.clone(),
+                    reason: "slash succeeded but no reward coin found".to_string(),
+                }
+            };
+            if let Some(eff) = self.try_emit_terminal(&old_definition.game_id, notification) {
                 effects.push(eff);
             }
             effects.extend(self.next_action(env)?);
