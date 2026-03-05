@@ -1,4 +1,3 @@
-import { Paper, Typography } from '@mui/material';
 import { suitNames } from '../../../types/ChiaGaming';
 
 
