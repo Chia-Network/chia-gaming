@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::ops::{Add, AddAssign, Sub, SubAssign};
+use std::ops::{Add, AddAssign};
 
 use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 use clvmr::allocator::NodePtr;
@@ -23,6 +23,19 @@ impl Amount {
         self.0
     }
 
+    pub fn checked_sub(&self, rhs: &Amount) -> Result<Amount, Error> {
+        debug_assert!(
+            self.0 >= rhs.0,
+            "Amount underflow: {} - {}",
+            self.0,
+            rhs.0
+        );
+        self.0
+            .checked_sub(rhs.0)
+            .map(Amount)
+            .ok_or_else(|| Error::StrErr(format!("Amount underflow: {} - {}", self.0, rhs.0)))
+    }
+
     pub fn from_clvm(allocator: &mut AllocEncoder, clvm: NodePtr) -> Result<Amount, Error> {
         if let Some(val) = atom_from_clvm(allocator, clvm).and_then(|a| u64_from_atom(&a)) {
             Ok(Amount::new(val))
@@ -43,21 +56,6 @@ impl Add for Amount {
 
     fn add(mut self, rhs: Self) -> Amount {
         self += rhs;
-        self
-    }
-}
-
-impl SubAssign for Amount {
-    fn sub_assign(&mut self, rhs: Self) {
-        self.0 -= rhs.0;
-    }
-}
-
-impl Sub for Amount {
-    type Output = Amount;
-
-    fn sub(mut self, rhs: Self) -> Amount {
-        self -= rhs;
         self
     }
 }

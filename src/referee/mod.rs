@@ -241,8 +241,8 @@ impl Referee {
         self.fixed().timeout.clone()
     }
 
-    pub fn get_their_current_share(&self) -> Amount {
-        self.fixed().amount.clone() - self.get_our_current_share()
+    pub fn get_their_current_share(&self) -> Result<Amount, Error> {
+        self.fixed().amount.checked_sub(&self.get_our_current_share()?)
     }
 
     pub fn enable_cheating(&self, make_move: &[u8], mover_share: Amount) -> Option<Rc<Referee>> {
@@ -356,7 +356,7 @@ impl Referee {
             Vec::default()
         };
 
-        let mover_share = self.get_our_current_share();
+        let mover_share = self.get_our_current_share()?;
 
         if rem_conditions.is_empty() {
             let my_reward_coin_string = CoinString::from_parts(
@@ -392,12 +392,14 @@ impl Referee {
         }
     }
 
-    pub fn get_our_current_share(&self) -> Amount {
+    pub fn get_our_current_share(&self) -> Result<Amount, Error> {
         let args = self.spend_this_coin();
         if self.is_my_turn() {
-            args.game_move.basic.mover_share.clone()
+            Ok(args.game_move.basic.mover_share.clone())
         } else {
-            self.fixed().amount.clone() - args.game_move.basic.mover_share.clone()
+            self.fixed()
+                .amount
+                .checked_sub(&args.game_move.basic.mover_share)
         }
     }
 
@@ -442,12 +444,7 @@ impl Referee {
                 self.args_for_this_coin()
             };
         let mover_share = args.game_move.basic.mover_share.clone();
-        let waiter_share = Amount::new(
-            self.fixed()
-                .amount
-                .to_u64()
-                .saturating_sub(mover_share.to_u64()),
-        );
+        let waiter_share = self.fixed().amount.checked_sub(&mover_share)?;
 
         let i_am_mover = args.mover_pubkey == self.fixed().my_identity.public_key;
         let (mover_payout_ph, waiter_payout_ph) = if i_am_mover {
@@ -539,7 +536,7 @@ impl Referee {
             true,
             spend_puzzle,
             &args_list,
-            self.get_our_current_share(),
+            self.get_our_current_share()?,
         )? {
             Ok(transaction)
         } else {

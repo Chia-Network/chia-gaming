@@ -927,8 +927,10 @@ impl ChannelHandler {
 
         self.my_allocated_balance += proposal.my_contribution.clone();
         self.their_allocated_balance += proposal.their_contribution.clone();
-        self.my_out_of_game_balance -= proposal.my_contribution.clone();
-        self.their_out_of_game_balance -= proposal.their_contribution.clone();
+        self.my_out_of_game_balance =
+            self.my_out_of_game_balance.checked_sub(&proposal.my_contribution)?;
+        self.their_out_of_game_balance =
+            self.their_out_of_game_balance.checked_sub(&proposal.their_contribution)?;
 
         self.push_cached_action(CachedPotatoRegenerateLastHop::ProposalAccepted(
             game_id.clone(),
@@ -965,8 +967,10 @@ impl ChannelHandler {
 
         self.my_allocated_balance += proposal.my_contribution.clone();
         self.their_allocated_balance += proposal.their_contribution.clone();
-        self.my_out_of_game_balance -= proposal.my_contribution.clone();
-        self.their_out_of_game_balance -= proposal.their_contribution.clone();
+        self.my_out_of_game_balance =
+            self.my_out_of_game_balance.checked_sub(&proposal.my_contribution)?;
+        self.their_out_of_game_balance =
+            self.their_out_of_game_balance.checked_sub(&proposal.their_contribution)?;
 
         let live_game = LiveGame::new(
             proposal.game_id.clone(),
@@ -1108,6 +1112,14 @@ impl ChannelHandler {
         game_move: &GameMoveDetails,
     ) -> Result<ChannelHandlerMoveResult, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
+        let game_amount = self.live_games[game_idx].get_amount();
+        if game_move.basic.mover_share > game_amount {
+            return Err(Error::StrErr(format!(
+                "received move with mover_share {} exceeding game amount {}",
+                game_move.basic.mover_share.to_u64(),
+                game_amount.to_u64(),
+            )));
+        }
         let state_number = self.current_state_number();
 
         let coin_string = self.state_channel.coin.clone();
@@ -1162,10 +1174,12 @@ impl ChannelHandler {
         let game_idx = self.get_game_by_id(game_id)?;
 
         let live_game = self.live_games.remove(game_idx);
-        self.my_allocated_balance -= live_game.my_contribution.clone();
-        self.their_allocated_balance -= live_game.their_contribution.clone();
+        self.my_allocated_balance =
+            self.my_allocated_balance.checked_sub(&live_game.my_contribution)?;
+        self.their_allocated_balance =
+            self.their_allocated_balance.checked_sub(&live_game.their_contribution)?;
 
-        let amount = live_game.get_our_current_share();
+        let amount = live_game.get_our_current_share()?;
         let at_stake = live_game.get_amount();
 
         let (ref_clone, ph_clone) = live_game.save_referee_state();
@@ -1178,7 +1192,7 @@ impl ChannelHandler {
         ));
 
         self.my_out_of_game_balance += amount.clone();
-        self.their_out_of_game_balance += at_stake.clone() - amount.clone();
+        self.their_out_of_game_balance += at_stake.checked_sub(&amount)?;
 
         self.push_cached_action(CachedPotatoRegenerateLastHop::PotatoAcceptTimeout(
             Box::new(PotatoAcceptTimeoutCachedData {
@@ -1197,14 +1211,17 @@ impl ChannelHandler {
     pub fn apply_received_accept_timeout(&mut self, game_id: &GameID) -> Result<(), Error> {
         let game_idx = self.get_game_by_id(game_id)?;
 
-        let game_amount_for_me = self.live_games[game_idx].get_our_current_share();
-        let game_amount_for_them = self.live_games[game_idx].get_amount()
-            - self.live_games[game_idx].get_our_current_share();
+        let game_amount_for_me = self.live_games[game_idx].get_our_current_share()?;
+        let game_amount_for_them = self.live_games[game_idx]
+            .get_amount()
+            .checked_sub(&self.live_games[game_idx].get_our_current_share()?)?;
 
-        self.my_allocated_balance =
-            self.my_allocated_balance.clone() - self.live_games[game_idx].my_contribution.clone();
-        self.their_allocated_balance = self.their_allocated_balance.clone()
-            - self.live_games[game_idx].their_contribution.clone();
+        self.my_allocated_balance = self
+            .my_allocated_balance
+            .checked_sub(&self.live_games[game_idx].my_contribution)?;
+        self.their_allocated_balance = self
+            .their_allocated_balance
+            .checked_sub(&self.live_games[game_idx].their_contribution)?;
         self.my_out_of_game_balance += game_amount_for_me;
         self.their_out_of_game_balance += game_amount_for_them;
 

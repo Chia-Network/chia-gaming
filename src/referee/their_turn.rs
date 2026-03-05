@@ -286,17 +286,17 @@ impl TheirTurnReferee {
         self.fixed.amount.clone()
     }
 
-    pub fn get_our_current_share(&self) -> Amount {
+    pub fn get_our_current_share(&self) -> Result<Amount, Error> {
         let args = self.spend_this_coin();
         if self.processing_my_turn() {
-            self.fixed.amount.clone() - args.game_move.basic.mover_share.clone()
+            self.fixed.amount.checked_sub(&args.game_move.basic.mover_share)
         } else {
-            args.game_move.basic.mover_share.clone()
+            Ok(args.game_move.basic.mover_share.clone())
         }
     }
 
-    pub fn get_their_current_share(&self) -> Amount {
-        self.fixed.amount.clone() - self.get_our_current_share()
+    pub fn get_their_current_share(&self) -> Result<Amount, Error> {
+        self.fixed.amount.checked_sub(&self.get_our_current_share()?)
     }
 
     pub fn accept_their_move(
@@ -566,7 +566,15 @@ impl TheirTurnReferee {
         let new_move = &rem_conditions[0];
         let validation_info_hash = Hash::from_slice(&rem_conditions[1]);
         let new_mover_share = if let Some(share) = u64_from_atom(&rem_conditions[2]) {
-            Amount::new(share)
+            let amt = Amount::new(share);
+            if amt > self.fixed.amount {
+                return Err(Error::StrErr(format!(
+                    "on-chain mover_share {} exceeds game amount {}",
+                    share,
+                    self.fixed.amount.to_u64(),
+                )));
+            }
+            amt
         } else {
             return Err(Error::StrErr(
                 "mover share wasn't a properly sized atom".to_string(),

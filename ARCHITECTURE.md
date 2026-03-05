@@ -1336,6 +1336,13 @@ The frontend should treat any of these as the "game ended" signal.
 | `OpponentSuccessfullyCheated { id, our_reward, reward_coin }` | Illegal-move coin timed out before we slashed   | Opponent made an illegal move on-chain and we failed to slash before they claimed a timeout; `our_reward` is what the cheater left us (the `mover_share` they declared for us — zero if they maximized their own take)                      |
 | `GameError { id, reason }`                                    | A single game coin is in an unrecoverable state | Something went wrong with one game                                                                                                                                                                                                         |
 
+`GameError` covers situations that "should never happen" under normal
+operation but *can* happen if, for example, a trusted full node sends
+fabricated data (bogus puzzle solutions, impossible mover shares, missing
+coins, etc.).  The system must handle these gracefully — emitting a
+`GameError` notification and continuing — rather than panicking or crashing.
+Any code path processing data from the blockchain or the peer should treat
+unexpected values as a `GameError`, never an `assert!` or `unwrap()`.
 
 ### Key Invariants
 

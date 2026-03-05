@@ -994,7 +994,7 @@ impl PotatoHandler {
             )));
         };
 
-        let their_contribution = game_start.amount.clone() - game_start.my_contribution.clone();
+        let their_contribution = game_start.amount.checked_sub(&game_start.my_contribution)?;
 
         if let Some(parser_prog) = &starter.parser_program {
             let alice_game = game::Game::new_from_proposal(

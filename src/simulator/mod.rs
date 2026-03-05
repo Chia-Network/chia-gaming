@@ -613,7 +613,7 @@ impl Simulator {
     ) -> Result<(CoinString, CoinString), Error> {
         let (_parent, _, amt) = source_coin.get_coin_string_parts()?;
 
-        let change_amt = amt.clone() - target_amt.clone();
+        let change_amt = amt.checked_sub(&target_amt)?;
         let first_coin =
             CoinString::from_parts(&source_coin.to_coin_id(), identity_target, &target_amt);
         let second_coin = CoinString::from_parts(

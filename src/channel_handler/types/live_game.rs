@@ -138,7 +138,7 @@ impl LiveGame {
         self.referee_maker.get_amount()
     }
 
-    pub fn get_our_current_share(&self) -> Amount {
+    pub fn get_our_current_share(&self) -> Result<Amount, Error> {
         self.referee_maker.get_our_current_share()
     }
 
