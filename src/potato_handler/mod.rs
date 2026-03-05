@@ -2047,7 +2047,7 @@ impl PotatoHandler {
             return Err(Error::StrErr("no conditions for unroll coin".to_string()));
         };
 
-        let (game_map, on_chain_reward_coin) = {
+        let (mut game_map, on_chain_reward_coin) = {
             let player_ch = self.channel_handler_mut()?;
 
             let mut pre_game_ids: HashSet<GameID> = player_ch.live_game_ids().into_iter().collect();
@@ -2148,6 +2148,72 @@ impl PotatoHandler {
 
             (game_map_inner, reward_coin)
         };
+
+        if game_map.is_empty() {
+            self.channel_state = ChannelState::Completed;
+            effects.push(Effect::CleanShutdownComplete {
+                reward_coin: on_chain_reward_coin,
+            });
+            return Ok(effects);
+        }
+
+        // Zero-reward early-out: remove games where our share is zero and
+        // emit WeTimedOut immediately instead of waiting for on-chain
+        // timeouts or performing pointless redo moves / transactions.
+        //
+        // Three cases:
+        //  1. Pending redo that would produce zero share (our_turn, has redo).
+        //  2. Pending AcceptTimeout with zero share (accepted == true).
+        //  3. Opponent's turn, mover_share == coin_amount (we get nothing).
+        //
+        // When it's our turn and there's NO redo, we have a live game and
+        // should NOT early-out even if our current share is zero — making a
+        // move can change the outcome.
+        {
+            let player_ch = self.channel_handler_mut()?;
+            let mut zero_reward_games = Vec::new();
+            for (coin, state) in game_map.iter() {
+                let dominated = if state.accepted {
+                    // Scenario 2: accepted with zero share.
+                    player_ch
+                        .get_game_our_current_share(&state.game_id)
+                        .map(|s| s == Amount::default())
+                        .unwrap_or(false)
+                } else if !state.our_turn {
+                    // Scenario 3: opponent's turn, our share is zero.
+                    player_ch
+                        .get_game_our_current_share(&state.game_id)
+                        .map(|s| s == Amount::default())
+                        .unwrap_or(false)
+                } else {
+                    // Scenario 1: our turn with a pending redo — check
+                    // whether the post-redo share is zero.
+                    player_ch.is_redo_zero_reward(coin, &state.game_id)
+                };
+                if dominated {
+                    let reason = if state.accepted {
+                        "pending AcceptTimeout with zero share"
+                    } else if !state.our_turn {
+                        "opponent's turn, mover_share == coin_amount"
+                    } else {
+                        "redo would produce zero reward"
+                    };
+                    log::debug!(
+                        "zero-reward early-out for game {:?}: {reason}",
+                        state.game_id
+                    );
+                    zero_reward_games.push((coin.clone(), state.game_id.clone()));
+                }
+            }
+            for (coin, game_id) in &zero_reward_games {
+                game_map.remove(coin);
+                effects.push(Effect::from(GameNotification::WeTimedOut {
+                    id: game_id.clone(),
+                    our_reward: Amount::default(),
+                    reward_coin: None,
+                }));
+            }
+        }
 
         if game_map.is_empty() {
             self.channel_state = ChannelState::Completed;

@@ -1034,6 +1034,32 @@ impl ChannelHandler {
         self.live_games.iter().any(|g| &g.game_id == game_id)
     }
 
+    pub fn get_game_our_current_share(&self, game_id: &GameID) -> Result<Amount, Error> {
+        if let Some(g) = self.live_games.iter().find(|g| g.game_id == *game_id) {
+            return g.get_our_current_share();
+        }
+        if let Some(g) = self.pending_accept_timeouts.iter().find(|g| g.game_id == *game_id) {
+            return g.get_our_current_share();
+        }
+        Err(Error::StrErr(format!(
+            "get_game_our_current_share: game {:?} not found",
+            game_id
+        )))
+    }
+
+    pub fn get_game_amount(&self, game_id: &GameID) -> Result<Amount, Error> {
+        if let Some(g) = self.live_games.iter().find(|g| g.game_id == *game_id) {
+            return Ok(g.get_amount());
+        }
+        if let Some(g) = self.pending_accept_timeouts.iter().find(|g| g.game_id == *game_id) {
+            return Ok(g.get_amount());
+        }
+        Err(Error::StrErr(format!(
+            "get_game_amount: game {:?} not found",
+            game_id
+        )))
+    }
+
     pub fn get_game_by_id(&self, game_id: &GameID) -> Result<usize, Error> {
         self.live_games
             .iter()
@@ -1919,6 +1945,42 @@ impl ChannelHandler {
 
     /// Simple forward-only redo check.  `set_state_for_coins` already matched
     /// the game coin to the live game by amount.  We just check if the cached
+    /// Check whether a pending redo move for this coin would result in zero
+    /// reward for us (post-redo our_current_share == 0).  Used by the
+    /// zero-reward early-out scan at unroll time.
+    pub fn is_redo_zero_reward(&self, coin: &CoinString, game_id: &GameID) -> bool {
+        let has_redo = self.cached_last_actions.iter().any(|entry| {
+            if let CachedPotatoRegenerateLastHop::PotatoMoveHappening(move_data) = entry {
+                move_data.game_id == *game_id
+                    && coin
+                        .to_parts()
+                        .map(|(_, ph, _)| ph == move_data.match_puzzle_hash)
+                        .unwrap_or(false)
+            } else {
+                false
+            }
+        });
+        if !has_redo {
+            return false;
+        }
+        // After the redo, our share is determined by the saved post-move
+        // referee.  If the referee is not cached (serialization round-trip),
+        // we can't check — be conservative and return false.
+        for entry in &self.cached_last_actions {
+            if let CachedPotatoRegenerateLastHop::PotatoMoveHappening(move_data) = entry {
+                if move_data.game_id == *game_id {
+                    if let Some(ref saved_ref) = move_data.saved_post_move_referee {
+                        return saved_ref
+                            .get_our_current_share()
+                            .map(|share| share == Amount::default())
+                            .unwrap_or(false);
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// action is for the same game and emit the `RedoMove`.
     pub fn get_redo_action<R: Rng>(
         &mut self,

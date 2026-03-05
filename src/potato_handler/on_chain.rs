@@ -926,11 +926,33 @@ impl PotatoHandlerImpl for OnChainGameHandler {
 
         debug!("{initial_potato} do on chain move {readable_move:?} cc {current_coin:?}");
 
+        let game_amount = self.player_ch.get_game_amount(&game_id)?;
         let (pre_referee, pre_last_ph) = self.player_ch.save_game_state(&game_id)?;
 
-        let (old_ph, new_ph, _state_number, _move_result, transaction) = self
+        let (old_ph, new_ph, _state_number, move_result, transaction) = self
             .player_ch
             .on_chain_our_move(env, &game_id, &readable_move, entropy.clone(), current_coin)?;
+
+        // After the move, roles swap: mover_share is what the opponent (new
+        // mover) gets on timeout.  If that equals the full game amount, we
+        // as the new waiter get zero — skip the move and fire WeTimedOut.
+        // Only skip non-terminal moves (max_move_size > 0): terminal moves
+        // resolve the game and should always be submitted.
+        if move_result.basic.mover_share == game_amount && move_result.basic.max_move_size > 0 {
+            debug!(
+                "{initial_potato} on-chain move gives zero reward, skipping: game {:?}",
+                game_id
+            );
+            self.player_ch
+                .restore_game_state(&game_id, pre_referee, pre_last_ph)?;
+            self.game_map
+                .retain(|_, def| def.game_id != game_id);
+            return Ok(Some(Effect::from(GameNotification::WeTimedOut {
+                id: game_id,
+                our_reward: Amount::default(),
+                reward_coin: None,
+            })));
+        }
 
         let (post_referee, post_last_ph) = self.player_ch.save_game_state(&game_id)?;
 
@@ -1048,6 +1070,19 @@ impl PotatoHandlerImpl for OnChainGameHandler {
             GameAction::AcceptTimeout(game_id) => {
                 match get_current_coin(&game_id) {
                     Ok(current_coin) => {
+                        let our_share = self.player_ch.get_game_our_current_share(&game_id);
+                        if matches!(our_share, Ok(ref s) if *s == Amount::default()) {
+                            debug!(
+                                "{initial_potato} on-chain AcceptTimeout with zero share, early-out: game {:?}",
+                                game_id
+                            );
+                            self.game_map.remove(&current_coin);
+                            return Ok(vec![Effect::from(GameNotification::WeTimedOut {
+                                id: game_id,
+                                our_reward: Amount::default(),
+                                reward_coin: None,
+                            })]);
+                        }
                         debug!("{initial_potato} on chain: accept game coin {current_coin:?}");
                         if let Some(def) = self.game_map.get_mut(&current_coin) {
                             def.accepted = true;
