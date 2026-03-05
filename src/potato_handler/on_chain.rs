@@ -228,7 +228,10 @@ impl PotatoHandlerImpl for OnChainGameHandler {
             });
 
             if let Some((create_ph, create_amt)) = create {
-                let pending = self.pending_move.take().unwrap();
+                let pending = self.pending_move.take().ok_or_else(|| {
+                    debug_assert!(false, "pending_move was None in handle_game_coin_spent");
+                    Error::StrErr("pending_move was None in handle_game_coin_spent".to_string())
+                })?;
 
                 let old_def = self.game_map.remove(coin_id).ok_or_else(|| {
                     Error::StrErr("pending move coin not in game_map".to_string())
@@ -569,7 +572,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 );
                 let (puzzle_hash, amt) =
                     if let Some((orig_coin_id, ph, amt)) = new_coin_string.to_parts() {
-                        assert_eq!(coin_id.to_coin_id(), orig_coin_id);
+                        game_assert_eq!(coin_id.to_coin_id(), orig_coin_id, "coin parent mismatch in their spend");
                         (ph, amt)
                     } else {
                         return Err(Error::StrErr("bad coin explode".to_string()));
@@ -719,7 +722,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
     ) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
 
-        if let Some(mut game_def) = self.game_map.remove(coin_id) {
+        if let Some(game_def) = self.game_map.remove(coin_id) {
             let initial_potato = self.player_ch.is_initial_potato();
             let game_id = game_def.game_id.clone();
             debug!("{initial_potato} timeout coin {coin_id:?}, do accept");
@@ -809,22 +812,16 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 let our_turn = game_def.our_turn;
                 let accepted = game_def.accepted;
                 let already_notified = game_def.notification_sent;
-                game_def.accept = AcceptTransactionState::Finished;
-                game_def.notification_sent = true;
                 self.game_map.insert(coin_id.clone(), game_def);
 
-                let result_transaction = {
-                    match self
-                        .player_ch
-                        .accept_or_timeout_game_on_chain(env, &game_id, coin_id)
-                    {
-                        Ok(tx) => tx,
-                        Err(e) => {
-                            debug!("accept_or_timeout error: {e:?}");
-                            return self.next_action(env);
-                        }
-                    }
-                };
+                let result_transaction = self
+                    .player_ch
+                    .accept_or_timeout_game_on_chain(env, &game_id, coin_id)?;
+
+                if let Some(game_def) = self.game_map.get_mut(coin_id) {
+                    game_def.accept = AcceptTransactionState::Finished;
+                    game_def.notification_sent = true;
+                }
 
                 self.have_potato = PotatoState::Present;
                 let (reward_coin, our_reward) = if let Some(tx) = result_transaction {
@@ -960,7 +957,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
             .restore_game_state(&game_id, pre_referee, pre_last_ph.clone())?;
 
         if let Some((_, ph, _)) = current_coin.to_parts() {
-            assert_eq!(old_ph, ph);
+            game_assert_eq!(old_ph, ph, "do_on_chain_move: pre-move puzzle hash mismatch");
         }
 
         self.pending_move = Some(PendingMoveSavedState {

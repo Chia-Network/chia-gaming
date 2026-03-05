@@ -91,14 +91,16 @@ impl Referee {
             my_turn,
         ));
         if my_turn {
-            assert_eq!(
+            game_assert_eq!(
                 fixed_info.my_identity.public_key,
-                ref_puzzle_args.mover_pubkey
+                ref_puzzle_args.mover_pubkey,
+                "Referee::new: my_turn but mover_pubkey != my pubkey"
             );
         } else {
-            assert_eq!(
+            game_assert_eq!(
                 fixed_info.their_referee_pubkey,
-                ref_puzzle_args.mover_pubkey
+                ref_puzzle_args.mover_pubkey,
+                "Referee::new: their_turn but mover_pubkey != their pubkey"
             );
         }
         let puzzle_hash =

@@ -696,7 +696,7 @@ mod gaming_wasm {
         if let Some(js_value) = callbacks.get(name) {
             let function = js_value
                 .dyn_ref::<js_sys::Function>()
-                .expect("Not a js function");
+                .ok_or_else(|| types::Error::StrErr("Not a js function".to_string()))?;
             let mut args_array = Array::new();
             f(&mut args_array)?;
             function.apply(&JsValue::NULL, &args_array).into_e()?;
@@ -733,9 +733,10 @@ mod gaming_wasm {
             let entry = Array::from(&entries.at(i as i32));
             let js_name = &entry.at(0);
 
-            if let Some(name) = js_name
+            let js_string = js_name
                 .dyn_ref::<JsString>()
-                .expect("Not a js string")
+                .ok_or_else(|| JsValue::from_str("Not a js string"))?;
+            if let Some(name) = js_string
                 .as_string()
             {
                 let value = entry.at(1);

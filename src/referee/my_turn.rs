@@ -229,16 +229,17 @@ impl MyTurnReferee {
             ip.clone(),
             my_turn,
         ));
-        // If this reflects my turn, then we will spend the next parameter set.
         if my_turn {
-            assert_eq!(
+            game_assert_eq!(
                 fixed_info.my_identity.public_key,
-                ref_puzzle_args.mover_pubkey
+                ref_puzzle_args.mover_pubkey,
+                "MyTurnReferee::new: my_turn but mover_pubkey != my pubkey"
             );
         } else {
-            assert_eq!(
+            game_assert_eq!(
                 fixed_info.their_referee_pubkey,
-                ref_puzzle_args.mover_pubkey
+                ref_puzzle_args.mover_pubkey,
+                "MyTurnReferee::new: their_turn but mover_pubkey != their pubkey"
             );
         }
         let handler = game_start_info.game_handler.clone();

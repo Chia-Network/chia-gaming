@@ -4,8 +4,9 @@
     clippy::too_many_arguments
 )]
 
-pub mod channel_handler;
+#[macro_use]
 pub mod common;
+pub mod channel_handler;
 pub mod games;
 pub mod log;
 /// Provides as simple as possible a full blockchain interface that can be spoken

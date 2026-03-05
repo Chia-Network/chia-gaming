@@ -351,9 +351,10 @@ impl InternalStateUpdateArgs {
     }
 
     pub fn run(&self, allocator: &mut AllocEncoder) -> Result<StateUpdateResult, Error> {
-        assert_eq!(
+        game_assert_eq!(
             self.referee_args.validation_program.hash(),
-            self.validation_program.hash()
+            self.validation_program.hash(),
+            "ValidationInfo::run: validation_program hash mismatch"
         );
         let validation_program_mod_hash = self.validation_program.hash();
         let validation_program_nodeptr = self.validation_program.to_nodeptr(allocator)?;

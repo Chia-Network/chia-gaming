@@ -366,7 +366,10 @@ impl ChannelHandler {
                 .state_channel
                 .coin
                 .amount()
-                .expect("state channel coin has no amount"),
+                .ok_or_else(|| {
+                    debug_assert!(false, "state channel coin has no amount");
+                    Error::StrErr("state channel coin has no amount".to_string())
+                })?,
             unroll_coin,
         )
     }
@@ -550,7 +553,10 @@ impl ChannelHandler {
                 .state_channel
                 .coin
                 .amount()
-                .expect("state channel coin has no amount")
+                .ok_or_else(|| {
+                    debug_assert!(false, "state channel coin has no amount");
+                    Error::StrErr("state channel coin has no amount".to_string())
+                })?
                 .clone(),
             spend: ChannelCoinSpendInfo {
                 aggsig: combined_signature,
@@ -1196,7 +1202,7 @@ impl ChannelHandler {
     /// Apply a send-side accept mutation. Does NOT finalize signatures.
     /// Pushes a cache entry for on-chain redo. Returns the amount won.
     pub fn send_accept_timeout_no_finalize(&mut self, game_id: &GameID) -> Result<Amount, Error> {
-        assert!(self.have_potato);
+        game_assert!(self.have_potato, "send_accept_timeout_no_finalize: must have potato");
         let game_idx = self.get_game_by_id(game_id)?;
 
         let live_game = self.live_games.remove(game_idx);
@@ -1263,7 +1269,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         conditions: NodePtr,
     ) -> Result<Spend, Error> {
-        assert!(self.have_potato);
+        game_assert!(self.have_potato, "send_potato_clean_shutdown: must have potato");
         let aggregate_public_key = self.get_aggregate_channel_public_key();
         let spend = self.state_channel_coin();
 
@@ -1344,7 +1350,7 @@ impl ChannelHandler {
         their_channel_half_signature: &Aggsig,
         conditions: NodePtr,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
-        assert!(!self.have_potato);
+        game_assert!(!self.have_potato, "received_potato_clean_shutdown: must not have potato");
         let conditions_program = Program::from_nodeptr(env.allocator, conditions)?;
         let channel_spend = self.verify_channel_coin_from_peer_signatures(
             env,

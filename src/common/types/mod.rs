@@ -1,3 +1,6 @@
+#[macro_use]
+mod macros;
+
 mod aggsig;
 mod alloc_encoder;
 mod amount;

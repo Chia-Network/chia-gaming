@@ -19,7 +19,7 @@ impl<'de> Deserialize<'de> for ChaCha8SerializationWrapper {
         D: Deserializer<'de>,
     {
         let st = String::deserialize(deserializer)?;
-        let slice = hex::decode(&st).unwrap();
+        let slice = hex::decode(&st).map_err(serde::de::Error::custom)?;
 
         let mut bytes: [u8; 32] = [0; 32];
         for (i, b) in slice.iter().enumerate() {
