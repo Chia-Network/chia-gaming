@@ -282,9 +282,7 @@ impl Simulator {
                 Some(r) => r,
                 None => {
                     if self.strict {
-                        panic!(
-                            "Strict mode: Coin not found: {coin_id:?}",
-                        );
+                        panic!("Strict mode: Coin not found: {coin_id:?}",);
                     }
                     return Ok(IncludeTransactionResult {
                         code: 3,
@@ -296,9 +294,7 @@ impl Simulator {
 
             if record.spent_height.is_some() {
                 if self.strict {
-                    panic!(
-                        "Strict mode: Coin already spent: {coin_id:?}",
-                    );
+                    panic!("Strict mode: Coin already spent: {coin_id:?}",);
                 }
                 return Ok(IncludeTransactionResult {
                     code: 3,
@@ -345,7 +341,9 @@ impl Simulator {
                             "Strict mode: CLVM execution error for coin {i}: \
                              coin_id={coin_id:?} coin_ph={:?} computed_ph={computed_ph:?}\n  \
                              puzzle_len={} solution_len={}\n  err={e:?}",
-                            record.puzzle_hash, puzzle_hex.len() / 2, sol_hex.len() / 2,
+                            record.puzzle_hash,
+                            puzzle_hex.len() / 2,
+                            sol_hex.len() / 2,
                         );
                     }
                     eprintln!(
@@ -514,7 +512,8 @@ impl Simulator {
                     panic!(
                         "Strict mode: Aggregate signature verification failed \
                          ({} sig pairs, {} coin spends)",
-                        agg_sig_pairs.len(), txs.len(),
+                        agg_sig_pairs.len(),
+                        txs.len(),
                     );
                 }
                 return Ok(IncludeTransactionResult {

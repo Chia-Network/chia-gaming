@@ -954,9 +954,10 @@ impl PotatoHandlerImpl for OnChainGameHandler {
 
         match action {
             GameAction::Move(game_id, readable_move, hash) => match get_current_coin(&game_id) {
-                Ok(current_coin) => {
-                    Ok(self.do_on_chain_move(env, &current_coin, game_id, readable_move, hash)?.into_iter().collect())
-                }
+                Ok(current_coin) => Ok(self
+                    .do_on_chain_move(env, &current_coin, game_id, readable_move, hash)?
+                    .into_iter()
+                    .collect()),
                 Err(_) => {
                     debug!("{initial_potato} discarding Move for game no longer in game_map");
                     self.next_action(env)
@@ -970,7 +971,10 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                             .enable_cheating_for_game(&game_id, &[0x80], mover_share)?;
                         let readable_move =
                             ReadableMove::from_program(Rc::new(Program::from_bytes(&[0x80])));
-                        Ok(self.do_on_chain_move(env, &current_coin, game_id, readable_move, entropy)?.into_iter().collect())
+                        Ok(self
+                            .do_on_chain_move(env, &current_coin, game_id, readable_move, entropy)?
+                            .into_iter()
+                            .collect())
                     } else if my_turn.is_none() {
                         debug!("{initial_potato} discarding Cheat for finished/absent game {game_id:?}");
                         Ok(Vec::new())
@@ -990,7 +994,12 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 }
             },
             GameAction::RedoMove(game_id, coin, cached_move) => {
-                Ok(vec![self.do_on_chain_redo_move(env, game_id, coin, cached_move)?])
+                Ok(vec![self.do_on_chain_redo_move(
+                    env,
+                    game_id,
+                    coin,
+                    cached_move,
+                )?])
             }
             GameAction::RedoAcceptTimeout(_game_id, coin, _new_ph, tx) => {
                 let mut effects = Vec::new();

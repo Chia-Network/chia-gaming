@@ -476,9 +476,18 @@ impl BootstrapTowardWallet for SynchronousGameCradleState {
 impl ToLocalUI for SynchronousGameCradleState {
     fn notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
         match notification {
-            GameNotification::OpponentMoved { id, state_number, readable, mover_share } => {
-                self.opponent_moves
-                    .push_back((id.clone(), *state_number, readable.clone(), mover_share.clone()));
+            GameNotification::OpponentMoved {
+                id,
+                state_number,
+                readable,
+                mover_share,
+            } => {
+                self.opponent_moves.push_back((
+                    id.clone(),
+                    *state_number,
+                    readable.clone(),
+                    mover_share.clone(),
+                ));
             }
             GameNotification::GameMessage { id, readable } => {
                 self.game_messages.push_back((id.clone(), readable.clone()));
@@ -1071,9 +1080,15 @@ impl GameCradle for SynchronousGameCradle {
             return Ok(Some(result));
         }
 
-        if let Some((id, state_number, readable, mover_share)) = self.state.opponent_moves.pop_front()
+        if let Some((id, state_number, readable, mover_share)) =
+            self.state.opponent_moves.pop_front()
         {
-            local_ui.notification(&GameNotification::OpponentMoved { id, state_number, readable, mover_share })?;
+            local_ui.notification(&GameNotification::OpponentMoved {
+                id,
+                state_number,
+                readable,
+                mover_share,
+            })?;
             result.continue_on = true;
             return Ok(Some(result));
         }
@@ -1097,7 +1112,9 @@ impl GameCradle for SynchronousGameCradle {
                     return Ok(Some(result));
                 }
                 Err(e) => {
-                    local_ui.notification(&GameNotification::GoingOnChain { reason: format!("error receiving peer message: {e:?}") })?;
+                    local_ui.notification(&GameNotification::GoingOnChain {
+                        reason: format!("error receiving peer message: {e:?}"),
+                    })?;
                     result.receive_error = Some(e);
                     return Ok(Some(result));
                 }

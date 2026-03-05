@@ -12,8 +12,8 @@ use crate::channel_handler::types::{
 };
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
-    Aggsig, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, Program,
-    ProgramRef, PuzzleHash, SpendBundle, Timeout,
+    Aggsig, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, Program, ProgramRef,
+    PuzzleHash, SpendBundle, Timeout,
 };
 use crate::potato_handler::effects::{Effect, ResyncInfo};
 use crate::potato_handler::handshake::{HandshakeA, HandshakeB};
