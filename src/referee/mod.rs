@@ -212,25 +212,17 @@ impl Referee {
         }))
     }
 
-    fn get_last_move_spend(&self) -> Result<Rc<OnChainRefereeMoveData>, Error> {
-        let move_spend = match self {
-            Referee::TheirTurn(t) => {
-                debug!("get_last_move_spend: right phase");
-                t.get_move_info()
-            }
-            Referee::MyTurn(t) => {
-                debug!("get_last_move_spend: wrong phase");
-                t.get_move_info()
-            }
-        };
-
-        if let Some(s) = move_spend {
-            Ok(s.clone())
-        } else {
-            Err(Error::StrErr(
-                "we need to be after a my turn to get a move transaction".to_string(),
-            ))
+    fn get_move_info(&self) -> Option<Rc<OnChainRefereeMoveData>> {
+        match self {
+            Referee::MyTurn(t) => t.get_move_info(),
+            Referee::TheirTurn(t) => t.get_move_info(),
         }
+    }
+
+    fn get_last_move_spend(&self) -> Result<Rc<OnChainRefereeMoveData>, Error> {
+        self.get_move_info().ok_or_else(|| {
+            Error::StrErr("we need to be after a my turn to get a move transaction".to_string())
+        })
     }
 
     pub fn is_my_turn(&self) -> bool {
