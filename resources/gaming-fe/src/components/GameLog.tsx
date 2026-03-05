@@ -1,12 +1,12 @@
 import React, { useState, useCallback } from 'react';
-import { Box, Typography, Card, CardContent } from '@mui/material';
 import {
   OutcomeLogLine,
   OutcomeHandType,
   suitNames,
 } from '../types/ChiaGaming';
-import { ExpandMore } from '@mui/icons-material';
+
 import { RANK_SYMBOLS } from '../features/calPoker/components/constants/constants';
+import { ChevronDown, Expand } from 'lucide-react';
 
 interface GameLogProps {
   log: OutcomeLogLine[];
@@ -154,7 +154,7 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                         </div>
                       </div>
 
-                      <ExpandMore
+                      <ChevronDown
                         data-testid={`log-expand-button-${index}`}
                         className={`ml-1 flex-shrink-0 transform transition-transform duration-200 ${
                           isExpanded ? 'rotate-180' : 'rotate-0'

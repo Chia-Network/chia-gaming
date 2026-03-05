@@ -7,7 +7,6 @@ import { useEffect } from 'react';
 import installThemeSyncListener from '../utils/themeSyncListener';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
-import { Box, Typography } from '@mui/material';
 
 export interface GameParams {
   params: any;
@@ -36,15 +35,24 @@ const Game: React.FC<GameParams> = ({ params }) => {
     stopPlaying,
   } = useWasmBlob(params, params.lobbyUrl, uniqueId);
 
-  // All early returns need to be after all useEffect, etc.
   useEffect(() => {
-    // If this page is loaded inside an iframe, accept theme-sync messages
-    // from the parent so CSS variables and dark class can be applied.
     const uninstall = installThemeSyncListener();
     return () => uninstall();
   }, []);
+
   if (error) {
-    return <div>{error}</div>;
+    return (
+      <div className="flex items-center justify-center min-h-screen p-4">
+        <Card className="w-full max-w-md border-destructive">
+          <CardHeader>
+            <CardTitle className="text-destructive">Error</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">{error}</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
   if (gameConnectionState.stateIdentifier === 'starting') {
@@ -58,26 +66,37 @@ const Game: React.FC<GameParams> = ({ params }) => {
 
   if (gameConnectionState.stateIdentifier === 'shutdown') {
     return (
-      <Box p={4}>
-        <Typography variant='h4' align='center' aria-label='shutdown'>
-          {`Cal Poker - shutdown succeeded`}
-        </Typography>
-        <Box>
-          {gameConnectionState.stateDetail.map((c: string) => (
-            <Typography variant='h5' align='center'>
-              {c}
-            </Typography>
-          ))}
-          <Box>
-            {gameConnectionState.stateDetail.map((c: string) => (
-              <Typography variant='h5' align='center'>
+      <div className="flex items-center justify-center min-h-screen p-4 bg-background">
+        <Card className="w-full max-w-2xl shadow-lg">
+          <CardHeader className="text-center pb-2">
+            <CardTitle
+              className="text-2xl font-bold tracking-tight"
+              aria-label="shutdown"
+            >
+              Cal Poker — Shutdown Succeeded
+            </CardTitle>
+          </CardHeader>
+
+          <Separator className="my-2" />
+
+          <CardContent className="pt-4 space-y-2">
+            {gameConnectionState.stateDetail.map((c: string, i: number) => (
+              <p
+                key={i}
+                className="text-center text-lg font-medium text-muted-foreground"
+              >
                 {c}
-              </Typography>
+              </p>
             ))}
+          </CardContent>
+
+          <Separator className="my-2" />
+
+          <CardContent className="pt-2">
             <GameLog log={log} />
-          </Box>
-        </Box>
-      </Box>
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 
