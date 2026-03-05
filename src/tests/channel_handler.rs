@@ -213,7 +213,6 @@ pub(crate) fn test_unroll_can_verify_own_signature() {
         my_balance: Amount::new(0),
         their_balance: Amount::new(100),
         puzzle_hashes_and_amounts: vec![],
-        rem_condition_state: 0,
         unroll_timeout: 0,
     };
 

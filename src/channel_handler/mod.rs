@@ -108,9 +108,10 @@ pub struct ChannelHandler {
 
     cached_last_actions: Vec<CachedPotatoRegenerateLastHop>,
 
-    // Has a parity between the two players of whether have_potato means odd
-    // or even, but odd-ness = have-potato is arbitrary.
-    current_state_number: usize, //
+    // Whether we have sent a potato since the last one we received (or since
+    // init).  Together with `last_received_state` this derives the current
+    // state number: `last_received_state + 1 + sent_since_last_receive`.
+    sent_since_last_receive: bool,
     // The state number from the most recent potato we received, starting at 0
     // after handshake.  Used to determine whether an on-chain unroll is stale.
     last_received_state: usize,
@@ -184,8 +185,12 @@ impl ChannelHandler {
         game_id.0 as usize % 2 == self.my_next_nonce % 2
     }
 
+    fn current_state_number(&self) -> usize {
+        self.last_received_state + 1 + self.sent_since_last_receive as usize
+    }
+
     pub fn get_state_number(&self) -> usize {
-        self.current_state_number
+        self.current_state_number()
     }
 
     pub fn get_last_received_state(&self) -> usize {
@@ -197,12 +202,17 @@ impl ChannelHandler {
     }
 
     /// Corrupt the channel handler's view of state for testing unrecoverable
-    /// unroll edge cases.  Sets `current_state_number` to `new_sn`, changes
-    /// `unroll.coin.state_number` to match, and clears `timeout` so that
-    /// `get_unroll_for_state` won't find the real on-chain state.
+    /// unroll edge cases.  Sets `current_state_number()` to `new_sn` (by
+    /// adjusting `last_received_state`), changes `unroll.coin.state_number`
+    /// to match, and clears `timeout` so that `get_unroll_for_state` won't
+    /// find the real on-chain state.
     #[cfg(test)]
     pub fn corrupt_state_for_testing(&mut self, new_sn: usize) {
-        self.current_state_number = new_sn;
+        // The derived current_state_number() has a minimum of 1, so
+        // requesting 0 yields 1 instead.  Tests only need the value to
+        // be far from the real on-chain state, so this is fine.
+        self.last_received_state = new_sn.saturating_sub(1);
+        self.sent_since_last_receive = false;
         self.unroll.coin.state_number = new_sn;
         self.unroll.signatures = Default::default();
         self.timeout = None;
@@ -344,7 +354,6 @@ impl ChannelHandler {
             my_balance,
             their_balance,
             puzzle_hashes_and_amounts: puzzle_hashes_and_amounts.to_vec(),
-            rem_condition_state: self.current_state_number,
             unroll_timeout: self.unroll_advance_timeout.to_u64(),
         }
     }
@@ -450,7 +459,7 @@ impl ChannelHandler {
 
             cached_last_actions: Vec::new(),
 
-            current_state_number: 0,
+            sent_since_last_receive: false,
             last_received_state: 0,
             my_next_nonce: if we_start_with_potato { 0 } else { 1 },
             their_next_nonce: if we_start_with_potato { 1 } else { 0 },
@@ -473,7 +482,7 @@ impl ChannelHandler {
             private_keys,
         };
 
-        myself.unroll.coin.state_number = myself.current_state_number;
+        myself.unroll.coin.state_number = 0;
         myself.unroll.coin.started_with_potato = myself.have_potato;
 
         // XXX more member settings.
@@ -514,7 +523,6 @@ impl ChannelHandler {
                 .state_conditions_hashes
                 .insert(outcome.state_number, outcome.hash.clone());
         }
-        myself.current_state_number += 1;
 
         let channel_coin_spend =
             myself.create_conditions_and_signature_of_channel_coin(env, &myself.unroll.coin)?;
@@ -637,8 +645,8 @@ impl ChannelHandler {
 
         self.old_unrolls.push(self.unroll.clone());
 
-        self.current_state_number += 1;
-        self.unroll.coin.state_number = self.current_state_number;
+        self.sent_since_last_receive = true;
+        self.unroll.coin.state_number = self.current_state_number();
 
         // Now update our unroll state.
         self.unroll.coin.update(
@@ -710,7 +718,7 @@ impl ChannelHandler {
 
         // Unroll coin section.
         let mut test_unroll = self.unroll.coin.clone();
-        test_unroll.state_number = self.current_state_number + 1;
+        test_unroll.state_number = self.current_state_number() + 1;
         test_unroll.update(
             env,
             &self.private_keys.my_unroll_coin_private_key,
@@ -735,14 +743,8 @@ impl ChannelHandler {
             channel_coin_spend.conditions.p(),
         )?;
 
-        // If state number is 0 and we're receiving the potato, then we don't
-        // verify, we do finish_handshake instead.
-        if self.current_state_number == 0 {
-            self.finish_handshake(env, &signatures.my_channel_half_signature_peer)?;
-        }
-
-        self.last_received_state = self.current_state_number;
-        self.current_state_number += 1;
+        self.last_received_state = self.current_state_number();
+        self.sent_since_last_receive = false;
         if let Some(ref outcome) = test_unroll.outcome {
             self.state_conditions_hashes
                 .insert(outcome.state_number, outcome.hash.clone());
@@ -848,7 +850,7 @@ impl ChannelHandler {
             &self.reward_puzzle_hash,
             new_game_nonce,
             &agg_sig_me,
-            self.current_state_number,
+            self.current_state_number(),
         )?;
 
         self.proposed_games.push(ProposedGame::new(
@@ -912,7 +914,7 @@ impl ChannelHandler {
             &self.reward_puzzle_hash,
             new_game_nonce,
             &agg_sig_me,
-            self.current_state_number,
+            self.current_state_number(),
         )?;
 
         self.proposed_games.push(ProposedGame::new(
@@ -1072,12 +1074,13 @@ impl ChannelHandler {
         new_entropy: Hash,
     ) -> Result<MoveResult, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
+        let state_number = self.current_state_number();
 
         let referee_result = self.live_games[game_idx].internal_make_move(
             env.allocator,
             readable_move,
             new_entropy.clone(),
-            self.current_state_number,
+            state_number,
         )?;
 
         let match_puzzle_hash = referee_result.puzzle_hash_for_unroll.clone();
@@ -1102,7 +1105,7 @@ impl ChannelHandler {
 
         self.push_cached_action(CachedPotatoRegenerateLastHop::PotatoMoveHappening(Rc::new(
             PotatoMoveCachedData {
-                state_number: self.current_state_number,
+                state_number: self.current_state_number(),
                 game_id: game_id.clone(),
                 match_puzzle_hash,
                 puzzle_hash,
@@ -1113,7 +1116,7 @@ impl ChannelHandler {
         )));
 
         Ok(MoveResult {
-            state_number: self.current_state_number,
+            state_number: self.current_state_number(),
             game_move: referee_result.details.clone(),
         })
     }
@@ -1127,12 +1130,13 @@ impl ChannelHandler {
         game_move: &GameMoveDetails,
     ) -> Result<ChannelHandlerMoveResult, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
+        let state_number = self.current_state_number();
 
         let coin_string = self.state_channel.coin.clone();
         let their_move_result = self.live_games[game_idx].internal_their_move(
             env.allocator,
             game_move,
-            self.current_state_number,
+            state_number,
             Some(&coin_string),
         )?;
 
@@ -1156,7 +1160,7 @@ impl ChannelHandler {
 
         Ok(ChannelHandlerMoveResult {
             readable_their_move: readable_move.p(),
-            state_number: self.current_state_number,
+            state_number: self.current_state_number(),
             message,
             mover_share,
         })
@@ -1422,7 +1426,7 @@ impl ChannelHandler {
         // Three cases based on comparing on-chain state to our current state:
         let mut result = match (
             myself,
-            unrolling_state_number.cmp(&self.current_state_number),
+            unrolling_state_number.cmp(&self.current_state_number()),
         ) {
             // We initiated this spend, or the on-chain state matches ours:
             // use the timeout (default) path.
@@ -1430,7 +1434,7 @@ impl ChannelHandler {
             // On-chain state is from the future relative to us - error.
             (_, Ordering::Greater) => Err(Error::StrErr(format!(
                 "Reply from the future onchain {} (me {})",
-                unrolling_state_number, self.current_state_number,
+                unrolling_state_number, self.current_state_number(),
             ))),
             // On-chain state is behind ours - preempt.  We have two
             // adjacent states (unroll and timeout); exactly one will
@@ -1662,7 +1666,7 @@ impl ChannelHandler {
                         game_id: live_game.game_id.clone(),
                         puzzle_hash: coin_ph.clone(),
                         our_turn: live_game.is_my_turn(),
-                        state_number: self.current_state_number,
+                        state_number: self.current_state_number(),
                         accept: AcceptTransactionState::Waiting,
                         pending_slash_amount: None,
                         cheating_move_mover_share: None,
@@ -1687,7 +1691,7 @@ impl ChannelHandler {
                         game_id: live_game.game_id.clone(),
                         puzzle_hash: coin_ph.clone(),
                         our_turn: true,
-                        state_number: self.current_state_number,
+                        state_number: self.current_state_number(),
                         accept: AcceptTransactionState::Waiting,
                         pending_slash_amount: None,
                         cheating_move_mover_share: None,
@@ -1710,7 +1714,7 @@ impl ChannelHandler {
                         game_id: pending.game_id.clone(),
                         puzzle_hash: coin_ph.clone(),
                         our_turn: true,
-                        state_number: self.current_state_number,
+                        state_number: self.current_state_number(),
                         accept: AcceptTransactionState::Waiting,
                         pending_slash_amount: None,
                         cheating_move_mover_share: None,
@@ -1840,6 +1844,7 @@ impl ChannelHandler {
 
         let last_puzzle_hash = self.live_games[game_idx].last_puzzle_hash();
         let _start_puzzle_hash = self.live_games[game_idx].current_puzzle_hash(env.allocator)?;
+        let state_number = self.current_state_number();
 
         // assert_eq!(start_puzzle_hash, existing_ph);
 
@@ -1848,7 +1853,7 @@ impl ChannelHandler {
             env.allocator,
             readable_move,
             entropy,
-            self.current_state_number,
+            state_number,
         )?;
 
         let tx = self.live_games[game_idx].get_transaction_for_move(
@@ -1862,7 +1867,7 @@ impl ChannelHandler {
         Ok((
             last_puzzle_hash,
             post_outcome,
-            self.current_state_number,
+            self.current_state_number(),
             move_result.details.clone(),
             tx,
         ))
@@ -1898,6 +1903,7 @@ impl ChannelHandler {
         }
 
         let live_game_idx = self.get_game_by_id(game_id)?;
+        let state_number = self.current_state_number();
 
         // Forward-only alignment: if the new coin's PH matches our
         // referee's expected outcome, the opponent's move brought the
@@ -1911,7 +1917,7 @@ impl ChannelHandler {
             if !matches_spent {
                 self.live_games[live_game_idx].last_referee_puzzle_hash = ph.clone();
                 return Ok(CoinSpentInformation::TheirSpend(
-                    TheirTurnCoinSpentResult::Expected(self.current_state_number, ph, amt, None),
+                    TheirTurnCoinSpentResult::Expected(state_number, ph, amt, None),
                 ));
             }
         }
@@ -1920,7 +1926,7 @@ impl ChannelHandler {
             env.allocator,
             coin_string,
             conditions,
-            self.current_state_number,
+            state_number,
         )?;
         Ok(CoinSpentInformation::TheirSpend(spent_result))
     }

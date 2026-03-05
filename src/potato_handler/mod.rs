@@ -1202,7 +1202,7 @@ impl PotatoHandler {
                     msg
                 } else {
                     return Err(Error::StrErr(format!(
-                        "Expected handshake a message, got {msg_envelope:?}"
+                        "Expected handshake b message, got {msg_envelope:?}"
                     )));
                 };
 

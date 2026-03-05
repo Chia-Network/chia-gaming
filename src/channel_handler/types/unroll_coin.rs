@@ -308,7 +308,6 @@ pub struct UnrollCoinConditionInputs {
     pub my_balance: Amount,
     pub their_balance: Amount,
     pub puzzle_hashes_and_amounts: Vec<(PuzzleHash, Amount)>,
-    pub rem_condition_state: usize,
     pub unroll_timeout: u64,
 }
 
