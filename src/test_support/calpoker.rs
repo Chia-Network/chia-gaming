@@ -99,8 +99,7 @@ mod sim_tests {
     use crate::common::types::Hash;
     use crate::common::types::{atom_from_clvm, i64_from_atom};
     use crate::simulator::tests::potato_handler_sim::{
-        parse_card_lists_from_readable,
-        assert_event_sequence, game_accepted, game_proposed,
+        assert_event_sequence, game_accepted, game_proposed, parse_card_lists_from_readable,
         run_calpoker_container_with_action_list,
         run_calpoker_container_with_action_list_with_success_predicate, ExpectedEvent,
         ExpectedNotification, GameRunOutcome, TestEvent,
@@ -415,26 +414,17 @@ mod sim_tests {
                 let readable_list =
                     crate::utils::proper_list(allocator.allocator(), readable_node, true)
                         .expect("readable should be a list");
-                assert!(
-                    readable_list.len() >= 6,
-                    "readable should have 6 elements"
-                );
+                assert!(readable_list.len() >= 6, "readable should have 6 elements");
 
                 let alice_hv =
                     crate::utils::proper_list(allocator.allocator(), readable_list[3], true)
                         .expect("alice hand value should be a list");
-                assert!(
-                    !alice_hv.is_empty(),
-                    "alice hand value should not be empty"
-                );
+                assert!(!alice_hv.is_empty(), "alice hand value should not be empty");
 
                 let bob_hv =
                     crate::utils::proper_list(allocator.allocator(), readable_list[4], true)
                         .expect("bob hand value should be a list");
-                assert!(
-                    !bob_hv.is_empty(),
-                    "bob hand value should not be empty"
-                );
+                assert!(!bob_hv.is_empty(), "bob hand value should not be empty");
 
                 let win_dir = atom_from_clvm(&mut allocator, readable_list[5])
                     .and_then(|a| i64_from_atom(&a))

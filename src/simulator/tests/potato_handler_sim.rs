@@ -13,13 +13,12 @@ use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
     sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
 };
+use crate::common::types::{atom_from_clvm, i64_from_atom, usize_from_atom};
 use crate::common::types::{
     AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, IntoErr, Node,
     PrivateKey, Program, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
-use crate::common::types::{atom_from_clvm, i64_from_atom, usize_from_atom};
 use crate::games::poker_collection;
-use crate::utils::proper_list;
 use crate::peer_container::{
     report_coin_changes_to_peer, FullCoinSetAdapter, GameCradle, MessagePeerQueue, MessagePipe,
     SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
@@ -31,6 +30,7 @@ use crate::potato_handler::types::{
     WalletSpendInterface,
 };
 use crate::potato_handler::PotatoHandler;
+use crate::utils::proper_list;
 
 use crate::simulator::Simulator;
 use crate::test_support::calpoker::{calpoker_ran_all_the_moves_predicate, prefix_test_moves};
@@ -1822,17 +1822,15 @@ fn check_calpoker_economic_result(
         .2
         .to_nodeptr(allocator)
         .expect("should work");
-    let bob_win_dir =
-        parse_win_direction_from_readable(allocator, bob_outcome_node, false)
-            .expect("should parse bob win direction");
+    let bob_win_dir = parse_win_direction_from_readable(allocator, bob_outcome_node, false)
+        .expect("should parse bob win direction");
 
     let alice_outcome_node = alice_outcome_move
         .2
         .to_nodeptr(allocator)
         .expect("should work");
-    let alice_win_dir =
-        parse_win_direction_from_readable(allocator, alice_outcome_node, true)
-            .expect("should parse alice win direction");
+    let alice_win_dir = parse_win_direction_from_readable(allocator, alice_outcome_node, true)
+        .expect("should parse alice win direction");
 
     debug!("alice win_dir={alice_win_dir} bob win_dir={bob_win_dir}");
     debug!("p1 balance {p1_balance:?} p2 {p2_balance:?}");

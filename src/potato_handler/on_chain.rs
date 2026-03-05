@@ -359,9 +359,9 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                     }
                 }
             } else {
-                let is_timeout = conditions.iter().any(|c| {
-                    matches!(c, CoinCondition::CreateCoin(ph, _) if *ph == their_reward_ph)
-                });
+                let is_timeout = conditions.iter().any(
+                    |c| matches!(c, CoinCondition::CreateCoin(ph, _) if *ph == their_reward_ph),
+                );
 
                 if is_timeout {
                     if !old_definition.notification_sent {
@@ -382,8 +382,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                         _ => None,
                     });
                     if let Some((ph, amt)) = created {
-                        let new_coin =
-                            CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt);
+                        let new_coin = CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt);
                         debug!(
                             "{initial_potato} accepted coin advanced by redo: tracking new coin {new_coin:?}"
                         );

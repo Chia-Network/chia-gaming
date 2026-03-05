@@ -933,10 +933,12 @@ impl ChannelHandler {
 
         self.my_allocated_balance += proposal.my_contribution.clone();
         self.their_allocated_balance += proposal.their_contribution.clone();
-        self.my_out_of_game_balance =
-            self.my_out_of_game_balance.checked_sub(&proposal.my_contribution)?;
-        self.their_out_of_game_balance =
-            self.their_out_of_game_balance.checked_sub(&proposal.their_contribution)?;
+        self.my_out_of_game_balance = self
+            .my_out_of_game_balance
+            .checked_sub(&proposal.my_contribution)?;
+        self.their_out_of_game_balance = self
+            .their_out_of_game_balance
+            .checked_sub(&proposal.their_contribution)?;
 
         let live_game = LiveGame::new(
             proposal.game_id.clone(),
@@ -1179,10 +1181,12 @@ impl ChannelHandler {
         let game_idx = self.get_game_by_id(game_id)?;
 
         let live_game = self.live_games.remove(game_idx);
-        self.my_allocated_balance =
-            self.my_allocated_balance.checked_sub(&live_game.my_contribution)?;
-        self.their_allocated_balance =
-            self.their_allocated_balance.checked_sub(&live_game.their_contribution)?;
+        self.my_allocated_balance = self
+            .my_allocated_balance
+            .checked_sub(&live_game.my_contribution)?;
+        self.their_allocated_balance = self
+            .their_allocated_balance
+            .checked_sub(&live_game.their_contribution)?;
 
         let amount = live_game.get_our_current_share()?;
         let at_stake = live_game.get_amount();
@@ -1434,7 +1438,8 @@ impl ChannelHandler {
             // On-chain state is from the future relative to us - error.
             (_, Ordering::Greater) => Err(Error::StrErr(format!(
                 "Reply from the future onchain {} (me {})",
-                unrolling_state_number, self.current_state_number(),
+                unrolling_state_number,
+                self.current_state_number(),
             ))),
             // On-chain state is behind ours - preempt.  We have two
             // adjacent states (unroll and timeout); exactly one will
@@ -1638,8 +1643,7 @@ impl ChannelHandler {
             let coin_id = CoinString::from_parts(&unroll_coin_id, coin_ph, coin_amt);
 
             let live_latest = self.live_games.iter().find(|g| {
-                !matched_game_ids.contains(&g.game_id)
-                    && g.last_referee_puzzle_hash == *coin_ph
+                !matched_game_ids.contains(&g.game_id) && g.last_referee_puzzle_hash == *coin_ph
             });
             let live_redo = if live_latest.is_none() {
                 cached_moves.iter().find_map(|(gid, mph)| {
@@ -1734,7 +1738,9 @@ impl ChannelHandler {
             for g in &self.live_games {
                 log::debug!(
                     "  live game {:?}: last_ref_ph={:?} amount={:?}",
-                    g.game_id, g.last_referee_puzzle_hash, g.get_amount(),
+                    g.game_id,
+                    g.last_referee_puzzle_hash,
+                    g.get_amount(),
                 );
             }
         }
