@@ -266,27 +266,6 @@ impl ChannelHandler {
         self.their_out_of_game_balance.clone()
     }
 
-    pub fn get_cached_accept_game_ids(&self) -> Vec<GameID> {
-        self.cached_last_actions
-            .iter()
-            .filter_map(|entry| {
-                if let CachedPotatoRegenerateLastHop::PotatoAcceptTimeout(acc) = entry {
-                    Some(acc.game_id.clone())
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    pub fn clear_cached_game_id_for_send(&mut self) {
-        for game_id in self.get_cached_accept_game_ids() {
-            if let Ok(idx) = self.get_game_by_id(&game_id) {
-                self.live_games.remove(idx);
-            }
-        }
-    }
-
     /// Drain all cached PotatoAcceptTimeout entries, returning (game_id, our_share_amount) for each.
     pub fn drain_cached_accept_timeouts(&mut self) -> Vec<(GameID, Amount)> {
         let mut accepts = Vec::new();
@@ -951,7 +930,6 @@ impl ChannelHandler {
         self.my_out_of_game_balance -= proposal.my_contribution.clone();
         self.their_out_of_game_balance -= proposal.their_contribution.clone();
 
-        self.clear_cached_game_id_for_send();
         self.push_cached_action(CachedPotatoRegenerateLastHop::ProposalAccepted(
             game_id.clone(),
         ));
