@@ -623,6 +623,26 @@ depending on whether the game was fully established or still in-flight:
 - The channel handler does **not** enter `Failed` state; remaining games
 continue on-chain.
 
+### Why Stale Coins Are Not Recovered
+
+When a game coin appears in the stale unroll outputs but at an older state
+than what was played off-chain, the system treats it as a terminal error
+rather than attempting to resume the game from the stale state. This is
+intentional for several reasons:
+
+1. **Rarity.** This can only happen when you're having trouble posting
+   transactions (preemption failed, your timeout was too slow, etc.). In
+   that situation you're likely unable to transact reliably anyway.
+2. **Opponent divergence.** If the game were resumed from the stale state,
+   the opponent could play a *different* move than they did off-chain. The
+   code logic and UX for handling that divergence (re-validating a
+   different move history, surfacing "they changed their move" to the
+   player) are complex and error-prone.
+3. **One terminal condition.** The current approach guarantees exactly one
+   terminal event per game — either the game was matched and continues
+   normally, or it gets a `GameError`/`GameCancelled`. There is no
+   ambiguous middle state where a game is "maybe recoverable."
+
 ### Notifications
 
 
