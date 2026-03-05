@@ -245,7 +245,7 @@ mod gaming_wasm {
                 unroll_timeout: Timeout::new(jsconfig.unroll_timeout as u64),
                 my_contribution: jsconfig.my_contribution.amt.clone(),
                 their_contribution: jsconfig.their_contribution.amt.clone(),
-                reward_puzzle_hash: PuzzleHash::from_hash(Hash::from_slice(&reward_puzzle_hash_bytes)),
+                reward_puzzle_hash: PuzzleHash::from_hash(Hash::from_slice(&reward_puzzle_hash_bytes).into_js()?),
             },
             rng_id: jsconfig.rng_id,
         })
@@ -557,7 +557,7 @@ mod gaming_wasm {
         let game_id = string_to_game_id(id)?;
         let readable_bytes = hex::decode(readable).into_js()?;
         let new_entropy = if let Some(e) = entropy {
-            Some(Hash::from_slice(&hex::decode(e).into_js()?))
+            Some(Hash::from_slice(&hex::decode(e).into_js()?).into_js()?)
         } else {
             None
         };
@@ -978,8 +978,8 @@ mod gaming_wasm {
     ) -> Result<String, JsValue> {
         let parent_coin_bytes = check_for_hex(parent_coin_info)?;
         let puzzle_hash_bytes = check_for_hex(puzzle_hash)?;
-        let parent_coin_info_hash = Hash::from_slice(&parent_coin_bytes);
-        let puzzle_hash_hash = Hash::from_slice(&puzzle_hash_bytes);
+        let parent_coin_info_hash = Hash::from_slice(&parent_coin_bytes).into_js()?;
+        let puzzle_hash_hash = Hash::from_slice(&puzzle_hash_bytes).into_js()?;
         let coin_string = CoinString::from_parts(
             &CoinID::new(parent_coin_info_hash),
             &PuzzleHash::from_hash(puzzle_hash_hash),

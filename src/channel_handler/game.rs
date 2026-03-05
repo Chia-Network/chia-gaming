@@ -58,7 +58,7 @@ impl GameStart {
             StateUpdateProgram::new(allocator, "initial", validation_prog);
         let initial_validation_program_hash =
             if let Some(a) = atom_from_clvm(allocator, template_list[6]) {
-                Hash::from_slice(&a)
+                Hash::from_slice(&a)?
             } else {
                 return Err(Error::StrErr(
                     "not an atom for initial_validation_hash".to_string(),

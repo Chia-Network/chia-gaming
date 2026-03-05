@@ -60,10 +60,12 @@ fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<C
             }
         } else if *atoms[0] == CREATE_COIN_ATOM {
             if let Some(amt) = u64_from_atom(&atoms[2]) {
-                return Some(CoinCondition::CreateCoin(
-                    PuzzleHash::from_hash(Hash::from_slice(&atoms[1])),
-                    Amount::new(amt),
-                ));
+                if let Ok(hash) = Hash::from_slice(&atoms[1]) {
+                    return Some(CoinCondition::CreateCoin(
+                        PuzzleHash::from_hash(hash),
+                        Amount::new(amt),
+                    ));
+                }
             }
         }
     }

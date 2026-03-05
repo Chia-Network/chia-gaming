@@ -97,5 +97,5 @@ select cards. The five on-chain validator steps (a–e) enforce this protocol.
 | `Referee` | Manages referee coin state and on-chain transactions |
 | `GameFactory` | Holds proposal and parser programs for a game type |
 | `GameAction` | Enum of test actions (Move, Accept, Shutdown, RedoMove, etc.) |
-| `RefereeOnChainTransaction` | Spend bundle for an on-chain referee action |
+| `Spend` | Spend bundle for an on-chain referee action |
 | `SynchronousGameCradle` | High-level game wrapper used in tests |

@@ -188,7 +188,7 @@ impl Default for Simulator {
 impl Simulator {
     pub fn new(strict: bool) -> Self {
         let mut state = SimulatorState::new();
-        let zero_ph = PuzzleHash::from_hash(Hash::from_slice(&[0u8; 32]));
+        let zero_ph = PuzzleHash::from_hash(Hash::from_bytes([0u8; 32]));
         state.farm_block_inner(&zero_ph);
         Simulator {
             state: RefCell::new(state),
@@ -368,7 +368,7 @@ impl Simulator {
                         let full_msg = agg_sig_me_message(
                             msg,
                             &coin_id,
-                            &Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA),
+                            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
                         );
                         agg_sig_pairs.push((pk.to_bls(), full_msg));
                     }
@@ -543,7 +543,7 @@ impl Simulator {
         coin: &CoinString,
         target_coins: &[(PuzzleHash, Amount)],
     ) -> Result<Vec<CoinString>, Error> {
-        let agg_sig_me_additional_data = Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA);
+        let agg_sig_me_additional_data = Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA);
         let (_first_coin_parent, first_coin_ph, _first_coin_amt) = coin.get_coin_string_parts()?;
         assert_eq!(puzzle.sha256tree(allocator), first_coin_ph);
 
@@ -644,7 +644,7 @@ impl Simulator {
             &identity_source.synthetic_private_key,
             quoted_conditions_hash.bytes(),
             &source_coin.to_coin_id(),
-            &Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA),
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
         );
         let tx = CoinSpend {
             bundle: Spend {
@@ -695,7 +695,7 @@ impl Simulator {
                 &owner.synthetic_private_key,
                 quoted_conditions_hash.bytes(),
                 &c.to_coin_id(),
-                &Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA),
+                &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
             );
             spends.push(CoinSpend {
                 bundle: Spend {

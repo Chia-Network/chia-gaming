@@ -21,7 +21,7 @@ use crate::common::types::{
 };
 use crate::potato_handler::effects::{Effect, GameNotification, ResyncInfo};
 use crate::potato_handler::types::{GameAction, PotatoHandlerImpl, PotatoState};
-use crate::referee::types::{RefereeOnChainTransaction, SlashOutcome, TheirTurnCoinSpentResult};
+use crate::referee::types::{SlashOutcome, TheirTurnCoinSpentResult};
 use crate::referee::Referee;
 
 enum PendingMoveKind {
@@ -147,7 +147,7 @@ impl OnChainGameHandler {
             name: Some("on chain redo move".to_string()),
             spends: vec![CoinSpend {
                 coin: coin.clone(),
-                bundle: transaction.bundle.clone(),
+                bundle: transaction.clone(),
             }],
         }))
     }
@@ -734,8 +734,8 @@ impl PotatoHandlerImpl for OnChainGameHandler {
 
                 let conditions = CoinCondition::from_puzzle_and_solution(
                     env.allocator,
-                    &tx.bundle.puzzle.to_program(),
-                    &tx.bundle.solution.p(),
+                    &tx.puzzle.to_program(),
+                    &tx.solution.p(),
                 )?;
 
                 let reward_ph = self.player_ch.get_reward_puzzle_hash(env)?;
@@ -759,7 +759,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                         name: Some("redo accept".to_string()),
                         spends: vec![CoinSpend {
                             coin: coin_id.clone(),
-                            bundle: tx.bundle.clone(),
+                            bundle: tx.as_ref().clone(),
                         }],
                     };
                     effects.push(Effect::SpendTransaction(spend_bundle));
@@ -807,8 +807,8 @@ impl PotatoHandlerImpl for OnChainGameHandler {
 
                     let conditions = CoinCondition::from_puzzle_and_solution(
                         env.allocator,
-                        &tx.bundle.puzzle.to_program(),
-                        &tx.bundle.solution.p(),
+                        &tx.puzzle.to_program(),
+                        &tx.solution.p(),
                     )?;
                     let reward_ph = self.player_ch.get_reward_puzzle_hash(env)?;
                     let parent_coin_id = coin_id.to_coin_id();
@@ -830,7 +830,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                             name: Some(format!("{initial_potato} accept transaction")),
                             spends: vec![CoinSpend {
                                 coin: coin_id.clone(),
-                                bundle: tx.bundle.clone(),
+                                bundle: tx,
                             }],
                         }));
                     }
@@ -930,7 +930,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
             name: Some("on chain move".to_string()),
             spends: vec![CoinSpend {
                 coin: current_coin.clone(),
-                bundle: transaction.bundle.clone(),
+                bundle: transaction,
             }],
         })))
     }
@@ -1011,8 +1011,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
 
                     self.have_potato = PotatoState::Absent;
                     debug!("{initial_potato} redo accept: register for timeout {coin:?}");
-                    let tx_borrow: &RefereeOnChainTransaction = tx.borrow();
-                    def.accept = AcceptTransactionState::Determined(Box::new(tx_borrow.clone()));
+                    def.accept = AcceptTransactionState::Determined(tx);
                     effects.push(Effect::RegisterCoin {
                         coin,
                         timeout: def.game_timeout.clone(),

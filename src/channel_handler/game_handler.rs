@@ -252,8 +252,8 @@ impl GameHandler {
         };
 
         let get_hash = |allocator: &mut AllocEncoder, loc: usize| {
-            if let Some(h) = atom_from_clvm(allocator, pl[loc]).map(|a| Hash::from_slice(&a)) {
-                Ok(h)
+            if let Some(a) = atom_from_clvm(allocator, pl[loc]) {
+                Hash::from_slice(&a)
             } else {
                 Err(Error::StrErr("bad hash".to_string()))
             }

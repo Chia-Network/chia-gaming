@@ -564,7 +564,7 @@ impl TheirTurnReferee {
         }
 
         let new_move = &rem_conditions[0];
-        let validation_info_hash = Hash::from_slice(&rem_conditions[1]);
+        let validation_info_hash = Hash::from_slice(&rem_conditions[1])?;
         let new_mover_share = if let Some(share) = u64_from_atom(&rem_conditions[2]) {
             let amt = Amount::new(share);
             if amt > self.fixed.amount {

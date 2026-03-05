@@ -39,7 +39,7 @@ use crate::common::types::{
     Puzzle, PuzzleHash, Sha256tree, Spend, Timeout,
 };
 use crate::potato_handler::types::GameAction;
-use crate::referee::types::{GameMoveDetails, RefereeOnChainTransaction, TheirTurnCoinSpentResult};
+use crate::referee::types::{GameMoveDetails, TheirTurnCoinSpentResult};
 use crate::referee::Referee;
 
 /// A channel handler runs the game by facilitating the phases of game startup
@@ -1785,7 +1785,7 @@ impl ChannelHandler {
         game_id: &GameID,
         game_coin: &CoinString,
         on_chain: bool,
-    ) -> Result<RefereeOnChainTransaction, Error> {
+    ) -> Result<Spend, Error> {
         let idx = self.get_game_by_id(game_id)?;
         self.live_games[idx].get_transaction_for_move(allocator, game_coin, on_chain)
     }
@@ -1825,16 +1825,7 @@ impl ChannelHandler {
         readable_move: &ReadableMove,
         entropy: Hash,
         existing_coin: &CoinString,
-    ) -> Result<
-        (
-            PuzzleHash,
-            PuzzleHash,
-            usize,
-            GameMoveDetails,
-            RefereeOnChainTransaction,
-        ),
-        Error,
-    > {
+    ) -> Result<(PuzzleHash, PuzzleHash, usize, GameMoveDetails, Spend), Error> {
         let game_idx = self.get_game_by_id(game_id)?;
 
         let last_puzzle_hash = self.live_games[game_idx].last_puzzle_hash();
@@ -1964,7 +1955,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         game_id: &GameID,
         coin: &CoinString,
-    ) -> Result<Option<RefereeOnChainTransaction>, Error> {
+    ) -> Result<Option<Spend>, Error> {
         if let Ok(game_idx) = self.get_game_by_id(game_id) {
             let tx = self.live_games[game_idx].get_transaction_for_timeout(env.allocator, coin)?;
             self.live_games.remove(game_idx);

@@ -112,7 +112,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let s = Simulator::new_strict();
         assert_eq!(s.get_current_height(), 0usize);
 
-        let ph = PuzzleHash::from_hash(Hash::from_slice(&[1u8; 32]));
+        let ph = PuzzleHash::from_hash(Hash::from_bytes([1u8; 32]));
         s.farm_block(&ph);
         assert_eq!(s.get_current_height(), 1usize);
 
@@ -152,7 +152,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
     res.push(("test_simulator_get_all_coins_excludes_coinbase", &|| {
         let s = Simulator::new_strict();
-        let ph = PuzzleHash::from_hash(Hash::from_slice(&[2u8; 32]));
+        let ph = PuzzleHash::from_hash(Hash::from_bytes([2u8; 32]));
         s.farm_block(&ph);
 
         let all = s.get_all_coins().expect("ok");
@@ -198,7 +198,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &identity.synthetic_private_key,
             qhash.bytes(),
             &coin.to_coin_id(),
-            &Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA),
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
         );
         let tx = CoinSpend {
             coin: coin.clone(),
@@ -271,7 +271,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 &identity.synthetic_private_key,
                 qhash.bytes(),
                 &coin.to_coin_id(),
-                &Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA),
+                &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
             );
             CoinSpend {
                 coin: coin.clone(),
@@ -303,7 +303,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let identity = ChiaIdentity::new(&mut allocator, pk).expect("should create");
 
         let fake_coin = CoinString::from_parts(
-            &CoinID::new(Hash::from_slice(&[99u8; 32])),
+            &CoinID::new(Hash::from_bytes([99u8; 32])),
             &identity.puzzle_hash,
             &Amount::new(1000),
         );
@@ -325,7 +325,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &identity.synthetic_private_key,
             qhash.bytes(),
             &fake_coin.to_coin_id(),
-            &Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA),
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
         );
         let tx = CoinSpend {
             coin: fake_coin,

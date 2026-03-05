@@ -6,11 +6,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::ReadableMove;
 use crate::common::types::{
-    AllocEncoder, Amount, CoinCondition, CoinString, Error, GameID, Hash, PuzzleHash, Timeout,
+    AllocEncoder, Amount, CoinCondition, CoinString, Error, GameID, Hash, PuzzleHash, Spend,
+    Timeout,
 };
 use crate::referee::types::{
-    GameMoveDetails, GameMoveWireData, RefereeOnChainTransaction, TheirTurnCoinSpentResult,
-    TheirTurnMoveResult,
+    GameMoveDetails, GameMoveWireData, TheirTurnCoinSpentResult, TheirTurnMoveResult,
 };
 use crate::referee::Referee;
 
@@ -147,8 +147,7 @@ impl LiveGame {
         allocator: &mut AllocEncoder,
         game_coin: &CoinString,
         on_chain: bool,
-    ) -> Result<RefereeOnChainTransaction, Error> {
-        // assert!(self.referee_maker.processing_my_turn());
+    ) -> Result<Spend, Error> {
         self.referee_maker
             .get_transaction_for_move(allocator, game_coin, on_chain)
     }
@@ -190,7 +189,7 @@ impl LiveGame {
         &mut self,
         allocator: &mut AllocEncoder,
         coin: &CoinString,
-    ) -> Result<Option<RefereeOnChainTransaction>, Error> {
+    ) -> Result<Option<Spend>, Error> {
         self.referee_maker
             .get_transaction_for_timeout(allocator, coin)
     }

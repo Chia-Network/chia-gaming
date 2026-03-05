@@ -184,9 +184,9 @@ pub fn convert_coinset_org_spend_to_spend(
     let solution_bytes = check_for_hex(solution)?;
     let puzzle_reveal_prog = Program::from_bytes(&puzzle_reveal_bytes).into();
     let solution_prog = Program::from_bytes(&solution_bytes).into();
-    let coinid_hash = Hash::from_slice(&parent_coin_info_bytes);
+    let coinid_hash = Hash::from_slice(&parent_coin_info_bytes)?;
     let parent_id = CoinID::new(coinid_hash);
-    let puzzle_hash = PuzzleHash::from_hash(Hash::from_slice(&puzzle_hash_bytes));
+    let puzzle_hash = PuzzleHash::from_hash(Hash::from_slice(&puzzle_hash_bytes)?);
     let coin_string = CoinString::from_parts(&parent_id, &puzzle_hash, &Amount::new(amount));
     Ok(CoinSpend {
         coin: coin_string,

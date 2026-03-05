@@ -13,12 +13,12 @@ use crate::channel_handler::types::{
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
     Aggsig, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, Program, ProgramRef,
-    PuzzleHash, SpendBundle, Timeout,
+    PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::potato_handler::effects::{Effect, ResyncInfo};
 use crate::potato_handler::handshake::{HandshakeA, HandshakeB};
 use crate::potato_handler::start::GameStart;
-use crate::referee::types::{GameMoveDetails, RefereeOnChainTransaction};
+use crate::referee::types::GameMoveDetails;
 
 // Internal: decide what kind of condition wait we're in.
 #[derive(Debug)]
@@ -292,12 +292,7 @@ pub enum GameAction {
     Move(GameID, ReadableMove, Hash),
     RedoMove(GameID, CoinString, Rc<PotatoMoveCachedData>),
     #[serde(rename = "RedoAccept")]
-    RedoAcceptTimeout(
-        GameID,
-        CoinString,
-        PuzzleHash,
-        Box<RefereeOnChainTransaction>,
-    ),
+    RedoAcceptTimeout(GameID, CoinString, PuzzleHash, Box<Spend>),
     #[serde(rename = "Accept")]
     AcceptTimeout(GameID),
     CleanShutdown,

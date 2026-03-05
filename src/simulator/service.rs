@@ -219,7 +219,7 @@ impl GameRunner {
             debug!("coin string: {cs:?}");
             cs.to_coin_id()
         } else {
-            CoinID::new(Hash::from_slice(&bytes))
+            CoinID::new(Hash::from_slice(&bytes)?)
         };
 
         if let Some((prog, sol)) = self
@@ -263,7 +263,7 @@ impl GameRunner {
     fn create_spendable(&mut self, who: &str, target: &str, amt: u64) -> StringWithError {
         let target_ph_bytes: Vec<u8> =
             hex::decode(target).map_err(|_| Error::StrErr("bad target hex".to_string()))?;
-        let target_ph = PuzzleHash::from_hash(Hash::from_slice(&target_ph_bytes));
+        let target_ph = PuzzleHash::from_hash(Hash::from_slice(&target_ph_bytes)?);
         let identity = self.lookup_identity(who).cloned();
         if let Some(identity) = identity {
             let coins0 = self.simulator.get_my_coins(&identity.puzzle_hash)?;

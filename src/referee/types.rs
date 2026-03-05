@@ -19,7 +19,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     atom_from_clvm, chia_dialect, i64_from_atom, Aggsig, AllocEncoder, Amount, CoinSpend,
     CoinString, Error, Hash, IntoErr, Node, Program, PublicKey, Puzzle, PuzzleHash, Sha256tree,
-    Spend, Timeout,
+    Timeout,
 };
 use crate::utils::proper_list;
 
@@ -65,13 +65,6 @@ pub enum SlashOutcome {
         /// If the slash times out, this is what we actually end up with.
         cheating_move_mover_share: Amount,
     },
-}
-
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct RefereeOnChainTransaction {
-    pub bundle: Spend,
-    pub amount: Amount,
-    pub coin: CoinString,
 }
 
 #[derive(Debug)]
