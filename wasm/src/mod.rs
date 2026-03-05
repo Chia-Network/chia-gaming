@@ -706,72 +706,14 @@ mod gaming_wasm {
     }
 
     impl ToLocalUI for JsLocalUI {
-        fn opponent_moved(
-            &mut self,
-            _allocator: &mut AllocEncoder,
-            game_id: &GameID,
-            state_number: usize,
-            readable_move: ReadableMove,
-            _amount: Amount,
-        ) -> Result<(), chia_gaming::common::types::Error> {
-            call_javascript_from_collection(&self.callbacks, "opponent_moved", |args_array| {
-                args_array.set(0, JsValue::from_str(&game_id_to_string(game_id)));
-                args_array.set(1, JsValue::from_str(&readable_move.to_program().to_hex()));
-                args_array.set(2, state_number.into());
-                Ok(())
-            })
-        }
-
-        fn game_message(
-            &mut self,
-            _allocator: &mut AllocEncoder,
-            game_id: &GameID,
-            readable: ReadableMove,
-        ) -> Result<(), chia_gaming::common::types::Error> {
-            call_javascript_from_collection(&self.callbacks, "game_message", |args_array| {
-                args_array.set(0, JsValue::from_str(&game_id_to_string(game_id)));
-                args_array.set(1, JsValue::from_str(&readable.to_program().to_hex()));
-                Ok(())
-            })
-        }
-
-        fn game_notification(
+        fn notification(
             &mut self,
             notification: &chia_gaming::potato_handler::effects::GameNotification,
         ) -> Result<(), chia_gaming::common::types::Error> {
-            call_javascript_from_collection(&self.callbacks, "game_notification", |args_array| {
+            call_javascript_from_collection(&self.callbacks, "notification", |args_array| {
                 let json = serde_json::to_string(notification)
                     .unwrap_or_else(|_| format!("{notification:?}"));
                 args_array.set(0, JsValue::from_str(&json));
-                Ok(())
-            })
-        }
-
-        fn clean_shutdown_started(
-            &mut self
-        ) -> Result<(), chia_gaming::common::types::Error> {
-            call_javascript_from_collection(&self.callbacks, "clean_shutdown_started", |_args_array| {
-                Ok(())
-            })
-        }
-
-        fn clean_shutdown_complete(
-            &mut self,
-            coin: Option<&CoinString>,
-        ) -> Result<(), chia_gaming::common::types::Error> {
-            call_javascript_from_collection(&self.callbacks, "clean_shutdown_complete", |args_array| {
-                args_array.set(
-                    0,
-                    coin.map(|c| JsValue::from_str(&hex::encode(&c.to_bytes())))
-                        .unwrap_or_else(|| JsValue::NULL.clone()),
-                );
-                Ok(())
-            })
-        }
-
-        fn going_on_chain(&mut self, reason: &str) -> Result<(), chia_gaming::common::types::Error> {
-            call_javascript_from_collection(&self.callbacks, "going_on_chain", |args_array| {
-                args_array.set(0, JsValue::from_str(reason));
                 Ok(())
             })
         }

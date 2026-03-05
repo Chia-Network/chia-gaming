@@ -20,7 +20,7 @@ use crate::common::types::{GameID, PrivateKey, Program, Timeout};
 use crate::games::poker_collection;
 #[cfg(test)]
 use crate::peer_container::{MessagePeerQueue, MessagePipe};
-use crate::potato_handler::effects::{apply_effects, Effect};
+use crate::potato_handler::effects::{apply_effects, Effect, GameNotification};
 #[cfg(test)]
 use crate::potato_handler::start::GameStart;
 use crate::potato_handler::types::{
@@ -152,39 +152,20 @@ impl BootstrapTowardWallet for Pipe {
 
 #[cfg(test)]
 impl ToLocalUI for Pipe {
-    fn opponent_moved(
-        &mut self,
-        _allocator: &mut AllocEncoder,
-        id: &GameID,
-        _state_number: usize,
-        readable: ReadableMove,
-        mover_share: Amount,
-    ) -> Result<(), Error> {
-        self.opponent_moves
-            .push((id.clone(), readable, mover_share));
-        Ok(())
-    }
-    fn game_message(
-        &mut self,
-        _allocator: &mut AllocEncoder,
-        id: &GameID,
-        readable: ReadableMove,
-    ) -> Result<(), Error> {
-        self.opponent_messages.push((id.clone(), readable));
-        Ok(())
-    }
-    fn clean_shutdown_started(&mut self) -> Result<(), Error> {
-        Ok(())
-    }
-
-    fn clean_shutdown_complete(
-        &mut self,
-        _reward_coin_string: Option<&CoinString>,
-    ) -> Result<(), Error> {
-        Ok(())
-    }
-    fn going_on_chain(&mut self, reason: &str) -> Result<(), Error> {
-        self.went_on_chain = Some(reason.to_string());
+    fn notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
+        match notification {
+            GameNotification::OpponentMoved { id, readable, mover_share, .. } => {
+                self.opponent_moves
+                    .push((id.clone(), readable.clone(), mover_share.clone()));
+            }
+            GameNotification::GameMessage { id, readable } => {
+                self.opponent_messages.push((id.clone(), readable.clone()));
+            }
+            GameNotification::GoingOnChain { reason } => {
+                self.went_on_chain = Some(reason.clone());
+            }
+            _ => {}
+        }
         Ok(())
     }
 }
@@ -236,7 +217,7 @@ pub fn test_handle_received_channel_puzzle_hash<R: Rng>(
             }],
         },
     )
-    .map(|effect| effect.unwrap_or_default())
+    .map(|effect| effect.into_iter().collect())
 }
 
 /// Helper for test handshake: call peer.channel_transaction_completion.
@@ -246,7 +227,7 @@ pub fn test_handle_received_unfunded_offer<R: Rng>(
     unfunded_offer: &SpendBundle,
 ) -> Result<Vec<Effect>, Error> {
     peer.channel_transaction_completion(env, unfunded_offer)
-        .map(|effect| effect.unwrap_or_default())
+        .map(|effect| effect.into_iter().collect())
 }
 
 pub fn run_move<P, R: Rng>(

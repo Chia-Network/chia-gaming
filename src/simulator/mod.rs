@@ -243,6 +243,15 @@ impl Simulator {
         Ok(state.spent_puzzle_solutions.get(coin_id).cloned())
     }
 
+    pub fn is_coin_spendable(&self, coin: &CoinString) -> bool {
+        let state = self.state.borrow();
+        let coin_id = coin.to_coin_id();
+        match state.coins.get(&coin_id) {
+            Some(r) => r.spent_height.is_none(),
+            None => false,
+        }
+    }
+
     pub fn push_tx(
         &self,
         allocator: &mut AllocEncoder,
@@ -272,6 +281,11 @@ impl Simulator {
             let record = match state.coins.get(&coin_id) {
                 Some(r) => r,
                 None => {
+                    if self.strict {
+                        panic!(
+                            "Strict mode: Coin not found: {coin_id:?}",
+                        );
+                    }
                     return Ok(IncludeTransactionResult {
                         code: 3,
                         e: Some(5),
@@ -281,6 +295,11 @@ impl Simulator {
             };
 
             if record.spent_height.is_some() {
+                if self.strict {
+                    panic!(
+                        "Strict mode: Coin already spent: {coin_id:?}",
+                    );
+                }
                 return Ok(IncludeTransactionResult {
                     code: 3,
                     e: Some(5),
@@ -294,10 +313,20 @@ impl Simulator {
             let puzzle_program: Program = (*tx.bundle.puzzle.to_program()).clone();
             let computed_ph = puzzle_program.sha256tree(allocator);
             if computed_ph != record.puzzle_hash {
-                panic!(
-                    "PUSH_TX: puzzle hash MISMATCH for coin {i}: coin_id={coin_id:?} coin_ph={:?} computed_ph={computed_ph:?}",
-                    record.puzzle_hash,
-                );
+                if self.strict {
+                    panic!(
+                        "Strict mode: puzzle hash MISMATCH for coin {i}: coin_id={coin_id:?} coin_ph={:?} computed_ph={computed_ph:?}",
+                        record.puzzle_hash,
+                    );
+                }
+                return Ok(IncludeTransactionResult {
+                    code: 3,
+                    e: Some(6),
+                    diagnostic: format!(
+                        "Puzzle hash mismatch for coin {}: expected {:?}, got {computed_ph:?}",
+                        i, record.puzzle_hash,
+                    ),
+                });
             }
             let solution_bytes = tx.bundle.solution.to_clvm(allocator).into_gen()?;
             let solution_program = Program::from_nodeptr(allocator, solution_bytes)?;
@@ -311,6 +340,14 @@ impl Simulator {
                 Err(e) => {
                     let puzzle_hex = puzzle_program.to_hex();
                     let sol_hex = solution_program.to_hex();
+                    if self.strict {
+                        panic!(
+                            "Strict mode: CLVM execution error for coin {i}: \
+                             coin_id={coin_id:?} coin_ph={:?} computed_ph={computed_ph:?}\n  \
+                             puzzle_len={} solution_len={}\n  err={e:?}",
+                            record.puzzle_hash, puzzle_hex.len() / 2, sol_hex.len() / 2,
+                        );
+                    }
                     eprintln!(
                         "PUSH_TX: CLVM error for coin {i}: coin_id={:?} coin_ph={:?} computed_ph={computed_ph:?}\n  puzzle_len={} solution_len={}\n  err={e:?}",
                         coin_id, record.puzzle_hash, puzzle_hex.len() / 2, sol_hex.len() / 2,
@@ -347,14 +384,24 @@ impl Simulator {
                     }
                     CoinCondition::AssertHeightRelative(blocks) => {
                         let elapsed = state.height.saturating_sub(record.created_height);
-                        assert!(
-                            elapsed as u64 >= *blocks,
-                            "ASSERT_HEIGHT_RELATIVE violated at mempool submission: \
-                             coin {:?} created at height {}, current height {}, \
-                             elapsed {} but required {}. \
-                             Transactions with unsatisfied relative timelocks must not be submitted.",
-                            coin_id, record.created_height, state.height, elapsed, blocks,
-                        );
+                        if (elapsed as u64) < *blocks {
+                            if self.strict {
+                                panic!(
+                                    "Strict mode: ASSERT_HEIGHT_RELATIVE violated: \
+                                     coin {:?} created at height {}, current height {}, \
+                                     elapsed {} but required {}",
+                                    coin_id, record.created_height, state.height, elapsed, blocks,
+                                );
+                            }
+                            return Ok(IncludeTransactionResult {
+                                code: 3,
+                                e: Some(8),
+                                diagnostic: format!(
+                                    "Relative timelock not satisfied: elapsed {} < required {}",
+                                    elapsed, blocks,
+                                ),
+                            });
+                        }
                     }
                     _ => {}
                 }
@@ -371,6 +418,13 @@ impl Simulator {
         }
 
         if total_output > total_input {
+            if self.strict {
+                panic!(
+                    "Strict mode: Minting coins: outputs ({}) exceed inputs ({})",
+                    total_output.to_u64(),
+                    total_input.to_u64(),
+                );
+            }
             return Ok(IncludeTransactionResult {
                 code: 3,
                 e: Some(20),
@@ -384,6 +438,13 @@ impl Simulator {
 
         let implicit_fee = Amount::new(total_input.to_u64() - total_output.to_u64());
         if total_reserve_fee > implicit_fee {
+            if self.strict {
+                panic!(
+                    "Strict mode: RESERVE_FEE not satisfied: declared {} but only {} available",
+                    total_reserve_fee.to_u64(),
+                    implicit_fee.to_u64(),
+                );
+            }
             return Ok(IncludeTransactionResult {
                 code: 3,
                 e: Some(21),
@@ -423,11 +484,21 @@ impl Simulator {
                         diagnostic: "duplicate transaction de-duplicated".to_string(),
                     });
                 }
-                panic!(
-                    "Conflicting transactions in mempool: existing tx and new tx both \
-                     spend {:?}. Existing removals={:?}, new removals={:?}",
-                    overlap, existing.removals, removals,
-                );
+                if self.strict {
+                    panic!(
+                        "Strict mode: conflicting transactions in mempool: existing tx and new tx both \
+                         spend {:?}. Existing removals={:?}, new removals={:?}",
+                        overlap, existing.removals, removals,
+                    );
+                }
+                return Ok(IncludeTransactionResult {
+                    code: 3,
+                    e: Some(9),
+                    diagnostic: format!(
+                        "Conflicting transaction: overlapping spends {:?}",
+                        overlap,
+                    ),
+                });
             }
         }
 
@@ -439,6 +510,13 @@ impl Simulator {
                 .map(|(pk, msg)| (pk, msg.as_slice()))
                 .collect();
             if !aggregate_verify(&aggregate_signature.to_bls(), pairs.clone()) {
+                if self.strict {
+                    panic!(
+                        "Strict mode: Aggregate signature verification failed \
+                         ({} sig pairs, {} coin spends)",
+                        agg_sig_pairs.len(), txs.len(),
+                    );
+                }
                 return Ok(IncludeTransactionResult {
                     code: 3,
                     e: Some(10),

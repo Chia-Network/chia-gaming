@@ -474,50 +474,33 @@ impl BootstrapTowardWallet for SynchronousGameCradleState {
 }
 
 impl ToLocalUI for SynchronousGameCradleState {
-    fn opponent_moved(
-        &mut self,
-        _allocator: &mut AllocEncoder,
-        id: &GameID,
-        state_number: usize,
-        readable: ReadableMove,
-        my_share: Amount,
-    ) -> Result<(), Error> {
-        self.opponent_moves
-            .push_back((id.clone(), state_number, readable, my_share));
-        Ok(())
-    }
-    fn game_message(
-        &mut self,
-        _allocator: &mut AllocEncoder,
-        id: &GameID,
-        readable: ReadableMove,
-    ) -> Result<(), Error> {
-        self.game_messages.push_back((id.clone(), readable.clone()));
-        Ok(())
-    }
-    fn game_notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
-        self.pending_notifications.push_back(notification.clone());
-        Ok(())
-    }
-    fn channel_created(&mut self) -> Result<(), Error> {
-        self.channel_created = true;
-        Ok(())
-    }
-    fn clean_shutdown_started(&mut self) -> Result<(), Error> {
-        self.clean_shutdown_received = true;
-        Ok(())
-    }
-    fn clean_shutdown_complete(
-        &mut self,
-        reward_coin_string: Option<&CoinString>,
-    ) -> Result<(), Error> {
-        self.clean_shutdown = reward_coin_string.cloned();
-        self.finished = true;
-        Ok(())
-    }
-    fn going_on_chain(&mut self, reason: &str) -> Result<(), Error> {
-        self.peer_disconnected = true;
-        self.went_on_chain = Some(reason.to_string());
+    fn notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
+        match notification {
+            GameNotification::OpponentMoved { id, state_number, readable, mover_share } => {
+                self.opponent_moves
+                    .push_back((id.clone(), *state_number, readable.clone(), mover_share.clone()));
+            }
+            GameNotification::GameMessage { id, readable } => {
+                self.game_messages.push_back((id.clone(), readable.clone()));
+            }
+            GameNotification::ChannelCreated => {
+                self.channel_created = true;
+            }
+            GameNotification::CleanShutdownStarted => {
+                self.clean_shutdown_received = true;
+            }
+            GameNotification::CleanShutdownComplete { reward_coin } => {
+                self.clean_shutdown = reward_coin.clone();
+                self.finished = true;
+            }
+            GameNotification::GoingOnChain { reason } => {
+                self.peer_disconnected = true;
+                self.went_on_chain = Some(reason.clone());
+            }
+            other => {
+                self.pending_notifications.push_back(other.clone());
+            }
+        }
         Ok(())
     }
 }
@@ -528,12 +511,12 @@ pub fn report_coin_changes_to_peer<R: Rng>(
     watch_report: &WatchReport,
 ) -> Result<Vec<Effect>, Error> {
     let mut effects = Vec::new();
-    for t in watch_report.timed_out.iter() {
-        effects.extend(peer.coin_timeout_reached(env, t)?);
-    }
-
     for d in watch_report.deleted_watched.iter() {
         effects.extend(peer.coin_spent(env, d)?);
+    }
+
+    for t in watch_report.timed_out.iter() {
+        effects.extend(peer.coin_timeout_reached(env, t)?);
     }
 
     for c in watch_report.created_watched.iter() {
@@ -673,8 +656,8 @@ impl SynchronousGameCradle {
 
             self.peer.channel_offer(&mut env, bundle)?
         };
-        if let Some(effects) = reported_effects {
-            self.process_effects(effects, allocator)?;
+        if let Some(effect) = reported_effects {
+            self.process_effects(vec![effect], allocator)?;
         }
 
         Ok(true)
@@ -724,8 +707,8 @@ impl SynchronousGameCradle {
             self.peer
                 .channel_transaction_completion(&mut env, &unfunded_offer)?
         };
-        if let Some(effects) = reported_effects {
-            self.process_effects(effects, allocator)?;
+        if let Some(effect) = reported_effects {
+            self.process_effects(vec![effect], allocator)?;
         }
 
         Ok(true)
@@ -1036,7 +1019,7 @@ impl GameCradle for SynchronousGameCradle {
             if !self.state.pending_notifications.is_empty() {
                 let mut result = IdleResult::default();
                 while let Some(notification) = self.state.pending_notifications.pop_front() {
-                    local_ui.game_notification(&notification)?;
+                    local_ui.notification(&notification)?;
                     result.notifications.push(notification);
                 }
                 return Ok(Some(result));
@@ -1054,7 +1037,7 @@ impl GameCradle for SynchronousGameCradle {
         if self.state.channel_created {
             result.channel_created = true;
             self.state.channel_created = false;
-            local_ui.channel_created()?;
+            local_ui.notification(&GameNotification::ChannelCreated)?;
         }
 
         swap(
@@ -1079,18 +1062,18 @@ impl GameCradle for SynchronousGameCradle {
         self.state.coin_solution_requests.clear();
 
         while let Some(notification) = self.state.pending_notifications.pop_front() {
-            local_ui.game_notification(&notification)?;
+            local_ui.notification(&notification)?;
             result.notifications.push(notification);
         }
 
-        if let Some((id, msg)) = self.state.game_messages.pop_front() {
-            local_ui.game_message(allocator, &id, msg)?;
+        if let Some((id, readable)) = self.state.game_messages.pop_front() {
+            local_ui.notification(&GameNotification::GameMessage { id, readable })?;
             return Ok(Some(result));
         }
 
-        if let Some((id, state_number, readable, my_share)) = self.state.opponent_moves.pop_front()
+        if let Some((id, state_number, readable, mover_share)) = self.state.opponent_moves.pop_front()
         {
-            local_ui.opponent_moved(allocator, &id, state_number, readable, my_share)?;
+            local_ui.notification(&GameNotification::OpponentMoved { id, state_number, readable, mover_share })?;
             result.continue_on = true;
             return Ok(Some(result));
         }
@@ -1105,7 +1088,7 @@ impl GameCradle for SynchronousGameCradle {
             }
 
             if let Some(reason) = self.state.went_on_chain.take() {
-                local_ui.going_on_chain(&reason)?;
+                local_ui.notification(&GameNotification::GoingOnChain { reason })?;
             }
 
             match recv_result {
@@ -1114,7 +1097,7 @@ impl GameCradle for SynchronousGameCradle {
                     return Ok(Some(result));
                 }
                 Err(e) => {
-                    local_ui.going_on_chain(&format!("error receiving peer message: {e:?}"))?;
+                    local_ui.notification(&GameNotification::GoingOnChain { reason: format!("error receiving peer message: {e:?}") })?;
                     result.receive_error = Some(e);
                     return Ok(Some(result));
                 }

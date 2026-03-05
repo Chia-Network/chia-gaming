@@ -81,7 +81,7 @@ impl OnChainGameHandler {
         _game_id: &GameID,
         notification: GameNotification,
     ) -> Option<Effect> {
-        Some(Effect::Notification(notification))
+        Some(Effect::from(notification))
     }
 
     pub fn get_game_coin(&self, game_id: &GameID) -> Option<CoinString> {
@@ -103,7 +103,7 @@ impl OnChainGameHandler {
         game_id: GameID,
         coin: CoinString,
         cached_move: Rc<PotatoMoveCachedData>,
-    ) -> Result<Vec<Effect>, Error> {
+    ) -> Result<Effect, Error> {
         let saved_referee = cached_move
             .saved_post_move_referee
             .as_ref()
@@ -143,15 +143,13 @@ impl OnChainGameHandler {
             },
         });
 
-        let effects = vec![Effect::SpendTransaction(SpendBundle {
+        Ok(Effect::SpendTransaction(SpendBundle {
             name: Some("on chain redo move".to_string()),
             spends: vec![CoinSpend {
                 coin: coin.clone(),
                 bundle: transaction.bundle.clone(),
             }],
-        })];
-
-        Ok(effects)
+        }))
     }
 }
 
@@ -600,11 +598,9 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 debug!("{initial_potato} slash {outcome:?}");
                 self.have_potato = PotatoState::Present;
 
-                effects.push(Effect::Notification(
-                    GameNotification::OpponentPlayedIllegalMove {
-                        id: old_definition.game_id.clone(),
-                    },
-                ));
+                effects.push(Effect::OpponentPlayedIllegalMove {
+                    id: old_definition.game_id.clone(),
+                });
 
                 match outcome.borrow() {
                     SlashOutcome::Reward {
@@ -887,18 +883,18 @@ impl PotatoHandlerImpl for OnChainGameHandler {
         game_id: GameID,
         readable_move: ReadableMove,
         entropy: Hash,
-    ) -> Result<Vec<Effect>, Error> {
+    ) -> Result<Option<Effect>, Error> {
         let initial_potato = self.player_ch.is_initial_potato();
         let my_turn = self.my_move_in_game(&game_id);
         if my_turn.is_none() {
             debug!("{initial_potato} discarding move for finished/absent game {game_id:?}");
-            return Ok(Vec::new());
+            return Ok(None);
         }
         if my_turn == Some(false) {
             debug!("{initial_potato} trying to do game action when not my turn {readable_move:?}");
             self.game_action_queue
                 .push_back(GameAction::Move(game_id, readable_move, entropy));
-            return Ok(Vec::new());
+            return Ok(None);
         }
 
         debug!("{initial_potato} do on chain move {readable_move:?} cc {current_coin:?}");
@@ -928,15 +924,13 @@ impl PotatoHandlerImpl for OnChainGameHandler {
             },
         });
 
-        let effects = vec![Effect::SpendTransaction(SpendBundle {
+        Ok(Some(Effect::SpendTransaction(SpendBundle {
             name: Some("on chain move".to_string()),
             spends: vec![CoinSpend {
                 coin: current_coin.clone(),
                 bundle: transaction.bundle.clone(),
             }],
-        })];
-
-        Ok(effects)
+        })))
     }
 
     fn do_on_chain_action<R: Rng>(
@@ -961,7 +955,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
         match action {
             GameAction::Move(game_id, readable_move, hash) => match get_current_coin(&game_id) {
                 Ok(current_coin) => {
-                    self.do_on_chain_move(env, &current_coin, game_id, readable_move, hash)
+                    Ok(self.do_on_chain_move(env, &current_coin, game_id, readable_move, hash)?.into_iter().collect())
                 }
                 Err(_) => {
                     debug!("{initial_potato} discarding Move for game no longer in game_map");
@@ -976,7 +970,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                             .enable_cheating_for_game(&game_id, &[0x80], mover_share)?;
                         let readable_move =
                             ReadableMove::from_program(Rc::new(Program::from_bytes(&[0x80])));
-                        self.do_on_chain_move(env, &current_coin, game_id, readable_move, entropy)
+                        Ok(self.do_on_chain_move(env, &current_coin, game_id, readable_move, entropy)?.into_iter().collect())
                     } else if my_turn.is_none() {
                         debug!("{initial_potato} discarding Cheat for finished/absent game {game_id:?}");
                         Ok(Vec::new())
@@ -996,7 +990,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 }
             },
             GameAction::RedoMove(game_id, coin, cached_move) => {
-                self.do_on_chain_redo_move(env, game_id, coin, cached_move)
+                Ok(vec![self.do_on_chain_redo_move(env, game_id, coin, cached_move)?])
             }
             GameAction::RedoAcceptTimeout(_game_id, coin, _new_ph, tx) => {
                 let mut effects = Vec::new();
