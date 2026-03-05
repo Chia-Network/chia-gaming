@@ -658,6 +658,77 @@ intentional for several reasons:
 
 ---
 
+## Zero-Reward Early-Out
+
+When our share of a game is zero, there is no reason to wait for on-chain
+timeouts, submit transactions, or perform redo moves — those operations cost
+time and transaction fees for no reward.  In these cases the system immediately
+emits `WeTimedOut { our_reward: 0, reward_coin: None }` and removes the game
+from tracking.
+
+### Rationale
+
+1. **No rational incentive.**  When our share is zero the opponent has nothing
+   to gain by playing (they already have everything) and we have nothing to
+   claim.  Waiting for a timeout is pure overhead.
+2. **Avoids unnecessary transactions.**  Submitting a redo move or timeout
+   claim that yields zero reward wastes block space and fees.
+3. **Clean terminal signal.**  The UX immediately learns the game is over,
+   rather than waiting many blocks for a timeout that produces nothing.
+
+### Trigger Points
+
+The early-out fires at five distinct points.
+
+**At unroll completion** (scanned in `finish_on_chain_transition` right after
+`set_state_for_coins` populates the `game_map`):
+
+1. **Pending redo with zero reward.**  A move was sent off-chain but the
+   potato hadn't come back.  The unroll lands at the pre-move state and a redo
+   is queued.  If the post-redo `our_current_share` would be zero, the redo is
+   skipped and `WeTimedOut(0)` fires.  Checked via `is_redo_zero_reward()`.
+
+2. **Pending AcceptTimeout with zero share.**  An `AcceptTimeout` was called
+   off-chain but the potato round-trip hadn't completed.  The coin matches via
+   `pending_accept_timeouts` with `accepted = true`.  If our share is zero,
+   `WeTimedOut(0)` fires immediately instead of waiting for the on-chain
+   timeout.
+
+3. **Opponent's turn, mover_share == coin_amount.**  The move was
+   acknowledged (no redo needed).  It's the opponent's turn and
+   `mover_share == coin_amount`, meaning the opponent gets everything on
+   timeout and has no incentive to move.  `WeTimedOut(0)` fires.  This
+   only applies when it's the opponent's turn — when it's our turn and
+   `mover_share == coin_amount`, *we* get everything and the UX should
+   trigger claiming it.
+
+**During on-chain play** (action requested by UX):
+
+4. **On-chain move would produce mover_share == coin_amount.**  In
+   `do_on_chain_move`, after computing the move result, if the new
+   `mover_share == game_amount` (we as the new waiter get zero) and the move
+   is non-terminal (`max_move_size > 0`), the move is not submitted and
+   `WeTimedOut(0)` fires.  Terminal moves (`max_move_size == 0`) are always
+   submitted because they resolve the game.
+
+5. **On-chain AcceptTimeout with zero share.**  In `do_on_chain_action`'s
+   `AcceptTimeout` handler, if `get_game_our_current_share() == 0`, the game
+   is removed and `WeTimedOut(0)` fires instead of setting `accepted = true`
+   and waiting for the timeout.
+
+### Already handled (no new code)
+
+Off-chain `AcceptTimeout` with zero reward is already handled by
+`drain_cached_accept_timeouts` in `src/channel_handler/mod.rs`, which emits
+`WeTimedOut` with whatever `our_share_amount` is, including zero.
+
+**Key code:** `src/potato_handler/mod.rs` — `finish_on_chain_transition` (unroll
+scan), `src/potato_handler/on_chain.rs` — `do_on_chain_move` (scenario 4),
+`do_on_chain_action` (scenario 5), `src/channel_handler/mod.rs` —
+`is_redo_zero_reward`, `get_game_our_current_share`, `get_game_amount`
+
+---
+
 ## The Referee
 
 The referee is the on-chain puzzle that enforces game rules. Each game coin is

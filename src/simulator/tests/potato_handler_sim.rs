@@ -4772,5 +4772,249 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         );
     }));
 
+    // ── Zero-reward early-out tests ──────────────────────────────────────
+
+    res.push(("test_zero_reward_redo_skipped", &|| {
+        let mut allocator = AllocEncoder::new();
+        let seed_data: [u8; 32] = [0; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed_data);
+
+        // Alice makes a move with mover_share = 200 (the full pot).  After
+        // the move Bob is the new mover and gets everything on timeout;
+        // Alice as waiter gets 0.  Nerf Alice's messages so the potato
+        // never reaches Bob — this means the unroll lands at the pre-move
+        // state and a redo would be needed.  Instead of performing the redo
+        // (which would give Alice 0), the system should immediately emit
+        // WeTimedOut(0) for Alice.
+        let moves = [DebugGameTestMove::new(200, 0)];
+        let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
+
+        // WaitBlocks lets the handshake and game setup complete before we
+        // nerf.  NerfMessages then drops Alice's potato so Bob never sees
+        // the move.
+        sim_setup.game_actions.insert(0, GameAction::WaitBlocks(5, 0));
+        sim_setup.game_actions.insert(1, GameAction::NerfMessages(0));
+        sim_setup.game_actions.push(GameAction::GoOnChain(0));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(120, 1));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+
+        let outcome = run_game_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &mut rng,
+            sim_setup.private_keys.clone(),
+            &sim_setup.identities,
+            b"debug",
+            &sim_setup.args_program,
+            &sim_setup.game_actions,
+            None,
+            None,
+            false,
+        )
+        .expect("should finish");
+
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        assert!(
+            p0_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::WeTimedOut { our_reward, reward_coin: None, .. }
+                if *our_reward == Amount::default()
+            )),
+            "Alice should get WeTimedOut with zero reward (redo skipped), got: {p0_notifs:?}"
+        );
+    }));
+
+    res.push(("test_zero_reward_accepted_after_unroll", &|| {
+        let mut allocator = AllocEncoder::new();
+        let seed_data: [u8; 32] = [0; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed_data);
+
+        // Two moves: Alice sets mover_share=0 (Bob gets 0 as new mover),
+        // Bob sets mover_share=0 (Alice gets 0 as new mover).  Now it's
+        // Alice's turn and her share as mover is 0.  Let both moves be
+        // acknowledged normally.  Then nerf Alice's messages and call
+        // AcceptTimeout (game moves to pending_accept_timeouts but potato
+        // never reaches Bob).  Go on-chain.  The coin matches via
+        // pending_accept_timeouts with accepted=true.  Alice's share is 0
+        // so she should get immediate WeTimedOut(0).
+        let moves = [
+            DebugGameTestMove::new(0, 0),
+            DebugGameTestMove::new(0, 0),
+        ];
+        let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
+        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+        sim_setup.game_actions.push(GameAction::NerfMessages(0));
+        sim_setup.game_actions.push(GameAction::AcceptTimeout(0));
+        sim_setup.game_actions.push(GameAction::GoOnChain(0));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(120, 1));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+
+        let outcome = run_game_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &mut rng,
+            sim_setup.private_keys.clone(),
+            &sim_setup.identities,
+            b"debug",
+            &sim_setup.args_program,
+            &sim_setup.game_actions,
+            None,
+            None,
+            false,
+        )
+        .expect("should finish");
+
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        assert!(
+            p0_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::WeTimedOut { our_reward, reward_coin: None, .. }
+                if *our_reward == Amount::default()
+            )),
+            "Alice should get WeTimedOut with zero reward (accepted, unroll), got: {p0_notifs:?}"
+        );
+    }));
+
+    res.push(("test_zero_reward_opponent_turn_after_unroll", &|| {
+        let mut allocator = AllocEncoder::new();
+        let seed_data: [u8; 32] = [0; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed_data);
+
+        // Alice makes a move with mover_share = 200 (full pot to Bob).
+        // The potato comes back (move is acknowledged).  Go on-chain.
+        // After unroll it's Bob's turn with mover_share = 200 — Alice as
+        // waiter gets 0.  The opponent has no incentive to move.  Alice
+        // should get immediate WeTimedOut(0).
+        let moves = [DebugGameTestMove::new(200, 0)];
+        let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
+
+        // Let the move be acknowledged (no nerf), then go on-chain.
+        sim_setup.game_actions.push(GameAction::GoOnChain(0));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(120, 1));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+
+        let outcome = run_game_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &mut rng,
+            sim_setup.private_keys.clone(),
+            &sim_setup.identities,
+            b"debug",
+            &sim_setup.args_program,
+            &sim_setup.game_actions,
+            None,
+            None,
+            false,
+        )
+        .expect("should finish");
+
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        assert!(
+            p0_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::WeTimedOut { our_reward, reward_coin: None, .. }
+                if *our_reward == Amount::default()
+            )),
+            "Alice should get WeTimedOut with zero reward (opponent's turn, dead game), got: {p0_notifs:?}"
+        );
+    }));
+
+    res.push(("test_zero_reward_on_chain_move_skipped", &|| {
+        let mut allocator = AllocEncoder::new();
+        let seed_data: [u8; 32] = [0; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed_data);
+
+        // Alice makes move 0 (mover_share=100), Bob makes move 1
+        // (mover_share=100).  Now it's Alice's turn.  Alice's move 2
+        // sets mover_share=200 (giving Bob everything).  We use
+        // GoOnChainThenMove to go on-chain and immediately queue the
+        // losing move.  After the unroll the on-chain handler processes
+        // the move.  Instead of submitting, the system should detect
+        // mover_share == coin_amount and fire WeTimedOut(0) for Alice.
+        let moves = [
+            DebugGameTestMove::new(100, 0),
+            DebugGameTestMove::new(100, 0),
+            DebugGameTestMove::new(200, 0),
+        ];
+        let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
+
+        // Extract the third move to pair with GoOnChainThenMove.
+        let on_chain_move = sim_setup.game_actions.pop().unwrap();
+
+        sim_setup.game_actions.push(GameAction::GoOnChainThenMove(0));
+        sim_setup.game_actions.push(on_chain_move);
+        sim_setup.game_actions.push(GameAction::WaitBlocks(120, 1));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+
+        let outcome = run_game_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &mut rng,
+            sim_setup.private_keys.clone(),
+            &sim_setup.identities,
+            b"debug",
+            &sim_setup.args_program,
+            &sim_setup.game_actions,
+            None,
+            None,
+            false,
+        )
+        .expect("should finish");
+
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        assert!(
+            p0_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::WeTimedOut { our_reward, reward_coin: None, .. }
+                if *our_reward == Amount::default()
+            )),
+            "Alice should get WeTimedOut with zero reward (on-chain move skipped), got: {p0_notifs:?}"
+        );
+    }));
+
+    res.push(("test_zero_reward_on_chain_accept_timeout", &|| {
+        let mut allocator = AllocEncoder::new();
+        let seed_data: [u8; 32] = [0; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed_data);
+
+        // Alice makes move 0 (mover_share=0, giving Alice everything as
+        // waiter).  Bob makes move 1 (mover_share=0, giving Bob everything
+        // as waiter).  Now it's Alice's turn, her share as mover is 0.
+        // Go on-chain, wait for unroll.  Alice calls AcceptTimeout on-chain.
+        // Since her share is 0, the system should skip the timeout wait and
+        // immediately fire WeTimedOut(0).
+        let moves = [
+            DebugGameTestMove::new(0, 0),
+            DebugGameTestMove::new(0, 0),
+        ];
+        let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
+
+        sim_setup.game_actions.push(GameAction::GoOnChain(0));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(120, 1));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+        sim_setup.game_actions.push(GameAction::AcceptTimeout(0));
+        sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
+
+        let outcome = run_game_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &mut rng,
+            sim_setup.private_keys.clone(),
+            &sim_setup.identities,
+            b"debug",
+            &sim_setup.args_program,
+            &sim_setup.game_actions,
+            None,
+            None,
+            false,
+        )
+        .expect("should finish");
+
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        assert!(
+            p0_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::WeTimedOut { our_reward, reward_coin: None, .. }
+                if *our_reward == Amount::default()
+            )),
+            "Alice should get WeTimedOut with zero reward (on-chain AcceptTimeout), got: {p0_notifs:?}"
+        );
+    }));
+
     res
 }
