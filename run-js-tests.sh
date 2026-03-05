@@ -36,7 +36,7 @@ echo "=== Installing frontend dependencies ==="
 # Build the simulator binary (separate from starting it, so compile time
 # doesn't eat into the startup timeout)
 echo "=== Building simulator ==="
-cargo build --features sim-tests --bin chia-gaming-sim
+cargo build --features sim-tests,sim-server --bin chia-gaming-sim
 
 # Start the Rust simulator in the background
 echo "=== Starting simulator ==="

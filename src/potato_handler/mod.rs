@@ -2116,10 +2116,9 @@ impl PotatoHandler {
 
             if is_stale {
                 effects.push(Effect::StaleChannelUnroll {
-                        our_reward: reward_amount,
-                        reward_coin: reward_coin.clone(),
-                    },
-                );
+                    our_reward: reward_amount,
+                    reward_coin: reward_coin.clone(),
+                });
             }
 
             let game_map_inner =
@@ -2389,10 +2388,13 @@ impl SpendWalletReceiver for PotatoHandler {
         self.waiting_to_start = false;
 
         if let ChannelState::PostStepF(info) = &self.channel_state {
-            let mut effects: Vec<Effect> = self.try_complete_step_f(
-                info.first_player_hs_info.clone(),
-                info.second_player_hs_info.clone(),
-            )?.into_iter().collect();
+            let mut effects: Vec<Effect> = self
+                .try_complete_step_f(
+                    info.first_player_hs_info.clone(),
+                    info.second_player_hs_info.clone(),
+                )?
+                .into_iter()
+                .collect();
             effects.push(Effect::ChannelCreated);
             return Ok(Some(effects));
         }
@@ -2470,9 +2472,7 @@ impl SpendWalletReceiver for PotatoHandler {
                 Err(e) => {
                     let reason = format!("timeout unroll failed for state {on_chain_state}: {e:?}");
                     effects.extend(self.emit_failure_cleanup());
-                    effects.push(Effect::ChannelError {
-                        reason,
-                    });
+                    effects.push(Effect::ChannelError { reason });
                     self.channel_state = ChannelState::Failed;
                 }
             }
@@ -2499,8 +2499,7 @@ impl SpendWalletReceiver for PotatoHandler {
         let mut effects = Vec::new();
         if let ChannelState::OnChain(on_chain) = &mut self.channel_state {
             if let Some((p, s)) = puzzle_and_solution {
-                let (game_effects, resync) =
-                    on_chain.handle_game_coin_spent(env, coin_id, p, s)?;
+                let (game_effects, resync) = on_chain.handle_game_coin_spent(env, coin_id, p, s)?;
                 effects.extend(game_effects);
                 return Ok((effects, resync));
             } else if let Some((game_id, our_turn)) = on_chain.remove_game_coin_info(coin_id) {
@@ -2530,9 +2529,7 @@ impl SpendWalletReceiver for PotatoHandler {
                     Err(e) => {
                         let reason = format!("clean shutdown condition check failed: {e:?}");
                         effects.extend(self.emit_failure_cleanup());
-                        effects.push(Effect::ChannelError {
-                            reason,
-                        });
+                        effects.push(Effect::ChannelError { reason });
                         self.channel_state = ChannelState::Failed;
                     }
                 }
@@ -2566,9 +2563,7 @@ impl SpendWalletReceiver for PotatoHandler {
                         Err(e) => {
                             let reason = format!("channel coin spent to non-unroll: {e:?}");
                             effects.extend(self.emit_failure_cleanup());
-                            effects.push(Effect::ChannelError {
-                                reason,
-                            });
+                            effects.push(Effect::ChannelError { reason });
                             self.channel_state = ChannelState::Failed;
                         }
                     }
@@ -2589,9 +2584,7 @@ impl SpendWalletReceiver for PotatoHandler {
                         Err(e) => {
                             let reason = format!("unroll coin spent with unexpected state: {e:?}");
                             effects.extend(self.emit_failure_cleanup());
-                            effects.push(Effect::ChannelError {
-                                reason,
-                            });
+                            effects.push(Effect::ChannelError { reason });
                             self.channel_state = ChannelState::Failed;
                         }
                     }

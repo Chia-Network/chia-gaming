@@ -202,26 +202,92 @@ impl From<GameNotification> for Effect {
     fn from(n: GameNotification) -> Self {
         match n {
             GameNotification::GameCancelled { id } => Effect::GameCancelled { id },
-            GameNotification::WeTimedOut { id, our_reward, reward_coin } => Effect::WeTimedOut { id, our_reward, reward_coin },
-            GameNotification::OpponentTimedOut { id, our_reward, reward_coin } => Effect::OpponentTimedOut { id, our_reward, reward_coin },
-            GameNotification::OpponentPlayedIllegalMove { id } => Effect::OpponentPlayedIllegalMove { id },
-            GameNotification::WeSlashedOpponent { id, reward_coin } => Effect::WeSlashedOpponent { id, reward_coin },
+            GameNotification::WeTimedOut {
+                id,
+                our_reward,
+                reward_coin,
+            } => Effect::WeTimedOut {
+                id,
+                our_reward,
+                reward_coin,
+            },
+            GameNotification::OpponentTimedOut {
+                id,
+                our_reward,
+                reward_coin,
+            } => Effect::OpponentTimedOut {
+                id,
+                our_reward,
+                reward_coin,
+            },
+            GameNotification::OpponentPlayedIllegalMove { id } => {
+                Effect::OpponentPlayedIllegalMove { id }
+            }
+            GameNotification::WeSlashedOpponent { id, reward_coin } => {
+                Effect::WeSlashedOpponent { id, reward_coin }
+            }
             GameNotification::OpponentSlashedUs { id } => Effect::OpponentSlashedUs { id },
-            GameNotification::OpponentSuccessfullyCheated { id, our_reward, reward_coin } => Effect::OpponentSuccessfullyCheated { id, our_reward, reward_coin },
-            GameNotification::StaleChannelUnroll { our_reward, reward_coin } => Effect::StaleChannelUnroll { our_reward, reward_coin },
+            GameNotification::OpponentSuccessfullyCheated {
+                id,
+                our_reward,
+                reward_coin,
+            } => Effect::OpponentSuccessfullyCheated {
+                id,
+                our_reward,
+                reward_coin,
+            },
+            GameNotification::StaleChannelUnroll {
+                our_reward,
+                reward_coin,
+            } => Effect::StaleChannelUnroll {
+                our_reward,
+                reward_coin,
+            },
             GameNotification::ChannelError { reason } => Effect::ChannelError { reason },
             GameNotification::GameError { id, reason } => Effect::GameError { id, reason },
             GameNotification::ChannelCoinSpent => Effect::ChannelCoinSpent,
-            GameNotification::UnrollCoinSpent { reward_coin } => Effect::UnrollCoinSpent { reward_coin },
-            GameNotification::GameProposed { id, my_contribution, their_contribution } => Effect::GameProposed { id, my_contribution, their_contribution },
+            GameNotification::UnrollCoinSpent { reward_coin } => {
+                Effect::UnrollCoinSpent { reward_coin }
+            }
+            GameNotification::GameProposed {
+                id,
+                my_contribution,
+                their_contribution,
+            } => Effect::GameProposed {
+                id,
+                my_contribution,
+                their_contribution,
+            },
             GameNotification::GameProposalAccepted { id } => Effect::GameProposalAccepted { id },
-            GameNotification::GameProposalCancelled { id, reason } => Effect::GameProposalCancelled { id, reason },
-            GameNotification::InsufficientBalance { id, our_balance_short, their_balance_short } => Effect::InsufficientBalance { id, our_balance_short, their_balance_short },
-            GameNotification::OpponentMoved { id, state_number, readable, mover_share } => Effect::OpponentMoved { id, state_number, readable, mover_share },
+            GameNotification::GameProposalCancelled { id, reason } => {
+                Effect::GameProposalCancelled { id, reason }
+            }
+            GameNotification::InsufficientBalance {
+                id,
+                our_balance_short,
+                their_balance_short,
+            } => Effect::InsufficientBalance {
+                id,
+                our_balance_short,
+                their_balance_short,
+            },
+            GameNotification::OpponentMoved {
+                id,
+                state_number,
+                readable,
+                mover_share,
+            } => Effect::OpponentMoved {
+                id,
+                state_number,
+                readable,
+                mover_share,
+            },
             GameNotification::GameMessage { id, readable } => Effect::GameMessage { id, readable },
             GameNotification::ChannelCreated => Effect::ChannelCreated,
             GameNotification::CleanShutdownStarted => Effect::CleanShutdownStarted,
-            GameNotification::CleanShutdownComplete { reward_coin } => Effect::CleanShutdownComplete { reward_coin },
+            GameNotification::CleanShutdownComplete { reward_coin } => {
+                Effect::CleanShutdownComplete { reward_coin }
+            }
             GameNotification::GoingOnChain { reason } => Effect::GoingOnChain { reason },
         }
     }
@@ -230,27 +296,115 @@ impl From<GameNotification> for Effect {
 fn effect_to_notification(effect: &Effect) -> Option<GameNotification> {
     match effect {
         Effect::GameCancelled { id } => Some(GameNotification::GameCancelled { id: id.clone() }),
-        Effect::WeTimedOut { id, our_reward, reward_coin } => Some(GameNotification::WeTimedOut { id: id.clone(), our_reward: our_reward.clone(), reward_coin: reward_coin.clone() }),
-        Effect::OpponentTimedOut { id, our_reward, reward_coin } => Some(GameNotification::OpponentTimedOut { id: id.clone(), our_reward: our_reward.clone(), reward_coin: reward_coin.clone() }),
-        Effect::OpponentPlayedIllegalMove { id } => Some(GameNotification::OpponentPlayedIllegalMove { id: id.clone() }),
-        Effect::WeSlashedOpponent { id, reward_coin } => Some(GameNotification::WeSlashedOpponent { id: id.clone(), reward_coin: reward_coin.clone() }),
-        Effect::OpponentSlashedUs { id } => Some(GameNotification::OpponentSlashedUs { id: id.clone() }),
-        Effect::OpponentSuccessfullyCheated { id, our_reward, reward_coin } => Some(GameNotification::OpponentSuccessfullyCheated { id: id.clone(), our_reward: our_reward.clone(), reward_coin: reward_coin.clone() }),
-        Effect::StaleChannelUnroll { our_reward, reward_coin } => Some(GameNotification::StaleChannelUnroll { our_reward: our_reward.clone(), reward_coin: reward_coin.clone() }),
-        Effect::ChannelError { reason } => Some(GameNotification::ChannelError { reason: reason.clone() }),
-        Effect::GameError { id, reason } => Some(GameNotification::GameError { id: id.clone(), reason: reason.clone() }),
+        Effect::WeTimedOut {
+            id,
+            our_reward,
+            reward_coin,
+        } => Some(GameNotification::WeTimedOut {
+            id: id.clone(),
+            our_reward: our_reward.clone(),
+            reward_coin: reward_coin.clone(),
+        }),
+        Effect::OpponentTimedOut {
+            id,
+            our_reward,
+            reward_coin,
+        } => Some(GameNotification::OpponentTimedOut {
+            id: id.clone(),
+            our_reward: our_reward.clone(),
+            reward_coin: reward_coin.clone(),
+        }),
+        Effect::OpponentPlayedIllegalMove { id } => {
+            Some(GameNotification::OpponentPlayedIllegalMove { id: id.clone() })
+        }
+        Effect::WeSlashedOpponent { id, reward_coin } => {
+            Some(GameNotification::WeSlashedOpponent {
+                id: id.clone(),
+                reward_coin: reward_coin.clone(),
+            })
+        }
+        Effect::OpponentSlashedUs { id } => {
+            Some(GameNotification::OpponentSlashedUs { id: id.clone() })
+        }
+        Effect::OpponentSuccessfullyCheated {
+            id,
+            our_reward,
+            reward_coin,
+        } => Some(GameNotification::OpponentSuccessfullyCheated {
+            id: id.clone(),
+            our_reward: our_reward.clone(),
+            reward_coin: reward_coin.clone(),
+        }),
+        Effect::StaleChannelUnroll {
+            our_reward,
+            reward_coin,
+        } => Some(GameNotification::StaleChannelUnroll {
+            our_reward: our_reward.clone(),
+            reward_coin: reward_coin.clone(),
+        }),
+        Effect::ChannelError { reason } => Some(GameNotification::ChannelError {
+            reason: reason.clone(),
+        }),
+        Effect::GameError { id, reason } => Some(GameNotification::GameError {
+            id: id.clone(),
+            reason: reason.clone(),
+        }),
         Effect::ChannelCoinSpent => Some(GameNotification::ChannelCoinSpent),
-        Effect::UnrollCoinSpent { reward_coin } => Some(GameNotification::UnrollCoinSpent { reward_coin: reward_coin.clone() }),
-        Effect::GameProposed { id, my_contribution, their_contribution } => Some(GameNotification::GameProposed { id: id.clone(), my_contribution: my_contribution.clone(), their_contribution: their_contribution.clone() }),
-        Effect::GameProposalAccepted { id } => Some(GameNotification::GameProposalAccepted { id: id.clone() }),
-        Effect::GameProposalCancelled { id, reason } => Some(GameNotification::GameProposalCancelled { id: id.clone(), reason: reason.clone() }),
-        Effect::InsufficientBalance { id, our_balance_short, their_balance_short } => Some(GameNotification::InsufficientBalance { id: id.clone(), our_balance_short: *our_balance_short, their_balance_short: *their_balance_short }),
-        Effect::OpponentMoved { id, state_number, readable, mover_share } => Some(GameNotification::OpponentMoved { id: id.clone(), state_number: *state_number, readable: readable.clone(), mover_share: mover_share.clone() }),
-        Effect::GameMessage { id, readable } => Some(GameNotification::GameMessage { id: id.clone(), readable: readable.clone() }),
+        Effect::UnrollCoinSpent { reward_coin } => Some(GameNotification::UnrollCoinSpent {
+            reward_coin: reward_coin.clone(),
+        }),
+        Effect::GameProposed {
+            id,
+            my_contribution,
+            their_contribution,
+        } => Some(GameNotification::GameProposed {
+            id: id.clone(),
+            my_contribution: my_contribution.clone(),
+            their_contribution: their_contribution.clone(),
+        }),
+        Effect::GameProposalAccepted { id } => {
+            Some(GameNotification::GameProposalAccepted { id: id.clone() })
+        }
+        Effect::GameProposalCancelled { id, reason } => {
+            Some(GameNotification::GameProposalCancelled {
+                id: id.clone(),
+                reason: reason.clone(),
+            })
+        }
+        Effect::InsufficientBalance {
+            id,
+            our_balance_short,
+            their_balance_short,
+        } => Some(GameNotification::InsufficientBalance {
+            id: id.clone(),
+            our_balance_short: *our_balance_short,
+            their_balance_short: *their_balance_short,
+        }),
+        Effect::OpponentMoved {
+            id,
+            state_number,
+            readable,
+            mover_share,
+        } => Some(GameNotification::OpponentMoved {
+            id: id.clone(),
+            state_number: *state_number,
+            readable: readable.clone(),
+            mover_share: mover_share.clone(),
+        }),
+        Effect::GameMessage { id, readable } => Some(GameNotification::GameMessage {
+            id: id.clone(),
+            readable: readable.clone(),
+        }),
         Effect::ChannelCreated => Some(GameNotification::ChannelCreated),
         Effect::CleanShutdownStarted => Some(GameNotification::CleanShutdownStarted),
-        Effect::CleanShutdownComplete { reward_coin } => Some(GameNotification::CleanShutdownComplete { reward_coin: reward_coin.clone() }),
-        Effect::GoingOnChain { reason } => Some(GameNotification::GoingOnChain { reason: reason.clone() }),
+        Effect::CleanShutdownComplete { reward_coin } => {
+            Some(GameNotification::CleanShutdownComplete {
+                reward_coin: reward_coin.clone(),
+            })
+        }
+        Effect::GoingOnChain { reason } => Some(GameNotification::GoingOnChain {
+            reason: reason.clone(),
+        }),
         _ => None,
     }
 }

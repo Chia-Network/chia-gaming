@@ -705,11 +705,20 @@ impl ToLocalUI for LocalTestUIReceiver {
             GameNotification::ChannelCreated => {
                 self.channel_created = true;
             }
-            GameNotification::OpponentMoved { id, state_number, readable, mover_share } => {
+            GameNotification::OpponentMoved {
+                id,
+                state_number,
+                readable,
+                mover_share,
+            } => {
                 self.assert_channel_created("opponent_moved");
                 self.opponent_moved = true;
-                self.opponent_moves
-                    .push((id.clone(), *state_number, readable.clone(), mover_share.clone()));
+                self.opponent_moves.push((
+                    id.clone(),
+                    *state_number,
+                    readable.clone(),
+                    mover_share.clone(),
+                ));
                 self.events.push(TestEvent::OpponentMoved {
                     id: id.clone(),
                     state_number: *state_number,
@@ -746,8 +755,7 @@ impl ToLocalUI for LocalTestUIReceiver {
             other => {
                 self.assert_channel_created("game_notification");
                 self.notifications.push(other.clone());
-                self.events
-                    .push(TestEvent::Notification(other.clone()));
+                self.events.push(TestEvent::Notification(other.clone()));
             }
         }
         Ok(())
@@ -1046,9 +1054,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                         nerfed_tx_backlog.push(tx.clone());
                         continue;
                     }
-                    let any_stale = tx.spends.iter().any(|cs| {
-                        !simulator.is_coin_spendable(&cs.coin)
-                    });
+                    let any_stale = tx
+                        .spends
+                        .iter()
+                        .any(|cs| !simulator.is_coin_spendable(&cs.coin));
                     if any_stale {
                         debug!("step {num_steps}: p{i} skipping stale tx {:?}", tx.name);
                         continue;
@@ -1427,9 +1436,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                         nerf_transactions_for = 0;
                         if *replay {
                             for tx in nerfed_tx_backlog.drain(..) {
-                                let any_stale = tx.spends.iter().any(|cs| {
-                                    !simulator.is_coin_spendable(&cs.coin)
-                                });
+                                let any_stale = tx
+                                    .spends
+                                    .iter()
+                                    .any(|cs| !simulator.is_coin_spendable(&cs.coin));
                                 if any_stale {
                                     debug!("REPLAY: skipping stale nerfed tx {:?}", tx.name);
                                     continue;
