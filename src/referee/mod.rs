@@ -231,7 +231,9 @@ impl Referee {
     }
 
     pub fn get_their_current_share(&self) -> Result<Amount, Error> {
-        self.fixed().amount.checked_sub(&self.get_our_current_share()?)
+        self.fixed()
+            .amount
+            .checked_sub(&self.get_our_current_share()?)
     }
 
     pub fn enable_cheating(&self, make_move: &[u8], mover_share: Amount) -> Option<Rc<Referee>> {

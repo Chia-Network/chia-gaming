@@ -2121,8 +2121,7 @@ impl PotatoHandler {
                 });
             }
 
-            let game_map_inner =
-                player_ch.set_state_for_coins(env, unroll_coin, &created_coins)?;
+            let game_map_inner = player_ch.set_state_for_coins(env, unroll_coin, &created_coins)?;
 
             let surviving_ids: HashSet<GameID> = game_map_inner
                 .values()

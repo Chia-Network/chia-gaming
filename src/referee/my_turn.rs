@@ -311,14 +311,18 @@ impl MyTurnReferee {
     pub fn get_our_current_share(&self) -> Result<Amount, Error> {
         let args = self.spend_this_coin();
         if self.processing_my_turn() {
-            self.fixed.amount.checked_sub(&args.game_move.basic.mover_share)
+            self.fixed
+                .amount
+                .checked_sub(&args.game_move.basic.mover_share)
         } else {
             Ok(args.game_move.basic.mover_share.clone())
         }
     }
 
     pub fn get_their_current_share(&self) -> Result<Amount, Error> {
-        self.fixed.amount.checked_sub(&self.get_our_current_share()?)
+        self.fixed
+            .amount
+            .checked_sub(&self.get_our_current_share()?)
     }
 
     #[allow(clippy::too_many_arguments)]

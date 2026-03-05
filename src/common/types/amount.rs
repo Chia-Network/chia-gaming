@@ -24,12 +24,7 @@ impl Amount {
     }
 
     pub fn checked_sub(&self, rhs: &Amount) -> Result<Amount, Error> {
-        debug_assert!(
-            self.0 >= rhs.0,
-            "Amount underflow: {} - {}",
-            self.0,
-            rhs.0
-        );
+        debug_assert!(self.0 >= rhs.0, "Amount underflow: {} - {}", self.0, rhs.0);
         self.0
             .checked_sub(rhs.0)
             .map(Amount)
