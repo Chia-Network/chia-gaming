@@ -284,9 +284,6 @@ pub fn curry_referee_puzzle_hash(
     ))
 }
 
-// Agg sig me on the solution of the referee_coin_puzzle.
-// When it invokes the validation program, it passes through args as the full
-// argument set.
 pub fn curry_referee_puzzle(
     allocator: &mut AllocEncoder,
     referee_coin_puzzle: &Puzzle,
@@ -379,8 +376,6 @@ impl InternalStateUpdateArgs {
         }
         let raw_result = raw_result_p?;
 
-        // Targeted decode for calpoker final validator (onchain/e):
-        // move bytes = 16-byte salt || 1-byte alice_discards || 1-byte alice_selects
         StateUpdateResult::from_nodeptr(allocator, raw_result.1)
     }
 }

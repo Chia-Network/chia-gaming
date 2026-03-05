@@ -80,8 +80,8 @@ use crate::referee::Referee;
 ///
 /// If we made a move and never got a reply, the latest thing that can be signed
 /// onto the chain is the most recent 'their move'.  We preserve the ability to
-/// recall and sign this move via timeout_unroll and timeout_stored_signatures
-/// which are updated when we send a move.
+/// recall and sign this move via `unroll` and `timeout` which are updated when
+/// we send a move.
 #[derive(Serialize, Deserialize)]
 pub struct ChannelHandler {
     private_keys: ChannelHandlerPrivateKeys,
@@ -467,8 +467,6 @@ impl ChannelHandler {
         myself.unroll.coin.state_number = 0;
         myself.unroll.coin.started_with_potato = myself.have_potato;
 
-        // XXX more member settings.
-
         // Unroll puzzle knows its sequence number and knows the hashes of the
         // things to exit in the two different ways (one is a hash of a list of
         // conditions, (default conditions hash), other is the shared puzzle hash.
@@ -479,7 +477,7 @@ impl ChannelHandler {
         //
         // The shared puzzle hash passed into the state_channel puzzle
         // essentially an invocation of
-        // state_channel.clinc::state_channel_unrolling
+        // unroll/unroll_puzzle.clsp::state_channel_unrolling
         // should be a standard puzzle with a aggsig parent condition.
 
         // Puzzle hash of a standard puzzle with a pubkey that combines our
@@ -497,7 +495,6 @@ impl ChannelHandler {
             env,
             &myself.private_keys.my_unroll_coin_private_key,
             &myself.their_unroll_coin_public_key,
-            // XXX might need to mutate slightly.
             &inputs,
         )?;
         if let Some(ref outcome) = myself.unroll.coin.outcome {
@@ -1957,7 +1954,9 @@ impl ChannelHandler {
         false
     }
 
-    /// action is for the same game and emit the `RedoMove`.
+    /// Find a cached move whose puzzle hash matches `coin`, remove it from
+    /// the cache, and return a `GameAction::RedoMove` so the move can be
+    /// replayed on-chain.  Returns `Ok(None)` if no cached move matches.
     pub fn get_redo_action<R: Rng>(
         &mut self,
         _env: &mut ChannelHandlerEnv<R>,
@@ -2012,10 +2011,6 @@ impl ChannelHandler {
         }
     }
 
-    // the vanilla coin we get and each reward coin are all sent to the referee
-    // this returns spends which allow them to be consolidated by spending the
-    // reward coins.
-    //
     pub fn get_game_state_id<R: Rng>(&self, env: &mut ChannelHandlerEnv<R>) -> Result<Hash, Error> {
         let mut bytes: Vec<u8> = Vec::with_capacity(self.live_games.len() * 32);
         for l in self.live_games.iter() {

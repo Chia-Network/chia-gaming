@@ -123,8 +123,7 @@ pub struct PotatoHandler {
     reward_puzzle_hash: PuzzleHash,
 
     waiting_to_start: bool,
-    // This is also given to unroll coin to set a timelock based on it.
-    // We'll be notified by the timeout handler when we can spend the unroll coin.
+    // Timeout for the channel coin watcher; the unroll coin uses `unroll_timeout`.
     channel_timeout: Timeout,
     // Unroll timeout
     unroll_timeout: Timeout,
@@ -1206,14 +1205,6 @@ impl PotatoHandler {
                     )));
                 };
 
-                // XXX Call the UX saying the channel coin has been created
-                // and play can happen.
-                // Register the channel coin in the bootstrap provider.
-                // Situation:
-                // Before we've got notification of the channel coin, it's possible
-                // alice will get a potato from bob or bob a request from alice.
-                //
-                // That should halt for the channel coin notifiation.
                 let (mut channel_handler, _init_result) =
                     self.make_channel_handler(parent_coin.to_coin_id(), false, msg, env)?;
 
@@ -1526,8 +1517,9 @@ impl PotatoHandler {
     /// CLSP simply verifies the hash of the revealed conditions.
     ///
     /// `on_chain_state` is the state_number the on-chain unroll coin was
-    /// created at.  We look up the matching stored UnrollCoin (either
-    /// `self.unroll` or `self.timeout`) so the puzzle hash matches.
+    /// created at.  We look up the matching stored UnrollCoin (via the
+    /// channel handler's `unroll` or `timeout` field) so the puzzle hash
+    /// matches.
     pub fn do_unroll_spend_to_games<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,

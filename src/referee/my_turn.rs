@@ -74,11 +74,9 @@ impl MyTurnRefereeGameState {
     }
 }
 
-/// Referee coin has two inner puzzles.
-/// Throughout channel handler, the one that's ours is the standard format puzzle
-/// to the pubkey of the referee private key (referred to in channel_handler).
-///
-/// change step 1:
+/// Referee coin is curried with two public keys (mover and waiter), which swap
+/// roles each turn.  The mover signs moves via AGG_SIG_ME; the waiter can
+/// claim via timeout.
 ///
 /// The flow of things:
 ///

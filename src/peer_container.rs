@@ -235,7 +235,7 @@ pub trait GameCradle {
     fn deliver_message(&mut self, inbound_message: &[u8]) -> Result<(), Error>;
 
     /// Allow the game to carry out tasks it needs to perform, yielding peer messages that
-    /// should be forwarded.  Returns false when no more work is needed.
+    /// should be forwarded.  Returns `Ok(None)` when no more work is needed.
     fn idle<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,
@@ -450,15 +450,6 @@ impl BootstrapTowardWallet for SynchronousGameCradleState {
     fn received_channel_offer(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
         self.unfunded_offer = Some(bundle.clone());
         Ok(())
-    }
-
-    fn received_channel_transaction_completion(
-        &mut self,
-        _bundle: &SpendBundle,
-    ) -> Result<(), Error> {
-        Err(Error::StrErr(
-            "received_channel_transaction_completion not yet implemented".to_string(),
-        ))
     }
 }
 
@@ -1005,7 +996,7 @@ impl GameCradle for SynchronousGameCradle {
     }
 
     /// Allow the game to carry out tasks it needs to perform, yielding peer messages that
-    /// should be forwarded.  Returns false when no more work is needed.
+    /// should be forwarded.  Returns `Ok(None)` when no more work is needed.
     fn idle<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,

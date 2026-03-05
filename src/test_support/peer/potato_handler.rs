@@ -139,15 +139,6 @@ impl BootstrapTowardWallet for Pipe {
         self.unfunded_offer = Some(bundle.clone());
         Ok(())
     }
-
-    fn received_channel_transaction_completion(
-        &mut self,
-        _bundle: &SpendBundle,
-    ) -> Result<(), Error> {
-        Err(Error::StrErr(
-            "received_channel_transaction_completion not expected in Pipe test helper".to_string(),
-        ))
-    }
 }
 
 #[cfg(test)]

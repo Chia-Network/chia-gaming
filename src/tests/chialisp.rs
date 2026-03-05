@@ -8,8 +8,6 @@ use crate::utils::first;
 
 use log::debug;
 
-// TODO: Remove duplicate code
-
 fn test_prepend_count() {
     let mut allocator = AllocEncoder::new();
     let source_data = (

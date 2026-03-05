@@ -220,15 +220,6 @@ impl BootstrapTowardWallet for SimulatedPeer {
         self.unfunded_offer = Some(bundle.clone());
         Ok(())
     }
-
-    fn received_channel_transaction_completion(
-        &mut self,
-        _bundle: &SpendBundle,
-    ) -> Result<(), Error> {
-        Err(Error::StrErr(
-            "received_channel_transaction_completion not expected during handshake".to_string(),
-        ))
-    }
 }
 
 impl ToLocalUI for SimulatedPeer {
@@ -2994,7 +2985,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Switch the nerf: now alice's redo transaction will be dropped while
         // bob is free to act.
         moves.push(GameAction::NerfTransactions(0));
-        // Wait long enough for the game coin timeout (100 blocks) to fire.
+        // Wait long enough for the game coin timeout (10 blocks) to fire.
         // Alice's redo was dropped so the game coin stays at "alice's turn".
         moves.push(GameAction::WaitBlocks(110, 0));
         moves.push(GameAction::UnNerfTransactions(false));
@@ -3127,7 +3118,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         moves.truncate(3);
         moves.push(GameAction::GoOnChain(1));
         // 120 blocks covers the unroll timeout (5) and
-        // game coin timeout (100).
+        // game coin timeout (10).
         moves.push(GameAction::WaitBlocks(120, 0));
 
         let outcome =

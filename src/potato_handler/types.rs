@@ -84,8 +84,8 @@ pub trait BootstrapTowardGame {
     /// fully spendble transaction will result, to which fee might need to be
     /// added.
     ///
-    /// Alice sends this to the wallet interface via received_channel_transaction
-    /// completion to finish this phase of execution.
+    /// Alice receives this via the `channel_transaction_completion` callback
+    /// from the wallet interface to finish this phase of execution.
     ///
     /// Bob receives this callback from the wallet interface with the fully funded
     /// but not fee adjusted spend bundle on bob's side.  It is given back to alice
@@ -127,17 +127,6 @@ pub trait BootstrapTowardWallet {
     /// wallet object injected dependency to finish funding this and actually
     /// spend it.
     fn received_channel_offer(&mut self, bundle: &SpendBundle) -> Result<(), Error>;
-
-    /// Bob has sent this to us via the potato interface and it is given here to
-    /// the wallet injected dependency to actually spend.  Alice must add a fee
-    /// if needed.
-    ///
-    /// Both alice and bob, upon knowing the full channel coin id, use the more
-    /// general wallet interface to register for notifications of the channel coin.
-    fn received_channel_transaction_completion(
-        &mut self,
-        bundle: &SpendBundle,
-    ) -> Result<(), Error>;
 }
 
 /// Spend wallet receiver

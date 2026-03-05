@@ -95,10 +95,8 @@ impl TheirTurnRefereeGameState {
     }
 }
 
-// XXX break out state so we can have a previous state and easily swap them.
-// Referee coin has two inner puzzles.
-// Throughout channel handler, the one that's ours is the standard format puzzle
-// to the pubkey of the referee private key (referred to in channel_handler).
+// Referee coin is curried with two public keys (mover and waiter), which swap
+// roles each turn.  See the detailed flow comment on MyTurnReferee.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TheirTurnReferee {
     pub fixed: Rc<RMFixed>,
@@ -386,7 +384,7 @@ impl TheirTurnReferee {
 
         let handler = self.get_game_handler();
 
-        // Run the initial our turn validation to get the new state.
+        // Run the validation program for the incoming move to get the new state.
         let evidence = Evidence::nil()?;
         let puzzle_args = self.spend_this_coin();
         let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
