@@ -348,8 +348,6 @@ impl Simulator {
                         "PUSH_TX: CLVM error for coin {i}: coin_id={:?} coin_ph={:?} computed_ph={computed_ph:?}\n  puzzle_len={} solution_len={}\n  err={e:?}",
                         coin_id, record.puzzle_hash, puzzle_hex.len() / 2, sol_hex.len() / 2,
                     );
-                    let _ = std::fs::write("/tmp/failing_puzzle.hex", &puzzle_hex);
-                    let _ = std::fs::write("/tmp/failing_solution.hex", &sol_hex);
                     return Ok(IncludeTransactionResult {
                         code: 3,
                         e: Some(7),

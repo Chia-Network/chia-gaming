@@ -29,8 +29,9 @@ impl<'de> Deserialize<'de> for Aggsig {
         D: Deserializer<'de>,
     {
         let st = String::deserialize(deserializer)?;
-        let slice = hex::decode(&st).unwrap();
-        Ok(Aggsig::from_slice(&slice).unwrap())
+        let slice = hex::decode(&st).map_err(serde::de::Error::custom)?;
+        Aggsig::from_slice(&slice)
+            .map_err(|e| serde::de::Error::custom(format!("{e:?}")))
     }
 }
 

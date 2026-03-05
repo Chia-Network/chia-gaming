@@ -130,17 +130,6 @@ impl MessagePeerQueue for SimulatedPeer<SimulatedWalletSpend> {
     }
 }
 
-pub struct RegisteredCoinsIterator<'a> {
-    internal_iterator: std::collections::btree_map::Iter<'a, CoinString, WatchEntry>,
-}
-
-impl<'a> Iterator for RegisteredCoinsIterator<'a> {
-    type Item = (&'a CoinString, &'a WatchEntry);
-
-    fn next(&mut self) -> std::option::Option<<Self as Iterator>::Item> {
-        self.internal_iterator.next()
-    }
-}
 
 #[derive(Default)]
 pub struct IdleResult {
@@ -246,7 +235,7 @@ pub trait GameCradle {
     fn deliver_message(&mut self, inbound_message: &[u8]) -> Result<(), Error>;
 
     /// Allow the game to carry out tasks it needs to perform, yielding peer messages that
-    /// should be forwarded.  Returns false when no more work is needed.
+    /// should be forwarded.  Returns `Ok(None)` when no more work is needed.
     fn idle<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,
@@ -462,15 +451,6 @@ impl BootstrapTowardWallet for SynchronousGameCradleState {
         self.unfunded_offer = Some(bundle.clone());
         Ok(())
     }
-
-    fn received_channel_transaction_completion(
-        &mut self,
-        _bundle: &SpendBundle,
-    ) -> Result<(), Error> {
-        Err(Error::StrErr(
-            "received_channel_transaction_completion not yet implemented".to_string(),
-        ))
-    }
 }
 
 impl ToLocalUI for SynchronousGameCradleState {
@@ -624,9 +604,8 @@ impl SynchronousGameCradle {
         let ch = self.peer.channel_handler()?;
         let channel_coin = ch.state_channel_coin();
         let channel_coin_amt = if let Some((ch_parent, ph, amt)) = channel_coin.to_parts() {
-            // We can be sure we've got the right puzzle hash separately.
-            assert_eq!(ph, channel_puzzle_hash);
-            assert_eq!(ch_parent, parent.to_coin_id());
+            game_assert_eq!(ph, channel_puzzle_hash, "channel coin puzzle hash mismatch");
+            game_assert_eq!(ch_parent, parent.to_coin_id(), "channel coin parent mismatch");
             amt
         } else {
             return Err(Error::StrErr("no channel coin".to_string()));
@@ -694,7 +673,7 @@ impl SynchronousGameCradle {
             let quoted_empty_hash = quoted_empty_conditions.sha256tree(env.allocator);
 
             let mut spends = unfunded_offer.clone();
-            assert!(!spends.spends.is_empty());
+            game_assert!(!spends.spends.is_empty(), "respond_to_unfunded_offer: empty spend bundle");
             let signature = sign_agg_sig_me(
                 &self.state.identity.synthetic_private_key,
                 quoted_empty_hash.bytes(),
@@ -709,7 +688,7 @@ impl SynchronousGameCradle {
                     signature,
                 },
             });
-            assert_eq!(spends.spends.len(), 2);
+            game_assert_eq!(spends.spends.len(), 2, "respond_to_unfunded_offer: expected 2 spends");
 
             self.state.outbound_transactions.push_back(spends);
 
@@ -1017,7 +996,7 @@ impl GameCradle for SynchronousGameCradle {
     }
 
     /// Allow the game to carry out tasks it needs to perform, yielding peer messages that
-    /// should be forwarded.  Returns false when no more work is needed.
+    /// should be forwarded.  Returns `Ok(None)` when no more work is needed.
     fn idle<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,

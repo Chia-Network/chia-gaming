@@ -80,8 +80,8 @@ use crate::referee::Referee;
 ///
 /// If we made a move and never got a reply, the latest thing that can be signed
 /// onto the chain is the most recent 'their move'.  We preserve the ability to
-/// recall and sign this move via timeout_unroll and timeout_stored_signatures
-/// which are updated when we send a move.
+/// recall and sign this move via `unroll` and `timeout` which are updated when
+/// we send a move.
 #[derive(Serialize, Deserialize)]
 pub struct ChannelHandler {
     private_keys: ChannelHandlerPrivateKeys,
@@ -366,7 +366,10 @@ impl ChannelHandler {
                 .state_channel
                 .coin
                 .amount()
-                .expect("state channel coin has no amount"),
+                .ok_or_else(|| {
+                    debug_assert!(false, "state channel coin has no amount");
+                    Error::StrErr("state channel coin has no amount".to_string())
+                })?,
             unroll_coin,
         )
     }
@@ -464,8 +467,6 @@ impl ChannelHandler {
         myself.unroll.coin.state_number = 0;
         myself.unroll.coin.started_with_potato = myself.have_potato;
 
-        // XXX more member settings.
-
         // Unroll puzzle knows its sequence number and knows the hashes of the
         // things to exit in the two different ways (one is a hash of a list of
         // conditions, (default conditions hash), other is the shared puzzle hash.
@@ -476,7 +477,7 @@ impl ChannelHandler {
         //
         // The shared puzzle hash passed into the state_channel puzzle
         // essentially an invocation of
-        // state_channel.clinc::state_channel_unrolling
+        // unroll/unroll_puzzle.clsp::state_channel_unrolling
         // should be a standard puzzle with a aggsig parent condition.
 
         // Puzzle hash of a standard puzzle with a pubkey that combines our
@@ -494,7 +495,6 @@ impl ChannelHandler {
             env,
             &myself.private_keys.my_unroll_coin_private_key,
             &myself.their_unroll_coin_public_key,
-            // XXX might need to mutate slightly.
             &inputs,
         )?;
         if let Some(ref outcome) = myself.unroll.coin.outcome {
@@ -550,7 +550,10 @@ impl ChannelHandler {
                 .state_channel
                 .coin
                 .amount()
-                .expect("state channel coin has no amount")
+                .ok_or_else(|| {
+                    debug_assert!(false, "state channel coin has no amount");
+                    Error::StrErr("state channel coin has no amount".to_string())
+                })?
                 .clone(),
             spend: ChannelCoinSpendInfo {
                 aggsig: combined_signature,
@@ -908,7 +911,7 @@ impl ChannelHandler {
     }
 
     /// Mutate state for accepting a proposal. Does NOT finalize signatures.
-    pub fn send_accept_proposal(&mut self, game_id: &GameID) -> Result<(), Error> {
+    fn accept_proposal_inner(&mut self, game_id: &GameID) -> Result<(), Error> {
         let idx = self
             .proposed_games
             .iter()
@@ -933,10 +936,6 @@ impl ChannelHandler {
         self.their_out_of_game_balance = self
             .their_out_of_game_balance
             .checked_sub(&proposal.their_contribution)?;
-
-        self.push_cached_action(CachedPotatoRegenerateLastHop::ProposalAccepted(
-            game_id.clone(),
-        ));
 
         let live_game = LiveGame::new(
             proposal.game_id.clone(),
@@ -949,42 +948,17 @@ impl ChannelHandler {
         Ok(())
     }
 
+    pub fn send_accept_proposal(&mut self, game_id: &GameID) -> Result<(), Error> {
+        self.accept_proposal_inner(game_id)?;
+        self.push_cached_action(CachedPotatoRegenerateLastHop::ProposalAccepted(
+            game_id.clone(),
+        ));
+        Ok(())
+    }
+
     /// Apply a received accept-proposal without verifying signatures.
     pub fn apply_received_accept_proposal(&mut self, game_id: &GameID) -> Result<(), Error> {
-        let idx = self
-            .proposed_games
-            .iter()
-            .position(|p| p.game_id == *game_id)
-            .ok_or_else(|| Error::StrErr(format!("no proposal with id {game_id:?}")))?;
-        let proposal = self.proposed_games.remove(idx);
-
-        if proposal.my_contribution.clone() > self.my_out_of_game_balance
-            || proposal.their_contribution.clone() > self.their_out_of_game_balance
-        {
-            self.proposed_games.insert(idx, proposal);
-            return Err(Error::StrErr(
-                "insufficient balance to accept proposal".to_string(),
-            ));
-        }
-
-        self.my_allocated_balance += proposal.my_contribution.clone();
-        self.their_allocated_balance += proposal.their_contribution.clone();
-        self.my_out_of_game_balance = self
-            .my_out_of_game_balance
-            .checked_sub(&proposal.my_contribution)?;
-        self.their_out_of_game_balance = self
-            .their_out_of_game_balance
-            .checked_sub(&proposal.their_contribution)?;
-
-        let live_game = LiveGame::new(
-            proposal.game_id.clone(),
-            proposal.initial_puzzle_hash,
-            proposal.referee,
-            proposal.my_contribution,
-            proposal.their_contribution,
-        );
-        self.live_games.push(live_game);
-        Ok(())
+        self.accept_proposal_inner(game_id)
     }
 
     /// Mutate state for cancelling a proposal. Does NOT finalize signatures.
@@ -1112,7 +1086,6 @@ impl ChannelHandler {
                 &PuzzleHash::default(),
                 &Amount::default(),
             ),
-            false,
         );
 
         self.live_games[game_idx].last_referee_puzzle_hash =
@@ -1160,12 +1133,10 @@ impl ChannelHandler {
         }
         let state_number = self.current_state_number();
 
-        let coin_string = self.state_channel.coin.clone();
         let their_move_result = self.live_games[game_idx].internal_their_move(
             env.allocator,
             game_move,
             state_number,
-            Some(&coin_string),
         )?;
 
         let (readable_move, message, mover_share) = match their_move_result.original {
@@ -1208,7 +1179,7 @@ impl ChannelHandler {
     /// Apply a send-side accept mutation. Does NOT finalize signatures.
     /// Pushes a cache entry for on-chain redo. Returns the amount won.
     pub fn send_accept_timeout_no_finalize(&mut self, game_id: &GameID) -> Result<Amount, Error> {
-        assert!(self.have_potato);
+        game_assert!(self.have_potato, "send_accept_timeout_no_finalize: must have potato");
         let game_idx = self.get_game_by_id(game_id)?;
 
         let live_game = self.live_games.remove(game_idx);
@@ -1277,7 +1248,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         conditions: NodePtr,
     ) -> Result<Spend, Error> {
-        assert!(self.have_potato);
+        game_assert!(self.have_potato, "send_potato_clean_shutdown: must have potato");
         let aggregate_public_key = self.get_aggregate_channel_public_key();
         let spend = self.state_channel_coin();
 
@@ -1358,7 +1329,7 @@ impl ChannelHandler {
         their_channel_half_signature: &Aggsig,
         conditions: NodePtr,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
-        assert!(!self.have_potato);
+        game_assert!(!self.have_potato, "received_potato_clean_shutdown: must not have potato");
         let conditions_program = Program::from_nodeptr(env.allocator, conditions)?;
         let channel_spend = self.verify_channel_coin_from_peer_signatures(
             env,
@@ -1826,10 +1797,9 @@ impl ChannelHandler {
         allocator: &mut AllocEncoder,
         game_id: &GameID,
         game_coin: &CoinString,
-        on_chain: bool,
     ) -> Result<Spend, Error> {
         let idx = self.get_game_by_id(game_id)?;
-        self.live_games[idx].get_transaction_for_move(allocator, game_coin, on_chain)
+        self.live_games[idx].get_transaction_for_move(allocator, game_coin)
     }
 
     pub fn get_game_outcome_puzzle_hash<R: Rng>(
@@ -1871,12 +1841,8 @@ impl ChannelHandler {
         let game_idx = self.get_game_by_id(game_id)?;
 
         let last_puzzle_hash = self.live_games[game_idx].last_puzzle_hash();
-        let _start_puzzle_hash = self.live_games[game_idx].current_puzzle_hash(env.allocator)?;
         let state_number = self.current_state_number();
 
-        // assert_eq!(start_puzzle_hash, existing_ph);
-
-        // assert_eq!(self.game_is_my_turn(game_id), Some(true));
         let move_result = self.live_games[game_idx].internal_make_move(
             env.allocator,
             readable_move,
@@ -1887,7 +1853,6 @@ impl ChannelHandler {
         let tx = self.live_games[game_idx].get_transaction_for_move(
             env.allocator,
             existing_coin,
-            true,
         )?;
 
         let post_outcome = self.live_games[game_idx].outcome_puzzle_hash(env.allocator)?;
@@ -1997,7 +1962,9 @@ impl ChannelHandler {
         false
     }
 
-    /// action is for the same game and emit the `RedoMove`.
+    /// Find a cached move whose puzzle hash matches `coin`, remove it from
+    /// the cache, and return a `GameAction::RedoMove` so the move can be
+    /// replayed on-chain.  Returns `Ok(None)` if no cached move matches.
     pub fn get_redo_action<R: Rng>(
         &mut self,
         _env: &mut ChannelHandlerEnv<R>,
@@ -2052,10 +2019,6 @@ impl ChannelHandler {
         }
     }
 
-    // the vanilla coin we get and each reward coin are all sent to the referee
-    // this returns spends which allow them to be consolidated by spending the
-    // reward coins.
-    //
     pub fn get_game_state_id<R: Rng>(&self, env: &mut ChannelHandlerEnv<R>) -> Result<Hash, Error> {
         let mut bytes: Vec<u8> = Vec::with_capacity(self.live_games.len() * 32);
         for l in self.live_games.iter() {

@@ -42,7 +42,6 @@ use crate::common::types::{
 /// if the other player doesn't successfully challenge by providing another program that
 /// produces new conditions that match the parity criteria.
 ///
-/// XXX TODO: Add time lock
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct UnrollCoin {
     pub started_with_potato: bool,

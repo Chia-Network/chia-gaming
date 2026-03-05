@@ -171,8 +171,8 @@ mod sim_tests {
         /// Fake move, just calls receive on the indicated side.
         FakeMove(usize, ReadableMove, Vec<u8>),
         /// Cheat: enable cheating on the referee and queue a move with
-        /// invalid data. The given mover_share controls how much the
-        /// cheater claims. For testing and demonstration only.
+        /// invalid data. The given mover_share is the amount the victim
+        /// receives on timeout. For testing and demonstration only.
         Cheat(usize, Amount),
         /// Force-destroy a game coin: inject a fake deletion into WatchReport
         /// to test impossible spend / game destroyed notifications.

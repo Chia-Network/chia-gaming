@@ -23,6 +23,92 @@ use crate::referee::types::{
     TheirTurnCoinSpentResult, TheirTurnMoveResult,
 };
 
+pub(crate) struct RefereeInitialSetup {
+    pub fixed: Rc<RMFixed>,
+    pub ref_puzzle_args: Rc<RefereePuzzleArgs>,
+    pub puzzle_hash: PuzzleHash,
+    pub my_turn: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn referee_initial_setup(
+    allocator: &mut AllocEncoder,
+    referee_coin_puzzle: Puzzle,
+    referee_coin_puzzle_hash: PuzzleHash,
+    game_start_info: &Rc<GameStartInfo>,
+    my_identity: ChiaIdentity,
+    their_pubkey: &PublicKey,
+    their_reward_puzzle_hash: &PuzzleHash,
+    their_reward_payout_signature: &Aggsig,
+    reward_puzzle_hash: &PuzzleHash,
+    nonce: usize,
+    agg_sig_me_additional_data: &Hash,
+) -> Result<RefereeInitialSetup, Error> {
+    let initial_move = GameMoveStateInfo {
+        mover_share: game_start_info.initial_mover_share.clone(),
+        move_made: game_start_info.initial_move.clone(),
+        max_move_size: game_start_info.initial_max_move_size,
+    };
+    let my_turn = game_start_info.game_handler.is_my_turn();
+
+    let fixed = Rc::new(RMFixed {
+        referee_coin_puzzle,
+        referee_coin_puzzle_hash: referee_coin_puzzle_hash.clone(),
+        their_referee_pubkey: their_pubkey.clone(),
+        their_reward_payout_signature: their_reward_payout_signature.clone(),
+        my_reward_payout_signature: sign_reward_payout(
+            &my_identity.private_key,
+            reward_puzzle_hash,
+        ),
+        reward_puzzle_hash: reward_puzzle_hash.clone(),
+        their_reward_puzzle_hash: their_reward_puzzle_hash.clone(),
+        my_identity: my_identity.clone(),
+        timeout: game_start_info.timeout.clone(),
+        amount: game_start_info.amount.clone(),
+        nonce,
+        agg_sig_me_additional_data: agg_sig_me_additional_data.clone(),
+    });
+
+    let ip = game_start_info.initial_validation_program.clone();
+    let vi_hash = ValidationInfo::new_state_update(
+        allocator,
+        ip.clone(),
+        game_start_info.initial_state.p(),
+    );
+    let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
+        &fixed,
+        &GameMoveDetails {
+            basic: initial_move,
+            validation_info_hash: vi_hash.hash().clone(),
+        },
+        None,
+        ip,
+        my_turn,
+    ));
+    if my_turn {
+        game_assert_eq!(
+            fixed.my_identity.public_key,
+            ref_puzzle_args.mover_pubkey,
+            "referee_initial_setup: my_turn but mover_pubkey != my pubkey"
+        );
+    } else {
+        game_assert_eq!(
+            fixed.their_referee_pubkey,
+            ref_puzzle_args.mover_pubkey,
+            "referee_initial_setup: their_turn but mover_pubkey != their pubkey"
+        );
+    }
+    let puzzle_hash =
+        curry_referee_puzzle_hash(allocator, &referee_coin_puzzle_hash, &ref_puzzle_args)?;
+
+    Ok(RefereeInitialSetup {
+        fixed,
+        ref_puzzle_args,
+        puzzle_hash,
+        my_turn,
+    })
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Referee {
     MyTurn(Rc<MyTurnReferee>),
@@ -45,83 +131,8 @@ impl Referee {
         agg_sig_me_additional_data: &Hash,
         state_number: usize,
     ) -> Result<(Self, PuzzleHash), Error> {
-        let initial_move = GameMoveStateInfo {
-            mover_share: game_start_info.initial_mover_share.clone(),
-            move_made: game_start_info.initial_move.clone(),
-            max_move_size: 0,
-        };
-        let my_turn = game_start_info.game_handler.is_my_turn();
-
-        let fixed_info = Rc::new(RMFixed {
-            referee_coin_puzzle: referee_coin_puzzle.clone(),
-            referee_coin_puzzle_hash: referee_coin_puzzle_hash.clone(),
-            their_referee_pubkey: their_pubkey.clone(),
-            their_reward_payout_signature: their_reward_payout_signature.clone(),
-            my_reward_payout_signature: sign_reward_payout(
-                &my_identity.private_key,
-                reward_puzzle_hash,
-            ),
-            reward_puzzle_hash: reward_puzzle_hash.clone(),
-            their_reward_puzzle_hash: their_reward_puzzle_hash.clone(),
-            my_identity: my_identity.clone(),
-            timeout: game_start_info.timeout.clone(),
-            amount: game_start_info.amount.clone(),
-            nonce,
-            agg_sig_me_additional_data: agg_sig_me_additional_data.clone(),
-        });
-
-        let ip = game_start_info.initial_validation_program.clone();
-        let vi_hash = ValidationInfo::new_state_update(
-            allocator,
-            ip.clone(),
-            game_start_info.initial_state.p(),
-        );
-        let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
-            &fixed_info,
-            &GameMoveDetails {
-                basic: GameMoveStateInfo {
-                    mover_share: game_start_info.initial_mover_share.clone(),
-                    max_move_size: game_start_info.initial_max_move_size,
-                    ..initial_move.clone()
-                },
-                validation_info_hash: vi_hash.hash().clone(),
-            },
-            None,
-            ip.clone(),
-            my_turn,
-        ));
-        if my_turn {
-            assert_eq!(
-                fixed_info.my_identity.public_key,
-                ref_puzzle_args.mover_pubkey
-            );
-        } else {
-            assert_eq!(
-                fixed_info.their_referee_pubkey,
-                ref_puzzle_args.mover_pubkey
-            );
-        }
-        let puzzle_hash =
-            curry_referee_puzzle_hash(allocator, &referee_coin_puzzle_hash, &ref_puzzle_args)?;
-
-        let (turn, _t_ph) = if my_turn {
-            let tr = MyTurnReferee::new(
-                allocator,
-                referee_coin_puzzle.clone(),
-                referee_coin_puzzle_hash.clone(),
-                game_start_info,
-                my_identity.clone(),
-                their_pubkey,
-                their_reward_puzzle_hash,
-                their_reward_payout_signature,
-                reward_puzzle_hash,
-                nonce,
-                agg_sig_me_additional_data,
-                state_number,
-            )?;
-            (Referee::MyTurn(Rc::new(tr.0)), tr.1)
-        } else {
-            let tr = TheirTurnReferee::new(
+        if game_start_info.game_handler.is_my_turn() {
+            let (r, ph) = MyTurnReferee::new(
                 allocator,
                 referee_coin_puzzle,
                 referee_coin_puzzle_hash,
@@ -135,9 +146,24 @@ impl Referee {
                 agg_sig_me_additional_data,
                 state_number,
             )?;
-            (Referee::TheirTurn(Rc::new(tr.0)), tr.1)
-        };
-        Ok((turn, puzzle_hash))
+            Ok((Referee::MyTurn(Rc::new(r)), ph))
+        } else {
+            let (r, ph) = TheirTurnReferee::new(
+                allocator,
+                referee_coin_puzzle,
+                referee_coin_puzzle_hash,
+                game_start_info,
+                my_identity,
+                their_pubkey,
+                their_reward_puzzle_hash,
+                their_reward_payout_signature,
+                reward_puzzle_hash,
+                nonce,
+                agg_sig_me_additional_data,
+                state_number,
+            )?;
+            Ok((Referee::TheirTurn(Rc::new(r)), ph))
+        }
     }
 
     fn fixed(&self) -> Rc<RMFixed> {
@@ -186,25 +212,17 @@ impl Referee {
         }))
     }
 
-    fn get_last_move_spend(&self) -> Result<Rc<OnChainRefereeMoveData>, Error> {
-        let move_spend = match self {
-            Referee::TheirTurn(t) => {
-                debug!("get_last_move_spend: right phase");
-                t.get_move_info()
-            }
-            Referee::MyTurn(t) => {
-                debug!("get_last_move_spend: wrong phase");
-                t.get_move_info()
-            }
-        };
-
-        if let Some(s) = move_spend {
-            Ok(s.clone())
-        } else {
-            Err(Error::StrErr(
-                "we need to be after a my turn to get a move transaction".to_string(),
-            ))
+    fn get_move_info(&self) -> Option<Rc<OnChainRefereeMoveData>> {
+        match self {
+            Referee::MyTurn(t) => t.get_move_info(),
+            Referee::TheirTurn(t) => t.get_move_info(),
         }
+    }
+
+    fn get_last_move_spend(&self) -> Result<Rc<OnChainRefereeMoveData>, Error> {
+        self.get_move_info().ok_or_else(|| {
+            Error::StrErr("we need to be after a my turn to get a move transaction".to_string())
+        })
     }
 
     pub fn is_my_turn(&self) -> bool {
@@ -285,7 +303,6 @@ impl Referee {
         allocator: &mut AllocEncoder,
         details: &GameMoveDetails,
         state_number: usize,
-        coin: Option<&CoinString>,
     ) -> Result<(Option<Rc<Referee>>, TheirTurnMoveResult), Error> {
         debug!("their_turn_move_off_chain: state={}", state_number);
         let (new_self, result) = match self {
@@ -295,7 +312,7 @@ impl Referee {
                 ));
             }
             Referee::TheirTurn(t) => {
-                t.their_turn_move_off_chain(allocator, details, state_number, coin)?
+                t.their_turn_move_off_chain(allocator, details, state_number)?
             }
         };
 
@@ -508,7 +525,6 @@ impl Referee {
         &self,
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
-        _on_chain: bool,
     ) -> Result<Spend, Error> {
         let my_turn_spend = self.get_last_move_spend()?;
         let args = my_turn_spend.before_args.clone();

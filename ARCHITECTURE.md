@@ -43,6 +43,7 @@ For debugging and testing operational guidance, see `DEBUGGING_GUIDE.md`.
 - [AcceptTimeout Lifecycle](#accepttimeout-lifecycle)
 - [Simulator Strictness](#simulator-strictness)
 - [Test Infrastructure](#test-infrastructure)
+- [Invariant Assertions: game_assert! / game_assert_eq!](#invariant-assertions-game_assert--game_assert_eq)
 
 ---
 
@@ -1661,4 +1662,51 @@ without the nerfed player's knowledge.
 - `src/test_support/debug_game.rs` — `DebugGameHandler`, `DebugGameTestMove`
 - `src/test_support/game.rs` — `GameAction` enum (sim-tests variant)
 - `src/simulator/tests/potato_handler_sim.rs` — integration test suite
+
+---
+
+## Invariant Assertions: `game_assert!` / `game_assert_eq!`
+
+Production code must never crash on bad data from peers or the blockchain.
+At the same time, internal invariant violations are bugs that should be caught
+loudly during development and testing.
+
+The `game_assert!` and `game_assert_eq!` macros (defined in
+`src/common/types/macros.rs`) bridge these two needs:
+
+- **Debug / test builds:** the macro panics immediately (via `debug_assert!`),
+  making invariant violations impossible to miss during development.
+- **Release builds:** the macro returns `Err(Error::StrErr(...))`, allowing the
+  caller to handle the failure gracefully (typically by emitting a `GameError`
+  notification and continuing).
+
+### Usage
+
+```rust
+game_assert!(self.have_potato, "must have potato to send accept");
+game_assert_eq!(expected_ph, actual_ph, "puzzle hash mismatch");
+```
+
+The calling function must return `Result<_, Error>` — the compiler enforces
+this because the macro contains a `return Err(...)`.
+
+### When to use each pattern
+
+| Situation | Pattern |
+| --- | --- |
+| Internal invariant (own logic) | `game_assert!` / `game_assert_eq!` |
+| Data from peer or blockchain | Return `Err` directly (never trust external data) |
+| Deserialization of wire data | `map_err(serde::de::Error::custom)?` |
+| Infallible conversions (e.g. `0.to_bigint()`) | `.unwrap()` is acceptable |
+| Test-only code | Standard `assert!` / `assert_eq!` |
+
+### Rationale
+
+Before these macros, the codebase used a mix of `assert!`, `.expect()`, and
+`.unwrap()` for invariant checks — all of which panic unconditionally, crashing
+the process even in production when a trusted full node sends bad data. The
+macros replace these with a single consistent pattern that is strict during
+development but graceful in production.
+
+**Key code:** `src/common/types/macros.rs`
 

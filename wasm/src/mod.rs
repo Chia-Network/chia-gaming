@@ -175,7 +175,7 @@ mod gaming_wasm {
         // name vs hex string for program
         game_types: BTreeMap<String, JsGameFactory>,
         // hex string for private key
-        identity: String, //todo rename private_key
+        identity: String,
         rng_id: i32,
         have_potato: bool,
         // float or decimal string
@@ -371,9 +371,6 @@ mod gaming_wasm {
         Ok(CoinString::from_bytes(&coinstring_bytes))
     }
 
-    fn coinstring_to_hex(cs: &CoinString) -> String {
-        hex::encode(cs.to_bytes())
-    }
 
     #[wasm_bindgen]
     pub fn opening_coin(cid: i32, hex_coinstring: &str) -> Result<(), JsValue> {
@@ -589,7 +586,7 @@ mod gaming_wasm {
     }
 
     /// Submit a cheating move for testing and demonstration purposes.
-    /// The mover_share controls how much the cheater claims from the pot.
+    /// The mover_share is the amount the victim receives on timeout.
     #[wasm_bindgen]
     pub fn cheat(cid: i32, id: &str, mover_share: &str) -> Result<(), JsValue> {
         let game_id = string_to_game_id(id)?;
@@ -696,7 +693,7 @@ mod gaming_wasm {
         if let Some(js_value) = callbacks.get(name) {
             let function = js_value
                 .dyn_ref::<js_sys::Function>()
-                .expect("Not a js function");
+                .ok_or_else(|| types::Error::StrErr("Not a js function".to_string()))?;
             let mut args_array = Array::new();
             f(&mut args_array)?;
             function.apply(&JsValue::NULL, &args_array).into_e()?;
@@ -733,9 +730,10 @@ mod gaming_wasm {
             let entry = Array::from(&entries.at(i as i32));
             let js_name = &entry.at(0);
 
-            if let Some(name) = js_name
+            let js_string = js_name
                 .dyn_ref::<JsString>()
-                .expect("Not a js string")
+                .ok_or_else(|| JsValue::from_str("Not a js string"))?;
+            if let Some(name) = js_string
                 .as_string()
             {
                 let value = entry.at(1);
@@ -785,7 +783,7 @@ mod gaming_wasm {
 
     fn coin_spend_to_js(spend: &CoinSpend) -> JsCoinSpend {
         JsCoinSpend {
-            coin: coinstring_to_hex(&spend.coin),
+            coin: coin_string_to_hex(&spend.coin),
             bundle: spend_to_js(&spend.bundle),
         }
     }

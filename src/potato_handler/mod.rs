@@ -123,8 +123,7 @@ pub struct PotatoHandler {
     reward_puzzle_hash: PuzzleHash,
 
     waiting_to_start: bool,
-    // This is also given to unroll coin to set a timelock based on it.
-    // We'll be notified by the timeout handler when we can spend the unroll coin.
+    // Timeout for the channel coin watcher; the unroll coin uses `unroll_timeout`.
     channel_timeout: Timeout,
     // Unroll timeout
     unroll_timeout: Timeout,
@@ -372,7 +371,7 @@ impl PotatoHandler {
             &self.reward_puzzle_hash,
         );
 
-        assert!(matches!(self.channel_state, ChannelState::StepA));
+        game_assert!(matches!(self.channel_state, ChannelState::StepA), "start: expected StepA state");
         let my_hs_info = HandshakeA {
             parent: parent_coin.clone(),
             simple: HandshakeB {
@@ -783,7 +782,7 @@ impl PotatoHandler {
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
     ) -> Result<(bool, Vec<Effect>), Error> {
-        assert!(matches!(self.have_potato, PotatoState::Present));
+        game_assert!(matches!(self.have_potato, PotatoState::Present), "drain_queue_into_batch: must have potato");
         let mut effects = Vec::new();
         let mut batch_actions: Vec<BatchAction> = Vec::new();
         let mut clean_shutdown_data: Option<(Aggsig, ProgramRef)> = None;
@@ -1206,14 +1205,6 @@ impl PotatoHandler {
                     )));
                 };
 
-                // XXX Call the UX saying the channel coin has been created
-                // and play can happen.
-                // Register the channel coin in the bootstrap provider.
-                // Situation:
-                // Before we've got notification of the channel coin, it's possible
-                // alice will get a potato from bob or bob a request from alice.
-                //
-                // That should halt for the channel coin notifiation.
                 let (mut channel_handler, _init_result) =
                     self.make_channel_handler(parent_coin.to_coin_id(), false, msg, env)?;
 
@@ -1448,7 +1439,7 @@ impl PotatoHandler {
                     ChannelState::Finished(hs) => {
                         self.channel_state =
                             ChannelState::OnChainWaitForConditions(channel_coin.clone(), hs);
-                        assert!(!matches!(self.channel_state, ChannelState::StepA));
+                        game_assert!(!matches!(self.channel_state, ChannelState::StepA), "check_channel_spent: unexpected StepA after Finished");
                         return Ok((
                             true,
                             vec![Effect::RequestPuzzleAndSolution(coin_id.clone())],
@@ -1457,7 +1448,7 @@ impl PotatoHandler {
                     ChannelState::OnChainWaitingForUnrollSpend(channel_coin, _, reward_coin) => {
                         self.channel_state =
                             ChannelState::CleanShutdownWaitForConditions(channel_coin, reward_coin);
-                        assert!(!matches!(self.channel_state, ChannelState::StepA));
+                        game_assert!(!matches!(self.channel_state, ChannelState::StepA), "check_channel_spent: unexpected StepA after CleanShutdown");
                         return Ok((
                             true,
                             vec![Effect::RequestPuzzleAndSolution(coin_id.clone())],
@@ -1469,7 +1460,7 @@ impl PotatoHandler {
                     }
                     x => {
                         self.channel_state = x;
-                        assert!(!matches!(self.channel_state, ChannelState::StepA));
+                        game_assert!(!matches!(self.channel_state, ChannelState::StepA), "check_channel_spent: unexpected StepA in catch-all");
                         return Err(Error::StrErr(
                             "channel coin spend in non-handshake state".to_string(),
                         ));
@@ -1478,7 +1469,7 @@ impl PotatoHandler {
             }
         }
 
-        assert!(!matches!(self.channel_state, ChannelState::StepA));
+        game_assert!(!matches!(self.channel_state, ChannelState::StepA), "check_channel_spent: unexpected StepA at exit");
         Ok((false, vec![]))
     }
 
@@ -1526,8 +1517,9 @@ impl PotatoHandler {
     /// CLSP simply verifies the hash of the revealed conditions.
     ///
     /// `on_chain_state` is the state_number the on-chain unroll coin was
-    /// created at.  We look up the matching stored UnrollCoin (either
-    /// `self.unroll` or `self.timeout`) so the puzzle hash matches.
+    /// created at.  We look up the matching stored UnrollCoin (via the
+    /// channel handler's `unroll` or `timeout` field) so the puzzle hash
+    /// matches.
     pub fn do_unroll_spend_to_games<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
