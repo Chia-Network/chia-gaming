@@ -525,7 +525,6 @@ impl Referee {
         &self,
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
-        _on_chain: bool,
     ) -> Result<Spend, Error> {
         let my_turn_spend = self.get_last_move_spend()?;
         let args = my_turn_spend.before_args.clone();

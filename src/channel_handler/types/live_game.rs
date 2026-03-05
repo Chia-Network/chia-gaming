@@ -144,10 +144,9 @@ impl LiveGame {
         &self,
         allocator: &mut AllocEncoder,
         game_coin: &CoinString,
-        on_chain: bool,
     ) -> Result<Spend, Error> {
         self.referee_maker
-            .get_transaction_for_move(allocator, game_coin, on_chain)
+            .get_transaction_for_move(allocator, game_coin)
     }
 
     pub fn receive_readable(

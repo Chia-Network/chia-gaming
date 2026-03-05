@@ -25,7 +25,6 @@ use crate::referee::types::GameMoveDetails;
 pub enum ConditionWaitKind {
     Channel(CoinString),
     Unroll(CoinString, usize),
-    Game,
 }
 
 /// Async interface for messaging out of the game layer toward the wallet.

@@ -124,7 +124,7 @@ impl OnChainGameHandler {
 
         let transaction =
             self.player_ch
-                .get_transaction_for_game_move(env.allocator, &game_id, &coin, true)?;
+                .get_transaction_for_game_move(env.allocator, &game_id, &coin)?;
 
         let new_ph = self.player_ch.get_game_outcome_puzzle_hash(env, &game_id)?;
 

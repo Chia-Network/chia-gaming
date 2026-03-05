@@ -80,15 +80,10 @@ pub struct TheirTurnInputs<'a> {
     pub new_move: GameMoveDetails,
 }
 
-fn get_their_turn_debug_flag(_: &TheirTurnInputs) -> bool {
-    false
-}
-
 fn run_code(
     allocator: &mut AllocEncoder,
     code: NodePtr,
     env: NodePtr,
-    _debug: bool,
 ) -> Result<NodePtr, Error> {
     run_program(allocator.allocator(), &chia_dialect(), code, env, 0)
         .into_gen()
@@ -188,7 +183,7 @@ impl GameHandler {
             .into_gen()?;
 
         let handler_node = self.get_my_turn_handler(allocator)?;
-        let run_result = run_code(allocator, handler_node, handler_args, false);
+        let run_result = run_code(allocator, handler_node, handler_args);
 
         if let Err(Error::ClvmErr(e)) = &run_result {
             let failing_hex = Node(e.node_ptr()).to_hex(allocator)?;
@@ -326,7 +321,6 @@ impl GameHandler {
             allocator,
             handler_node,
             handler_args,
-            get_their_turn_debug_flag(inputs),
         );
 
         if let Err(Error::ClvmErr(e)) = &run_result_e {
@@ -514,7 +508,7 @@ impl MessageHandler {
             .to_clvm(allocator)
             .into_gen()?;
         let run_prog = self.0.to_nodeptr(allocator)?;
-        let run_result = run_code(allocator, run_prog, args, false);
+        let run_result = run_code(allocator, run_prog, args);
 
         let run_output = run_result
             .map_err(|e| Error::StrErr(format!("message parser returned error: {e:?}")))?;

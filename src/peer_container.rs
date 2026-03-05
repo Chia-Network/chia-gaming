@@ -130,17 +130,6 @@ impl MessagePeerQueue for SimulatedPeer<SimulatedWalletSpend> {
     }
 }
 
-pub struct RegisteredCoinsIterator<'a> {
-    internal_iterator: std::collections::btree_map::Iter<'a, CoinString, WatchEntry>,
-}
-
-impl<'a> Iterator for RegisteredCoinsIterator<'a> {
-    type Item = (&'a CoinString, &'a WatchEntry);
-
-    fn next(&mut self) -> std::option::Option<<Self as Iterator>::Item> {
-        self.internal_iterator.next()
-    }
-}
 
 #[derive(Default)]
 pub struct IdleResult {

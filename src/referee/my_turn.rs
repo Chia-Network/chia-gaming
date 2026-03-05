@@ -340,7 +340,7 @@ impl MyTurnReferee {
         new_entropy: Hash,
         state_number: usize,
     ) -> Result<(Referee, GameMoveWireData), Error> {
-        assert!(self.is_my_turn());
+        game_assert!(self.is_my_turn(), "my_turn_make_move called when not my turn");
 
         let game_handler = if let Some(gh) = self.get_game_handler() {
             gh

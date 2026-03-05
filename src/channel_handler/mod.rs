@@ -1081,7 +1081,6 @@ impl ChannelHandler {
                 &PuzzleHash::default(),
                 &Amount::default(),
             ),
-            false,
         );
 
         self.live_games[game_idx].last_referee_puzzle_hash =
@@ -1793,10 +1792,9 @@ impl ChannelHandler {
         allocator: &mut AllocEncoder,
         game_id: &GameID,
         game_coin: &CoinString,
-        on_chain: bool,
     ) -> Result<Spend, Error> {
         let idx = self.get_game_by_id(game_id)?;
-        self.live_games[idx].get_transaction_for_move(allocator, game_coin, on_chain)
+        self.live_games[idx].get_transaction_for_move(allocator, game_coin)
     }
 
     pub fn get_game_outcome_puzzle_hash<R: Rng>(
@@ -1850,7 +1848,6 @@ impl ChannelHandler {
         let tx = self.live_games[game_idx].get_transaction_for_move(
             env.allocator,
             existing_coin,
-            true,
         )?;
 
         let post_outcome = self.live_games[game_idx].outcome_puzzle_hash(env.allocator)?;
