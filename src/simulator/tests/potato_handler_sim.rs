@@ -3501,9 +3501,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                 ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::OpponentMoved {
-                    mover_share: Amount::new(0),
-                },
                 ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
             ],
             "accept_finished p0",
@@ -3525,6 +3522,33 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
             ],
             "accept_finished p1",
+        );
+    }));
+
+    res.push(("test_accept_timeout_nerfed_then_on_chain", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        // Alice accepts off-chain but her potato is nerfed so Bob never
+        // receives it.  Then Alice goes on-chain.  The unroll resolves to
+        // the pre-accept state (Bob never countersigned the accept batch).
+        // Alice should still get WeTimedOut through the on-chain timeout
+        // path, which finds the game in pending_accept_timeouts.
+        let mut moves = prefix_test_moves(&mut allocator).to_vec();
+        moves.push(GameAction::NerfMessages(0));
+        moves.push(GameAction::AcceptTimeout(0));
+        moves.push(GameAction::GoOnChain(0));
+        moves.push(GameAction::WaitBlocks(120, 1));
+        moves.push(GameAction::WaitBlocks(5, 0));
+
+        let outcome =
+            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        assert!(
+            p0_notifs
+                .iter()
+                .any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
+            "player 0 should get WeTimedOut after nerfed accept + on-chain, got: {p0_notifs:?}"
         );
     }));
 
