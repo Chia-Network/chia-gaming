@@ -66,7 +66,7 @@ impl PrivateKey {
     }
 
     pub fn sign<Msg: AsRef<[u8]>>(&self, msg: Msg) -> Aggsig {
-        Aggsig(sign(&self.0, msg))
+        Aggsig::from_bls(sign(&self.0, msg))
     }
 
     pub fn bytes(&self) -> [u8; 32] {

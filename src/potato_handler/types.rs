@@ -245,7 +245,7 @@ pub enum PeerMessage {
     Batch {
         actions: Vec<BatchAction>,
         signatures: PotatoSignatures,
-        clean_shutdown: Option<(Aggsig, ProgramRef)>,
+        clean_shutdown: Option<Box<(Aggsig, ProgramRef)>>,
     },
     CleanShutdownComplete(CoinSpend),
     RequestPotato(()),

@@ -81,7 +81,7 @@ impl OnChainGameHandler {
         _game_id: &GameID,
         notification: GameNotification,
     ) -> Option<Effect> {
-        Some(Effect::from(notification))
+        Some(Effect::Notify(notification))
     }
 
     pub fn get_game_coin(&self, game_id: &GameID) -> Option<CoinString> {
@@ -612,12 +612,12 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                     }
                 }
 
-                effects.push(Effect::OpponentMoved {
+                effects.push(Effect::Notify(GameNotification::OpponentMoved {
                     id: game_id,
                     state_number,
                     readable,
                     mover_share,
-                });
+                }));
                 effects.push(Effect::RegisterCoin {
                     coin: new_coin_string,
                     timeout: gt,
@@ -630,9 +630,11 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 debug!("{initial_potato} slash {outcome:?}");
                 self.have_potato = PotatoState::Present;
 
-                effects.push(Effect::OpponentPlayedIllegalMove {
-                    id: old_definition.game_id,
-                });
+                effects.push(Effect::Notify(
+                    GameNotification::OpponentPlayedIllegalMove {
+                        id: old_definition.game_id,
+                    },
+                ));
 
                 match outcome.borrow() {
                     SlashOutcome::Reward {
@@ -946,7 +948,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
             self.player_ch
                 .restore_game_state(&game_id, pre_referee, pre_last_ph)?;
             self.game_map.retain(|_, def| def.game_id != game_id);
-            return Ok(Some(Effect::from(GameNotification::WeTimedOut {
+            return Ok(Some(Effect::Notify(GameNotification::WeTimedOut {
                 id: game_id,
                 our_reward: Amount::default(),
                 reward_coin: None,
@@ -1080,7 +1082,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                                 game_id
                             );
                             self.game_map.remove(&current_coin);
-                            return Ok(vec![Effect::from(GameNotification::WeTimedOut {
+                            return Ok(vec![Effect::Notify(GameNotification::WeTimedOut {
                                 id: game_id,
                                 our_reward: Amount::default(),
                                 reward_coin: None,

@@ -10,16 +10,23 @@ use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 
 use crate::common::types::{Error, IntoErr, PublicKey};
 
-/// Aggsig
-#[derive(Clone, Eq, PartialEq, Debug, Default)]
-pub struct Aggsig(pub chia_bls::Signature);
+/// BLS G2 signature stored in compressed 96-byte form.
+/// Decompresses on demand for arithmetic and verification.
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub struct Aggsig(pub [u8; 96]);
+
+impl Default for Aggsig {
+    fn default() -> Self {
+        Aggsig::from_bls(chia_bls::Signature::default())
+    }
+}
 
 impl Serialize for Aggsig {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        hex::encode(self.bytes()).serialize(serializer)
+        hex::encode(self.0).serialize(serializer)
     }
 }
 
@@ -36,11 +43,12 @@ impl<'de> Deserialize<'de> for Aggsig {
 
 impl Aggsig {
     pub fn from_bls(bls: chia_bls::Signature) -> Aggsig {
-        Aggsig(bls)
+        Aggsig(bls.to_bytes())
     }
 
     pub fn from_bytes(by: [u8; 96]) -> Result<Aggsig, Error> {
-        Ok(Aggsig(chia_bls::Signature::from_bytes(&by).into_gen()?))
+        chia_bls::Signature::from_bytes(&by).into_gen()?;
+        Ok(Aggsig(by))
     }
 
     pub fn from_slice(by: &[u8]) -> Result<Aggsig, Error> {
@@ -48,38 +56,40 @@ impl Aggsig {
             return Err(Error::StrErr("bad aggsig length".to_string()));
         }
         let mut fixed: [u8; 96] = [0; 96];
-        for (i, b) in by.iter().enumerate() {
-            fixed[i % 96] = *b;
-        }
+        fixed.copy_from_slice(by);
         Aggsig::from_bytes(fixed)
     }
 
     pub fn bytes(&self) -> [u8; 96] {
-        self.0.to_bytes()
+        self.0
     }
 
     pub fn to_bls(&self) -> chia_bls::Signature {
-        self.0.clone()
+        chia_bls::Signature::from_bytes(&self.0).expect("Aggsig always holds validated bytes")
     }
 
     pub fn verify(&self, public_key: &PublicKey, msg: &[u8]) -> bool {
-        verify(&self.0, &public_key.to_bls(), msg)
+        verify(&self.to_bls(), &public_key.to_bls(), msg)
     }
 
     pub fn aggregate(&self, other: &Aggsig) -> Aggsig {
-        let mut result = self.0.clone();
-        result.aggregate(&other.0);
-        Aggsig(result)
+        let mut result = self.to_bls();
+        result.aggregate(&other.to_bls());
+        Aggsig::from_bls(result)
     }
 
     pub fn scalar_multiply(&mut self, int_bytes: &[u8]) {
-        self.0.scalar_multiply(int_bytes)
+        let mut sig = self.to_bls();
+        sig.scalar_multiply(int_bytes);
+        *self = Aggsig::from_bls(sig);
     }
 }
 
 impl AddAssign for Aggsig {
     fn add_assign(&mut self, rhs: Self) {
-        self.0 += &rhs.0;
+        let mut sig = self.to_bls();
+        sig += &rhs.to_bls();
+        *self = Aggsig::from_bls(sig);
     }
 }
 
@@ -94,6 +104,6 @@ impl Add for Aggsig {
 
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Aggsig {
     fn to_clvm(&self, encoder: &mut E) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
-        encoder.encode_atom(clvm_traits::Atom::Borrowed(&self.0.to_bytes()))
+        encoder.encode_atom(clvm_traits::Atom::Borrowed(&self.0))
     }
 }
