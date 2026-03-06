@@ -255,10 +255,8 @@ impl PotatoHandler {
         mover_share: Amount,
         entropy: Hash,
     ) -> Result<Vec<Effect>, Error> {
-        let (_continued, effects) = self.do_game_action(
-            env,
-            GameAction::Cheat(game_id.clone(), mover_share, entropy),
-        )?;
+        let (_continued, effects) =
+            self.do_game_action(env, GameAction::Cheat(*game_id, mover_share, entropy))?;
 
         Ok(effects)
     }
@@ -369,7 +367,10 @@ impl PotatoHandler {
             &self.reward_puzzle_hash,
         );
 
-        game_assert!(matches!(self.channel_state, ChannelState::StepA), "start: expected StepA state");
+        game_assert!(
+            matches!(self.channel_state, ChannelState::StepA),
+            "start: expected StepA state"
+        );
         let my_hs_info = HandshakeA {
             parent: parent_coin.clone(),
             simple: HandshakeB {
@@ -479,7 +480,7 @@ impl PotatoHandler {
                         BatchAction::ProposeGame(gsi) => {
                             let ch = self.channel_handler_mut()?;
                             ch.apply_received_proposal(env, gsi)?;
-                            let game_id = gsi.game_id.clone();
+                            let game_id = gsi.game_id;
                             let my_contribution = gsi.my_contribution_this_game.clone();
                             let their_contribution = gsi.their_contribution_this_game.clone();
                             effects.push(Effect::GameProposed {
@@ -491,15 +492,13 @@ impl PotatoHandler {
                         BatchAction::AcceptProposal(game_id) => {
                             let ch = self.channel_handler_mut()?;
                             ch.apply_received_accept_proposal(game_id)?;
-                            effects.push(Effect::GameProposalAccepted {
-                                id: game_id.clone(),
-                            });
+                            effects.push(Effect::GameProposalAccepted { id: *game_id });
                         }
                         BatchAction::CancelProposal(game_id) => {
                             let ch = self.channel_handler_mut()?;
                             ch.received_cancel_proposal(game_id)?;
                             effects.push(Effect::GameProposalCancelled {
-                                id: game_id.clone(),
+                                id: *game_id,
                                 reason: "cancelled by peer".to_string(),
                             });
                         }
@@ -511,14 +510,14 @@ impl PotatoHandler {
                             let opponent_readable =
                                 ReadableMove::from_program(move_result.readable_their_move);
                             effects.push(Effect::OpponentMoved {
-                                id: game_id.clone(),
+                                id: *game_id,
                                 state_number: move_result.state_number,
                                 readable: opponent_readable,
                                 mover_share: move_result.mover_share,
                             });
                             if !move_result.message.is_empty() {
                                 effects.push(Effect::SendMessage(PeerMessage::Message(
-                                    game_id.clone(),
+                                    *game_id,
                                     move_result.message,
                                 )));
                             }
@@ -527,7 +526,7 @@ impl PotatoHandler {
                             let ch = self.channel_handler_mut()?;
                             ch.apply_received_accept_timeout(game_id)?;
                             effects.push(Effect::OpponentTimedOut {
-                                id: game_id.clone(),
+                                id: *game_id,
                                 our_reward: amount.clone(),
                                 reward_coin: None,
                             });
@@ -669,7 +668,7 @@ impl PotatoHandler {
                     ch.received_message(env, game_id, message)?
                 };
                 effects.push(Effect::GameMessage {
-                    id: game_id.clone(),
+                    id: *game_id,
                     readable: decoded_message,
                 });
             }
@@ -780,7 +779,10 @@ impl PotatoHandler {
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
     ) -> Result<(bool, Vec<Effect>), Error> {
-        game_assert!(matches!(self.have_potato, PotatoState::Present), "drain_queue_into_batch: must have potato");
+        game_assert!(
+            matches!(self.have_potato, PotatoState::Present),
+            "drain_queue_into_batch: must have potato"
+        );
         let mut effects = Vec::new();
         let mut batch_actions: Vec<BatchAction> = Vec::new();
         let mut clean_shutdown_data: Option<(Aggsig, ProgramRef)> = None;
@@ -832,9 +834,7 @@ impl PotatoHandler {
                         let ch = self.channel_handler_mut()?;
                         let proposal = ch.find_proposal(&game_id);
                         if proposal.is_none() {
-                            effects.push(Effect::GameCancelled {
-                                id: game_id.clone(),
-                            });
+                            effects.push(Effect::GameCancelled { id: game_id });
                             continue;
                         }
                         let proposal = proposal.unwrap();
@@ -846,13 +846,13 @@ impl PotatoHandler {
                             proposal.their_contribution > ch.their_out_of_game_balance();
                         if our_short || their_short {
                             effects.push(Effect::InsufficientBalance {
-                                id: game_id.clone(),
+                                id: game_id,
                                 our_balance_short: our_short,
                                 their_balance_short: their_short,
                             });
                             ch.send_cancel_proposal(&game_id)?;
                             effects.push(Effect::GameProposalCancelled {
-                                id: game_id.clone(),
+                                id: game_id,
                                 reason: "insufficient balance".to_string(),
                             });
                             batch_actions.push(BatchAction::CancelProposal(game_id));
@@ -860,9 +860,7 @@ impl PotatoHandler {
                         }
                         ch.send_accept_proposal(&game_id)?;
                     }
-                    effects.push(Effect::GameProposalAccepted {
-                        id: game_id.clone(),
-                    });
+                    effects.push(Effect::GameProposalAccepted { id: game_id });
                     batch_actions.push(BatchAction::AcceptProposal(game_id));
                 }
                 GameAction::QueuedCancelProposal(game_id) => {
@@ -874,7 +872,7 @@ impl PotatoHandler {
                         ch.send_cancel_proposal(&game_id)?;
                     }
                     effects.push(Effect::GameProposalCancelled {
-                        id: game_id.clone(),
+                        id: game_id,
                         reason: "cancelled by us".to_string(),
                     });
                     batch_actions.push(BatchAction::CancelProposal(game_id));
@@ -1359,7 +1357,7 @@ impl PotatoHandler {
                 let going_on_chain = self
                     .channel_handler
                     .as_ref()
-                    .map_or(false, |ch| ch.initiated_on_chain());
+                    .is_some_and(|ch| ch.initiated_on_chain());
 
                 if going_on_chain {
                     return Ok(effects);
@@ -1437,7 +1435,10 @@ impl PotatoHandler {
                     ChannelState::Finished(hs) => {
                         self.channel_state =
                             ChannelState::OnChainWaitForConditions(channel_coin.clone(), hs);
-                        game_assert!(!matches!(self.channel_state, ChannelState::StepA), "check_channel_spent: unexpected StepA after Finished");
+                        game_assert!(
+                            !matches!(self.channel_state, ChannelState::StepA),
+                            "check_channel_spent: unexpected StepA after Finished"
+                        );
                         return Ok((
                             true,
                             vec![Effect::RequestPuzzleAndSolution(coin_id.clone())],
@@ -1446,7 +1447,10 @@ impl PotatoHandler {
                     ChannelState::OnChainWaitingForUnrollSpend(channel_coin, _, reward_coin) => {
                         self.channel_state =
                             ChannelState::CleanShutdownWaitForConditions(channel_coin, reward_coin);
-                        game_assert!(!matches!(self.channel_state, ChannelState::StepA), "check_channel_spent: unexpected StepA after CleanShutdown");
+                        game_assert!(
+                            !matches!(self.channel_state, ChannelState::StepA),
+                            "check_channel_spent: unexpected StepA after CleanShutdown"
+                        );
                         return Ok((
                             true,
                             vec![Effect::RequestPuzzleAndSolution(coin_id.clone())],
@@ -1458,7 +1462,10 @@ impl PotatoHandler {
                     }
                     x => {
                         self.channel_state = x;
-                        game_assert!(!matches!(self.channel_state, ChannelState::StepA), "check_channel_spent: unexpected StepA in catch-all");
+                        game_assert!(
+                            !matches!(self.channel_state, ChannelState::StepA),
+                            "check_channel_spent: unexpected StepA in catch-all"
+                        );
                         return Err(Error::StrErr(
                             "channel coin spend in non-handshake state".to_string(),
                         ));
@@ -1467,7 +1474,10 @@ impl PotatoHandler {
             }
         }
 
-        game_assert!(!matches!(self.channel_state, ChannelState::StepA), "check_channel_spent: unexpected StepA at exit");
+        game_assert!(
+            !matches!(self.channel_state, ChannelState::StepA),
+            "check_channel_spent: unexpected StepA at exit"
+        );
         Ok((false, vec![]))
     }
 
@@ -1706,7 +1716,7 @@ impl PotatoHandler {
         let going_on_chain = self
             .channel_handler
             .as_ref()
-            .map_or(false, |ch| ch.initiated_on_chain());
+            .is_some_and(|ch| ch.initiated_on_chain());
 
         if going_on_chain {
             return Ok((false, vec![]));
@@ -2113,15 +2123,11 @@ impl PotatoHandler {
 
             let game_map_inner = player_ch.set_state_for_coins(env, unroll_coin, &created_coins)?;
 
-            let surviving_ids: HashSet<GameID> = game_map_inner
-                .values()
-                .map(|def| def.game_id.clone())
-                .collect();
+            let surviving_ids: HashSet<GameID> =
+                game_map_inner.values().map(|def| def.game_id).collect();
             for missing_id in pre_game_ids.difference(&surviving_ids) {
                 if in_flight_proposal_ids.contains(missing_id) {
-                    effects.push(Effect::GameCancelled {
-                        id: missing_id.clone(),
-                    });
+                    effects.push(Effect::GameCancelled { id: *missing_id });
                 } else {
                     let reason = if is_stale {
                         "live game absent from stale unroll"
@@ -2129,7 +2135,7 @@ impl PotatoHandler {
                         "live game absent from unroll"
                     };
                     effects.push(Effect::GameError {
-                        id: missing_id.clone(),
+                        id: *missing_id,
                         reason: reason.to_string(),
                     });
                 }
@@ -2191,13 +2197,13 @@ impl PotatoHandler {
                         "zero-reward early-out for game {:?}: {reason}",
                         state.game_id
                     );
-                    zero_reward_games.push((coin.clone(), state.game_id.clone()));
+                    zero_reward_games.push((coin.clone(), state.game_id));
                 }
             }
             for (coin, game_id) in &zero_reward_games {
                 game_map.remove(coin);
                 effects.push(Effect::from(GameNotification::WeTimedOut {
-                    id: game_id.clone(),
+                    id: *game_id,
                     our_reward: Amount::default(),
                     reward_coin: None,
                 }));
@@ -2306,7 +2312,7 @@ impl FromLocalUI for PotatoHandler {
             (their_games, my_games)
         };
 
-        let game_id_list: Vec<GameID> = my_games.iter().map(|g| g.game_id.clone()).collect();
+        let game_id_list: Vec<GameID> = my_games.iter().map(|g| g.game_id).collect();
 
         for (mine, theirs) in my_games.into_iter().zip(their_games.into_iter()) {
             self.push_action(GameAction::QueuedProposal(mine, theirs));
@@ -2322,7 +2328,7 @@ impl FromLocalUI for PotatoHandler {
         game_id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
         let (_continued, effects) =
-            self.do_game_action(env, GameAction::QueuedAcceptProposal(game_id.clone()))?;
+            self.do_game_action(env, GameAction::QueuedAcceptProposal(*game_id))?;
         Ok(effects)
     }
 
@@ -2332,7 +2338,7 @@ impl FromLocalUI for PotatoHandler {
         game_id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
         let (_continued, effects) =
-            self.do_game_action(env, GameAction::QueuedCancelProposal(game_id.clone()))?;
+            self.do_game_action(env, GameAction::QueuedCancelProposal(*game_id))?;
         Ok(effects)
     }
 
@@ -2343,10 +2349,8 @@ impl FromLocalUI for PotatoHandler {
         readable: &ReadableMove,
         new_entropy: Hash,
     ) -> Result<Vec<Effect>, Error> {
-        let (_continued, effects) = self.do_game_action(
-            env,
-            GameAction::Move(id.clone(), readable.clone(), new_entropy),
-        )?;
+        let (_continued, effects) =
+            self.do_game_action(env, GameAction::Move(*id, readable.clone(), new_entropy))?;
 
         Ok(effects)
     }
@@ -2356,8 +2360,7 @@ impl FromLocalUI for PotatoHandler {
         env: &mut ChannelHandlerEnv<'_, R>,
         id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
-        let (_continued, effects) =
-            self.do_game_action(env, GameAction::AcceptTimeout(id.clone()))?;
+        let (_continued, effects) = self.do_game_action(env, GameAction::AcceptTimeout(*id))?;
 
         Ok(effects)
     }
@@ -2564,7 +2567,7 @@ impl SpendWalletReceiver for PotatoHandler {
                     "opponent made impossible spend".to_string()
                 };
                 let notification = GameNotification::GameError {
-                    id: game_id.clone(),
+                    id: game_id,
                     reason,
                 };
                 effects.push(Effect::from(notification));

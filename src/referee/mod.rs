@@ -70,11 +70,8 @@ pub(crate) fn referee_initial_setup(
     });
 
     let ip = game_start_info.initial_validation_program.clone();
-    let vi_hash = ValidationInfo::new_state_update(
-        allocator,
-        ip.clone(),
-        game_start_info.initial_state.p(),
-    );
+    let vi_hash =
+        ValidationInfo::new_state_update(allocator, ip.clone(), game_start_info.initial_state.p());
     let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
         &fixed,
         &GameMoveDetails {
@@ -394,7 +391,7 @@ impl Referee {
                     state_number,
                     &rem_conditions,
                 )?;
-                let new_ref_rc = new_ref.map(|r| Rc::new(r));
+                let new_ref_rc = new_ref.map(Rc::new);
                 Ok((new_ref_rc, res))
             }
         }

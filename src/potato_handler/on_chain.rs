@@ -136,7 +136,7 @@ impl OnChainGameHandler {
         self.pending_move = Some(PendingMoveSavedState {
             coin: coin.clone(),
             expected_ph: new_ph,
-            game_id: game_id.clone(),
+            game_id: game_id,
             kind: PendingMoveKind::OurMove {
                 post_move_referee: post_referee,
                 post_move_last_ph: post_last_ph,
@@ -311,12 +311,12 @@ impl PotatoHandlerImpl for OnChainGameHandler {
             });
             let notification = if let Some(reward_coin) = reward_coin {
                 GameNotification::WeSlashedOpponent {
-                    id: old_definition.game_id.clone(),
+                    id: old_definition.game_id,
                     reward_coin,
                 }
             } else {
                 GameNotification::GameError {
-                    id: old_definition.game_id.clone(),
+                    id: old_definition.game_id,
                     reason: "slash succeeded but no reward coin found".to_string(),
                 }
             };
@@ -350,7 +350,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                     if let Some(eff) = self.try_emit_terminal(
                         &old_definition.game_id,
                         GameNotification::WeTimedOut {
-                            id: old_definition.game_id.clone(),
+                            id: old_definition.game_id,
                             our_reward: amt,
                             reward_coin,
                         },
@@ -368,7 +368,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                         if let Some(eff) = self.try_emit_terminal(
                             &old_definition.game_id,
                             GameNotification::WeTimedOut {
-                                id: old_definition.game_id.clone(),
+                                id: old_definition.game_id,
                                 our_reward: Amount::default(),
                                 reward_coin: None,
                             },
@@ -429,7 +429,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
             if let Some(eff) = self.try_emit_terminal(
                 &old_definition.game_id,
                 GameNotification::GameError {
-                    id: old_definition.game_id.clone(),
+                    id: old_definition.game_id,
                     reason: format!("game_coin_spent failed: {result:?}"),
                 },
             ) {
@@ -454,7 +454,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 if let Some(eff) = self.try_emit_terminal(
                     &old_definition.game_id,
                     GameNotification::GameError {
-                        id: old_definition.game_id.clone(),
+                        id: old_definition.game_id,
                         reason: format!("our turn coin spent unexpectedly: {their_turn_result:?}"),
                     },
                 ) {
@@ -475,7 +475,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 debug!("{initial_potato} got an expected spend {ph:?} {amt:?}");
                 let new_coin_id = CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt);
 
-                let game_id = old_definition.game_id.clone();
+                let game_id = old_definition.game_id;
                 let is_my_turn = matches!(self.player_ch.game_is_my_turn(&game_id), Some(true));
 
                 // is_my_turn==false means the referee already processed
@@ -486,7 +486,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 if !is_my_turn {
                     if let Some(cached) = self.player_ch.take_cached_move_for_game(&game_id) {
                         self.game_action_queue.push_back(GameAction::RedoMove(
-                            game_id.clone(),
+                            game_id,
                             new_coin_id.clone(),
                             cached,
                         ));
@@ -532,7 +532,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 if !old_definition.notification_sent {
                     let notif = if old_definition.our_turn {
                         GameNotification::WeTimedOut {
-                            id: old_definition.game_id.clone(),
+                            id: old_definition.game_id,
                             our_reward: amount.clone(),
                             reward_coin: my_reward_coin_string.clone(),
                         }
@@ -542,11 +542,11 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                             .any(|c| matches!(c, CoinCondition::Rem(_)));
                         if has_rem {
                             GameNotification::OpponentSlashedUs {
-                                id: old_definition.game_id.clone(),
+                                id: old_definition.game_id,
                             }
                         } else {
                             GameNotification::OpponentTimedOut {
-                                id: old_definition.game_id.clone(),
+                                id: old_definition.game_id,
                                 our_reward: amount.clone(),
                                 reward_coin: my_reward_coin_string.clone(),
                             }
@@ -571,13 +571,17 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 );
                 let (puzzle_hash, amt) =
                     if let Some((orig_coin_id, ph, amt)) = new_coin_string.to_parts() {
-                        game_assert_eq!(coin_id.to_coin_id(), orig_coin_id, "coin parent mismatch in their spend");
+                        game_assert_eq!(
+                            coin_id.to_coin_id(),
+                            orig_coin_id,
+                            "coin parent mismatch in their spend"
+                        );
                         (ph, amt)
                     } else {
                         return Err(Error::StrErr("bad coin explode".to_string()));
                     };
 
-                let game_id = old_definition.game_id.clone();
+                let game_id = old_definition.game_id;
                 let gt = old_definition.game_timeout.clone();
                 debug!("{initial_potato} got their coin spend with new puzzle hash {puzzle_hash:?} {amt:?}");
                 debug!("{initial_potato} changing game map");
@@ -595,7 +599,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 if let Some(cached) = self.player_ch.take_cached_move_for_game(&game_id) {
                     if cached.match_puzzle_hash == puzzle_hash {
                         self.game_action_queue.push_back(GameAction::RedoMove(
-                            game_id.clone(),
+                            game_id,
                             new_coin_string.clone(),
                             cached,
                         ));
@@ -627,7 +631,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 self.have_potato = PotatoState::Present;
 
                 effects.push(Effect::OpponentPlayedIllegalMove {
-                    id: old_definition.game_id.clone(),
+                    id: old_definition.game_id,
                 });
 
                 match outcome.borrow() {
@@ -666,7 +670,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                         if let Some(eff) = self.try_emit_terminal(
                             &old_definition.game_id,
                             GameNotification::OpponentSlashedUs {
-                                id: old_definition.game_id.clone(),
+                                id: old_definition.game_id,
                             },
                         ) {
                             effects.push(eff);
@@ -684,13 +688,13 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                     };
                     let notif = if old_definition.our_turn {
                         GameNotification::WeTimedOut {
-                            id: old_definition.game_id.clone(),
+                            id: old_definition.game_id,
                             our_reward: amt,
                             reward_coin,
                         }
                     } else {
                         GameNotification::OpponentTimedOut {
-                            id: old_definition.game_id.clone(),
+                            id: old_definition.game_id,
                             our_reward: amt,
                             reward_coin,
                         }
@@ -723,7 +727,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
 
         if let Some(game_def) = self.game_map.remove(coin_id) {
             let initial_potato = self.player_ch.is_initial_potato();
-            let game_id = game_def.game_id.clone();
+            let game_id = game_def.game_id;
             debug!("{initial_potato} timeout coin {coin_id:?}, do accept");
 
             if let Some(_slash_amount) = game_def.pending_slash_amount {
@@ -744,7 +748,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 if let Some(eff) = self.try_emit_terminal(
                     &game_id,
                     GameNotification::OpponentSuccessfullyCheated {
-                        id: game_id.clone(),
+                        id: game_id,
                         our_reward,
                         reward_coin,
                     },
@@ -793,13 +797,13 @@ impl PotatoHandlerImpl for OnChainGameHandler {
 
                 let notif = if game_def.our_turn || game_def.accepted {
                     GameNotification::WeTimedOut {
-                        id: game_id.clone(),
+                        id: game_id,
                         our_reward,
                         reward_coin,
                     }
                 } else {
                     GameNotification::OpponentTimedOut {
-                        id: game_id.clone(),
+                        id: game_id,
                         our_reward,
                         reward_coin,
                     }
@@ -865,13 +869,13 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 if !already_notified {
                     let notif = if our_turn || accepted {
                         GameNotification::WeTimedOut {
-                            id: game_id.clone(),
+                            id: game_id,
                             our_reward,
                             reward_coin,
                         }
                     } else {
                         GameNotification::OpponentTimedOut {
-                            id: game_id.clone(),
+                            id: game_id,
                             our_reward,
                             reward_coin,
                         }
@@ -955,13 +959,17 @@ impl PotatoHandlerImpl for OnChainGameHandler {
             .restore_game_state(&game_id, pre_referee, pre_last_ph.clone())?;
 
         if let Some((_, ph, _)) = current_coin.to_parts() {
-            game_assert_eq!(old_ph, ph, "do_on_chain_move: pre-move puzzle hash mismatch");
+            game_assert_eq!(
+                old_ph,
+                ph,
+                "do_on_chain_move: pre-move puzzle hash mismatch"
+            );
         }
 
         self.pending_move = Some(PendingMoveSavedState {
             coin: current_coin.clone(),
             expected_ph: new_ph.clone(),
-            game_id: game_id.clone(),
+            game_id: game_id,
             kind: PendingMoveKind::OurMove {
                 post_move_referee: post_referee,
                 post_move_last_ph: post_last_ph,

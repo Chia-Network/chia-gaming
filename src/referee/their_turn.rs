@@ -382,9 +382,9 @@ impl TheirTurnReferee {
 
         debug!("do their turn {details:?}");
 
-        let handler = self.get_game_handler().ok_or_else(|| {
-            Error::StrErr("received their move after our final move".to_string())
-        })?;
+        let handler = self
+            .get_game_handler()
+            .ok_or_else(|| Error::StrErr("received their move after our final move".to_string()))?;
 
         // Run the validation program for the incoming move to get the new state.
         let evidence = Evidence::nil()?;
@@ -610,14 +610,14 @@ impl TheirTurnReferee {
                 validation_program: slash_validation_program.clone(),
                 previous_validation_info_hash: after_args.game_move.validation_info_hash.clone(),
             });
-            let puzzle =
-                curry_referee_puzzle(allocator, &self.fixed.referee_coin_puzzle, &args)?;
-            let new_puzzle_hash = curry_referee_puzzle_hash(
-                allocator,
-                &self.fixed.referee_coin_puzzle_hash,
-                &args,
-            )?;
-            game_assert_eq!(new_puzzle_hash, to_spend_ph, "their_turn_coin_spent: curried puzzle hash mismatch");
+            let puzzle = curry_referee_puzzle(allocator, &self.fixed.referee_coin_puzzle, &args)?;
+            let new_puzzle_hash =
+                curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)?;
+            game_assert_eq!(
+                new_puzzle_hash,
+                to_spend_ph,
+                "their_turn_coin_spent: curried puzzle hash mismatch"
+            );
             let slash = self.make_slash_for_their_turn(
                 allocator,
                 slash_validation_program,

@@ -90,7 +90,6 @@ impl<'de> Deserialize<'de> for PrivateKey {
     {
         let st = String::deserialize(deserializer)?;
         let slice = hex::decode(&st).map_err(serde::de::Error::custom)?;
-        PrivateKey::from_slice(&slice)
-            .map_err(|e| serde::de::Error::custom(format!("{e:?}")))
+        PrivateKey::from_slice(&slice).map_err(|e| serde::de::Error::custom(format!("{e:?}")))
     }
 }

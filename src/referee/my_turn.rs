@@ -16,8 +16,8 @@ use crate::common::types::{
     Aggsig, AllocEncoder, Amount, Error, Hash, Program, ProgramRef, PublicKey, Puzzle, PuzzleHash,
     Sha256tree,
 };
-use crate::referee::their_turn::{TheirTurnReferee, TheirTurnRefereeGameState};
 use crate::referee::referee_initial_setup;
+use crate::referee::their_turn::{TheirTurnReferee, TheirTurnRefereeGameState};
 use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs,
     OnChainRefereeMoveData, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
@@ -337,7 +337,10 @@ impl MyTurnReferee {
         new_entropy: Hash,
         state_number: usize,
     ) -> Result<(Referee, GameMoveWireData), Error> {
-        game_assert!(self.is_my_turn(), "my_turn_make_move called when not my turn");
+        game_assert!(
+            self.is_my_turn(),
+            "my_turn_make_move called when not my turn"
+        );
 
         let game_handler = if let Some(gh) = self.get_game_handler() {
             gh
@@ -398,7 +401,7 @@ impl MyTurnReferee {
             result.move_bytes.len(),
             result.max_move_size,
             result.mover_share,
-            result.waiting_handler.as_ref().map_or(false, |h| h.is_my_turn()),
+            result.waiting_handler.as_ref().is_some_and(|h| h.is_my_turn()),
             result.message_parser.is_some()
         );
 

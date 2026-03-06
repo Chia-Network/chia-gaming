@@ -295,13 +295,13 @@ impl From<GameNotification> for Effect {
 
 fn effect_to_notification(effect: &Effect) -> Option<GameNotification> {
     match effect {
-        Effect::GameCancelled { id } => Some(GameNotification::GameCancelled { id: id.clone() }),
+        Effect::GameCancelled { id } => Some(GameNotification::GameCancelled { id: *id }),
         Effect::WeTimedOut {
             id,
             our_reward,
             reward_coin,
         } => Some(GameNotification::WeTimedOut {
-            id: id.clone(),
+            id: *id,
             our_reward: our_reward.clone(),
             reward_coin: reward_coin.clone(),
         }),
@@ -310,28 +310,26 @@ fn effect_to_notification(effect: &Effect) -> Option<GameNotification> {
             our_reward,
             reward_coin,
         } => Some(GameNotification::OpponentTimedOut {
-            id: id.clone(),
+            id: *id,
             our_reward: our_reward.clone(),
             reward_coin: reward_coin.clone(),
         }),
         Effect::OpponentPlayedIllegalMove { id } => {
-            Some(GameNotification::OpponentPlayedIllegalMove { id: id.clone() })
+            Some(GameNotification::OpponentPlayedIllegalMove { id: *id })
         }
         Effect::WeSlashedOpponent { id, reward_coin } => {
             Some(GameNotification::WeSlashedOpponent {
-                id: id.clone(),
+                id: *id,
                 reward_coin: reward_coin.clone(),
             })
         }
-        Effect::OpponentSlashedUs { id } => {
-            Some(GameNotification::OpponentSlashedUs { id: id.clone() })
-        }
+        Effect::OpponentSlashedUs { id } => Some(GameNotification::OpponentSlashedUs { id: *id }),
         Effect::OpponentSuccessfullyCheated {
             id,
             our_reward,
             reward_coin,
         } => Some(GameNotification::OpponentSuccessfullyCheated {
-            id: id.clone(),
+            id: *id,
             our_reward: our_reward.clone(),
             reward_coin: reward_coin.clone(),
         }),
@@ -346,7 +344,7 @@ fn effect_to_notification(effect: &Effect) -> Option<GameNotification> {
             reason: reason.clone(),
         }),
         Effect::GameError { id, reason } => Some(GameNotification::GameError {
-            id: id.clone(),
+            id: *id,
             reason: reason.clone(),
         }),
         Effect::ChannelCoinSpent => Some(GameNotification::ChannelCoinSpent),
@@ -358,16 +356,16 @@ fn effect_to_notification(effect: &Effect) -> Option<GameNotification> {
             my_contribution,
             their_contribution,
         } => Some(GameNotification::GameProposed {
-            id: id.clone(),
+            id: *id,
             my_contribution: my_contribution.clone(),
             their_contribution: their_contribution.clone(),
         }),
         Effect::GameProposalAccepted { id } => {
-            Some(GameNotification::GameProposalAccepted { id: id.clone() })
+            Some(GameNotification::GameProposalAccepted { id: *id })
         }
         Effect::GameProposalCancelled { id, reason } => {
             Some(GameNotification::GameProposalCancelled {
-                id: id.clone(),
+                id: *id,
                 reason: reason.clone(),
             })
         }
@@ -376,7 +374,7 @@ fn effect_to_notification(effect: &Effect) -> Option<GameNotification> {
             our_balance_short,
             their_balance_short,
         } => Some(GameNotification::InsufficientBalance {
-            id: id.clone(),
+            id: *id,
             our_balance_short: *our_balance_short,
             their_balance_short: *their_balance_short,
         }),
@@ -386,13 +384,13 @@ fn effect_to_notification(effect: &Effect) -> Option<GameNotification> {
             readable,
             mover_share,
         } => Some(GameNotification::OpponentMoved {
-            id: id.clone(),
+            id: *id,
             state_number: *state_number,
             readable: readable.clone(),
             mover_share: mover_share.clone(),
         }),
         Effect::GameMessage { id, readable } => Some(GameNotification::GameMessage {
-            id: id.clone(),
+            id: *id,
             readable: readable.clone(),
         }),
         Effect::ChannelCreated => Some(GameNotification::ChannelCreated),

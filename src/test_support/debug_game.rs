@@ -256,9 +256,10 @@ impl BareDebugGameHandler {
     ) -> Result<(), Error> {
         let ui_move = exhaustive_inputs.get_ui_move(allocator)?;
         debug!("my turn handler {:?}", self.handler);
-        let handler = self.handler.as_ref().ok_or_else(|| {
-            Error::StrErr("my turn called after final move".to_string())
-        })?;
+        let handler = self
+            .handler
+            .as_ref()
+            .ok_or_else(|| Error::StrErr("my turn called after final move".to_string()))?;
         let my_handler_result = handler.call_my_turn_handler(
             allocator,
             &MyTurnInputs {
@@ -376,13 +377,15 @@ impl BareDebugGameHandler {
                             mover_share: mover_share.clone(),
                             max_move_size: self.max_move_size,
                         },
-                        validation_info_hash: Some(ValidationInfo::new_state_update(
-                            allocator,
-                            validation_program.clone(),
-                            self.state.p(),
-                        )
-                        .hash()
-                        .clone()),
+                        validation_info_hash: Some(
+                            ValidationInfo::new_state_update(
+                                allocator,
+                                validation_program.clone(),
+                                self.state.p(),
+                            )
+                            .hash()
+                            .clone(),
+                        ),
                     },
                 }
                 .off_chain(),
@@ -506,26 +509,29 @@ impl BareDebugGameHandler {
                 let state_node = state.to_clvm(allocator).into_gen()?;
                 (
                     state.clone(),
-                    self.handler.as_ref().ok_or_else(|| {
-                        Error::StrErr("their turn called after final move".to_string())
-                    })?.call_their_turn_handler(
-                        allocator,
-                        &TheirTurnInputs {
-                            amount: self.start.amount.clone(),
-                            pre_state: pre_state_node,
-                            state: state_node,
-                            last_move: &move_to_check,
-                            last_mover_share: inputs.mover_share.clone(),
-                            new_move: GameMoveDetails {
-                                basic: GameMoveStateInfo {
-                                    move_made: move_to_check.clone(),
-                                    mover_share: inputs.opponent_mover_share.clone(),
-                                    max_move_size: inputs.max_move_size,
+                    self.handler
+                        .as_ref()
+                        .ok_or_else(|| {
+                            Error::StrErr("their turn called after final move".to_string())
+                        })?
+                        .call_their_turn_handler(
+                            allocator,
+                            &TheirTurnInputs {
+                                amount: self.start.amount.clone(),
+                                pre_state: pre_state_node,
+                                state: state_node,
+                                last_move: &move_to_check,
+                                last_mover_share: inputs.mover_share.clone(),
+                                new_move: GameMoveDetails {
+                                    basic: GameMoveStateInfo {
+                                        move_made: move_to_check.clone(),
+                                        mover_share: inputs.opponent_mover_share.clone(),
+                                        max_move_size: inputs.max_move_size,
+                                    },
+                                    validation_info_hash: Some(vprog.hash().clone()),
                                 },
-                                validation_info_hash: Some(vprog.hash().clone()),
                             },
-                        },
-                    )?,
+                        )?,
                 )
             }
             StateUpdateResult::Slash(evidence) => {
