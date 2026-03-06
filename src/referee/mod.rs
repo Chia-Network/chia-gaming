@@ -79,7 +79,7 @@ pub(crate) fn referee_initial_setup(
         &fixed,
         &GameMoveDetails {
             basic: initial_move,
-            validation_info_hash: vi_hash.hash().clone(),
+            validation_info_hash: Some(vi_hash.hash().clone()),
         },
         None,
         ip,

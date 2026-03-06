@@ -1,15 +1,16 @@
 ---
-description: MANDATORY first action — read project docs before ANY response
+description: Read project docs at the start of every conversation
 alwaysApply: true
 ---
 
-# MANDATORY: Read Project Docs First
+# Read Project Docs First
 
-**Your FIRST tool call in every conversation MUST be reading these two files. No exceptions. Do not respond to the user's message, do not think about the task, do not do anything else until both files have been read.**
+At the start of each conversation, read these project docs before diving into the task:
 
 1. `ARCHITECTURE.MD`
 2. `DEBUGGING_GUIDE.md`
+3. `HANDLER_GUIDE.md`
 
-Read both files in your very first response, before addressing anything the user said.
+This gives you the context you need to work effectively in this codebase.
 
 **Build/test commands:** Always use `./cb.sh` and `./ct.sh`. Never use `cargo test` directly.

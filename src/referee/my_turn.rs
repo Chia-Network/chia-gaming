@@ -140,13 +140,12 @@ impl MyTurnRefereeGameState {
 ///         evidence, --------------> try these with their_turn_validation_program
 ///       }
 ///
-/// This assumes an "out of time" aspect to the validation programs.
-///
-/// In bram's mind the validation programs are a single chain of events:
+/// On-chain, the validation programs form a single chain of events:
 ///
 ///   a.clsp -> b.clsp -> c.clsp -> d.clsp -> e.clsp -> lambda from e.
 ///
-/// In reality, there are two progressions, one on each side:
+/// Off-chain (on the players' machines), there are two progressions, one on
+/// each side:
 ///
 /// alice: alice handler 0 -> move 0
 /// bob: move 0 -> a.clsp with state initial_state
@@ -154,9 +153,9 @@ impl MyTurnRefereeGameState {
 /// alice: move 1 -> b.clsp
 /// ...
 ///
-/// In bram's mind, there's no difference between move 0 _leaving_ alice and _arriving_
-/// at bob, so we need to ensure that an outgoing move uses the same validation program
-/// as the incoming move that follows.
+/// On-chain there's no difference between move 0 _leaving_ alice and
+/// _arriving_ at bob, so we need to ensure that an outgoing move uses the
+/// same validation program as the incoming move that follows.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MyTurnReferee {
     pub fixed: Rc<RMFixed>,
@@ -285,7 +284,7 @@ impl MyTurnReferee {
     #[allow(clippy::too_many_arguments)]
     pub fn accept_this_move(
         &self,
-        game_handler: GameHandler,
+        game_handler: Option<GameHandler>,
         new_state: Rc<Program>,
         current_state: Rc<Program>,
         current_puzzle_args: Rc<RefereePuzzleArgs>,
@@ -377,7 +376,7 @@ impl MyTurnReferee {
                     .sha256tree(allocator)
                     .hash()
                     .clone(),
-                waiting_handler: game_handler.clone(),
+                waiting_handler: Some(game_handler.clone()),
                 message_parser: None,
             })
         } else {
@@ -399,7 +398,7 @@ impl MyTurnReferee {
             result.move_bytes.len(),
             result.max_move_size,
             result.mover_share,
-            result.waiting_handler.is_my_turn(),
+            result.waiting_handler.as_ref().map_or(false, |h| h.is_my_turn()),
             result.message_parser.is_some()
         );
 
@@ -410,7 +409,11 @@ impl MyTurnReferee {
             result.outgoing_move_state_update_program.clone(),
             state_to_update.clone(),
         );
-        let validation_info_hash = v.hash().clone();
+        let validation_info_hash = if result.waiting_handler.is_some() {
+            Some(v.hash().clone())
+        } else {
+            None
+        };
         let game_move_details = GameMoveDetails {
             basic: GameMoveStateInfo {
                 move_made: result.move_bytes.clone(),
@@ -423,7 +426,7 @@ impl MyTurnReferee {
         let offchain_prev_hash = if is_initial {
             None
         } else {
-            Some(ref_puzzle_args.game_move.validation_info_hash.clone())
+            ref_puzzle_args.game_move.validation_info_hash.clone()
         };
         let offchain_puzzle_args = Rc::new(RefereePuzzleArgs {
             mover_pubkey: self.fixed.their_referee_pubkey.clone(),
@@ -445,9 +448,7 @@ impl MyTurnReferee {
             waiter_pubkey: self.fixed.my_identity.public_key.clone(),
             game_move: game_move_details.clone(),
             validation_program: result.outgoing_move_state_update_program.clone(),
-            previous_validation_info_hash: Some(
-                ref_puzzle_args.game_move.validation_info_hash.clone(),
-            ),
+            previous_validation_info_hash: ref_puzzle_args.game_move.validation_info_hash.clone(),
             ..ref_puzzle_args.clone()
         });
 

@@ -109,8 +109,8 @@ pub struct BareDebugGameHandler {
 
     validation_program_queue: VecDeque<StateUpdateProgram>,
 
-    handler: GameHandler,
-    next_handler: GameHandler,
+    handler: Option<GameHandler>,
+    next_handler: Option<GameHandler>,
     start: GameStartInfo,
     rng: Vec<Hash>,
 
@@ -193,8 +193,8 @@ impl BareDebugGameHandler {
                 move_count: 0,
                 alice_identity: identities[0].clone(),
                 bob_identity: identities[1].clone(),
-                handler: game_start.game_handler.clone(),
-                next_handler: game_start.game_handler.clone(),
+                handler: Some(game_start.game_handler.clone()),
+                next_handler: Some(game_start.game_handler.clone()),
                 timeout: timeout.clone(),
                 max_move_size: game_start.initial_max_move_size,
                 next_max_move_size: game_start.initial_max_move_size,
@@ -257,7 +257,10 @@ impl BareDebugGameHandler {
     ) -> Result<(), Error> {
         let ui_move = exhaustive_inputs.get_ui_move(allocator)?;
         debug!("my turn handler {:?}", self.handler);
-        let my_handler_result = self.handler.call_my_turn_handler(
+        let handler = self.handler.as_ref().ok_or_else(|| {
+            Error::StrErr("my turn called after final move".to_string())
+        })?;
+        let my_handler_result = handler.call_my_turn_handler(
             allocator,
             &MyTurnInputs {
                 readable_new_move: ui_move,
@@ -374,13 +377,13 @@ impl BareDebugGameHandler {
                             mover_share: mover_share.clone(),
                             max_move_size: self.max_move_size,
                         },
-                        validation_info_hash: ValidationInfo::new_state_update(
+                        validation_info_hash: Some(ValidationInfo::new_state_update(
                             allocator,
                             validation_program.clone(),
                             self.state.p(),
                         )
                         .hash()
-                        .clone(),
+                        .clone()),
                     },
                 }
                 .off_chain(),
@@ -504,7 +507,9 @@ impl BareDebugGameHandler {
                 let state_node = state.to_clvm(allocator).into_gen()?;
                 (
                     state.clone(),
-                    self.handler.call_their_turn_handler(
+                    self.handler.as_ref().ok_or_else(|| {
+                        Error::StrErr("their turn called after final move".to_string())
+                    })?.call_their_turn_handler(
                         allocator,
                         &TheirTurnInputs {
                             amount: self.start.amount.clone(),
@@ -518,7 +523,7 @@ impl BareDebugGameHandler {
                                     mover_share: inputs.opponent_mover_share.clone(),
                                     max_move_size: inputs.max_move_size,
                                 },
-                                validation_info_hash: vprog.hash().clone(),
+                                validation_info_hash: Some(vprog.hash().clone()),
                             },
                         },
                     )?,
@@ -531,7 +536,7 @@ impl BareDebugGameHandler {
 
         match tt_result {
             TheirTurnResult::MakeMove(new_handler, _message, tt_data) => {
-                self.handler = new_handler.clone();
+                self.handler = Some(new_handler.clone());
                 for evidence in tt_data.slash_evidence.iter() {
                     let validator_response = self.generic_run_state_update(
                         allocator,
@@ -548,7 +553,7 @@ impl BareDebugGameHandler {
                     }
                 }
                 self.move_count += 1;
-                self.handler = new_handler.clone();
+                self.handler = Some(new_handler.clone());
                 self.mover_share = tt_data.mover_share.clone();
                 self.last_validation_data
                     .push_back((vprog.clone(), self.state.clone()));

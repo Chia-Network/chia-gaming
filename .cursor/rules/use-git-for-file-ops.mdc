@@ -1,0 +1,14 @@
+---
+description: Use git commands when adding, removing, or moving files
+alwaysApply: true
+---
+
+# Use git for file operations
+
+When adding, removing, or moving files in this repo, always use git commands:
+
+- **Remove files:** `git rm <path>` (not `rm` or the Delete tool)
+- **Move/rename files:** `git mv <old> <new>` (not `mv`)
+- **Add new files:** create the file, then `git add <path>`
+
+This keeps the index in sync and avoids forgetting to stage changes.

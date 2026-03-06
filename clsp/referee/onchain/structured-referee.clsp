@@ -7,7 +7,6 @@
 (import std.shatree)
 (import std.prefix)
 (import std.relops)
-(import std.append)
 (import std.condition_codes)
 (import std.match)
 (import std.li)
@@ -44,7 +43,7 @@
 
    (i
     MOVER_SHARE
-    (list AGG_SIG_UNSAFE MOVER_PUBKEY (concat 0x00 mover_payout_ph))
+    (list AGG_SIG_UNSAFE MOVER_PUBKEY (concat 0x78 mover_payout_ph))
     (list 1)
     )
 
@@ -56,13 +55,13 @@
 
    (i
     (- AMOUNT MOVER_SHARE)
-    (list AGG_SIG_UNSAFE WAITER_PUBKEY (concat 0x00 waiter_payout_ph))
+    (list AGG_SIG_UNSAFE WAITER_PUBKEY (concat 0x78 waiter_payout_ph))
     (list 1)
     )
    )
   )
 
-(defun handle-slash ((REFEREE_INFO) previous_state previous_validation_program evidence output_conditions)
+(defun handle-slash ((REFEREE_INFO) previous_state previous_validation_program evidence mover_payout_ph)
   (assign
 
    previous_validation_program_hash (shatree previous_validation_program)
@@ -74,14 +73,14 @@
         (shatree previous_state))
        )
 
-    (c (list REMARK)
-       (c (list AGG_SIG_ME MOVER_PUBKEY (shatree (list previous_state previous_validation_program evidence output_conditions)))
-          (append
-           (f (r (a previous_validation_program
-              (c previous_validation_program_hash @))))
-           output_conditions)
-          )
-       )
+    (a previous_validation_program
+       (c previous_validation_program_hash @))
+
+    (list
+     (list REMARK)
+     (list CREATE_COIN mover_payout_ph AMOUNT)
+     (list AGG_SIG_UNSAFE MOVER_PUBKEY (concat 0x78 mover_payout_ph))
+     )
     )
    )
   )
@@ -166,7 +165,7 @@
 ; If action is timeout args is (mover_payout_ph waiter_payout_ph)
 ;
 ; If action is slash args is (previous_state previous_validation_program
-; evidence output_conditions)
+; evidence mover_payout_ph)
 ;
 ; If action is move args is (new_move new_validation_info_hash new_mover_share
 ; new_max_move_size)

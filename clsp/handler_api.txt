@@ -111,13 +111,6 @@ Their-turn return (slash, 2 elements):
   Type tag 2 means the opponent's move is provably fraudulent.
   evidence is submitted for an on-chain slash.
 
-Their-turn return (legacy compact, 3 elements):
-  (0 readable_info next_handler)
-
-  Type tag 0 with 3 elements. A backward-compatible shorthand for a
-  normal move with no evidence and no message. Used by some handlers
-  (e.g. calpoker_bob_handler_a).
-
 
 Message Parser
 --------------
