@@ -267,7 +267,13 @@ fn run_step_and_check(
 ) -> Option<MoveResult> {
     let vh = last.next_validator_hash.as_ref()?;
 
-    let info = lib.by_hash.get(vh).unwrap();
+    let info = lib.by_hash.get(vh).unwrap_or_else(|| {
+        eprintln!("HASH MISMATCH: looking for {}", hex::encode(vh));
+        for (k, v) in &lib.by_hash {
+            eprintln!("  library has {} => {}", hex::encode(k), v.name);
+        }
+        panic!("validator hash not found in library");
+    });
     assert_eq!(
         info.name, spec.validator_name,
         "expected validator {}, got {}",
