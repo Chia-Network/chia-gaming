@@ -9,7 +9,6 @@ use log::debug;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::game_handler::TheirTurnResult;
 use crate::channel_handler::types::{
     Evidence, PotatoMoveCachedData, ReadableMove, StateUpdateProgram, ValidationInfo,
 };
@@ -18,8 +17,8 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     atom_from_clvm, chia_dialect, i64_from_atom, Aggsig, AllocEncoder, Amount, CoinSpend,
-    CoinString, Error, Hash, IntoErr, Node, Program, PublicKey, Puzzle, PuzzleHash, Sha256tree,
-    Timeout,
+    CoinString, Error, Hash, IntoErr, Node, Program, ProgramRef, PublicKey, Puzzle, PuzzleHash,
+    Sha256tree, Timeout,
 };
 use crate::utils::proper_list;
 
@@ -52,7 +51,10 @@ pub struct GameMoveWireData {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TheirTurnMoveResult {
     pub puzzle_hash_for_unroll: Option<PuzzleHash>,
-    pub original: TheirTurnResult,
+    pub readable_move: ProgramRef,
+    pub mover_share: Amount,
+    pub message: Vec<u8>,
+    pub slash: Option<Evidence>,
 }
 
 #[derive(Debug)]

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use log::debug;
 
 use crate::channel_handler::game_handler::{
-    GameHandler, MessageHandler, MessageInputs, TheirTurnInputs, TheirTurnMoveData, TheirTurnResult,
+    GameHandler, MessageHandler, MessageInputs, TheirTurnInputs, TheirTurnResult,
 };
 use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::channel_handler::types::{Evidence, ReadableMove, StateUpdateProgram};
@@ -424,7 +424,6 @@ impl TheirTurnReferee {
             evidence,
         )?;
 
-        // Retrieve evidence from their turn handler.
         let new_state = match &state_update {
             StateUpdateResult::MoveOk(state) => state,
             StateUpdateResult::Slash(evidence) => {
@@ -432,7 +431,10 @@ impl TheirTurnReferee {
                     None,
                     TheirTurnMoveResult {
                         puzzle_hash_for_unroll: None,
-                        original: TheirTurnResult::Slash(Evidence::new(evidence.clone())),
+                        readable_move: Program(vec![0x80]).into(),
+                        mover_share: details.basic.mover_share.clone(),
+                        message: vec![],
+                        slash: Some(Evidence::new(evidence.clone())),
                     },
                 ));
             }
@@ -458,26 +460,8 @@ impl TheirTurnReferee {
             },
         )?;
 
-        let (handler, move_data) = match &result {
-            TheirTurnResult::FinalMove(move_data) => (None, move_data.clone()),
-            TheirTurnResult::MakeMove(handler, _, move_data) => {
-                (Some(handler.clone()), move_data.clone())
-            }
-
-            // Slash can't be used when we're off chain.
-            TheirTurnResult::Slash(evidence) => {
-                return Ok((
-                    None,
-                    TheirTurnMoveResult {
-                        puzzle_hash_for_unroll: None,
-                        original: TheirTurnResult::Slash(evidence.clone()),
-                    },
-                ))
-            }
-        };
-
         let new_self = self.accept_their_move(
-            handler,
+            result.next_handler.clone(),
             new_state.clone(),
             puzzle_args.clone(),
             rc_puzzle_args.clone(),
@@ -485,8 +469,7 @@ impl TheirTurnReferee {
             state_number,
         )?;
 
-        // If specified, check for slash.
-        for evidence in move_data.slash_evidence.iter() {
+        for evidence in result.slash_evidence.iter() {
             debug!("calling slash for given evidence {evidence:?}");
             if let StateUpdateResult::Slash(_result_evidence) = self.run_state_update(
                 allocator,
@@ -498,13 +481,16 @@ impl TheirTurnReferee {
                     None,
                     TheirTurnMoveResult {
                         puzzle_hash_for_unroll: None,
-                        original: TheirTurnResult::Slash(evidence.clone()),
+                        readable_move: result.readable_move.clone(),
+                        mover_share: result.mover_share.clone(),
+                        message: result.message.clone(),
+                        slash: Some(evidence.clone()),
                     },
                 ));
             }
         }
 
-        let out_move = self.finish_their_turn(allocator, puzzle_args, result)?;
+        let out_move = self.finish_their_turn(allocator, puzzle_args, &result)?;
 
         Ok((Some(new_self), out_move))
     }
@@ -565,145 +551,134 @@ impl TheirTurnReferee {
         let (new_self, result) =
             self.their_turn_move_off_chain(allocator, &details, state_number)?;
 
-        let finish_result = |allocator: &mut AllocEncoder, move_data: &TheirTurnMoveData| {
-            let new_self = if let Some(new_self) = new_self {
-                new_self
+        if let Some(evidence) = &result.slash {
+            let (slash_validation_program, slash_state) =
+                if let Some(prev) = self.slash_infohash_inputs() {
+                    prev
+                } else {
+                    return Err(Error::StrErr(
+                        "slash: no previous validation info hash inputs available".to_string(),
+                    ));
+                };
+
+            let spent_ph = if let Some((_, ph, _)) = referee_coin_string.to_parts() {
+                ph
             } else {
-                // Didn't slash but didn't update is an error.
                 return Err(Error::StrErr(
-                    "we didn't slash but also didn't return a new state".to_string(),
+                    "slash: could not extract puzzle hash from referee coin string".to_string(),
                 ));
             };
-
-            let args = new_self.spend_this_coin();
-
-            let new_puzzle_hash =
-                curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)?;
-            debug!("THEIR TURN MOVE OFF CHAIN SUCCEEDED {new_puzzle_hash:?}");
-
-            // On-chain: the move created a new coin curried with `args`
-            // (= spend_this_coin). Align args_for_this_coin() so that
-            // get_transaction_for_timeout can reconstruct the correct puzzle.
-            let adjusted_self = match new_self.state.as_ref() {
-                MyTurnRefereeGameState::AfterTheirTurn {
-                    game_handler,
-                    state_after_their_turn,
-                    spend_this_coin,
-                    move_spend,
-                    ..
-                } => {
-                    let adjusted_state = Rc::new(MyTurnRefereeGameState::AfterTheirTurn {
-                        game_handler: game_handler.clone(),
-                        state_after_their_turn: state_after_their_turn.clone(),
-                        create_this_coin: args.clone(),
-                        spend_this_coin: spend_this_coin.clone(),
-                        move_spend: move_spend.clone(),
-                    });
-                    MyTurnReferee {
-                        state: adjusted_state,
-                        ..new_self
+            let to_spend_ph = if let Some(p) = conditions
+                .iter()
+                .filter_map(|c| {
+                    if let CoinCondition::CreateCoin(ph, _) = c {
+                        Some(ph.clone())
+                    } else {
+                        None
                     }
-                }
-                _ => new_self,
+                })
+                .next()
+            {
+                p
+            } else {
+                return Err(Error::StrErr(
+                    "slash: no CREATE_COIN condition found in referee spend".to_string(),
+                ));
             };
+            let coin_string_to_spend = CoinString::from_parts(
+                &referee_coin_string.to_coin_id(),
+                &to_spend_ph,
+                &self.fixed.amount,
+            );
 
-            let final_move = TheirTurnCoinSpentResult::Moved {
-                new_coin_string: CoinString::from_parts(
-                    &referee_coin_string.to_coin_id(),
-                    &new_puzzle_hash,
-                    &self.fixed.amount,
-                ),
-                state_number,
-                readable: ReadableMove::from_program(move_data.readable_move.p()),
-                mover_share: args.game_move.basic.mover_share.clone(),
-            };
+            debug!("their turn: slash specified {:?}", evidence);
+            let after_args = self.spend_this_coin();
+            let expected_ph = self.outcome_referee_puzzle_hash(allocator)?;
+            debug!(
+                "slash: outcome_ph={expected_ph:?} spent_ph={spent_ph:?} match={}",
+                expected_ph == spent_ph
+            );
 
-            Ok((Some(Referee::MyTurn(Rc::new(adjusted_self))), final_move))
+            let args = Rc::new(RefereePuzzleArgs {
+                mover_pubkey: self.fixed.my_identity.public_key.clone(),
+                waiter_pubkey: self.fixed.their_referee_pubkey.clone(),
+                game_move: details.clone(),
+                timeout: self.fixed.timeout.clone(),
+                amount: self.fixed.amount.clone(),
+                nonce: self.fixed.nonce,
+                referee_coin_puzzle_hash: self.fixed.referee_coin_puzzle_hash.clone(),
+                validation_program: slash_validation_program.clone(),
+                previous_validation_info_hash: after_args.game_move.validation_info_hash.clone(),
+            });
+            let puzzle =
+                curry_referee_puzzle(allocator, &self.fixed.referee_coin_puzzle, &args)?;
+            let new_puzzle_hash = curry_referee_puzzle_hash(
+                allocator,
+                &self.fixed.referee_coin_puzzle_hash,
+                &args,
+            )?;
+            game_assert_eq!(new_puzzle_hash, to_spend_ph, "their_turn_coin_spent: curried puzzle hash mismatch");
+            let slash = self.make_slash_for_their_turn(
+                allocator,
+                slash_validation_program,
+                slash_state,
+                &coin_string_to_spend,
+                &puzzle,
+                evidence.clone(),
+                new_mover_share.clone(),
+            )?;
+            return Ok((None, slash));
+        }
+
+        let new_self = if let Some(new_self) = new_self {
+            new_self
+        } else {
+            return Err(Error::StrErr(
+                "we didn't slash but also didn't return a new state".to_string(),
+            ));
         };
 
-        match &result.original {
-            TheirTurnResult::Slash(evidence) => {
-                let (slash_validation_program, slash_state) =
-                    if let Some(prev) = self.slash_infohash_inputs() {
-                        prev
-                    } else {
-                        return Err(Error::StrErr(
-                            "slash: no previous validation info hash inputs available".to_string(),
-                        ));
-                    };
+        let args = new_self.spend_this_coin();
 
-                let spent_ph = if let Some((_, ph, _)) = referee_coin_string.to_parts() {
-                    ph
-                } else {
-                    return Err(Error::StrErr(
-                        "slash: could not extract puzzle hash from referee coin string".to_string(),
-                    ));
-                };
-                let to_spend_ph = if let Some(p) = conditions
-                    .iter()
-                    .filter_map(|c| {
-                        if let CoinCondition::CreateCoin(ph, _) = c {
-                            Some(ph.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .next()
-                {
-                    p
-                } else {
-                    return Err(Error::StrErr(
-                        "slash: no CREATE_COIN condition found in referee spend".to_string(),
-                    ));
-                };
-                let coin_string_to_spend = CoinString::from_parts(
-                    &referee_coin_string.to_coin_id(),
-                    &to_spend_ph,
-                    &self.fixed.amount,
-                );
+        let new_puzzle_hash =
+            curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)?;
+        debug!("THEIR TURN MOVE OFF CHAIN SUCCEEDED {new_puzzle_hash:?}");
 
-                // Slash specified.
-                debug!("their turn: slash specified {:?}", evidence);
-                let after_args = self.spend_this_coin();
-                let expected_ph = self.outcome_referee_puzzle_hash(allocator)?;
-                debug!(
-                    "slash: outcome_ph={expected_ph:?} spent_ph={spent_ph:?} match={}",
-                    expected_ph == spent_ph
-                );
-
-                let args = Rc::new(RefereePuzzleArgs {
-                    mover_pubkey: self.fixed.my_identity.public_key.clone(),
-                    waiter_pubkey: self.fixed.their_referee_pubkey.clone(),
-                    game_move: details.clone(),
-                    timeout: self.fixed.timeout.clone(),
-                    amount: self.fixed.amount.clone(),
-                    nonce: self.fixed.nonce,
-                    referee_coin_puzzle_hash: self.fixed.referee_coin_puzzle_hash.clone(),
-                    validation_program: slash_validation_program.clone(),
-                    previous_validation_info_hash: after_args.game_move.validation_info_hash.clone(),
+        let adjusted_self = match new_self.state.as_ref() {
+            MyTurnRefereeGameState::AfterTheirTurn {
+                game_handler,
+                state_after_their_turn,
+                spend_this_coin,
+                move_spend,
+                ..
+            } => {
+                let adjusted_state = Rc::new(MyTurnRefereeGameState::AfterTheirTurn {
+                    game_handler: game_handler.clone(),
+                    state_after_their_turn: state_after_their_turn.clone(),
+                    create_this_coin: args.clone(),
+                    spend_this_coin: spend_this_coin.clone(),
+                    move_spend: move_spend.clone(),
                 });
-                let puzzle =
-                    curry_referee_puzzle(allocator, &self.fixed.referee_coin_puzzle, &args)?;
-                let new_puzzle_hash = curry_referee_puzzle_hash(
-                    allocator,
-                    &self.fixed.referee_coin_puzzle_hash,
-                    &args,
-                )?;
-                game_assert_eq!(new_puzzle_hash, to_spend_ph, "their_turn_coin_spent: curried puzzle hash mismatch");
-                let slash = self.make_slash_for_their_turn(
-                    allocator,
-                    slash_validation_program,
-                    slash_state,
-                    &coin_string_to_spend,
-                    &puzzle,
-                    evidence.clone(),
-                    new_mover_share.clone(),
-                )?;
-                Ok((None, slash))
+                MyTurnReferee {
+                    state: adjusted_state,
+                    ..new_self
+                }
             }
-            TheirTurnResult::FinalMove(move_data) => finish_result(allocator, move_data),
-            TheirTurnResult::MakeMove(_, _, move_data) => finish_result(allocator, move_data),
-        }
+            _ => new_self,
+        };
+
+        let final_move = TheirTurnCoinSpentResult::Moved {
+            new_coin_string: CoinString::from_parts(
+                &referee_coin_string.to_coin_id(),
+                &new_puzzle_hash,
+                &self.fixed.amount,
+            ),
+            state_number,
+            readable: ReadableMove::from_program(result.readable_move.p()),
+            mover_share: args.game_move.basic.mover_share.clone(),
+        };
+
+        Ok((Some(Referee::MyTurn(Rc::new(adjusted_self))), final_move))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -760,7 +735,7 @@ impl TheirTurnReferee {
         &self,
         allocator: &mut AllocEncoder,
         puzzle_args: Rc<RefereePuzzleArgs>,
-        result: TheirTurnResult,
+        result: &TheirTurnResult,
     ) -> Result<TheirTurnMoveResult, Error> {
         let puzzle_hash_for_unroll = curry_referee_puzzle_hash(
             allocator,
@@ -768,10 +743,12 @@ impl TheirTurnReferee {
             &puzzle_args,
         )?;
 
-        // Coin calculated off the new new state.
         Ok(TheirTurnMoveResult {
             puzzle_hash_for_unroll: Some(puzzle_hash_for_unroll),
-            original: result,
+            readable_move: result.readable_move.clone(),
+            mover_share: result.mover_share.clone(),
+            message: result.message.clone(),
+            slash: None,
         })
     }
 }

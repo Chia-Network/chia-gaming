@@ -99,17 +99,18 @@ Their-turn return (normal move, 3-4 elements):
 
   - If next_handler is nil or absent, this is a final move (game over).
   - If next_handler is present, the game continues with our turn.
-  - evidence_list contains potential slash evidence. Each item can be
-    submitted as evidence in an on-chain slash spend. They may or may
-    not actually validate — the on-chain referee decides.
+  - evidence_list contains potential slash evidence candidates. The
+    handler does not need to verify each piece actually triggers a
+    slash — just return everything that might work. The Rust framework
+    tests each candidate against the validator; the first one that
+    produces a SLASH result wins. If none succeed, the game continues
+    normally. Nil evidence is always tried automatically before the
+    handler is called, so the handler never needs to include it.
+    When the handler is certain the move is fraudulent, it puts the
+    evidence in the list and can return junk for the other fields
+    (they are ignored when a slash succeeds).
   - message is optional (element may be absent). When present, it is
     sent out-of-band to the opponent and parsed by their message_parser.
-
-Their-turn return (slash, 2 elements):
-  (2 evidence)
-
-  Type tag 2 means the opponent's move is provably fraudulent.
-  evidence is submitted for an on-chain slash.
 
 
 Message Parser

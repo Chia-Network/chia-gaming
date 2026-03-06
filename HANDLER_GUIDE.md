@@ -16,6 +16,7 @@ resolution), see `ARCHITECTURE.MD`. For the raw calling conventions, see
 - [My-Turn Handler](#my-turn-handler)
 - [Their-Turn Handler](#their-turn-handler)
 - [Handler Chaining](#handler-chaining)
+- [Detailed Turn Data Flow](#detailed-turn-data-flow)
 - [Validators](#validators)
 - [Validator Chaining](#validator-chaining)
 - [On-Chain vs Off-Chain](#on-chain-vs-off-chain)
@@ -153,22 +154,20 @@ Called when the opponent has moved and we need to interpret their move.
 ```
 
 - If `next_handler` is nil or absent, this is a final move (game over).
-- `evidence_list` contains potential slash evidence. Each item can be
-  submitted as evidence in an on-chain slash spend. They may or may not
-  actually validate -- the on-chain referee decides.
+- `evidence_list` contains potential slash evidence candidates. The handler
+  does **not** need to verify that each piece of evidence actually triggers a
+  slash -- just return everything that *might* work. The Rust framework
+  (`their_turn_move_off_chain`) tests each candidate against the validator;
+  the first one that produces a `SLASH` result wins. If none succeed, the
+  game continues normally -- evidence that doesn't work is silently discarded.
+  Nil evidence is always tried automatically by the framework *before*
+  calling the handler, so the handler never needs to include it. When the
+  handler is certain the move is fraudulent, it puts the evidence in the
+  list and can return junk for the other fields (`readable_move`,
+  `next_handler`, etc.) since they will never be used.
 - `message` is optional (the fourth element may be absent). When present,
   it is sent out-of-band to the opponent and parsed by their
   `message_parser`.
-
-### Return: Slash (2 elements)
-
-```
-(2 evidence)
-```
-
-The type tag `2` means the opponent's move is provably fraudulent. The
-`evidence` is submitted for an on-chain slash. The game immediately ends
-with a slash attempt.
 
 ---
 
@@ -199,6 +198,90 @@ creating an implicit state machine.
 
 When a handler returns nil for the next handler, the game is over. No more
 turns will be taken.
+
+---
+
+## Detailed Turn Data Flow
+
+The following diagram (from `src/referee/my_turn.rs`) shows how data flows
+through a single round of play -- one of our moves followed by one of
+theirs:
+
+```
+my turn:                                   ┌-------------------------------------------┐
+                                           v                                           |
+┌-> my_turn_handler(local_move, state_after_their_turn0) ->                            |
+|            { serialized_our_move, ------------┐    |                                 |
+|   ┌--------- their_turn_handler,              |    |                                 |
+|   |          local_readable_move,             |    |                                 |
+|   |   ┌----- their_turn_validation_program,   |    |                                 |
+|   |   |    }                                  |    └------------┐                    |
+|   |   |                                       |                 |                    |
+|   |   |                                       v                 v                    |
+| ┌-|---|->my_turn_validation_program(serialized_our_move, state_after_their_turn0) -> |
+| | |   |    state_after_our_turn --------------------------------┐                    |
+| | |   |                                                         |                    |
+| | |   | their turn:                                             |                    |
+| | |   v                                                         v                    |
+| | |   their_turn_validation_program(serialized_their_move, state_after_our_turn) ->  |
+| | |     state_after_their_turn1 -┐                              |                    |
+| | |                              |                              |                    |
+| | v                              |                              |                    |
+| | their_turn_handler(            ├---------------------------------------------------┘
+| |   serialized_their_move,       |                              |
+| |   state_after_their_turn1 <----┘                              |
+| |   state_after_our_turn, <-------------------------------------┘
+| | ) ->
+| |   { remote_readable_move,
+| └---- my_turn_validation_program,
+└------ my_turn_handler,
+        evidence, --------------> try these with their_turn_validation_program
+      }
+```
+
+Key observations:
+
+- **`their_turn_handler` receives both states**: it gets `state_after_our_turn`
+  (before the opponent moved) and `state_after_their_turn1` (after). This lets
+  it compare the two to detect fraud.
+- **Evidence feeds back into the validator**: the `evidence` returned by
+  `their_turn_handler` is tested against `their_turn_validation_program` by the
+  framework. The handler just proposes candidates; the framework does the
+  actual slash check.
+- **The loop feeds forward**: the outputs of one round (`my_turn_handler`,
+  `my_turn_validation_program`) become the inputs to the next round.
+
+### The 0th Move
+
+On the very first move, the initial validation program is **not** called.
+Instead, the game's `initial_state` is used directly as the state input to
+the handler. The first validator only runs when the *opponent* processes
+move 0.
+
+### On-Chain vs Off-Chain Chains
+
+On-chain, validators form a single linear chain:
+
+```
+a.clsp -> b.clsp -> c.clsp -> d.clsp -> e.clsp -> (terminal)
+```
+
+Off-chain, there are two parallel handler progressions (one per player):
+
+```
+alice: alice_handler_0 -> move 0
+bob:   move 0 -> a.clsp with initial_state
+bob:   bob_handler_0 -> move 1
+alice: move 1 -> b.clsp
+...
+```
+
+On-chain there is no difference between a move *leaving* one player and
+*arriving* at the other, so the outgoing validation program for a move must
+be the same program that the opponent uses as the incoming validator for
+that move. This is why `my_turn_handler` returns both `outgoing_validator`
+and `incoming_validator` -- they correspond to adjacent links in the single
+on-chain chain.
 
 ---
 

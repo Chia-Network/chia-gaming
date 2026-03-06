@@ -196,7 +196,7 @@
    move-len (strlen move)
 
    (if (> 1 move-len)
-       (list SLASH ())
+       (list () () ())
        ;; Skipping the last byte and the mover share, there should be a count.
        ;; It's fairly simple to read over a positive number.
        (assign

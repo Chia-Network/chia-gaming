@@ -16,7 +16,6 @@ use clvmr::allocator::NodePtr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::game_handler::TheirTurnResult;
 use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::channel_handler::types::{
     prepend_rem_conditions, AcceptTransactionState, CachedPotatoRegenerateLastHop,
@@ -1139,29 +1138,17 @@ impl ChannelHandler {
             state_number,
         )?;
 
-        let (readable_move, message, mover_share) = match their_move_result.original {
-            TheirTurnResult::FinalMove(move_data) => (
-                move_data.readable_move,
-                vec![],
-                move_data.mover_share.clone(),
-            ),
-            TheirTurnResult::MakeMove(_, message, move_data) => (
-                move_data.readable_move,
-                message.clone(),
-                move_data.mover_share.clone(),
-            ),
-            TheirTurnResult::Slash(_) => {
-                return Err(Error::StrErr(
-                    "slash when off chain: go on chain".to_string(),
-                ));
-            }
-        };
+        if their_move_result.slash.is_some() {
+            return Err(Error::StrErr(
+                "slash when off chain: go on chain".to_string(),
+            ));
+        }
 
         Ok(ChannelHandlerMoveResult {
-            readable_their_move: readable_move.p(),
+            readable_their_move: their_move_result.readable_move.p(),
             state_number: self.current_state_number(),
-            message,
-            mover_share,
+            message: their_move_result.message,
+            mover_share: their_move_result.mover_share,
         })
     }
 

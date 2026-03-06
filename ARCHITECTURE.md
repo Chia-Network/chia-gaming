@@ -1018,7 +1018,7 @@ optional fourth element of its result.
 **Key code:**
 
 - `src/channel_handler/game_handler.rs` — `MyTurnResult::message_parser`,
-`TheirTurnResult::MakeMove` (message field), `MessageHandler`
+`TheirTurnResult` (message field), `MessageHandler`
 - `src/potato_handler/mod.rs` — sends `PeerMessage::Message` on receive;
 dispatches incoming messages via `received_message`
 - `clsp/games/calpoker/onchain/a.clsp` through `e.clsp`

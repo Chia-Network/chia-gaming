@@ -24,8 +24,7 @@ use crate::referee::types::GameMoveDetails;
 // Message parser takes (message state amount) and returns readable_info or raises
 //
 // Their turn handler takes (amount pre_state state move validation_info_hash mover_share) and returns
-//       (readable_move evidence_list next_handler message_optional) or
-//       (2 evidence)  -- slash
+//       (readable_move evidence_list next_handler message_optional)
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GameHandler {
@@ -106,17 +105,12 @@ fn get_state_update_program(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TheirTurnMoveData {
+pub struct TheirTurnResult {
     pub readable_move: ProgramRef,
     pub slash_evidence: Vec<Evidence>,
     pub mover_share: Amount,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TheirTurnResult {
-    FinalMove(TheirTurnMoveData),
-    MakeMove(GameHandler, Vec<u8>, TheirTurnMoveData),
-    Slash(Evidence),
+    pub next_handler: Option<GameHandler>,
+    pub message: Vec<u8>,
 }
 
 impl GameHandler {
@@ -393,23 +387,6 @@ impl GameHandler {
             )));
         };
 
-        if pl.is_empty() {
-            return Err(Error::StrErr(
-                "bad result from game handler: wrong length".to_string(),
-            ));
-        }
-
-        // Slash: (2 evidence)
-        if pl.len() == 2 {
-            let move_type = atom_from_clvm(allocator, pl[0]).and_then(|a| usize_from_atom(&a));
-            if move_type == Some(2) {
-                return Ok(TheirTurnResult::Slash(Evidence::from_nodeptr(
-                    allocator, pl[1],
-                )?));
-            }
-        }
-
-        // Normal move: (readable_move evidence_list next_handler message_optional)
         if pl.len() < 2 {
             return Err(Error::StrErr(format!(
                 "bad length for move result {}",
@@ -417,10 +394,9 @@ impl GameHandler {
             )));
         }
 
-        let decode_slash_evidence = |allocator: &mut AllocEncoder, index: Option<usize>| {
+        let decode_slash_evidence = |allocator: &mut AllocEncoder| {
             let mut lst = Vec::new();
-            let lst_nodeptr = index
-                .and_then(|i| proper_list(allocator.allocator(), pl[i], true))
+            let lst_nodeptr = proper_list(allocator.allocator(), pl[1], true)
                 .unwrap_or_default();
 
             for v in lst_nodeptr.into_iter() {
@@ -429,29 +405,27 @@ impl GameHandler {
             Ok(lst)
         };
 
-        let slash_evidence = decode_slash_evidence(allocator, Some(1));
+        let slash_evidence: Vec<Evidence> = decode_slash_evidence(allocator)?;
 
-        let their_turn_move_data = TheirTurnMoveData {
-            readable_move: Program::from_nodeptr(allocator, pl[0])?.into(),
-            mover_share: inputs.new_move.basic.mover_share.clone(),
-            slash_evidence: slash_evidence?,
-        };
-
-        let message_data = if pl.len() >= 4 {
+        let message = if pl.len() >= 4 {
             allocator.allocator().atom(pl[3]).to_vec()
         } else {
             vec![]
         };
 
-        if pl.len() < 3 || pl[2] == allocator.allocator().nil() {
-            Ok(TheirTurnResult::FinalMove(their_turn_move_data))
+        let next_handler = if pl.len() >= 3 && pl[2] != allocator.allocator().nil() {
+            Some(GameHandler::my_handler_from_nodeptr(allocator, pl[2])?)
         } else {
-            Ok(TheirTurnResult::MakeMove(
-                GameHandler::my_handler_from_nodeptr(allocator, pl[2])?,
-                message_data,
-                their_turn_move_data,
-            ))
-        }
+            None
+        };
+
+        Ok(TheirTurnResult {
+            readable_move: Program::from_nodeptr(allocator, pl[0])?.into(),
+            mover_share: inputs.new_move.basic.mover_share.clone(),
+            slash_evidence,
+            next_handler,
+            message,
+        })
     }
 }
 

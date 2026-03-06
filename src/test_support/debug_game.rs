@@ -12,7 +12,6 @@ use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
 
 use crate::channel_handler::game::Game;
-use crate::channel_handler::game_handler::TheirTurnResult;
 use crate::channel_handler::game_handler::{GameHandler, MyTurnInputs, TheirTurnInputs};
 use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::channel_handler::types::{
@@ -534,42 +533,34 @@ impl BareDebugGameHandler {
             }
         };
 
-        match tt_result {
-            TheirTurnResult::MakeMove(new_handler, _message, tt_data) => {
-                self.handler = Some(new_handler.clone());
-                for evidence in tt_data.slash_evidence.iter() {
-                    let validator_response = self.generic_run_state_update(
-                        allocator,
-                        vprog.clone(),
-                        previous_validation_info_hash.clone(),
-                        &move_to_check,
-                        &inputs.opponent_mover_share,
-                        evidence.clone(),
-                    )?;
-                    if let StateUpdateResult::Slash(evidence1) = validator_response {
-                        debug!("SLASH DETECTED: EVIDENCE {evidence:?} {evidence1:?}");
-                        self.slash_detected = Some(evidence.clone());
-                        return Ok(Some(evidence.to_program()));
-                    }
+        if let Some(new_handler) = &tt_result.next_handler {
+            self.handler = Some(new_handler.clone());
+            for evidence in tt_result.slash_evidence.iter() {
+                let validator_response = self.generic_run_state_update(
+                    allocator,
+                    vprog.clone(),
+                    previous_validation_info_hash.clone(),
+                    &move_to_check,
+                    &inputs.opponent_mover_share,
+                    evidence.clone(),
+                )?;
+                if let StateUpdateResult::Slash(evidence1) = validator_response {
+                    debug!("SLASH DETECTED: EVIDENCE {evidence:?} {evidence1:?}");
+                    self.slash_detected = Some(evidence.clone());
+                    return Ok(Some(evidence.to_program()));
                 }
-                self.move_count += 1;
-                self.handler = Some(new_handler.clone());
-                self.mover_share = tt_data.mover_share.clone();
-                self.last_validation_data
-                    .push_back((vprog.clone(), self.state.clone()));
-                self.state = state.clone().into();
-                debug!("Accepted their turn");
             }
-            TheirTurnResult::FinalMove(_) => {
-                return Err(Error::StrErr(
-                    "unexpected FinalMove in their_turn_handler (expected MakeMove)".to_string(),
-                ));
-            }
-            TheirTurnResult::Slash(evidence) => {
-                return Err(Error::StrErr(format!(
-                    "unexpected Slash from their_turn_handler: {evidence:?}"
-                )));
-            }
+            self.move_count += 1;
+            self.handler = Some(new_handler.clone());
+            self.mover_share = tt_result.mover_share.clone();
+            self.last_validation_data
+                .push_back((vprog.clone(), self.state.clone()));
+            self.state = state.clone().into();
+            debug!("Accepted their turn");
+        } else {
+            return Err(Error::StrErr(
+                "unexpected FinalMove in their_turn_handler (expected MakeMove)".to_string(),
+            ));
         }
         Ok(None)
     }
