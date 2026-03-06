@@ -14,6 +14,10 @@ impl AllocEncoder {
         Self::default()
     }
 
+    pub fn allocator_ref(&self) -> &Allocator {
+        &self.0
+    }
+
     pub fn allocator(&mut self) -> &mut Allocator {
         &mut self.0
     }

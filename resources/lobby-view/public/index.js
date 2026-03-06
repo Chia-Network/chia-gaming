@@ -21725,12 +21725,12 @@
 
   // dist/js/index.js
   var import_jsx_runtime10 = __toESM(require_jsx_runtime(), 1);
-  var import_react6 = __toESM(require_react(), 1);
+  var import_react7 = __toESM(require_react(), 1);
   var import_client = __toESM(require_client(), 1);
 
   // dist/js/lobby.js
   var import_jsx_runtime9 = __toESM(require_jsx_runtime(), 1);
-  var import_react5 = __toESM(require_react(), 1);
+  var import_react6 = __toESM(require_react(), 1);
 
   // node_modules/chia-gaming-lobby-connection/dist/index.js
   var import_react = __toESM(require_react());
@@ -25913,10 +25913,12 @@
 
   // dist/js/features/lobbyComponents/CreateRoomDialog.js
   var import_jsx_runtime7 = __toESM(require_jsx_runtime(), 1);
+  var import_react5 = __toESM(require_react(), 1);
   var CreateRoomDialog = ({ dialogOpen, closeDialog, gameChoice, setGameChoice, lobbyGames, wagerInput, setWagerInput, perHandInput, setPerHandInput, wagerValidationError, handleCreate }) => {
     if (!dialogOpen)
       return null;
-    return (0, import_jsx_runtime7.jsx)("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-canvas-bg-subtle/75", onClick: closeDialog, children: (0, import_jsx_runtime7.jsxs)("div", { className: "bg-canvas-bg-subtle text-canvas-text shadow-2xl rounded-lg w-full max-w-lg p-6", onClick: (e) => e.stopPropagation(), children: [(0, import_jsx_runtime7.jsx)("h2", { className: "text-xl font-bold mb-4", children: "Create a Room" }), (0, import_jsx_runtime7.jsxs)("div", { className: "mb-4", children: [(0, import_jsx_runtime7.jsx)("label", { className: "block mb-1 font-medium", children: "Game" }), (0, import_jsx_runtime7.jsx)("div", { className: dialogOpen ? "block" : "hidden", children: (0, import_jsx_runtime7.jsx)("select", { value: gameChoice, "aria-label": "game-id", onChange: (e) => setGameChoice(e.target.value), className: "w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded", children: lobbyGames.map((g) => (0, import_jsx_runtime7.jsx)("option", { value: g.game, "data-testid": `choose-${g.game}`, children: g.game }, g.game)) }) })] }), wagerValidationError && (0, import_jsx_runtime7.jsx)("div", { className: "mb-1 text-secondary-solid", children: wagerValidationError }), (0, import_jsx_runtime7.jsxs)("div", { className: "mb-4", children: [(0, import_jsx_runtime7.jsx)("label", { className: "block mb-1 font-medium", children: "Wager (mojo)" }), (0, import_jsx_runtime7.jsx)("input", { type: "number", "aria-label": "game-wager", value: wagerInput, onChange: (e) => setWagerInput(e.target.value), placeholder: "Buy-in (minimum 100 mojos)", className: "w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded" })] }), wagerValidationError && (0, import_jsx_runtime7.jsx)("p", { style: { color: "#FF6F00", marginBottom: 1 }, children: "    " + wagerValidationError }), (0, import_jsx_runtime7.jsxs)("div", { className: "mb-4", children: [(0, import_jsx_runtime7.jsx)("label", { className: "block mb-1 font-medium", children: "Each hand (mojo)" }), (0, import_jsx_runtime7.jsx)("input", { type: "number", "aria-label": "per-hand", value: perHandInput, onChange: (e) => setPerHandInput(e.target.value), placeholder: "Enter per hand", className: "w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded" })] }), (0, import_jsx_runtime7.jsxs)("div", { className: "flex justify-end gap-2 mt-4", children: [(0, import_jsx_runtime7.jsx)(ButtonMemoized, { variant: "outline", color: "secondary", onClick: closeDialog, children: "Cancel" }), (0, import_jsx_runtime7.jsx)(ButtonMemoized, { variant: "solid", color: "secondary", onClick: handleCreate, className: "px-4 py-2 bg-secondary-solid text-canvas-bg rounded hover:bg-secondary-solid/90", children: "Create" })] })] }) });
+    const [isFocused, setIsFocused] = (0, import_react5.useState)(false);
+    return (0, import_jsx_runtime7.jsx)("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-canvas-bg-subtle/75", onClick: closeDialog, children: (0, import_jsx_runtime7.jsxs)("div", { className: "bg-canvas-bg-subtle text-canvas-text shadow-2xl rounded-lg w-full max-w-lg p-6", onClick: (e) => e.stopPropagation(), children: [(0, import_jsx_runtime7.jsx)("h2", { className: "text-xl font-bold mb-4", children: "Create a Room" }), (0, import_jsx_runtime7.jsxs)("div", { className: "mb-4", children: [(0, import_jsx_runtime7.jsx)("label", { className: "block mb-1 font-medium", children: "Game" }), (0, import_jsx_runtime7.jsx)("div", { className: dialogOpen ? "block" : "hidden", children: (0, import_jsx_runtime7.jsx)("select", { value: gameChoice, "aria-label": "game-id", onChange: (e) => setGameChoice(e.target.value), className: "w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded", children: lobbyGames.map((g) => (0, import_jsx_runtime7.jsx)("option", { value: g.game, "data-testid": `choose-${g.game}`, children: g.game }, g.game)) }) })] }), wagerValidationError && (0, import_jsx_runtime7.jsx)("div", { className: "mb-1 text-secondary-solid", children: wagerValidationError }), (0, import_jsx_runtime7.jsxs)("div", { className: "mb-4", children: [(0, import_jsx_runtime7.jsx)("label", { className: "block mb-1 font-medium", children: "Wager (mojo)" }), (0, import_jsx_runtime7.jsx)("input", { type: "number", "aria-label": "game-wager", value: wagerInput, onChange: (e) => setWagerInput(e.target.value), onFocus: () => setIsFocused(true), onBlur: () => setIsFocused(false), placeholder: isFocused ? "" : "Buy-in (minimum 100 mojos)", className: "w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded" })] }), wagerValidationError && (0, import_jsx_runtime7.jsx)("p", { style: { color: "#FF6F00", marginBottom: 1 }, children: "    " + wagerValidationError }), (0, import_jsx_runtime7.jsxs)("div", { className: "mb-4", children: [(0, import_jsx_runtime7.jsx)("label", { className: "block mb-1 font-medium", children: "Each hand (mojo)" }), (0, import_jsx_runtime7.jsx)("input", { type: "number", "aria-label": "per-hand", value: perHandInput, onChange: (e) => setPerHandInput(e.target.value), placeholder: "Enter per hand", className: "w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded" })] }), (0, import_jsx_runtime7.jsxs)("div", { className: "flex justify-end gap-2 mt-4", children: [(0, import_jsx_runtime7.jsx)(ButtonMemoized, { variant: "outline", color: "secondary", onClick: closeDialog, children: "Cancel" }), (0, import_jsx_runtime7.jsx)(ButtonMemoized, { variant: "solid", color: "secondary", onClick: handleCreate, className: "px-4 py-2 bg-secondary-solid text-canvas-bg rounded hover:bg-secondary-solid/90", children: "Create" })] })] }) });
   };
   var CreateRoomDialog_default = CreateRoomDialog;
 
@@ -25931,7 +25933,7 @@
 
   // dist/js/lobby.js
   var LobbyScreen = () => {
-    const [myAlias, setMyAlias] = (0, import_react5.useState)(generateOrRetrieveAlias());
+    const [myAlias, setMyAlias] = (0, import_react6.useState)(generateOrRetrieveAlias());
     const params = getSearchParams();
     const fragment = getFragmentParams();
     const uniqueId = params.uniqueId;
@@ -25939,20 +25941,20 @@
       console.warn(`from tryJoinRoom, navigate ${newUrl}`);
       window.location.href = newUrl;
     });
-    const [chatInput, setChatInput] = (0, import_react5.useState)("");
-    const [dialogOpen, setDialogOpen] = (0, import_react5.useState)(false);
-    const [gameChoice, setGameChoice] = (0, import_react5.useState)(lobbyGames[0]?.game || "");
-    const [wagerInput, setWagerInputPrimitive] = (0, import_react5.useState)("");
-    const [wagerValidationError, setWagerValidationError] = (0, import_react5.useState)("");
-    const [perHandInput, setPerHandInput] = (0, import_react5.useState)("");
-    const [editingAlias, setEditingAlias] = (0, import_react5.useState)(false);
-    const [gotoUrl, setGotoUrl] = (0, import_react5.useState)("");
-    const [urlDialogOpen, setUrlDialogOpen] = (0, import_react5.useState)(false);
-    const [secureUrl, setSecureUrl] = (0, import_react5.useState)("");
-    const [splitPct, setSplitPct] = (0, import_react5.useState)(50);
-    const rightColumnRef = (0, import_react5.useRef)(null);
-    const messagesRef = (0, import_react5.useRef)(null);
-    const setWagerInput = (0, import_react5.useCallback)((newWagerInput) => {
+    const [chatInput, setChatInput] = (0, import_react6.useState)("");
+    const [dialogOpen, setDialogOpen] = (0, import_react6.useState)(false);
+    const [gameChoice, setGameChoice] = (0, import_react6.useState)(lobbyGames[0]?.game || "");
+    const [wagerInput, setWagerInputPrimitive] = (0, import_react6.useState)("");
+    const [wagerValidationError, setWagerValidationError] = (0, import_react6.useState)("");
+    const [perHandInput, setPerHandInput] = (0, import_react6.useState)("");
+    const [editingAlias, setEditingAlias] = (0, import_react6.useState)(false);
+    const [gotoUrl, setGotoUrl] = (0, import_react6.useState)("");
+    const [urlDialogOpen, setUrlDialogOpen] = (0, import_react6.useState)(false);
+    const [secureUrl, setSecureUrl] = (0, import_react6.useState)("");
+    const [splitPct, setSplitPct] = (0, import_react6.useState)(50);
+    const rightColumnRef = (0, import_react6.useRef)(null);
+    const messagesRef = (0, import_react6.useRef)(null);
+    const setWagerInput = (0, import_react6.useCallback)((newWagerInput) => {
       setWagerInputPrimitive(newWagerInput);
       try {
         const newWagerInputInteger = parseInt(newWagerInput);
@@ -25976,13 +25978,13 @@
       }
       return true;
     };
-    (0, import_react5.useEffect)(() => {
+    (0, import_react6.useEffect)(() => {
       if (messagesRef.current) {
         const el = messagesRef.current;
         el.scrollTop = el.scrollHeight;
       }
     }, [messages]);
-    (0, import_react5.useEffect)(() => {
+    (0, import_react6.useEffect)(() => {
       let dragging = false;
       const onMove = (clientY) => {
         if (!rightColumnRef.current)
@@ -26056,7 +26058,7 @@
       setUrlDialogOpen(false);
       closeDialog();
     };
-    (0, import_react5.useEffect)(() => {
+    (0, import_react6.useEffect)(() => {
       if (fragment.token)
         joinRoom(fragment.token);
     }, [fragment, joinRoom]);
@@ -26070,7 +26072,7 @@
       const player = players.find((p) => p.id === id);
       return player ? player.alias : `Unknown Player (${id})`;
     }
-    (0, import_react5.useEffect)(() => {
+    (0, import_react6.useEffect)(() => {
       if (lobbyGames.length > 0 && !gameChoice) {
         setGameChoice(lobbyGames[0].game);
       }
@@ -26083,7 +26085,7 @@
   // dist/js/index.js
   var container = document.getElementById("root");
   var root = (0, import_client.createRoot)(container);
-  root.render((0, import_jsx_runtime10.jsx)(import_react6.default.StrictMode, { children: (0, import_jsx_runtime10.jsx)(lobby_default, {}) }));
+  root.render((0, import_jsx_runtime10.jsx)(import_react7.default.StrictMode, { children: (0, import_jsx_runtime10.jsx)(lobby_default, {}) }));
 })();
 /*! Bundled license information:
 
