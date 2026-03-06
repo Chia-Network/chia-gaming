@@ -31,7 +31,7 @@ impl Amount {
             .ok_or_else(|| Error::StrErr(format!("Amount underflow: {} - {}", self.0, rhs.0)))
     }
 
-    pub fn from_clvm(allocator: &mut AllocEncoder, clvm: NodePtr) -> Result<Amount, Error> {
+    pub fn from_clvm(allocator: &AllocEncoder, clvm: NodePtr) -> Result<Amount, Error> {
         if let Some(val) = atom_from_clvm(allocator, clvm).and_then(|a| u64_from_atom(&a)) {
             Ok(Amount::new(val))
         } else {
