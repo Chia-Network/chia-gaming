@@ -63,7 +63,7 @@ pub struct MyTurnResult {
     pub incoming_move_state_update_program_hash: Hash,
     pub max_move_size: usize,
     pub mover_share: Amount,
-    pub waiting_handler: GameHandler,
+    pub waiting_handler: Option<GameHandler>,
     pub message_parser: Option<MessageHandler>,
 }
 
@@ -273,7 +273,11 @@ impl GameHandler {
 
         Ok(MyTurnResult {
             name: name.to_string(),
-            waiting_handler: GameHandler::their_handler_from_nodeptr(allocator, pl[8])?,
+            waiting_handler: if pl[8] == allocator.allocator().nil() {
+                None
+            } else {
+                Some(GameHandler::their_handler_from_nodeptr(allocator, pl[8])?)
+            },
             outgoing_move_state_update_program: outgoing_move_state_update_program,
             outgoing_move_state_update_program_hash,
             incoming_move_state_update_program: incoming_move_state_update_program,

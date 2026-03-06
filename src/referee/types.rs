@@ -40,7 +40,7 @@ pub struct GameMoveDetails {
     /// sha256 of the concatenation of two hashes:
     /// 1 - The next game handler program
     /// 2 - The game state.
-    pub validation_info_hash: Hash,
+    pub validation_info_hash: Option<Hash>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -261,7 +261,9 @@ where
             self.nonce.to_clvm(encoder)?,
             encoder.encode_atom(clvm_traits::Atom::Borrowed(&self.game_move.basic.move_made))?,
             self.game_move.basic.max_move_size.to_clvm(encoder)?,
-            self.game_move.validation_info_hash.to_clvm(encoder)?,
+            self.game_move.validation_info_hash
+                .as_ref()
+                .to_clvm(encoder)?,
             self.game_move.basic.mover_share.to_clvm(encoder)?,
             self.previous_validation_info_hash
                 .as_ref()
@@ -398,17 +400,22 @@ impl OnChainRefereeMoveData {
     ) -> Result<OnChainRefereeMove, Error> {
         debug!("referee spend with parent coin {coin_string:?}");
 
-        let infohash_c = ValidationInfo::new_state_update(
-            allocator,
-            self.validation_program.clone(),
-            self.state.clone(),
-        );
+        let infohash_c: Option<Hash> = if self.new_move.validation_info_hash.is_some() {
+            let vi = ValidationInfo::new_state_update(
+                allocator,
+                self.validation_program.clone(),
+                self.state.clone(),
+            );
+            Some(vi.hash().clone())
+        } else {
+            None
+        };
         let solution_args_node = (
             allocator
                 .encode_atom(clvm_traits::Atom::Borrowed(&self.new_move.basic.move_made))
                 .into_gen()?,
             (
-                infohash_c.hash(),
+                infohash_c.as_ref(),
                 (
                     self.new_move.basic.mover_share.clone(),
                     (self.new_move.basic.max_move_size, ()),
@@ -516,16 +523,22 @@ impl OnChainRefereeSolution {
                         &refmove.game_move.basic.move_made,
                     ))
                     .into_gen()?;
-                let infohash_c = ValidationInfo::new_state_update(
-                    encoder,
-                    refmove.validation_program.clone(),
-                    refmove.state.clone(),
-                );
+                let infohash_c: Option<Hash> =
+                    if refmove.game_move.validation_info_hash.is_some() {
+                        let vi = ValidationInfo::new_state_update(
+                            encoder,
+                            refmove.validation_program.clone(),
+                            refmove.state.clone(),
+                        );
+                        Some(vi.hash().clone())
+                    } else {
+                        None
+                    };
 
                 (
                     move_atom,
                     (
-                        infohash_c.hash(),
+                        infohash_c.as_ref(),
                         (
                             refmove.game_move.basic.mover_share.clone(),
                             (refmove.game_move.basic.max_move_size, ()),
