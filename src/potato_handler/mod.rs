@@ -156,8 +156,6 @@ pub struct PotatoHandler {
 /// Bob receivs channel offer then is given the transaction completion by watching
 /// the blockchain.
 ///
-/// Alice sends the "received channel transaction completion" message.
-///
 /// once this object knows the channel puzzle hash they should register the coin.
 impl PotatoHandler {
     pub fn new(phi: PotatoHandlerInit) -> PotatoHandler {

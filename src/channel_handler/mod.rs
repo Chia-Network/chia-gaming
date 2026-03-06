@@ -71,7 +71,7 @@ use crate::referee::Referee;
 ///     reveal
 ///     solution
 ///
-/// Conditions that the uonrll coin makes needs a rem to ensure that we know
+/// Conditions that the unroll coin makes needs a rem to ensure that we know
 /// the latest game state number.
 ///
 /// Needs to be a code path by which they took an old potato and put it on chain.

@@ -322,6 +322,9 @@ batch.
 
 ## Off-Chain Game Flow
 
+For details on how game handlers and validation programs work (parameters,
+return formats, chaining), see `HANDLER_GUIDE.md`.
+
 A single game's lifecycle, independent of other concurrent games:
 
 ```
@@ -800,6 +803,9 @@ refer to the game for its entire lifecycle.
 
 ### On-Chain Referee Actions
 
+The referee runs validator programs to enforce game rules on-chain. For how
+validators relate to off-chain handlers, see `HANDLER_GUIDE.md`.
+
 The referee puzzle (`referee.clsp`) accepts three types of solutions:
 
 1. **Timeout** (`args = (mover_payout_ph, waiter_payout_ph)`):
@@ -1047,6 +1053,7 @@ dispatches incoming messages via `received_message`
 | `clsp/games/calpoker/onchain/a-e.clsp`        | Calpoker validation programs (one per protocol step)    |
 | `clsp/games/calpoker/calpoker_generate.clinc` | Off-chain calpoker handlers (Alice & Bob sides)         |
 | `clsp/test/debug_game.clsp`                   | Debug game: validator, my-turn, their-turn, and factory |
+| `clsp/handler_api.txt`                        | Handler calling conventions (see also `HANDLER_GUIDE.md`) |
 
 
 ### Test infrastructure

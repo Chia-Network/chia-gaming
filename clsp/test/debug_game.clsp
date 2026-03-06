@@ -214,7 +214,6 @@
             (not (= smove slash-byte))
             (x "their turn: wrong slash byte in state" smove slash-byte)
             (list
-             MAKE_MOVE
              (list count smove mshare)
              (list slash-byte)
              (curry SELF_PROG "myturn" (curry-args-incr curry-args))

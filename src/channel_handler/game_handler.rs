@@ -18,15 +18,14 @@ use crate::referee::types::GameMoveDetails;
 
 // How to call the clvm program in this object:
 //
-// My turn handler takes (readable_new_move amount state last_mover_share entropy) and returns
-//       (waiting_handler move validation_program validation_program_hash state max_move_size mover_share
-//       message_parser)
-// Message parser takes (message amount state move mover_share) and returns error or readable_info
+// My turn handler takes (local_move amount state mover_share entropy) and returns
+//       (label move outgoing_validator outgoing_validator_hash incoming_validator
+//        incoming_validator_hash max_move_size mover_share their_turn_handler message_parser)
+// Message parser takes (message state amount) and returns readable_info or raises
 //
-// their turn handler takes (amount pre_state state last_move last_mover_share
-//       new_move new_validation_info_hash new_max_move_size new_mover_share) and returns
-//       (readable_info evidence_list moving_handler message_optional) or
-//       (SLASH evidence)
+// Their turn handler takes (amount pre_state state move validation_info_hash mover_share) and returns
+//       (readable_move evidence_list next_handler message_optional) or
+//       (2 evidence)  -- slash
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GameHandler {
@@ -400,42 +399,18 @@ impl GameHandler {
             ));
         }
 
-        let mut offset = 0usize;
-        let move_type = atom_from_clvm(allocator, pl[0]).and_then(|a| usize_from_atom(&a));
-        if let Some(move_type) = move_type {
-            if move_type == 2 {
-                if pl.len() != 2 {
-                    return Err(Error::StrErr(format!(
-                        "bad length for slash {}",
-                        Node(run_result).to_hex(allocator)?
-                    )));
-                }
-
+        // Slash: (2 evidence)
+        if pl.len() == 2 {
+            let move_type = atom_from_clvm(allocator, pl[0]).and_then(|a| usize_from_atom(&a));
+            if move_type == Some(2) {
                 return Ok(TheirTurnResult::Slash(Evidence::from_nodeptr(
                     allocator, pl[1],
                 )?));
             }
-            if move_type == 0 {
-                // Legacy MAKE_MOVE tag.
-                offset = 1;
-                // Backward compatibility: some handlers returned compact form
-                // (0 readable_info next_handler) with no slash-evidence slot.
-                if pl.len() == 3 {
-                    let their_turn_move_data = TheirTurnMoveData {
-                        readable_move: Program::from_nodeptr(allocator, pl[1])?.into(),
-                        mover_share: inputs.new_move.basic.mover_share.clone(),
-                        slash_evidence: Vec::new(),
-                    };
-                    return Ok(TheirTurnResult::MakeMove(
-                        GameHandler::my_handler_from_nodeptr(allocator, pl[2])?,
-                        Vec::new(),
-                        their_turn_move_data,
-                    ));
-                }
-            }
         }
 
-        if pl.len() < offset + 2 {
+        // Normal move: (readable_move evidence_list next_handler message_optional)
+        if pl.len() < 2 {
             return Err(Error::StrErr(format!(
                 "bad length for move result {}",
                 Node(run_result).to_hex(allocator)?
@@ -454,29 +429,25 @@ impl GameHandler {
             Ok(lst)
         };
 
-        let slash_evidence = if pl.len() >= offset + 2 {
-            decode_slash_evidence(allocator, Some(offset + 1))
-        } else {
-            decode_slash_evidence(allocator, None)
-        };
+        let slash_evidence = decode_slash_evidence(allocator, Some(1));
 
         let their_turn_move_data = TheirTurnMoveData {
-            readable_move: Program::from_nodeptr(allocator, pl[offset])?.into(),
+            readable_move: Program::from_nodeptr(allocator, pl[0])?.into(),
             mover_share: inputs.new_move.basic.mover_share.clone(),
             slash_evidence: slash_evidence?,
         };
 
-        let message_data = if pl.len() >= offset + 4 {
-            allocator.allocator().atom(pl[offset + 3]).to_vec()
+        let message_data = if pl.len() >= 4 {
+            allocator.allocator().atom(pl[3]).to_vec()
         } else {
             vec![]
         };
 
-        if pl.len() < offset + 3 || pl[offset + 2] == allocator.allocator().nil() {
+        if pl.len() < 3 || pl[2] == allocator.allocator().nil() {
             Ok(TheirTurnResult::FinalMove(their_turn_move_data))
         } else {
             Ok(TheirTurnResult::MakeMove(
-                GameHandler::my_handler_from_nodeptr(allocator, pl[offset + 2])?,
+                GameHandler::my_handler_from_nodeptr(allocator, pl[2])?,
                 message_data,
                 their_turn_move_data,
             ))

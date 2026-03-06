@@ -140,13 +140,12 @@ impl MyTurnRefereeGameState {
 ///         evidence, --------------> try these with their_turn_validation_program
 ///       }
 ///
-/// This assumes an "out of time" aspect to the validation programs.
-///
-/// In bram's mind the validation programs are a single chain of events:
+/// On-chain, the validation programs form a single chain of events:
 ///
 ///   a.clsp -> b.clsp -> c.clsp -> d.clsp -> e.clsp -> lambda from e.
 ///
-/// In reality, there are two progressions, one on each side:
+/// Off-chain (on the players' machines), there are two progressions, one on
+/// each side:
 ///
 /// alice: alice handler 0 -> move 0
 /// bob: move 0 -> a.clsp with state initial_state
@@ -154,9 +153,9 @@ impl MyTurnRefereeGameState {
 /// alice: move 1 -> b.clsp
 /// ...
 ///
-/// In bram's mind, there's no difference between move 0 _leaving_ alice and _arriving_
-/// at bob, so we need to ensure that an outgoing move uses the same validation program
-/// as the incoming move that follows.
+/// On-chain there's no difference between move 0 _leaving_ alice and
+/// _arriving_ at bob, so we need to ensure that an outgoing move uses the
+/// same validation program as the incoming move that follows.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MyTurnReferee {
     pub fixed: Rc<RMFixed>,
