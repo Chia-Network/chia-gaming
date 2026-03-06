@@ -11,7 +11,7 @@ use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 pub struct GameID(pub u64);
 
 impl GameID {
-    pub fn from_clvm(allocator: &mut AllocEncoder, clvm: NodePtr) -> Result<Self, Error> {
+    pub fn from_clvm(allocator: &AllocEncoder, clvm: NodePtr) -> Result<Self, Error> {
         if let Some(atom) = atom_from_clvm(allocator, clvm) {
             u64_from_atom(&atom)
                 .map(GameID)

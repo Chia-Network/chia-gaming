@@ -45,8 +45,8 @@ impl Program {
     pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
         clvmr::serde::node_from_bytes(allocator.allocator(), &self.0).into_gen()
     }
-    pub fn from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<Program, Error> {
-        let bytes = clvmr::serde::node_to_bytes(allocator.allocator(), n).into_gen()?;
+    pub fn from_nodeptr(allocator: &AllocEncoder, n: NodePtr) -> Result<Program, Error> {
+        let bytes = clvmr::serde::node_to_bytes(allocator.allocator_ref(), n).into_gen()?;
         Ok(Program(bytes))
     }
 

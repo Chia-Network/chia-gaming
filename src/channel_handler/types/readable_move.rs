@@ -11,7 +11,7 @@ use crate::common::types::{AllocEncoder, Error, Program};
 pub struct ReadableMove(Rc<Program>);
 
 impl ReadableMove {
-    pub fn from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<Self, Error> {
+    pub fn from_nodeptr(allocator: &AllocEncoder, n: NodePtr) -> Result<Self, Error> {
         Ok(ReadableMove(Rc::new(Program::from_nodeptr(allocator, n)?)))
     }
 

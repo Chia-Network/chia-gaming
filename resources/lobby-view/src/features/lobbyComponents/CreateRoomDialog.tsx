@@ -1,5 +1,6 @@
 import React from 'react';
 import { Button } from '../../button';
+import { useState } from 'react';
 
 interface CreateRoomDialogProps {
   dialogOpen: boolean;
@@ -29,7 +30,7 @@ const CreateRoomDialog: React.FC<CreateRoomDialogProps> = ({
   handleCreate,
 }) => {
   if (!dialogOpen) return null;
-
+  const [isFocused, setIsFocused] = useState(false);
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-canvas-bg-subtle/75"
@@ -42,59 +43,61 @@ const CreateRoomDialog: React.FC<CreateRoomDialogProps> = ({
         {/* Title */}
         <h2 className="text-xl font-bold mb-4">Create a Room</h2>
 
-      {/* Game Select */}
-      <div className="mb-4">
-        <label className="block mb-1 font-medium">Game</label>
-        <div className={dialogOpen ? "block" : "hidden"}>
-        <select
-          value={gameChoice}
-          aria-label='game-id'
-          onChange={(e) => setGameChoice(e.target.value)}
-          className="w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded"
-        >
-          {lobbyGames.map((g) => (
-            <option key={g.game} value={g.game} data-testid={`choose-${g.game}`}>
-              {g.game}
-            </option>
-          ))}
-        </select>
+        {/* Game Select */}
+        <div className="mb-4">
+          <label className="block mb-1 font-medium">Game</label>
+          <div className={dialogOpen ? "block" : "hidden"}>
+            <select
+              value={gameChoice}
+              aria-label='game-id'
+              onChange={(e) => setGameChoice(e.target.value)}
+              className="w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded"
+            >
+              {lobbyGames.map((g) => (
+                <option key={g.game} value={g.game} data-testid={`choose-${g.game}`}>
+                  {g.game}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
-      </div>
 
-      {/* Wager Validation Error */}
-      {wagerValidationError && (
-        <div className="mb-1 text-secondary-solid">{wagerValidationError}</div>
-      )}
+        {/* Wager Validation Error */}
+        {wagerValidationError && (
+          <div className="mb-1 text-secondary-solid">{wagerValidationError}</div>
+        )}
 
-      {/* Wager Input */}
-      <div className="mb-4">
-        <label className="block mb-1 font-medium">Wager (mojo)</label>
-        <input
-          type="number"
-          aria-label='game-wager'
-          value={wagerInput}
-          onChange={(e) => setWagerInput(e.target.value)}
-          placeholder="Buy-in (minimum 100 mojos)"
-          className="w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded"
-        />
-      </div>
-      {wagerValidationError && (
-        <p style={{ color: '#FF6F00', marginBottom: 1 }}>
-          {"    " + wagerValidationError}
-        </p>
-      )}
-      {/* Each Hand Input */}
-      <div className="mb-4">
-        <label className="block mb-1 font-medium">Each hand (mojo)</label>
-        <input
-          type="number"
-          aria-label='per-hand'
-          value={perHandInput}
-          onChange={(e) => setPerHandInput(e.target.value)}
-          placeholder="Enter per hand"
-          className="w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded"
-        />
-      </div>
+        {/* Wager Input */}
+        <div className="mb-4">
+          <label className="block mb-1 font-medium">Wager (mojo)</label>
+          <input
+            type="number"
+            aria-label="game-wager"
+            value={wagerInput}
+            onChange={(e) => setWagerInput(e.target.value)}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setIsFocused(false)}
+            placeholder={isFocused ? "" : "Buy-in (minimum 100 mojos)"}
+            className="w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded"
+          />
+        </div>
+        {wagerValidationError && (
+          <p style={{ color: '#FF6F00', marginBottom: 1 }}>
+            {"    " + wagerValidationError}
+          </p>
+        )}
+        {/* Each Hand Input */}
+        <div className="mb-4">
+          <label className="block mb-1 font-medium">Each hand (mojo)</label>
+          <input
+            type="number"
+            aria-label='per-hand'
+            value={perHandInput}
+            onChange={(e) => setPerHandInput(e.target.value)}
+            placeholder="Enter per hand"
+            className="w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded"
+          />
+        </div>
 
         {/* Actions */}
         <div className="flex justify-end gap-2 mt-4">

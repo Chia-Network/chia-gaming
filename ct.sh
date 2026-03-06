@@ -7,4 +7,11 @@ elif [ -n "$1" ]; then
 fi
 SECONDS=0
 cargo test --lib --features sim-tests -- --nocapture
+
+echo "=== Running JS tests ==="
+./run-js-tests.sh
+
+echo "=== Running WASM tests ==="
+./tools/local-wasm-tests.sh
+
 echo "Total time: ${SECONDS}s"
