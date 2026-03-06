@@ -113,11 +113,9 @@ impl LiveGame {
                 "received opponent move but it is our turn".to_string(),
             ));
         }
-        let (new_ref, their_move_result) = self.referee_maker.their_turn_move_off_chain(
-            allocator,
-            game_move,
-            state_number,
-        )?;
+        let (new_ref, their_move_result) =
+            self.referee_maker
+                .their_turn_move_off_chain(allocator, game_move, state_number)?;
         if let Some(r) = new_ref {
             self.referee_maker = r;
         }

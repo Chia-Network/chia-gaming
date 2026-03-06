@@ -369,7 +369,10 @@ impl PotatoHandler {
             &self.reward_puzzle_hash,
         );
 
-        game_assert!(matches!(self.channel_state, ChannelState::StepA), "start: expected StepA state");
+        game_assert!(
+            matches!(self.channel_state, ChannelState::StepA),
+            "start: expected StepA state"
+        );
         let my_hs_info = HandshakeA {
             parent: parent_coin.clone(),
             simple: HandshakeB {
@@ -780,7 +783,10 @@ impl PotatoHandler {
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
     ) -> Result<(bool, Vec<Effect>), Error> {
-        game_assert!(matches!(self.have_potato, PotatoState::Present), "drain_queue_into_batch: must have potato");
+        game_assert!(
+            matches!(self.have_potato, PotatoState::Present),
+            "drain_queue_into_batch: must have potato"
+        );
         let mut effects = Vec::new();
         let mut batch_actions: Vec<BatchAction> = Vec::new();
         let mut clean_shutdown_data: Option<(Aggsig, ProgramRef)> = None;
@@ -1437,7 +1443,10 @@ impl PotatoHandler {
                     ChannelState::Finished(hs) => {
                         self.channel_state =
                             ChannelState::OnChainWaitForConditions(channel_coin.clone(), hs);
-                        game_assert!(!matches!(self.channel_state, ChannelState::StepA), "check_channel_spent: unexpected StepA after Finished");
+                        game_assert!(
+                            !matches!(self.channel_state, ChannelState::StepA),
+                            "check_channel_spent: unexpected StepA after Finished"
+                        );
                         return Ok((
                             true,
                             vec![Effect::RequestPuzzleAndSolution(coin_id.clone())],
@@ -1446,7 +1455,10 @@ impl PotatoHandler {
                     ChannelState::OnChainWaitingForUnrollSpend(channel_coin, _, reward_coin) => {
                         self.channel_state =
                             ChannelState::CleanShutdownWaitForConditions(channel_coin, reward_coin);
-                        game_assert!(!matches!(self.channel_state, ChannelState::StepA), "check_channel_spent: unexpected StepA after CleanShutdown");
+                        game_assert!(
+                            !matches!(self.channel_state, ChannelState::StepA),
+                            "check_channel_spent: unexpected StepA after CleanShutdown"
+                        );
                         return Ok((
                             true,
                             vec![Effect::RequestPuzzleAndSolution(coin_id.clone())],
@@ -1458,7 +1470,10 @@ impl PotatoHandler {
                     }
                     x => {
                         self.channel_state = x;
-                        game_assert!(!matches!(self.channel_state, ChannelState::StepA), "check_channel_spent: unexpected StepA in catch-all");
+                        game_assert!(
+                            !matches!(self.channel_state, ChannelState::StepA),
+                            "check_channel_spent: unexpected StepA in catch-all"
+                        );
                         return Err(Error::StrErr(
                             "channel coin spend in non-handshake state".to_string(),
                         ));
@@ -1467,7 +1482,10 @@ impl PotatoHandler {
             }
         }
 
-        game_assert!(!matches!(self.channel_state, ChannelState::StepA), "check_channel_spent: unexpected StepA at exit");
+        game_assert!(
+            !matches!(self.channel_state, ChannelState::StepA),
+            "check_channel_spent: unexpected StepA at exit"
+        );
         Ok((false, vec![]))
     }
 

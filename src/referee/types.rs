@@ -263,7 +263,8 @@ where
             self.nonce.to_clvm(encoder)?,
             encoder.encode_atom(clvm_traits::Atom::Borrowed(&self.game_move.basic.move_made))?,
             self.game_move.basic.max_move_size.to_clvm(encoder)?,
-            self.game_move.validation_info_hash
+            self.game_move
+                .validation_info_hash
                 .as_ref()
                 .to_clvm(encoder)?,
             self.game_move.basic.mover_share.to_clvm(encoder)?,
@@ -525,17 +526,16 @@ impl OnChainRefereeSolution {
                         &refmove.game_move.basic.move_made,
                     ))
                     .into_gen()?;
-                let infohash_c: Option<Hash> =
-                    if refmove.game_move.validation_info_hash.is_some() {
-                        let vi = ValidationInfo::new_state_update(
-                            encoder,
-                            refmove.validation_program.clone(),
-                            refmove.state.clone(),
-                        );
-                        Some(vi.hash().clone())
-                    } else {
-                        None
-                    };
+                let infohash_c: Option<Hash> = if refmove.game_move.validation_info_hash.is_some() {
+                    let vi = ValidationInfo::new_state_update(
+                        encoder,
+                        refmove.validation_program.clone(),
+                        refmove.state.clone(),
+                    );
+                    Some(vi.hash().clone())
+                } else {
+                    None
+                };
 
                 (
                     move_atom,

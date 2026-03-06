@@ -571,7 +571,11 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 );
                 let (puzzle_hash, amt) =
                     if let Some((orig_coin_id, ph, amt)) = new_coin_string.to_parts() {
-                        game_assert_eq!(coin_id.to_coin_id(), orig_coin_id, "coin parent mismatch in their spend");
+                        game_assert_eq!(
+                            coin_id.to_coin_id(),
+                            orig_coin_id,
+                            "coin parent mismatch in their spend"
+                        );
                         (ph, amt)
                     } else {
                         return Err(Error::StrErr("bad coin explode".to_string()));
@@ -955,7 +959,11 @@ impl PotatoHandlerImpl for OnChainGameHandler {
             .restore_game_state(&game_id, pre_referee, pre_last_ph.clone())?;
 
         if let Some((_, ph, _)) = current_coin.to_parts() {
-            game_assert_eq!(old_ph, ph, "do_on_chain_move: pre-move puzzle hash mismatch");
+            game_assert_eq!(
+                old_ph,
+                ph,
+                "do_on_chain_move: pre-move puzzle hash mismatch"
+            );
         }
 
         self.pending_move = Some(PendingMoveSavedState {

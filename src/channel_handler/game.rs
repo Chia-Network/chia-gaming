@@ -69,7 +69,9 @@ impl GameStart {
         let initial_move = atom_from_clvm(allocator, template_list[8]).unwrap_or_default();
         let initial_max_move_size = atom_from_clvm(allocator, template_list[9])
             .and_then(|a| usize_from_atom(&a))
-            .ok_or_else(|| Error::StrErr("initial_max_move_size is not a valid atom".to_string()))?;
+            .ok_or_else(|| {
+                Error::StrErr("initial_max_move_size is not a valid atom".to_string())
+            })?;
         let initial_mover_share = atom_from_clvm(allocator, template_list[10])
             .and_then(|a| u64_from_atom(&a))
             .ok_or_else(|| Error::StrErr("initial_mover_share is not a valid atom".to_string()))?;

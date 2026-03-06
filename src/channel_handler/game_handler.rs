@@ -78,11 +78,7 @@ pub struct TheirTurnInputs<'a> {
     pub new_move: GameMoveDetails,
 }
 
-fn run_code(
-    allocator: &mut AllocEncoder,
-    code: NodePtr,
-    env: NodePtr,
-) -> Result<NodePtr, Error> {
+fn run_code(allocator: &mut AllocEncoder, code: NodePtr, env: NodePtr) -> Result<NodePtr, Error> {
     run_program(allocator.allocator(), &chia_dialect(), code, env, 0)
         .into_gen()
         .map(|r| r.1)
@@ -314,11 +310,7 @@ impl GameHandler {
 
         let handler_node = self.get_their_turn_handler(allocator)?;
 
-        let run_result_e = run_code(
-            allocator,
-            handler_node,
-            handler_args,
-        );
+        let run_result_e = run_code(allocator, handler_node, handler_args);
 
         if let Err(Error::ClvmErr(e)) = &run_result_e {
             let failing_hex = Node(e.node_ptr()).to_hex(allocator)?;
@@ -396,8 +388,7 @@ impl GameHandler {
 
         let decode_slash_evidence = |allocator: &mut AllocEncoder| {
             let mut lst = Vec::new();
-            let lst_nodeptr = proper_list(allocator.allocator(), pl[1], true)
-                .unwrap_or_default();
+            let lst_nodeptr = proper_list(allocator.allocator(), pl[1], true).unwrap_or_default();
 
             for v in lst_nodeptr.into_iter() {
                 lst.push(Evidence::from_nodeptr(allocator, v)?);

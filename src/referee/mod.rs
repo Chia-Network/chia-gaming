@@ -70,11 +70,8 @@ pub(crate) fn referee_initial_setup(
     });
 
     let ip = game_start_info.initial_validation_program.clone();
-    let vi_hash = ValidationInfo::new_state_update(
-        allocator,
-        ip.clone(),
-        game_start_info.initial_state.p(),
-    );
+    let vi_hash =
+        ValidationInfo::new_state_update(allocator, ip.clone(), game_start_info.initial_state.p());
     let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
         &fixed,
         &GameMoveDetails {

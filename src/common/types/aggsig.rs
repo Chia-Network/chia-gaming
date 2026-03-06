@@ -30,8 +30,7 @@ impl<'de> Deserialize<'de> for Aggsig {
     {
         let st = String::deserialize(deserializer)?;
         let slice = hex::decode(&st).map_err(serde::de::Error::custom)?;
-        Aggsig::from_slice(&slice)
-            .map_err(|e| serde::de::Error::custom(format!("{e:?}")))
+        Aggsig::from_slice(&slice).map_err(|e| serde::de::Error::custom(format!("{e:?}")))
     }
 }
 

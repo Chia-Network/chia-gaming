@@ -130,7 +130,6 @@ impl MessagePeerQueue for SimulatedPeer<SimulatedWalletSpend> {
     }
 }
 
-
 #[derive(Default)]
 pub struct IdleResult {
     pub continue_on: bool,
@@ -605,7 +604,11 @@ impl SynchronousGameCradle {
         let channel_coin = ch.state_channel_coin();
         let channel_coin_amt = if let Some((ch_parent, ph, amt)) = channel_coin.to_parts() {
             game_assert_eq!(ph, channel_puzzle_hash, "channel coin puzzle hash mismatch");
-            game_assert_eq!(ch_parent, parent.to_coin_id(), "channel coin parent mismatch");
+            game_assert_eq!(
+                ch_parent,
+                parent.to_coin_id(),
+                "channel coin parent mismatch"
+            );
             amt
         } else {
             return Err(Error::StrErr("no channel coin".to_string()));
@@ -673,7 +676,10 @@ impl SynchronousGameCradle {
             let quoted_empty_hash = quoted_empty_conditions.sha256tree(env.allocator);
 
             let mut spends = unfunded_offer.clone();
-            game_assert!(!spends.spends.is_empty(), "respond_to_unfunded_offer: empty spend bundle");
+            game_assert!(
+                !spends.spends.is_empty(),
+                "respond_to_unfunded_offer: empty spend bundle"
+            );
             let signature = sign_agg_sig_me(
                 &self.state.identity.synthetic_private_key,
                 quoted_empty_hash.bytes(),
@@ -688,7 +694,11 @@ impl SynchronousGameCradle {
                     signature,
                 },
             });
-            game_assert_eq!(spends.spends.len(), 2, "respond_to_unfunded_offer: expected 2 spends");
+            game_assert_eq!(
+                spends.spends.len(),
+                2,
+                "respond_to_unfunded_offer: expected 2 spends"
+            );
 
             self.state.outbound_transactions.push_back(spends);
 
