@@ -6,17 +6,10 @@ cd "$REPO_ROOT"
 
 CACHE_FILE=".build-chialisp.cache"
 
-# Collect .clsp files listed in chialisp.toml (the ones that produce .hex output)
-clsp_files() {
-    grep '\.clsp"' chialisp.toml | sed 's/.*= *"//;s/"//'
-}
-
-# Build current timestamps for comparison
+# Track all chialisp source files (entry points + imports + includes)
 current_stamps() {
-    clsp_files | while read -r f; do
-        if [ -f "$f" ]; then
-            echo "$f $(stat -f '%m' "$f" 2>/dev/null || stat -c '%Y' "$f" 2>/dev/null)"
-        fi
+    find clsp -name '*.clsp' -o -name '*.clinc' | while read -r f; do
+        echo "$f $(stat -f '%m' "$f" 2>/dev/null || stat -c '%Y' "$f" 2>/dev/null)"
     done | sort
 }
 
