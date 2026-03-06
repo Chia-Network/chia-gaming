@@ -9,9 +9,7 @@ cargo build --features sim-tests
 echo "Build took: ${SECONDS} seconds"
 
 echo "=== Building chialisp ==="
-cp build.rs.disabled build.rs
-cargo build
-echo "Build took: ${SECONDS} seconds"
+./tools/build-chialisp.sh
 
 if [ "$1" = "-o" ] && [ -n "$2" ]; then
     export SIM_TEST_ONLY="$2"
