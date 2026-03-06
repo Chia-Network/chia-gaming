@@ -941,8 +941,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
             );
             self.player_ch
                 .restore_game_state(&game_id, pre_referee, pre_last_ph)?;
-            self.game_map
-                .retain(|_, def| def.game_id != game_id);
+            self.game_map.retain(|_, def| def.game_id != game_id);
             return Ok(Some(Effect::from(GameNotification::WeTimedOut {
                 id: game_id,
                 our_reward: Amount::default(),

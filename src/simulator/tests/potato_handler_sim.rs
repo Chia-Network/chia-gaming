@@ -4783,8 +4783,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // WaitBlocks lets the handshake and game setup complete before we
         // nerf.  NerfMessages then drops Alice's potato so Bob never sees
         // the move.
-        sim_setup.game_actions.insert(0, GameAction::WaitBlocks(5, 0));
-        sim_setup.game_actions.insert(1, GameAction::NerfMessages(0));
+        sim_setup
+            .game_actions
+            .insert(0, GameAction::WaitBlocks(5, 0));
+        sim_setup
+            .game_actions
+            .insert(1, GameAction::NerfMessages(0));
         sim_setup.game_actions.push(GameAction::GoOnChain(0));
         sim_setup.game_actions.push(GameAction::WaitBlocks(120, 1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
@@ -4827,10 +4831,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // never reaches Bob).  Go on-chain.  The coin matches via
         // pending_accept_timeouts with accepted=true.  Alice's share is 0
         // so she should get immediate WeTimedOut(0).
-        let moves = [
-            DebugGameTestMove::new(0, 0),
-            DebugGameTestMove::new(0, 0),
-        ];
+        let moves = [DebugGameTestMove::new(0, 0), DebugGameTestMove::new(0, 0)];
         let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
         sim_setup.game_actions.push(GameAction::NerfMessages(0));

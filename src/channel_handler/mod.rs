@@ -1016,7 +1016,11 @@ impl ChannelHandler {
         if let Some(g) = self.live_games.iter().find(|g| g.game_id == *game_id) {
             return g.get_our_current_share();
         }
-        if let Some(g) = self.pending_accept_timeouts.iter().find(|g| g.game_id == *game_id) {
+        if let Some(g) = self
+            .pending_accept_timeouts
+            .iter()
+            .find(|g| g.game_id == *game_id)
+        {
             return g.get_our_current_share();
         }
         Err(Error::StrErr(format!(
@@ -1029,7 +1033,11 @@ impl ChannelHandler {
         if let Some(g) = self.live_games.iter().find(|g| g.game_id == *game_id) {
             return Ok(g.get_amount());
         }
-        if let Some(g) = self.pending_accept_timeouts.iter().find(|g| g.game_id == *game_id) {
+        if let Some(g) = self
+            .pending_accept_timeouts
+            .iter()
+            .find(|g| g.game_id == *game_id)
+        {
             return Ok(g.get_amount());
         }
         Err(Error::StrErr(format!(
