@@ -16,7 +16,6 @@ mod gaming_wasm {
 
     use wasm_bindgen::prelude::*;
 
-    use chia_gaming::channel_handler::types::ReadableMove;
     use chia_gaming::common::load_clvm::wasm_deposit_file;
     use chia_gaming::common::standard_coin::{puzzle_hash_for_pk, ChiaIdentity};
 
@@ -632,6 +631,7 @@ mod gaming_wasm {
 
     #[wasm_bindgen]
     #[deprecated(note = "Use the game_notification callback in idle() instead of polling state")]
+    #[allow(deprecated)]
     pub fn get_game_state_id(cid: i32) -> Result<Option<String>, JsValue> {
         with_game(cid, move |cradle: &mut JsCradle| {
             Ok(cradle.cradle.get_game_state_id(&mut cradle.allocator, &mut cradle.rng.0)?.map(|h| hex::encode(&h.bytes())))
@@ -640,6 +640,7 @@ mod gaming_wasm {
 
     #[wasm_bindgen]
     #[deprecated(note = "Duplicate of cradle_amount; balance should come from notifications")]
+    #[allow(deprecated)]
     pub fn get_amount(cid: i32) -> Result<JsValue, JsValue> {
         serde_wasm_bindgen::to_value(&with_game(cid, move |cradle: &mut JsCradle| {
             Ok(JsAmount {
@@ -853,6 +854,7 @@ mod gaming_wasm {
 
     #[wasm_bindgen]
     #[deprecated(note = "Share information should come from game notifications")]
+    #[allow(deprecated)]
     pub fn cradle_our_share(cid: i32) -> Result<JsValue, JsValue> {
         let amount = with_game(cid, move |cradle: &mut JsCradle| {
             Ok(cradle.cradle.get_our_current_share())
@@ -862,6 +864,7 @@ mod gaming_wasm {
 
     #[wasm_bindgen]
     #[deprecated(note = "Share information should come from game notifications")]
+    #[allow(deprecated)]
     pub fn cradle_their_share(cid: i32) -> Result<JsValue, JsValue> {
         let amount = with_game(cid, move |cradle: &mut JsCradle| {
             Ok(cradle.cradle.get_their_current_share())
