@@ -90,28 +90,28 @@ if ! curl -s -X POST http://localhost:5800/get_peak >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "=== Starting static file server (ports 3000, 3001) ==="
+echo "=== Starting static file server (ports 3002, 3003) ==="
 node "$SCRIPT_DIR/resources/local-server.js" "$SCRIPT_DIR" &
 PIDS+=($!)
 
-echo "=== Starting wc-stub (port 3002) ==="
+echo "=== Starting wc-stub (port 3004) ==="
 (cd "$WC_DIR" && node ./dist/index.js) &
 PIDS+=($!)
 
 echo "=== Starting lobby-service (port 5801) ==="
-(cd "$LOBBY_SERVICE_DIR" && node ./dist/index-rollup.cjs --self http://localhost:3001) &
+(cd "$LOBBY_SERVICE_DIR" && node ./dist/index-rollup.cjs --self http://localhost:3003) &
 PIDS+=($!)
 
 echo "=== Starting beacon ==="
-"$SCRIPT_DIR/resources/nginx/beacon.sh" http://localhost:3000 http://localhost:3001 &
+"$SCRIPT_DIR/resources/nginx/beacon.sh" http://localhost:3002 http://localhost:3003 &
 PIDS+=($!)
 
 echo ""
 echo "════════════════════════════════════════════════════════"
 echo "  All services running:"
-echo "    Game frontend:  http://localhost:3000"
-echo "    Lobby view:     http://localhost:3001"
-echo "    WC stub:        http://localhost:3002"
+echo "    Game frontend:  http://localhost:3002"
+echo "    Lobby view:     http://localhost:3003"
+echo "    WC stub:        http://localhost:3004"
 echo "    Simulator:      http://localhost:5800"
 echo ""
 echo "  Press Ctrl-C to stop all services."
