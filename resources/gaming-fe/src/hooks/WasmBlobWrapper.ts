@@ -1,4 +1,5 @@
 import { Subject, NextObserver } from 'rxjs';
+import { Program } from 'clvm-lib';
 
 import {
   PeerConnectionResult,
@@ -12,6 +13,11 @@ import {
 import {
   spend_bundle_to_clvm,
 } from '../util';
+
+function clvmToBytes(value: Program | null): Uint8Array {
+  if (value === null || value === undefined) return new Uint8Array([0x80]);
+  return value.serialize();
+}
 
 function combine_reports(old_report: WatchReport, new_report: WatchReport) {
   for (const item of new_report.created_watched) {
@@ -219,7 +225,9 @@ export class WasmBlobWrapper {
 
   proposeGame(params: any): string[] {
     if (!this.cradle) throw new Error('no cradle');
-    const result = this.cradle.propose_game(params);
+    const paramBytes = clvmToBytes(params.parameters);
+    const { parameters: _drop, ...wasmParams } = params;
+    const result = this.cradle.propose_game(wasmParams, paramBytes);
     this.processResult(result);
     return result?.ids || [];
   }
@@ -230,13 +238,14 @@ export class WasmBlobWrapper {
     this.processResult(result);
   }
 
-  makeMove(gameId: string, readable: string, entropy?: string): void {
+  makeMove(gameId: string, readable: Program | null, entropy?: string): void {
     if (!this.cradle) throw new Error('no cradle');
+    const bytes = clvmToBytes(readable);
     let result;
     if (entropy) {
-      result = this.cradle.make_move_entropy(gameId, readable, entropy);
+      result = this.cradle.make_move_entropy(gameId, bytes, entropy);
     } else {
-      result = this.cradle.make_move_entropy(gameId, readable, this.generateEntropy());
+      result = this.cradle.make_move_entropy(gameId, bytes, this.generateEntropy());
     }
     this.processResult(result);
   }

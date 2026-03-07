@@ -104,7 +104,8 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
             return;
           }
           this.setNewPeak(peak);
-        });
+        })
+        .catch(() => {});
     });
   }
 

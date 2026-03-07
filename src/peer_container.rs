@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-use std::rc::Rc;
 
 use clvm_traits::ToClvm;
 
@@ -188,7 +187,7 @@ pub trait GameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
         id: &GameID,
-        readable: Vec<u8>,
+        readable: ReadableMove,
         new_entropy: Hash,
     ) -> Result<(), Error>;
 
@@ -199,7 +198,7 @@ pub trait GameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
         id: &GameID,
-        readable: Vec<u8>,
+        readable: ReadableMove,
         new_entropy: Hash,
     ) -> Result<(), Error>;
 
@@ -590,18 +589,22 @@ impl SynchronousGameCradle {
         }
 
         // Channel setup steps (may produce more outbound).
-        let handshake_before = self.peer.handshake_done();
         if let Some(ph) = self.state.channel_puzzle_hash.take() {
-            self.create_partial_spend_for_channel_coin(allocator, rng, ph)?;
+            if !self.create_partial_spend_for_channel_coin(allocator, rng, ph.clone())? {
+                self.state.channel_puzzle_hash = Some(ph);
+            }
         }
         if let (false, Some(uo)) = (self.state.is_initiator, self.state.unfunded_offer.take()) {
-            self.respond_to_unfunded_offer(allocator, rng, uo)?;
+            if !self.respond_to_unfunded_offer(allocator, rng, uo.clone())? {
+                self.state.unfunded_offer = Some(uo);
+            }
         }
 
-        // If channel setup just completed the handshake, process any messages
-        // that were re-queued while in a transitional state (e.g. a proposal
-        // that arrived during PostStepF).
-        if !handshake_before && self.peer.handshake_done() {
+        // Process any messages that were re-queued in the PotatoHandler's
+        // internal queue during transitional states (e.g. a proposal that
+        // arrived during PostStepF, or was delivered after the handshake
+        // completed in a previous drain_all but before the next drain).
+        if self.peer.handshake_done() {
             while self.peer.has_pending_incoming() {
                 let recv_result = {
                     let mut env = ChannelHandlerEnv::new(allocator, rng)?;
@@ -999,13 +1002,11 @@ impl GameCradle for SynchronousGameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
         id: &GameID,
-        readable: Vec<u8>,
+        readable: ReadableMove,
         new_entropy: Hash,
     ) -> Result<(), Error> {
         let reported_effects = {
             let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-            let rehydrated_move = Rc::new(Program::from_bytes(&readable));
-            let readable = ReadableMove::from_program(rehydrated_move);
             self.peer.make_move(&mut env, id, &readable, new_entropy)?
         };
         self.process_effects(reported_effects, allocator)?;
@@ -1017,17 +1018,15 @@ impl GameCradle for SynchronousGameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
         id: &GameID,
-        readable: Vec<u8>,
+        readable: ReadableMove,
         new_entropy: Hash,
     ) -> Result<(), Error> {
         let reported_effects = {
             let mut env = ChannelHandlerEnv::new(allocator, rng)?;
             let mut effects = self.peer.accept_proposal(&mut env, id)?;
-            let rehydrated_move = Rc::new(Program::from_bytes(&readable));
-            let readable_move = ReadableMove::from_program(rehydrated_move);
             effects.extend(
                 self.peer
-                    .make_move(&mut env, id, &readable_move, new_entropy)?,
+                    .make_move(&mut env, id, &readable, new_entropy)?,
             );
             effects
         };

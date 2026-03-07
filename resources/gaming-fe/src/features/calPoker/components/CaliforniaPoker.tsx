@@ -118,12 +118,11 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   useEffect(() => {
     const haveOutcome = outcome ? outcome : rememberedOutcome;
     if (
-      outcome &&
-      moveNumber === 0 &&
+      haveOutcome &&
       gameState === GAME_STATES.AWAITING_SWAP
     ) {
-      console.log('outcome is', JSON.stringify(outcome));
-      swapCards(outcome);
+      console.log('outcome is', JSON.stringify(haveOutcome));
+      swapCards(haveOutcome);
     }
   }, [outcome, gameState, moveNumber, rememberedOutcome]);
 
@@ -166,13 +165,14 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const toggleCardSelection = (cardId: number) => {
     if (gameState !== GAME_STATES.SELECTING) return;
 
-    if (cardSelections.includes(cardId)) {
-      const newSelection = cardSelections.filter((id) => id !== cardId);
-      setCardSelections(newSelection);
-    } else if (cardSelections.length < 4) {
-      const newSelection = [...cardSelections, cardId];
-      setCardSelections(newSelection);
-    }
+    setCardSelections((prev: number[]) => {
+      if (prev.includes(cardId)) {
+        return prev.filter((id) => id !== cardId);
+      } else if (prev.length < 4) {
+        return [...prev, cardId];
+      }
+      return prev;
+    });
   };
 
   const isDisabled =
@@ -208,13 +208,11 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   }
 
   const doHandleMakeMove = () => {
-    const moveData = '80';
-
     if (gameState === GAME_STATES.SELECTING && cardSelections.length > 0) {
       setGameState(GAME_STATES.AWAITING_SWAP);
     }
 
-    handleMakeMove(moveData);
+    handleMakeMove();
   };
 
   //

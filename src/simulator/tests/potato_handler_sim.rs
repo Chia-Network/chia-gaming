@@ -1223,15 +1223,13 @@ fn run_game_container_with_action_list_with_success_predicate(
                         );
                         let is_my_move = cradles[*who].my_move_in_game(&game_ids[0]);
                         if matches!(is_my_move, Some(true)) {
-                            let readable_program = readable.to_program();
-                            let encoded_readable_move = readable_program.bytes();
                             let entropy = rng.gen();
                             let t_mv = std::time::Instant::now();
                             cradles[*who].make_move(
                                 allocator,
                                 rng,
                                 &game_ids[0],
-                                encoded_readable_move.to_vec(),
+                                readable.clone(),
                                 entropy,
                             )?;
                             if timing_enabled {
@@ -1332,14 +1330,12 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 *mwho, *who,
                                 "GoOnChainThenMove({who}) followed by Move({mwho},...) — player mismatch"
                             );
-                            let readable_program = readable.to_program();
-                            let encoded = readable_program.bytes();
                             let entropy = rng.gen();
                             cradles[*who].make_move(
                                 allocator,
                                 rng,
                                 &game_ids[0],
-                                encoded.to_vec(),
+                                readable.clone(),
                                 entropy,
                             )?;
                             move_number += 1;
@@ -1354,18 +1350,13 @@ fn run_game_container_with_action_list_with_success_predicate(
                             !game_ids.is_empty(),
                             "FakeMove({who}) at move_number={move_number} but game_ids is empty"
                         );
-                        // This is a fake move.  We give that move to the given target channel
-                        // handler as a their move.
                         debug!("make move");
-                        let readable_program = readable.to_program();
-                        let encoded_readable_move = readable_program.bytes();
                         let entropy = rng.gen();
-                        // Do like we're sending a real message.
                         cradles[*who].make_move(
                             allocator,
                             rng,
                             &game_ids[0],
-                            encoded_readable_move.to_vec(),
+                            readable.clone(),
                             entropy,
                         )?;
 

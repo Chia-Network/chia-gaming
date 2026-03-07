@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { Program } from 'clvm-lib';
 import {
   storeInitArgs,
 } from './WasmStateInit';
@@ -11,11 +12,6 @@ import {
   handValueToDescription,
   WasmEvent,
 } from '../types/ChiaGaming';
-import {
-  decode_sexp_hex,
-  proper_list,
-  encode_clvm_list_of_bytes,
-} from '../util';
 import { ChildFrameBlockchainInterface } from './ChildFrameBlockchainInterface';
 import {
   getBlobSingleton,
@@ -23,10 +19,6 @@ import {
   setInitStarted,
 } from './blobSingleton';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
-
-function bytesToHex(bytes: number[]): string {
-  return bytes.map(b => b.toString(16).padStart(2, '0')).join('');
-}
 
 const TERMINAL_TYPES = [
   'WeTimedOut', 'OpponentTimedOut', 'WeSlashedOpponent',
@@ -38,15 +30,9 @@ function isTerminal(n: any): boolean {
   return TERMINAL_TYPES.some(t => t in n);
 }
 
-function parseCards(readable: any, iStarted: boolean): { playerHand: number[], opponentHand: number[] } {
-  const card_lists = proper_list(readable).map((l: any) =>
-    proper_list(l).map((v: Uint8Array) => {
-      if (v.length > 0) {
-        return v[0];
-      }
-      return 0;
-    }),
-  );
+function parseCards(readableBytes: number[], iStarted: boolean): { playerHand: number[], opponentHand: number[] } {
+  const program = Program.deserialize(Uint8Array.from(readableBytes));
+  const card_lists = program.toList().map(l => l.toList().map(v => v.toInt()));
   if (iStarted) {
     return { playerHand: card_lists[1], opponentHand: card_lists[0] };
   } else {
@@ -75,12 +61,12 @@ export interface UseWasmBlobResult {
   isPlayerTurn: boolean;
   iStarted: boolean;
   moveNumber: number;
-  handleMakeMove: (hex: string) => void;
+  handleMakeMove: () => void;
   playerHand: number[];
   opponentHand: number[];
   playerNumber: number;
   cardSelections: number[];
-  setCardSelections: (s: number[]) => void;
+  setCardSelections: (s: number[] | ((prev: number[]) => number[])) => void;
   outcome: CalpokerOutcome | undefined;
   lastOutcome: CalpokerOutcome | undefined;
   stopPlaying: () => void;
@@ -163,7 +149,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
         amount: perGameAmount,
         my_contribution: perGameAmount / 2,
         my_turn: !iStarted,
-        parameters: '80',
+        parameters: null,
       });
       console.log('[calpoker] proposed game, ids:', ids);
       setGameIds(prev => [...prev, ...ids]);
@@ -227,63 +213,59 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
       moveNumberRef.current = 0;
       setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
     } else if ('OpponentMoved' in n) {
-      const hexStr = bytesToHex(n.OpponentMoved.readable);
-      const decoded = decode_sexp_hex(hexStr);
       const currentMove = moveNumberRef.current;
 
       setMyTurn(true);
 
-      if (currentMove === 1) {
-        const cards = parseCards(decoded, iStarted);
+      if (currentMove === 1 && !iStarted) {
+        try {
+          const cards = parseCards(n.OpponentMoved.readable, iStarted);
+          console.log('[calpoker] OpponentMoved cards (joiner):', cards);
+          setPlayerHand(cards.playerHand);
+          setOpponentHand(cards.opponentHand);
+          playerHandRef.current = cards.playerHand;
+          opponentHandRef.current = cards.opponentHand;
+        } catch (e) {
+          console.error('[calpoker] parseCards from OpponentMoved failed:', e);
+        }
+      } else if (currentMove >= 2) {
+        const myDiscardsBitfield = selectedCardsToBitfield(
+          cardSelectionsRef.current,
+          playerHandRef.current,
+        );
+        const newOutcome = new CalpokerOutcome(
+          iStarted,
+          myDiscardsBitfield,
+          iStarted ? opponentHandRef.current : playerHandRef.current,
+          iStarted ? playerHandRef.current : opponentHandRef.current,
+          n.OpponentMoved.readable,
+        );
+        recognizeOutcome(newOutcome);
+        if (!iStarted && currentMove === 2) {
+          try {
+            go?.makeMove(gameIdsRef.current[0], null);
+          } catch (e) {
+            console.error('makeMove failed:', e);
+          }
+        } else {
+          try {
+            go?.acceptTimeout(gameIdsRef.current[0]);
+          } catch (e) {
+            console.error('acceptTimeout failed:', e);
+          }
+        }
+      }
+    } else if ('GameMessage' in n) {
+      try {
+        const cards = parseCards(n.GameMessage.readable, iStarted);
+        console.log('[calpoker] GameMessage cards:', cards);
         setPlayerHand(cards.playerHand);
         setOpponentHand(cards.opponentHand);
         playerHandRef.current = cards.playerHand;
         opponentHandRef.current = cards.opponentHand;
-      } else if (!iStarted && currentMove === 2) {
-        const myDiscardsBitfield = selectedCardsToBitfield(
-          cardSelectionsRef.current,
-          playerHandRef.current,
-        );
-        const newOutcome = new CalpokerOutcome(
-          iStarted,
-          myDiscardsBitfield,
-          iStarted ? opponentHandRef.current : playerHandRef.current,
-          iStarted ? playerHandRef.current : opponentHandRef.current,
-          decoded,
-        );
-        recognizeOutcome(newOutcome);
-        try {
-          go?.makeMove(gameIdsRef.current[0], '80');
-        } catch (e) {
-          console.error('makeMove failed:', e);
-        }
-      } else if (currentMove > 1) {
-        const myDiscardsBitfield = selectedCardsToBitfield(
-          cardSelectionsRef.current,
-          playerHandRef.current,
-        );
-        const newOutcome = new CalpokerOutcome(
-          iStarted,
-          myDiscardsBitfield,
-          iStarted ? opponentHandRef.current : playerHandRef.current,
-          iStarted ? playerHandRef.current : opponentHandRef.current,
-          decoded,
-        );
-        recognizeOutcome(newOutcome);
-        try {
-          go?.acceptTimeout(gameIdsRef.current[0]);
-        } catch (e) {
-          console.error('acceptTimeout failed:', e);
-        }
+      } catch (e) {
+        console.error('[calpoker] parseCards failed:', e, 'readable:', n.GameMessage.readable);
       }
-    } else if ('GameMessage' in n) {
-      const hexStr = bytesToHex(n.GameMessage.readable);
-      const decoded = decode_sexp_hex(hexStr);
-      const cards = parseCards(decoded, iStarted);
-      setPlayerHand(cards.playerHand);
-      setOpponentHand(cards.opponentHand);
-      playerHandRef.current = cards.playerHand;
-      opponentHandRef.current = cards.opponentHand;
     } else if ('CleanShutdownComplete' in n) {
       setGameConnectionState({ stateIdentifier: 'clean_shutdown', stateDetail: [] });
     } else if ('ChannelCreated' in n) {
@@ -364,7 +346,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     };
   }, [gameObject]);
 
-  const handleMakeMove = useCallback((_move: any) => {
+  const handleMakeMove = useCallback(() => {
     const go = gameObjectRef.current;
     if (!go || !go.isChannelReady()) return;
     const currentGameId = gameIdsRef.current[0];
@@ -373,21 +355,21 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     const currentMove = moveNumberRef.current;
 
     if (currentMove === 0) {
-      go.makeMove(currentGameId, '80');
+      go.makeMove(currentGameId, null);
       const newMoveNum = currentMove + 1;
       setMoveNumber(newMoveNum);
       moveNumberRef.current = newMoveNum;
       setMyTurn(false);
     } else if (currentMove === 1) {
       if (cardSelectionsRef.current.length !== 4) return;
-      const encoded = encode_clvm_list_of_bytes(cardSelectionsRef.current);
-      go.makeMove(currentGameId, encoded);
+      const cards = cardSelectionsRef.current;
+      go.makeMove(currentGameId, Program.fromList(cards.map(c => Program.fromInt(c))));
       const newMoveNum = currentMove + 1;
       setMoveNumber(newMoveNum);
       moveNumberRef.current = newMoveNum;
       setMyTurn(false);
     } else if (currentMove === 2) {
-      go.makeMove(currentGameId, '80');
+      go.makeMove(currentGameId, null);
       const newMoveNum = currentMove + 1;
       setMoveNumber(newMoveNum);
       moveNumberRef.current = newMoveNum;
@@ -395,9 +377,17 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     }
   }, []);
 
-  const setCardSelections = useCallback((selections: number[]) => {
-    setOurCardSelections(selections);
-    cardSelectionsRef.current = selections;
+  const setCardSelections = useCallback((selectionsOrFn: number[] | ((prev: number[]) => number[])) => {
+    if (typeof selectionsOrFn === 'function') {
+      setOurCardSelections(prev => {
+        const next = selectionsOrFn(prev);
+        cardSelectionsRef.current = next;
+        return next;
+      });
+    } else {
+      setOurCardSelections(selectionsOrFn);
+      cardSelectionsRef.current = selectionsOrFn;
+    }
   }, []);
 
   const stopPlaying = useCallback(() => {

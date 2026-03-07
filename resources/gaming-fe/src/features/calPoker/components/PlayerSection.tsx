@@ -9,9 +9,9 @@ interface PlayerSectionProps {
   playerHand: number[];
   isPlayerTurn: boolean;
   moveNumber: number;
-  handleMakeMove: (move: any) => void;
+  handleMakeMove: () => void;
   cardSelections: number[];
-  setCardSelections: (mask: number[]) => void;
+  setCardSelections: (mask: number[] | ((prev: number[]) => number[])) => void;
 }
 
 const PlayerSection = ({
@@ -24,8 +24,7 @@ const PlayerSection = ({
   setCardSelections,
 }: PlayerSectionProps) => {
   const doHandleMakeMove = () => {
-    const moveData = '80';
-    handleMakeMove(moveData);
+    handleMakeMove();
   };
   const setSelection = (cardId: number, selected: boolean) => {
     let selections = cardSelections;

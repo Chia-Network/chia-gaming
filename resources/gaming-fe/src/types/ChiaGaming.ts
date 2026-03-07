@@ -1,6 +1,5 @@
 import { Subject, Subscription } from 'rxjs';
-
-import { proper_list } from '../util';
+import { Program } from 'clvm-lib';
 
 export interface Amount {
   amt: number;
@@ -107,17 +106,17 @@ export interface WasmConnection {
   convert_chia_public_key_to_puzzle_hash: (public_key: string) => string;
 
   // Game
-  propose_game: (cid: number, game: any) => any;
+  propose_game: (cid: number, game: any, parameters: Uint8Array) => any;
   accept_proposal: (cid: number, game_id: string) => any;
   cancel_proposal: (cid: number, game_id: string) => any;
   make_move_entropy: (
     cid: number,
     id: string,
-    readable: string,
+    readable: Uint8Array,
     new_entropy: string,
   ) => any;
-  make_move: (cid: number, id: string, readable: string) => any;
-  accept: (cid: number, id: string) => any;
+  make_move: (cid: number, id: string, readable: Uint8Array) => any;
+  accept_timeout: (cid: number, id: string) => any;
   shut_down: (cid: number) => any;
   deliver_message: (cid: number, inbound_message: string) => any;
   cradle_amount: (cid: number) => any;
@@ -155,8 +154,8 @@ export class ChiaGame {
     this.cradle = cradleId;
   }
 
-  propose_game(game: any): any {
-    return this.wasm.propose_game(this.cradle, game);
+  propose_game(game: any, parameters: Uint8Array): any {
+    return this.wasm.propose_game(this.cradle, game, parameters);
   }
 
   accept_proposal(game_id: string): any {
@@ -188,14 +187,14 @@ export class ChiaGame {
   }
 
   accept(id: string): any {
-    return this.wasm.accept(this.cradle, id);
+    return this.wasm.accept_timeout(this.cradle, id);
   }
 
   shut_down(): any {
     return this.wasm.shut_down(this.cradle);
   }
 
-  make_move_entropy(id: string, readable: string, new_entropy: string): any {
+  make_move_entropy(id: string, readable: Uint8Array, new_entropy: string): any {
     return this.wasm.make_move_entropy(this.cradle, id, readable, new_entropy);
   }
 
@@ -425,25 +424,25 @@ export class CalpokerOutcome {
     myDiscards: number,
     alice_cards: number[],
     bob_cards: number[],
-    readable: any,
+    readableBytes: number[],
   ) {
-    const result_list = proper_list(readable);
-    console.warn('result_list', result_list);
+    const program = Program.deserialize(Uint8Array.from(readableBytes));
+    const result_list = program.toList();
     this.alice_cards = alice_cards;
     this.bob_cards = bob_cards;
 
-    this.alice_selects = result_list[1];
-    this.bob_selects = result_list[2];
-    this.alice_hand_value = proper_list(result_list[3]);
-    this.bob_hand_value = proper_list(result_list[4]);
-    let raw_win_direction = result_list[5][0] === 255 ? -1 : result_list[5][0];
+    this.alice_selects = result_list[1].toInt();
+    this.bob_selects = result_list[2].toInt();
+    this.alice_hand_value = result_list[3].toList().map(v => v.toInt());
+    this.bob_hand_value = result_list[4].toList().map(v => v.toInt());
+    let raw_win_direction = result_list[5].toInt();
     if (iStarted) {
       raw_win_direction *= -1;
-      this.alice_discards = result_list[0];
+      this.alice_discards = result_list[0].toInt();
       this.bob_discards = myDiscards;
     } else {
       this.alice_discards = myDiscards;
-      this.bob_discards = result_list[0];
+      this.bob_discards = result_list[0].toInt();
     }
 
     this.win_direction = raw_win_direction;

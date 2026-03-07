@@ -98,7 +98,8 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
               `${room.target}&uniqueId=${uniqueId}&iStarted=${iStarted}&walletToken=${walletToken}` as string;
             console.warn(`from tryJoinRoom, navigate ${newUrl}`);
             window.location.href = newUrl;
-          });
+          })
+          .catch((e) => console.error('join-room failed:', e));
         break;
       }
     }

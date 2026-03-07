@@ -24,6 +24,7 @@ mod gaming_wasm {
         CoinsetSpendRecord, CoinsetCoin, CoinString, GameID, GameType, Hash, IntoErr, PrivateKey, Program, PublicKey,
         PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout, convert_coinset_org_spend_to_spend, map_m
     };
+    use chia_gaming::channel_handler::types::ReadableMove;
     use chia_gaming::peer_container::{
         DrainResult, GameCradle, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
     };
@@ -490,8 +491,6 @@ mod gaming_wasm {
         amount: u64,
         my_contribution: u64,
         my_turn: bool,
-        // Hex
-        parameters: String,
     }
 
     fn game_id_to_string(id: &GameID) -> String {
@@ -503,8 +502,9 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn propose_game(cid: i32, game: JsValue) -> Result<JsValue, JsValue> {
+    pub fn propose_game(cid: i32, game: JsValue, parameters: &[u8]) -> Result<JsValue, JsValue> {
         let js_game_start = serde_wasm_bindgen::from_value::<JsGameStart>(game.clone()).into_js()?;
+        let parameters_program = Program::from_bytes(parameters);
         with_game(cid, move |cradle: &mut JsCradle| {
             let game_start = GameStart {
                 game_id: cradle.cradle.next_game_id()?,
@@ -513,7 +513,7 @@ mod gaming_wasm {
                 amount: Amount::new(js_game_start.amount),
                 my_contribution: Amount::new(js_game_start.my_contribution),
                 my_turn: js_game_start.my_turn,
-                parameters: Program::from_bytes(&hex::decode(&js_game_start.parameters).into_gen()?),
+                parameters: parameters_program,
             };
             let ids = cradle.cradle.propose_game(
                 &mut cradle.allocator,
@@ -574,11 +574,11 @@ mod gaming_wasm {
     pub fn make_move_inner(
         cid: i32,
         id: &str,
-        readable: &str,
+        readable: &[u8],
         entropy: Option<&str>,
     ) -> Result<JsValue, JsValue> {
         let game_id = string_to_game_id(id)?;
-        let readable_bytes = hex::decode(readable).into_js()?;
+        let readable_move = ReadableMove::from_program(std::rc::Rc::new(Program::from_bytes(readable)));
         let new_entropy = if let Some(e) = entropy {
             Some(Hash::from_slice(&hex::decode(e).into_js()?).into_js()?)
         } else {
@@ -590,7 +590,7 @@ mod gaming_wasm {
                 &mut cradle.allocator,
                 &mut cradle.rng.0,
                 &game_id,
-                readable_bytes,
+                readable_move,
                 entropy,
             )
         })
@@ -600,14 +600,14 @@ mod gaming_wasm {
     pub fn make_move_entropy(
         cid: i32,
         id: &str,
-        readable: &str,
+        readable: &[u8],
         new_entropy: &str,
     ) -> Result<JsValue, JsValue> {
         make_move_inner(cid, id, readable, Some(new_entropy))
     }
 
     #[wasm_bindgen]
-    pub fn make_move(cid: i32, id: &str, readable: &str) -> Result<JsValue, JsValue> {
+    pub fn make_move(cid: i32, id: &str, readable: &[u8]) -> Result<JsValue, JsValue> {
         make_move_inner(cid, id, readable, None)
     }
 
@@ -632,17 +632,17 @@ mod gaming_wasm {
     pub fn accept_proposal_and_move(
         cid: i32,
         id: &str,
-        readable: &str,
+        readable: &[u8],
     ) -> Result<JsValue, JsValue> {
         let game_id = string_to_game_id(id)?;
-        let readable_bytes = hex::decode(readable).into_js()?;
+        let readable_move = ReadableMove::from_program(std::rc::Rc::new(Program::from_bytes(readable)));
         with_game_drain(cid, move |cradle: &mut JsCradle| {
             let entropy: Hash = cradle.rng.0.gen();
             cradle.cradle.accept_proposal_and_move(
                 &mut cradle.allocator,
                 &mut cradle.rng.0,
                 &game_id,
-                readable_bytes,
+                readable_move,
                 entropy,
             )
         })

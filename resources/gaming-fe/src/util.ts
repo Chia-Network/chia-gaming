@@ -1,4 +1,3 @@
-import { Program } from 'clvm-lib';
 import { v4 as uuidv4 } from 'uuid';
 
 export function toUint8(s: string) {
@@ -116,11 +115,6 @@ function clvm_length(atom: string): string {
   }
 }
 
-export function encode_clvm_list_of_bytes(values: number[]): string {
-  const clvms = values.map((value) => clvm_length(toHexString([value])));
-  return clvm_enlist(clvms);
-}
-
 function spend_to_clvm(spend: any): string {
   const spend_clvm = clvm_enlist([
     spend.puzzle,
@@ -138,42 +132,11 @@ function coin_spend_to_clvm(coinspend: any): string {
   return coin_spend_clvm;
 }
 
-function explode(p: any): any {
-  if (p.value instanceof Uint8Array) {
-    return p.value;
-  } else {
-    return [explode(p.value[0]), explode(p.value[1])];
-  }
-}
-
-export function proper_list(p: any): any {
-  const result = [];
-  while (!(p instanceof Uint8Array)) {
-    result.push(p[0]);
-    p = p[1];
-  }
-  return result;
-}
-
-export function decode_sexp_hex(h: string): any {
-  const p = Program.deserialize(toUint8(h));
-  return explode(p);
-}
-
 export function spend_bundle_to_clvm(sbundle: any): string {
   const bundle_clvm = clvm_enlist(
     sbundle.spends.map((s: any) => coin_spend_to_clvm(s)),
   );
   return bundle_clvm;
-}
-
-export function popcount(n: number): number {
-  let r = 0;
-  for (let i = 0; i < 8; i++) {
-    r += n & 1;
-    n >>= 1;
-  }
-  return r;
 }
 
 export async function empty() {
