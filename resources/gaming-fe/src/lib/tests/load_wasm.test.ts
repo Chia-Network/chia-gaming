@@ -174,11 +174,8 @@ async function action_with_messages(
   let evt_results: Array<boolean> = [false, false];
   cradles.forEach((cradle, index) => {
     subscriptions.push(addActiveSubscription(cradle.getObservable().subscribe({
-      next: (evt) => {
-        if (
-          evt.setGameConnectionState &&
-          evt.setGameConnectionState.stateIdentifier === 'running'
-        ) {
+      next: (evt: any) => {
+        if (evt.type === 'handshake_done') {
           evt_results[index] = true;
         }
       },
@@ -217,15 +214,11 @@ async function initWasmBlobWrapper(
   await fetch(`${BLOCKCHAIN_SERVICE_URL}/register?name=${uniqueId}`, {
     method: 'POST',
   });
-  // let wbw = new WasmBlobWrapper(
   let gameObject = new WasmBlobWrapper(
     blockchain,
     uniqueId,
     amount,
-    amount / 10,
     iStarted,
-    doInternalLoadWasm,
-    fetchHex,
     peer_conn,
   );
 

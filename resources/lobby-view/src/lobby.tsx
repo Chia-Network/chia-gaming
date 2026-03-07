@@ -1,7 +1,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useLobbySocket } from 'chia-gaming-lobby-connection';
-import { getSearchParams, getFragmentParams, generateOrRetrieveAlias, updateAlias } from './util';
+import { getSearchParams, getFragmentParams, generateOrRetrieveAlias, generateOrRetrieveUniqueId, updateAlias } from './util';
 import ConnectedPlayers from './features/lobbyComponents/ConnectedPlayers';
 import CardDivider from './features/lobbyComponents/CardDivider';
 import Chat from './features/lobbyComponents/Chat';
@@ -14,7 +14,7 @@ const LobbyScreen = () => {
   const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());
   const params = getSearchParams();
   const fragment = getFragmentParams();
-  const uniqueId = params.uniqueId;
+  const uniqueId = params.uniqueId || generateOrRetrieveUniqueId();
   const {
     players,
     rooms,

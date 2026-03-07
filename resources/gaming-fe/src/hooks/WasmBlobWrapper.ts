@@ -4,18 +4,13 @@ import {
   PeerConnectionResult,
   WasmConnection,
   ChiaGame,
-  CalpokerOutcome,
   WatchReport,
   InternalBlockchainInterface,
-  GameInitParams,
   BlockchainInboundAddressResult,
+  WasmEvent,
 } from '../types/ChiaGaming';
 import {
   spend_bundle_to_clvm,
-  decode_sexp_hex,
-  proper_list,
-  encode_clvm_list_of_bytes,
-  empty,
 } from '../util';
 
 function combine_reports(old_report: WatchReport, new_report: WatchReport) {
@@ -30,27 +25,6 @@ function combine_reports(old_report: WatchReport, new_report: WatchReport) {
   }
 }
 
-const uiSettingSource: Record<string, "value" | "array"> = {
-  uniqueId: "value",
-  messageNumber: "value",
-  remoteNumber: "value",
-  handshakeDone: "value",
-  currentBlock: "value",
-  iStarted: "value",
-  gameIds: "array",
-  storedMessages: "array",
-  messageQueue: "array",
-  myTurn: "value",
-  moveNumber: "value",
-  cardSelections: "value",
-  playerHand: "value",
-  opponentHand: "value",
-  cleanShutdownCalled: "value",
-  finished: "value",
-  perGameAmount: "value",
-  gameOutcome: "value"
-};
-
 export class WasmBlobWrapper {
   amount: number;
   wc: WasmConnection | undefined;
@@ -60,79 +34,41 @@ export class WasmBlobWrapper {
   cradle: ChiaGame | undefined;
   uniqueId: string;
   handshakeDone: boolean;
-  handlingMessage: boolean;
-  currentBlock: number;
-  messageQueue: any[];
-  iStarted: boolean;
-  gameIds: string[];
   storedMessages: string[];
-  myTurn: boolean;
-  moveNumber: number;
-  qualifyingEvents: number;
-  cardSelections: number[];
-  playerHand: number[];
-  opponentHand: number[];
   cleanShutdownCalled: boolean;
   finished: boolean;
   reloading: boolean;
-  perGameAmount: number;
-  gameOutcome: CalpokerOutcome | undefined;
-  fetchHex: (path: string) => Promise<string>;
-  doInternalLoadWasm: () => Promise<ArrayBuffer>;
-  rxjsMessageSingleton: Subject<any>;
-  rxjsEmitter: NextObserver<any> | undefined;
+  qualifyingEvents: number;
+  iStarted: boolean;
   blockchain: InternalBlockchainInterface;
-  uiUpdates: any;
-  currentSave: string | undefined;
-  timeoutHandles: ReturnType<typeof setTimeout>[];
+  rxjsMessageSingleton: Subject<WasmEvent>;
+  rxjsEmitter: NextObserver<WasmEvent> | undefined;
 
   constructor(
     blockchain: InternalBlockchainInterface,
     uniqueId: string,
     amount: number,
-    perGameAmount: number,
     iStarted: boolean,
-    doInternalLoadWasm: () => Promise<ArrayBuffer>,
-    fetchHex: (key: string) => Promise<string>,
     peer_conn: PeerConnectionResult,
   ) {
     const { sendMessage } = peer_conn;
     this.uniqueId = uniqueId;
-
     this.messageNumber = 1;
     this.remoteNumber = 0;
     this.sendMessage = sendMessage;
     this.amount = amount;
-    this.currentBlock = 0;
-    this.handlingMessage = false;
     this.handshakeDone = false;
     this.iStarted = iStarted;
-    this.gameIds = [];
-    this.myTurn = false;
     this.storedMessages = [];
-    this.moveNumber = 0;
-    this.messageQueue = [];
-    this.cardSelections = [];
-    this.playerHand = [];
-    this.opponentHand = [];
     this.cleanShutdownCalled = false;
     this.finished = false;
     this.reloading = false;
-    this.perGameAmount = perGameAmount;
     this.qualifyingEvents = 0;
-    this.fetchHex = fetchHex;
-    this.doInternalLoadWasm = doInternalLoadWasm;
     this.blockchain = blockchain;
-    this.uiUpdates = {};
-    this.timeoutHandles = [];
-    this.rxjsMessageSingleton = new Subject<any>();
+    this.rxjsMessageSingleton = new Subject<WasmEvent>();
     this.rxjsEmitter = {
-      next: (settings: any) => {
-        Object.keys(settings).forEach((k) => {
-          this.uiUpdates[k] = settings[k];
-          delete this.uiUpdates['setSavedGame'];
-        });
-        this.rxjsMessageSingleton.next(settings);
+      next: (evt: WasmEvent) => {
+        this.rxjsMessageSingleton.next(evt);
       }
     };
   }
@@ -142,12 +78,7 @@ export class WasmBlobWrapper {
   cleanup() {
     this.finished = true;
     this.cleanShutdownCalled = true;
-    this.messageQueue = [];
     this.storedMessages = [];
-    this.gameIds = [];
-
-    this.timeoutHandles.forEach((handle) => clearTimeout(handle));
-    this.timeoutHandles = [];
     this.rxjsMessageSingleton.complete();
   }
 
@@ -155,11 +86,10 @@ export class WasmBlobWrapper {
 
   getWasmConnection(): WasmConnection | undefined { return this.wc; }
 
-  reportError(err: any) {
-    // TODO: Use this method to report all errors
-    this.rxjsEmitter?.next({
-      setError: err.toString()
-    });
+  isHandshakeDone(): boolean { return this.handshakeDone; }
+
+  getObservable() {
+    return this.rxjsMessageSingleton;
   }
 
   spillStoredMessages() {
@@ -181,21 +111,11 @@ export class WasmBlobWrapper {
   activateSpend(coin: string) {
     if (!this.wc) { throw new Error("this.wc is falsey") }
     this.cradle?.opening_coin(coin);
-
-    this.rxjsEmitter?.next({
-      setGameConnectionState: {
-        stateIdentifier: 'starting',
-        stateDetail: ['doing handshake'],
-      },
-    });
+    this.drainAll();
   }
 
   setBlockchainAddress(a: BlockchainInboundAddressResult) {
-    this.rxjsEmitter?.next({ setAddressData: a });
-  }
-
-  getObservable() {
-    return this.rxjsMessageSingleton;
+    this.rxjsEmitter?.next({ type: 'address', data: a });
   }
 
   kickSystem(flags: number) {
@@ -206,500 +126,76 @@ export class WasmBlobWrapper {
     }
   }
 
-  internalKickIdle(): any {
-    let idle_info;
-    do {
-      idle_info = this.idle();
-      if (!idle_info) {
-        return idle_info;
-      }
-      this.rxjsEmitter?.next(idle_info);
-    } while (!idle_info.stop);
-    return idle_info;
-  }
-
-  pushEvent(msg: any): any {
-    if (this.finished) {
-      return;
-    }
-    this.messageQueue.push(msg);
-    return this.kickMessageHandling();
-  }
-
-  handleOneMessage(msg: any): any {
-    //console.log('handleOneMessage', Object.keys(msg));
-
-    if (msg.deliverMessage) {
-      return this.internalDeliverMessage(msg.deliverMessage.msgno, msg.deliverMessage.msg);
-    } else if (msg.move) {
-      return this.internalMakeMove(msg.move);
-    } else if (msg.takeOpponentMove) {
-      const data = msg.takeOpponentMove;
-      return this.takeOpponentMove(
-        data.moveNumber,
-        data.game_id,
-        data.readable_move_hex,
-      );
-    } else if (msg.takeGameMessage) {
-      const data = msg.takeGameMessage;
-      return this.takeGameMessage(
-        data.moveNumber,
-        data.game_id,
-        data.readable_hex,
-      );
-    } else if (msg.setCardSelections !== undefined) {
-      return this.internalSetCardSelections(msg.setCardSelections);
-    } else if (msg.startGame) {
-      return this.internalStartGame();
-    } else if (msg.cleanShutdown) {
-      return this.internalCleanShutdown(msg.condition);
-    } else if (msg.receivedCleanShutdown) {
-      return this.internalReceivedCleanShutdown();
-    } else if (msg.takeBlockData) {
-      return this.internalTakeBlock(
-        msg.takeBlockData.peak,
-        msg.takeBlockData.block_report,
-      );
-    }
-
-    console.error('Unknown event:', msg);
-    return empty();
-  }
-
-  updateCards(readable: any, result: any) {
-    const card_lists = proper_list(readable).map((l: any) =>
-      proper_list(l).map((v: Uint8Array) => {
-        if (v.length > 0) {
-          return v[0];
-        }
-        return 0;
-      }),
-    );
-    if (this.iStarted) {
-      result.setPlayerHand = card_lists[1];
-      result.setOpponentHand = card_lists[0];
-      this.playerHand = card_lists[1];
-      this.opponentHand = card_lists[0];
-    } else {
-      result.setPlayerHand = card_lists[0];
-      result.setOpponentHand = card_lists[1];
-      this.playerHand = card_lists[0];
-      this.opponentHand = card_lists[1];
-    }
-  }
-
-  selectedCardsToBitfield(selectedCards: number[], hand: number[]): number {
-    let bitfield = 0;
-    hand.forEach((cardId, index) => {
-      if (selectedCards.includes(cardId)) {
-        bitfield |= 1 << index;
-      }
-    });
-    return bitfield;
-  }
-
-  finalOutcome(readable: any, result: any) {
-    const myDiscardsBitfield = this.selectedCardsToBitfield(
-      this.cardSelections,
-      this.playerHand,
-    );
-    this.gameOutcome = new CalpokerOutcome(
-      this.iStarted,
-      myDiscardsBitfield,
-      this.iStarted ? this.opponentHand : this.playerHand,
-      this.iStarted ? this.playerHand : this.opponentHand,
-      readable,
-    );
-    result.setOutcome = this.gameOutcome;
-  }
-
-  takeOpponentMove(
-    moveNumber: number,
-    game_id: string,
-    readable_move_hex: string,
-  ): any {
-    const result: any = {
-      setMyTurn: true,
-    };
-    const p = decode_sexp_hex(readable_move_hex);
-    if (moveNumber === 1) {
-      this.updateCards(p, result);
-    } else if (!this.iStarted && moveNumber === 2) {
-      console.warn('finalOutcome:', this.iStarted, moveNumber);
-      this.finalOutcome(p, result);
-      this.makeMove('80');
-    } else if (moveNumber > 1) {
-      console.warn('finalOutcome:', this.iStarted, moveNumber);
-      this.finalOutcome(p, result);
-      console.warn('accept game');
-      this.cradle?.accept(this.gameIds[0]);
-      this.gameIds.pop();
-    }
-
-    result.setMoveNumber = this.moveNumber;
-    return empty().then(() => result);
-  }
-
-  takeGameMessage(
-    moveNumber: number,
-    game_id: string,
-    readable_move_hex: string,
-  ): any {
-    const result = {};
-    const p = decode_sexp_hex(readable_move_hex);
-    this.updateCards(p, result);
-    return empty().then(() => result);
-  }
-
-  kickMessageHandling(): any {
-    if (this.messageQueue.length == 0 || this.handlingMessage) {
-      return empty();
-    }
-
-    const msg = this.messageQueue.shift();
-
-    this.handlingMessage = true;
-    return this.handleOneMessage(msg)
-      .then((result: any) => {
-        this.rxjsEmitter?.next(result);
-
-        this.internalKickIdle();
-
-        this.handlingMessage = false;
-
-        return this.kickMessageHandling();
-      })
-      .catch((e: any) => {
-        console.error(e);
-        this.handlingMessage = false;
-        throw e;
-      });
-  }
-
-  loadWasm(wasmConnection: WasmConnection): any {
-    if (this.wc !== undefined) { throw new Error("this.wc is undefined") }
+  loadWasm(wasmConnection: WasmConnection) {
+    if (this.wc !== undefined) { throw new Error("wc already set") }
     if (!wasmConnection) { throw new Error("wasmConnection is falsey") }
-
     this.wc = wasmConnection;
-    //this.loadWasmEvent = { loadWasmEvent: { chia_gaming_init, cg } };
     this.kickSystem(1);
-    return empty();
   }
+
+  private submitTransaction(tx: any) {
+    const blob = spend_bundle_to_clvm(tx);
+    const cvt = (blob: string) => {
+      return this.wc?.convert_spend_to_coinset_org(blob);
+    };
+    this.blockchain.spend(cvt, blob).then(() => {});
+  }
+
+  drainAll(): void {
+    if (!this.cradle || this.finished) return;
+
+    const notifications: any[] = [];
+    while (true) {
+      const result = this.cradle.idle({
+        notification: (json: string) => {
+          try {
+            notifications.push(JSON.parse(json));
+          } catch (e) {
+            console.warn('failed to parse notification', e);
+          }
+        }
+      });
+      if (!result) break;
+
+      for (const msg of result.outbound_messages) {
+        this.sendMessage(this.messageNumber++, msg);
+      }
+      for (const tx of result.outbound_transactions) {
+        this.submitTransaction(tx);
+      }
+
+      if (result.handshake_done && !this.handshakeDone) {
+        this.handshakeDone = true;
+        this.rxjsEmitter?.next({ type: 'handshake_done' });
+      }
+      if (result.finished && !this.finished) {
+        this.finished = true;
+        this.rxjsEmitter?.next({ type: 'finished' });
+      }
+      if (result.receive_error) {
+        this.rxjsEmitter?.next({ type: 'error', error: result.receive_error });
+      }
+      if (!result.continue_on) break;
+    }
+
+    for (const n of notifications) {
+      this.rxjsEmitter?.next({ type: 'notification', data: n });
+    }
+  }
+
+  // --- Inbound events ---
 
   deliverMessage(msgno: number, msg: string) {
-    this.pushEvent({ deliverMessage: { msg, msgno } });
-  }
-
-  internalDeliverMessage(msgno: number, msg: string): any {
     if (!this.wc || !this.cradle || this.qualifyingEvents != 15 || this.reloading) {
       this.storedMessages.push(msg);
-      return empty();
+      return;
     }
     if (this.remoteNumber >= msgno) {
-      return empty();
+      return;
     }
     this.remoteNumber = msgno;
-    this.cradle?.deliver_message(msg);
-    return empty();
-  }
-
-  internalStartGame(): any {
-    if (this.finished || this.cleanShutdownCalled) {
-      return empty();
-    }
-
-    let result: any = {};
-    let gids = this.cradle?.propose_game({
-      game_type: '63616c706f6b6572',
-      timeout: 100,
-      amount: this.perGameAmount,
-      my_contribution: this.perGameAmount / 2,
-      my_turn: !this.iStarted,
-      parameters: '80',
-    });
-    if (gids) {
-      gids.forEach((g) => {
-        this.gameIds.push(g);
-      });
-      result.setGameIds = this.gameIds;
-    }
-    result.setMyTurn = !this.iStarted;
-    return empty().then(() => result);
-  }
-
-  idle(): any {
-    const result: any = {};
-
-    this.reloading = false;
-    this.spillStoredMessages();
-
-    result.setOurShare = this.cradle?.our_share()?.amt;
-    result.setTheirShare = this.cradle?.their_share()?.amt;
-
-    // Create the save before we do any post-action items such as
-    // sending packets so we can send them again when we deserialize.
-    const newGameId = this.cradle?.get_game_state_id();
-    if (newGameId !== this.currentSave) {
-      this.currentSave = newGameId;
-      const saveData = this.cradle?.serialize();
-      saveData.id = newGameId;
-      const saveDataWrapper: any = {};
-      Object.keys(uiSettingSource).forEach((k) => {
-        if (uiSettingSource[k] === "array") {
-          saveDataWrapper[k] = [... (this as any)[k]];
-        } else {
-          saveDataWrapper[k] = (this as any)[k];
-        }
-      });
-      saveData.wrapper = saveDataWrapper;
-      saveData.ui = this.uiUpdates;
-      result.setSavedGame = saveData;
-    }
-
-    const idle = this.cradle?.idle({
-      // Local ui callbacks.
-      opponent_moved: (game_id, readable_move_hex) => {
-        console.error('got opponent move', game_id, readable_move_hex);
-        this.messageQueue.push({
-          takeOpponentMove: {
-            game_id,
-            readable_move_hex,
-            moveNumber: this.moveNumber,
-          },
-        });
-      },
-      game_message: (game_id, readable_hex) => {
-        console.error('got opponent msg', game_id, readable_hex);
-        this.messageQueue.push({
-          takeGameMessage: {
-            game_id,
-            readable_hex,
-            moveNumber: this.moveNumber,
-          },
-        });
-      },
-      game_notification: (notification_json) => {
-        try {
-          const notification = JSON.parse(notification_json);
-          const terminalTypes = [
-            'WeTimedOut', 'OpponentTimedOut', 'WeSlashedOpponent',
-            'OpponentSlashedUs', 'OpponentSuccessfullyCheated',
-            'GameCancelled', 'GameError', 'ChannelError',
-          ];
-          const isTerminal = terminalTypes.some(t => t in notification);
-          if (isTerminal) {
-            this.gameIds.pop();
-            this.myTurn = false;
-            this.cardSelections = [];
-            this.moveNumber = 0;
-            this.playerHand = [];
-            this.opponentHand = [];
-
-            result.setCardSelections = [];
-            result.setMoveNumber = 0;
-            result.setPlayerHand = [];
-            result.setOpponentHand = [];
-            result.setOutcome = undefined;
-            result.setLastOutcome = this.gameOutcome;
-            result.setGameConnectionState = {
-              stateIdentifier: 'running',
-              stateDetail: [],
-            };
-
-            result.setMyTurn = false;
-            const handle = setTimeout(() => {
-              this.pushEvent({ startGame: true });
-            }, 2000);
-            this.timeoutHandles.push(handle);
-          }
-        } catch (e) {
-          console.warn('failed to parse game_notification', e);
-        }
-      },
-    });
-
-    if (!idle || this.finished) {
-      return { stop: true };
-    }
-
-    if (idle.clean_shutdown_received && !this.cleanShutdownCalled) {
-      this.cleanShutdownCalled = true;
-    }
-
-    if (idle.finished && !this.finished) {
-      console.error('clean shutdown complete');
-      this.finished = true;
-      this.rxjsEmitter?.next({
-        setGameConnectionState: {
-          stateIdentifier: 'clean_shutdown',
-          stateDetail: [],
-        },
-        outcome: undefined,
-      });
-      this.messageQueue.push({ receivedCleanShutdown: true });
-      return result;
-    }
-
-    result.stop = !idle.continue_on;
-
-    if (result.setError) {
-      return result;
-    }
-
-    result.setError = idle.receive_error;
-    if (idle.handshake_done && !this.handshakeDone) {
-      this.handshakeDone = true;
-      result.setGameConnectionState = {
-        stateIdentifier: 'running',
-        stateDetail: [],
-      };
-      this.pushEvent({ startGame: true });
-    }
-
-    for (const message of idle.outbound_messages) {
-      this.sendMessage(this.messageNumber++, message);
-    }
-
-    for (const tx of idle.outbound_transactions) {
-      const blob = spend_bundle_to_clvm(tx);
-      const cvt = (blob: string) => {
-        return this.wc?.convert_spend_to_coinset_org(blob);
-      };
-      this.blockchain.spend(cvt, blob).then((_res) => {
-      });
-    }
-
-    this.rxjsEmitter?.next({
-      setOurShare: this.cradle?.our_share()?.amt,
-      setTheirShare: this.cradle?.their_share()?.amt
-    });
-
-    return result;
-  }
-
-  takeWrapperSerialization(wrapper: any) {
-    const keys = Object.keys(wrapper);
-    keys.forEach((k) => {
-      if (uiSettingSource[k]) {
-        (this as any)[k] = wrapper[k];
-      }
-    });
-  }
-
-  generateEntropy() {
-    const hexDigits = [];
-    for (let i = 0; i < 16; i++) {
-      hexDigits.push(Math.floor(Math.random() * 16)).toString(16);
-    }
-    const entropy = this.wc?.sha256bytes(hexDigits.join(''));
-    if (!entropy) {
-      throw 'tried to make entropy without a wasm connection';
-    }
-    return entropy;
-  }
-
-  isHandshakeDone(): boolean {
-    return this.handshakeDone;
-  }
-
-  internalMakeMove(_move: any): any {
-    if (!this.handshakeDone || !this.wc || !this.cradle) {
-      return empty();
-    }
-
-    if (this.moveNumber === 0) {
-      const entropy = this.generateEntropy();
-      this.cradle?.make_move_entropy(this.gameIds[0], '80', entropy);
-      this.moveNumber += 1;
-      return empty().then(() => {
-        return {
-          setMyTurn: false,
-          setMoveNumber: this.moveNumber,
-        };
-      });
-    } else if (this.moveNumber === 1) {
-      if (this.cardSelections.length != 4) {
-        return empty();
-      }
-      this.moveNumber += 1;
-      const entropy = this.generateEntropy();
-      const encoded = encode_clvm_list_of_bytes(this.cardSelections);
-      this.cradle?.make_move_entropy(this.gameIds[0], encoded, entropy);
-      return empty().then(() => {
-        return {
-          setMyTurn: false,
-          setMoveNumber: this.moveNumber,
-        };
-      });
-    } else if (this.moveNumber === 2) {
-      this.moveNumber += 1;
-      const entropy = this.generateEntropy();
-      this.cradle?.make_move_entropy(this.gameIds[0], '80', entropy);
-      return empty().then(() => {
-        return {
-          setMyTurn: false,
-          setMoveNumber: this.moveNumber,
-          setGameConnectionState: {
-            stateIdentifier: 'end',
-            stateDetail: [],
-          },
-        };
-      });
-    }
-
-    throw `Don't yet know what to do for move ${this.moveNumber}`;
-  }
-
-  makeMove(move: any) {
-    this.pushEvent({ move });
-  }
-
-  setCardSelections(mask: number[]) {
-    this.pushEvent({ setCardSelections: mask });
-  }
-
-  internalSetCardSelections(mask: number[]): any {
-    const result = { setCardSelections: mask };
-    this.cardSelections = mask;
-    return empty().then(() => result);
-  }
-
-  cleanShutdown(condition: string | undefined) {
-    this.pushEvent({ cleanShutdown: true, condition });
-  }
-
-  internalCleanShutdown(condition: string) {
-    const details: string[] = [];
-    if (condition) {
-      details.push(condition);
-    }
-    const result: any = {
-      setGameConnectionState: {
-        stateIdentifier: 'clean_shutdown',
-        stateDetail: details,
-      },
-      outcome: undefined,
-    };
-    this.cleanShutdownCalled = true;
-    this.cradle?.shut_down();
-    return empty().then(() => result);
-  }
-
-  internalTakeBlock(peak: number, block_report: WatchReport): any {
-    this.cradle?.block_data(peak, block_report);
-    return empty();
-  }
-
-  internalReceivedCleanShutdown() {
-    const result: any = {};
-    console.warn('internalReceivedCleanShutdown', this.finished);
-    console.warn('setting clean_shutdown state in ui');
-    result.setGameConnectionState = {
-      stateIdentifier: 'clean_shutdown',
-      stateDetail: [],
-    };
-    result.outcome = undefined;
-    return empty().then(() => result);
+    this.cradle.deliver_message(msg);
+    this.drainAll();
   }
 
   blockNotification(peak: number, blocks: any[], block_report: any) {
@@ -724,11 +220,57 @@ export class WasmBlobWrapper {
       }
     }
     this.kickSystem(4);
-    this.pushEvent({
-      takeBlockData: {
-        peak: peak,
-        block_report: block_report,
-      },
-    });
+    this.cradle?.block_data(peak, block_report);
+    this.drainAll();
+  }
+
+  // --- Game actions (called by higher layer) ---
+
+  proposeGame(params: any): string[] {
+    if (!this.cradle) throw new Error('no cradle');
+    const ids = this.cradle.propose_game(params);
+    this.drainAll();
+    return ids;
+  }
+
+  acceptProposal(gameId: string): void {
+    if (!this.cradle) throw new Error('no cradle');
+    this.cradle.accept_proposal(gameId);
+    this.drainAll();
+  }
+
+  makeMove(gameId: string, readable: string, entropy?: string): void {
+    if (!this.cradle) throw new Error('no cradle');
+    if (entropy) {
+      this.cradle.make_move_entropy(gameId, readable, entropy);
+    } else {
+      this.cradle.make_move_entropy(gameId, readable, this.generateEntropy());
+    }
+    this.drainAll();
+  }
+
+  acceptTimeout(gameId: string): void {
+    if (!this.cradle) throw new Error('no cradle');
+    this.cradle.accept(gameId);
+    this.drainAll();
+  }
+
+  cleanShutdown(): void {
+    if (!this.cradle) return;
+    this.cleanShutdownCalled = true;
+    this.cradle.shut_down();
+    this.drainAll();
+  }
+
+  generateEntropy(): string {
+    const hexDigits = [];
+    for (let i = 0; i < 16; i++) {
+      hexDigits.push(Math.floor(Math.random() * 16).toString(16));
+    }
+    const entropy = this.wc?.sha256bytes(hexDigits.join(''));
+    if (!entropy) {
+      throw new Error('tried to make entropy without a wasm connection');
+    }
+    return entropy;
   }
 }

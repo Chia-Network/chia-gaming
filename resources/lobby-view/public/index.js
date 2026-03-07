@@ -25310,6 +25310,14 @@
     const search = window.location.search.substring(1);
     return getParamsFromString(search);
   }
+  function generateOrRetrieveUniqueId() {
+    let id = localStorage.getItem("uniqueId");
+    if (id)
+      return id;
+    id = v4_default();
+    localStorage.setItem("uniqueId", id);
+    return id;
+  }
   function updateAlias(alias) {
     localStorage.setItem("alias", alias);
   }
@@ -25936,7 +25944,7 @@
     const [myAlias, setMyAlias] = (0, import_react6.useState)(generateOrRetrieveAlias());
     const params = getSearchParams();
     const fragment = getFragmentParams();
-    const uniqueId = params.uniqueId;
+    const uniqueId = params.uniqueId || generateOrRetrieveUniqueId();
     const { players, rooms, messages, sendMessage, setLobbyAlias, generateRoom, joinRoom, lobbyGames } = useLobbySocket(window.location.origin, uniqueId, myAlias, true, params, fragment, (newUrl) => {
       console.warn(`from tryJoinRoom, navigate ${newUrl}`);
       window.location.href = newUrl;

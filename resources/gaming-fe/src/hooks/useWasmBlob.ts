@@ -1,11 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
-import { v4 as uuidv4 } from 'uuid';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  WasmStateInit,
-  doInternalLoadWasm,
-  fetchHex,
   storeInitArgs,
-  loadCalpoker,
 } from './WasmStateInit';
 import {
   GameConnectionState,
@@ -14,24 +9,60 @@ import {
   BlockchainReport,
   OutcomeLogLine,
   handValueToDescription,
-  RngId,
-  SaveData,
+  WasmEvent,
 } from '../types/ChiaGaming';
-import { getSearchParams, empty, getRandomInt, getEvenHexString } from '../util';
+import {
+  decode_sexp_hex,
+  proper_list,
+  encode_clvm_list_of_bytes,
+} from '../util';
 import { ChildFrameBlockchainInterface } from './ChildFrameBlockchainInterface';
 import {
-  configGameObject,
   getBlobSingleton,
   initStarted,
   setInitStarted,
-  deserializeGameObject,
 } from './blobSingleton';
-import {
-  saveGame,
-  startNewSession,
-} from './save';
+import { WasmBlobWrapper } from './WasmBlobWrapper';
 
-let blobSingleton: any = null;
+function bytesToHex(bytes: number[]): string {
+  return bytes.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+const TERMINAL_TYPES = [
+  'WeTimedOut', 'OpponentTimedOut', 'WeSlashedOpponent',
+  'OpponentSlashedUs', 'OpponentSuccessfullyCheated',
+  'GameCancelled', 'GameError', 'ChannelError',
+];
+
+function isTerminal(n: any): boolean {
+  return TERMINAL_TYPES.some(t => t in n);
+}
+
+function parseCards(readable: any, iStarted: boolean): { playerHand: number[], opponentHand: number[] } {
+  const card_lists = proper_list(readable).map((l: any) =>
+    proper_list(l).map((v: Uint8Array) => {
+      if (v.length > 0) {
+        return v[0];
+      }
+      return 0;
+    }),
+  );
+  if (iStarted) {
+    return { playerHand: card_lists[1], opponentHand: card_lists[0] };
+  } else {
+    return { playerHand: card_lists[0], opponentHand: card_lists[1] };
+  }
+}
+
+function selectedCardsToBitfield(selectedCards: number[], hand: number[]): number {
+  let bitfield = 0;
+  hand.forEach((cardId, index) => {
+    if (selectedCards.includes(cardId)) {
+      bitfield |= 1 << index;
+    }
+  });
+  return bitfield;
+}
 
 export interface UseWasmBlobResult {
   error: any;
@@ -53,11 +84,9 @@ export interface UseWasmBlobResult {
   outcome: CalpokerOutcome | undefined;
   lastOutcome: CalpokerOutcome | undefined;
   stopPlaying: () => void;
-};
+}
 
 export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: string): UseWasmBlobResult {
-  const [realPublicKey] = useState<string | undefined>(undefined);
-  const [balance, setBalance] = useState<number | undefined>(undefined);
   const [ourShare, setOurShare] = useState<number | undefined>(undefined);
   const [theirShare, setTheirShare] = useState<number | undefined>(undefined);
   const [gameConnectionState, setGameConnectionState] =
@@ -70,144 +99,259 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
   const playerNumber = iStarted ? 1 : 2;
   const [log, setLog] = useState<OutcomeLogLine[]>([]);
   const [addressData, setAddressData] =
-    useState<BlockchainInboundAddressResult>({
-      address: '',
-      puzzleHash: '',
-    });
+    useState<BlockchainInboundAddressResult | undefined>(undefined);
   const [playerHand, setPlayerHand] = useState<number[]>([]);
   const [opponentHand, setOpponentHand] = useState<number[]>([]);
-  const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(
-    undefined,
-  );
-  const [lastOutcome, setLastOutcome] = useState<CalpokerOutcome | undefined>(
-    undefined,
-  );
+  const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(undefined);
+  const [lastOutcome, setLastOutcome] = useState<CalpokerOutcome | undefined>(undefined);
   const [isPlayerTurn, setMyTurn] = useState<boolean>(false);
   const [moveNumber, setMoveNumber] = useState<number>(0);
   const [error, setRealError] = useState<string | undefined>(undefined);
   const [cardSelections, setOurCardSelections] = useState<number[]>([]);
+  const [gameIds, setGameIds] = useState<string[]>([]);
   const amount = parseInt(searchParams.amount);
 
-  const setSavedGame = (game: any) => {
-    let serialized = { game, searchParams, id: game.id, addressData, url: window.location.toString() };
-    const saveResult = saveGame(serialized);
-    if (saveResult) {
-      setError(`${saveResult[0]}: ${saveResult[1].toString()}`);
-    }
-  };
+  const playerHandRef = useRef<number[]>([]);
+  const opponentHandRef = useRef<number[]>([]);
+  const cardSelectionsRef = useRef<number[]>([]);
+  const moveNumberRef = useRef<number>(0);
+  const gameIdsRef = useRef<string[]>([]);
+  const gameOutcomeRef = useRef<CalpokerOutcome | undefined>(undefined);
 
-  const recognizeOutcome = (outcome: CalpokerOutcome | undefined) => {
-    setOutcome(outcome);
-    if (outcome) {
-      const iAmAlice = !iStarted;
-      const mySelects = iAmAlice ? outcome.alice_selects : outcome.bob_selects;
-      const theirSelects = iAmAlice ? outcome.bob_selects : outcome.alice_selects;
-      const myFinalHand = iAmAlice ? outcome.alice_final_hand : outcome.bob_final_hand;
-      const opponentFinalHand = iAmAlice ? outcome.bob_final_hand : outcome.alice_final_hand;
-      const myCards = iAmAlice ? outcome.alice_used_cards : outcome.bob_used_cards;
-      const myValue = iAmAlice
-        ? outcome.alice_hand_value
-        : outcome.bob_hand_value;
-      const theirCards = iAmAlice ? outcome.bob_used_cards : outcome.alice_used_cards;
-      const theirValue = iAmAlice
-        ? outcome.bob_hand_value
-        : outcome.alice_hand_value;
-      const myHandDescription = handValueToDescription(myValue, myCards);
-      const opponentHandDescription = handValueToDescription(theirValue, theirCards);
-      let newLogObject = {
-        topLineOutcome: outcome.my_win_outcome,
-        myHandDescription,
-        opponentHandDescription,
-        myHand: myCards,
-        opponentHand: theirCards,
-        myStartHand: playerHand,
-        opponentStartHand: opponentHand,
-        myFinalHand,
-        opponentFinalHand,
-        mySelects,
-        opponentSelects: theirSelects,
-        myPicks: iAmAlice ? outcome.alice_discards : outcome.bob_discards,
-        opponentPicks: iAmAlice ? outcome.bob_discards : outcome.alice_discards
-      };
-      setLog([newLogObject, ...log]);
-    }
-  };
-
-  const recognizeGameConnectionState = async (cs: GameConnectionState) => {
-    if (cs.stateIdentifier === 'clean_shutdown') {
-      startNewSession();
-    }
-    setGameConnectionState(cs);
-  }
+  playerHandRef.current = playerHand;
+  opponentHandRef.current = opponentHand;
+  cardSelectionsRef.current = cardSelections;
+  moveNumberRef.current = moveNumber;
+  gameIdsRef.current = gameIds;
 
   const setError = (e: any) => {
-    if (e !== undefined && error === undefined) {
-      setRealError(e);
+    if (e !== undefined) {
+      setRealError((prev) => prev === undefined ? e : prev);
     }
   };
-
-  const settable: any = {
-    setGameConnectionState: recognizeGameConnectionState,
-    setPlayerHand,
-    setOpponentHand,
-    setMyTurn,
-    setMoveNumber,
-    setCardSelections: setOurCardSelections,
-    setOutcome: recognizeOutcome,
-    setAddressData,
-    setOurShare,
-    setTheirShare,
-    setLastOutcome,
-    setError,
-  };
-
-  function setState(state: any): void {
-    const keys = Object.keys(state);
-    keys.forEach((k) => {
-      if (settable[k]) {
-        // console.warn(k, state[k]);
-        settable[k](state[k]);
-      }
-    });
-
-    // Save last so we can observe all ui updates.
-    if (state.setSavedGame) {
-      setSavedGame(state.setSavedGame);
-    }
-  }
 
   let perGameAmount = amount / 10;
   try {
     perGameAmount = parseInt(searchParams.perGame);
   } catch (e) {
-    // not ok if perGame wasn't empty.
     if (searchParams.perGame) {
       throw e;
     }
   }
+
   const blockchain = new ChildFrameBlockchainInterface();
 
-  const { gameObject, hostLog } = getBlobSingleton(
+  const { gameObject } = getBlobSingleton(
     blockchain,
     searchParams,
     lobbyUrl,
     uniqueId,
     amount,
-    perGameAmount,
     iStarted,
-    setState,
   );
 
-  const setCardSelections = useCallback(
-    (selections: number[]) => {
-      gameObject?.setCardSelections(selections);
-    },
-    [gameObject],
-  );
+  const gameObjectRef = useRef<WasmBlobWrapper>(gameObject);
+  gameObjectRef.current = gameObject;
 
-  const stopPlaying = useCallback(() => {
-    gameObject?.cleanShutdown();
-  }, [gameObject]);
+  const proposeNewGame = useCallback(() => {
+    const go = gameObjectRef.current;
+    if (!go || !go.isHandshakeDone()) return;
+    try {
+      const ids = go.proposeGame({
+        game_type: '63616c706f6b6572',
+        timeout: 100,
+        amount: perGameAmount,
+        my_contribution: perGameAmount / 2,
+        my_turn: !iStarted,
+        parameters: '80',
+      });
+      setGameIds(prev => [...prev, ...ids]);
+    } catch (e) {
+      console.error('proposeGame failed:', e);
+    }
+  }, [iStarted, perGameAmount]);
+
+  const recognizeOutcome = useCallback((newOutcome: CalpokerOutcome | undefined) => {
+    setOutcome(newOutcome);
+    gameOutcomeRef.current = newOutcome;
+    if (newOutcome) {
+      const iAmAlice = !iStarted;
+      const mySelects = iAmAlice ? newOutcome.alice_selects : newOutcome.bob_selects;
+      const theirSelects = iAmAlice ? newOutcome.bob_selects : newOutcome.alice_selects;
+      const myFinalHand = iAmAlice ? newOutcome.alice_final_hand : newOutcome.bob_final_hand;
+      const opponentFinalHand = iAmAlice ? newOutcome.bob_final_hand : newOutcome.alice_final_hand;
+      const myCards = iAmAlice ? newOutcome.alice_used_cards : newOutcome.bob_used_cards;
+      const myValue = iAmAlice ? newOutcome.alice_hand_value : newOutcome.bob_hand_value;
+      const theirCards = iAmAlice ? newOutcome.bob_used_cards : newOutcome.alice_used_cards;
+      const theirValue = iAmAlice ? newOutcome.bob_hand_value : newOutcome.alice_hand_value;
+      const myHandDescription = handValueToDescription(myValue, myCards);
+      const opponentHandDescription = handValueToDescription(theirValue, theirCards);
+      const newLogObject: OutcomeLogLine = {
+        topLineOutcome: newOutcome.my_win_outcome,
+        myHandDescription,
+        opponentHandDescription,
+        myHand: myCards,
+        opponentHand: theirCards,
+        myStartHand: playerHandRef.current,
+        opponentStartHand: opponentHandRef.current,
+        myFinalHand,
+        opponentFinalHand,
+        mySelects,
+        opponentSelects: theirSelects,
+        myPicks: iAmAlice ? newOutcome.alice_discards : newOutcome.bob_discards,
+        opponentPicks: iAmAlice ? newOutcome.bob_discards : newOutcome.alice_discards,
+      };
+      setLog(prev => [newLogObject, ...prev]);
+    }
+  }, [iStarted]);
+
+  const handleNotification = useCallback((n: any) => {
+    const go = gameObjectRef.current;
+
+    if (typeof n === 'string') {
+      if (n === 'CleanShutdownComplete') {
+        setGameConnectionState({ stateIdentifier: 'clean_shutdown', stateDetail: [] });
+      }
+      return;
+    }
+    if (typeof n !== 'object' || n === null) return;
+
+    if ('GameProposed' in n) {
+      if (!iStarted) {
+        try {
+          go?.acceptProposal(n.GameProposed.id.toString());
+        } catch (e) {
+          console.error('acceptProposal failed:', e);
+        }
+      }
+    } else if ('GameProposalAccepted' in n) {
+      const newId = n.GameProposalAccepted.id.toString();
+      setGameIds(prev => [...prev, newId]);
+      gameIdsRef.current = [...gameIdsRef.current, newId];
+      setMyTurn(!iStarted);
+      setMoveNumber(0);
+      moveNumberRef.current = 0;
+      setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
+    } else if ('OpponentMoved' in n) {
+      const hexStr = bytesToHex(n.OpponentMoved.readable);
+      const decoded = decode_sexp_hex(hexStr);
+      const currentMove = moveNumberRef.current;
+
+      setMyTurn(true);
+
+      if (currentMove === 1) {
+        const cards = parseCards(decoded, iStarted);
+        setPlayerHand(cards.playerHand);
+        setOpponentHand(cards.opponentHand);
+        playerHandRef.current = cards.playerHand;
+        opponentHandRef.current = cards.opponentHand;
+      } else if (!iStarted && currentMove === 2) {
+        const myDiscardsBitfield = selectedCardsToBitfield(
+          cardSelectionsRef.current,
+          playerHandRef.current,
+        );
+        const newOutcome = new CalpokerOutcome(
+          iStarted,
+          myDiscardsBitfield,
+          iStarted ? opponentHandRef.current : playerHandRef.current,
+          iStarted ? playerHandRef.current : opponentHandRef.current,
+          decoded,
+        );
+        recognizeOutcome(newOutcome);
+        try {
+          go?.makeMove(gameIdsRef.current[0], '80');
+        } catch (e) {
+          console.error('makeMove failed:', e);
+        }
+      } else if (currentMove > 1) {
+        const myDiscardsBitfield = selectedCardsToBitfield(
+          cardSelectionsRef.current,
+          playerHandRef.current,
+        );
+        const newOutcome = new CalpokerOutcome(
+          iStarted,
+          myDiscardsBitfield,
+          iStarted ? opponentHandRef.current : playerHandRef.current,
+          iStarted ? playerHandRef.current : opponentHandRef.current,
+          decoded,
+        );
+        recognizeOutcome(newOutcome);
+        try {
+          go?.acceptTimeout(gameIdsRef.current[0]);
+        } catch (e) {
+          console.error('acceptTimeout failed:', e);
+        }
+      }
+    } else if ('GameMessage' in n) {
+      const hexStr = bytesToHex(n.GameMessage.readable);
+      const decoded = decode_sexp_hex(hexStr);
+      const cards = parseCards(decoded, iStarted);
+      setPlayerHand(cards.playerHand);
+      setOpponentHand(cards.opponentHand);
+      playerHandRef.current = cards.playerHand;
+      opponentHandRef.current = cards.opponentHand;
+    } else if ('CleanShutdownComplete' in n) {
+      setGameConnectionState({ stateIdentifier: 'clean_shutdown', stateDetail: [] });
+    } else if ('CleanShutdownStarted' in n) {
+      // Peer initiated clean shutdown
+    } else if (isTerminal(n)) {
+      setGameIds(prev => prev.slice(1));
+      gameIdsRef.current = gameIdsRef.current.slice(1);
+      setMyTurn(false);
+      setOurCardSelections([]);
+      cardSelectionsRef.current = [];
+      setMoveNumber(0);
+      moveNumberRef.current = 0;
+      setPlayerHand([]);
+      setOpponentHand([]);
+      playerHandRef.current = [];
+      opponentHandRef.current = [];
+      setOutcome(undefined);
+      setLastOutcome(gameOutcomeRef.current);
+      setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
+
+      if (iStarted) {
+        setTimeout(() => {
+          proposeNewGame();
+        }, 2000);
+      }
+    }
+  }, [iStarted, recognizeOutcome, proposeNewGame]);
+
+  useEffect(() => {
+    const subscription = gameObject.getObservable().subscribe({
+      next: (evt: WasmEvent) => {
+        switch (evt.type) {
+          case 'handshake_done':
+            setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
+            if (iStarted) {
+              proposeNewGame();
+            }
+            break;
+          case 'notification':
+            handleNotification(evt.data);
+            break;
+          case 'error':
+            setError(evt.error);
+            break;
+          case 'finished':
+            setGameConnectionState({ stateIdentifier: 'clean_shutdown', stateDetail: [] });
+            break;
+          case 'address':
+            setAddressData(evt.data);
+            break;
+        }
+      }
+    });
+
+    if (!initStarted) {
+      setInitStarted(true);
+    }
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [gameObject, iStarted, handleNotification, proposeNewGame]);
 
   useEffect(() => {
     const subscription = blockchain.getObservable().subscribe({
@@ -219,38 +363,55 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     return () => {
       subscription.unsubscribe();
     };
-  });
+  }, [gameObject]);
 
-  const handleMakeMove = useCallback((move: any) => {
-    gameObject?.makeMove(move);
+  const handleMakeMove = useCallback((_move: any) => {
+    const go = gameObjectRef.current;
+    if (!go || !go.isHandshakeDone()) return;
+    const currentGameId = gameIdsRef.current[0];
+    if (!currentGameId) return;
+
+    const currentMove = moveNumberRef.current;
+
+    if (currentMove === 0) {
+      go.makeMove(currentGameId, '80');
+      const newMoveNum = currentMove + 1;
+      setMoveNumber(newMoveNum);
+      moveNumberRef.current = newMoveNum;
+      setMyTurn(false);
+    } else if (currentMove === 1) {
+      if (cardSelectionsRef.current.length !== 4) return;
+      const encoded = encode_clvm_list_of_bytes(cardSelectionsRef.current);
+      go.makeMove(currentGameId, encoded);
+      const newMoveNum = currentMove + 1;
+      setMoveNumber(newMoveNum);
+      moveNumberRef.current = newMoveNum;
+      setMyTurn(false);
+    } else if (currentMove === 2) {
+      go.makeMove(currentGameId, '80');
+      const newMoveNum = currentMove + 1;
+      setMoveNumber(newMoveNum);
+      moveNumberRef.current = newMoveNum;
+      setMyTurn(false);
+    }
   }, []);
 
-  useEffect(() => {
-    const subscription = gameObject.getObservable().subscribe({
-      next: (state: any) => setState(state)
-    });
+  const setCardSelections = useCallback((selections: number[]) => {
+    setOurCardSelections(selections);
+    cardSelectionsRef.current = selections;
+  }, []);
 
-    if (initStarted) {
-      return () => {
-        subscription.unsubscribe();
-      };
-    } else {
-      setInitStarted(true);
-    }
+  const stopPlaying = useCallback(() => {
+    gameObject?.cleanShutdown();
+  }, [gameObject]);
 
-    return () => {
-      subscription.unsubscribe();
-    }
-  });
-
-  // Called once at an arbitrary time.
   (window as any).loadWasm = useCallback((chia_gaming_init: any, cg: any) => {
     storeInitArgs(chia_gaming_init, cg);
   }, []);
 
   return {
     error,
-    addressData,
+    addressData: addressData || { address: '', puzzleHash: '' },
     amount,
     ourShare,
     theirShare,

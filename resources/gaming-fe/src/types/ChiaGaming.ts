@@ -42,21 +42,7 @@ export interface SaveData {
   gameCradle: any;
 }
 
-export type OpponentMove = [string, string];
 export type StateIdentifier = 'starting' | 'running' | 'clean_shutdown' | 'end';
-
-export interface IdleResult {
-  continue_on: boolean;
-  finished: boolean;
-  clean_shutdown_received: boolean;
-  outbound_transactions: SpendBundle[];
-  outbound_messages: string[];
-  opponent_move: OpponentMove | undefined;
-  handshake_done: boolean;
-  receive_error: string | undefined;
-  action_queue: string[];
-  incoming_messages: string[];
-}
 
 export interface GameCradleConfig {
   seed: string | undefined;
@@ -82,18 +68,12 @@ export interface GameInitParams {
 
 export type IChiaIdentityFun = (seed: string) => IChiaIdentity;
 
-export interface IdleCallbacks {
-  opponent_moved?:
-    | ((game_id: string, readable_move_hex: string) => void)
-    | undefined;
-  game_message?:
-    | ((game_id: string, readable_move_hex: string) => void)
-    | undefined;
-  game_notification?: ((notification_json: string) => void) | undefined;
-  clean_shutdown_started?: (() => void) | undefined;
-  clean_shutdown_complete?: ((coin: string) => void) | undefined;
-  going_on_chain?: ((reason: string) => void) | undefined;
-}
+export type WasmEvent =
+  | { type: 'handshake_done' }
+  | { type: 'notification'; data: any }
+  | { type: 'error'; error: string }
+  | { type: 'finished' }
+  | { type: 'address'; data: BlockchainInboundAddressResult };
 
 export interface WasmConnection {
   // System
@@ -243,14 +223,8 @@ export class ChiaGame {
     return w;
   }
 
-  idle(callbacks: IdleCallbacks): IdleResult {
-    const result = this.wasm.idle(this.cradle, callbacks);
-    if (result) {
-      this.waiting_messages = this.waiting_messages.concat(
-        result.outbound_messages,
-      );
-    }
-    return result;
+  idle(callbacks: any): any {
+    return this.wasm.idle(this.cradle, callbacks);
   }
 
   block_data(block_number: number, block_data: WatchReport) {
