@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-use std::mem::swap;
 use std::rc::Rc;
 
 use clvm_traits::ToClvm;
@@ -131,17 +130,14 @@ impl MessagePeerQueue for SimulatedPeer<SimulatedWalletSpend> {
 }
 
 #[derive(Default)]
-pub struct IdleResult {
-    pub continue_on: bool,
-    pub finished: bool,
-    pub clean_shutdown_received: bool,
+pub struct DrainResult {
     pub handshake_done: bool,
-    pub channel_created: bool,
+    pub finished: bool,
+    pub outbound_messages: VecDeque<Vec<u8>>,
     pub outbound_transactions: VecDeque<SpendBundle>,
     pub coin_solution_requests: VecDeque<CoinString>,
-    pub outbound_messages: VecDeque<Vec<u8>>,
     pub notifications: Vec<GameNotification>,
-    pub receive_error: Option<Error>,
+    pub receive_errors: Vec<Error>,
     pub resync: Option<(usize, bool)>,
 }
 
@@ -232,15 +228,6 @@ pub trait GameCradle {
 
     /// Deliver a message from the peer.
     fn deliver_message(&mut self, inbound_message: &[u8]) -> Result<(), Error>;
-
-    /// Allow the game to carry out tasks it needs to perform, yielding peer messages that
-    /// should be forwarded.  Returns `Ok(None)` when no more work is needed.
-    fn idle<R: Rng>(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        rng: &mut R,
-        local_ui: &mut dyn ToLocalUI,
-    ) -> Result<Option<IdleResult>, Error>;
 
     /// Cheat in a game: enable cheating on the referee (substituting fake
     /// move bytes and the given mover_share), then queue a normal move.
@@ -471,10 +458,10 @@ impl ToLocalUI for SynchronousGameCradleState {
             GameNotification::GameMessage { id, readable } => {
                 self.game_messages.push_back((*id, readable.clone()));
             }
-            GameNotification::ChannelCreated => {
+            GameNotification::ChannelCreated { .. } => {
                 self.channel_created = true;
             }
-            GameNotification::CleanShutdownStarted => {
+            GameNotification::CleanShutdownStarted { .. } => {
                 self.clean_shutdown_received = true;
             }
             GameNotification::CleanShutdownComplete { reward_coin } => {
@@ -574,6 +561,107 @@ impl SynchronousGameCradle {
 
     pub fn next_game_id(&mut self) -> Result<GameID, Error> {
         self.peer.next_game_id()
+    }
+
+    /// Drain all queued state in one shot: process inbound messages, channel
+    /// setup steps, and collect all outbound messages, transactions, and
+    /// notifications.
+    pub fn drain_all<R: Rng>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+    ) -> Result<DrainResult, Error> {
+        let mut result = DrainResult::default();
+        result.handshake_done = self.peer.handshake_done();
+        result.finished = self.finished();
+
+        // Process inbound messages until stable (each may enqueue more effects).
+        while let Some(msg) = self.state.inbound_messages.pop_front() {
+            let recv_result = {
+                let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+                self.peer.received_message(&mut env, msg)
+            };
+            match recv_result {
+                Ok(effects) => self.process_effects(effects, allocator)?,
+                Err(e) => {
+                    result.receive_errors.push(e);
+                }
+            }
+        }
+
+        // Channel setup steps (may produce more outbound).
+        let handshake_before = self.peer.handshake_done();
+        if let Some(ph) = self.state.channel_puzzle_hash.take() {
+            self.create_partial_spend_for_channel_coin(allocator, rng, ph)?;
+        }
+        if let (false, Some(uo)) = (self.state.is_initiator, self.state.unfunded_offer.take()) {
+            self.respond_to_unfunded_offer(allocator, rng, uo)?;
+        }
+
+        // If channel setup just completed the handshake, process any messages
+        // that were re-queued while in a transitional state (e.g. a proposal
+        // that arrived during PostStepF).
+        if !handshake_before && self.peer.handshake_done() {
+            while self.peer.has_pending_incoming() {
+                let recv_result = {
+                    let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+                    self.peer.process_incoming_message(&mut env)
+                };
+                match recv_result {
+                    Ok(effects) => {
+                        if effects.is_empty() {
+                            break;
+                        }
+                        self.process_effects(effects, allocator)?;
+                    }
+                    Err(e) => {
+                        result.receive_errors.push(e);
+                    }
+                }
+            }
+        }
+
+        // Re-check after processing - handshake may have just completed.
+        result.handshake_done = self.peer.handshake_done();
+        result.finished = self.finished();
+
+        // Collect everything that accumulated.
+        result.outbound_messages = std::mem::take(&mut self.state.outbound_messages);
+        result.outbound_transactions = std::mem::take(&mut self.state.outbound_transactions);
+        result.coin_solution_requests = std::mem::take(&mut self.state.coin_solution_requests);
+        result.resync = self.state.resync.take();
+
+        if self.state.channel_created {
+            result.notifications.push(GameNotification::ChannelCreated {});
+            self.state.channel_created = false;
+        }
+        while let Some(n) = self.state.pending_notifications.pop_front() {
+            result.notifications.push(n);
+        }
+        while let Some((id, readable)) = self.state.game_messages.pop_front() {
+            result
+                .notifications
+                .push(GameNotification::GameMessage { id, readable });
+        }
+        while let Some((id, state_number, readable, mover_share)) =
+            self.state.opponent_moves.pop_front()
+        {
+            result
+                .notifications
+                .push(GameNotification::OpponentMoved {
+                    id,
+                    state_number,
+                    readable,
+                    mover_share,
+                });
+        }
+        if let Some(reason) = self.state.went_on_chain.take() {
+            result
+                .notifications
+                .push(GameNotification::GoingOnChain { reason });
+        }
+
+        Ok(result)
     }
 
     fn process_effects(
@@ -1003,124 +1091,6 @@ impl GameCradle for SynchronousGameCradle {
             .inbound_messages
             .push_back(inbound_message.to_vec());
         Ok(())
-    }
-
-    /// Allow the game to carry out tasks it needs to perform, yielding peer messages that
-    /// should be forwarded.  Returns `Ok(None)` when no more work is needed.
-    fn idle<R: Rng>(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        rng: &mut R,
-        local_ui: &mut dyn ToLocalUI,
-    ) -> Result<Option<IdleResult>, Error> {
-        if self.state.clean_shutdown.is_some() {
-            if !self.state.pending_notifications.is_empty() {
-                let mut result = IdleResult::default();
-                while let Some(notification) = self.state.pending_notifications.pop_front() {
-                    local_ui.notification(&notification)?;
-                    result.notifications.push(notification);
-                }
-                return Ok(Some(result));
-            }
-            return Ok(None);
-        }
-
-        let mut result = IdleResult {
-            finished: self.finished(),
-            clean_shutdown_received: self.state.clean_shutdown_received,
-            ..IdleResult::default()
-        };
-
-        result.handshake_done = self.peer.handshake_done();
-        if self.state.channel_created {
-            result.channel_created = true;
-            self.state.channel_created = false;
-            local_ui.notification(&GameNotification::ChannelCreated)?;
-        }
-
-        swap(
-            &mut result.outbound_transactions,
-            &mut self.state.outbound_transactions,
-        );
-        self.state.outbound_transactions.clear();
-
-        swap(
-            &mut result.outbound_messages,
-            &mut self.state.outbound_messages,
-        );
-        self.state.outbound_messages.clear();
-
-        swap(
-            &mut result.coin_solution_requests,
-            &mut self.state.coin_solution_requests,
-        );
-
-        swap(&mut result.resync, &mut self.state.resync);
-
-        self.state.coin_solution_requests.clear();
-
-        while let Some(notification) = self.state.pending_notifications.pop_front() {
-            local_ui.notification(&notification)?;
-            result.notifications.push(notification);
-        }
-
-        if let Some((id, readable)) = self.state.game_messages.pop_front() {
-            local_ui.notification(&GameNotification::GameMessage { id, readable })?;
-            return Ok(Some(result));
-        }
-
-        if let Some((id, state_number, readable, mover_share)) =
-            self.state.opponent_moves.pop_front()
-        {
-            local_ui.notification(&GameNotification::OpponentMoved {
-                id,
-                state_number,
-                readable,
-                mover_share,
-            })?;
-            result.continue_on = true;
-            return Ok(Some(result));
-        }
-
-        if let Some(msg) = self.state.inbound_messages.pop_front() {
-            let recv_result = {
-                let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-                self.peer.received_message(&mut env, msg)
-            };
-            if let Ok(returned_effects) = recv_result.as_ref() {
-                self.process_effects(returned_effects.clone(), allocator)?;
-            }
-
-            if let Some(reason) = self.state.went_on_chain.take() {
-                local_ui.notification(&GameNotification::GoingOnChain { reason })?;
-            }
-
-            match recv_result {
-                Ok(_) => {
-                    result.continue_on = true;
-                    return Ok(Some(result));
-                }
-                Err(e) => {
-                    local_ui.notification(&GameNotification::GoingOnChain {
-                        reason: format!("error receiving peer message: {e:?}"),
-                    })?;
-                    result.receive_error = Some(e);
-                    return Ok(Some(result));
-                }
-            }
-        }
-
-        if let Some(ph) = self.state.channel_puzzle_hash.clone() {
-            result.continue_on = self.create_partial_spend_for_channel_coin(allocator, rng, ph)?;
-            return Ok(Some(result));
-        }
-
-        if let (false, Some(uo)) = (self.state.is_initiator, self.state.unfunded_offer.clone()) {
-            result.continue_on = self.respond_to_unfunded_offer(allocator, rng, uo)?;
-            return Ok(Some(result));
-        }
-
-        Ok(Some(result))
     }
 
     /// Trigger going on chain.

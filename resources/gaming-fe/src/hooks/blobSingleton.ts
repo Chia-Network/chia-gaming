@@ -5,7 +5,8 @@ import { WasmStateInit, loadCalpoker } from './WasmStateInit';
 import {
   InternalBlockchainInterface,
 } from '../types/ChiaGaming';
-import { getRandomInt, getEvenHexString } from '../util';
+import { blockchainDataEmitter } from './BlockchainInfo';
+import { FAKE_BLOCKCHAIN_ID } from './FakeBlockchainInterface';
 import { getGameSocket } from '../services/GameSocket';
 import {
   startNewSession,
@@ -33,16 +34,17 @@ export async function configGameObject(
 ): Promise<WasmBlobWrapper> {
   let wasmConnection = await wasmStateInit.getWasmConnection();
   gameObject.loadWasm(wasmConnection);
-  let seed = getRandomInt(1<<31);
-  let seedStr = getEvenHexString(seed);
-  let rngId = wasmConnection.create_rng(seedStr);
-  let identity = wasmConnection.chia_identity(rngId);
+  const entropy = new Uint8Array(32);
+  crypto.getRandomValues(entropy);
+  const seedHex = Array.from(entropy, b => b.toString(16).padStart(2, '0')).join('');
+  let rngId = wasmConnection.create_rng(seedHex);
   let address = await blockchain.getAddress();
   gameObject.setBlockchainAddress(address);
-  let cradle = wasmStateInit.createGame(calpokerHexes.proposalHex, calpokerHexes.parserHex, rngId, wasmConnection, identity.private_key, iStarted, amount, amount, address.puzzleHash);
+  let { game: cradle, puzzleHash } = wasmStateInit.createGame(calpokerHexes.proposalHex, calpokerHexes.parserHex, rngId, wasmConnection, iStarted, amount, amount, address.puzzleHash);
   gameObject.setGameCradle(cradle);
-  let coin = await wasmStateInit.createStartCoin(blockchain, uniqueId, identity, amount, wasmConnection);
+  let coin = await wasmStateInit.createStartCoin(blockchain, uniqueId, puzzleHash, amount, wasmConnection);
   gameObject.activateSpend(coin.coinString);
+  console.log('[config] game configured, puzzleHash:', puzzleHash.substring(0, 16) + '...');
   return gameObject;
 }
 
@@ -109,7 +111,12 @@ export function getBlobSingleton(
     peerconn,
   );
 
-  setupBlockchainConnection(uniqueId);
+  const isInIframe = window.parent !== window;
+  if (isInIframe) {
+    setupBlockchainConnection(uniqueId);
+  } else {
+    blockchainDataEmitter.select({ selection: FAKE_BLOCKCHAIN_ID, uniqueId });
+  }
 
   return { gameObject: blobSingleton };
 }

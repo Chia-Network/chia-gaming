@@ -23,14 +23,10 @@ const App = () => {
   const saveList: string[] = []; // Disable save / reload
   const shouldRedirectToLobby =
     saveList.length == 0 && !params.lobby && !params.iStarted;
-
-  const isInIframe = window.parent !== window;
   if (saveList.length > 0) {
     const decodedSave = loadSave(saveList[0]);
     useParams = decodedSave.searchParams;
     useIframeUrl = decodedSave.url;
-  } else if (params.game && !params.join && !isInIframe) {
-    useIframeUrl = window.location.href;
   }
   const [havePeak, setHavePeak] = useState(false);
   const [iframeUrl, setIframeUrl] = useState(useIframeUrl);
@@ -212,11 +208,7 @@ const App = () => {
   }
 
   if (params.game && !params.join && !showPopup) {
-    if (isInIframe) {
-      return <Game params={params} />;
-    }
-    // Top-level: fall through to WalletConnectHeading + iframe layout
-    // so the blockchain connection is available via the parent frame.
+    return <Game params={params} />;
   }
 
   const wcHeading = (

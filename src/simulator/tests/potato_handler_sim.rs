@@ -229,8 +229,8 @@ impl ToLocalUI for SimulatedPeer {
                 self.messages.push(readable.clone());
                 Ok(())
             }
-            GameNotification::OpponentMoved { .. } | GameNotification::ChannelCreated => Ok(()),
-            GameNotification::CleanShutdownStarted => Err(Error::StrErr(
+            GameNotification::OpponentMoved { .. } | GameNotification::ChannelCreated { .. } => Ok(()),
+            GameNotification::CleanShutdownStarted { .. } => Err(Error::StrErr(
                 "clean_shutdown_started not expected during handshake".to_string(),
             )),
             GameNotification::CleanShutdownComplete { .. } => Err(Error::StrErr(
@@ -452,7 +452,7 @@ fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
                     GameNotification::StaleChannelUnroll { .. },
                     ExpectedNotification::StaleChannelUnroll,
                 ) => true,
-                (GameNotification::ChannelCoinSpent, ExpectedNotification::ChannelCoinSpent) => {
+                (GameNotification::ChannelCoinSpent { .. }, ExpectedNotification::ChannelCoinSpent) => {
                     true
                 }
                 (
@@ -496,7 +496,7 @@ fn event_shape(actual: &TestEvent) -> String {
             GameNotification::OpponentSlashedUs { .. } => "Notif(OpponentSlashedUs)".to_string(),
             GameNotification::OpponentSuccessfullyCheated { .. } => "Notif(OpponentSuccessfullyCheated)".to_string(),
             GameNotification::StaleChannelUnroll { .. } => "Notif(StaleChannelUnroll)".to_string(),
-            GameNotification::ChannelCoinSpent => "Notif(ChannelCoinSpent)".to_string(),
+            GameNotification::ChannelCoinSpent { .. } => "Notif(ChannelCoinSpent)".to_string(),
             GameNotification::UnrollCoinSpent { .. } => "Notif(UnrollCoinSpent)".to_string(),
             GameNotification::ChannelError { .. } => "Notif(ChannelError)".to_string(),
             GameNotification::GameError { .. } => "Notif(GameError)".to_string(),
@@ -506,8 +506,8 @@ fn event_shape(actual: &TestEvent) -> String {
             GameNotification::InsufficientBalance { id, our_balance_short, their_balance_short } => format!("Notif(InsufficientBalance(id={id:?},ours={our_balance_short},theirs={their_balance_short}))"),
             GameNotification::OpponentMoved { .. } => "Notif(OpponentMoved)".to_string(),
             GameNotification::GameMessage { .. } => "Notif(GameMessage)".to_string(),
-            GameNotification::ChannelCreated => "Notif(ChannelCreated)".to_string(),
-            GameNotification::CleanShutdownStarted => "Notif(CleanShutdownStarted)".to_string(),
+            GameNotification::ChannelCreated { .. } => "Notif(ChannelCreated)".to_string(),
+            GameNotification::CleanShutdownStarted { .. } => "Notif(CleanShutdownStarted)".to_string(),
             GameNotification::CleanShutdownComplete { .. } => "Notif(CleanShutdownComplete)".to_string(),
             GameNotification::GoingOnChain { reason } => format!("Notif(GoingOnChain(reason={reason}))"),
         },
@@ -693,7 +693,7 @@ impl LocalTestUIReceiver {
 impl ToLocalUI for LocalTestUIReceiver {
     fn notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
         match notification {
-            GameNotification::ChannelCreated => {
+            GameNotification::ChannelCreated { .. } => {
                 self.channel_created = true;
             }
             GameNotification::OpponentMoved {
@@ -728,7 +728,7 @@ impl ToLocalUI for LocalTestUIReceiver {
                     readable: readable.clone(),
                 });
             }
-            GameNotification::CleanShutdownStarted => {
+            GameNotification::CleanShutdownStarted { .. } => {
                 self.assert_channel_created("clean_shutdown_started");
             }
             GameNotification::CleanShutdownComplete { .. } => {
@@ -998,33 +998,12 @@ fn run_game_container_with_action_list_with_success_predicate(
                 }
             }
 
-            while let Some(result) = cradles[i].idle(allocator, rng, &mut local_uis[i])? {
-                if matches!(result.resync, Some((_, true))) {
-                    can_move = true;
-                    let saved = move_number;
-                    while move_number > 0
-                        && (move_number >= moves_input.len()
-                            || !matches!(moves_input[move_number], GameAction::Move(_, _, _)))
-                    {
-                        move_number -= 1;
-                    }
-                    // Only rewind to a Move that belongs to the player
-                    // whose turn it is.  If the nearest action is for a
-                    // different player, restore move_number so the sim
-                    // keeps processing subsequent (non-Move) actions.
-                    let dominated_by_other = match moves_input.get(move_number) {
-                        Some(GameAction::Move(who, _, _)) => *who != i,
-                        _ => true,
-                    };
-                    if dominated_by_other {
-                        move_number = saved;
-                    }
-                    debug!(
-                        "{num_steps} can move {can_move} {move_number} {:?}",
-                        &moves_input[move_number..]
-                    );
-                }
+            {
+                let result = cradles[i].drain_all(allocator, rng)?;
 
+                // Feed puzzle/solution requests back, then drain again
+                // to collect the effects they produce.
+                let mut extra_results = Vec::new();
                 for coin in result.coin_solution_requests.iter() {
                     let ps_res = simulator
                         .get_puzzle_and_solution(&coin.to_coin_id())
@@ -1037,88 +1016,109 @@ fn run_game_container_with_action_list_with_success_predicate(
                             ps_res.as_ref().map(|ps| (&ps.0, &ps.1)),
                         )?;
                     }
+                    extra_results.push(cradles[i].drain_all(allocator, rng)?);
                 }
 
-                for tx in result.outbound_transactions.iter() {
-                    if nerf_transactions_for & (1 << i) != 0 {
-                        debug!("NERFED tx from player {i}: {:?}", tx.name);
-                        nerfed_tx_backlog.push(tx.clone());
-                        continue;
+                // Process all drain results (initial + post-puzzle-solution).
+                let all_results = std::iter::once(&result).chain(extra_results.iter());
+                for dr in all_results {
+                    if matches!(dr.resync, Some((_, true))) {
+                        can_move = true;
+                        let saved = move_number;
+                        while move_number > 0
+                            && (move_number >= moves_input.len()
+                                || !matches!(moves_input[move_number], GameAction::Move(_, _, _)))
+                        {
+                            move_number -= 1;
+                        }
+                        let dominated_by_other = match moves_input.get(move_number) {
+                            Some(GameAction::Move(who, _, _)) => *who != i,
+                            _ => true,
+                        };
+                        if dominated_by_other {
+                            move_number = saved;
+                        }
+                        debug!(
+                            "{num_steps} can move {can_move} {move_number} {:?}",
+                            &moves_input[move_number..]
+                        );
                     }
-                    let any_stale = tx
-                        .spends
-                        .iter()
-                        .any(|cs| !simulator.is_coin_spendable(&cs.coin));
-                    if any_stale {
-                        debug!("step {num_steps}: p{i} skipping stale tx {:?}", tx.name);
-                        continue;
+
+                    for tx in dr.outbound_transactions.iter() {
+                        if nerf_transactions_for & (1 << i) != 0 {
+                            debug!("NERFED tx from player {i}: {:?}", tx.name);
+                            nerfed_tx_backlog.push(tx.clone());
+                            continue;
+                        }
+                        let any_stale = tx
+                            .spends
+                            .iter()
+                            .any(|cs| !simulator.is_coin_spendable(&cs.coin));
+                        if any_stale {
+                            debug!("step {num_steps}: p{i} skipping stale tx {:?}", tx.name);
+                            continue;
+                        }
+                        let t_tx = std::time::Instant::now();
+                        let included_result = simulator.push_tx(allocator, &tx.spends)?;
+                        if timing_enabled {
+                            let tx_elapsed = t_tx.elapsed();
+                            if tx_elapsed.as_millis() > 10 {
+                                eprintln!(
+                                    "  step {num_steps}: p{i} push_tx({:?}) {tx_elapsed:.2?}",
+                                    tx.name
+                                );
+                            }
+                        }
+                        debug!(
+                            "TX result: code={} e={:?} diag={:?}",
+                            included_result.code, included_result.e, included_result.diagnostic
+                        );
+                        let is_expected_duplicate = included_result.code == 3
+                            && matches!(included_result.e, Some(5) | Some(20));
+                        let include_ok = included_result.code == 1 || is_expected_duplicate;
+                        assert!(
+                            include_ok,
+                            "tx include failed: move_number={move_number} tx_name={:?} code={} e={:?} diagnostic={:?}",
+                            tx.name,
+                            included_result.code,
+                            included_result.e,
+                            included_result.diagnostic
+                        );
                     }
-                    let t_tx = std::time::Instant::now();
-                    let included_result = simulator.push_tx(allocator, &tx.spends)?;
-                    if timing_enabled {
-                        let tx_elapsed = t_tx.elapsed();
-                        if tx_elapsed.as_millis() > 10 {
-                            eprintln!(
-                                "  step {num_steps}: p{i} push_tx({:?}) {tx_elapsed:.2?}",
-                                tx.name
-                            );
+
+                    for msg in dr.outbound_messages.iter() {
+                        if nerf_messages_for & (1 << i) != 0 {
+                            debug!("NERFED msg from player {i}");
+                            continue;
+                        }
+                        if cradles[i].is_peer_disconnected() {
+                            debug!("dropping outbound msg from player {i} (peer_disconnected)");
+                            continue;
+                        }
+                        let t_msg = std::time::Instant::now();
+                        cradles[i ^ 1].deliver_message(msg)?;
+                        if timing_enabled {
+                            let msg_elapsed = t_msg.elapsed();
+                            if msg_elapsed.as_millis() > 10 {
+                                eprintln!(
+                                    "  step {num_steps}: p{i}->p{} deliver_message {msg_elapsed:.2?}",
+                                    i ^ 1
+                                );
+                            }
                         }
                     }
-                    debug!(
-                        "TX result: code={} e={:?} diag={:?}",
-                        included_result.code, included_result.e, included_result.diagnostic
-                    );
-                    // Don't assert on double spend since it is expected that some actions
-                    // such as timeout could be launched by either or both on chain parties.
-                    // Most of the time, the timeout is coalesced because the spends are equivalent
-                    // and take place on the same block.  If we insert delays, we might see an
-                    // attempt to spend the same coin and that's fine.
-                    // DOUBLE_SPEND (5) or MINTING_COIN (20) are both expected
-                    // when both parties independently submit equivalent transactions.
-                    let is_expected_duplicate = included_result.code == 3
-                        && matches!(included_result.e, Some(5) | Some(20));
-                    let include_ok = included_result.code == 1 || is_expected_duplicate;
-                    assert!(
-                        include_ok,
-                        "tx include failed: move_number={move_number} tx_name={:?} code={} e={:?} diagnostic={:?}",
-                        tx.name,
-                        included_result.code,
-                        included_result.e,
-                        included_result.diagnostic
-                    );
-                }
 
-                for msg in result.outbound_messages.iter() {
-                    if nerf_messages_for & (1 << i) != 0 {
-                        debug!("NERFED msg from player {i}");
-                        continue;
+                    for n in dr.notifications.iter() {
+                        debug!("NOTIFICATION player {i}: {n:?}");
+                        local_uis[i].notification(n)?;
                     }
-                    if cradles[i].is_peer_disconnected() {
-                        debug!("dropping outbound msg from player {i} (peer_disconnected)");
-                        continue;
-                    }
-                    let t_msg = std::time::Instant::now();
-                    cradles[i ^ 1].deliver_message(msg)?;
-                    if timing_enabled {
-                        let msg_elapsed = t_msg.elapsed();
-                        if msg_elapsed.as_millis() > 10 {
-                            eprintln!(
-                                "  step {num_steps}: p{i}->p{} deliver_message {msg_elapsed:.2?}",
-                                i ^ 1
-                            );
-                        }
-                    }
-                }
 
-                for n in result.notifications.iter() {
-                    debug!("NOTIFICATION player {i}: {n:?}");
-                }
-
-                let processed_requests = !result.coin_solution_requests.is_empty()
-                    || !result.outbound_transactions.is_empty()
-                    || !result.outbound_messages.is_empty();
-                if !result.continue_on && !processed_requests {
-                    break;
+                    for e in dr.receive_errors.iter() {
+                        debug!("RECEIVE ERROR player {i}: {e:?}");
+                        local_uis[i].notification(&GameNotification::GoingOnChain {
+                            reason: format!("error receiving peer message: {e:?}"),
+                        })?;
+                    }
                 }
             }
         }
@@ -2745,19 +2745,16 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             },
         );
 
-        for i in 0..100 {
+        for _i in 0..100 {
             for c in 0..2 {
-                while let Some(result) = outcome.cradles[c]
-                    .idle(&mut allocator, &mut rng, &mut outcome.local_uis[c])
-                    .unwrap()
-                {
-                    for msg in result.outbound_messages.iter() {
-                        outcome.cradles[i ^ 1].deliver_message(msg).unwrap();
-                    }
-
-                    if !result.continue_on {
-                        break;
-                    }
+                let result = outcome.cradles[c]
+                    .drain_all(&mut allocator, &mut rng)
+                    .unwrap();
+                for msg in result.outbound_messages.iter() {
+                    outcome.cradles[c ^ 1].deliver_message(msg).unwrap();
+                }
+                for n in result.notifications.iter() {
+                    outcome.local_uis[c].notification(n).unwrap();
                 }
             }
         }
@@ -2892,7 +2889,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p1_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::ChannelCoinSpent)),
+                .any(|n| matches!(n, GameNotification::ChannelCoinSpent { .. })),
             "player 1 should see ChannelCoinSpent, got: {p1_notifs:?}"
         );
         assert!(
@@ -2904,7 +2901,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::ChannelCoinSpent)),
+                .any(|n| matches!(n, GameNotification::ChannelCoinSpent { .. })),
             "player 0 should see ChannelCoinSpent, got: {p0_notifs:?}"
         );
     }));
@@ -2943,7 +2940,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p1_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::ChannelCoinSpent)),
+                .any(|n| matches!(n, GameNotification::ChannelCoinSpent { .. })),
             "player 1 should see ChannelCoinSpent, got: {p1_notifs:?}"
         );
         assert!(
@@ -2955,7 +2952,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::ChannelCoinSpent)),
+                .any(|n| matches!(n, GameNotification::ChannelCoinSpent { .. })),
             "player 0 should see ChannelCoinSpent, got: {p0_notifs:?}"
         );
     }));

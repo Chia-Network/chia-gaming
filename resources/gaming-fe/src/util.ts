@@ -186,9 +186,8 @@ export function getRandomInt(max: number) {
 
 export function getEvenHexString(n: number) {
   let hexString = n.toString(16);
-  if ((hexString.length & 1) == 0) {
-    return hexString;
-  } else {
-    return hexString.slice(0, hexString.length - 1);
+  if (hexString.length & 1) {
+    hexString = '0' + hexString;
   }
+  return hexString;
 }

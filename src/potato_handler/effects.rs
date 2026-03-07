@@ -60,7 +60,7 @@ pub enum GameNotification {
         reason: String,
     },
 
-    ChannelCoinSpent,
+    ChannelCoinSpent {},
     UnrollCoinSpent {
         reward_coin: Option<CoinString>,
     },
@@ -93,8 +93,8 @@ pub enum GameNotification {
         id: GameID,
         readable: ReadableMove,
     },
-    ChannelCreated,
-    CleanShutdownStarted,
+    ChannelCreated {},
+    CleanShutdownStarted {},
     CleanShutdownComplete {
         reward_coin: Option<CoinString>,
     },

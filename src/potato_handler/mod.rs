@@ -261,6 +261,10 @@ impl PotatoHandler {
         Ok(effects)
     }
 
+    pub fn has_pending_incoming(&self) -> bool {
+        !self.incoming_messages.is_empty()
+    }
+
     pub fn handshake_done(&self) -> bool {
         !matches!(
             self.channel_state,
@@ -620,7 +624,7 @@ impl PotatoHandler {
                         timeout: timeout.clone(),
                         name: Some("reward"),
                     });
-                    effects.push(Effect::Notify(GameNotification::CleanShutdownStarted));
+                    effects.push(Effect::Notify(GameNotification::CleanShutdownStarted {}));
 
                     let puzzle = puzzle_for_synthetic_public_key(
                         env.allocator,
@@ -1821,7 +1825,7 @@ impl PotatoHandler {
             }
         }
 
-        effects.push(Effect::Notify(GameNotification::ChannelCoinSpent));
+        effects.push(Effect::Notify(GameNotification::ChannelCoinSpent {}));
 
         effects.extend(self.handle_unroll_from_channel_conditions(
             env,
@@ -2021,7 +2025,7 @@ impl PotatoHandler {
                 Error::StrErr("channel conditions didn't include a coin creation".to_string())
             })?;
 
-        effects.push(Effect::Notify(GameNotification::ChannelCoinSpent));
+        effects.push(Effect::Notify(GameNotification::ChannelCoinSpent {}));
 
         effects.extend(self.handle_unroll_from_channel_conditions(
             env,
@@ -2457,11 +2461,11 @@ impl SpendWalletReceiver for PotatoHandler {
                 )?
                 .into_iter()
                 .collect();
-            effects.push(Effect::Notify(GameNotification::ChannelCreated));
+            effects.push(Effect::Notify(GameNotification::ChannelCreated {}));
             return Ok(Some(effects));
         }
 
-        Ok(Some(vec![Effect::Notify(GameNotification::ChannelCreated)]))
+        Ok(Some(vec![Effect::Notify(GameNotification::ChannelCreated {})]))
     }
 
     fn coin_spent<R: Rng>(

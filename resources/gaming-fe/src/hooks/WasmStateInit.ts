@@ -4,7 +4,6 @@ import {
   RngId,
   InternalBlockchainInterface,
   CreateStartCoinReturn,
-  IChiaIdentity,
 } from '../types/ChiaGaming';
 import { Observable, Subject } from 'rxjs';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
@@ -70,7 +69,7 @@ export class WasmStateInit {
   ): Promise<WasmConnection> {
     // Fill out WasmConnection object
     const modData = await this.doInternalLoadWasm();
-    chia_gaming_init(modData);
+    chia_gaming_init({ module: modData });
     if (!logInitialized) {
       logInitialized = true;
       cg.init((msg: string) => console.warn('wasm', msg));
@@ -159,12 +158,12 @@ export class WasmStateInit {
   async createStartCoin(
     blockchain: InternalBlockchainInterface,
     uniqueId: string,
-    identity: IChiaIdentity,
+    puzzleHash: string,
     amount: number,
     wc: WasmConnection,
   ): Promise<CreateStartCoinReturn> {
-    if (!identity) {
-      throw new Error('create start coin with no identity');
+    if (!puzzleHash) {
+      throw new Error('create start coin with no puzzle hash');
     }
     if (!wc) {
       throw new Error('create start coin with no wasm obj?');
@@ -174,19 +173,11 @@ export class WasmStateInit {
       throw new Error(msg);
     }
 
-    /*
-    TODO: move one call layer up
-      .catch((e) => {
-        return {
-          setError: e.toString(),
-        };
-      });
-    */
     let address = await blockchain.getAddress();
 
     let inital_spend = await blockchain.do_initial_spend(
       uniqueId,
-      identity.puzzle_hash,
+      puzzleHash,
       amount,
     );
 
@@ -228,13 +219,12 @@ export class WasmStateInit {
     calpokerParserHex: string,
     rngId: number,
     wasm: WasmConnection,
-    private_key: string,
     have_potato: boolean,
     my_contribution: number,
     their_contribution: number,
     rewardPuzzleHash: string,
-  ): ChiaGame {
-    const env = {
+  ): { game: ChiaGame, puzzleHash: string } {
+    const result = wasm.create_game_cradle({
       rng_id: rngId,
       game_types: {
         calpoker: {
@@ -243,30 +233,18 @@ export class WasmStateInit {
           parser_hex: calpokerParserHex,
         },
       },
-      timeout: 100,
+      have_potato: have_potato,
+      my_contribution: { amt: my_contribution },
+      their_contribution: { amt: their_contribution },
+      channel_timeout: 100,
       unroll_timeout: 100,
+      reward_puzzle_hash: rewardPuzzleHash,
+    });
+
+    return {
+      game: new ChiaGame(wasm, result.id),
+      puzzleHash: result.puzzle_hash,
     };
-
-    let chiaGameId = wasm.create_game_cradle(
-      {
-        rng_id: env.rng_id,
-        game_types: env.game_types,
-        identity: private_key,
-        have_potato: have_potato,
-        my_contribution: { amt: my_contribution },
-        their_contribution: { amt: their_contribution },
-        channel_timeout: env.timeout,
-        unroll_timeout: env.unroll_timeout,
-        reward_puzzle_hash: rewardPuzzleHash,
-      }
-    );
-
-    return new ChiaGame(
-      wasm,
-      chiaGameId,
-      private_key,
-    );
-
   }
 
   deserializeGame(
@@ -274,13 +252,7 @@ export class WasmStateInit {
     serializedGame: any,
   ): ChiaGame {
     let chiaGameId = wasm.create_serialized_game(serializedGame);
-    let identity = wasm.get_identity(chiaGameId);
-
-    return new ChiaGame(
-      wasm,
-      chiaGameId,
-      identity.private_key,
-    );
+    return new ChiaGame(wasm, chiaGameId);
   }
 }
 

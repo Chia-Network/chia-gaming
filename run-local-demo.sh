@@ -12,6 +12,12 @@ LOBBY_CONN_DIR="$SCRIPT_DIR/resources/lobby-connection"
 WC_DIR="$SCRIPT_DIR/resources/wc-stub"
 CLSP_DIR="$SCRIPT_DIR/clsp"
 
+GAME_PORT=${GAME_PORT:-3002}
+LOBBY_PORT=${LOBBY_PORT:-3003}
+WC_PORT=${WC_PORT:-3004}
+SIM_PORT=${SIM_PORT:-5800}
+LOBBY_SERVICE_PORT=${LOBBY_SERVICE_PORT:-5801}
+
 SKIP_BUILD=0
 
 for arg in "$@"; do
@@ -20,6 +26,13 @@ for arg in "$@"; do
         *) echo "Unknown argument: $arg"; exit 1 ;;
     esac
 done
+
+# Kill anything still listening on our ports from a previous run.
+for p in $GAME_PORT $LOBBY_PORT $WC_PORT $SIM_PORT $LOBBY_SERVICE_PORT; do
+    pids=$(lsof -ti:"$p" 2>/dev/null || true)
+    [ -n "$pids" ] && kill $pids 2>/dev/null || true
+done
+sleep 0.5
 
 cleanup() {
     echo ""
@@ -67,52 +80,52 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     cargo build --features sim-tests,sim-server --bin chia-gaming-sim
 fi
 
-# Copy the urls file into the frontend dist (the server serves it from there)
-cp "$SCRIPT_DIR/resources/nginx/urls" "$FE_DIR/dist/urls"
+# Generate the urls file with the actual lobby port
+echo "{\"tracker\": \"http://localhost:$LOBBY_PORT/?lobby=true\"}" > "$FE_DIR/dist/urls"
 
 # ── Start services ──────────────────────────────────────────────────
 
-echo "=== Starting simulator (port 5800) ==="
+echo "=== Starting simulator (port $SIM_PORT) ==="
 SIM_BIN="${CARGO_TARGET_DIR:-$SCRIPT_DIR/target}/debug/chia-gaming-sim"
 RUST_LOG=debug "$SIM_BIN" &
 
 echo "=== Waiting for simulator ==="
 for i in $(seq 1 5); do
-    if curl -s -X POST http://localhost:5800/get_peak >/dev/null 2>&1; then
+    if curl -s -X POST "http://localhost:$SIM_PORT/get_peak" >/dev/null 2>&1; then
         echo "Simulator ready"
         break
     fi
     sleep 1
 done
 
-if ! curl -s -X POST http://localhost:5800/get_peak >/dev/null 2>&1; then
+if ! curl -s -X POST "http://localhost:$SIM_PORT/get_peak" >/dev/null 2>&1; then
     echo "Simulator failed to start within 5 seconds"
     exit 1
 fi
 
-echo "=== Starting static file server (ports 3002, 3003) ==="
-node "$SCRIPT_DIR/resources/local-server.js" "$SCRIPT_DIR" &
+echo "=== Starting static file server (ports $GAME_PORT, $LOBBY_PORT) ==="
+node "$SCRIPT_DIR/resources/local-server.js" "$SCRIPT_DIR" "$GAME_PORT" "$LOBBY_PORT" &
 PIDS+=($!)
 
-echo "=== Starting wc-stub (port 3004) ==="
-(cd "$WC_DIR" && node ./dist/index.js) &
+echo "=== Starting wc-stub (port $WC_PORT) ==="
+(cd "$WC_DIR" && PORT=$WC_PORT node ./dist/index.js) &
 PIDS+=($!)
 
-echo "=== Starting lobby-service (port 5801) ==="
-(cd "$LOBBY_SERVICE_DIR" && node ./dist/index-rollup.cjs --self http://localhost:3003) &
+echo "=== Starting lobby-service (port $LOBBY_SERVICE_PORT) ==="
+(cd "$LOBBY_SERVICE_DIR" && PORT=$LOBBY_SERVICE_PORT node ./dist/index-rollup.cjs --self "http://localhost:$LOBBY_PORT") &
 PIDS+=($!)
 
 echo "=== Starting beacon ==="
-"$SCRIPT_DIR/resources/nginx/beacon.sh" http://localhost:3002 http://localhost:3003 &
+"$SCRIPT_DIR/resources/nginx/beacon.sh" "http://localhost:$GAME_PORT" "http://localhost:$LOBBY_PORT" &
 PIDS+=($!)
 
 echo ""
 echo "════════════════════════════════════════════════════════"
 echo "  All services running:"
-echo "    Game frontend:  http://localhost:3002"
-echo "    Lobby view:     http://localhost:3003"
-echo "    WC stub:        http://localhost:3004"
-echo "    Simulator:      http://localhost:5800"
+echo "    Game frontend:  http://localhost:$GAME_PORT"
+echo "    Lobby view:     http://localhost:$LOBBY_PORT"
+echo "    WC stub:        http://localhost:$WC_PORT"
+echo "    Simulator:      http://localhost:$SIM_PORT"
 echo ""
 echo "  Press Ctrl-C to stop all services."
 echo "════════════════════════════════════════════════════════"

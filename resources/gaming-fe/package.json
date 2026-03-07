@@ -43,7 +43,7 @@
     "axios": "^1.9.0",
     "bech32-buffer": "^0.2.1",
     "buffer-replace": "^2.0.0",
-    "chia-gaming-lobby-connection": "../lobby-connection/",
+    "chia-gaming-lobby-connection": "link:../lobby-connection",
     "chia-utils": "^1.0.10",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

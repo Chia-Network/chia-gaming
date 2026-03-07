@@ -155,7 +155,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
 
   const proposeNewGame = useCallback(() => {
     const go = gameObjectRef.current;
-    if (!go || !go.isHandshakeDone()) return;
+    if (!go || !go.isChannelReady()) return;
     try {
       const ids = go.proposeGame({
         game_type: '63616c706f6b6572',
@@ -165,9 +165,10 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
         my_turn: !iStarted,
         parameters: '80',
       });
+      console.log('[calpoker] proposed game, ids:', ids);
       setGameIds(prev => [...prev, ...ids]);
     } catch (e) {
-      console.error('proposeGame failed:', e);
+      console.error('[calpoker] proposeGame failed:', e);
     }
   }, [iStarted, perGameAmount]);
 
@@ -207,13 +208,6 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
 
   const handleNotification = useCallback((n: any) => {
     const go = gameObjectRef.current;
-
-    if (typeof n === 'string') {
-      if (n === 'CleanShutdownComplete') {
-        setGameConnectionState({ stateIdentifier: 'clean_shutdown', stateDetail: [] });
-      }
-      return;
-    }
     if (typeof n !== 'object' || n === null) return;
 
     if ('GameProposed' in n) {
@@ -292,6 +286,12 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
       opponentHandRef.current = cards.opponentHand;
     } else if ('CleanShutdownComplete' in n) {
       setGameConnectionState({ stateIdentifier: 'clean_shutdown', stateDetail: [] });
+    } else if ('ChannelCreated' in n) {
+      console.log('[calpoker] channel created, iStarted:', iStarted);
+      setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
+      if (iStarted) {
+        proposeNewGame();
+      }
     } else if ('CleanShutdownStarted' in n) {
       // Peer initiated clean shutdown
     } else if (isTerminal(n)) {
@@ -315,6 +315,8 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
           proposeNewGame();
         }, 2000);
       }
+    } else {
+      console.warn('[calpoker] unhandled notification:', JSON.stringify(n));
     }
   }, [iStarted, recognizeOutcome, proposeNewGame]);
 
@@ -322,12 +324,6 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     const subscription = gameObject.getObservable().subscribe({
       next: (evt: WasmEvent) => {
         switch (evt.type) {
-          case 'handshake_done':
-            setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
-            if (iStarted) {
-              proposeNewGame();
-            }
-            break;
           case 'notification':
             handleNotification(evt.data);
             break;
@@ -339,6 +335,9 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
             break;
           case 'address':
             setAddressData(evt.data);
+            break;
+          default:
+            console.warn('[calpoker] unhandled event type:', (evt as any).type, evt);
             break;
         }
       }
@@ -367,7 +366,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
 
   const handleMakeMove = useCallback((_move: any) => {
     const go = gameObjectRef.current;
-    if (!go || !go.isHandshakeDone()) return;
+    if (!go || !go.isChannelReady()) return;
     const currentGameId = gameIdsRef.current[0];
     if (!currentGameId) return;
 

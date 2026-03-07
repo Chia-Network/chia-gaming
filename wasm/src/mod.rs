@@ -1,6 +1,5 @@
 #[allow(unused_variables)] // enable this so 'typescript_type' can be named 'typescript_type'
 mod gaming_wasm {
-    use js_sys::{Array, JsString, Object};
 
     use std::cell::RefCell;
     use std::collections::{BTreeMap, HashMap};
@@ -26,9 +25,10 @@ mod gaming_wasm {
         PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout, convert_coinset_org_spend_to_spend, map_m
     };
     use chia_gaming::peer_container::{
-        GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
+        DrainResult, GameCradle, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
     };
-    use chia_gaming::potato_handler::types::{GameFactory, ToLocalUI};
+    use chia_gaming::potato_handler::effects::GameNotification;
+    use chia_gaming::potato_handler::types::GameFactory;
     use chia_gaming::potato_handler::start::GameStart;
 
     #[cfg(target_arch = "wasm32")]
@@ -71,16 +71,18 @@ mod gaming_wasm {
         "puzzle_hash": string,
     };
 
-    export type IdleResult = {
-        "continue_on": boolean,
+    export type DrainResult = {
+        "handshake_done": boolean,
+        "finished": boolean,
         "outbound_transactions": Array<SpendBundle>,
         "outbound_messages": Array<string>,
+        "notifications": Array<any>,
+        "receive_errors": Array<string>,
     };
 
     export type GameCradleConfig = {
         "seed": string | undefined,
         "game_types": Map<string, string>,
-        "identity": string | undefined,
         "have_potato": boolean,
         "my_contribution": Amount,
         "their_contribution": Amount,
@@ -88,16 +90,12 @@ mod gaming_wasm {
         "reward_puzzle_hash": string
     };
 
-    export type IChiaIdentityFun = (seed: string) => IChiaIdentity;
-
-    export type IdleCallbacks = {
-        "opponent_moved": ((game_id: string, readable_move_hex: string) => void) | undefined,
-        "game_message": ((game_id: string, readable_move_hex: string) => void) | undefined,
-        "game_notification": ((notification_json: string) => void) | undefined,
-        "clean_shutdown_started": (() => void) | undefined,
-        "clean_shutdown_complete": ((coin: string) => void) | undefined,
-        "going_on_chain": ((reason: string) => void) | undefined
+    export type GameCradleResult = {
+        "id": number,
+        "puzzle_hash": string,
     };
+
+    export type IChiaIdentityFun = (seed: string) => IChiaIdentity;
     "#;
 
     #[derive(Serialize, Deserialize, Default, Debug)]
@@ -170,20 +168,13 @@ mod gaming_wasm {
 
     #[derive(Serialize, Deserialize, Default, Debug)]
     struct JsGameCradleConfig {
-        // GameInitParams?
-        // name vs hex string for program
         game_types: BTreeMap<String, JsGameFactory>,
-        // hex string for private key
-        identity: String,
         rng_id: i32,
         have_potato: bool,
-        // float or decimal string
         my_contribution: JsAmount,
-        // float or decimal string
         their_contribution: JsAmount,
         channel_timeout: i32,
         unroll_timeout: i32,
-        // hex string for puzzle hash
         reward_puzzle_hash: String,
     }
 
@@ -219,33 +210,30 @@ mod gaming_wasm {
         Ok(result)
     }
 
-    struct GameConfigResult {
-        config: SynchronousGameCradleConfig,
+    struct GameConfigPartial {
+        game_types: BTreeMap<GameType, GameFactory>,
+        have_potato: bool,
+        channel_timeout: Timeout,
+        unroll_timeout: Timeout,
+        my_contribution: Amount,
+        their_contribution: Amount,
+        reward_puzzle_hash: PuzzleHash,
         rng_id: i32,
     }
 
-    fn get_game_config(
-        allocator: &mut AllocEncoder,
-        js_config: JsValue,
-    ) -> Result<GameConfigResult, JsValue> {
+    fn parse_game_config(js_config: JsValue) -> Result<GameConfigPartial, JsValue> {
         let jsconfig: JsGameCradleConfig = serde_wasm_bindgen::from_value(js_config).into_js()?;
-        let private_key_bytes = hex::decode(&jsconfig.identity).into_js()?;
-        let private_key = PrivateKey::from_slice(&private_key_bytes).into_js()?;
-        let identity = ChiaIdentity::new(allocator, private_key).into_js()?;
         let game_types = convert_game_types(&jsconfig.game_types)?;
         let reward_puzzle_hash_bytes = hex::decode(&jsconfig.reward_puzzle_hash).into_js()?;
 
-        Ok(GameConfigResult {
-            config: SynchronousGameCradleConfig {
-                game_types,
-                have_potato: jsconfig.have_potato,
-                identity: identity,
-                channel_timeout: Timeout::new(jsconfig.channel_timeout as u64),
-                unroll_timeout: Timeout::new(jsconfig.unroll_timeout as u64),
-                my_contribution: jsconfig.my_contribution.amt.clone(),
-                their_contribution: jsconfig.their_contribution.amt.clone(),
-                reward_puzzle_hash: PuzzleHash::from_hash(Hash::from_slice(&reward_puzzle_hash_bytes).into_js()?),
-            },
+        Ok(GameConfigPartial {
+            game_types,
+            have_potato: jsconfig.have_potato,
+            channel_timeout: Timeout::new(jsconfig.channel_timeout as u64),
+            unroll_timeout: Timeout::new(jsconfig.unroll_timeout as u64),
+            my_contribution: jsconfig.my_contribution.amt.clone(),
+            their_contribution: jsconfig.their_contribution.amt.clone(),
+            reward_puzzle_hash: PuzzleHash::from_hash(Hash::from_slice(&reward_puzzle_hash_bytes).into_js()?),
             rng_id: jsconfig.rng_id,
         })
     }
@@ -317,20 +305,38 @@ mod gaming_wasm {
 
     /// The name 'typescript_type' is part of the FFI
     #[wasm_bindgen(typescript_type = "ICreateGameCradle")]
-    pub fn create_game_cradle(js_config: JsValue) -> Result<i32, JsValue> {
+    pub fn create_game_cradle(js_config: JsValue) -> Result<JsValue, JsValue> {
         let new_id = get_next_id();
-        let mut allocator = AllocEncoder::new();
-        let game_config = get_game_config(&mut allocator, js_config.clone())?;
-        with_rng(game_config.rng_id, move |rng: &mut ChaCha8Rng| {
-            let synchronous_game_cradle_config = game_config.config.clone();
-            let game_cradle = SynchronousGameCradle::new(rng, synchronous_game_cradle_config);
+        let partial = parse_game_config(js_config)?;
+        with_rng(partial.rng_id, move |rng: &mut ChaCha8Rng| {
+            let mut allocator = AllocEncoder::new();
+            let private_key: PrivateKey = rng.gen();
+            let identity = ChiaIdentity::new(&mut allocator, private_key)?;
+            let puzzle_hash_hex = hex::encode(identity.puzzle_hash.bytes());
+
+            let config = SynchronousGameCradleConfig {
+                game_types: partial.game_types,
+                have_potato: partial.have_potato,
+                identity,
+                channel_timeout: partial.channel_timeout,
+                unroll_timeout: partial.unroll_timeout,
+                my_contribution: partial.my_contribution,
+                their_contribution: partial.their_contribution,
+                reward_puzzle_hash: partial.reward_puzzle_hash,
+            };
+
+            let game_cradle = SynchronousGameCradle::new(rng, config);
             let cradle = JsCradle {
                 allocator,
                 rng: ChaCha8SerializationWrapper(rng.clone()),
                 cradle: game_cradle,
             };
             insert_cradle(new_id, cradle);
-            Ok(new_id)
+
+            #[derive(Serialize)]
+            struct CradleResult { id: i32, puzzle_hash: String }
+            serde_wasm_bindgen::to_value(&CradleResult { id: new_id, puzzle_hash: puzzle_hash_hex })
+                .map_err(|e| types::Error::StrErr(format!("{e:?}")))
         })
     }
 
@@ -372,12 +378,13 @@ mod gaming_wasm {
 
 
     #[wasm_bindgen]
-    pub fn opening_coin(cid: i32, hex_coinstring: &str) -> Result<(), JsValue> {
-        with_game(cid, move |cradle: &mut JsCradle| {
+    pub fn opening_coin(cid: i32, hex_coinstring: &str) -> Result<JsValue, JsValue> {
+        let coin = hex_to_coinstring(hex_coinstring).into_js()?;
+        with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle.cradle.opening_coin(
                 &mut cradle.allocator,
                 &mut cradle.rng.0,
-                hex_to_coinstring(hex_coinstring)?,
+                coin,
             )
         })
     }
@@ -463,9 +470,9 @@ mod gaming_wasm {
         additions: Vec<String>,
         removals: Vec<String>,
         timed_out: Vec<String>,
-    ) -> Result<(), JsValue> {
-        with_game(cid, move |cradle: &mut JsCradle| {
-            let watch_report = watch_report_from_params(additions, removals, timed_out)?;
+    ) -> Result<JsValue, JsValue> {
+        let watch_report = watch_report_from_params(additions, removals, timed_out).into_js()?;
+        with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle.cradle.new_block(
                 &mut cradle.allocator,
                 &mut cradle.rng.0,
@@ -496,9 +503,9 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn propose_game(cid: i32, game: JsValue) -> Result<Vec<String>, JsValue> {
+    pub fn propose_game(cid: i32, game: JsValue) -> Result<JsValue, JsValue> {
         let js_game_start = serde_wasm_bindgen::from_value::<JsGameStart>(game.clone()).into_js()?;
-        let res = with_game(cid, move |cradle: &mut JsCradle| {
+        with_game(cid, move |cradle: &mut JsCradle| {
             let game_start = GameStart {
                 game_id: cradle.cradle.next_game_id()?,
                 game_type: GameType(hex::decode(&js_game_start.game_type).into_gen()?),
@@ -508,40 +515,60 @@ mod gaming_wasm {
                 my_turn: js_game_start.my_turn,
                 parameters: Program::from_bytes(&hex::decode(&js_game_start.parameters).into_gen()?),
             };
-            cradle.cradle.propose_game(
+            let ids = cradle.cradle.propose_game(
                 &mut cradle.allocator,
                 &mut cradle.rng.0,
                 &game_start,
-            )
-        })?;
+            )?;
+            let dr = cradle
+                .cradle
+                .drain_all(&mut cradle.allocator, &mut cradle.rng.0)?;
 
-        Ok(res.iter().map(game_id_to_string).collect())
+            #[derive(Serialize)]
+            struct ProposeGameResult {
+                ids: Vec<String>,
+                handshake_done: bool,
+                finished: bool,
+                outbound_transactions: Vec<JsSpendBundle>,
+                outbound_messages: Vec<String>,
+                notifications: Vec<serde_json::Value>,
+                receive_errors: Vec<String>,
+            }
+
+            to_js_compat(&ProposeGameResult {
+                ids: ids.iter().map(game_id_to_string).collect(),
+                handshake_done: dr.handshake_done,
+                finished: dr.finished,
+                outbound_transactions: dr.outbound_transactions.iter().map(spend_bundle_to_js).collect(),
+                outbound_messages: dr.outbound_messages.iter().map(hex::encode).collect(),
+                notifications: notifications_to_js(&dr.notifications),
+                receive_errors: dr.receive_errors.iter().map(|e| format!("{e:?}")).collect(),
+            })
+        })
     }
 
     #[wasm_bindgen]
-    pub fn accept_proposal(cid: i32, game_id: &str) -> Result<(), JsValue> {
+    pub fn accept_proposal(cid: i32, game_id: &str) -> Result<JsValue, JsValue> {
         let game_id = string_to_game_id(game_id)?;
-        with_game(cid, move |cradle: &mut JsCradle| {
+        with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle.cradle.accept_proposal(
                 &mut cradle.allocator,
                 &mut cradle.rng.0,
                 &game_id,
             )
-        })?;
-        Ok(())
+        })
     }
 
     #[wasm_bindgen]
-    pub fn cancel_proposal(cid: i32, game_id: &str) -> Result<(), JsValue> {
+    pub fn cancel_proposal(cid: i32, game_id: &str) -> Result<JsValue, JsValue> {
         let game_id = string_to_game_id(game_id)?;
-        with_game(cid, move |cradle: &mut JsCradle| {
+        with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle.cradle.cancel_proposal(
                 &mut cradle.allocator,
                 &mut cradle.rng.0,
                 &game_id,
             )
-        })?;
-        Ok(())
+        })
     }
 
     pub fn make_move_inner(
@@ -549,7 +576,7 @@ mod gaming_wasm {
         id: &str,
         readable: &str,
         entropy: Option<&str>,
-    ) -> Result<(), JsValue> {
+    ) -> Result<JsValue, JsValue> {
         let game_id = string_to_game_id(id)?;
         let readable_bytes = hex::decode(readable).into_js()?;
         let new_entropy = if let Some(e) = entropy {
@@ -557,7 +584,7 @@ mod gaming_wasm {
         } else {
             None
         };
-        with_game(cid, move |cradle: &mut JsCradle| {
+        with_game_drain(cid, move |cradle: &mut JsCradle| {
             let entropy: Hash = new_entropy.unwrap_or_else(|| cradle.rng.0.gen());
             cradle.cradle.make_move(
                 &mut cradle.allocator,
@@ -575,23 +602,23 @@ mod gaming_wasm {
         id: &str,
         readable: &str,
         new_entropy: &str,
-    ) -> Result<(), JsValue> {
+    ) -> Result<JsValue, JsValue> {
         make_move_inner(cid, id, readable, Some(new_entropy))
     }
 
     #[wasm_bindgen]
-    pub fn make_move(cid: i32, id: &str, readable: &str) -> Result<(), JsValue> {
+    pub fn make_move(cid: i32, id: &str, readable: &str) -> Result<JsValue, JsValue> {
         make_move_inner(cid, id, readable, None)
     }
 
     /// Submit a cheating move for testing and demonstration purposes.
     /// The mover_share is the amount the victim receives on timeout.
     #[wasm_bindgen]
-    pub fn cheat(cid: i32, id: &str, mover_share: &str) -> Result<(), JsValue> {
+    pub fn cheat(cid: i32, id: &str, mover_share: &str) -> Result<JsValue, JsValue> {
         let game_id = string_to_game_id(id)?;
         let share =
             Amount::new(mover_share.parse::<u64>().map_err(|e| JsValue::from_str(&e.to_string()))?);
-        with_game(cid, move |cradle: &mut JsCradle| {
+        with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle.cradle.cheat(
                 &mut cradle.allocator,
                 &mut cradle.rng.0,
@@ -606,10 +633,10 @@ mod gaming_wasm {
         cid: i32,
         id: &str,
         readable: &str,
-    ) -> Result<(), JsValue> {
+    ) -> Result<JsValue, JsValue> {
         let game_id = string_to_game_id(id)?;
         let readable_bytes = hex::decode(readable).into_js()?;
-        with_game(cid, move |cradle: &mut JsCradle| {
+        with_game_drain(cid, move |cradle: &mut JsCradle| {
             let entropy: Hash = cradle.rng.0.gen();
             cradle.cradle.accept_proposal_and_move(
                 &mut cradle.allocator,
@@ -630,7 +657,7 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    #[deprecated(note = "Use the game_notification callback in idle() instead of polling state")]
+    #[deprecated(note = "Game state should come from notifications in the DrainResult")]
     #[allow(deprecated)]
     pub fn get_game_state_id(cid: i32) -> Result<Option<String>, JsValue> {
         with_game(cid, move |cradle: &mut JsCradle| {
@@ -651,9 +678,9 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn accept_timeout(cid: i32, id: &str) -> Result<(), JsValue> {
+    pub fn accept_timeout(cid: i32, id: &str) -> Result<JsValue, JsValue> {
         let game_id = string_to_game_id(id)?;
-        with_game(cid, move |cradle: &mut JsCradle| {
+        with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle
                 .cradle
                 .accept_timeout(&mut cradle.allocator, &mut cradle.rng.0, &game_id)
@@ -661,8 +688,8 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn shut_down(cid: i32) -> Result<(), JsValue> {
-        with_game(cid, move |cradle: &mut JsCradle| {
+    pub fn shut_down(cid: i32) -> Result<JsValue, JsValue> {
+        with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle.cradle.shut_down(
                 &mut cradle.allocator,
                 &mut cradle.rng.0,
@@ -671,79 +698,13 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn deliver_message(cid: i32, inbound_message: &str) -> Result<(), JsValue> {
+    pub fn deliver_message(cid: i32, inbound_message: &str) -> Result<JsValue, JsValue> {
         let message_data = hex::decode(inbound_message).into_js()?;
-        with_game(cid, move |cradle: &mut JsCradle| {
+        with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle.cradle.deliver_message(&message_data)
         })
     }
 
-    #[derive(Default)]
-    struct JsLocalUI {
-        callbacks: BTreeMap<String, JsValue>,
-    }
-
-    fn call_javascript_from_collection<F>(
-        callbacks: &BTreeMap<String, JsValue>,
-        name: &str,
-        f: F,
-    ) -> Result<(), types::Error>
-    where
-        F: FnOnce(&mut Array) -> Result<(), types::Error>,
-    {
-        if let Some(js_value) = callbacks.get(name) {
-            let function = js_value
-                .dyn_ref::<js_sys::Function>()
-                .ok_or_else(|| types::Error::StrErr("Not a js function".to_string()))?;
-            let mut args_array = Array::new();
-            f(&mut args_array)?;
-            function.apply(&JsValue::NULL, &args_array).into_e()?;
-        }
-
-        Ok(())
-    }
-
-    impl ToLocalUI for JsLocalUI {
-        fn notification(
-            &mut self,
-            notification: &chia_gaming::potato_handler::effects::GameNotification,
-        ) -> Result<(), chia_gaming::common::types::Error> {
-            call_javascript_from_collection(&self.callbacks, "notification", |args_array| {
-                let json = serde_json::to_string(notification)
-                    .unwrap_or_else(|_| format!("{notification:?}"));
-                args_array.set(0, JsValue::from_str(&json));
-                Ok(())
-            })
-        }
-    }
-
-    fn to_local_ui(callbacks: JsValue) -> Result<JsLocalUI, JsValue> {
-        let object = if let Some(object) = Object::try_from(&callbacks) {
-            object
-        } else {
-            return Err(JsValue::from_str("callbacks wasn't an object"));
-        };
-
-        let mut jslocalui = JsLocalUI::default();
-
-        let entries = Object::entries(object);
-        for i in 0..entries.length() {
-            let entry = Array::from(&entries.at(i as i32));
-            let js_name = &entry.at(0);
-
-            let js_string = js_name
-                .dyn_ref::<JsString>()
-                .ok_or_else(|| JsValue::from_str("Not a js string"))?;
-            if let Some(name) = js_string
-                .as_string()
-            {
-                let value = entry.at(1);
-                jslocalui.callbacks.insert(name, value);
-            }
-        }
-
-        Ok(jslocalui)
-    }
 
     #[derive(Serialize)]
     struct JsSpend {
@@ -764,14 +725,13 @@ mod gaming_wasm {
     }
 
     #[derive(Serialize)]
-    struct JsIdleResult {
-        continue_on: bool,
+    struct JsDrainResult {
+        handshake_done: bool,
         finished: bool,
-        clean_shutdown_received: bool,
         outbound_transactions: Vec<JsSpendBundle>,
         outbound_messages: Vec<String>,
-        handshake_done: bool,
-        receive_error: Option<String>,
+        notifications: Vec<serde_json::Value>,
+        receive_errors: Vec<String>,
     }
 
     fn spend_to_js(spend: &Spend) -> JsSpend {
@@ -823,25 +783,45 @@ mod gaming_wasm {
         }
     }
 
-    fn idle_result_to_js(idle_result: &IdleResult) -> Result<JsValue, types::Error> {
-        serde_wasm_bindgen::to_value(&JsIdleResult {
-            continue_on: idle_result.continue_on,
-            finished: idle_result.finished,
-            clean_shutdown_received: idle_result.clean_shutdown_received,
-            outbound_transactions: idle_result
+    fn notifications_to_js(notifications: &[GameNotification]) -> Vec<serde_json::Value> {
+        notifications
+            .iter()
+            .map(|n| serde_json::to_value(n).unwrap_or_else(|_| serde_json::json!(format!("{n:?}"))))
+            .collect()
+    }
+
+    fn to_js_compat<T: Serialize>(value: &T) -> Result<JsValue, types::Error> {
+        value.serialize(
+            &serde_wasm_bindgen::Serializer::json_compatible()
+        ).into_e()
+    }
+
+    fn drain_result_to_js(dr: &DrainResult) -> Result<JsValue, types::Error> {
+        to_js_compat(&JsDrainResult {
+            handshake_done: dr.handshake_done,
+            finished: dr.finished,
+            outbound_transactions: dr
                 .outbound_transactions
                 .iter()
                 .map(spend_bundle_to_js)
                 .collect(),
-            outbound_messages: idle_result
-                .outbound_messages
-                .iter()
-                .map(hex::encode)
-                .collect(),
-            handshake_done: idle_result.handshake_done,
-            receive_error: idle_result.receive_error.as_ref().map(|e| format!("{e:?}")),
+            outbound_messages: dr.outbound_messages.iter().map(hex::encode).collect(),
+            notifications: notifications_to_js(&dr.notifications),
+            receive_errors: dr.receive_errors.iter().map(|e| format!("{e:?}")).collect(),
         })
-        .into_e()
+    }
+
+    fn with_game_drain<F>(cid: i32, f: F) -> Result<JsValue, JsValue>
+    where
+        F: FnOnce(&mut JsCradle) -> Result<(), types::Error>,
+    {
+        with_game(cid, move |cradle: &mut JsCradle| {
+            f(cradle)?;
+            let dr = cradle
+                .cradle
+                .drain_all(&mut cradle.allocator, &mut cradle.rng.0)?;
+            drain_result_to_js(&dr)
+        })
     }
 
     #[wasm_bindgen]
@@ -872,22 +852,6 @@ mod gaming_wasm {
         serde_wasm_bindgen::to_value(&amount.map(|a| JsAmount { amt: a })).into_js()
     }
 
-    #[wasm_bindgen]
-    pub fn idle(cid: i32, callbacks: JsValue) -> Result<JsValue, JsValue> {
-        let mut local_ui = to_local_ui(callbacks)?;
-        with_game(cid, move |cradle: &mut JsCradle| {
-            if let Some(idle_result) =
-                cradle
-                    .cradle
-                    .idle(&mut cradle.allocator, &mut cradle.rng.0, &mut local_ui)?
-            // Give extras
-            {
-                idle_result_to_js(&idle_result)
-            } else {
-                Ok(JsValue::NULL.clone())
-            }
-        })
-    }
 
     #[derive(Serialize, Deserialize)]
     struct JsChiaIdentity {

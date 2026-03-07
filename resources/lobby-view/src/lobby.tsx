@@ -40,9 +40,9 @@ const LobbyScreen = () => {
   const [chatInput, setChatInput] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [gameChoice, setGameChoice] = useState(lobbyGames[0]?.game || '');
-  const [wagerInput, setWagerInputPrimitive] = useState('');
+  const [wagerInput, setWagerInputPrimitive] = useState('100');
   const [wagerValidationError, setWagerValidationError] = useState('');
-  const [perHandInput, setPerHandInput] = useState('');
+  const [perHandInput, setPerHandInput] = useState('10');
   const [editingAlias, setEditingAlias] = useState(false);
   const [gotoUrl, setGotoUrl] = useState('');
   const [urlDialogOpen, setUrlDialogOpen] = useState(false);
@@ -176,7 +176,7 @@ const LobbyScreen = () => {
   };
 
   useEffect(() => {
-    if (fragment.token) joinRoom(fragment.token);
+    if (fragment.token) joinRoom(fragment.token).catch(() => {});
   }, [fragment, joinRoom]);
 
   function commitEdit(e: any) {

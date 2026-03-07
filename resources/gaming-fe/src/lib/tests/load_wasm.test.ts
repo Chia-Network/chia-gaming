@@ -5,14 +5,12 @@ import {
   deliver_message,
   deposit_file,
   opening_coin,
-  idle,
   chia_identity,
   Spend,
   CoinSpend,
   SpendBundle,
   IChiaIdentity,
-  IdleCallbacks,
-  IdleResult,
+  DrainResult,
 } from '../../../node-pkg/chia_gaming_wasm.js';
 import { Subscription } from 'rxjs';
 import {
@@ -118,7 +116,7 @@ class WasmBlobWrapperAdapter {
   }
 
   handshaked(): boolean {
-    return !!this.blob?.isHandshakeDone();
+    return !!this.blob?.isChannelReady();
   }
 
   outbound_messages(): Array<SimpleMessage> {
@@ -175,7 +173,7 @@ async function action_with_messages(
   cradles.forEach((cradle, index) => {
     subscriptions.push(addActiveSubscription(cradle.getObservable().subscribe({
       next: (evt: any) => {
-        if (evt.type === 'handshake_done') {
+        if (evt.type === 'notification' && evt.data && 'ChannelCreated' in evt.data) {
           evt_results[index] = true;
         }
       },

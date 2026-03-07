@@ -33,7 +33,7 @@ export class WasmBlobWrapper {
   remoteNumber: number;
   cradle: ChiaGame | undefined;
   uniqueId: string;
-  handshakeDone: boolean;
+  channelReady: boolean;
   storedMessages: string[];
   cleanShutdownCalled: boolean;
   finished: boolean;
@@ -57,7 +57,7 @@ export class WasmBlobWrapper {
     this.remoteNumber = 0;
     this.sendMessage = sendMessage;
     this.amount = amount;
-    this.handshakeDone = false;
+    this.channelReady = false;
     this.iStarted = iStarted;
     this.storedMessages = [];
     this.cleanShutdownCalled = false;
@@ -86,7 +86,7 @@ export class WasmBlobWrapper {
 
   getWasmConnection(): WasmConnection | undefined { return this.wc; }
 
-  isHandshakeDone(): boolean { return this.handshakeDone; }
+  isChannelReady(): boolean { return this.channelReady; }
 
   getObservable() {
     return this.rxjsMessageSingleton;
@@ -99,7 +99,8 @@ export class WasmBlobWrapper {
     const storedMessages = this.storedMessages;
     this.storedMessages = [];
     storedMessages.forEach((m) => {
-      this.cradle?.deliver_message(m);
+      const result = this.cradle?.deliver_message(m);
+      this.processResult(result);
     });
   }
 
@@ -110,8 +111,8 @@ export class WasmBlobWrapper {
 
   activateSpend(coin: string) {
     if (!this.wc) { throw new Error("this.wc is falsey") }
-    this.cradle?.opening_coin(coin);
-    this.drainAll();
+    const result = this.cradle?.opening_coin(coin);
+    this.processResult(result);
   }
 
   setBlockchainAddress(a: BlockchainInboundAddressResult) {
@@ -141,44 +142,33 @@ export class WasmBlobWrapper {
     this.blockchain.spend(cvt, blob).then(() => {});
   }
 
-  drainAll(): void {
-    if (!this.cradle || this.finished) return;
+  processResult(result: any): void {
+    if (!result || this.finished) return;
 
-    const notifications: any[] = [];
-    while (true) {
-      const result = this.cradle.idle({
-        notification: (json: string) => {
-          try {
-            notifications.push(JSON.parse(json));
-          } catch (e) {
-            console.warn('failed to parse notification', e);
-          }
-        }
-      });
-      if (!result) break;
-
-      for (const msg of result.outbound_messages) {
-        this.sendMessage(this.messageNumber++, msg);
-      }
-      for (const tx of result.outbound_transactions) {
-        this.submitTransaction(tx);
-      }
-
-      if (result.handshake_done && !this.handshakeDone) {
-        this.handshakeDone = true;
-        this.rxjsEmitter?.next({ type: 'handshake_done' });
-      }
-      if (result.finished && !this.finished) {
-        this.finished = true;
-        this.rxjsEmitter?.next({ type: 'finished' });
-      }
-      if (result.receive_error) {
-        this.rxjsEmitter?.next({ type: 'error', error: result.receive_error });
-      }
-      if (!result.continue_on) break;
+    const msgs = result.outbound_messages || [];
+    if (msgs.length > 0) {
+      console.log(`[wasm] sending ${msgs.length} outbound message(s)`);
     }
-
-    for (const n of notifications) {
+    for (const msg of msgs) {
+      this.sendMessage(this.messageNumber++, msg);
+    }
+    for (const tx of result.outbound_transactions || []) {
+      this.submitTransaction(tx);
+    }
+    if (result.finished && !this.finished) {
+      this.finished = true;
+      this.rxjsEmitter?.next({ type: 'finished' });
+    }
+    for (const err of result.receive_errors || []) {
+      console.error('[wasm] receive error:', err);
+      this.rxjsEmitter?.next({ type: 'error', error: err });
+    }
+    for (const n of result.notifications || []) {
+      const tag = typeof n === 'object' && n !== null ? Object.keys(n)[0] : String(n);
+      console.log('[wasm] notification:', tag);
+      if (tag === 'ChannelCreated' && !this.channelReady) {
+        this.channelReady = true;
+      }
       this.rxjsEmitter?.next({ type: 'notification', data: n });
     }
   }
@@ -194,8 +184,9 @@ export class WasmBlobWrapper {
       return;
     }
     this.remoteNumber = msgno;
-    this.cradle.deliver_message(msg);
-    this.drainAll();
+    const result = this.cradle.deliver_message(msg);
+    console.log(`[wasm] deliverMessage #${msgno} DELIVERED`);
+    this.processResult(result);
   }
 
   blockNotification(peak: number, blocks: any[], block_report: any) {
@@ -220,46 +211,47 @@ export class WasmBlobWrapper {
       }
     }
     this.kickSystem(4);
-    this.cradle?.block_data(peak, block_report);
-    this.drainAll();
+    const result = this.cradle?.block_data(peak, block_report);
+    this.processResult(result);
   }
 
   // --- Game actions (called by higher layer) ---
 
   proposeGame(params: any): string[] {
     if (!this.cradle) throw new Error('no cradle');
-    const ids = this.cradle.propose_game(params);
-    this.drainAll();
-    return ids;
+    const result = this.cradle.propose_game(params);
+    this.processResult(result);
+    return result?.ids || [];
   }
 
   acceptProposal(gameId: string): void {
     if (!this.cradle) throw new Error('no cradle');
-    this.cradle.accept_proposal(gameId);
-    this.drainAll();
+    const result = this.cradle.accept_proposal(gameId);
+    this.processResult(result);
   }
 
   makeMove(gameId: string, readable: string, entropy?: string): void {
     if (!this.cradle) throw new Error('no cradle');
+    let result;
     if (entropy) {
-      this.cradle.make_move_entropy(gameId, readable, entropy);
+      result = this.cradle.make_move_entropy(gameId, readable, entropy);
     } else {
-      this.cradle.make_move_entropy(gameId, readable, this.generateEntropy());
+      result = this.cradle.make_move_entropy(gameId, readable, this.generateEntropy());
     }
-    this.drainAll();
+    this.processResult(result);
   }
 
   acceptTimeout(gameId: string): void {
     if (!this.cradle) throw new Error('no cradle');
-    this.cradle.accept(gameId);
-    this.drainAll();
+    const result = this.cradle.accept(gameId);
+    this.processResult(result);
   }
 
   cleanShutdown(): void {
     if (!this.cradle) return;
     this.cleanShutdownCalled = true;
-    this.cradle.shut_down();
-    this.drainAll();
+    const result = this.cradle.shut_down();
+    this.processResult(result);
   }
 
   generateEntropy(): string {

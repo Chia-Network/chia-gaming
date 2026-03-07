@@ -182,7 +182,7 @@ const WalletConnectHeading = (_args: any) => {
             {
               blockchain_reply: evt,
             },
-            window.location.origin,
+            '*',
           );
         } else {
           // TODO: Two cases:

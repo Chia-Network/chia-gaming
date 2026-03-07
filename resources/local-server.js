@@ -11,9 +11,12 @@ const url = require('url');
 
 const PROJECT_ROOT = process.argv[2];
 if (!PROJECT_ROOT) {
-    console.error('Usage: node local-server.js <project-root>');
+    console.error('Usage: node local-server.js <project-root> [game-port] [lobby-port]');
     process.exit(1);
 }
+
+const GAME_PORT  = parseInt(process.argv[3] || process.env.GAME_PORT  || '3002', 10);
+const LOBBY_PORT = parseInt(process.argv[4] || process.env.LOBBY_PORT || '3003', 10);
 
 const FE_DIR = path.join(PROJECT_ROOT, 'resources', 'gaming-fe');
 const LOBBY_VIEW_DIR = path.join(PROJECT_ROOT, 'resources', 'lobby-view');
@@ -87,10 +90,16 @@ function proxyWebSocket(req, clientSocket, head, port) {
     clientSocket.on('error', () => backend.destroy());
 }
 
-// ── Game frontend — port 3002 ──────────────────────────────────────
+// ── Game frontend ─────────────────────────────────────────────────
 
 const gameServer = http.createServer((req, res) => {
     const pathname = url.parse(req.url).pathname;
+
+    // Proxy lobby API and socket.io to lobby-service so the game frontend
+    // can reach them same-origin (avoids cross-origin issues with port 3003).
+    if (pathname.startsWith('/lobby') || pathname.startsWith('/socket.io')) {
+        return proxyHttp(req, res, 5801);
+    }
 
     if (pathname === '/index.js') {
         return sendFile(res, path.join(FE_DIR, 'dist', 'js', 'index-rollup.js'));
@@ -124,11 +133,25 @@ const gameServer = http.createServer((req, res) => {
     });
 });
 
-gameServer.listen(3002, '127.0.0.1', () => {
-    console.log('Game frontend:  http://localhost:3002');
+gameServer.on('upgrade', (req, socket, head) => {
+    if (url.parse(req.url).pathname.startsWith('/socket.io')) {
+        proxyWebSocket(req, socket, head, 5801);
+    } else {
+        socket.destroy();
+    }
 });
 
-// ── Lobby view — port 3003 ─────────────────────────────────────────
+gameServer.listen(GAME_PORT, '127.0.0.1', () => {
+    console.log(`Game frontend:  http://localhost:${GAME_PORT}`);
+});
+gameServer.on('error', (e) => {
+    if (e.code === 'EADDRINUSE') {
+        console.error(`Port ${GAME_PORT} already in use – kill the old process or set GAME_PORT`);
+    }
+    process.exit(1);
+});
+
+// ── Lobby view ────────────────────────────────────────────────────
 
 const lobbyServer = http.createServer((req, res) => {
     const pathname = url.parse(req.url).pathname;
@@ -161,6 +184,12 @@ lobbyServer.on('upgrade', (req, socket, head) => {
     }
 });
 
-lobbyServer.listen(3003, '127.0.0.1', () => {
-    console.log('Lobby view:     http://localhost:3003');
+lobbyServer.listen(LOBBY_PORT, '127.0.0.1', () => {
+    console.log(`Lobby view:     http://localhost:${LOBBY_PORT}`);
+});
+lobbyServer.on('error', (e) => {
+    if (e.code === 'EADDRINUSE') {
+        console.error(`Port ${LOBBY_PORT} already in use – kill the old process or set LOBBY_PORT`);
+    }
+    process.exit(1);
 });

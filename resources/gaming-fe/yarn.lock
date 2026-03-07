@@ -4755,21 +4755,9 @@ chia-bls@^1.0.2:
     jssha "^3.3.1"
     randombytes "^2.1.0"
 
-chia-gaming-lobby-connection@../lobby-connection/:
-  version "0.0.1"
-  dependencies:
-    "@types/express" "^5.0.5"
-    "@types/minimist" "^1.2.5"
-    "@types/node" "^24.9.2"
-    cors "^2.8.5"
-    crypto "^1.0.1"
-    esbuild "^0.25.11"
-    express "^5.1.0"
-    helmet "^8.1.0"
-    minimist "^1.2.8"
-    socket.io-client "^4.8.1"
-    typescript "^5.9.3"
-    uuid "^13.0.0"
+"chia-gaming-lobby-connection@link:../lobby-connection":
+  version "0.0.0"
+  uid ""
 
 chia-utils@^1.0.10:
   version "1.0.10"

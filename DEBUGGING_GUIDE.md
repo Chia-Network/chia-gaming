@@ -1,6 +1,6 @@
 # Debugging & Testing Reference for chia_gaming
 
-This document captures hard-won knowledge from debugging the calpoker on-chain
+This document captures hard-won knowledge from debugging the chia gaming
 tests. It is intended as a reference for future sessions.
 
 ## Building and Running Tests

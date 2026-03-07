@@ -69,7 +69,6 @@ export interface GameInitParams {
 export type IChiaIdentityFun = (seed: string) => IChiaIdentity;
 
 export type WasmEvent =
-  | { type: 'handshake_done' }
   | { type: 'notification'; data: any }
   | { type: 'error'; error: string }
   | { type: 'finished' }
@@ -79,7 +78,7 @@ export interface WasmConnection {
   // System
   init: (print: any) => any;
   create_rng: (seed: string) => number;
-  create_game_cradle: (config: any) => number;
+  create_game_cradle: (config: any) => { id: number; puzzle_hash: string };
   create_serialized_game: (serialized: any) => number;
   deposit_file: (name: string, data: string) => any;
 
@@ -124,13 +123,11 @@ export interface WasmConnection {
   cradle_amount: (cid: number) => any;
   cradle_our_share: (cid: number) => any;
   cradle_their_share: (cid: number) => any;
-  idle: (cid: number, callbacks: any) => any;
   get_identity: (cid: number) => IChiaIdentity;
   get_game_state_id: (cid: number) => string | undefined;
   serialize_cradle: (cid: number) => any;
 
   // Misc
-  chia_identity: (id: number) => any;
   sha256bytes: (hex: string) => string;
 }
 
@@ -147,30 +144,27 @@ export interface CreateStartCoinReturn {
 export class ChiaGame {
   wasm: WasmConnection;
   waiting_messages: string[];
-  private_key: string;
   cradle: number;
 
   constructor(
     wasm: WasmConnection,
     cradleId: number,
-    private_key: string,  //identity: IChiaIdentity,
   ) {
     this.wasm = wasm;
     this.waiting_messages = [];
-    this.private_key = private_key;
     this.cradle = cradleId;
   }
 
-  propose_game(game: any): string[] {
+  propose_game(game: any): any {
     return this.wasm.propose_game(this.cradle, game);
   }
 
-  accept_proposal(game_id: string): void {
-    this.wasm.accept_proposal(this.cradle, game_id);
+  accept_proposal(game_id: string): any {
+    return this.wasm.accept_proposal(this.cradle, game_id);
   }
 
-  cancel_proposal(game_id: string): void {
-    this.wasm.cancel_proposal(this.cradle, game_id);
+  cancel_proposal(game_id: string): any {
+    return this.wasm.cancel_proposal(this.cradle, game_id);
   }
 
   amount() {
@@ -193,11 +187,11 @@ export class ChiaGame {
     return this.wasm.serialize_cradle(this.cradle);
   }
 
-  accept(id: string) {
+  accept(id: string): any {
     return this.wasm.accept(this.cradle, id);
   }
 
-  shut_down() {
+  shut_down(): any {
     return this.wasm.shut_down(this.cradle);
   }
 
@@ -205,30 +199,16 @@ export class ChiaGame {
     return this.wasm.make_move_entropy(this.cradle, id, readable, new_entropy);
   }
 
-  deliver_message(msg: string) {
-    this.wasm.deliver_message(this.cradle, msg);
+  deliver_message(msg: string): any {
+    return this.wasm.deliver_message(this.cradle, msg);
   }
 
-  opening_coin(coin_string: string) {
-    this.wasm.opening_coin(this.cradle, coin_string);
+  opening_coin(coin_string: string): any {
+    return this.wasm.opening_coin(this.cradle, coin_string);
   }
 
-  quiet(): boolean {
-    return this.waiting_messages.length === 0;
-  }
-
-  outbound_messages(): string[] {
-    const w = this.waiting_messages;
-    this.waiting_messages = [];
-    return w;
-  }
-
-  idle(callbacks: any): any {
-    return this.wasm.idle(this.cradle, callbacks);
-  }
-
-  block_data(block_number: number, block_data: WatchReport) {
-    this.wasm.new_block(
+  block_data(block_number: number, block_data: WatchReport): any {
+    return this.wasm.new_block(
       this.cradle,
       block_number,
       block_data.created_watched,
