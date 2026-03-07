@@ -87,7 +87,7 @@ function proxyWebSocket(req, clientSocket, head, port) {
     clientSocket.on('error', () => backend.destroy());
 }
 
-// ── Game frontend — port 3000 ──────────────────────────────────────
+// ── Game frontend — port 3002 ──────────────────────────────────────
 
 const gameServer = http.createServer((req, res) => {
     const pathname = url.parse(req.url).pathname;
@@ -124,11 +124,11 @@ const gameServer = http.createServer((req, res) => {
     });
 });
 
-gameServer.listen(3000, '127.0.0.1', () => {
-    console.log('Game frontend:  http://localhost:3000');
+gameServer.listen(3002, '127.0.0.1', () => {
+    console.log('Game frontend:  http://localhost:3002');
 });
 
-// ── Lobby view — port 3001 ─────────────────────────────────────────
+// ── Lobby view — port 3003 ─────────────────────────────────────────
 
 const lobbyServer = http.createServer((req, res) => {
     const pathname = url.parse(req.url).pathname;
@@ -161,6 +161,6 @@ lobbyServer.on('upgrade', (req, socket, head) => {
     }
 });
 
-lobbyServer.listen(3001, '127.0.0.1', () => {
-    console.log('Lobby view:     http://localhost:3001');
+lobbyServer.listen(3003, '127.0.0.1', () => {
+    console.log('Lobby view:     http://localhost:3003');
 });

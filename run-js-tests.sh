@@ -1,6 +1,11 @@
-#!/bin/bash -x
+#!/bin/bash
 
 set -e
+
+. ~/.nvm/nvm.sh
+nvm use 20.19.0
+
+set -x
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FE_DIR="$SCRIPT_DIR/resources/gaming-fe"
