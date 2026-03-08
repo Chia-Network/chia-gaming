@@ -22,7 +22,7 @@
     (if_any_fail
         (= (strlen bob_discards) 1)
         (= (popcount bob_discards) 4)
-        (list SLASH () "D" bob_discards MAX_MOVE_SIZE)
+        (list SLASH)
         (list MAKE_MOVE ehash (list bob_discards alice_cards bob_cards alice_commit) 18 "D")
     )
 )

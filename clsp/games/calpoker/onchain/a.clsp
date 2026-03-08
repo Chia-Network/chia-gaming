@@ -19,7 +19,7 @@
     ;; First their turn for the second player
     (if_any_fail
         (= (strlen MOVE) 32)
-        (list SLASH () "A slash" MOVE "max_move_size" MAX_MOVE_SIZE)
+        (list SLASH)
         (list MAKE_MOVE bhash MOVE 16 "A move"); MAKE_MOVE case: b_hash state(==MOVE) max_move_size
     )
 )

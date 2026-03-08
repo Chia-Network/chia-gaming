@@ -77,7 +77,7 @@
             ;; Common subexpression: (substr MOVE 16 17) == alice_card_selections
             (not (= (popcount (substr MOVE 17 18)) 5))
         )
-        (list SLASH () "E slash invalid final move shape (need len=18, discards_popcount=4, selects_popcount=5)" MOVE)
+        (list SLASH)
 
         (assign
             alice_salted_discards (substr MOVE 0 17)
@@ -101,7 +101,7 @@
                         AMOUNT
                     )
                 )
-                (list SLASH () "E slash")
+                (list SLASH)
 
                 (list MAKE_MOVE 0
                     (li

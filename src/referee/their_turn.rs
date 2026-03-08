@@ -426,7 +426,7 @@ impl TheirTurnReferee {
 
         let new_state = match &state_update {
             StateUpdateResult::MoveOk(state) => state,
-            StateUpdateResult::Slash(evidence) => {
+            StateUpdateResult::Slash => {
                 return Ok((
                     None,
                     TheirTurnMoveResult {
@@ -434,7 +434,7 @@ impl TheirTurnReferee {
                         readable_move: Program(vec![0x80]).into(),
                         mover_share: details.basic.mover_share.clone(),
                         message: vec![],
-                        slash: Some(Evidence::new(evidence.clone())),
+                        slash: Some(Evidence::nil()?),
                     },
                 ));
             }
@@ -471,7 +471,7 @@ impl TheirTurnReferee {
 
         for evidence in result.slash_evidence.iter() {
             debug!("calling slash for given evidence {evidence:?}");
-            if let StateUpdateResult::Slash(_result_evidence) = self.run_state_update(
+            if let StateUpdateResult::Slash = self.run_state_update(
                 allocator,
                 offchain_puzzle_args.clone(),
                 state.clone(),

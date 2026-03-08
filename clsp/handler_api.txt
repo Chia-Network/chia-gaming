@@ -102,13 +102,14 @@ Their-turn return (normal move, 3-4 elements):
   - evidence_list contains potential slash evidence candidates. The
     handler does not need to verify each piece actually triggers a
     slash — just return everything that might work. The Rust framework
-    tests each candidate against the validator; the first one that
-    produces a SLASH result wins. If none succeed, the game continues
-    normally. Nil evidence is always tried automatically before the
-    handler is called, so the handler never needs to include it.
-    When the handler is certain the move is fraudulent, it puts the
-    evidence in the list and can return junk for the other fields
-    (they are ignored when a slash succeeds).
+    tests each candidate by running the validator with that evidence;
+    if the validator returns SLASH (tag 2) rather than raising, the
+    slash succeeds. If none of the candidates trigger a slash, the game
+    continues normally. Nil evidence is always tried automatically
+    before the handler is called, so the handler never needs to
+    include it. When the handler is certain the move is fraudulent, it
+    puts the evidence in the list and can return junk for the other
+    fields (they are ignored when a slash succeeds).
   - message is optional (element may be absent). When present, it is
     sent out-of-band to the opponent and parsed by their message_parser.
 
@@ -136,12 +137,24 @@ display.
 
 Notes on validators vs handlers
 --------------------------------
-Validators (a.clsp through e.clsp) run ON-CHAIN to enforce rules.
-Handlers run OFF-CHAIN to produce moves and interpret opponent moves.
+Validators (a.clsp through e.clsp) run both on-chain and off-chain.
+Handlers run off-chain only to produce moves and interpret opponent moves.
 
 A handler returns two validators per move:
-  - outgoing_validator: used on-chain to validate the move we just made
-  - incoming_validator: used on-chain to validate the opponent's reply
+  - outgoing_validator: validates the move we just made
+  - incoming_validator: validates the opponent's reply
 
 The outgoing_validator_hash must match what the previous incoming_validator
 specified, creating a chain of validated state transitions.
+
+Validator return values: tag 0 (MAKE_MOVE) with new state, or tag 2 (SLASH)
+with no payload. These are consumed both on-chain (referee curries MAKE_MOVE
+values into the new coin, or emits a reward on SLASH) and off-chain (Rust
+uses MAKE_MOVE state to advance the game, or detects SLASH to initiate a
+slash).
+
+Move-path enforcement: the on-chain referee does NOT re-run the validator
+when a move is submitted. It trusts the submitted values and advances the
+game. Enforcement comes from the threat of slashing — if a player cheats,
+the opponent submits evidence to the validator on-chain and takes the pot.
+This avoids running validation logic during honest play.

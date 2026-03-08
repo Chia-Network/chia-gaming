@@ -534,8 +534,8 @@ impl BareDebugGameHandler {
                         )?,
                 )
             }
-            StateUpdateResult::Slash(evidence) => {
-                return Ok(Some(evidence));
+            StateUpdateResult::Slash => {
+                return Ok(Some(Rc::new(Program(vec![0x80]))));
             }
         };
 
@@ -550,8 +550,8 @@ impl BareDebugGameHandler {
                     &inputs.opponent_mover_share,
                     evidence.clone(),
                 )?;
-                if let StateUpdateResult::Slash(evidence1) = validator_response {
-                    debug!("SLASH DETECTED: EVIDENCE {evidence:?} {evidence1:?}");
+                if let StateUpdateResult::Slash = validator_response {
+                    debug!("SLASH DETECTED: EVIDENCE {evidence:?}");
                     self.slash_detected = Some(evidence.clone());
                     return Ok(Some(evidence.to_program()));
                 }

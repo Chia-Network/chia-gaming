@@ -25,13 +25,13 @@
             (alice_commit bob_seed) previous_validation_program evidence output_conditions)
 
     (if (not (= (strlen MOVE) 48))
-        (list SLASH () "C" MOVE "wrong move length")
+        (list SLASH)
 
         (assign
             new_state (c (substr MOVE 16 48) (make_cards (sha256 (substr MOVE 0 16) bob_seed AMOUNT)))
             (if_any_fail
                 (= (sha256 (substr MOVE 0 16)) alice_commit)
-                (list SLASH () "C" MOVE "with alice commit" alice_commit MAX_MOVE_SIZE new_state)
+                (list SLASH)
                 (list MAKE_MOVE dhash new_state 1 "C")
             )
         )

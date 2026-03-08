@@ -114,7 +114,7 @@ pub const REM_CONDITION_FIELDS: usize = 4;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StateUpdateResult {
     MoveOk(Rc<Program>),
-    Slash(Rc<Program>),
+    Slash,
 }
 
 impl StateUpdateResult {
@@ -140,17 +140,7 @@ impl StateUpdateResult {
             };
 
         if selector != 0 {
-            // Slash
-            let evidence_node = if lst.len() > 1 {
-                lst[1]
-            } else {
-                allocator
-                    .encode_atom(clvm_traits::Atom::Borrowed(&[]))
-                    .into_gen()?
-            };
-            let evidence = Rc::new(Program::from_nodeptr(allocator, evidence_node)?);
-
-            return Ok(StateUpdateResult::Slash(evidence));
+            return Ok(StateUpdateResult::Slash);
         }
 
         if lst.len() < 3 {

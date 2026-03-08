@@ -17,6 +17,6 @@
         alice_commit previous_validation_program evidence output_conditions)
     (if (= (strlen MOVE) 16)
         (list MAKE_MOVE chash (list alice_commit MOVE) 48 "B" MOVE)
-        (list SLASH () "B slash" MOVE)
+        (list SLASH)
     )
 )

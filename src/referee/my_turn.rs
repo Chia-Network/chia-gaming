@@ -538,17 +538,16 @@ impl MyTurnReferee {
                     Err(e)
                 }
             }
-            Ok(StateUpdateResult::Slash(slash_evidence)) => {
+            Ok(StateUpdateResult::Slash) => {
                 if self.enable_cheating.is_some() {
                     Ok(state.clone())
                 } else {
                     Err(Error::StrErr(format!(
-                        "pre-send validation rejected our move: nonce={}, move_len={}, mover_share={:?}, state={:?}, slash_evidence={:?}",
+                        "pre-send validation rejected our move: nonce={}, move_len={}, mover_share={:?}, state={:?}",
                         referee_args.nonce,
                         referee_args.game_move.basic.move_made.len(),
                         referee_args.game_move.basic.mover_share,
                         state,
-                        slash_evidence,
                     )))
                 }
             }

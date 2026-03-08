@@ -33,15 +33,16 @@ Games are driven by two cooperating systems:
   interpret the opponent's moves, and decide what to display in the UI. They
   are chialisp programs, curried with game-specific state.
 
-- **Validators** run on-chain inside the referee puzzle. They enforce the
-  rules of each move, producing a new game state. They are also chialisp
-  programs, one per protocol step (e.g. `a.clsp` through `e.clsp` for
-  calpoker).
+- **Validators** enforce the rules of each move. They are chialisp programs,
+  one per protocol step (e.g. `a.clsp` through `e.clsp` for calpoker). They
+  run both off-chain (for move verification during normal play) and on-chain
+  (inside the referee puzzle, for slash enforcement during disputes).
 
 Handlers and validators are complementary: handlers decide *what* to play,
-validators prove *that it was legal*. A handler that produces an illegal move
-will pass off-chain (handlers trust each other's output) but fail on-chain
-(the referee runs the validator, which raises).
+validators prove *that it was legal*. A handler that produces an illegal
+move will pass locally (the handler trusts its own output) but the
+opponent's off-chain code will detect the fraud when it runs the validator,
+and can then slash on-chain.
 
 ---
 
@@ -287,44 +288,59 @@ on-chain chain.
 
 ## Validators
 
-Validators are chialisp programs that run *on-chain* inside the referee
-puzzle. They enforce the rules for a single step of the game protocol.
+Validators are chialisp programs that enforce the rules for a single step of
+the game protocol. They run both **on-chain** (inside the referee puzzle
+during disputes) and **off-chain** (called by the Rust code during normal
+play).
 
-A validator takes the move and current state, and produces a new state (plus
-a `MAKE_MOVE` or `SLASH` tag for the referee):
+A validator takes the move and current state and returns a tagged result:
 
-### Validator Return: Valid Move
+### Validator Return: Valid Move (MAKE_MOVE)
 
 ```
 (0 new_validation_info_hash new_state max_move_size mover_share ...)
 ```
 
-Tag `0` (`MAKE_MOVE`) means the move is legal. The referee uses the returned
-values to construct the next game coin.
+Tag `0` (`MAKE_MOVE`) means the move is legal. The returned values are used
+in two places:
 
-### Validator Return: Slash
+- **On-chain**: The referee curries them into the new referee coin
+  (next validation hash, state, max move size, mover share).
+- **Off-chain**: The Rust code extracts `new_state` so the handler can
+  determine the next game state without duplicating that logic.
+
+### Validator Return: Invalid Move (SLASH)
 
 ```
-(2 ...)
+(2)
 ```
 
-Tag `2` (`SLASH`) means the move is illegal. When this happens during an
-on-chain slash attempt, the slasher takes the full game amount.
+Tag `2` (`SLASH`) means the move is illegal. The validator simply returns
+this tag with no payload. On-chain, the referee emits a reward coin giving
+the full game amount to the slasher. Off-chain, the Rust code detects the
+tag and initiates a slash.
 
-### How the Referee Calls Validators
+### How the On-Chain Referee Uses Validators
 
-When a move is submitted on-chain, the referee:
+The referee has three spend types: **move**, **slash**, and **timeout**.
+Validators are only involved in the first two, and their role differs:
 
-1. Looks up the `previous_validation_info_hash` (the hash committed by the
-   prior move)
-2. Verifies that the revealed validation program + state match that hash
-3. Runs the validator with the move and state
-4. If the validator returns `MAKE_MOVE`, creates a new game coin with the
-   updated state
-5. If the validator raises (error), the move is rejected on-chain
+**Move path** -- The referee does **not** call a validator when a move is
+submitted. It trusts that the move is valid and advances the game state
+using the values provided in the solution. The threat of slashing is the
+enforcement mechanism: if a player submits an illegal move, the opponent
+can slash them. This avoids running validation logic on-chain during honest
+play, saving cost and complexity.
 
-For slash attempts, the referee runs the *previous* move's validator with
-evidence. If the validator returns `SLASH`, the slash succeeds.
+**Slash path** -- A player submits evidence along with the previous move's
+validator. The referee runs the validator with the evidence. If the
+validator returns `SLASH` (does not raise), the slash succeeds and the
+slasher takes the full pot. If the validator raises, the slash attempt
+fails.
+
+**Timeout path** -- No validator is involved. The referee simply checks
+that enough time has passed and pays out according to the current mover
+share.
 
 ---
 
@@ -383,24 +399,30 @@ Both players independently run the same validators and arrive at the same
 state. If they disagree, one of them will detect fraud when they try to
 validate the opponent's move.
 
+The validator's `MAKE_MOVE` return includes the new state, so the handler
+uses this directly rather than duplicating state-transition logic.
+
 ### On-Chain (Dispute)
 
 When the channel goes on-chain, game coins are created from the last agreed
 state. From that point:
 
-- The **referee puzzle** (`clsp/referee/onchain/referee.clsp`) enforces the
-  rules. It runs validators to check moves and produces new game coins.
 - **Handlers are not used on-chain.** The on-chain path only needs the move
   bytes and the validator -- it doesn't need to interpret the move for a UI.
-- The on-chain referee has three actions: **move** (advance the game),
+- The on-chain referee has three spend types: **move** (advance the game),
   **timeout** (claim the pot when the opponent doesn't act), and **slash**
   (prove a previous move was invalid and take the full amount).
+- On the **move path**, the referee does **not** re-run the validator. It
+  trusts the submitted state transition and advances the game. The
+  enforcement mechanism is the threat of slashing: if a player cheats, the
+  opponent can submit evidence to the validator and take the full pot.
+- On the **slash path**, the referee runs the validator with the provided
+  evidence. If it returns `SLASH`, the slasher wins.
 
-The key insight is that the same validator programs are used both off-chain
-(by the Rust code, to verify moves as they happen) and on-chain (by the
-referee puzzle, to enforce rules during disputes). This guarantees
-consistency: if a move passes off-chain validation, it will pass on-chain
-validation too.
+The same validator programs are used both off-chain (by the Rust code, to
+verify moves as they happen) and on-chain (by the referee, for slash
+enforcement). This guarantees consistency: if a move fails off-chain
+validation, the evidence that caught it will also work on-chain.
 
 ---
 
