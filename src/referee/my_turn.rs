@@ -20,7 +20,7 @@ use crate::referee::referee_initial_setup;
 use crate::referee::their_turn::{TheirTurnReferee, TheirTurnRefereeGameState};
 use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs,
-    OnChainRefereeMoveData, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
+    OnChainRefereeMoveData, RefereePuzzleArgs, StateUpdateMoveArgs,
 };
 use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RMFixed};
 use crate::referee::Referee;
@@ -538,7 +538,7 @@ impl MyTurnReferee {
                     Err(e)
                 }
             }
-            Ok(StateUpdateResult::Slash) => {
+            Ok(None) => {
                 if self.enable_cheating.is_some() {
                     Ok(state.clone())
                 } else {
@@ -551,7 +551,7 @@ impl MyTurnReferee {
                     )))
                 }
             }
-            Ok(StateUpdateResult::MoveOk(new_state)) => Ok(new_state.clone()),
+            Ok(Some(new_state)) => Ok(new_state.clone()),
         }
     }
 }

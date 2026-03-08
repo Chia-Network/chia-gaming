@@ -325,7 +325,7 @@ impl BareDebugGameHandler {
             &exhaustive_inputs.opponent_mover_share.clone(),
             Evidence::nil()?,
         )?;
-        if let StateUpdateResult::MoveOk(new_state) = state_update_result {
+        if let Some(new_state) = state_update_result {
             self.handler = self.next_handler.clone();
             self.move_count += 1;
             self.mover_share = self.next_mover_share.clone();
@@ -503,7 +503,7 @@ impl BareDebugGameHandler {
         )?;
 
         let (state, tt_result) = match validator_response {
-            StateUpdateResult::MoveOk(state) => {
+            Some(state) => {
                 debug!("debug their move: new state {state:?}");
                 let pre_state_node = self.state.to_nodeptr(allocator)?;
                 let state_node = state.to_clvm(allocator).into_gen()?;
@@ -534,7 +534,7 @@ impl BareDebugGameHandler {
                         )?,
                 )
             }
-            StateUpdateResult::Slash => {
+            None => {
                 return Ok(Some(Rc::new(Program(vec![0x80]))));
             }
         };
@@ -550,7 +550,7 @@ impl BareDebugGameHandler {
                     &inputs.opponent_mover_share,
                     evidence.clone(),
                 )?;
-                if let StateUpdateResult::Slash = validator_response {
+                if validator_response.is_none() {
                     debug!("SLASH DETECTED: EVIDENCE {evidence:?}");
                     self.slash_detected = Some(evidence.clone());
                     return Ok(Some(evidence.to_program()));
@@ -594,7 +594,7 @@ impl BareDebugGameHandler {
             )
             .expect("good");
         debug!("validation_result {validation_result:?}");
-        assert!(matches!(validation_result, StateUpdateResult::MoveOk(_)));
+        assert!(validation_result.is_some());
         debug!("end my turn");
         self.end_my_turn(allocator, &predicted_move).expect("good");
         debug!("accept move");

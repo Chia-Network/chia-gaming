@@ -317,8 +317,9 @@ in two places:
 
 Tag `2` (`SLASH`) means the move is illegal. The validator simply returns
 this tag with no payload. On-chain, the referee emits a reward coin giving
-the full game amount to the slasher. Off-chain, the Rust code detects the
-tag and initiates a slash.
+the full game amount to the slasher. Off-chain, the Rust code represents
+validator results as `Option<Rc<Program>>` — `Some(new_state)` for
+MAKE_MOVE, `None` for SLASH — and initiates a slash when it gets `None`.
 
 ### How the On-Chain Referee Uses Validators
 

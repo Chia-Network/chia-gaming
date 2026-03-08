@@ -424,9 +424,9 @@ impl TheirTurnReferee {
             evidence,
         )?;
 
-        let new_state = match &state_update {
-            StateUpdateResult::MoveOk(state) => state,
-            StateUpdateResult::Slash => {
+        let new_state: Rc<Program> = match state_update {
+            Some(state) => state,
+            None => {
                 return Ok((
                     None,
                     TheirTurnMoveResult {
@@ -471,12 +471,12 @@ impl TheirTurnReferee {
 
         for evidence in result.slash_evidence.iter() {
             debug!("calling slash for given evidence {evidence:?}");
-            if let StateUpdateResult::Slash = self.run_state_update(
+            if self.run_state_update(
                 allocator,
                 offchain_puzzle_args.clone(),
                 state.clone(),
                 evidence.clone(),
-            )? {
+            )?.is_none() {
                 return Ok((
                     None,
                     TheirTurnMoveResult {

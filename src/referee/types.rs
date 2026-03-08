@@ -111,46 +111,39 @@ pub struct RMFixed {
 
 pub const REM_CONDITION_FIELDS: usize = 4;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StateUpdateResult {
-    MoveOk(Rc<Program>),
-    Slash,
-}
+/// Validator result: `Some(new_state)` for MAKE_MOVE, `None` for SLASH.
+pub type StateUpdateResult = Option<Rc<Program>>;
 
-impl StateUpdateResult {
-    pub fn from_nodeptr(
-        allocator: &mut AllocEncoder,
-        node: NodePtr,
-    ) -> Result<StateUpdateResult, Error> {
-        let lst = if let Some(p) = proper_list(allocator.allocator(), node, true) {
-            p
+pub fn parse_validator_result(
+    allocator: &mut AllocEncoder,
+    node: NodePtr,
+) -> Result<StateUpdateResult, Error> {
+    let lst = if let Some(p) = proper_list(allocator.allocator(), node, true) {
+        p
+    } else {
+        return Err(Error::StrErr("non-list in validator result".to_string()));
+    };
+
+    if lst.is_empty() {
+        return Err(Error::StrErr("empty list from validator".to_string()));
+    }
+
+    let selector =
+        if let Some(a) = atom_from_clvm(allocator, lst[0]).and_then(|a| i64_from_atom(&a)) {
+            a
         } else {
-            return Err(Error::StrErr("non-list in validator result".to_string()));
+            return Err(Error::StrErr("not atom selector".to_string()));
         };
 
-        if lst.is_empty() {
-            return Err(Error::StrErr("empty list from validator".to_string()));
-        }
-
-        let selector =
-            if let Some(a) = atom_from_clvm(allocator, lst[0]).and_then(|a| i64_from_atom(&a)) {
-                a
-            } else {
-                return Err(Error::StrErr("not atom selector".to_string()));
-            };
-
-        if selector != 0 {
-            return Ok(StateUpdateResult::Slash);
-        }
-
-        if lst.len() < 3 {
-            return Err(Error::StrErr("short list for make move".to_string()));
-        }
-
-        Ok(StateUpdateResult::MoveOk(Rc::new(Program::from_nodeptr(
-            allocator, lst[2],
-        )?)))
+    if selector != 0 {
+        return Ok(None);
     }
+
+    if lst.len() < 3 {
+        return Err(Error::StrErr("short list for make move".to_string()));
+    }
+
+    Ok(Some(Rc::new(Program::from_nodeptr(allocator, lst[2])?)))
 }
 
 /// Adjudicates a two player turn based game
@@ -371,7 +364,7 @@ impl InternalStateUpdateArgs {
         }
         let raw_result = raw_result_p?;
 
-        StateUpdateResult::from_nodeptr(allocator, raw_result.1)
+        parse_validator_result(allocator, raw_result.1)
     }
 }
 

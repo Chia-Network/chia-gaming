@@ -150,8 +150,8 @@ specified, creating a chain of validated state transitions.
 Validator return values: tag 0 (MAKE_MOVE) with new state, or tag 2 (SLASH)
 with no payload. These are consumed both on-chain (referee curries MAKE_MOVE
 values into the new coin, or emits a reward on SLASH) and off-chain (Rust
-uses MAKE_MOVE state to advance the game, or detects SLASH to initiate a
-slash).
+parses the result as Option — Some(new_state) for MAKE_MOVE, None for
+SLASH — and uses None to initiate a slash).
 
 Move-path enforcement: the on-chain referee does NOT re-run the validator
 when a move is submitted. It trusts the submitted values and advances the

@@ -108,7 +108,7 @@ fn parse_validator_output(allocator: &mut AllocEncoder, result: NodePtr) -> Move
     let items = proper_list(allocator.allocator(), result, true)
         .expect("validator output should be a proper list");
     assert!(
-        items.len() >= 2,
+        !items.is_empty(),
         "validator output too short: {}",
         items.len()
     );
