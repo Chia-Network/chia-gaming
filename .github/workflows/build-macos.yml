@@ -1,4 +1,4 @@
-name: Build and Test (macOS ARM)
+name: Build and Test (macOS ARM) build-macos.yml
 
 on:
   push:

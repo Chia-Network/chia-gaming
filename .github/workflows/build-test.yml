@@ -1,5 +1,5 @@
 # Thanks: clvm_rs' github actions.
-name: Build
+name: build-test.yml
 
 concurrency:
   group: ${{ github.ref }}-${{ github.workflow }}-${{ github.event_name }}--${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/heads/long_lived/')) && github.sha || '' }}
@@ -66,7 +66,7 @@ jobs:
 
   unit_tests:
     runs-on: ubuntu-22.04
-    name: Unit tests
+    name: Unit tests - build-test.yml
     needs: [fmt, clippy]
     steps:
       - uses: actions/checkout@v4
