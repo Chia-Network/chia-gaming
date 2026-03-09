@@ -28,6 +28,7 @@ COPY rust-toolchain.toml Cargo.toml Cargo.lock /app/rust/
 
 # Build the hex files
 COPY build.rs.disabled /app/rust/build.rs
+COPY chialisp.toml /app/rust/
 
 # Setup pre-build wasm
 COPY wasm/Cargo.toml wasm/Cargo.lock /app/rust/wasm/
