@@ -3,8 +3,7 @@ import { useEffect, useState } from 'react';
 import { Dialog, DialogClose, DialogContent, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
 import { Button } from './button';
-import { Close } from '@radix-ui/react-dialog';
-import { CheckCircle, Copy, QrCode, Smartphone } from 'lucide-react';
+import { CheckCircle, Copy, QrCode, Smartphone, X } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 interface QRCodeModalProps {
@@ -89,7 +88,7 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
 
           <DialogClose asChild>
             <button className="p-1 rounded hover:bg-canvas-bg-hover transition">
-              <Close className="w-5 h-5 text-canvas-text" />
+              <X className="w-5 h-5 text-canvas-text" />
             </button>
           </DialogClose>
         </DialogHeader>

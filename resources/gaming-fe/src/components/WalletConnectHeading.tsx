@@ -106,6 +106,7 @@ const WalletConnectHeading = (_args: any) => {
   useEffect(() => {
     const subscription = walletConnectState.getObservable().subscribe({
       next: (evt: any) => {
+        console.log('[WC UI] state event:', evt.stateName, evt);
         if (evt.stateName === 'connected') {
           toggleExpanded();
           setAlreadyConnected(true);
@@ -137,13 +138,11 @@ const WalletConnectHeading = (_args: any) => {
 
   const initWalletConnect = useCallback(() => {
     if (!initializing) {
-      console.log(
-        'initialzing wallet connect if needed',
-        initializing,
-        initialized,
-      );
+      console.log('[WC UI] initWalletConnect() -- calling walletConnectState.init()');
       walletConnectState.init();
       setInitializing(true);
+    } else {
+      console.log('[WC UI] initWalletConnect() -- skipped (already initializing)');
     }
   }, [initializing, initialized]);
 
@@ -254,15 +253,19 @@ const WalletConnectHeading = (_args: any) => {
   }, []);
 
   const onDoWalletConnect = useCallback(() => {
+    console.log('[WC UI] "Link Wallet" clicked');
     initWalletConnect();
     doConnectWallet(
       setShowQRModal,
       setConnectionUri,
       () => walletConnectState.startConnect(),
       () => {
-        console.warn('walletconnect should now be connected');
+        console.log('[WC UI] doConnectWallet complete -- session established');
       },
-      (e) => setWalletConnectError(e),
+      (e) => {
+        console.error('[WC UI] doConnectWallet error:', e);
+        setWalletConnectError(e);
+      },
     );
   }, [initWalletConnect]);
 
