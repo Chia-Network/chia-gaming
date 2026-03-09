@@ -90,56 +90,59 @@ jobs:
           # Run simulator tests (matches local ct.sh)
           cargo test --lib --features sim-tests -- --nocapture
 
-  calpoker_onchain_tests:
-    runs-on: ubuntu-22.04
-    needs: [fmt, clippy]
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
+  # Disabled python clisp tests for now
+  # We need to verify that all of this has been ported to rust.
 
-      - name: Install rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
+  # calpoker_onchain_tests:
+  #   runs-on: ubuntu-22.04
+  #   needs: [fmt, clippy]
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 1
 
-      - name: Build rust code
-        run: cargo build
+  #     - name: Install rust
+  #       uses: dtolnay/rust-toolchain@master
+  #       with:
+  #         toolchain: ${{ env.RUST_VERSION }}
 
-      - name: Set up Python 3.12
-        uses: Chia-Network/actions/setup-python@main
-        with:
-          python-version: 3.12
+  #     - name: Build rust code
+  #       run: cargo build
 
-      - name: Install uv
-        run: |
-          pip install uv==$UV_VERSION
+  #     - name: Set up Python 3.12
+  #       uses: Chia-Network/actions/setup-python@main
+  #       with:
+  #         python-version: 3.12
 
-      - name: install chia_gaming into .venv
-        run: |
-          cd python
-          uv venv
-          uv pip install -e .
+  #     - name: Install uv
+  #       run: |
+  #         pip install uv==$UV_VERSION
 
-      - name: Build hex files
-        run: |
-          tools/build-chialisp.sh
+  #     - name: install chia_gaming into .venv
+  #       run: |
+  #         cd python
+  #         uv venv
+  #         uv pip install -e .
 
-      - name: calpoker_onchain_tests
-        run: |
-          cd python
-          source .venv/bin/activate
-          cd tests
-          uv run compute_hashes.py
-          uv run ./test_calpoker_validation.py
+  #     - name: Build hex files
+  #       run: |
+  #         tools/build-chialisp.sh
 
-      - name: calpoker_handler tests
-        run: |
-          cd python
-          source .venv/bin/activate
-          cd tests
-          uv run compute_hashes.py
-          uv run ./test_calpoker_handlers.py
+  #     - name: calpoker_onchain_tests
+  #       run: |
+  #         cd python
+  #         source .venv/bin/activate
+  #         cd tests
+  #         uv run compute_hashes.py
+  #         uv run ./test_calpoker_validation.py
+
+  #     - name: calpoker_handler tests
+  #       run: |
+  #         cd python
+  #         source .venv/bin/activate
+  #         cd tests
+  #         uv run compute_hashes.py
+  #         uv run ./test_calpoker_handlers.py
 
   coverage:
     needs: unit_tests
