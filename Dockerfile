@@ -27,9 +27,10 @@ WORKDIR /app
 COPY rust-toolchain.toml Cargo.toml Cargo.lock /app/rust/
 
 # Copy the files needed to build the hex files into the docker image
-COPY clsp/ /app/rust/
+RUN mkdir -p /app/rust/clsp
+COPY clsp/ /app/rust/clsp/
 COPY build.rs.disabled /app/rust/build.rs
-COPY chialisp.toml /app/rust/
+COPY chialisp.toml /app/rust/chialisp.toml
 
 # Setup pre-build wasm
 COPY wasm/Cargo.toml wasm/Cargo.lock /app/rust/wasm/
