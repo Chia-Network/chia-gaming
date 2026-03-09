@@ -1,0 +1,51 @@
+name: Build and Test (macOS ARM)
+
+on:
+  push:
+    branches:
+      - base
+      - dev
+    tags:
+      - "**"
+  pull_request:
+    branches:
+      - "**"
+
+env:
+  RUST_VERSION: stable
+
+concurrency:
+  group: ${{ github.ref }}-${{ github.workflow }}-${{ github.event_name }}--${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/heads/long_lived/')) && github.sha || '' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  test_macos_arm:
+    name: Test on macOS ARM
+    runs-on: [macos-13-arm64]
+    strategy:
+      fail-fast: false
+
+    steps:
+      - uses: Chia-Network/actions/clean-workspace@main
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rust.sh
+          sh rust.sh -y
+
+      - name: Run tests on macOS ARM
+        run: |
+          export PATH=~/.cargo/bin:$PATH
+          # Build without sim-tests to ensure that configuration compiles
+          cargo test --no-run
+          # Run simulator tests (matches local ct.sh)
+          cargo test --lib --features sim-tests -- --nocapture

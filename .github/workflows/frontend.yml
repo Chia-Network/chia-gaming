@@ -126,14 +126,14 @@ jobs:
     needs:
       - frontend_test
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Set Env
         uses: Chia-Network/actions/setjobenv@main
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v4
         with:
           path: artifacts
 
