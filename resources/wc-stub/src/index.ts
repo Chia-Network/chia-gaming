@@ -126,6 +126,45 @@ function processRequest(
         result.data = { confirmedWalletBalance: balance };
         return result;
       });
+  } else if (command === 'chia_getHeightInfo') {
+    return fetch('http://localhost:5800/get_peak', { method: 'POST' })
+      .then((res: any) => res.json())
+      .then((height: number) => {
+        result.endpointName = 'getHeightInfo';
+        result.data = { height };
+        return result;
+      });
+  } else if (command === 'chia_getWallets') {
+    result.endpointName = 'getWallets';
+    result.data = {
+      wallets: [
+        { id: 1, name: 'Chia Wallet', type: 0 },
+        { id: 2, name: 'Remote Wallet', type: 205 },
+      ],
+    };
+    return Promise.resolve(result);
+  } else if (command === 'chia_getCoinRecordsByNames') {
+    const names: string[] = params.names || [];
+    const includeSpentCoins: boolean = params.includeSpentCoins ?? true;
+    return fetch('http://localhost:5800/get_coin_records_by_names', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ names, include_spent_coins: includeSpentCoins }),
+    })
+      .then((res: any) => res.json())
+      .then((data: any) => {
+        result.endpointName = 'getCoinRecordsByNames';
+        result.data = data;
+        return result;
+      });
+  } else if (command === 'chia_createNewRemoteWallet') {
+    result.endpointName = 'createNewRemoteWallet';
+    result.data = { walletId: 2, success: true };
+    return Promise.resolve(result);
+  } else if (command === 'chia_registerRemoteCoins') {
+    result.endpointName = 'registerRemoteCoins';
+    result.data = { success: true };
+    return Promise.resolve(result);
   }
 
   console.log('unknown rpc', command, params);
