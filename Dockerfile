@@ -26,6 +26,9 @@ WORKDIR /app
 # Setup to pre-build the dependencies
 COPY rust-toolchain.toml Cargo.toml Cargo.lock /app/rust/
 
+# Build the hex files
+COPY build.rs.disabled /app/rust/build.rs
+
 # Setup pre-build wasm
 COPY wasm/Cargo.toml wasm/Cargo.lock /app/rust/wasm/
 

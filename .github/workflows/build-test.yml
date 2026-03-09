@@ -99,7 +99,7 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
 
-      - name: Build rust (needed by Python tests)
+      - name: Build rust code
         run: cargo build
 
       - name: Set up Python 3.12
@@ -116,6 +116,10 @@ jobs:
           cd python
           uv venv
           uv pip install -e .
+
+      - name: Build hex files
+        run: |
+          tools/build-chialisp.sh
 
       - name: calpoker_onchain_tests
         run: |

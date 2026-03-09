@@ -42,6 +42,11 @@ jobs:
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rust.sh
           sh rust.sh -y
 
+      - name: Build hex files
+        run: |
+          export PATH=~/.cargo/bin:$PATH
+          tools/build-chialisp.sh
+
       - name: Run tests on macOS ARM
         run: |
           export PATH=~/.cargo/bin:$PATH
