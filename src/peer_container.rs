@@ -635,7 +635,9 @@ impl SynchronousGameCradle {
         result.resync = self.state.resync.take();
 
         if self.state.channel_created {
-            result.notifications.push(GameNotification::ChannelCreated {});
+            result
+                .notifications
+                .push(GameNotification::ChannelCreated {});
             self.state.channel_created = false;
         }
         while let Some(n) = self.state.pending_notifications.pop_front() {
@@ -649,14 +651,12 @@ impl SynchronousGameCradle {
         while let Some((id, state_number, readable, mover_share)) =
             self.state.opponent_moves.pop_front()
         {
-            result
-                .notifications
-                .push(GameNotification::OpponentMoved {
-                    id,
-                    state_number,
-                    readable,
-                    mover_share,
-                });
+            result.notifications.push(GameNotification::OpponentMoved {
+                id,
+                state_number,
+                readable,
+                mover_share,
+            });
         }
         if let Some(reason) = self.state.went_on_chain.take() {
             result
@@ -1024,10 +1024,7 @@ impl GameCradle for SynchronousGameCradle {
         let reported_effects = {
             let mut env = ChannelHandlerEnv::new(allocator, rng)?;
             let mut effects = self.peer.accept_proposal(&mut env, id)?;
-            effects.extend(
-                self.peer
-                    .make_move(&mut env, id, &readable, new_entropy)?,
-            );
+            effects.extend(self.peer.make_move(&mut env, id, &readable, new_entropy)?);
             effects
         };
         self.process_effects(reported_effects, allocator)?;

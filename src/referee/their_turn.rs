@@ -471,12 +471,15 @@ impl TheirTurnReferee {
 
         for evidence in result.slash_evidence.iter() {
             debug!("calling slash for given evidence {evidence:?}");
-            if self.run_state_update(
-                allocator,
-                offchain_puzzle_args.clone(),
-                state.clone(),
-                evidence.clone(),
-            )?.is_none() {
+            if self
+                .run_state_update(
+                    allocator,
+                    offchain_puzzle_args.clone(),
+                    state.clone(),
+                    evidence.clone(),
+                )?
+                .is_none()
+            {
                 return Ok((
                     None,
                     TheirTurnMoveResult {

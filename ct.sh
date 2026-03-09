@@ -14,11 +14,11 @@ rm -f build.rs
 cargo build --features sim-tests
 echo "Build took: ${SECONDS} seconds"
 
-echo "=== Running rust tests ==="
-cargo test --lib --features sim-tests -- --nocapture
-
 echo "=== Building chialisp ==="
 ./tools/build-chialisp.sh
+
+echo "=== Running rust tests ==="
+cargo test --lib --features sim-tests -- --nocapture
 
 echo "=== Running JS tests ==="
 ./run-js-tests.sh

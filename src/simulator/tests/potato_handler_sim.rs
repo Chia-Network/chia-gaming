@@ -229,7 +229,9 @@ impl ToLocalUI for SimulatedPeer {
                 self.messages.push(readable.clone());
                 Ok(())
             }
-            GameNotification::OpponentMoved { .. } | GameNotification::ChannelCreated { .. } => Ok(()),
+            GameNotification::OpponentMoved { .. } | GameNotification::ChannelCreated { .. } => {
+                Ok(())
+            }
             GameNotification::CleanShutdownStarted { .. } => Err(Error::StrErr(
                 "clean_shutdown_started not expected during handshake".to_string(),
             )),
@@ -452,9 +454,10 @@ fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
                     GameNotification::StaleChannelUnroll { .. },
                     ExpectedNotification::StaleChannelUnroll,
                 ) => true,
-                (GameNotification::ChannelCoinSpent { .. }, ExpectedNotification::ChannelCoinSpent) => {
-                    true
-                }
+                (
+                    GameNotification::ChannelCoinSpent { .. },
+                    ExpectedNotification::ChannelCoinSpent,
+                ) => true,
                 (
                     GameNotification::UnrollCoinSpent { .. },
                     ExpectedNotification::UnrollCoinSpent,
