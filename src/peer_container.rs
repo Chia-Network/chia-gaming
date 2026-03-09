@@ -570,9 +570,7 @@ impl SynchronousGameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
     ) -> Result<DrainResult, Error> {
-        let mut result = DrainResult::default();
-        result.handshake_done = self.peer.handshake_done();
-        result.finished = self.finished();
+        let mut result = DrainResult { handshake_done: self.peer.handshake_done(), finished: self.finished(), ..Default::default() };
 
         // Process inbound messages until stable (each may enqueue more effects).
         while let Some(msg) = self.state.inbound_messages.pop_front() {
