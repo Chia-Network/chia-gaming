@@ -188,17 +188,23 @@ RUN cd /app/wc && yarn run build
 RUN ln -s /app/game/resources /resources
 ADD clsp /app/game/clsp
 RUN ln -s /app/game/clsp /clsp
+
+# Nginx config templates (port substitution happens at runtime via entrypoint)
+COPY resources/nginx/game.conf /etc/nginx/templates/game.conf
+COPY resources/nginx/lobby.conf /etc/nginx/templates/lobby.conf
+
+# Static assets and scripts
 COPY resources/gaming-fe/package.json /app/package.json
-COPY resources/nginx/game.conf /tmp/game.conf
-COPY resources/nginx/lobby.conf /tmp/lobby.conf
-RUN sed -e 's!@PORT@!3000!g' < /tmp/game.conf > /etc/nginx/sites-enabled/game.conf
-RUN sed -e 's!@PORT@!3001!g' < /tmp/lobby.conf > /etc/nginx/sites-enabled/lobby.conf
-COPY resources/nginx/urls /app/dist
-COPY resources/nginx/beacon.sh /app
-COPY resources/gaming-fe/test.sh /app
+COPY resources/nginx/urls /app/dist/
+COPY resources/nginx/beacon.sh /app/
+COPY resources/gaming-fe/test.sh /app/
+COPY resources/fe-test/scripts/test_env.sh /app/
 
-# The simulator service is now a Rust binary; run_simulator.py is no longer needed.
-# To run the service: cd /app/rust && cargo run --features sim-tests
-COPY resources/fe-test/scripts/test_env.sh /app
+# Configurable ports (same defaults as run-local-demo.sh uses in Docker)
+ENV GAME_PORT=3002
+ENV LOBBY_PORT=3003
+ENV WC_PORT=3004
+ENV SIM_PORT=5800
+ENV LOBBY_SERVICE_PORT=5801
 
-CMD /bin/bash /app/test_env.sh
+CMD ["/bin/bash", "/app/test_env.sh"]
