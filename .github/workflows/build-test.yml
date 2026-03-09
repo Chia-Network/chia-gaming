@@ -79,6 +79,10 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
           components: "clippy, rustfmt"
 
+      - name: Build hex files
+        run: |
+          tools/build-chialisp.sh
+
       - name: Run rust tests and simulator tests
         run: |
           # Build without sim-tests to ensure that configuration compiles
