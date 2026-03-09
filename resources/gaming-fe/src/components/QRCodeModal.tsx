@@ -147,12 +147,12 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
                   Retry
                 </Button>
               </div>
-            ) : (
+            ) : qrCodeDataUrl ? (
               <img
                 src={qrCodeDataUrl}
                 className="w-full max-w-[200px] mx-auto h-auto rounded-md transition-opacity"
               />
-            )}
+            ) : null}
           </div>
 
           {/* URI TEXTFIELD */}
