@@ -61,8 +61,8 @@ jobs:
           set -x
           rustup component add --toolchain stable-x86_64-unknown-linux-gnu clippy rustfmt
           cargo clippy --version
-          cargo clippy --all --features=sim-tests -- -D warnings
-          cargo check --features=sim-tests --tests
+          cargo clippy --all --features=sim-tests,sim-server -- -D warnings
+          cargo check --features=sim-tests,sim-server --tests
 
   unit_tests:
     runs-on: ubuntu-22.04
@@ -88,7 +88,7 @@ jobs:
           # Build without sim-tests to ensure that configuration compiles
           cargo test --no-run
           # Run simulator tests (matches local ct.sh)
-          cargo test --lib --features sim-tests -- --nocapture
+          cargo test --lib --features sim-tests,sim-server -- --nocapture
 
   # Disabled python clisp tests for now
   # We need to verify that all of this has been ported to rust.
@@ -165,7 +165,7 @@ jobs:
           export RUSTFLAGS="-Cinstrument-coverage"
           export LLVM_PROFILE_FILE=$(pwd)/target/chialisp-%p-%m.profraw
           export CARGO_TARGET_DIR=$(pwd)/target
-          cargo test --lib --features sim-tests -- --nocapture
+          cargo test --lib --features sim-tests,sim-server -- --nocapture
           grcov . --binary-path target -s . --branch --ignore-not-existing --ignore='*/.cargo/*' --ignore='*/tests/*' -o rust_cov.info
           python3 -c 'with open("rust_cov.info") as f: lines = [l for l in f if not (l.startswith("DA:") and int(l.split(",")[1].strip()) >= 2**63)]; open("lcov.info", "w").writelines(lines)'
       - name: Upload to Coveralls

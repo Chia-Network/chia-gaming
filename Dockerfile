@@ -45,7 +45,7 @@ RUN --mount=type=tmpfs,dst=/tmp/rust \
 	mkdir -p /tmp/rust/wasm && (cd /app/rust/wasm && tar cf - .) | (cd /tmp/rust/wasm && tar xf -) && \
 	cd /tmp/rust && \
 	. $HOME/.cargo/env && \
-	cargo build --features sim-tests && \
+	cargo build --features sim-tests,sim-server && \
 	cd /tmp/rust/wasm && \
 	wasm-pack build --out-dir=/tmp/rust/wasm/node-pkg --release --target=nodejs && \
 	wasm-pack build --out-dir=/tmp/rust/wasm/pkg --release --target=web && \
