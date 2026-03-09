@@ -12,6 +12,7 @@ import {
 import { WalletBalance } from '../types/WalletBalance';
 import { toHexString, toUint8 } from '../util';
 
+import { BLOCKCHAIN_DATA_URL } from '../settings';
 import {
   blockchainConnector,
   BlockchainOutboundRequest,
@@ -211,7 +212,7 @@ export class RealBlockchainInterface {
 }
 
 export const realBlockchainInfo: RealBlockchainInterface =
-  new RealBlockchainInterface('https://api.coinset.org');
+  new RealBlockchainInterface(BLOCKCHAIN_DATA_URL);
 
 export const REAL_BLOCKCHAIN_ID = blockchainDataEmitter.addUpstream(
   realBlockchainInfo.getObservable(),
