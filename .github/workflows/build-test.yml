@@ -157,6 +157,7 @@ jobs:
           components: "clippy, rustfmt"
       - name: Run for coverage
         run: |
+          cp build.rs.disabled build.rs
           sudo apt-get update
           sudo apt-get install lcov -y
           rustup component add llvm-tools-preview
