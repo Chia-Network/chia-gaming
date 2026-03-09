@@ -49,6 +49,9 @@ RUN --mount=type=tmpfs,dst=/tmp/rust \
   rm -rf /tmp/rust/wasm/node-pkg /tmp/rust/wasm/pkg && \
 	(cd /tmp/rust && tar cvf - .) | (cd /app/rust && tar xf -)
 
+# Copy the hex files into the docker image
+COPY clsp/ /app/rust/
+
 # Lobby connection - pre-install deps (only invalidated by package.json/yarn.lock changes)
 COPY resources/lobby-connection/package.json resources/lobby-connection/yarn.lock /preinst/lobby-connection/
 RUN --mount=type=cache,target=/usr/local/share/.cache/yarn \
