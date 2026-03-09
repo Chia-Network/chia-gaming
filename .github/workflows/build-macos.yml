@@ -1,4 +1,5 @@
-name: Build and Test (macOS ARM) build-macos.yml
+# Build and Test (macOS ARM) github action for chia-gaming
+name: build-macos.yml
 
 on:
   push:

@@ -1,4 +1,4 @@
-# Thanks: clvm_rs' github actions.
+# Build and Test (Linux x86_64) github action for chia-gaming
 name: build-test.yml
 
 concurrency:
