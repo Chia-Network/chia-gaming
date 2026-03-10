@@ -232,7 +232,7 @@ const App = () => {
       }}
     >
       <Loader2 className='h-6 w-6 z-0 animate-spin text-primary mb-4' />
-      Waiting for peak from coinset.org ...
+      Waiting for blockchain peak ...
     </div>
   );
 

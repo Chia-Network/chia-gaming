@@ -9,7 +9,7 @@ import {
 } from '../hooks/RealBlockchainInterface';
 import useDebug from '../hooks/useDebug';
 import { walletConnectState } from '../hooks/useWalletConnect';
-import { BLOCKCHAIN_SERVICE_URL } from '../settings';
+import { BLOCKCHAIN_SERVICE_URL, BLOCKCHAIN_DATA_URL } from '../settings';
 import { generateOrRetrieveUniqueId } from '../util';
 
 import Debug from './Debug';
@@ -106,6 +106,7 @@ const WalletConnectHeading = (_args: any) => {
   useEffect(() => {
     const subscription = walletConnectState.getObservable().subscribe({
       next: (evt: any) => {
+        console.log('[WC UI] state event:', evt.stateName, evt);
         if (evt.stateName === 'connected') {
           toggleExpanded();
           setAlreadyConnected(true);
@@ -114,7 +115,7 @@ const WalletConnectHeading = (_args: any) => {
             selection: REAL_BLOCKCHAIN_ID,
             uniqueId,
           });
-          connectRealBlockchain('https://api.coinset.org');
+          connectRealBlockchain(BLOCKCHAIN_DATA_URL);
           requestBalance();
           requestRecvAddress();
         }
@@ -137,15 +138,17 @@ const WalletConnectHeading = (_args: any) => {
 
   const initWalletConnect = useCallback(() => {
     if (!initializing) {
-      console.log(
-        'initialzing wallet connect if needed',
-        initializing,
-        initialized,
-      );
+      console.log('[WC UI] initWalletConnect() -- calling walletConnectState.init()');
       walletConnectState.init();
       setInitializing(true);
+    } else {
+      console.log('[WC UI] initWalletConnect() -- skipped (already initializing)');
     }
   }, [initializing, initialized]);
+
+  useEffect(() => {
+    initWalletConnect();
+  }, []);
 
   useEffect(() => {
     function receivedWindowMessage(evt: any) {
@@ -250,15 +253,19 @@ const WalletConnectHeading = (_args: any) => {
   }, []);
 
   const onDoWalletConnect = useCallback(() => {
+    console.log('[WC UI] "Link Wallet" clicked');
     initWalletConnect();
     doConnectWallet(
       setShowQRModal,
       setConnectionUri,
       () => walletConnectState.startConnect(),
       () => {
-        console.warn('walletconnect should now be connected');
+        console.log('[WC UI] doConnectWallet complete -- session established');
       },
-      (e) => setWalletConnectError(e),
+      (e) => {
+        console.error('[WC UI] doConnectWallet error:', e);
+        setWalletConnectError(e);
+      },
     );
   }, [initWalletConnect]);
 
