@@ -285,7 +285,7 @@ mod gaming_wasm {
         let rng = ChaCha8Rng::from_seed(*hashed.bytes());
         let id = get_next_id();
         insert_rng(id, rng);
-        return Ok(id);
+        Ok(id)
     }
 
     pub fn with_rng<F, T>(cid: i32, f: F) -> Result<T, JsValue>
@@ -346,7 +346,7 @@ mod gaming_wasm {
         let cradle = serde_wasm_bindgen::from_value::<JsCradle>(json.clone()).into_js()?;
         let new_id = get_next_id();
         insert_cradle(new_id, cradle);
-        return Ok(new_id);
+        Ok(new_id)
     }
 
     fn with_game<F, T>(cid: i32, f: F) -> Result<T, JsValue>
@@ -459,7 +459,7 @@ mod gaming_wasm {
         }
 
         Ok(CoinsetSpendBundle {
-            aggregated_signature: format!("0x{}", hex::encode(&aggsig.bytes())),
+            aggregated_signature: format!("0x{}", hex::encode(aggsig.bytes())),
             coin_spends,
         })
     }
@@ -661,7 +661,7 @@ mod gaming_wasm {
     #[allow(deprecated)]
     pub fn get_game_state_id(cid: i32) -> Result<Option<String>, JsValue> {
         with_game(cid, move |cradle: &mut JsCradle| {
-            Ok(cradle.cradle.get_game_state_id(&mut cradle.allocator, &mut cradle.rng.0)?.map(|h| hex::encode(&h.bytes())))
+            Ok(cradle.cradle.get_game_state_id(&mut cradle.allocator, &mut cradle.rng.0)?.map(|h| hex::encode(h.bytes())))
         })
     }
 
@@ -877,11 +877,11 @@ mod gaming_wasm {
     }
 
     fn check_for_hex(hex_with_prefix: &str) -> Result<Vec<u8>, JsValue> {
-        if hex_with_prefix.starts_with("0x") {
-            return hex::decode(&hex_with_prefix[2..]).into_js();
+        if let Some(stripped) = hex_with_prefix.strip_prefix("0x") {
+            return hex::decode(stripped).into_js();
         }
 
-        return hex::decode(hex_with_prefix).into_js();
+        hex::decode(hex_with_prefix).into_js()
     }
 
     #[wasm_bindgen]
@@ -913,7 +913,7 @@ mod gaming_wasm {
         )
         .into_gen()
         .into_js()?;
-        let conditions = CoinCondition::from_nodeptr(&mut allocator, run_output.1);
+        let conditions = CoinCondition::from_nodeptr(&allocator, run_output.1);
         let mut watch_result = WatchReport::default();
         watch_result.deleted_watched.insert(coin_string.clone());
         for condition in conditions.into_iter() {
@@ -931,7 +931,7 @@ mod gaming_wasm {
         let spend_bytes = hex::decode(spend).into_js()?;
         let spend_program = Program::from_bytes(&spend_bytes);
         let spend_node = spend_program.to_nodeptr(&mut allocator).into_js()?;
-        let spend = SpendBundle::from_clvm(&mut allocator, spend_node).into_js()?;
+        let spend = SpendBundle::from_clvm(&allocator, spend_node).into_js()?;
         serde_wasm_bindgen::to_value(&spend_bundle_to_coinset_js(&spend)?).into_js()
     }
 
