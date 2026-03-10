@@ -5,7 +5,7 @@
   "description": "Chia Gaming Lobby Frontend",
   "type": "module",
   "scripts": {
-    "build": "./node_modules/.bin/tsc --project . && ./node_modules/.bin/esbuild dist/js/index.js --bundle --outfile=./public/index.js && npx @tailwindcss/cli -i ./src/index.css -o ./dist/css/index.css",
+    "build": "./node_modules/.bin/tsc --project . && NODE_PATH=./node_modules ./node_modules/.bin/esbuild dist/js/index.js --bundle --outfile=./public/index.js && npx @tailwindcss/cli -i ./src/index.css -o ./dist/css/index.css",
     "test": "./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit && node --experimental-require-module node_modules/.bin/jest --useStderr",
     "lint": "eslint src/ --ext .ts,.tsx,.js,.jsx,.mjs",
     "lint:fix": "eslint src/ --ext .ts,.tsx,.js,.jsx,.mjs --fix",
@@ -32,7 +32,7 @@
     "@types/react-dom": "19.2.0",
     "@types/rx": "^4.1.4",
     "@types/socket.io-client": "^3.0.0",
-    "chia-gaming-lobby-connection": "../lobby-connection",
+    "chia-gaming-lobby-connection": "link:../lobby-connection",
     "chia-utils": "^1.0.10",
     "class-variance-authority": "^0.7.1",
     "clvm-lib": "^1.0.1",

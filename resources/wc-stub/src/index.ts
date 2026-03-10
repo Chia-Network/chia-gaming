@@ -42,7 +42,7 @@ app.use(
 );
 app.use(express.json());
 
-const PORT: number = process.env.PORT ? parseInt(process.env.PORT, 10) : 3002;
+const PORT: number = process.env.PORT ? parseInt(process.env.PORT, 10) : 3004;
 let client_id = 1;
 const pairs = useWalletConnectPairs();
 let wc_client: UseWalletConnectResult | undefined = undefined;

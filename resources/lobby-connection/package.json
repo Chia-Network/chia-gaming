@@ -7,7 +7,7 @@
     "dist/**/*"
   ],
   "scripts": {
-    "build": "./node_modules/.bin/tsc --project . && npm prune --production",
+    "build": "./node_modules/.bin/tsc --project .",
     "test": "./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit && node --experimental-require-module node_modules/.bin/jest --useStderr",
     "lint": "eslint src/ --ext .ts,.tsx,.js,.jsx,.mjs",
     "lint:fix": "eslint src/ --ext .ts,.tsx,.js,.jsx,.mjs --fix",
@@ -38,7 +38,6 @@
     "react": "19.2.0"
   },
   "devDependencies": {
-    "@types/react": "19.2.0",
-    "react": "^19.2.0"
+    "@types/react": "19.2.0"
   }
 }

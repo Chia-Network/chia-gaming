@@ -1,22 +1,16 @@
 
 import { WasmBlobWrapper } from './WasmBlobWrapper';
-import { GAME_SERVICE_URL } from '../settings';
-// import getGameSocket from './getGameSocket';
 import { setupBlockchainConnection } from './useBlockchainConnection';
 import { WasmStateInit, loadCalpoker } from './WasmStateInit';
 import {
   InternalBlockchainInterface,
 } from '../types/ChiaGaming';
-import { getSearchParams, empty, getRandomInt, getEvenHexString } from '../util';
-import { GameSocketReturn, getGameSocket } from '../services/GameSocket';
+import { blockchainDataEmitter } from './BlockchainInfo';
+import { FAKE_BLOCKCHAIN_ID } from './FakeBlockchainInterface';
+import { getGameSocket } from '../services/GameSocket';
 import {
-  findMatchingGame,
-  loadSave,
   startNewSession,
-  getSaveList,
 } from './save';
-
-// TODO: Maybe migrate this file's contents to WasmStateInit.ts
 
 export var blobSingleton: any = null;
 export var initStarted = false;
@@ -33,48 +27,26 @@ export async function configGameObject(
   gameObject: WasmBlobWrapper,
   iStarted: boolean,
   wasmStateInit: WasmStateInit,
-  calpokerHex: string,
-  blockchain:InternalBlockchainInterface,
+  calpokerHexes: {proposalHex: string, parserHex: string},
+  blockchain: InternalBlockchainInterface,
   uniqueId: string,
   amount: number,
 ): Promise<WasmBlobWrapper> {
   let wasmConnection = await wasmStateInit.getWasmConnection();
   gameObject.loadWasm(wasmConnection);
-  let seed = getRandomInt(1<<31);
-  let seedStr = getEvenHexString(seed);
-  console.log("configGameObject wasmConnection", wasmConnection);
-  let rngId = wasmConnection.create_rng(seedStr);
-  let identity = wasmConnection.chia_identity(rngId);
+  const entropy = new Uint8Array(32);
+  crypto.getRandomValues(entropy);
+  const seedHex = Array.from(entropy, b => b.toString(16).padStart(2, '0')).join('');
+  let rngId = wasmConnection.create_rng(seedHex);
   let address = await blockchain.getAddress();
   gameObject.setBlockchainAddress(address);
-  let cradle = wasmStateInit.createGame(calpokerHex, rngId, wasmConnection, identity.private_key, iStarted, amount, amount, address.puzzleHash);
+  let { game: cradle, puzzleHash } = wasmStateInit.createGame(calpokerHexes.proposalHex, calpokerHexes.parserHex, rngId, wasmConnection, iStarted, amount, amount, address.puzzleHash);
   gameObject.setGameCradle(cradle);
-  let coin = await wasmStateInit.createStartCoin(blockchain, uniqueId, identity, amount, wasmConnection);
+  let coin = await wasmStateInit.createStartCoin(blockchain, uniqueId, puzzleHash, amount, wasmConnection);
   gameObject.activateSpend(coin.coinString);
+  console.log('[config] game configured, puzzleHash:', puzzleHash.substring(0, 16) + '...');
   return gameObject;
 }
-
-export async function deserializeGameObject(
-  gameObject: WasmBlobWrapper,
-  iStarted: boolean,
-  wasmStateInit: WasmStateInit,
-  blockchain:InternalBlockchainInterface,
-  serializedGame: any,
-  address: any,
-): Promise<WasmBlobWrapper> {
-  let wasmConnection = gameObject.getWasmConnection();
-  if (!wasmConnection) {
-    wasmConnection = await wasmStateInit.getWasmConnection();
-    gameObject.loadWasm(wasmConnection);
-  }
-  gameObject.setBlockchainAddress(address);
-  let cradle = wasmStateInit.deserializeGame(wasmConnection, serializedGame);
-  gameObject.setGameCradle(cradle);
-  gameObject.takeWrapperSerialization(serializedGame.wrapper);
-  return gameObject;
-}
-
-let hostLog: (msg: string) => void = (msg) => {};
 
 export function getBlobSingleton(
   blockchain: InternalBlockchainInterface,
@@ -82,12 +54,10 @@ export function getBlobSingleton(
   lobbyUrl: string,
   uniqueId: string,
   amount: number,
-  perGameAmount: number,
   iStarted: boolean,
-  setUIState: (state: any) => void,
 ) {
   if (blobSingleton) {
-    return { gameObject: blobSingleton, hostLog };
+    return { gameObject: blobSingleton };
   }
 
   const doInternalLoadWasm = async () => {
@@ -103,74 +73,50 @@ export function getBlobSingleton(
     blobSingleton?.deliverMessage(msgno, msg);
   };
 
-  let signaledSave: string | undefined = undefined;
-  console.log('getGameSocket');
   const wasmStateInit = new WasmStateInit(doInternalLoadWasm, fetchHex);
   const peerconn = getGameSocket(
     searchParams,
     lobbyUrl,
     deliverMessage,
-    (saves: string[]) => {
+    (_saves: string[]) => {
       const systemState = blobSingleton.systemState();
-      const handleMatchingSave = async (matchingSave: string) => {
-        blobSingleton?.setReloading();
-        const loadedSave = loadSave(matchingSave);
-        await deserializeGameObject(
-          blobSingleton,
-          iStarted,
-          wasmStateInit,
-          blockchain,
-          loadedSave.game,
-          loadedSave.addressData
-        );
-        setUIState(loadedSave.game.ui);
-        blobSingleton?.idle();
-      };
       const newSession = async () => {
         startNewSession();
-        let calpokerHex = await loadCalpoker(fetchHex);
+        let calpokerHexes = await loadCalpoker(fetchHex);
         await configGameObject(
           blobSingleton,
           iStarted,
           wasmStateInit,
-          calpokerHex,
+          calpokerHexes,
           blockchain,
           uniqueId,
           amount
         );
       };
-      const matchingSave = findMatchingGame(saves);
 
       blobSingleton.kickSystem(2);
-      if (matchingSave) {
-        if (matchingSave != signaledSave) {
-          signaledSave = matchingSave;
-          handleMatchingSave(matchingSave);
-        }
-        return;
-      }
-
       if ((systemState & 2) == 0) {
         newSession();
         return;
       }
     },
-    () => getSaveList()
+    () => []
   );
 
-  hostLog = peerconn.hostLog;
   blobSingleton = new WasmBlobWrapper(
     blockchain,
     uniqueId,
     amount,
-    perGameAmount,
     iStarted,
-    doInternalLoadWasm,
-    fetchHex,
     peerconn,
   );
 
-  setupBlockchainConnection(uniqueId);
+  const isInIframe = window.parent !== window;
+  if (isInIframe) {
+    setupBlockchainConnection(uniqueId);
+  } else {
+    blockchainDataEmitter.select({ selection: FAKE_BLOCKCHAIN_ID, uniqueId });
+  }
 
-  return { gameObject: blobSingleton, hostLog };
+  return { gameObject: blobSingleton };
 }

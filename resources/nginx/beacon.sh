@@ -8,7 +8,7 @@ fi
 SELF_URL="$1"
 TRACKER_URL="$2"
 
-POST_CONTENT="{\"game\":\"calpoker\",\"target\":\"${SELF_URL}/?game=calpoker&lobbyUrl=${TRACKER_URL}\"}"
+POST_CONTENT="{\"game\":\"calpoker\",\"target\":\"${SELF_URL}/?game=calpoker&lobbyUrl=${SELF_URL}\"}"
 
 while true ; do
 	curl -H "Content-Type: application/json" -d "${POST_CONTENT}" "${TRACKER_URL}/lobby/game"

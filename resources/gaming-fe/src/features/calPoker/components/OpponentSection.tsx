@@ -5,7 +5,7 @@ import PlayingCard from './PlayingCard';
 
 interface OpponentSectionProps {
   playerNumber: number;
-  opponentHand: number[][];
+  opponentHand: number[];
 }
 
 const OpponentSection = ({

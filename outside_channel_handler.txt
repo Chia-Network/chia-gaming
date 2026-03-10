@@ -50,7 +50,7 @@ UX
 <- game_finished (id, my_share)
 <- game_cancelled (id)
 -> shut_down()
-<- shutdown_complete(reward_coin_string)
+<- clean_shutdown_complete(reward_coin_string)
 <- going_on_chain()
 
 

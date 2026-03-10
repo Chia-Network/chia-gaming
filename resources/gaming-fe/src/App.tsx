@@ -55,7 +55,8 @@ const App = () => {
         .then((urls) => {
           let trackerURL = new URL(urls.tracker);
           setIframeAllowed(trackerURL.origin);
-        });
+        })
+        .catch(() => {});
     }
   }, [fetchedUrls]);
 
@@ -83,7 +84,8 @@ const App = () => {
             // No invite → go straight to game
             setIframeUrl(gameUrl);
           }
-        });
+        })
+        .catch(() => {});
     }
   }, []);
   // no dependency on params so URL stays the same

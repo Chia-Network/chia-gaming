@@ -56,11 +56,11 @@ const Game: React.FC<GameParams> = ({ params }) => {
     );
   }
 
-  if (gameConnectionState.stateIdentifier === 'shutdown') {
+  if (gameConnectionState.stateIdentifier === 'clean_shutdown') {
     return (
       <Box p={4}>
-        <Typography variant='h4' align='center' aria-label='shutdown'>
-          {`Cal Poker - shutdown succeeded`}
+        <Typography variant='h4' align='center' aria-label='clean_shutdown'>
+          {`Cal Poker - clean shutdown succeeded`}
         </Typography>
         <Box>
           {gameConnectionState.stateDetail.map((c: string) => (

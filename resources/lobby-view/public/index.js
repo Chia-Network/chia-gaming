@@ -21732,10 +21732,10 @@
   var import_jsx_runtime9 = __toESM(require_jsx_runtime(), 1);
   var import_react6 = __toESM(require_react(), 1);
 
-  // node_modules/chia-gaming-lobby-connection/dist/index.js
+  // ../lobby-connection/dist/index.js
   var import_react = __toESM(require_react());
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-parser/build/esm/commons.js
+  // ../lobby-connection/node_modules/engine.io-parser/build/esm/commons.js
   var PACKET_TYPES = /* @__PURE__ */ Object.create(null);
   PACKET_TYPES["open"] = "0";
   PACKET_TYPES["close"] = "1";
@@ -21750,7 +21750,7 @@
   });
   var ERROR_PACKET = { type: "error", data: "parser error" };
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-parser/build/esm/encodePacket.browser.js
+  // ../lobby-connection/node_modules/engine.io-parser/build/esm/encodePacket.browser.js
   var withNativeBlob = typeof Blob === "function" || typeof Blob !== "undefined" && Object.prototype.toString.call(Blob) === "[object BlobConstructor]";
   var withNativeArrayBuffer = typeof ArrayBuffer === "function";
   var isView = (obj) => {
@@ -21804,7 +21804,7 @@
     });
   }
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-parser/build/esm/contrib/base64-arraybuffer.js
+  // ../lobby-connection/node_modules/engine.io-parser/build/esm/contrib/base64-arraybuffer.js
   var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   var lookup = typeof Uint8Array === "undefined" ? [] : new Uint8Array(256);
   for (let i = 0; i < chars.length; i++) {
@@ -21831,7 +21831,7 @@
     return arraybuffer;
   };
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-parser/build/esm/decodePacket.browser.js
+  // ../lobby-connection/node_modules/engine.io-parser/build/esm/decodePacket.browser.js
   var withNativeArrayBuffer2 = typeof ArrayBuffer === "function";
   var decodePacket = (encodedPacket, binaryType) => {
     if (typeof encodedPacket !== "string") {
@@ -21884,7 +21884,7 @@
     }
   };
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-parser/build/esm/index.js
+  // ../lobby-connection/node_modules/engine.io-parser/build/esm/index.js
   var SEPARATOR = String.fromCharCode(30);
   var encodePayload = (packets, callback) => {
     const length = packets.length;
@@ -22026,7 +22026,7 @@
   }
   var protocol = 4;
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/@socket.io/component-emitter/lib/esm/index.js
+  // ../lobby-connection/node_modules/@socket.io/component-emitter/lib/esm/index.js
   function Emitter(obj) {
     if (obj) return mixin(obj);
   }
@@ -22098,7 +22098,7 @@
     return !!this.listeners(event).length;
   };
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/globals.js
+  // ../lobby-connection/node_modules/engine.io-client/build/esm/globals.js
   var nextTick = (() => {
     const isPromiseAvailable = typeof Promise === "function" && typeof Promise.resolve === "function";
     if (isPromiseAvailable) {
@@ -22120,7 +22120,7 @@
   function createCookieJar() {
   }
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/util.js
+  // ../lobby-connection/node_modules/engine.io-client/build/esm/util.js
   function pick(obj, ...attr) {
     return attr.reduce((acc, k) => {
       if (obj.hasOwnProperty(k)) {
@@ -22168,7 +22168,7 @@
     return Date.now().toString(36).substring(3) + Math.random().toString(36).substring(2, 5);
   }
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/contrib/parseqs.js
+  // ../lobby-connection/node_modules/engine.io-client/build/esm/contrib/parseqs.js
   function encode(obj) {
     let str = "";
     for (let i in obj) {
@@ -22190,7 +22190,7 @@
     return qry;
   }
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/transport.js
+  // ../lobby-connection/node_modules/engine.io-client/build/esm/transport.js
   var TransportError = class extends Error {
     constructor(reason, description, context) {
       super(reason);
@@ -22309,7 +22309,7 @@
       return hostname.indexOf(":") === -1 ? hostname : "[" + hostname + "]";
     }
     _port() {
-      if (this.opts.port && (this.opts.secure && Number(this.opts.port !== 443) || !this.opts.secure && Number(this.opts.port) !== 80)) {
+      if (this.opts.port && (this.opts.secure && Number(this.opts.port) !== 443 || !this.opts.secure && Number(this.opts.port) !== 80)) {
         return ":" + this.opts.port;
       } else {
         return "";
@@ -22321,7 +22321,7 @@
     }
   };
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/transports/polling.js
+  // ../lobby-connection/node_modules/engine.io-client/build/esm/transports/polling.js
   var Polling = class extends Transport {
     constructor() {
       super(...arguments);
@@ -22453,7 +22453,7 @@
     }
   };
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/contrib/has-cors.js
+  // ../lobby-connection/node_modules/engine.io-client/build/esm/contrib/has-cors.js
   var value = false;
   try {
     value = typeof XMLHttpRequest !== "undefined" && "withCredentials" in new XMLHttpRequest();
@@ -22461,7 +22461,7 @@
   }
   var hasCORS = value;
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/transports/polling-xhr.js
+  // ../lobby-connection/node_modules/engine.io-client/build/esm/transports/polling-xhr.js
   function empty() {
   }
   var BaseXHR = class extends Polling {
@@ -22702,7 +22702,7 @@
     }
   }
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/transports/websocket.js
+  // ../lobby-connection/node_modules/engine.io-client/build/esm/transports/websocket.js
   var isReactNative = typeof navigator !== "undefined" && typeof navigator.product === "string" && navigator.product.toLowerCase() === "reactnative";
   var BaseWS = class extends Transport {
     get name() {
@@ -22796,7 +22796,7 @@
     }
   };
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/transports/webtransport.js
+  // ../lobby-connection/node_modules/engine.io-client/build/esm/transports/webtransport.js
   var WT = class extends Transport {
     get name() {
       return "webtransport";
@@ -22859,14 +22859,14 @@
     }
   };
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/transports/index.js
+  // ../lobby-connection/node_modules/engine.io-client/build/esm/transports/index.js
   var transports = {
     websocket: WS,
     webtransport: WT,
     polling: XHR
   };
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/contrib/parseuri.js
+  // ../lobby-connection/node_modules/engine.io-client/build/esm/contrib/parseuri.js
   var re = /^(?:(?![^:@\/?#]+:[^:@\/]*@)(http|https|ws|wss):\/\/)?((?:(([^:@\/?#]*)(?::([^:@\/?#]*))?)?@)?((?:[a-f0-9]{0,4}:){2,7}[a-f0-9]{0,4}|[^:\/?#]*)(?::(\d*))?)(((\/(?:[^?#](?![^?#\/]*\.[^?#\/.]+(?:[?#]|$)))*\/?)?([^?#\/]*))(?:\?([^#]*))?(?:#(.*))?)/;
   var parts = [
     "source",
@@ -22926,7 +22926,7 @@
     return data;
   }
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/socket.js
+  // ../lobby-connection/node_modules/engine.io-client/build/esm/socket.js
   var withEventListeners = typeof addEventListener === "function" && typeof removeEventListener === "function";
   var OFFLINE_EVENT_LISTENERS = [];
   if (withEventListeners) {
@@ -23493,10 +23493,10 @@
     }
   };
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/engine.io-client/build/esm/index.js
+  // ../lobby-connection/node_modules/engine.io-client/build/esm/index.js
   var protocol2 = Socket.protocol;
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/socket.io-client/build/esm/url.js
+  // ../lobby-connection/node_modules/socket.io-client/build/esm/url.js
   function url(uri, path = "", loc) {
     let obj = uri;
     loc = loc || typeof location !== "undefined" && location;
@@ -23534,16 +23534,17 @@
     return obj;
   }
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/socket.io-parser/build/esm/index.js
+  // ../lobby-connection/node_modules/socket.io-parser/build/esm/index.js
   var esm_exports = {};
   __export(esm_exports, {
     Decoder: () => Decoder,
     Encoder: () => Encoder,
     PacketType: () => PacketType,
+    isPacketValid: () => isPacketValid,
     protocol: () => protocol3
   });
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/socket.io-parser/build/esm/is-binary.js
+  // ../lobby-connection/node_modules/socket.io-parser/build/esm/is-binary.js
   var withNativeArrayBuffer3 = typeof ArrayBuffer === "function";
   var isView2 = (obj) => {
     return typeof ArrayBuffer.isView === "function" ? ArrayBuffer.isView(obj) : obj.buffer instanceof ArrayBuffer;
@@ -23580,7 +23581,7 @@
     return false;
   }
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/socket.io-parser/build/esm/binary.js
+  // ../lobby-connection/node_modules/socket.io-parser/build/esm/binary.js
   function deconstructPacket(packet) {
     const buffers = [];
     const packetData = packet.data;
@@ -23642,13 +23643,18 @@
     return data;
   }
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/socket.io-parser/build/esm/index.js
+  // ../lobby-connection/node_modules/socket.io-parser/build/esm/index.js
   var RESERVED_EVENTS = [
     "connect",
+    // used on the client side
     "connect_error",
+    // used on the client side
     "disconnect",
+    // used on both sides
     "disconnecting",
+    // used on the server side
     "newListener",
+    // used by the Node.js EventEmitter
     "removeListener"
     // used by the Node.js EventEmitter
   ];
@@ -23723,9 +23729,6 @@
       return buffers;
     }
   };
-  function isObject(value2) {
-    return Object.prototype.toString.call(value2) === "[object Object]";
-  }
   var Decoder = class _Decoder extends Emitter {
     /**
      * Decoder constructor
@@ -23897,8 +23900,39 @@
       this.buffers = [];
     }
   };
+  function isNamespaceValid(nsp) {
+    return typeof nsp === "string";
+  }
+  var isInteger = Number.isInteger || function(value2) {
+    return typeof value2 === "number" && isFinite(value2) && Math.floor(value2) === value2;
+  };
+  function isAckIdValid(id) {
+    return id === void 0 || isInteger(id);
+  }
+  function isObject(value2) {
+    return Object.prototype.toString.call(value2) === "[object Object]";
+  }
+  function isDataValid(type, payload) {
+    switch (type) {
+      case PacketType.CONNECT:
+        return payload === void 0 || isObject(payload);
+      case PacketType.DISCONNECT:
+        return payload === void 0;
+      case PacketType.EVENT:
+        return Array.isArray(payload) && (typeof payload[0] === "number" || typeof payload[0] === "string" && RESERVED_EVENTS.indexOf(payload[0]) === -1);
+      case PacketType.ACK:
+        return Array.isArray(payload);
+      case PacketType.CONNECT_ERROR:
+        return typeof payload === "string" || isObject(payload);
+      default:
+        return false;
+    }
+  }
+  function isPacketValid(packet) {
+    return isNamespaceValid(packet.nsp) && isAckIdValid(packet.id) && isDataValid(packet.type, packet.data);
+  }
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/socket.io-client/build/esm/on.js
+  // ../lobby-connection/node_modules/socket.io-client/build/esm/on.js
   function on(obj, ev, fn) {
     obj.on(ev, fn);
     return function subDestroy() {
@@ -23906,7 +23940,7 @@
     };
   }
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/socket.io-client/build/esm/socket.js
+  // ../lobby-connection/node_modules/socket.io-client/build/esm/socket.js
   var RESERVED_EVENTS2 = Object.freeze({
     connect: 1,
     connect_error: 1,
@@ -24162,7 +24196,6 @@
       };
       args.push((err, ...responseArgs) => {
         if (packet !== this._queue[0]) {
-          return;
         }
         const hasError = err !== null;
         if (hasError) {
@@ -24394,8 +24427,8 @@
       this._pid = pid;
       this.connected = true;
       this.emitBuffered();
-      this.emitReserved("connect");
       this._drainQueue(true);
+      this.emitReserved("connect");
     }
     /**
      * Emit buffered events (received and emitted).
@@ -24680,7 +24713,7 @@
     }
   };
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/socket.io-client/build/esm/contrib/backo2.js
+  // ../lobby-connection/node_modules/socket.io-client/build/esm/contrib/backo2.js
   function Backoff(opts) {
     opts = opts || {};
     this.ms = opts.min || 100;
@@ -24711,7 +24744,7 @@
     this.jitter = jitter;
   };
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/socket.io-client/build/esm/manager.js
+  // ../lobby-connection/node_modules/socket.io-client/build/esm/manager.js
   var Manager = class extends Emitter {
     constructor(uri, opts) {
       var _a;
@@ -25061,7 +25094,7 @@
     }
   };
 
-  // node_modules/chia-gaming-lobby-connection/node_modules/socket.io-client/build/esm/index.js
+  // ../lobby-connection/node_modules/socket.io-client/build/esm/index.js
   var cache = {};
   function lookup2(uri, opts) {
     if (typeof uri === "object") {
@@ -25096,7 +25129,7 @@
     connect: lookup2
   });
 
-  // node_modules/chia-gaming-lobby-connection/dist/index.js
+  // ../lobby-connection/dist/index.js
   function useLobbySocket(lobbyUrl, uniqueId, alias, walletConnect, params, fragment, navigate) {
     const [players, setPlayers] = (0, import_react.useState)([]);
     const [rooms, setRooms] = (0, import_react.useState)([]);
@@ -25104,9 +25137,9 @@
     const [didJoin, setDidJoin] = (0, import_react.useState)(false);
     const [lobbyGames, setLobbyGames] = (0, import_react.useState)([]);
     const socketRef = (0, import_react.useRef)(void 0);
-    console.log("fragment retrieved", fragment);
+    const navigatingRef = (0, import_react.useRef)(false);
     const joinRoom = (0, import_react.useCallback)(async (token) => {
-      const { data } = await fetch(`${lobbyUrl}/lobby/join-room`, {
+      const room = await fetch(`${lobbyUrl}/lobby/join-room`, {
         method: "POST",
         body: JSON.stringify({
           token,
@@ -25117,29 +25150,24 @@
         }),
         headers: { "Content-Type": "application/json" }
       }).then((res) => res.json());
-      return data.room;
+      return room;
     }, [uniqueId]);
     function tryJoinRoom() {
       for (const room of rooms) {
-        console.log("we have: uniqueId", uniqueId, "params", params);
-        console.log("checking room", room);
-        if (!room.host) {
-          console.log("either host or joiner missing");
+        if (!room.host)
           continue;
-        }
-        if (params.token && room.token != params.token) {
-          console.log("room with wrong token wanted", params.token);
+        if (params.token && room.token != params.token)
           continue;
-        }
         if (params.token && room.host != uniqueId && !room.joiner && !didJoin) {
           setDidJoin(true);
-          joinRoom(params.token);
+          joinRoom(params.token).catch(() => {
+          });
           continue;
         }
-        console.log("conditions to enter", room.host === uniqueId, room.joiner === uniqueId, room.target, walletConnect);
-        if ((room.host === uniqueId || room.joiner === uniqueId) && room.target && walletConnect) {
+        if ((room.host === uniqueId || room.joiner === uniqueId) && room.target && walletConnect && !navigatingRef.current) {
+          navigatingRef.current = true;
           const iStarted = room.host === uniqueId;
-          console.log("take us to game", JSON.stringify(room));
+          const newUrl = `${room.target}&uniqueId=${uniqueId}&iStarted=${iStarted}`;
           fetch("/lobby/good", {
             method: "POST",
             headers: {
@@ -25149,10 +25177,9 @@
               id: uniqueId,
               token: room.token
             })
-          }).then((res) => res.json()).then(() => {
-            const newUrl = `${room.target}&uniqueId=${uniqueId}&iStarted=${iStarted}`;
-            return navigate(newUrl);
+          }).catch(() => {
           });
+          navigate(newUrl);
           break;
         }
       }
@@ -25203,8 +25230,7 @@
       return data;
     }, [uniqueId]);
     const setLobbyAlias = (0, import_react.useCallback)(async (id, alias2) => {
-      console.log("setLobbyAlias", id, alias2);
-      const { data } = await fetch(`${lobbyUrl}/lobby/change-alias`, {
+      const result = await fetch(`${lobbyUrl}/lobby/change-alias`, {
         method: "POST",
         body: JSON.stringify({
           id,
@@ -25212,7 +25238,7 @@
         }),
         headers: { "Content-Type": "application/json" }
       }).then((res) => res.json());
-      return data.player;
+      return result?.player;
     }, [uniqueId]);
     const leaveRoom = (0, import_react.useCallback)(async (_token) => {
       console.error("implement leave room");
@@ -25309,6 +25335,14 @@
     }
     const search = window.location.search.substring(1);
     return getParamsFromString(search);
+  }
+  function generateOrRetrieveUniqueId() {
+    let id = localStorage.getItem("uniqueId");
+    if (id)
+      return id;
+    id = v4_default();
+    localStorage.setItem("uniqueId", id);
+    return id;
   }
   function updateAlias(alias) {
     localStorage.setItem("alias", alias);
@@ -25936,7 +25970,7 @@
     const [myAlias, setMyAlias] = (0, import_react6.useState)(generateOrRetrieveAlias());
     const params = getSearchParams();
     const fragment = getFragmentParams();
-    const uniqueId = params.uniqueId;
+    const uniqueId = params.uniqueId || generateOrRetrieveUniqueId();
     const { players, rooms, messages, sendMessage, setLobbyAlias, generateRoom, joinRoom, lobbyGames } = useLobbySocket(window.location.origin, uniqueId, myAlias, true, params, fragment, (newUrl) => {
       console.warn(`from tryJoinRoom, navigate ${newUrl}`);
       window.location.href = newUrl;
@@ -25944,9 +25978,9 @@
     const [chatInput, setChatInput] = (0, import_react6.useState)("");
     const [dialogOpen, setDialogOpen] = (0, import_react6.useState)(false);
     const [gameChoice, setGameChoice] = (0, import_react6.useState)(lobbyGames[0]?.game || "");
-    const [wagerInput, setWagerInputPrimitive] = (0, import_react6.useState)("");
+    const [wagerInput, setWagerInputPrimitive] = (0, import_react6.useState)("100");
     const [wagerValidationError, setWagerValidationError] = (0, import_react6.useState)("");
-    const [perHandInput, setPerHandInput] = (0, import_react6.useState)("");
+    const [perHandInput, setPerHandInput] = (0, import_react6.useState)("10");
     const [editingAlias, setEditingAlias] = (0, import_react6.useState)(false);
     const [gotoUrl, setGotoUrl] = (0, import_react6.useState)("");
     const [urlDialogOpen, setUrlDialogOpen] = (0, import_react6.useState)(false);
@@ -26060,7 +26094,8 @@
     };
     (0, import_react6.useEffect)(() => {
       if (fragment.token)
-        joinRoom(fragment.token);
+        joinRoom(fragment.token).catch(() => {
+        });
     }, [fragment, joinRoom]);
     function commitEdit(e) {
       const value2 = e.target.value;

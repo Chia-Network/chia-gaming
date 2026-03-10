@@ -1,7 +1,4 @@
-use crate::{
-    common::types::{Amount, GameID, GameType, Program, Timeout},
-    potato_handler::types::GSI,
-};
+use crate::common::types::{Amount, GameID, GameType, Program, Timeout};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -13,19 +10,4 @@ pub struct GameStart {
     pub my_contribution: Amount,
     pub my_turn: bool,
     pub parameters: Program,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WireGameStart {
-    pub game_ids: Vec<GameID>,
-    pub start: GameStart,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GameStartQueueEntry(pub Vec<GameID>);
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MyGameStartQueueEntry {
-    pub my_games: Vec<GSI>,
-    pub their_games: Vec<GSI>,
 }

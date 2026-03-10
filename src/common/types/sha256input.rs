@@ -27,16 +27,26 @@ impl Hash {
     pub fn from_bytes(by: [u8; 32]) -> Hash {
         Hash(by)
     }
-    pub fn from_slice(by: &[u8]) -> Hash {
-        let mut fixed: [u8; 32] = [0; 32];
-        for (i, b) in by.iter().enumerate().take(32) {
-            fixed[i % 32] = *b;
+    /// Converts a byte slice to a Hash.
+    /// Accepts exactly 32 bytes or 0 bytes (CLVM nil, treated as all-zero hash).
+    /// Rejects any other length.
+    pub fn from_slice(by: &[u8]) -> Result<Hash, Error> {
+        if by.is_empty() {
+            return Ok(Hash::from_bytes([0u8; 32]));
         }
-        Hash::from_bytes(fixed)
+        if by.len() != 32 {
+            return Err(Error::StrErr(format!(
+                "hash must be 32 bytes, got {}",
+                by.len()
+            )));
+        }
+        let mut fixed = [0u8; 32];
+        fixed.copy_from_slice(by);
+        Ok(Hash::from_bytes(fixed))
     }
     pub fn from_nodeptr(allocator: &AllocEncoder, n: NodePtr) -> Result<Hash, Error> {
         if let Some(bytes) = atom_from_clvm(allocator, n) {
-            return Ok(Hash::from_slice(&bytes));
+            return Hash::from_slice(&bytes);
         }
 
         Err(Error::StrErr("can't convert node to hash".to_string()))
@@ -107,6 +117,8 @@ impl Sha256Input<'_> {
         let mut hasher = Sha256::new();
         self.update(&mut hasher);
         let result = hasher.finalize();
-        Hash::from_slice(&result[..])
+        let mut fixed = [0u8; 32];
+        fixed.copy_from_slice(&result[..]);
+        Hash::from_bytes(fixed)
     }
 }

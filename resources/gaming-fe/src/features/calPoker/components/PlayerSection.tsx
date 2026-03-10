@@ -3,16 +3,15 @@ import { Box, Button, Typography, Paper } from '@mui/material';
 
 
 import PlayingCard from './PlayingCard';
-import { popcount } from '../../../util';
 
 interface PlayerSectionProps {
   playerNumber: number;
-  playerHand: number[][];
+  playerHand: number[];
   isPlayerTurn: boolean;
   moveNumber: number;
-  handleMakeMove: (move: any) => void;
-  cardSelections: number;
-  setCardSelections: (mask: number) => void;
+  handleMakeMove: () => void;
+  cardSelections: number[];
+  setCardSelections: (mask: number[] | ((prev: number[]) => number[])) => void;
 }
 
 const PlayerSection = ({
@@ -25,15 +24,14 @@ const PlayerSection = ({
   setCardSelections,
 }: PlayerSectionProps) => {
   const doHandleMakeMove = () => {
-    const moveData = '80';
-    handleMakeMove(moveData);
+    handleMakeMove();
   };
-  const setSelection = (index: number, selected: boolean) => {
+  const setSelection = (cardId: number, selected: boolean) => {
     let selections = cardSelections;
     if (selected) {
-      selections |= 1 << index;
+      selections = [...cardSelections, cardId];
     } else {
-      selections &= ~(1 << index);
+      selections = cardSelections.filter((id) => id !== cardId);
     }
     setCardSelections(selections);
     console.warn(
@@ -45,7 +43,7 @@ const PlayerSection = ({
     );
   };
   const disabled =
-    !isPlayerTurn || (moveNumber === 1 && popcount(cardSelections) != 4);
+    !isPlayerTurn || (moveNumber === 1 && cardSelections.length != 4);
   return (
     <Paper
       elevation={3}
@@ -61,13 +59,13 @@ const PlayerSection = ({
       <Typography variant='h6'>Your Hand:</Typography>
       <br />
       <Box display='flex' flexDirection='row' mb={2}>
-        {playerHand.map((card: number[], index) => (
+        {playerHand.map((card: number, index) => (
           <PlayingCard
             iAmPlayer
             id={`card-${playerNumber}-${card}`}
             key={index}
-            index={index}
-            selected={!!(cardSelections & (1 << index))}
+            index={card}
+            selected={cardSelections.includes(card)}
             cardValue={card}
             setSelection={setSelection}
           />

@@ -8,9 +8,6 @@ use crate::utils::first;
 
 use log::debug;
 
-// TODO: Remove duplicate code
-
-#[test]
 fn test_prepend_count() {
     let mut allocator = AllocEncoder::new();
     let source_data = (
@@ -51,7 +48,6 @@ fn test_prepend_count() {
     );
 }
 
-#[test]
 fn test_make_cards() {
     let mut allocator = AllocEncoder::new();
     let program =
@@ -82,7 +78,6 @@ fn test_make_cards() {
     );
 }
 
-#[test]
 fn test_mergein() {
     let mut allocator = AllocEncoder::new();
     let tests = [
@@ -108,7 +103,6 @@ fn test_mergein() {
     }
 }
 
-#[test]
 fn test_pull_indices() {
     let mut allocator = AllocEncoder::new();
     let source_data = (
@@ -149,7 +143,6 @@ fn test_pull_indices() {
     );
 }
 
-#[test]
 fn test_pull_out_straight() {
     let mut allocator = AllocEncoder::new();
     let source_data_ace = (
@@ -179,7 +172,6 @@ fn test_pull_out_straight() {
     );
 }
 
-#[test]
 fn test_find_straight_high() {
     let mut allocator = AllocEncoder::new();
     // Add additional case tests for normal range, not a straight.
@@ -213,7 +205,6 @@ fn test_find_straight_high() {
     assert_eq!(Node(result).to_hex(&mut allocator).expect("cvt"), "05");
 }
 
-#[test]
 fn test_straight_indices() {
     let mut allocator = AllocEncoder::new();
     // Add additional case tests for normal range, not a straight.
@@ -251,7 +242,6 @@ fn test_straight_indices() {
     );
 }
 
-#[test]
 fn test_handcalc() {
     let mut allocator = AllocEncoder::new();
     // Add additional case tests for normal range, not a straight.
@@ -884,12 +874,24 @@ fn test_handcalc() {
     let deep_compare =
         read_hex_puzzle(&mut allocator, "clsp/test/deep_compare.hex").expect("should read");
 
+    let to_mod52 = |cards: Vec<(i32, i32)>| -> Vec<i32> {
+        cards
+            .iter()
+            .map(|(rank, suit)| (rank - 2) * 4 + (suit - 1))
+            .collect()
+    };
+
     let mut test_handcalc_with_example =
-        |(expected_relationship, explanation, ex_data_1, ex_data_2)| {
-            let source_data_1 = ("handcalc", (ex_data_1, ()))
+        |(expected_relationship, explanation, ex_data_1, ex_data_2): (
+            &str,
+            Vec<&str>,
+            Vec<(i32, i32)>,
+            Vec<(i32, i32)>,
+        )| {
+            let source_data_1 = ("handcalc", (to_mod52(ex_data_1), ()))
                 .to_clvm(&mut allocator)
                 .expect("should build");
-            let source_data_2 = ("handcalc", (ex_data_2, ()))
+            let source_data_2 = ("handcalc", (to_mod52(ex_data_2), ()))
                 .to_clvm(&mut allocator)
                 .expect("should build");
             let program_clvm = program.to_clvm(&mut allocator).expect("should do");
@@ -936,4 +938,17 @@ fn test_handcalc() {
         debug!("test {test:?}");
         test_handcalc_with_example(test);
     }
+}
+
+pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
+    vec![
+        ("test_prepend_count", &test_prepend_count),
+        ("test_make_cards", &test_make_cards),
+        ("test_mergein", &test_mergein),
+        ("test_pull_indices", &test_pull_indices),
+        ("test_pull_out_straight", &test_pull_out_straight),
+        ("test_find_straight_high", &test_find_straight_high),
+        ("test_straight_indices", &test_straight_indices),
+        ("test_handcalc", &test_handcalc),
+    ]
 }

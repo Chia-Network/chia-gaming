@@ -1,10 +1,10 @@
-use crate::referee::types::RefereeOnChainTransaction;
+use crate::common::types::Spend;
 
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum AcceptTransactionState {
-    Determined(Box<RefereeOnChainTransaction>),
+    Determined(Box<Spend>),
     Waiting,
     Finished,
 }

@@ -17,7 +17,7 @@ enum WalletConnectCommandParamName {
   DID_ID = 'didId',
   DID_LINEAGE_PARENT = 'didLineageParent',
   DISABLE_JSON_FORMATTING = 'disableJSONFormatting',
-  DRIVER_DICT = 'driverDict',
+  DRIVER_DICT = 'handlerDict',
   EDITION_NUMBER = 'editionNumber',
   EDITION_TOTAL = 'editionTotal',
   END = 'end',

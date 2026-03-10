@@ -66,7 +66,6 @@ export class RealBlockchainInterface {
     this.ws = new ReconnectingWebSocket(wsUrl(this.baseUrl));
     this.ws?.addEventListener('message', (m: any) => {
       const json = JSON.parse(m.data);
-      console.log('coinset json', json);
       if (json.type === 'peak') {
         this.peak = json.data.height;
         this.pushEvent({ checkPeak: true });
@@ -95,7 +94,6 @@ export class RealBlockchainInterface {
   }
 
   async internalRetrieveBlock(height: number) {
-    console.log('full node: retrieve block', height);
     const br_height = await fetch(
       `${this.baseUrl}/get_block_record_by_height`,
       {
@@ -107,7 +105,6 @@ export class RealBlockchainInterface {
         body: JSON.stringify({ height }),
       },
     ).then((r) => r.json());
-    console.log('br_height', br_height);
     this.at_block = br_height.block_record.height + 1;
     const header_hash = br_height.block_record.header_hash;
     const br_spends = await fetch(`${this.baseUrl}/get_block_spends`, {
@@ -120,7 +117,6 @@ export class RealBlockchainInterface {
         header_hash: header_hash,
       }),
     }).then((r) => r.json());
-    console.log('br_spends', br_spends.block_spends);
     this.observable.next({
       peak: this.at_block,
       block: br_spends.block_spends,
@@ -150,16 +146,13 @@ export class RealBlockchainInterface {
   }
 
   async kickEvent() {
-    console.log('full node: kickEvent');
     while (this.incomingEvents.length) {
-      console.log('incoming events', this.incomingEvents.length);
       this.handlingEvent = true;
       try {
         const event = this.incomingEvents.shift();
-        console.log('full node: do event', event);
         await this.handleEvent(event);
       } catch (e) {
-        console.log('incoming event failed', e);
+        console.error('incoming event failed', e);
       } finally {
         this.handlingEvent = false;
       }
@@ -174,7 +167,6 @@ export class RealBlockchainInterface {
   }
 
   async push_request(req: any): Promise<any> {
-    console.log('blockchain: push message to parent', req);
     const requestId = this.requestId++;
     req.requestId = requestId;
     window.parent.postMessage(req, '*');
@@ -192,7 +184,6 @@ export class RealBlockchainInterface {
   }
 
   async spend(spend: any): Promise<string> {
-    console.log('push_tx', spend);
     return await fetch(`${this.baseUrl}/push_tx`, {
       method: 'POST',
       headers: {
@@ -204,7 +195,7 @@ export class RealBlockchainInterface {
       .then((r) => r.json())
       .then((r) => {
         if (r.error && r.error.indexOf('UNKNOWN_UNSPENT') != -1) {
-          console.log('unknown unspent, retry in 60 seconds');
+          console.warn('unknown unspent, retry in 60 seconds');
           return new Promise((resolve, reject) => {
             setTimeout(() => {
               this.spend(spend)
@@ -242,7 +233,6 @@ export function connectRealBlockchain(baseUrl: string) {
             walletId: 1,
           });
           if (currentAddress !== lastRecvAddress) {
-            console.log('walletconnect recv currentAddress (initialSpend=true):', currentAddress);
             lastRecvAddress = currentAddress;
           }
           const fromPuzzleHash = toHexString(
@@ -261,10 +251,8 @@ export function connectRealBlockchain(baseUrl: string) {
           });
 
           let resultCoin = undefined;
-          console.log('walletconnect recv spend result:', result);
           if (result.transaction) {
             result.transaction.additions.forEach((c) => {
-              console.log('look at coin', initialSpend.target, c);
               if (
                 c.puzzleHash == '0x' + initialSpend.target &&
                 c.amount.toString() == initialSpend.amount.toString()
@@ -289,7 +277,7 @@ export function connectRealBlockchain(baseUrl: string) {
             initialSpend: { coin: resultCoin as any, fromPuzzleHash },
           });
         } catch (e: any) {
-          console.log('catch from rpc', evt, ':', e);
+          console.error('rpc error', evt, ':', e);
           blockchainConnector.replyEmitter({
             responseId: evt.requestId,
             error: JSON.stringify(e),
@@ -333,7 +321,6 @@ export function connectRealBlockchain(baseUrl: string) {
           })
           .then((address) => {
             if (address !== lastRecvAddress) {
-              console.log('walletconnect recv currentAddress:', address);
               lastRecvAddress = address;
             }
             const puzzleHash = toHexString(bech32.decode(address).data as any);
@@ -367,7 +354,6 @@ export function connectRealBlockchain(baseUrl: string) {
 blockchainDataEmitter.getSelectionObservable().subscribe({
   next: (e: SelectionMessage) => {
     if (e.selection == REAL_BLOCKCHAIN_ID) {
-      console.log('real blockchain selected');
       realBlockchainInfo.startMonitoring();
     }
   },

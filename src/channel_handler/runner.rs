@@ -5,7 +5,7 @@ use crate::channel_handler::{
     ChannelHandler, ChannelHandlerEnv, ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys,
 };
 
-use crate::common::types::{Amount, CoinID, Error, PublicKey, Puzzle, PuzzleHash, Timeout};
+use crate::common::types::{Aggsig, Amount, CoinID, Error, PublicKey, Puzzle, PuzzleHash, Timeout};
 
 pub struct ChannelHandlerParty {
     pub ch: ChannelHandler,
@@ -25,8 +25,9 @@ impl ChannelHandlerParty {
         we_start_with_potato: bool,
         their_channel_pubkey: PublicKey,
         their_unroll_pubkey: PublicKey,
-        their_referee_puzzle_hash: PuzzleHash,
+        their_referee_pubkey: PublicKey,
         their_reward_puzzle_hash: PuzzleHash,
+        their_reward_payout_signature: Aggsig,
         my_contribution: Amount,
         their_contribution: Amount,
         unroll_advance_timeout: Timeout,
@@ -39,8 +40,9 @@ impl ChannelHandlerParty {
             we_start_with_potato,
             their_channel_pubkey,
             their_unroll_pubkey,
-            their_referee_puzzle_hash,
+            their_referee_pubkey,
             their_reward_puzzle_hash,
+            their_reward_payout_signature,
             my_contribution.clone(),
             their_contribution,
             unroll_advance_timeout,

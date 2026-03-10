@@ -11,23 +11,22 @@ use clvmr::{run_program, NodePtr};
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
 
-use crate::channel_handler::game_handler::TheirTurnResult;
+use crate::channel_handler::game::Game;
+use crate::channel_handler::game_handler::{GameHandler, MyTurnInputs, TheirTurnInputs};
+use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::channel_handler::types::{
     Evidence, HasStateUpdateProgram, ReadableMove, StateUpdateProgram, ValidationInfo,
 };
-use crate::channel_handler::v1::game::Game;
-use crate::channel_handler::v1::game_handler::{GameHandler, MyTurnInputs, TheirTurnInputs};
-use crate::channel_handler::v1::game_start_info::GameStartInfo;
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::standard_coin::ChiaIdentity;
 #[cfg(test)]
 use crate::common::types::PrivateKey;
 use crate::common::types::{
     atom_from_clvm, chia_dialect, AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Node,
-    Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Timeout,
+    Program, ProgramRef, PublicKey, PuzzleHash, Sha256tree, Timeout,
 };
 use crate::referee::types::{GameMoveDetails, GameMoveStateInfo};
-use crate::referee::v1::types::{
+use crate::referee::types::{
     InternalStateUpdateArgs, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
 };
 #[cfg(test)]
@@ -38,15 +37,15 @@ pub struct DebugGameCurry {
     pub count: usize,
     pub self_hash: PuzzleHash,
     pub self_prog: Rc<Program>,
-    pub mover0: PuzzleHash,
-    pub waiter0: PuzzleHash,
+    pub mover0: PublicKey,
+    pub waiter0: PublicKey,
 }
 
 impl DebugGameCurry {
     pub fn new(
         allocator: &mut AllocEncoder,
-        mover_ph: &PuzzleHash,
-        waiter_ph: &PuzzleHash,
+        mover_pk: &PublicKey,
+        waiter_pk: &PublicKey,
     ) -> Result<DebugGameCurry, Error> {
         let raw_program = read_hex_puzzle(allocator, "clsp/test/debug_game.hex")?;
         let prog_hash = raw_program.sha256tree(allocator);
@@ -54,8 +53,8 @@ impl DebugGameCurry {
             count: 0,
             self_prog: raw_program.to_program(),
             self_hash: prog_hash,
-            mover0: mover_ph.clone(),
-            waiter0: waiter_ph.clone(),
+            mover0: mover_pk.clone(),
+            waiter0: waiter_pk.clone(),
         })
     }
 }
@@ -80,16 +79,12 @@ where
 }
 
 pub struct DebugGameMoveInfo {
-    #[allow(dead_code)]
     pub ui_move: ReadableMove,
-    #[allow(dead_code)]
-    pub move_data: Vec<u8>,
-    #[allow(dead_code)]
     pub slash: Option<Rc<Program>>,
 }
 
-/// A driver for the bare debug game, wrapped in a referee coin.
-pub struct BareDebugGameDriver {
+/// A handler for the bare debug game, wrapped in a referee coin.
+pub struct BareDebugGameHandler {
     #[cfg(test)]
     game: Game,
 
@@ -113,16 +108,15 @@ pub struct BareDebugGameDriver {
 
     validation_program_queue: VecDeque<StateUpdateProgram>,
 
-    #[allow(dead_code)]
-    handler: GameHandler,
-    next_handler: GameHandler,
+    handler: Option<GameHandler>,
+    next_handler: Option<GameHandler>,
     start: GameStartInfo,
     rng: Vec<Hash>,
 
     slash_detected: Option<Evidence>,
 }
 
-impl BareDebugGameDriver {
+impl BareDebugGameHandler {
     fn get_validation_info(
         &self,
         allocator: &mut AllocEncoder,
@@ -140,7 +134,7 @@ impl BareDebugGameDriver {
         }
     }
 
-    fn new(
+    fn new_with_contributions(
         allocator: &mut AllocEncoder,
         game_id: GameID,
         nonce: usize,
@@ -148,11 +142,13 @@ impl BareDebugGameDriver {
         referee_coin_puzzle_hash: &PuzzleHash,
         timeout: Timeout,
         rng_sequence: &[Hash],
-    ) -> Result<[BareDebugGameDriver; 2], Error> {
+        my_contribution: u64,
+        their_contribution: u64,
+    ) -> Result<[BareDebugGameHandler; 2], Error> {
         let args = DebugGameCurry::new(
             allocator,
-            &identities[0].puzzle_hash,
-            &identities[1].puzzle_hash,
+            &identities[0].public_key,
+            &identities[1].public_key,
         )?;
         debug!("curried args into game {args:?}");
 
@@ -163,7 +159,9 @@ impl BareDebugGameDriver {
         .to_clvm(allocator)
         .into_gen()?;
         let curried_prog = Program::from_nodeptr(allocator, curried)?;
-        let args_node = (100, (100, (args, ()))).to_clvm(allocator).into_gen()?;
+        let args_node = (my_contribution, (their_contribution, (args, ())))
+            .to_clvm(allocator)
+            .into_gen()?;
         let args_clvm = Rc::new(Program::from_nodeptr(allocator, args_node)?);
         let alice_game = Game::new_program(
             allocator,
@@ -174,19 +172,28 @@ impl BareDebugGameDriver {
         )?;
         let bob_game =
             Game::new_program(allocator, false, &game_id, curried_prog.into(), args_clvm)?;
-        let start_a =
-            alice_game.game_start(&game_id, &Amount::new(100), &Amount::new(100), &timeout);
-        let start_b = bob_game.game_start(&game_id, &Amount::new(100), &Amount::new(100), &timeout);
+        let start_a = alice_game.game_start(
+            &game_id,
+            &Amount::new(my_contribution),
+            &Amount::new(their_contribution),
+            &timeout,
+        );
+        let start_b = bob_game.game_start(
+            &game_id,
+            &Amount::new(their_contribution),
+            &Amount::new(my_contribution),
+            &timeout,
+        );
         assert_ne!(start_a.amount, Amount::default());
         assert_ne!(start_b.amount, Amount::default());
-        let make_bare_driver = |game_start: &GameStartInfo| -> BareDebugGameDriver {
-            let mut driver = BareDebugGameDriver {
+        let make_bare_handler = |game_start: &GameStartInfo| -> BareDebugGameHandler {
+            let mut handler = BareDebugGameHandler {
                 i_am_alice: game_start.is_my_turn(),
                 move_count: 0,
                 alice_identity: identities[0].clone(),
                 bob_identity: identities[1].clone(),
-                handler: game_start.game_handler.clone(),
-                next_handler: game_start.game_handler.clone(),
+                handler: Some(game_start.game_handler.clone()),
+                next_handler: Some(game_start.game_handler.clone()),
                 timeout: timeout.clone(),
                 max_move_size: game_start.initial_max_move_size,
                 next_max_move_size: game_start.initial_max_move_size,
@@ -210,41 +217,36 @@ impl BareDebugGameDriver {
                     .cloned()
                     .collect(),
             };
-            driver.last_validation_data.push_back((
+            handler.last_validation_data.push_back((
                 game_start.initial_validation_program.clone(),
                 game_start.initial_state.clone(),
             ));
-            driver
+            handler
         };
-        let alice_driver = make_bare_driver(&start_a);
-        let bob_driver = make_bare_driver(&start_b);
-        debug!("created a mover share {:?}", alice_driver.mover_share);
-        debug!("created b mover share {:?}", bob_driver.mover_share);
-        Ok([alice_driver, bob_driver])
+        let alice_handler = make_bare_handler(&start_a);
+        let bob_handler = make_bare_handler(&start_b);
+        debug!("created a mover share {:?}", alice_handler.mover_share);
+        debug!("created b mover share {:?}", bob_handler.mover_share);
+        Ok([alice_handler, bob_handler])
     }
 
     pub fn alice_turn(&self) -> bool {
         (self.move_count & 1) == 0
     }
 
-    pub fn get_mover_and_waiter_ph(&self) -> (PuzzleHash, PuzzleHash, Puzzle) {
-        let mover_ph = if self.alice_turn() {
-            &self.alice_identity.puzzle_hash
+    pub fn get_mover_and_waiter_pubkey(&self) -> (PublicKey, PublicKey) {
+        let mover_pk = if self.alice_turn() {
+            &self.alice_identity.public_key
         } else {
-            &self.bob_identity.puzzle_hash
+            &self.bob_identity.public_key
         };
-        let mover_puzzle = if self.alice_turn() {
-            self.alice_identity.puzzle.clone()
+        let waiter_pk = if self.alice_turn() {
+            &self.bob_identity.public_key
         } else {
-            self.bob_identity.puzzle.clone()
-        };
-        let waiter_ph = if self.alice_turn() {
-            &self.bob_identity.puzzle_hash
-        } else {
-            &self.alice_identity.puzzle_hash
+            &self.alice_identity.public_key
         };
 
-        (mover_ph.clone(), waiter_ph.clone(), mover_puzzle)
+        (mover_pk.clone(), waiter_pk.clone())
     }
 
     pub fn prime_my_turn(
@@ -254,13 +256,18 @@ impl BareDebugGameDriver {
     ) -> Result<(), Error> {
         let ui_move = exhaustive_inputs.get_ui_move(allocator)?;
         debug!("my turn handler {:?}", self.handler);
-        let my_handler_result = self.handler.call_my_turn_driver(
+        let handler = self
+            .handler
+            .as_ref()
+            .ok_or_else(|| Error::StrErr("my turn called after final move".to_string()))?;
+        let my_handler_result = handler.call_my_turn_handler(
             allocator,
             &MyTurnInputs {
                 readable_new_move: ui_move,
                 entropy: self.rng[self.move_count].clone(),
                 amount: self.start.amount.clone(),
                 last_mover_share: self.mover_share.clone(),
+                state: self.state.clone(),
             },
         )?;
 
@@ -277,7 +284,7 @@ impl BareDebugGameDriver {
             );
         }
 
-        self.next_handler = my_handler_result.waiting_driver.clone();
+        self.next_handler = my_handler_result.waiting_handler.clone();
         self.next_max_move_size = my_handler_result.max_move_size;
         self.validation_program_queue.clear();
         self.validation_program_queue
@@ -318,7 +325,7 @@ impl BareDebugGameDriver {
             &exhaustive_inputs.opponent_mover_share.clone(),
             Evidence::nil()?,
         )?;
-        if let StateUpdateResult::MoveOk(new_state) = state_update_result {
+        if let Some(new_state) = state_update_result {
             self.handler = self.next_handler.clone();
             self.move_count += 1;
             self.mover_share = self.next_mover_share.clone();
@@ -340,9 +347,7 @@ impl BareDebugGameDriver {
         mover_share: &Amount,
         evidence: Evidence,
     ) -> Result<StateUpdateResult, Error> {
-        let (mover_ph, waiter_ph, mover_puzzle) = self.get_mover_and_waiter_ph();
-
-        // tmpsave("v-prog.hex", &validation_program.to_program().to_hex());
+        let (mover_pk, waiter_pk) = self.get_mover_and_waiter_pubkey();
 
         debug!(
             "{} debug test v program hash: {:?}",
@@ -363,30 +368,30 @@ impl BareDebugGameDriver {
                     previous_validation_info_hash,
                     referee_coin_puzzle_hash: self.mod_hash.clone(),
                     timeout: self.timeout.clone(),
-                    mover_puzzle_hash: mover_ph.clone(),
-                    waiter_puzzle_hash: waiter_ph.clone(),
+                    mover_pubkey: mover_pk.clone(),
+                    waiter_pubkey: waiter_pk.clone(),
                     amount: self.start.amount.clone(),
                     game_move: GameMoveDetails {
                         basic: GameMoveStateInfo {
                             move_made: move_to_check.to_vec(),
                             mover_share: mover_share.clone(),
-                            max_move_size: self.max_move_size, // unused in v1
+                            max_move_size: self.max_move_size,
                         },
-                        validation_info_hash: ValidationInfo::new_state_update(
-                            allocator,
-                            validation_program.clone(),
-                            self.state.p(),
-                        )
-                        .hash()
-                        .clone(),
+                        validation_info_hash: Some(
+                            ValidationInfo::new_state_update(
+                                allocator,
+                                validation_program.clone(),
+                                self.state.p(),
+                            )
+                            .hash()
+                            .clone(),
+                        ),
                     },
                 }
                 .off_chain(),
             ),
             state_update_args: StateUpdateMoveArgs {
                 evidence: evidence.to_program(),
-                mover_puzzle: mover_puzzle.to_program(),
-                solution: Rc::new(Program::from_hex("80")?),
                 state: self.state.p(),
             },
             validation_program: validation_program,
@@ -419,8 +424,8 @@ impl BareDebugGameDriver {
             ValidationInfo::new_state_update(allocator, validation_program.clone(), self.state.p());
 
         let emove = ExhaustiveMoveInputs {
-            alice_puzzle_hash: self.alice_identity.puzzle_hash.clone(),
-            bob_puzzle_hash: self.bob_identity.puzzle_hash.clone(),
+            alice_pubkey: self.alice_identity.public_key.clone(),
+            bob_pubkey: self.bob_identity.public_key.clone(),
             amount: self.start.amount.clone(),
             count: self.move_count,
             max_move_size: self.max_move_size,
@@ -436,7 +441,6 @@ impl BareDebugGameDriver {
             slash: slash,
             opponent_mover_share: mover_share.clone(),
             previous_validation_info: self.get_validation_info(allocator, 2),
-            entropy: self.rng[self.move_count].clone(),
         };
 
         self.prime_my_turn(allocator, &emove)?;
@@ -459,7 +463,7 @@ impl BareDebugGameDriver {
         let previous_validation_info_hash = self
             .get_validation_info(allocator, 1)
             .map(|v| v.hash().clone());
-        debug!("validation_program {:?}", vprog.to_program());
+        debug!("validation_program hash={:?}", vprog.hash());
         self.generic_run_state_update(
             allocator,
             vprog,
@@ -485,7 +489,7 @@ impl BareDebugGameDriver {
             .map(|v| v.hash().clone());
         let evidence = Evidence::nil()?;
         debug!("my mover share {:?}", self.mover_share);
-        debug!("validation program {:?}", vprog.to_program());
+        debug!("validation program hash={:?}", vprog.hash());
 
         self.last_validation_data
             .push_back((vprog.clone(), self.state.clone()));
@@ -499,62 +503,70 @@ impl BareDebugGameDriver {
         )?;
 
         let (state, tt_result) = match validator_response {
-            StateUpdateResult::MoveOk(state) => {
+            Some(state) => {
                 debug!("debug their move: new state {state:?}");
+                let pre_state_node = self.state.to_nodeptr(allocator)?;
                 let state_node = state.to_clvm(allocator).into_gen()?;
                 (
                     state.clone(),
-                    self.handler.call_their_turn_driver(
-                        allocator,
-                        &TheirTurnInputs {
-                            amount: self.start.amount.clone(),
-                            state: state_node,
-                            last_move: &move_to_check,
-                            last_mover_share: inputs.mover_share.clone(),
-                            new_move: GameMoveDetails {
-                                basic: GameMoveStateInfo {
-                                    move_made: move_to_check.clone(),
-                                    mover_share: inputs.opponent_mover_share.clone(),
-                                    max_move_size: inputs.max_move_size,
+                    self.handler
+                        .as_ref()
+                        .ok_or_else(|| {
+                            Error::StrErr("their turn called after final move".to_string())
+                        })?
+                        .call_their_turn_handler(
+                            allocator,
+                            &TheirTurnInputs {
+                                amount: self.start.amount.clone(),
+                                pre_state: pre_state_node,
+                                state: state_node,
+                                last_move: &move_to_check,
+                                last_mover_share: inputs.mover_share.clone(),
+                                new_move: GameMoveDetails {
+                                    basic: GameMoveStateInfo {
+                                        move_made: move_to_check.clone(),
+                                        mover_share: inputs.opponent_mover_share.clone(),
+                                        max_move_size: inputs.max_move_size,
+                                    },
+                                    validation_info_hash: Some(vprog.hash().clone()),
                                 },
-                                validation_info_hash: vprog.hash().clone(),
                             },
-                        },
-                    )?,
+                        )?,
                 )
             }
-            StateUpdateResult::Slash(evidence) => {
-                return Ok(Some(evidence));
+            None => {
+                return Ok(Some(Rc::new(Program(vec![0x80]))));
             }
         };
 
-        match tt_result {
-            TheirTurnResult::MakeMove(new_handler, _message, tt_data) => {
-                self.handler = new_handler.v1();
-                for evidence in tt_data.slash_evidence.iter() {
-                    let validator_response = self.generic_run_state_update(
-                        allocator,
-                        vprog.clone(),
-                        previous_validation_info_hash.clone(),
-                        &move_to_check,
-                        &inputs.opponent_mover_share,
-                        evidence.clone(),
-                    )?;
-                    if let StateUpdateResult::Slash(evidence1) = validator_response {
-                        debug!("SLASH DETECTED: EVIDENCE {evidence:?} {evidence1:?}");
-                        self.slash_detected = Some(evidence.clone());
-                        return Ok(Some(evidence.to_program()));
-                    }
+        if let Some(new_handler) = &tt_result.next_handler {
+            self.handler = Some(new_handler.clone());
+            for evidence in tt_result.slash_evidence.iter() {
+                let validator_response = self.generic_run_state_update(
+                    allocator,
+                    vprog.clone(),
+                    previous_validation_info_hash.clone(),
+                    &move_to_check,
+                    &inputs.opponent_mover_share,
+                    evidence.clone(),
+                )?;
+                if validator_response.is_none() {
+                    debug!("SLASH DETECTED: EVIDENCE {evidence:?}");
+                    self.slash_detected = Some(evidence.clone());
+                    return Ok(Some(evidence.to_program()));
                 }
-                self.move_count += 1;
-                self.handler = new_handler.v1();
-                self.mover_share = tt_data.mover_share.clone();
-                self.last_validation_data
-                    .push_back((vprog.clone(), self.state.clone()));
-                self.state = state.clone().into();
-                debug!("Accepted their turn");
             }
-            _ => todo!(),
+            self.move_count += 1;
+            self.handler = Some(new_handler.clone());
+            self.mover_share = tt_result.mover_share.clone();
+            self.last_validation_data
+                .push_back((vprog.clone(), self.state.clone()));
+            self.state = state.clone().into();
+            debug!("Accepted their turn");
+        } else {
+            return Err(Error::StrErr(
+                "unexpected FinalMove in their_turn_handler (expected MakeMove)".to_string(),
+            ));
         }
         Ok(None)
     }
@@ -563,7 +575,7 @@ impl BareDebugGameDriver {
     pub fn do_move(
         &mut self,
         allocator: &mut AllocEncoder,
-        peer: &mut BareDebugGameDriver,
+        peer: &mut BareDebugGameHandler,
         mover_share: Amount,
         slash: u8,
     ) -> Result<DebugGameMoveInfo, Error> {
@@ -582,7 +594,7 @@ impl BareDebugGameDriver {
             )
             .expect("good");
         debug!("validation_result {validation_result:?}");
-        assert!(matches!(validation_result, StateUpdateResult::MoveOk(_)));
+        assert!(validation_result.is_some());
         debug!("end my turn");
         self.end_my_turn(allocator, &predicted_move).expect("good");
         debug!("accept move");
@@ -590,7 +602,6 @@ impl BareDebugGameDriver {
         Ok(DebugGameMoveInfo {
             ui_move: predicted_move.get_ui_move(allocator)?,
             slash: move_success_0,
-            move_data,
         })
     }
 }
@@ -599,24 +610,37 @@ pub fn make_debug_games(
     allocator: &mut AllocEncoder,
     rng: &mut ChaCha8Rng,
     identities: &[ChiaIdentity],
-) -> Result<[BareDebugGameDriver; 2], Error> {
+    nonce: usize,
+) -> Result<[BareDebugGameHandler; 2], Error> {
+    make_debug_games_with_contributions(allocator, rng, identities, 100, 100, nonce)
+}
+
+pub fn make_debug_games_with_contributions(
+    allocator: &mut AllocEncoder,
+    rng: &mut ChaCha8Rng,
+    identities: &[ChiaIdentity],
+    my_contribution: u64,
+    their_contribution: u64,
+    nonce: usize,
+) -> Result<[BareDebugGameHandler; 2], Error> {
     let rng_seq0: Vec<Hash> = (0..50).map(|_| rng.gen()).collect();
-    let gid = GameID::default();
-    let referee_coin = read_hex_puzzle(allocator, "clsp/referee/onchain/referee-v1.hex")?;
+    let gid = GameID(nonce as u64);
+    let referee_coin = read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex")?;
     let ref_coin_hash = referee_coin.sha256tree(allocator);
-    BareDebugGameDriver::new(
+    BareDebugGameHandler::new_with_contributions(
         allocator,
         gid,
-        0,
+        nonce,
         identities,
         &ref_coin_hash,
         Timeout::new(10),
         &rng_seq0,
+        my_contribution,
+        their_contribution,
     )
 }
 
-#[test]
-fn test_debug_game_factory() {
+pub fn test_debug_game_factory() {
     let mut allocator = AllocEncoder::new();
     let rng_seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(rng_seed);
@@ -625,7 +649,7 @@ fn test_debug_game_factory() {
     let id0 = ChiaIdentity::new(&mut allocator, pk0).expect("ok");
     let id1 = ChiaIdentity::new(&mut allocator, pk1).expect("ok");
     let identities: [ChiaIdentity; 2] = [id0, id1];
-    let debug_games = make_debug_games(&mut allocator, &mut rng, &identities).expect("good");
+    let debug_games = make_debug_games(&mut allocator, &mut rng, &identities, 0).expect("good");
     assert_eq!(512, debug_games[0].game.starts[0].initial_max_move_size);
     assert_eq!(
         debug_games[0].game.starts[0].initial_max_move_size,
@@ -634,8 +658,8 @@ fn test_debug_game_factory() {
 }
 
 pub struct ExhaustiveMoveInputs {
-    alice_puzzle_hash: PuzzleHash,
-    bob_puzzle_hash: PuzzleHash,
+    alice_pubkey: PublicKey,
+    bob_pubkey: PublicKey,
     mod_hash: PuzzleHash,
     validation_info: ValidationInfo,
     validation_program: StateUpdateProgram,
@@ -646,8 +670,6 @@ pub struct ExhaustiveMoveInputs {
     mover_share: Amount,
     count: usize,
     nonce: usize,
-    #[allow(dead_code)]
-    entropy: Hash,
     slash: u8,
     opponent_mover_share: Amount,
     previous_validation_info: Option<ValidationInfo>,
@@ -712,15 +734,15 @@ impl ExhaustiveMoveInputs {
     pub fn to_linear_move(&self, allocator: &mut AllocEncoder) -> Result<Vec<u8>, Error> {
         let bit_0_set: bool = ((self.count & 1) << 4) == 0;
         let alice_mover = bit_0_set;
-        let mover_ph_ref = if alice_mover {
-            &self.bob_puzzle_hash
+        let mover_pk_ref = if alice_mover {
+            &self.bob_pubkey
         } else {
-            &self.alice_puzzle_hash
+            &self.alice_pubkey
         };
-        let waiter_ph_ref = if alice_mover {
-            Some(&self.alice_puzzle_hash)
+        let waiter_pk_ref = if alice_mover {
+            Some(&self.alice_pubkey)
         } else {
-            Some(&self.bob_puzzle_hash)
+            Some(&self.bob_pubkey)
         };
         let pv_hash = self.validation_program.sha256tree(allocator);
         let timeout_atom = at_least_one_byte(allocator, self.timeout.to_u64())?;
@@ -732,9 +754,9 @@ impl ExhaustiveMoveInputs {
         let count_atom = at_least_one_byte(allocator, self.count as u64)?;
         let mut tail_bytes = self.move_tail(allocator)?;
         let args = (
-            mover_ph_ref.clone(),
+            mover_pk_ref.clone(),
             (
-                waiter_ph_ref.cloned(),
+                waiter_pk_ref.cloned(),
                 (
                     self.mod_hash.clone(),
                     (
@@ -786,8 +808,7 @@ impl ExhaustiveMoveInputs {
     }
 }
 
-#[test]
-fn test_debug_game_validation_move() {
+pub fn test_debug_game_validation_move() {
     let mut allocator = AllocEncoder::new();
     let rng_seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(rng_seed);
@@ -796,7 +817,7 @@ fn test_debug_game_validation_move() {
     let id0 = ChiaIdentity::new(&mut allocator, pk0).expect("ok");
     let id1 = ChiaIdentity::new(&mut allocator, pk1).expect("ok");
     let identities: [ChiaIdentity; 2] = [id0, id1];
-    let mut debug_games = make_debug_games(&mut allocator, &mut rng, &identities).expect("good");
+    let mut debug_games = make_debug_games(&mut allocator, &mut rng, &identities, 0).expect("good");
     let debug_games = pair_of_array_mut(&mut debug_games);
 
     assert_eq!(
@@ -818,4 +839,14 @@ fn test_debug_game_validation_move() {
         .1
         .do_move(&mut allocator, debug_games.0, Amount::default(), 0)
         .expect("ok");
+}
+
+pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
+    vec![
+        ("test_debug_game_factory", &test_debug_game_factory),
+        (
+            "test_debug_game_validation_move",
+            &test_debug_game_validation_move,
+        ),
+    ]
 }

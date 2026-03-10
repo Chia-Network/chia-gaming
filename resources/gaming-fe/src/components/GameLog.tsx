@@ -3,6 +3,7 @@ import { Box, Typography, Card, CardContent } from '@mui/material';
 import {
   OutcomeLogLine,
   OutcomeHandType,
+  cardIdToRankSuit,
   suitNames,
 } from '../types/ChiaGaming';
 import { ExpandMore } from '@mui/icons-material';
@@ -26,15 +27,16 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
   };
 
   const cardDisplay = (
-    c: number[],
+    c: number,
     index: number,
     idPrefix: string,
     selected: boolean,
   ) => {
-    const suitName = suitNames[c[1]];
+    const { rank, suit } = cardIdToRankSuit(c);
+    const suitName = suitNames[suit];
     const isRedSuit = suitName === '♥' || suitName === '♦';
     const suitColor = isRedSuit ? '#dc2626' : '#000';
-    const rankDisplay = RANK_SYMBOLS[c[0]] ?? c[0];
+    const rankDisplay = RANK_SYMBOLS[rank] ?? rank;
 
     return (
       <div
@@ -58,7 +60,7 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
     me: boolean,
     label: string,
     desc: OutcomeHandType,
-    hand: number[][],
+    hand: number[],
   ) => {
     const cards = hand.map((c, i) =>
       cardDisplay(c, i, `outcome-${me ? 'me' : 'opponent'}`, false),
