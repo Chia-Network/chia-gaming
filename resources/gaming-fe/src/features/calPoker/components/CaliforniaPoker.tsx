@@ -459,6 +459,22 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   }, []);
 
   useEffect(() => {
+    if (moveNumber === 0) {
+      setGameState(GAME_STATES.SELECTING);
+      setRememberedCards([[], []]);
+      setRememberedOutcome(undefined);
+      setWinner(null);
+      setMovingCards([]);
+      setPlayerBestHand(undefined);
+      setAiBestHand(undefined);
+      setShowSwapAnimation(false);
+      setPlayerDisplayText('');
+      setOpponentDisplayText('');
+      setSwappingCards({ player: [], ai: [] });
+    }
+  }, [moveNumber]);
+
+  useEffect(() => {
     if (gameState === GAME_STATES.FINAL) {
       setShowEndDialog(true);
     }

@@ -143,7 +143,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     const go = gameObjectRef.current;
     if (!go || !go.isChannelReady()) return;
     try {
-      const ids = go.proposeGame({
+      go.proposeGame({
         game_type: '63616c706f6b6572',
         timeout: 100,
         amount: perGameAmount,
@@ -151,7 +151,6 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
         my_turn: !iStarted,
         parameters: null,
       });
-      setGameIds(prev => [...prev, ...ids]);
     } catch (e) {
       console.error('[calpoker] proposeGame failed:', e);
     }
@@ -210,6 +209,13 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
       setMyTurn(!iStarted);
       setMoveNumber(0);
       moveNumberRef.current = 0;
+      setPlayerHand([]);
+      setOpponentHand([]);
+      playerHandRef.current = [];
+      opponentHandRef.current = [];
+      setOurCardSelections([]);
+      cardSelectionsRef.current = [];
+      setOutcome(undefined);
       setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
     } else if ('OpponentMoved' in n) {
       const currentMove = moveNumberRef.current;
