@@ -5,7 +5,7 @@ lazy_static! {
     pub static ref DEFAULT_UNROLL_TIME_LOCK: Timeout = Timeout::new(5);
 }
 
-#[cfg(any(test, feature = "sim-tests"))]
+#[cfg(test)]
 use crate::channel_handler::types::ReadableMove;
 
 // In unit tests (without the `sim-tests` feature), we only need `Timeout` and `Move`.
@@ -13,11 +13,9 @@ use crate::channel_handler::types::ReadableMove;
 #[derive(Clone)]
 pub enum GameAction {
     /// Do a timeout
-    #[allow(dead_code)]
     Timeout(usize),
-    /// Move (player, clvm readable move, was received)
-    #[allow(dead_code)]
-    Move(usize, ReadableMove, bool),
+    /// Move (player, game ordinal, clvm readable move, was received)
+    Move(usize, usize, ReadableMove, bool),
 }
 
 #[cfg(all(test, not(feature = "sim-tests")))]
@@ -25,7 +23,7 @@ impl std::fmt::Debug for GameAction {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
             GameAction::Timeout(t) => write!(formatter, "Timeout({t})"),
-            GameAction::Move(p, n, r) => write!(formatter, "Move({p},{n:?},{r})"),
+            GameAction::Move(p, g, n, r) => write!(formatter, "Move({p},{g},{n:?},{r})"),
         }
     }
 }
@@ -35,18 +33,19 @@ mod sim_tests {
     use super::*;
 
     use crate::channel_handler::game::Game;
+    use crate::channel_handler::game_start_info::GameStartInfo;
     use crate::channel_handler::runner::ChannelHandlerParty;
     use crate::channel_handler::types::{
         ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerPrivateKeys, HandshakeResult,
-        StartGameResult,
     };
     use crate::common::standard_coin::{
-        private_to_public_key, puzzle_for_pk, puzzle_hash_for_synthetic_public_key, ChiaIdentity,
+        private_to_public_key, puzzle_for_pk, puzzle_hash_for_synthetic_public_key,
+        sign_reward_payout, ChiaIdentity,
     };
     use crate::common::types::{
-        Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, Puzzle, PuzzleHash, Sha256tree,
+        Aggsig, Amount, CoinID, CoinString, Error, GameID, Hash, PublicKey, Puzzle, PuzzleHash,
+        Sha256tree,
     };
-    use crate::shutdown::ShutdownConditions;
     use crate::simulator::Simulator;
     use log::debug;
     use rand::prelude::*;
@@ -68,14 +67,19 @@ mod sim_tests {
         ) -> Result<ChannelHandlerGame, Error> {
             let private_keys: [ChannelHandlerPrivateKeys; 2] = env.rng.gen();
 
-            let make_ref_info = |env: &mut ChannelHandlerEnv<R>,
-                                 id: usize|
-             -> Result<(Rc<Puzzle>, PuzzleHash), Error> {
-                let ref_key = private_to_public_key(&private_keys[id].my_referee_private_key);
-                let referee = puzzle_for_pk(env.allocator, &ref_key)?;
-                let ref_puzzle_hash = referee.sha256tree(env.allocator);
-                Ok((Rc::new(referee), ref_puzzle_hash))
-            };
+            let make_ref_info =
+                |env: &mut ChannelHandlerEnv<R>,
+                 id: usize|
+                 -> Result<(Rc<Puzzle>, PuzzleHash, PublicKey, Aggsig), Error> {
+                    let ref_key = private_to_public_key(&private_keys[id].my_referee_private_key);
+                    let referee = puzzle_for_pk(env.allocator, &ref_key)?;
+                    let ref_puzzle_hash = referee.sha256tree(env.allocator);
+                    let reward_sig = sign_reward_payout(
+                        &private_keys[id].my_referee_private_key,
+                        &ref_puzzle_hash,
+                    );
+                    Ok((Rc::new(referee), ref_puzzle_hash, ref_key, reward_sig))
+                };
 
             let ref1 = make_ref_info(env, 0)?;
             let ref2 = make_ref_info(env, 1)?;
@@ -92,12 +96,13 @@ mod sim_tests {
                         id == 1,
                         private_to_public_key(&private_keys[id ^ 1].my_channel_coin_private_key),
                         private_to_public_key(&private_keys[id ^ 1].my_unroll_coin_private_key),
+                        referees[id ^ 1].2.clone(),
                         referees[id ^ 1].1.clone(),
-                        referees[id ^ 1].1.clone(),
+                        referees[id ^ 1].3.clone(),
                         contributions[id].clone(),
                         contributions[id ^ 1].clone(),
                         unroll_advance_timeout.clone(),
-                        referees[id ^ 1].1.clone(),
+                        referees[id].1.clone(),
                     )
                 };
 
@@ -157,44 +162,119 @@ mod sim_tests {
         }
     }
 
+    /// What event a ProposeNewGame action waits for before firing.
+    #[derive(Clone, Debug)]
+    pub enum ProposeTrigger {
+        /// Wait for the channel to be created (handshake complete).
+        Channel,
+        /// Wait for a previous game (by ordinal) to finish.
+        AfterGame(usize),
+    }
+
     #[derive(Clone)]
     pub enum GameAction {
         /// Do a timeout
-        #[allow(dead_code)]
         Timeout(usize),
-        /// Move (player, clvm readable move, was received)
-        #[allow(dead_code)]
-        Move(usize, ReadableMove, bool),
-        /// Fake move, just calls receive on the indicated side.
-        FakeMove(usize, ReadableMove, Vec<u8>),
+        /// Move (player, game ordinal, clvm readable move, was received)
+        Move(usize, usize, ReadableMove, bool),
+        /// Fake move (player, game ordinal, readable, sabotage bytes).
+        FakeMove(usize, usize, ReadableMove, Vec<u8>),
+        /// Cheat: enable cheating on the referee and queue a move with
+        /// invalid data. The given mover_share is the amount the victim
+        /// receives on timeout. For testing and demonstration only.
+        Cheat(usize, Amount),
+        /// Force-destroy a game coin: inject a fake deletion into WatchReport
+        /// to test impossible spend / game destroyed notifications.
+        ForceDestroyCoin(usize),
+        /// Nerf (silently drop) all outbound transactions for a player.
+        NerfTransactions(usize),
+        /// Stop nerfing transactions. If true, replay the backlog to the
+        /// simulator; if false, discard it.
+        UnNerfTransactions(bool),
+        /// Propose a new game from the specified player.
+        /// The trigger specifies what event to wait for before proposing.
+        ProposeNewGame(usize, ProposeTrigger),
+        /// Like ProposeNewGame but with my_turn=false so the receiver moves first.
+        ProposeNewGameTheirTurn(usize, ProposeTrigger),
         /// Go on chain
         GoOnChain(usize),
+        /// Go on chain and immediately make the next Move in the action
+        /// list before any blockchain events are processed.  This tests
+        /// that moves issued right after go_on_chain get queued and
+        /// replayed once the on-chain transition completes.
+        GoOnChainThenMove(usize),
         /// Wait a number of blocks
         WaitBlocks(usize, usize),
-        /// Accept
-        Accept(usize),
+        /// Accept timeout (claim game outcome)
+        AcceptTimeout(usize),
         /// Shut down
-        Shutdown(usize, Rc<dyn ShutdownConditions>),
+        CleanShutdown(usize),
+        /// Corrupt a player's current_state_number for testing edge cases.
+        /// (player, new_state_number)
+        CorruptStateNumber(usize, usize),
+        /// Force-submit an unroll transaction for a player, bypassing
+        /// handshake state checks.  Simulates a malicious peer who submits
+        /// an old-state unroll even after agreeing to clean shutdown.
+        ForceUnroll(usize),
+        /// Nerf (silently drop) all outbound messages for a player.
+        NerfMessages(usize),
+        /// Stop nerfing messages.
+        UnNerfMessages,
+        /// Accept a proposed game. (player, proposal ordinal in all_game_ids)
+        AcceptProposal(usize, usize),
+        /// Cancel a proposed game from the specified player.
+        CancelProposal(usize),
+        /// Snapshot the current unroll spend info for later stale unroll.
+        SaveUnrollSnapshot(usize),
+        /// Force-submit a stale unroll using a previously saved snapshot.
+        ForceStaleUnroll(usize),
     }
 
     impl std::fmt::Debug for GameAction {
         fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
             match self {
                 GameAction::Timeout(t) => write!(formatter, "Timeout({t})"),
-                GameAction::Move(p, n, r) => write!(formatter, "Move({p},{n:?},{r})"),
-                GameAction::FakeMove(p, n, v) => write!(formatter, "FakeMove({p},{n:?},{v:?})"),
+                GameAction::Move(p, g, n, r) => write!(formatter, "Move({p},{g},{n:?},{r})"),
+                GameAction::FakeMove(p, g, n, v) => {
+                    write!(formatter, "FakeMove({p},{g},{n:?},{v:?})")
+                }
+                GameAction::Cheat(p, ms) => write!(formatter, "Cheat({p},{ms:?})"),
+                GameAction::ForceDestroyCoin(p) => write!(formatter, "ForceDestroyCoin({p})"),
+                GameAction::NerfTransactions(p) => write!(formatter, "NerfTransactions({p})"),
+                GameAction::UnNerfTransactions(r) => write!(formatter, "UnNerfTransactions({r})"),
+                GameAction::ProposeNewGame(p, t) => {
+                    write!(formatter, "ProposeNewGame({p},{t:?})")
+                }
+                GameAction::ProposeNewGameTheirTurn(p, t) => {
+                    write!(formatter, "ProposeNewGameTheirTurn({p},{t:?})")
+                }
                 GameAction::GoOnChain(p) => write!(formatter, "GoOnChain({p})"),
-                GameAction::Accept(p) => write!(formatter, "Accept({p})"),
+                GameAction::GoOnChainThenMove(p) => {
+                    write!(formatter, "GoOnChainThenMove({p})")
+                }
+                GameAction::AcceptTimeout(p) => write!(formatter, "AcceptTimeout({p})"),
                 GameAction::WaitBlocks(n, p) => write!(formatter, "WaitBlocks({n},{p})"),
-                GameAction::Shutdown(p, _) => write!(formatter, "Shutdown({p},..)"),
+                GameAction::CleanShutdown(p) => write!(formatter, "CleanShutdown({p})"),
+                GameAction::CorruptStateNumber(p, sn) => {
+                    write!(formatter, "CorruptStateNumber({p},{sn})")
+                }
+                GameAction::ForceUnroll(p) => write!(formatter, "ForceUnroll({p})"),
+                GameAction::NerfMessages(p) => write!(formatter, "NerfMessages({p})"),
+                GameAction::UnNerfMessages => write!(formatter, "UnNerfMessages"),
+                GameAction::AcceptProposal(p, n) => {
+                    write!(formatter, "AcceptProposal({p},{n})")
+                }
+                GameAction::CancelProposal(p) => write!(formatter, "CancelProposal({p})"),
+                GameAction::SaveUnrollSnapshot(p) => write!(formatter, "SaveUnrollSnapshot({p})"),
+                GameAction::ForceStaleUnroll(p) => write!(formatter, "ForceStaleUnroll({p})"),
             }
         }
     }
 
     impl GameAction {
         pub fn lose(&self) -> GameAction {
-            if let GameAction::Move(p, m, _r) = self {
-                return GameAction::Move(*p, m.clone(), false);
+            if let GameAction::Move(p, g, m, _r) = self {
+                return GameAction::Move(*p, *g, m.clone(), false);
             }
 
             self.clone()
@@ -206,14 +286,16 @@ mod sim_tests {
         MoveResult(ReadableMove, Vec<u8>, Option<ReadableMove>, Hash),
         BrokenMove,
         MoveToOnChain,
-        Accepted,
+        AcceptedTimeout,
         Shutdown,
     }
 
     pub fn new_channel_handler_game<R: Rng>(
         simulator: &Simulator,
         env: &mut ChannelHandlerEnv<R>,
-        game: &Game,
+        game_id: &GameID,
+        alice_game: &Game,
+        bob_game: &Game,
         identities: &[ChiaIdentity; 2],
         contributions: [Amount; 2],
     ) -> Result<(ChannelHandlerGame, CoinString), Error> {
@@ -224,8 +306,7 @@ mod sim_tests {
 
         let get_sufficient_coins = |i: usize| -> Result<Vec<CoinString>, Error> {
             Ok(simulator
-                .get_my_coins(&identities[i].puzzle_hash)
-                .into_gen()?
+                .get_my_coins(&identities[i].puzzle_hash)?
                 .into_iter()
                 .filter(|c| {
                     if let Some((_, _, amt)) = c.to_parts() {
@@ -260,7 +341,7 @@ mod sim_tests {
 
         let mut party = ChannelHandlerGame::new(
             env,
-            game.id.clone(),
+            game_id.clone(),
             &u2.to_coin_id(),
             &contributions.clone(),
             (*DEFAULT_UNROLL_TIME_LOCK).clone(),
@@ -295,42 +376,45 @@ mod sim_tests {
 
         let timeout = Timeout::new(10);
 
-        let (our_game_start, their_game_start) = game.symmetric_game_starts(
-            &game.id,
-            &contributions[0].clone(),
-            &contributions[1].clone(),
-            &timeout,
-        );
+        let our_game_start =
+            alice_game.game_start(game_id, &contributions[0], &contributions[1], &timeout);
+        let their_game_start =
+            bob_game.game_start(game_id, &contributions[1], &contributions[0], &timeout);
 
         debug!("our_game_start {:?}", our_game_start);
         debug!("their_game_start {:?}", their_game_start);
 
-        let sigs1 = party.player(0).ch.send_empty_potato(env)?;
-        let spend1 = party.player(1).ch.received_empty_potato(env, &sigs1)?;
-        party.update_channel_coin_after_receive(1, &spend1)?;
+        let our_start: Rc<GameStartInfo> = Rc::new(our_game_start);
+        let their_start: Rc<GameStartInfo> = Rc::new(their_game_start);
 
-        let sigs2 = party.player(1).ch.send_empty_potato(env)?;
-        let spend2 = party.player(0).ch.received_empty_potato(env, &sigs2)?;
-        party.update_channel_coin_after_receive(0, &spend2)?;
+        let propose_sigs = party.player(0).ch.propose_game(env, &our_start)?;
+        party
+            .player(1)
+            .ch
+            .apply_received_proposal(env, &their_start)?;
+        let recv_propose = party
+            .player(1)
+            .ch
+            .verify_received_batch_signatures(env, &propose_sigs)?;
+        party.update_channel_coin_after_receive(1, &recv_propose)?;
 
-        let StartGameResult::Success(start_potato) = party
+        party.player(1).ch.send_accept_proposal(&game_id)?;
+        let accept_sigs = party.player(1).ch.update_cached_unroll_state(env)?;
+        party
             .player(0)
             .ch
-            .send_potato_start_game(env, &[our_game_start])?
-        else {
-            return Err(Error::StrErr("game start failed in test".to_string()));
-        };
-
-        let (_, solidified_state) = party.player(1).ch.received_potato_start_game(
-            env,
-            &start_potato,
-            &[their_game_start],
-        )?;
-        party.update_channel_coin_after_receive(1, &solidified_state)?;
+            .apply_received_accept_proposal(&game_id)?;
+        let recv_accept = party
+            .player(0)
+            .ch
+            .verify_received_batch_signatures(env, &accept_sigs)?;
+        party.update_channel_coin_after_receive(0, &recv_accept)?;
 
         Ok((party, state_channel_coin))
     }
 }
 
 #[cfg(feature = "sim-tests")]
-pub use sim_tests::{new_channel_handler_game, ChannelHandlerGame, GameAction, GameActionResult};
+pub use sim_tests::{
+    new_channel_handler_game, ChannelHandlerGame, GameAction, GameActionResult, ProposeTrigger,
+};

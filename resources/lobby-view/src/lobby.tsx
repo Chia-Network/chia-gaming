@@ -1,7 +1,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useLobbySocket } from 'chia-gaming-lobby-connection';
-import { getSearchParams, getFragmentParams, generateOrRetrieveAlias, updateAlias } from './util';
+import { getSearchParams, getFragmentParams, generateOrRetrieveAlias, generateOrRetrieveUniqueId, updateAlias } from './util';
 import ConnectedPlayers from './features/lobbyComponents/ConnectedPlayers';
 import CardDivider from './features/lobbyComponents/CardDivider';
 import Chat from './features/lobbyComponents/Chat';
@@ -14,7 +14,7 @@ const LobbyScreen = () => {
   const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());
   const params = getSearchParams();
   const fragment = getFragmentParams();
-  const uniqueId = params.uniqueId;
+  const uniqueId = params.uniqueId || generateOrRetrieveUniqueId();
   const {
     players,
     rooms,
@@ -40,9 +40,9 @@ const LobbyScreen = () => {
   const [chatInput, setChatInput] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [gameChoice, setGameChoice] = useState(lobbyGames[0]?.game || '');
-  const [wagerInput, setWagerInputPrimitive] = useState('');
+  const [wagerInput, setWagerInputPrimitive] = useState('100');
   const [wagerValidationError, setWagerValidationError] = useState('');
-  const [perHandInput, setPerHandInput] = useState('');
+  const [perHandInput, setPerHandInput] = useState('10');
   const [editingAlias, setEditingAlias] = useState(false);
   const [gotoUrl, setGotoUrl] = useState('');
   const [urlDialogOpen, setUrlDialogOpen] = useState(false);
@@ -176,7 +176,7 @@ const LobbyScreen = () => {
   };
 
   useEffect(() => {
-    if (fragment.token) joinRoom(fragment.token);
+    if (fragment.token) joinRoom(fragment.token).catch(() => {});
   }, [fragment, joinRoom]);
 
   function commitEdit(e: any) {

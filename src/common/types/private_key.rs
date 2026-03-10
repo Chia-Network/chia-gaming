@@ -66,7 +66,7 @@ impl PrivateKey {
     }
 
     pub fn sign<Msg: AsRef<[u8]>>(&self, msg: Msg) -> Aggsig {
-        Aggsig(sign(&self.0, msg))
+        Aggsig::from_bls(sign(&self.0, msg))
     }
 
     pub fn bytes(&self) -> [u8; 32] {
@@ -89,7 +89,7 @@ impl<'de> Deserialize<'de> for PrivateKey {
         D: Deserializer<'de>,
     {
         let st = String::deserialize(deserializer)?;
-        let slice = hex::decode(&st).unwrap();
-        Ok(PrivateKey::from_slice(&slice).unwrap())
+        let slice = hex::decode(&st).map_err(serde::de::Error::custom)?;
+        PrivateKey::from_slice(&slice).map_err(|e| serde::de::Error::custom(format!("{e:?}")))
     }
 }

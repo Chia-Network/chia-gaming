@@ -4,7 +4,6 @@ import {
   RngId,
   InternalBlockchainInterface,
   CreateStartCoinReturn,
-  IChiaIdentity,
 } from '../types/ChiaGaming';
 import { Observable, Subject } from 'rxjs';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
@@ -15,9 +14,6 @@ var logInitialized = false;
 
 export const readyToInit = new Subject<boolean>();
 export const waitForReadyToInit = new Observable<boolean>((subscriber) => {
-  console.log('subscriber added to waitForReadyToInit');
-  console.log('chia_gaming_init=', chia_gaming_init);
-  console.log('cg=', cg);
   if (chia_gaming_init && cg) {
     subscriber.next(true);
     subscriber.complete();
@@ -65,31 +61,15 @@ export class WasmStateInit {
     this.doInternalLoadWasm = doInternalLoadWasm;
     this.fetchHex = fetchHex;
     this.deferredWasmConnection = new Subject<WasmConnection>();
-    console.log("WasmStateInit created")
   }
-
-  /*
-observable.subscribe({
-  next(x) {
-    console.log('got value ' + x);
-  },
-  error(err) {
-    console.error('something wrong occurred: ' + err);
-  },
-  complete() {
-    console.log('done');
-  },
-});
-    */
 
   async internalLoadWasm(
     chia_gaming_init: any,
     cg: WasmConnection,
   ): Promise<WasmConnection> {
     // Fill out WasmConnection object
-    console.log('wasm detected');
     const modData = await this.doInternalLoadWasm();
-    chia_gaming_init(modData);
+    chia_gaming_init({ module: modData });
     if (!logInitialized) {
       logInitialized = true;
       cg.init((msg: string) => console.warn('wasm', msg));
@@ -99,8 +79,8 @@ observable.subscribe({
       'clsp/unroll/unroll_meta_puzzle.hex',
       'clsp/unroll/unroll_puzzle_state_channel_unrolling.hex',
       'clsp/referee/onchain/referee.hex',
-      'clsp/referee/onchain/referee-v1.hex',
-      'clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex',
+      'clsp/games/calpoker/calpoker_include_calpoker_make_proposal.hex',
+      'clsp/games/calpoker/calpoker_include_calpoker_parser.hex',
     ];
     this.wasmConnection = cg;
     await this.loadPresets(presetFiles);
@@ -138,9 +118,6 @@ observable.subscribe({
     });
     return Promise.all(presetFetches).then((presets) => {
       presets.forEach((nameAndContent) => {
-        console.log(
-          `preset load ${nameAndContent.name} ${nameAndContent.content.length}`,
-        );
         if (!this.wasmConnection) {
           throw 'this.wasmConnection undefined in loadPresets';
         }
@@ -181,12 +158,12 @@ observable.subscribe({
   async createStartCoin(
     blockchain: InternalBlockchainInterface,
     uniqueId: string,
-    identity: IChiaIdentity,
+    puzzleHash: string,
     amount: number,
     wc: WasmConnection,
   ): Promise<CreateStartCoinReturn> {
-    if (!identity) {
-      throw new Error('create start coin with no identity');
+    if (!puzzleHash) {
+      throw new Error('create start coin with no puzzle hash');
     }
     if (!wc) {
       throw new Error('create start coin with no wasm obj?');
@@ -196,23 +173,11 @@ observable.subscribe({
       throw new Error(msg);
     }
 
-    console.log(
-      `create coin spendable by ${identity.puzzle_hash} for ${amount}`,
-    );
-
-    /*
-    TODO: move one call layer up
-      .catch((e) => {
-        return {
-          setError: e.toString(),
-        };
-      });
-    */
     let address = await blockchain.getAddress();
 
     let inital_spend = await blockchain.do_initial_spend(
       uniqueId,
-      identity.puzzle_hash,
+      puzzleHash,
       amount,
     );
 
@@ -241,66 +206,45 @@ observable.subscribe({
     return {coinString: coin, blockchainInboundAddressResult: address};
   }
 
-  async loadCalpoker(): Promise<string> {
-    return this.fetchHex(
-      'clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex',
-    );
-
-    /* TODO
-    .then((calpoker_hex) => {
-      this.calpokerHex = calpoker_hex;
-      return {
-        setGameConnectionState: {
-          stateIdentifier: 'starting',
-          stateDetail: ['loaded calpoker'],
-        },
-      };
-    });
-    */
+  async loadCalpoker(): Promise<{proposalHex: string, parserHex: string}> {
+    const [proposalHex, parserHex] = await Promise.all([
+      this.fetchHex('clsp/games/calpoker/calpoker_include_calpoker_make_proposal.hex'),
+      this.fetchHex('clsp/games/calpoker/calpoker_include_calpoker_parser.hex'),
+    ]);
+    return { proposalHex, parserHex };
   }
 
   createGame(
     calpokerHex: string,
+    calpokerParserHex: string,
     rngId: number,
     wasm: WasmConnection,
-    private_key: string,
     have_potato: boolean,
     my_contribution: number,
     their_contribution: number,
     rewardPuzzleHash: string,
-  ): ChiaGame {
-    const env = {
+  ): { game: ChiaGame, puzzleHash: string } {
+    const result = wasm.create_game_cradle({
       rng_id: rngId,
       game_types: {
         calpoker: {
           version: 1,
           hex: calpokerHex,
+          parser_hex: calpokerParserHex,
         },
       },
-      timeout: 100,
+      have_potato: have_potato,
+      my_contribution: { amt: my_contribution },
+      their_contribution: { amt: their_contribution },
+      channel_timeout: 100,
       unroll_timeout: 100,
+      reward_puzzle_hash: rewardPuzzleHash,
+    });
+
+    return {
+      game: new ChiaGame(wasm, result.id),
+      puzzleHash: result.puzzle_hash,
     };
-
-    let chiaGameId = wasm.create_game_cradle(
-      {
-        rng_id: env.rng_id,
-        game_types: env.game_types,
-        identity: private_key,
-        have_potato: have_potato,
-        my_contribution: { amt: my_contribution },
-        their_contribution: { amt: their_contribution },
-        channel_timeout: env.timeout,
-        unroll_timeout: env.unroll_timeout,
-        reward_puzzle_hash: rewardPuzzleHash,
-      }
-    );
-
-    return new ChiaGame(
-      wasm,
-      chiaGameId,
-      private_key,
-    );
-
   }
 
   deserializeGame(
@@ -308,18 +252,14 @@ observable.subscribe({
     serializedGame: any,
   ): ChiaGame {
     let chiaGameId = wasm.create_serialized_game(serializedGame);
-    let identity = wasm.get_identity(chiaGameId);
-
-    return new ChiaGame(
-      wasm,
-      chiaGameId,
-      identity.private_key,
-    );
+    return new ChiaGame(wasm, chiaGameId);
   }
 }
 
-export function loadCalpoker(fetchHex: (filename: string) => Promise<string> ): any {
-  return fetchHex(
-    'clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex',
-  );
+export async function loadCalpoker(fetchHex: (filename: string) => Promise<string> ): Promise<{proposalHex: string, parserHex: string}> {
+  const [proposalHex, parserHex] = await Promise.all([
+    fetchHex('clsp/games/calpoker/calpoker_include_calpoker_make_proposal.hex'),
+    fetchHex('clsp/games/calpoker/calpoker_include_calpoker_parser.hex'),
+  ]);
+  return { proposalHex, parserHex };
 }

@@ -138,12 +138,11 @@ function HandDisplay(props: HandDisplayProps) {
             >
               {Array.from({ length: 8 }).map((_, i) => {
                 const frontCard = cards && cards[i];
-                const originalIndex = frontCard
-                  ? cards.findIndex(
-                      (c) =>
-                        c.suit === frontCard.suit && c.rank === frontCard.rank,
-                    )
-                  : -1;
+                const originalIndex =
+                  frontCard?.originalIndex !== undefined
+                    ? frontCard.originalIndex
+                    : -1;
+                const cardId = frontCard?.cardId ?? -1;
 
                 return (
                   <div
@@ -174,10 +173,10 @@ function HandDisplay(props: HandDisplayProps) {
                               id={`card-${playerNumber}-${i}`}
                               key={`${area}-flip-${i}`}
                               card={frontCard}
-                              cardId={`${area}-${i}`}
-                              isSelected={selectedCards.includes(originalIndex)}
+                              cardId={`${area}-${cardId}`}
+                              isSelected={selectedCards.includes(cardId)}
                               onClick={() =>
-                                onCardClick && onCardClick(originalIndex)
+                                onCardClick && onCardClick(cardId)
                               }
                               isBeingSwapped={false}
                               isInBestHand={false}
@@ -206,9 +205,9 @@ function HandDisplay(props: HandDisplayProps) {
                           '
             >
               {cards.map((card: any, idx: number) => {
-                const originalIndex = cards.findIndex(
-                  (c) => c.suit === card.suit && c.rank === card.rank,
-                );
+                const originalIndex =
+                  card.originalIndex !== undefined ? card.originalIndex : idx;
+                const cardId = card.cardId ?? originalIndex;
                 const isBeingSwapped =
                   showSwapAnimation &&
                   swappingCards.some((c) => c.originalIndex === originalIndex);
@@ -222,7 +221,7 @@ function HandDisplay(props: HandDisplayProps) {
 
                 return (
                   <div
-                    key={`${area}-${originalIndex}`}
+                    key={`${area}-${cardId}`}
                     className='w-20 h-28 lg:w-20 lg:h-28 md:w-24 md:h-32 xl:w-24 xl:h-32  flex items-center justify-center'
                   >
                     <Card
@@ -230,9 +229,9 @@ function HandDisplay(props: HandDisplayProps) {
                       id={`card-${playerNumber}-${idx}`}
                       key={`${area}-${originalIndex}`}
                       card={card}
-                      cardId={`${area}-${originalIndex}`}
-                      isSelected={selectedCards.includes(originalIndex)}
-                      onClick={() => onCardClick && onCardClick(originalIndex)}
+                      cardId={`${area}-${cardId}`}
+                      isSelected={selectedCards.includes(cardId)}
+                      onClick={() => onCardClick && onCardClick(cardId)}
                       isBeingSwapped={isBeingSwapped}
                       isInBestHand={isInBestHand}
                       area={area}

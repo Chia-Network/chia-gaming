@@ -135,7 +135,7 @@ const WalletConnectHeading = (_args: any) => {
     setExpanded(!expanded);
   }, [expanded]);
 
-  useEffect(() => {
+  const initWalletConnect = useCallback(() => {
     if (!initializing) {
       console.log(
         'initialzing wallet connect if needed',
@@ -145,7 +145,7 @@ const WalletConnectHeading = (_args: any) => {
       walletConnectState.init();
       setInitializing(true);
     }
-  });
+  }, [initializing, initialized]);
 
   useEffect(() => {
     function receivedWindowMessage(evt: any) {
@@ -182,7 +182,7 @@ const WalletConnectHeading = (_args: any) => {
             {
               blockchain_reply: evt,
             },
-            window.location.origin,
+            '*',
           );
         } else {
           // TODO: Two cases:
@@ -245,10 +245,12 @@ const WalletConnectHeading = (_args: any) => {
         });
         requestBalance();
         requestRecvAddress();
-      });
+      })
+      .catch((e) => console.error('register failed:', e));
   }, []);
 
   const onDoWalletConnect = useCallback(() => {
+    initWalletConnect();
     doConnectWallet(
       setShowQRModal,
       setConnectionUri,
@@ -258,7 +260,7 @@ const WalletConnectHeading = (_args: any) => {
       },
       (e) => setWalletConnectError(e),
     );
-  }, []);
+  }, [initWalletConnect]);
 
   const onWalletDismiss = useCallback(() => {
     // toggleExpanded();

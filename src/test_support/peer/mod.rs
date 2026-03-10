@@ -1,2 +1,2 @@
-#[cfg(any(test, feature = "sim-tests"))]
+#[cfg(test)]
 pub mod potato_handler;

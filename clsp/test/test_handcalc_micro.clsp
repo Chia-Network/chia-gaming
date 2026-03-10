@@ -1,9 +1,9 @@
 (include *standard-cl-23*)
 (import util.prepend_count)
-(import games.calpoker-v0.handcalc)
-(import games.calpoker-v0.onchain.make_cards)
-(import games.calpoker-v0.onchain.onehandcalc)
-(import games.calpoker-v0.onchain.arrange_cards)
+(import games.calpoker.handcalc)
+(import games.calpoker.onchain.make_cards)
+(import games.calpoker.onchain.onehandcalc)
+(import games.calpoker.onchain.arrange_cards)
 
 (export (kind . arguments)
   (if
@@ -25,7 +25,25 @@
      (= kind "pull_suit")
      (pull_suit &rest arguments)
 
-     ;; Otherwise
+     (= kind "onehandcalc")
+     (onehandcalc &rest arguments)
+
+     (= kind "make_cards")
+     (make_cards &rest arguments)
+
+     (= kind "pull_out_cards")
+     (pull_out_cards &rest arguments)
+
+     (= kind "split_cards")
+     (split_cards &rest arguments)
+
+     (= kind "get_final_cards_in_canonical_order")
+     (get_final_cards_in_canonical_order &rest arguments)
+
+     (= kind "handcalc")
      (handcalc &rest arguments)
+
+     ;; Otherwise
+     (x "Couldn't find entrypoint: " kind)
      )
   )

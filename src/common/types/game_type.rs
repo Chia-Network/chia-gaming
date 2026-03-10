@@ -17,7 +17,7 @@ impl<'de> Deserialize<'de> for GameType {
         D: Deserializer<'de>,
     {
         let st = String::deserialize(deserializer)?;
-        let slice = hex::decode(&st).unwrap();
+        let slice = hex::decode(&st).map_err(serde::de::Error::custom)?;
         Ok(GameType(slice.to_vec()))
     }
 }

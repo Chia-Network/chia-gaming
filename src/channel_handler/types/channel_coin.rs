@@ -6,6 +6,7 @@ pub struct ChannelCoinSpentResult {
     pub transaction: Spend,
     pub timeout: bool,
     pub games_canceled: Vec<GameID>,
+    pub unrolling_state_number: usize,
 }
 
 #[derive(Clone, Debug)]

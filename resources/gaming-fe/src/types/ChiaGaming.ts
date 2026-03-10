@@ -1,6 +1,5 @@
 import { Subject, Subscription } from 'rxjs';
-
-import { proper_list } from '../util';
+import { Program } from 'clvm-lib';
 
 export interface Amount {
   amt: number;
@@ -42,23 +41,7 @@ export interface SaveData {
   gameCradle: any;
 }
 
-export type OpponentMove = [string, string];
-export type GameFinished = [string, number];
-export type StateIdentifier = 'starting' | 'running' | 'shutdown' | 'end';
-
-export interface IdleResult {
-  continue_on: boolean;
-  finished: boolean;
-  shutdown_received: boolean;
-  outbound_transactions: SpendBundle[];
-  outbound_messages: string[];
-  opponent_move: OpponentMove | undefined;
-  game_finished: GameFinished | undefined;
-  handshake_done: boolean;
-  receive_error: string | undefined;
-  action_queue: string[];
-  incoming_messages: string[];
-}
+export type StateIdentifier = 'starting' | 'running' | 'clean_shutdown' | 'end';
 
 export interface GameCradleConfig {
   seed: string | undefined;
@@ -84,28 +67,17 @@ export interface GameInitParams {
 
 export type IChiaIdentityFun = (seed: string) => IChiaIdentity;
 
-export interface IdleCallbacks {
-  self_move?: ((game_id: string, move_hex: string) => void) | undefined;
-  opponent_moved?:
-    | ((game_id: string, readable_move_hex: string) => void)
-    | undefined;
-  game_message?:
-    | ((game_id: string, readable_move_hex: string) => void)
-    | undefined;
-  game_started?:
-    | ((game_ids: string[], failed: string | undefined) => void)
-    | undefined;
-  game_finished?: ((game_id: string, amount: number) => void) | undefined;
-  shutdown_started?: (() => void) | undefined;
-  shutdown_complete?: ((coin: string) => void) | undefined;
-  going_on_chain?: (() => void) | undefined;
-}
+export type WasmEvent =
+  | { type: 'notification'; data: any }
+  | { type: 'error'; error: string }
+  | { type: 'finished' }
+  | { type: 'address'; data: BlockchainInboundAddressResult };
 
 export interface WasmConnection {
   // System
   init: (print: any) => any;
   create_rng: (seed: string) => number;
-  create_game_cradle: (config: any) => number;
+  create_game_cradle: (config: any) => { id: number; puzzle_hash: string };
   create_serialized_game: (serialized: any) => number;
   deposit_file: (name: string, data: string) => any;
 
@@ -134,27 +106,27 @@ export interface WasmConnection {
   convert_chia_public_key_to_puzzle_hash: (public_key: string) => string;
 
   // Game
-  start_games: (cid: number, initiator: boolean, game: any) => any;
+  propose_game: (cid: number, game: any, parameters: Uint8Array) => any;
+  accept_proposal: (cid: number, game_id: string) => any;
+  cancel_proposal: (cid: number, game_id: string) => any;
   make_move_entropy: (
     cid: number,
     id: string,
-    readable: string,
+    readable: Uint8Array,
     new_entropy: string,
   ) => any;
-  make_move: (cid: number, id: string, readable: string) => any;
-  accept: (cid: number, id: string) => any;
+  make_move: (cid: number, id: string, readable: Uint8Array) => any;
+  accept_timeout: (cid: number, id: string) => any;
   shut_down: (cid: number) => any;
   deliver_message: (cid: number, inbound_message: string) => any;
   cradle_amount: (cid: number) => any;
   cradle_our_share: (cid: number) => any;
   cradle_their_share: (cid: number) => any;
-  idle: (cid: number, callbacks: any) => any;
   get_identity: (cid: number) => IChiaIdentity;
   get_game_state_id: (cid: number) => string | undefined;
   serialize_cradle: (cid: number) => any;
 
   // Misc
-  chia_identity: (id: number) => any;
   sha256bytes: (hex: string) => string;
 }
 
@@ -171,23 +143,27 @@ export interface CreateStartCoinReturn {
 export class ChiaGame {
   wasm: WasmConnection;
   waiting_messages: string[];
-  private_key: string;
   cradle: number;
 
   constructor(
     wasm: WasmConnection,
     cradleId: number,
-    private_key: string,  //identity: IChiaIdentity,
   ) {
     this.wasm = wasm;
     this.waiting_messages = [];
-    this.private_key = private_key;
     this.cradle = cradleId;
-    console.log('constructed with cradle=', cradleId);
   }
 
-  start_games(initiator: boolean, game: any): string[] {
-    return this.wasm.start_games(this.cradle, initiator, game);
+  propose_game(game: any, parameters: Uint8Array): any {
+    return this.wasm.propose_game(this.cradle, game, parameters);
+  }
+
+  accept_proposal(game_id: string): any {
+    return this.wasm.accept_proposal(this.cradle, game_id);
+  }
+
+  cancel_proposal(game_id: string): any {
+    return this.wasm.cancel_proposal(this.cradle, game_id);
   }
 
   amount() {
@@ -210,48 +186,28 @@ export class ChiaGame {
     return this.wasm.serialize_cradle(this.cradle);
   }
 
-  accept(id: string) {
-    return this.wasm.accept(this.cradle, id);
+  accept(id: string): any {
+    return this.wasm.accept_timeout(this.cradle, id);
   }
 
-  shut_down() {
+  shut_down(): any {
     return this.wasm.shut_down(this.cradle);
   }
 
-  make_move_entropy(id: string, readable: string, new_entropy: string): any {
+  make_move_entropy(id: string, readable: Uint8Array, new_entropy: string): any {
     return this.wasm.make_move_entropy(this.cradle, id, readable, new_entropy);
   }
 
-  deliver_message(msg: string) {
-    this.wasm.deliver_message(this.cradle, msg);
+  deliver_message(msg: string): any {
+    return this.wasm.deliver_message(this.cradle, msg);
   }
 
-  opening_coin(coin_string: string) {
-    this.wasm.opening_coin(this.cradle, coin_string);
+  opening_coin(coin_string: string): any {
+    return this.wasm.opening_coin(this.cradle, coin_string);
   }
 
-  quiet(): boolean {
-    return this.waiting_messages.length === 0;
-  }
-
-  outbound_messages(): string[] {
-    const w = this.waiting_messages;
-    this.waiting_messages = [];
-    return w;
-  }
-
-  idle(callbacks: IdleCallbacks): IdleResult {
-    const result = this.wasm.idle(this.cradle, callbacks);
-    if (result) {
-      this.waiting_messages = this.waiting_messages.concat(
-        result.outbound_messages,
-      );
-    }
-    return result;
-  }
-
-  block_data(block_number: number, block_data: WatchReport) {
-    this.wasm.new_block(
+  block_data(block_number: number, block_data: WatchReport): any {
+    return this.wasm.new_block(
       this.cradle,
       block_number,
       block_data.created_watched,
@@ -390,9 +346,9 @@ function select_cards_using_bits<T>(card: T[], mask: number): T[][] {
   return [result0, result1];
 }
 
-function card_matches(cards: number[][], card: number[]): boolean {
+function card_matches(cards: number[], card: number): boolean {
   for (const existingCard of cards) {
-    if (existingCard.toString() === card.toString()) {
+    if (existingCard === card) {
       return true;
     }
   }
@@ -403,7 +359,7 @@ function card_matches(cards: number[][], card: number[]): boolean {
 export function card_color(
   outcome: CalpokerOutcome,
   iAmAlice: boolean,
-  card: number[],
+  card: number,
 ): 'my-used' | 'my-final' | 'their-used' | 'their-final' {
   const my_used_cards = iAmAlice
     ? outcome.alice_used_cards
@@ -426,12 +382,12 @@ export function card_color(
   return 'their-final';
 }
 
-function compare_card(a: number[], b: number[]): number {
-  const aval = a[0];
-  const bval = b[0];
-  const rankdiff = aval - bval;
+function compare_card(a: number, b: number): number {
+  const aRankSuit = cardIdToRankSuit(a);
+  const bRankSuit = cardIdToRankSuit(b);
+  const rankdiff = aRankSuit.rank - bRankSuit.rank;
   if (rankdiff === 0) {
-    return a[1] - b[1];
+    return aRankSuit.suit - bRankSuit.suit;
   }
   return rankdiff;
 }
@@ -454,42 +410,39 @@ export class CalpokerOutcome {
   win_direction: number;
   my_win_outcome: 'win' | 'lose' | 'tie';
 
-  alice_cards: number[][];
-  bob_cards: number[][];
+  alice_cards: number[];
+  bob_cards: number[];
 
-  alice_final_hand: number[][];
-  bob_final_hand: number[][];
+  alice_final_hand: number[];
+  bob_final_hand: number[];
 
-  alice_used_cards: number[][];
-  bob_used_cards: number[][];
+  alice_used_cards: number[];
+  bob_used_cards: number[];
 
   constructor(
     iStarted: boolean,
     myDiscards: number,
-    alice_cards: number[][],
-    bob_cards: number[][],
-    readable: any,
+    alice_cards: number[],
+    bob_cards: number[],
+    readableBytes: number[],
   ) {
-    const result_list = proper_list(readable);
-    console.warn('result_list', result_list);
+    const program = Program.deserialize(Uint8Array.from(readableBytes));
+    const result_list = program.toList();
     this.alice_cards = alice_cards;
     this.bob_cards = bob_cards;
 
-    console.log('alice_cards', alice_cards);
-    console.log('bob_cards', bob_cards);
-
-    this.alice_selects = result_list[1];
-    this.bob_selects = result_list[2];
-    this.alice_hand_value = proper_list(result_list[3]);
-    this.bob_hand_value = proper_list(result_list[4]);
-    let raw_win_direction = result_list[5][0] === 255 ? -1 : result_list[5][0];
+    this.alice_selects = result_list[1].toInt();
+    this.bob_selects = result_list[2].toInt();
+    this.alice_hand_value = result_list[3].toList().map(v => v.toInt());
+    this.bob_hand_value = result_list[4].toList().map(v => v.toInt());
+    let raw_win_direction = result_list[5].toInt();
     if (iStarted) {
       raw_win_direction *= -1;
-      this.alice_discards = result_list[0];
+      this.alice_discards = result_list[0].toInt();
       this.bob_discards = myDiscards;
     } else {
       this.alice_discards = myDiscards;
-      this.bob_discards = result_list[0];
+      this.bob_discards = result_list[0].toInt();
     }
 
     this.win_direction = raw_win_direction;
@@ -512,39 +465,22 @@ export class CalpokerOutcome {
       this.bob_discards,
     );
 
-    console.log('alice_for_alice', alice_for_alice);
-    console.log('alice_for_bob', alice_for_bob);
-    console.log('bob_for_alice', bob_for_alice);
-    console.log('bob_for_bob', bob_for_bob);
-
     this.alice_final_hand = [...bob_for_alice];
     alice_for_alice.forEach((c) => this.alice_final_hand.push(c));
     this.alice_final_hand.sort(compare_card);
-    console.log('final alice hand', this.alice_final_hand);
 
     this.bob_final_hand = [...alice_for_bob];
     bob_for_bob.forEach((c) => this.bob_final_hand.push(c));
     this.bob_final_hand.sort(compare_card);
-    console.log('final bob hand', this.bob_final_hand);
 
     this.alice_used_cards = select_cards_using_bits(
       this.alice_final_hand,
       this.alice_selects,
     )[1];
-    console.log(
-      'alice selects',
-      this.alice_selects.toString(16),
-      this.alice_used_cards,
-    );
     this.bob_used_cards = select_cards_using_bits(
       this.bob_final_hand,
       this.bob_selects,
     )[1];
-    console.log(
-      'bob selects',
-      this.bob_selects.toString(16),
-      this.bob_used_cards,
-    );
   }
 }
 
@@ -644,22 +580,28 @@ export interface OutcomeHandType {
 
 export interface OutcomeLogLine {
   topLineOutcome: 'win' | 'lose' | 'tie';
-  myStartHand: number[][];
-  opponentStartHand: number[][];
-  myFinalHand: number[][];
-  opponentFinalHand: number[][];
+  myStartHand: number[];
+  opponentStartHand: number[];
+  myFinalHand: number[];
+  opponentFinalHand: number[];
   myPicks: number;
   opponentPicks: number;
   mySelects: number;
   opponentSelects: number;
   myHandDescription: OutcomeHandType;
   opponentHandDescription: OutcomeHandType;
-  myHand: number[][];
-  opponentHand: number[][];
+  myHand: number[];
+  opponentHand: number[];
 }
 
 // Must match features/californiaPoker/constants/constants.ts:SUITS
 export const suitNames = ['Q', '♠', '♥', '♦', '♣'];
+
+export function cardIdToRankSuit(cardId: number): { rank: number; suit: number } {
+  const rank = Math.floor(cardId / 4) + 2;
+  const suit = (cardId % 4) + 1;
+  return { rank, suit };
+}
 
 function aget<T>(handValue: T[], choice: number, def: T): T {
   if (choice > handValue.length || choice < 0) {
@@ -680,7 +622,7 @@ function rget<T>(array: T[], start: number, end: number, def: T): T[] {
 
 export function handValueToDescription(
   handValue: number[],
-  myCards: number[][],
+  myCards: number[],
 ): OutcomeHandType {
   const handType = rget(handValue, 0, 3, 0);
 
@@ -689,7 +631,7 @@ export function handValueToDescription(
       return {
         name: 'Flush',
         rank: false,
-        values: [aget(myCards, 0, [0, 0])[1]],
+        values: [cardIdToRankSuit(aget(myCards, 0, 0)).suit],
       };
 
     case '3,1,2':

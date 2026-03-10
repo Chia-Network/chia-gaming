@@ -73,7 +73,6 @@ export const getGameSocket = (
   const socket = socketRef;
 
   const hostLog = (msg: string) => {
-    console.log('hostLog', msg);
     socket?.emit('log', msg);
   };
 
