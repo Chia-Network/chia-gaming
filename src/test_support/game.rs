@@ -14,8 +14,8 @@ use crate::channel_handler::types::ReadableMove;
 pub enum GameAction {
     /// Do a timeout
     Timeout(usize),
-    /// Move (player, clvm readable move, was received)
-    Move(usize, ReadableMove, bool),
+    /// Move (player, game ordinal, clvm readable move, was received)
+    Move(usize, usize, ReadableMove, bool),
 }
 
 #[cfg(all(test, not(feature = "sim-tests")))]
@@ -23,7 +23,7 @@ impl std::fmt::Debug for GameAction {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
             GameAction::Timeout(t) => write!(formatter, "Timeout({t})"),
-            GameAction::Move(p, n, r) => write!(formatter, "Move({p},{n:?},{r})"),
+            GameAction::Move(p, g, n, r) => write!(formatter, "Move({p},{g},{n:?},{r})"),
         }
     }
 }
@@ -162,14 +162,23 @@ mod sim_tests {
         }
     }
 
+    /// What event a ProposeNewGame action waits for before firing.
+    #[derive(Clone, Debug)]
+    pub enum ProposeTrigger {
+        /// Wait for the channel to be created (handshake complete).
+        Channel,
+        /// Wait for a previous game (by ordinal) to finish.
+        AfterGame(usize),
+    }
+
     #[derive(Clone)]
     pub enum GameAction {
         /// Do a timeout
         Timeout(usize),
-        /// Move (player, clvm readable move, was received)
-        Move(usize, ReadableMove, bool),
-        /// Fake move, just calls receive on the indicated side.
-        FakeMove(usize, ReadableMove, Vec<u8>),
+        /// Move (player, game ordinal, clvm readable move, was received)
+        Move(usize, usize, ReadableMove, bool),
+        /// Fake move (player, game ordinal, readable, sabotage bytes).
+        FakeMove(usize, usize, ReadableMove, Vec<u8>),
         /// Cheat: enable cheating on the referee and queue a move with
         /// invalid data. The given mover_share is the amount the victim
         /// receives on timeout. For testing and demonstration only.
@@ -182,11 +191,11 @@ mod sim_tests {
         /// Stop nerfing transactions. If true, replay the backlog to the
         /// simulator; if false, discard it.
         UnNerfTransactions(bool),
-        /// Propose a new game from the specified player (initiator side only).
-        /// The proposal will be queued and sent on the next potato exchange.
-        ProposeNewGame(usize),
+        /// Propose a new game from the specified player.
+        /// The trigger specifies what event to wait for before proposing.
+        ProposeNewGame(usize, ProposeTrigger),
         /// Like ProposeNewGame but with my_turn=false so the receiver moves first.
-        ProposeNewGameTheirTurn(usize),
+        ProposeNewGameTheirTurn(usize, ProposeTrigger),
         /// Go on chain
         GoOnChain(usize),
         /// Go on chain and immediately make the next Move in the action
@@ -211,8 +220,8 @@ mod sim_tests {
         NerfMessages(usize),
         /// Stop nerfing messages.
         UnNerfMessages,
-        /// Explicitly accept a proposed game from the specified player.
-        AcceptProposal(usize),
+        /// Accept a proposed game. (player, proposal ordinal in all_game_ids)
+        AcceptProposal(usize, usize),
         /// Cancel a proposed game from the specified player.
         CancelProposal(usize),
         /// Snapshot the current unroll spend info for later stale unroll.
@@ -225,15 +234,19 @@ mod sim_tests {
         fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
             match self {
                 GameAction::Timeout(t) => write!(formatter, "Timeout({t})"),
-                GameAction::Move(p, n, r) => write!(formatter, "Move({p},{n:?},{r})"),
-                GameAction::FakeMove(p, n, v) => write!(formatter, "FakeMove({p},{n:?},{v:?})"),
+                GameAction::Move(p, g, n, r) => write!(formatter, "Move({p},{g},{n:?},{r})"),
+                GameAction::FakeMove(p, g, n, v) => {
+                    write!(formatter, "FakeMove({p},{g},{n:?},{v:?})")
+                }
                 GameAction::Cheat(p, ms) => write!(formatter, "Cheat({p},{ms:?})"),
                 GameAction::ForceDestroyCoin(p) => write!(formatter, "ForceDestroyCoin({p})"),
                 GameAction::NerfTransactions(p) => write!(formatter, "NerfTransactions({p})"),
                 GameAction::UnNerfTransactions(r) => write!(formatter, "UnNerfTransactions({r})"),
-                GameAction::ProposeNewGame(p) => write!(formatter, "ProposeNewGame({p})"),
-                GameAction::ProposeNewGameTheirTurn(p) => {
-                    write!(formatter, "ProposeNewGameTheirTurn({p})")
+                GameAction::ProposeNewGame(p, t) => {
+                    write!(formatter, "ProposeNewGame({p},{t:?})")
+                }
+                GameAction::ProposeNewGameTheirTurn(p, t) => {
+                    write!(formatter, "ProposeNewGameTheirTurn({p},{t:?})")
                 }
                 GameAction::GoOnChain(p) => write!(formatter, "GoOnChain({p})"),
                 GameAction::GoOnChainThenMove(p) => {
@@ -248,7 +261,9 @@ mod sim_tests {
                 GameAction::ForceUnroll(p) => write!(formatter, "ForceUnroll({p})"),
                 GameAction::NerfMessages(p) => write!(formatter, "NerfMessages({p})"),
                 GameAction::UnNerfMessages => write!(formatter, "UnNerfMessages"),
-                GameAction::AcceptProposal(p) => write!(formatter, "AcceptProposal({p})"),
+                GameAction::AcceptProposal(p, n) => {
+                    write!(formatter, "AcceptProposal({p},{n})")
+                }
                 GameAction::CancelProposal(p) => write!(formatter, "CancelProposal({p})"),
                 GameAction::SaveUnrollSnapshot(p) => write!(formatter, "SaveUnrollSnapshot({p})"),
                 GameAction::ForceStaleUnroll(p) => write!(formatter, "ForceStaleUnroll({p})"),
@@ -258,8 +273,8 @@ mod sim_tests {
 
     impl GameAction {
         pub fn lose(&self) -> GameAction {
-            if let GameAction::Move(p, m, _r) = self {
-                return GameAction::Move(*p, m.clone(), false);
+            if let GameAction::Move(p, g, m, _r) = self {
+                return GameAction::Move(*p, *g, m.clone(), false);
             }
 
             self.clone()
@@ -400,4 +415,6 @@ mod sim_tests {
 }
 
 #[cfg(feature = "sim-tests")]
-pub use sim_tests::{new_channel_handler_game, ChannelHandlerGame, GameAction, GameActionResult};
+pub use sim_tests::{
+    new_channel_handler_game, ChannelHandlerGame, GameAction, GameActionResult, ProposeTrigger,
+};

@@ -139,6 +139,191 @@ When a puzzle hash mismatch occurs, there are two sides to compare:
 
 The divergence between these two answers is the bug.
 
+## Simulation Test Infrastructure
+
+### Overview
+
+Simulation tests exercise the full off-chain/on-chain game lifecycle by running
+two `SynchronousGameCradle` instances against a local `Simulator` blockchain.
+Each test defines a sequence of `GameAction` steps; the sim loop
+(`run_game_container_with_action_list_with_success_predicate` in
+`src/simulator/tests/potato_handler_sim.rs`) executes them while handling
+message delivery, block farming, and notification dispatch.
+
+### Key files
+
+| File | Role |
+|------|------|
+| `src/test_support/game.rs` | Defines the `GameAction` enum, `ProposeTrigger` (sim-tests feature gate) |
+| `src/simulator/tests/potato_handler_sim.rs` | Sim loop, test runner helpers, most tests |
+| `src/test_support/calpoker.rs` | `prefix_test_moves`, calpoker-specific tests |
+| `src/test_support/debug_game.rs` | Debug-game setup helpers |
+
+### Game ordinals and `all_game_ids`
+
+The sim loop tracks every game ID in chronological order in
+`all_game_ids: Vec<GameID>`. Game ordinal 0 is the initial game (if present),
+ordinal 1 is the first game proposed from the action list, etc. `GameAction`
+variants reference games by ordinal, not by raw `GameID`:
+
+- `Move(player, game_num, readable, share)` — move in `all_game_ids[game_num]`
+- `AcceptProposal(player, proposal_num)` — accept `all_game_ids[proposal_num]`
+- `ProposeNewGame(player, trigger)` — propose a new game; the ordinal is
+  implicit (the next index appended to `all_game_ids`)
+
+### `ProposeTrigger`
+
+`ProposeNewGame` and `ProposeNewGameTheirTurn` carry a `ProposeTrigger` that
+specifies when the action is ready to fire:
+
+- `ProposeTrigger::Channel` — fires when `channel_created` is true for the
+  proposing player.
+- `ProposeTrigger::AfterGame(n)` — fires when game ordinal `n` has a terminal
+  notification in either player's `game_finished_ids`.
+
+### GameAction variants
+
+**Game lifecycle (event-triggered):**
+- `Move(player, game_num, readable, share)` — Player makes a move. Triggered
+  when `game_accepted_ids` or `opponent_moved_in_game` contains the game ID.
+- `AcceptProposal(player, proposal_num)` — Two-phase: phase 1 calls
+  `accept_proposal` when the proposal is received; phase 2 advances past when
+  the accept resolves (see [Two-phase AcceptProposal](#two-phase-acceptproposal)).
+- `ProposeNewGame(player, trigger)` — Propose (`my_turn=true`). Triggered by
+  `ProposeTrigger`.
+- `ProposeNewGameTheirTurn(player, trigger)` — Propose (`my_turn=false`).
+
+**Game lifecycle (global — fire unconditionally):**
+- `AcceptTimeout(player)` — Accept the game result.
+- `CleanShutdown(player)` — Cooperative channel closure.
+- `CancelProposal(player)` — Cancel the most recently proposed game.
+
+**On-chain / fault injection (global):**
+- `GoOnChain(player)` — Unilaterally go on chain.
+- `GoOnChainThenMove(player)` — Go on chain and immediately make a move.
+- `WaitBlocks(n, players)` — Farm `n` blocks. `players` is a bitmask (0 = both).
+- `NerfTransactions(player)` / `UnNerfTransactions(replay)` — Drop/restore
+  outbound transactions.
+- `NerfMessages(player)` / `UnNerfMessages` — Drop/restore outbound messages.
+- `Cheat(player, mover_share)` — Queue a move with invalid data.
+- `ForceUnroll(player)` / `ForceStaleUnroll(player)` — Submit an unroll outside
+  normal flow.
+
+### Sim loop mechanics
+
+Each iteration of the sim loop:
+
+1. **Farm a block** and build a `WatchReport` from the new coin set.
+2. **Drain/deliver** for each player (in order 0, then 1):
+   - Call `drain_all` to process inbound messages and collect outbound.
+   - Deliver outbound messages to the other player's inbound queue.
+   - Dispatch notifications to `LocalTestUIReceiver`.
+3. **Auto-accept the initial game** (if `initial_game_id` is set and
+   player 1 has received the proposal).
+4. **Process the next action** from the script if a trigger condition is met.
+
+Because draining happens in fixed order (player 0 first), a message sent by
+player 1 takes one extra iteration to reach player 0 compared to the reverse
+direction. This asymmetry is natural and expected — the event-driven triggers
+automatically wait for the right notifications before firing.
+
+### Event-driven triggers
+
+The sim loop advances `move_number` only when the next action's trigger
+condition is satisfied. There are no polling loops or retry counters.
+
+| Trigger function | Fires when | Used by |
+|------------------|------------|---------|
+| `move_ready` | `game_accepted_ids` or `opponent_moved_in_game` contains the game ID for the moving player | `Move`, `FakeMove` |
+| `accept_proposal_ready` | Phase 1: proposal received. Phase 2: accept resolved (see below) | `AcceptProposal` |
+| `propose_ready` | `ProposeTrigger::Channel` → `channel_created`. `AfterGame(n)` → game `n` finished | `ProposeNewGame`, `ProposeNewGameTheirTurn` |
+| `global_move` | Always (unconditional) | `GoOnChain`, `WaitBlocks`, `AcceptTimeout`, `CleanShutdown`, etc. |
+| `can_move` | Set only after resync (on-chain recovery) | Resync path |
+
+`LocalTestUIReceiver` tracks the event state:
+
+- `received_proposal_ids: Vec<GameID>` — populated by `GameProposed`
+- `game_accepted_ids: HashSet<GameID>` — populated by `GameProposalAccepted`
+- `opponent_moved_in_game: HashSet<GameID>` — populated by `OpponentMoved`
+- `game_finished_ids: HashSet<GameID>` — populated by terminal notifications
+- `accepted_proposal_ids: Vec<GameID>` — tracks which accepts have been called
+- `channel_created: bool` — populated by `ChannelCreated`
+
+### Two-phase AcceptProposal
+
+`AcceptProposal` is inherently asynchronous: calling `accept_proposal` queues
+the accept, but the actual processing (balance check, game creation) happens
+only when the player holds the potato. If the player doesn't have the potato,
+a `RequestPotato` is sent and the accept waits for the potato round-trip.
+
+The sim loop handles this with a two-phase approach:
+
+- **Phase 1** (proposal received, accept not yet called): `accept_proposal` is
+  called on the cradle, and the game ID is added to `accepted_proposal_ids`.
+  `move_number` is NOT advanced — the sim loop stays on the same action.
+- **Phase 2** (accept called, resolution observed): the trigger fires again
+  once one of these notifications appears for the game ID:
+  `GameProposalAccepted`, `InsufficientBalance`, `GameCancelled`, or
+  `GameProposalCancelled`. The handler sees the accept was already called,
+  skips the call, and `move_number` advances past.
+
+This ensures that subsequent actions (e.g. `GoOnChain`) cannot fire before the
+accept's effects have been observed.
+
+### Test design conventions
+
+Tests that are not explicitly testing on-chain scenarios should end with
+`CleanShutdown` and verify a successful cooperative closure. On-chain tests
+use `GoOnChain` followed by `WaitBlocks` for unroll and game timeouts.
+
+Tests should NOT make assumptions about which player holds the potato at any
+given time. Any action that requires the potato (proposing, accepting, moving)
+will automatically request it if needed and wait for the round-trip. Effects
+like `InsufficientBalance` or `GameProposalAccepted` only fire when the potato
+arrives and the queued action is actually processed — this delay is normal and
+the event-driven triggers account for it.
+
+Tests should NOT require artificial pauses or polling — the event-driven
+triggers handle all necessary waiting. If a test stalls, the trigger condition
+for the next action is never satisfied, which means either:
+
+1. A notification or message is being lost or delayed unexpectedly.
+2. The trigger condition doesn't match the actual event flow.
+
+### Writing a new test
+
+1. Build a `Vec<GameAction>` describing the scenario using game ordinals.
+2. Call `run_calpoker_container_with_action_list` (with initial game) or
+   `run_calpoker_proposal_only` (proposal-only, no initial game).
+3. Inspect the returned `GameRunOutcome` for notifications, balances, and events.
+4. Register the test by adding a `res.push(("test_name", &|| { ... }))` entry
+   in the relevant `test_funs()` function.
+
+Example — two-game test where the initiator proposes both games:
+
+```rust
+let mut moves = prefix_test_moves(&mut allocator, 0); // game ordinal 0 (initial game)
+moves.push(GameAction::AcceptTimeout(0));
+moves.push(GameAction::ProposeNewGame(0, ProposeTrigger::AfterGame(0)));
+moves.push(GameAction::AcceptProposal(1, 1)); // accept game ordinal 1
+moves.push(GameAction::AcceptTimeout(0));
+moves.push(GameAction::CleanShutdown(0));
+
+let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, None)
+    .expect("should complete");
+```
+
+`prefix_test_moves(allocator, game_num)` returns the 5 hardcoded calpoker
+moves for game ordinal `game_num`. It only works for the first game in a
+deterministic-seed run; subsequent games produce different cards, so use
+timeout or other resolution strategies.
+
+### Stall detection
+
+The sim loop panics after 200 iterations with a diagnostic message including
+`move_number`, `can_move`, and the next pending action. If a test stalls, check
+whether the trigger condition for the next action can ever be satisfied.
+
 ## Mistakes to Avoid
 
 - **Don't use `cargo test` directly.** Use `./ct.sh`. The script handles

@@ -155,6 +155,9 @@
         }
       ]
     },
+    "modulePathIgnorePatterns": [
+      "<rootDir>/dist"
+    ],
     "transformIgnorePatterns": [
       "<rootDir>/node_modules",
       "<rootDir>/dist",
