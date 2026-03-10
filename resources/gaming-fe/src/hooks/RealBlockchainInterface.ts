@@ -64,10 +64,17 @@ export class RealBlockchainInterface {
       return;
     }
 
-    this.ws = new ReconnectingWebSocket(wsUrl(this.baseUrl));
+    const url = wsUrl(this.baseUrl);
+    console.log(`[coinset] ws connecting to ${url}`);
+    this.ws = new ReconnectingWebSocket(url);
+    this.ws?.addEventListener('open', () => {
+      console.log('[coinset] ws connected');
+    });
     this.ws?.addEventListener('message', (m: any) => {
-      const json = JSON.parse(m.data);
+      const raw = JSON.parse(m.data);
+      const json = raw.message ?? raw;
       if (json.type === 'peak') {
+        console.log(`[coinset] ws peak height=${json.data.height}`);
         this.peak = json.data.height;
         this.pushEvent({ checkPeak: true });
       }
@@ -95,6 +102,7 @@ export class RealBlockchainInterface {
   }
 
   async internalRetrieveBlock(height: number) {
+    console.log(`[coinset] >>> get_block_record_by_height height=${height}`);
     const br_height = await fetch(
       `${this.baseUrl}/get_block_record_by_height`,
       {
@@ -108,6 +116,9 @@ export class RealBlockchainInterface {
     ).then((r) => r.json());
     this.at_block = br_height.block_record.height + 1;
     const header_hash = br_height.block_record.header_hash;
+    console.log(`[coinset] <<< get_block_record_by_height header_hash=${header_hash}`);
+
+    console.log(`[coinset] >>> get_block_spends header_hash=${header_hash}`);
     const br_spends = await fetch(`${this.baseUrl}/get_block_spends`, {
       method: 'POST',
       headers: {
@@ -118,6 +129,9 @@ export class RealBlockchainInterface {
         header_hash: header_hash,
       }),
     }).then((r) => r.json());
+    const spendCount = br_spends.block_spends?.length ?? 0;
+    console.log(`[coinset] <<< get_block_spends spends=${spendCount}`);
+
     this.observable.next({
       peak: this.at_block,
       block: br_spends.block_spends,
@@ -185,6 +199,7 @@ export class RealBlockchainInterface {
   }
 
   async spend(spend: any): Promise<string> {
+    console.log('[coinset] >>> push_tx (spend)');
     return await fetch(`${this.baseUrl}/push_tx`, {
       method: 'POST',
       headers: {
@@ -196,7 +211,7 @@ export class RealBlockchainInterface {
       .then((r) => r.json())
       .then((r) => {
         if (r.error && r.error.indexOf('UNKNOWN_UNSPENT') != -1) {
-          console.warn('unknown unspent, retry in 60 seconds');
+          console.warn('[coinset] <<< push_tx UNKNOWN_UNSPENT, retry in 60s');
           return new Promise((resolve, reject) => {
             setTimeout(() => {
               this.spend(spend)
@@ -206,6 +221,7 @@ export class RealBlockchainInterface {
           });
         }
 
+        console.log('[coinset] <<< push_tx', r.error ? `error: ${r.error}` : 'ok');
         return r;
       });
   }
@@ -286,6 +302,7 @@ export function connectRealBlockchain(baseUrl: string) {
         }
       } else if (transaction) {
         while (true) {
+          console.log(`[coinset] >>> push_tx (transaction req #${evt.requestId})`);
           const r = await fetch(`${baseUrl}/push_tx`, {
             method: 'POST',
             headers: {
@@ -296,9 +313,8 @@ export function connectRealBlockchain(baseUrl: string) {
           });
           const j = await r.json();
 
-          // Return if the result was not unknown unspent, in which case we
-          // retry.
           if (!j.error || j.error.indexOf('UNKNOWN_UNSPENT') === -1) {
+            console.log(`[coinset] <<< push_tx (transaction req #${evt.requestId})`, j.error ? `error: ${j.error}` : 'ok');
             const result = {
               responseId: evt.requestId,
               transaction: Object.assign({}, j),
@@ -307,7 +323,7 @@ export function connectRealBlockchain(baseUrl: string) {
             return;
           }
 
-          // Wait a while to try the request again.
+          console.warn(`[coinset] <<< push_tx UNKNOWN_UNSPENT, retry in ${PUSH_TX_RETRY_TO_LET_UNCOFIRMED_TRANSACTIONS_BE_CONFIRMED / 1000}s`);
           await new Promise((resolve, _reject) => {
             setTimeout(
               resolve,

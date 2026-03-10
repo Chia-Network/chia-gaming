@@ -37,6 +37,23 @@ export interface BlockchainInboundReply {
   error?: string;
 }
 
+function describeRequest(r: BlockchainOutboundRequest): string {
+  if (r.initialSpend) return 'initialSpend';
+  if (r.transaction) return 'transaction';
+  if (r.getAddress) return 'getAddress';
+  if (r.getBalance) return 'getBalance';
+  return 'unknown';
+}
+
+function describeReply(r: BlockchainInboundReply): string {
+  if (r.error) return `error: ${r.error}`;
+  if (r.initialSpend) return 'initialSpend';
+  if (r.transaction) return 'transaction';
+  if (r.getAddress) return `getAddress`;
+  if (r.getBalance !== undefined) return `getBalance=${r.getBalance}`;
+  return 'unknown';
+}
+
 class BlockchainRequestConnector {
   outbound: Subject<BlockchainOutboundRequest>;
   inbound: Subject<BlockchainInboundReply>;
@@ -54,9 +71,11 @@ class BlockchainRequestConnector {
   }
 
   requestEmitter(r: BlockchainOutboundRequest) {
+    console.log(`[BC] >>> req #${r.requestId} ${describeRequest(r)}`);
     this.outbound.next(r);
   }
   replyEmitter(r: BlockchainInboundReply) {
+    console.log(`[BC] <<< reply #${r.responseId} ${describeReply(r)}`);
     this.inbound.next(r);
   }
 }
