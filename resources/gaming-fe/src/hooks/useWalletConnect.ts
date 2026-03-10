@@ -75,6 +75,16 @@ class WalletState {
 
     this.observable.next({ stateName: 'initializing', initializing: true });
 
+    const originalConsoleError = console.error;
+    console.error = (...args: any[]) => {
+      if (args.some(a => typeof a === 'object' && a instanceof Error
+        ? a.message?.includes('No matching key. history:')
+        : String(a).includes('No matching key. history:'))) {
+        return;
+      }
+      originalConsoleError.apply(console, args);
+    };
+
     try {
       const signClient = await Client.init({
         logger: 'error',
