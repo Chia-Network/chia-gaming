@@ -66,6 +66,7 @@ class WalletState {
 
     this.isInitialized = true;
 
+    console.log(`[WC] network: ${CHAIN_ID}`);
     console.log('[WC] init() starting', {
       projectId: PROJECT_ID,
       relayUrl: RELAY_URL,
@@ -233,6 +234,7 @@ class WalletState {
       const address = accountParts[2];
       const detectedChain = `${accountParts[0]}:${accountParts[1]}`;
 
+      console.log(`[WC] network: ${detectedChain}`);
       console.log('[WC] connect() session approved', {
         topic: session.topic,
         address,
