@@ -151,7 +151,6 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
         my_turn: !iStarted,
         parameters: null,
       });
-      console.log('[calpoker] proposed game, ids:', ids);
       setGameIds(prev => [...prev, ...ids]);
     } catch (e) {
       console.error('[calpoker] proposeGame failed:', e);
@@ -375,7 +374,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
       moveNumberRef.current = newMoveNum;
       setMyTurn(false);
     }
-  }, []);
+  }, [iStarted]);
 
   const setCardSelections = useCallback((selectionsOrFn: number[] | ((prev: number[]) => number[])) => {
     if (typeof selectionsOrFn === 'function') {
