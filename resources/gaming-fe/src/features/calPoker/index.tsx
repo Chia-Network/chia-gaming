@@ -22,6 +22,7 @@ export interface CalpokerProps {
   cardSelections: number[];
   setCardSelections: (n: number[] | ((prev: number[]) => number[])) => void;
   handleMakeMove: () => void;
+  handleCheat: () => void;
   stopPlaying: () => void;
   addressData: any;
   log: OutcomeLogLine[];
@@ -40,6 +41,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
   cardSelections,
   setCardSelections,
   handleMakeMove,
+  handleCheat,
   stopPlaying,
   addressData,
   log,
@@ -115,6 +117,17 @@ const Calpoker: React.FC<CalpokerProps> = ({
             leadingIcon={<Info size={'20px'} />}
           >
             Hint
+          </Button>
+
+          {/* CHEAT button (debug) */}
+          <Button
+            onClick={handleCheat}
+            color={'neutral'}
+            variant={'outline'}
+            size={'sm'}
+            disabled={!isPlayerTurn}
+          >
+            Cheat
           </Button>
 
           {/* Leave */}

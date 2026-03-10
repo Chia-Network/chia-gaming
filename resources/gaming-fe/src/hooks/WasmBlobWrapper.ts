@@ -238,6 +238,13 @@ export class WasmBlobWrapper {
     this.processResult(result);
   }
 
+  acceptProposalAndMove(gameId: string, readable: Program | null): void {
+    if (!this.cradle) throw new Error('no cradle');
+    const bytes = clvmToBytes(readable);
+    const result = this.cradle.accept_proposal_and_move(gameId, bytes);
+    this.processResult(result);
+  }
+
   makeMove(gameId: string, readable: Program | null, entropy?: string): void {
     if (!this.cradle) throw new Error('no cradle');
     const bytes = clvmToBytes(readable);
@@ -253,6 +260,12 @@ export class WasmBlobWrapper {
   acceptTimeout(gameId: string): void {
     if (!this.cradle) throw new Error('no cradle');
     const result = this.cradle.accept(gameId);
+    this.processResult(result);
+  }
+
+  cheat(gameId: string, moverShare: number): void {
+    if (!this.cradle) throw new Error('no cradle');
+    const result = this.cradle.cheat(gameId, moverShare);
     this.processResult(result);
   }
 

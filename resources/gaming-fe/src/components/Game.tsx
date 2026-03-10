@@ -8,6 +8,7 @@ import installThemeSyncListener from '../utils/themeSyncListener';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
 import { Box, Typography } from '@mui/material';
+import { Toaster } from './ui/toaster';
 
 export interface GameParams {
   params: any;
@@ -26,6 +27,7 @@ const Game: React.FC<GameParams> = ({ params }) => {
     iStarted,
     moveNumber,
     handleMakeMove,
+    handleCheat,
     playerHand,
     opponentHand,
     playerNumber,
@@ -82,23 +84,27 @@ const Game: React.FC<GameParams> = ({ params }) => {
   }
 
   return (
-    <Calpoker
-      outcome={outcome ? outcome : lastOutcome}
-      moveNumber={moveNumber}
-      iStarted={iStarted}
-      isPlayerTurn={isPlayerTurn}
-      playerNumber={playerNumber}
-      playerHand={playerHand}
-      opponentHand={opponentHand}
-      cardSelections={cardSelections}
-      setCardSelections={setCardSelections}
-      handleMakeMove={handleMakeMove}
-      stopPlaying={stopPlaying}
-      log={log}
-      addressData={addressData}
-      ourShare={ourShare}
-      theirShare={theirShare}
-    />
+    <>
+      <Calpoker
+        outcome={outcome ? outcome : lastOutcome}
+        moveNumber={moveNumber}
+        iStarted={iStarted}
+        isPlayerTurn={isPlayerTurn}
+        playerNumber={playerNumber}
+        playerHand={playerHand}
+        opponentHand={opponentHand}
+        cardSelections={cardSelections}
+        setCardSelections={setCardSelections}
+        handleMakeMove={handleMakeMove}
+        handleCheat={handleCheat}
+        stopPlaying={stopPlaying}
+        log={log}
+        addressData={addressData}
+        ourShare={ourShare}
+        theirShare={theirShare}
+      />
+      <Toaster />
+    </>
   );
 };
 
