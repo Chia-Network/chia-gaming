@@ -126,9 +126,11 @@ jobs:
 
       - name: Run headless browser test
         env:
+          DETECT_CHROMEDRIVER_VERSION: "true"
           FIREFOX_HEADLESS: "true"
         timeout-minutes: 20
         run: |
+          set -x
           sudo apt-get update
           sudo apt-get install -qy xvfb libnss3-dev libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2t64
 
