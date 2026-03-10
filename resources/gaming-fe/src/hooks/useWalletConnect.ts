@@ -26,6 +26,7 @@ class WalletState {
   isConnected: boolean;
   isInitialized: boolean;
   address?: string;
+  chainId?: string;
   session?: SessionTypes.Struct;
   error?: string;
   client?: any;
@@ -50,7 +51,7 @@ class WalletState {
   }
 
   getChainId() {
-    return CHAIN_ID;
+    return this.chainId ?? CHAIN_ID;
   }
 
   getAddress() {
@@ -99,16 +100,20 @@ class WalletState {
 
       if (sessions.length > 0) {
         const session = sessions[0];
-        const address = session.namespaces.chia.accounts[0].split(':')[2];
+        const accountParts = session.namespaces.chia.accounts[0].split(':');
+        const address = accountParts[2];
+        const detectedChain = `${accountParts[0]}:${accountParts[1]}`;
         console.log('[WC] restoring existing session', {
           topic: session.topic,
           address,
+          chainId: detectedChain,
           methods: session.namespaces.chia.methods,
           peer: session.peer?.metadata?.name,
         });
 
         this.isConnected = true;
         this.address = address;
+        this.chainId = detectedChain;
         this.session = session;
         this.observable.next({
           stateName: 'connected',
@@ -178,10 +183,10 @@ class WalletState {
 
     try {
       const { uri, approval } = await this.client.connect({
-        requiredNamespaces: {
+        optionalNamespaces: {
           chia: {
             methods: ['chia_getCurrentAddress', 'chia_getWalletBalance', 'chia_sendTransaction'],
-            chains: [CHAIN_ID],
+            chains: ['chia:mainnet', 'chia:testnet'],
             events: [],
           },
         },
@@ -214,11 +219,14 @@ class WalletState {
     console.log('[WC] connect() waiting for wallet approval...');
     try {
       const session = await approval();
-      const address = session.namespaces.chia.accounts[0].split(':')[2];
+      const accountParts = session.namespaces.chia.accounts[0].split(':');
+      const address = accountParts[2];
+      const detectedChain = `${accountParts[0]}:${accountParts[1]}`;
 
       console.log('[WC] connect() session approved', {
         topic: session.topic,
         address,
+        chainId: detectedChain,
         methods: session.namespaces.chia.methods,
         peer: session.peer?.metadata?.name,
         expiry: session.expiry,
@@ -233,6 +241,7 @@ class WalletState {
       });
 
       this.address = address;
+      this.chainId = detectedChain;
       this.session = session;
     } catch (err) {
       console.error('[WC] connect() approval FAILED or rejected', err);
