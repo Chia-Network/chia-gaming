@@ -1,4 +1,5 @@
-name: Frontend
+# Build and Test Player App and Lobby View github action for chia-gaming
+name: frontend.yml
 
 concurrency:
   group: ${{ github.ref }}-${{ github.workflow }}-${{ github.event_name }}--${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/heads/long_lived/')) && github.sha || '' }}
@@ -17,10 +18,12 @@ on:
 
 permissions:
   id-token: write
-  contents: write
+  contents: read
+
+env:
+  RUST_VERSION: stable
 
 jobs:
-  # All steps that were previously in 'build' now happen inside the docker container in build-test.
   frontend_test:
     runs-on: ubuntu-latest
     strategy:
@@ -28,86 +31,173 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Set Job Env
         uses: Chia-Network/actions/setjobenv@main
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20.19.0
 
-      - name: Smoke test docker image
+      - name: Install rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --version 0.13.1
+
+      # ── Build (mirrors ct.sh + run-local-demo.sh) ──────────────────
+
+      - name: Build chialisp (hex files)
         run: |
-            set -e -x
-        
-            cleanup_container() {
-              docker kill chia-gaming-test 2>/dev/null || true
-              docker rm   chia-gaming-test 2>/dev/null || true
-            }
-        
-            cleanup_container
-            trap cleanup_container EXIT
-        
-            mv Dockerfile Dockerfile.non-ci
-            sed -e 's/#CI //g' < Dockerfile.non-ci > Dockerfile
-            docker build --platform linux/amd64 --progress=plain -t chia-gaming-test .
-        
-            docker run --name chia-gaming-test --network=host -t chia-gaming-test &
-            docker image prune -f
-        
-            cd resources/fe-test
-            ./wait-for-it.sh localhost:5800
-            curl -d '' http://localhost:5800/wait_block | grep -E '[0-9]+'
+          find clsp -name '*.hex' -delete
+          cp build.rs.disabled build.rs
+          cargo build
 
-      - name: do wasm tests in frontend
+      - name: Build WASM (web + nodejs targets)
         run: |
-          cleanup_container() {
-            docker kill chia-gaming-test 2>/dev/null || true
-            docker rm   chia-gaming-test 2>/dev/null || true
-          }
-          
-          cleanup_container 
-          trap cleanup_container EXIT
+          cd wasm
+          wasm-pack build --out-dir=../resources/gaming-fe/dist --release --target=web
+          wasm-pack build --out-dir=../resources/gaming-fe/node-pkg --release --target=nodejs
 
-          docker run --name chia-gaming-test -t chia-gaming-test /app/test.sh
-
-      - name: Extract Game side Artifact
+      - name: Build lobby-connection
         run: |
-          cleanup_container() {
-            docker kill chia-gaming-test 2>/dev/null || true
-            docker rm   chia-gaming-test 2>/dev/null || true
-          }
-          
-          cleanup_container 
-          trap cleanup_container EXIT
-          export GW=${{ github.workspace }}
+          cd resources/lobby-connection
+          yarn install && yarn build
 
-          ./resources/extract-from-image.sh "${GW}"
-
-      - name: Prune unreferenced image data
+      - name: Build gaming-fe
         run: |
-          docker image prune -f
+          cd resources/gaming-fe
+          yarn install && yarn build
 
-      - name: Run headless test
+      - name: Build lobby-view
+        run: |
+          cd resources/lobby-view
+          yarn install && yarn build
+
+      - name: Build lobby-service
+        run: |
+          cd resources/lobby-service
+          yarn install && yarn build
+
+      - name: Build wc-stub
+        run: |
+          cd resources/wc-stub
+          yarn install && yarn build
+
+      - name: Build simulator
+        run: cargo build --features sim-tests,sim-server --bin chia-gaming-sim
+
+      # ── WASM/Jest tests (mirrors run-js-tests.sh) ──────────────────
+
+      - name: Run WASM/Jest tests
+        run: |
+          SIM_BIN="./target/debug/chia-gaming-sim"
+          RUST_LOG=error "$SIM_BIN" &
+          SIM_PID=$!
+
+          for i in $(seq 1 30); do
+              if curl -s http://localhost:5800/get_peak >/dev/null 2>&1; then
+                  echo "Simulator ready"
+                  break
+              fi
+              if ! kill -0 "$SIM_PID" 2>/dev/null; then
+                  echo "Simulator process died"
+                  exit 1
+              fi
+              sleep 1
+          done
+
+          if ! curl -s http://localhost:5800/get_peak >/dev/null 2>&1; then
+              echo "Simulator failed to start within 30 seconds"
+              exit 1
+          fi
+
+          (cd resources/gaming-fe && yarn test)
+
+          kill "$SIM_PID" 2>/dev/null || true
+
+      # ── Headless browser test ───────────────────────────────────────
+
+      - name: Run headless browser test
         env:
-          DETECT_CHROMEDRIVER_VERSION: "true"
           FIREFOX_HEADLESS: "true"
         timeout-minutes: 20
         run: |
-          sudo apt update
+          sudo apt-get update
           sudo apt-get install -qy xvfb libnss3-dev libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2t64
-          (cd resources/fe-test && xvfb-run -a ./test.sh)
 
-      - name: Cleanup xvfb pidx
+          GAME_PORT=3002
+          LOBBY_PORT=3003
+          WC_PORT=3004
+          SIM_PORT=5800
+          LOBBY_SERVICE_PORT=5801
+
+          SIM_BIN="./target/debug/chia-gaming-sim"
+          RUST_LOG=error "$SIM_BIN" &
+          SIM_PID=$!
+
+          for i in $(seq 1 30); do
+              if curl -s -X POST "http://localhost:${SIM_PORT}/get_peak" >/dev/null 2>&1; then
+                  echo "Simulator ready"
+                  break
+              fi
+              sleep 1
+          done
+
+          node resources/local-server.js "$(pwd)" "$GAME_PORT" "$LOBBY_PORT" &
+          SERVER_PID=$!
+
+          (cd resources/wc-stub && PORT=$WC_PORT node ./dist/index.js) &
+          (cd resources/lobby-service && PORT=$LOBBY_SERVICE_PORT node ./dist/index-rollup.cjs --self "http://localhost:${LOBBY_PORT}") &
+          resources/nginx/beacon.sh "http://localhost:${GAME_PORT}" "http://localhost:${LOBBY_PORT}" &
+
+          sleep 3
+
+          cd resources/fe-test
+          yarn install
+          xvfb-run -a yarn jest || STATUS=$?
+
+          kill "$SIM_PID" "$SERVER_PID" $(jobs -p) 2>/dev/null || true
+          exit ${STATUS:-0}
+
+      # ── Collect artifacts (mirrors extract-from-image.sh) ───────────
+
+      - name: Collect deployment artifacts
         run: |
-          xvfb_pids="$(pgrep tmp/xvfb-run | grep -v grep | awk '{print $2}')"
-          if [ "$xvfb_pids" != "" ]; then
-              echo "Killing the following xvfb processes: $xvfb_pids"
-              sudo kill "$xvfb_pids"
-          else
-              echo "No xvfb processes to kill"
-          fi
+          GW="${{ github.workspace }}"
+          TARGET="${GW}/chia-gaming-deploy"
+
+          GAME="${TARGET}/g/chia-gaming-game"
+          mkdir -p "${GAME}/dist/js" "${GAME}/dist/css" "${GAME}/public" "${GAME}/clsp" "${GAME}/nginx"
+
+          cp -r resources/gaming-fe/dist/*.* "${GAME}/dist/" 2>/dev/null || true
+          cp resources/gaming-fe/dist/js/index-rollup.js "${GAME}/dist/js/" 2>/dev/null || true
+          cp resources/gaming-fe/dist/css/index.css "${GAME}/dist/css/" 2>/dev/null || true
+          cp -r resources/gaming-fe/public/* "${GAME}/public/"
+          cp -r clsp/* "${GAME}/clsp/"
+          cp resources/nginx/urls "${GAME}/dist/"
+          cp resources/nginx/game.conf "${GAME}/nginx/"
+          cp resources/nginx/beacon.sh "${GAME}/beacon.sh"
+          cp resources/nginx/game-install.sh "${GAME}/game-install.sh"
+          cp resources/nginx/beacon.service "${GAME}/beacon.service"
+          cp resources/nginx/GAME.md "${GAME}/README.md"
+
+          LOBBY="${TARGET}/l/chia-gaming-lobby"
+          mkdir -p "${LOBBY}/public" "${LOBBY}/dist/css" "${LOBBY}/nginx"
+
+          cp -r resources/lobby-view/public/* "${LOBBY}/public/"
+          cp resources/lobby-view/dist/css/index.css "${LOBBY}/dist/css/" 2>/dev/null || true
+          cp resources/lobby-service/dist/index-rollup.cjs "${LOBBY}/service.js"
+          cp resources/nginx/lobby-install.sh "${LOBBY}/lobby-install.sh"
+          cp resources/nginx/lobby.service "${LOBBY}/lobby.service"
+          cp resources/nginx/lobby.conf "${LOBBY}/nginx/"
+          cp resources/nginx/LOBBY.md "${LOBBY}/README.md"
 
       - name: Archive chia-gaming-frontend
         uses: actions/upload-artifact@v4
@@ -123,8 +213,11 @@ jobs:
 
   release:
     runs-on: ubuntu-latest
+    if: github.event_name == 'release'
     needs:
       - frontend_test
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
