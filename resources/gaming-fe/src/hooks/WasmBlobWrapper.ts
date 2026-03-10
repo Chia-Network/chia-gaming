@@ -105,8 +105,13 @@ export class WasmBlobWrapper {
     const storedMessages = this.storedMessages;
     this.storedMessages = [];
     storedMessages.forEach((m) => {
-      const result = this.cradle?.deliver_message(m);
-      this.processResult(result);
+      try {
+        const result = this.cradle?.deliver_message(m);
+        this.processResult(result);
+      } catch (e) {
+        console.error('[wasm] deliver_message failed:', e,
+          'msg length:', m.length, 'is_odd:', m.length % 2 !== 0, 'msg:', m);
+      }
     });
   }
 
@@ -217,8 +222,16 @@ export class WasmBlobWrapper {
       }
     }
     this.kickSystem(4);
-    const result = this.cradle?.block_data(peak, block_report);
-    this.processResult(result);
+    try {
+      const result = this.cradle?.block_data(peak, block_report);
+      this.processResult(result);
+    } catch (e) {
+      console.error('[wasm] block_data failed:', e,
+        '\ncradle:', this.cradle !== undefined ? 'defined' : 'undefined',
+        '\npeak:', peak,
+        '\nreport:', JSON.stringify(block_report),
+      );
+    }
   }
 
   // --- Game actions (called by higher layer) ---
