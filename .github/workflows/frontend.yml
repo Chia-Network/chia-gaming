@@ -1,5 +1,5 @@
 # Build and Test Player App and Lobby View github action for chia-gaming
-name: Frontend
+name: frontend.yml
 
 concurrency:
   group: ${{ github.ref }}-${{ github.workflow }}-${{ github.event_name }}--${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/heads/long_lived/')) && github.sha || '' }}
@@ -51,7 +51,13 @@ jobs:
       - name: Install wasm-pack
         run: cargo install wasm-pack --version 0.13.1
 
-      # ── Build (mirrors run-local-demo.sh) ───────────────────────────
+      # ── Build (mirrors ct.sh + run-local-demo.sh) ──────────────────
+
+      - name: Build chialisp (hex files)
+        run: |
+          find clsp -name '*.hex' -delete
+          cp build.rs.disabled build.rs
+          cargo build
 
       - name: Build WASM (web + nodejs targets)
         run: |
