@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect } from 'react';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import { Button } from './button';
 import { blockchainConnector } from '../hooks/BlockchainConnector';
 import { blockchainDataEmitter } from '../hooks/BlockchainInfo';
@@ -43,6 +43,9 @@ const WalletConnectHeading = (_args: any) => {
   const [recvAddress, setRecvAddress] = useState();
   const [balance, setBalance] = useState<number | undefined>();
   const [haveBlock, setHaveBlock] = useState(false);
+
+  const balanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const addressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const uniqueId = generateOrRetrieveUniqueId();
 
@@ -116,6 +119,8 @@ const WalletConnectHeading = (_args: any) => {
             uniqueId,
           });
           connectRealBlockchain(BLOCKCHAIN_DATA_URL);
+          if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
+          if (addressTimerRef.current) clearTimeout(addressTimerRef.current);
           requestBalance();
           requestRecvAddress();
         }
@@ -173,11 +178,13 @@ const WalletConnectHeading = (_args: any) => {
       next: (evt: any) => {
         if (evt.getBalance) {
           setBalance(evt.getBalance);
-          setTimeout(requestBalance, 2000);
+          if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
+          balanceTimerRef.current = setTimeout(requestBalance, 15000);
         }
         if (evt.getAddress) {
           setRecvAddress(evt.getRecvAddress);
-          setTimeout(requestRecvAddress, 2000);
+          if (addressTimerRef.current) clearTimeout(addressTimerRef.current);
+          addressTimerRef.current = setTimeout(requestRecvAddress, 15000);
         }
         const subframe = document.getElementById('subframe');
         if (subframe) {
@@ -200,6 +207,8 @@ const WalletConnectHeading = (_args: any) => {
       next: (evt: any) => {
         if (!haveBlock) {
           setHaveBlock(true);
+          if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
+          if (addressTimerRef.current) clearTimeout(addressTimerRef.current);
           requestBalance();
           requestRecvAddress();
         }
@@ -221,6 +230,8 @@ const WalletConnectHeading = (_args: any) => {
     });
 
     return function () {
+      if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
+      if (addressTimerRef.current) clearTimeout(addressTimerRef.current);
       window.removeEventListener('message', receivedWindowMessage);
       bcSubscription.unsubscribe();
       biSubscription.unsubscribe();
@@ -246,6 +257,8 @@ const WalletConnectHeading = (_args: any) => {
           selection: FAKE_BLOCKCHAIN_ID,
           uniqueId,
         });
+        if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
+        if (addressTimerRef.current) clearTimeout(addressTimerRef.current);
         requestBalance();
         requestRecvAddress();
       })
