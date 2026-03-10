@@ -7,6 +7,7 @@ import {
 } from '../types/ChiaGaming';
 import { blockchainDataEmitter } from './BlockchainInfo';
 import { FAKE_BLOCKCHAIN_ID } from './FakeBlockchainInterface';
+import { realBlockchainInfo } from './RealBlockchainInterface';
 import { getGameSocket } from '../services/GameSocket';
 import {
   startNewSession,
@@ -34,6 +35,7 @@ export async function configGameObject(
 ): Promise<WasmBlobWrapper> {
   let wasmConnection = await wasmStateInit.getWasmConnection();
   gameObject.loadWasm(wasmConnection);
+  realBlockchainInfo.setWasmConnection(wasmConnection);
   const entropy = new Uint8Array(32);
   crypto.getRandomValues(entropy);
   const seedHex = Array.from(entropy, b => b.toString(16).padStart(2, '0')).join('');
@@ -41,6 +43,7 @@ export async function configGameObject(
   let address = await blockchain.getAddress();
   gameObject.setBlockchainAddress(address);
   let { game: cradle, puzzleHash } = wasmStateInit.createGame(calpokerHexes.proposalHex, calpokerHexes.parserHex, rngId, wasmConnection, iStarted, amount, amount, address.puzzleHash);
+  realBlockchainInfo.setCradleId(cradle.cradle);
   gameObject.setGameCradle(cradle);
   let coin = await wasmStateInit.createStartCoin(blockchain, uniqueId, puzzleHash, amount, wasmConnection);
   gameObject.activateSpend(coin.coinString);

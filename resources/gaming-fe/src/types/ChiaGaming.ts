@@ -104,6 +104,8 @@ export interface WasmConnection {
     amount: any,
   ) => string;
   convert_chia_public_key_to_puzzle_hash: (public_key: string) => string;
+  get_watching_coins: (cid: number) => { coin_string: string; coin_name: string }[];
+  coin_string_to_name: (hex_coinstring: string) => string;
 
   // Game
   propose_game: (cid: number, game: any, parameters: Uint8Array) => any;

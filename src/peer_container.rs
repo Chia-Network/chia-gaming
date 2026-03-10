@@ -538,6 +538,10 @@ impl SynchronousGameCradle {
         self.peer.force_stale_unroll_spend(&mut env, saved)
     }
 
+    pub fn get_watching_coin_entries(&self) -> &HashMap<CoinString, WatchEntry> {
+        &self.state.watching_coins
+    }
+
     pub fn amount(&self) -> Amount {
         self.peer.amount()
     }

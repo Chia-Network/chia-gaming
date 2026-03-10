@@ -1007,4 +1007,31 @@ mod gaming_wasm {
         let hashed = hex::encode(Sha256Input::Bytes(bytes_str.as_bytes()).hash().bytes());
         serde_wasm_bindgen::to_value(&hashed).into_js()
     }
+
+    #[derive(Serialize)]
+    struct JsWatchingCoin {
+        coin_string: String,
+        coin_name: String,
+    }
+
+    #[wasm_bindgen]
+    pub fn get_watching_coins(cid: i32) -> Result<JsValue, JsValue> {
+        with_game(cid, move |cradle: &mut JsCradle| {
+            let entries = cradle.cradle.get_watching_coin_entries();
+            let coins: Vec<JsWatchingCoin> = entries
+                .keys()
+                .map(|cs| JsWatchingCoin {
+                    coin_string: hex::encode(cs.to_bytes()),
+                    coin_name: hex::encode(cs.to_coin_id().bytes()),
+                })
+                .collect();
+            to_js_compat(&coins)
+        })
+    }
+
+    #[wasm_bindgen]
+    pub fn coin_string_to_name(hex_coinstring: &str) -> Result<String, JsValue> {
+        let cs = hex_to_coinstring(hex_coinstring).into_js()?;
+        Ok(hex::encode(cs.to_coin_id().bytes()))
+    }
 }

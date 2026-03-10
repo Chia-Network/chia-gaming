@@ -9,7 +9,7 @@ import {
 } from '../hooks/RealBlockchainInterface';
 import useDebug from '../hooks/useDebug';
 import { walletConnectState } from '../hooks/useWalletConnect';
-import { BLOCKCHAIN_SERVICE_URL, BLOCKCHAIN_DATA_URL } from '../settings';
+import { BLOCKCHAIN_SERVICE_URL } from '../settings';
 import { generateOrRetrieveUniqueId } from '../util';
 
 import Debug from './Debug';
@@ -118,7 +118,7 @@ const WalletConnectHeading = (_args: any) => {
             selection: REAL_BLOCKCHAIN_ID,
             uniqueId,
           });
-          connectRealBlockchain(BLOCKCHAIN_DATA_URL);
+          connectRealBlockchain();
           if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
           if (addressTimerRef.current) clearTimeout(addressTimerRef.current);
           requestBalance();
