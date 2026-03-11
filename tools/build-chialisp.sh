@@ -23,10 +23,13 @@ else
     fi
 fi
 
+echo "=== Building chialisp ==="
+
 if [ "$needs_build" -eq 1 ]; then
     SECONDS=0
     find clsp -name '*.hex' -delete
     cp build.rs.disabled build.rs
+    trap 'rm -f "$REPO_ROOT/build.rs"' EXIT
     cargo build
     echo "Build took: ${SECONDS} seconds"
     current_stamps > "$CACHE_FILE"
