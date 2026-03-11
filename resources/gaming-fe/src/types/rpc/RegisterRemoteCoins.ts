@@ -1,6 +1,6 @@
 export interface RegisterRemoteCoinsRequest {
   walletId: number;
-  coins: string[];
+  coinIds: string[];
 }
 
 export type RegisterRemoteCoinsResponse = Record<string, never>;

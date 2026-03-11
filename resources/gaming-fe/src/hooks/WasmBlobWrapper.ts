@@ -124,6 +124,7 @@ export class WasmBlobWrapper {
     if (!this.wc) { throw new Error("this.wc is falsey") }
     const result = this.cradle?.opening_coin(coin);
     this.processResult(result);
+    this.sendWatchingCoins();
   }
 
   setBlockchainAddress(a: BlockchainInboundAddressResult) {
@@ -231,6 +232,17 @@ export class WasmBlobWrapper {
         '\npeak:', peak,
         '\nreport:', JSON.stringify(block_report),
       );
+    }
+    this.sendWatchingCoins();
+  }
+
+  private sendWatchingCoins() {
+    if (!this.wc || !this.cradle || window.parent === window) return;
+    try {
+      const coins = this.wc.get_watching_coins(this.cradle.cradle);
+      window.parent.postMessage({ watching_coins: coins }, window.location.origin);
+    } catch (e) {
+      console.warn('[wasm] sendWatchingCoins failed:', e);
     }
   }
 

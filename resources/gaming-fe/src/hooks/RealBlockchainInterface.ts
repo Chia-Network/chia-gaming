@@ -7,7 +7,6 @@ import {
   BlockchainReport,
   SelectionMessage,
   BlockchainInboundAddressResult,
-  WasmConnection,
 } from '../types/ChiaGaming';
 import { WalletBalance } from '../types/WalletBalance';
 import { WalletType } from '../types/WalletType';
@@ -23,6 +22,38 @@ import { blockchainDataEmitter } from './BlockchainInfo';
 const bech32: any = (bech32_module ? bech32_module : bech32_buffer);
 const PUSH_TX_RETRY_DELAY = 30000;
 const POLL_INTERVAL = 5000;
+
+function encodeClvmInt(n: number): Uint8Array {
+  if (n === 0) return new Uint8Array(0);
+  const bytes: number[] = [];
+  let v = n;
+  while (v > 0) {
+    bytes.unshift(v & 0xff);
+    v = Math.floor(v / 256);
+  }
+  if (bytes[0] & 0x80) {
+    bytes.unshift(0);
+  }
+  return new Uint8Array(bytes);
+}
+
+async function coinRecordToName(rec: CoinRecord): Promise<string | undefined> {
+  try {
+    const parentBytes = toUint8(rec.coin.parentCoinInfo.replace(/^0x/, ''));
+    const puzzleBytes = toUint8(rec.coin.puzzleHash.replace(/^0x/, ''));
+    const amountBytes = encodeClvmInt(rec.coin.amount);
+
+    const data = new Uint8Array(parentBytes.length + puzzleBytes.length + amountBytes.length);
+    data.set(parentBytes, 0);
+    data.set(puzzleBytes, parentBytes.length);
+    data.set(amountBytes, parentBytes.length + puzzleBytes.length);
+
+    const hash = await crypto.subtle.digest('SHA-256', data);
+    return toHexString(Array.from(new Uint8Array(hash)));
+  } catch {
+    return undefined;
+  }
+}
 
 export class RealBlockchainInterface {
   addressData: BlockchainInboundAddressResult;
@@ -41,8 +72,7 @@ export class RealBlockchainInterface {
   private registerCoinsPending = false;
   private registeredCoinNames: Set<string> = new Set();
   private previousCoinStates: Map<string, boolean> = new Map();
-  private wc: WasmConnection | undefined;
-  private cradleId: number | undefined;
+  private watchingCoins: { coin_name: string; coin_string: string }[] = [];
 
   constructor() {
     this.addressData = { address: '', puzzleHash: '' };
@@ -54,12 +84,8 @@ export class RealBlockchainInterface {
     this.observable = new Subject();
   }
 
-  setWasmConnection(wc: WasmConnection) {
-    this.wc = wc;
-  }
-
-  setCradleId(cid: number) {
-    this.cradleId = cid;
+  setWatchingCoins(coins: { coin_name: string; coin_string: string }[]) {
+    this.watchingCoins = coins;
   }
 
   async getAddress() {
@@ -165,19 +191,8 @@ export class RealBlockchainInterface {
   }
 
   private async checkCoinStates() {
-    if (!this.wc || this.cradleId === undefined) {
-      this.observable.next({
-        peak: this.peak,
-        block: undefined,
-        report: { created_watched: [], deleted_watched: [], timed_out: [] },
-      });
-      return;
-    }
-
-    const watchingCoins = this.wc.get_watching_coins(this.cradleId);
-
     const coinNameToString = new Map<string, string>();
-    for (const entry of watchingCoins) {
+    for (const entry of this.watchingCoins) {
       coinNameToString.set(entry.coin_name, entry.coin_string);
     }
 
@@ -190,7 +205,7 @@ export class RealBlockchainInterface {
         console.log(`[wc-blockchain] registering ${newNames.length} new coin(s)`);
         rpc.registerRemoteCoins({
           walletId: this.remoteWalletId,
-          coins: newNames,
+          coinIds: newNames,
         })
           .then(() => {
             for (const n of newNames) {
@@ -205,7 +220,9 @@ export class RealBlockchainInterface {
       }
     }
 
-    if (allNames.length === 0) {
+    const registeredNames = allNames.filter((n) => this.registeredCoinNames.has(n));
+
+    if (registeredNames.length === 0) {
       this.observable.next({
         peak: this.peak,
         block: undefined,
@@ -217,7 +234,7 @@ export class RealBlockchainInterface {
     let records: CoinRecord[];
     try {
       records = await rpc.getCoinRecordsByNames({
-        names: allNames,
+        names: registeredNames,
         includeSpentCoins: true,
       });
     } catch (e) {
@@ -235,7 +252,7 @@ export class RealBlockchainInterface {
     const timed_out: string[] = [];
 
     for (const rec of records) {
-      const coinName = this.coinRecordToName(rec);
+      const coinName = await coinRecordToName(rec);
       if (!coinName) continue;
 
       const coinString = coinNameToString.get(coinName);
@@ -272,20 +289,6 @@ export class RealBlockchainInterface {
       block: undefined,
       report,
     });
-  }
-
-  private coinRecordToName(rec: CoinRecord): string | undefined {
-    if (!this.wc) return undefined;
-    try {
-      const coinString = this.wc.convert_coinset_to_coin_string(
-        rec.coin.parentCoinInfo,
-        rec.coin.puzzleHash,
-        rec.coin.amount,
-      );
-      return this.wc.coin_string_to_name(coinString);
-    } catch {
-      return undefined;
-    }
   }
 
   private async push_request(req: any): Promise<any> {
