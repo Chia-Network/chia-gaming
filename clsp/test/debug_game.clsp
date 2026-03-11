@@ -6,13 +6,13 @@
 (import std.curry)
 (import std.print)
 (import std.relops)
-(import games.calpoker-v0.game_codes)
+(import games.game_codes)
 
 ; See RefereePuzzleArgs::to_clvm
 (defmac STATE_PACK ()
   (q @ state-pack
-       (MOVER_PUZZLE_HASH
-        WAITER_PUZZLE_HASH
+       (MOVER_PUBKEY
+        WAITER_PUBKEY
         TIMEOUT
         AMOUNT
         MOD_HASH
@@ -32,15 +32,25 @@
   (c (+ 1 COUNT) (r curry-args))
   )
 
+;; Compute shatree(curry-args) using SELF_HASH in place of shatree(SELF_PROG)
+;; curry-args = (COUNT SELF_HASH SELF_PROG MOVER0 WAITER0)
+(defun curry-args-hash ((CURRY_PACK))
+  (sha256 2 (sha256 1 COUNT)
+    (sha256 2 (sha256 1 SELF_HASH)
+      (sha256 2 SELF_HASH
+        (sha256 2 (sha256 1 MOVER0)
+          (sha256 2 (sha256 1 WAITER0) (sha256 1 ()))))))
+  )
+
 (defun validator-hash ((CURRY_PACK))
   (curry_hashes_inline
    SELF_HASH
-   (shatree "validator")
-   (shatree curry-args)
+   (sha256 1 "validator")
+   (curry-args-hash curry-args)
    )
   )
 
-(defun current-waiter-puzzle-hash ((CURRY_PACK))
+(defun current-waiter-pubkey ((CURRY_PACK))
   (if (logand COUNT 1) MOVER0 WAITER0)
   )
 
@@ -59,17 +69,16 @@
      (STATE_PACK)
      state
      this_validation_program
-     mover_puzzle
-     solution
      evidence
+     output_conditions
      )
   (assign
-   pv_hash (shatree (print "doing validation" this_validation_program))
+   pv_hash (validator-hash curry-args)
    move-counter-data
    (concat
     ;; Hashes first
-    (if WAITER_PUZZLE_HASH WAITER_PUZZLE_HASH (current-waiter-puzzle-hash curry-args))
-    MOVER_PUZZLE_HASH
+    (if WAITER_PUBKEY WAITER_PUBKEY (current-waiter-pubkey curry-args))
+    MOVER_PUBKEY
     MOD_HASH
     INFOHASH_B
     INFOHASH_A
@@ -84,22 +93,14 @@
     )
 
    move-counter-data-len (strlen (print "move-counter-data?" move-counter-data))
-   mover-puzzle-hash (substr move-counter-data 0 32)
    move-len (strlen (print "MOVE?" MOVE))
 
    (if
     (or
-     ;; Self hash doesn't match self prog
-     (not (= (shatree SELF_PROG) SELF_HASH))
      ;; Too short move
      (print (list "have 2 or more bytes than move-counter-data-len which is" move-counter-data-len "have" (strlen MOVE)) (> move-counter-data-len (- (strlen MOVE) 2)))
      ;; Move doesn't repeat the counter data
      (print (list "did we reproduce the data" (substr MOVE 0 move-counter-data-len) "versus" move-counter-data) (not (= move-counter-data (substr MOVE 0 move-counter-data-len))))
-     ;; Mover puzzle isn't the puzzle of the mover we think we have.
-     ;; We can't actually check this because it relates to 'which user' is taking the action
-     ;; not whose move it relates to.
-     ;; (print "did we have the right mover puzzle" (not (= mover-puzzle-hash (shatree mover_puzzle))))
-     ;;
      (print (list "INFOHASH_A " INFOHASH_A) 0)
      (print (list "INFOHASH_B " INFOHASH_B) 0)
      (print (list "INFOHASH_C " "NONE YET") 0)
@@ -108,12 +109,12 @@
      (print "did we have the right previous validation info hash" (not (= INFOHASH_B (sha256 pv_hash (shatree state)))))
      ;;
      ;; the step we're on indicates mover0 or waiter0 as mover
-     (print "did we send mover and waiter puzzle hash in the right order" (if (logand COUNT 1)
-          (not (= MOVER_PUZZLE_HASH WAITER0))
-          (not (= MOVER_PUZZLE_HASH MOVER0))
+     (print "did we send mover and waiter pubkey in the right order" (if (logand COUNT 1)
+          (not (= MOVER_PUBKEY WAITER0))
+          (not (= MOVER_PUBKEY MOVER0))
           ))
      ;; if mover and waiter are the same then things are broken
-     (print "ensure we didn't just send the same puzzle hash for mover and waiter" (= MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH))
+     (print "ensure we didn't just send the same pubkey for mover and waiter" (= MOVER_PUBKEY WAITER_PUBKEY))
      ;; the evidence is the slash
      (and
       (print (list "move-len" move-len) 1)
@@ -124,7 +125,7 @@
       (print "and it wasn't a zero byte which we can't slash" (+ 0 evidence))
       )
      )
-    (list SLASH () "debug game: slash my count" COUNT)
+    (list SLASH)
     (assign
      slashable-move (substr MOVE (- move-len 1) move-len)
      mover-share (+ 0 (substr MOVE (print "getting mover share" move-counter-data-len) (print "mover share ends at" (- move-len 1))))
@@ -143,7 +144,7 @@
 ;; Make a value be at least one byte.
 (defun byteify (n) (i n n 0x00))
 
-(defun myturn ((CURRY_PACK) local_move amount split entropy)
+(defun myturn ((CURRY_PACK) local_move amount state last_mover_share entropy)
   ;; local move is a list of slashable and mover share
   (if (not (print (list "Curry pack:" curry-args) local_move))
       ;; () local move should make us emit a local slash so we can try that.
@@ -185,6 +186,7 @@
 (defun theirturn
     ((CURRY_PACK)
      amount
+     pre_state
      (@ state (count smove mshare))
      move
      validation_program_hash
@@ -194,7 +196,7 @@
    move-len (strlen move)
 
    (if (> 1 move-len)
-       (list SLASH ())
+       (list () () ())
        ;; Skipping the last byte and the mover share, there should be a count.
        ;; It's fairly simple to read over a positive number.
        (assign
@@ -212,7 +214,6 @@
             (not (= smove slash-byte))
             (x "their turn: wrong slash byte in state" smove slash-byte)
             (list
-             MAKE_MOVE
              (list count smove mshare)
              (list slash-byte)
              (curry SELF_PROG "myturn" (curry-args-incr curry-args))

@@ -1,4 +1,4 @@
-use crate::channel_handler::types::{ChannelCoinSpendInfo, CoinSpentDisposition, PotatoSignatures};
+use crate::channel_handler::types::{ChannelCoinSpendInfo, CoinSpentDisposition};
 
 use crate::common::types::{Amount, GameID, Puzzle};
 use crate::referee::types::GameMoveDetails;
@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MoveResult {
-    pub signatures: PotatoSignatures,
     pub game_move: GameMoveDetails,
     pub state_number: usize,
 }

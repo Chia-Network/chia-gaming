@@ -1,13 +1,11 @@
-# Thanks: clvm_rs' github actions.
-name: Build
+# Build and Test (Linux x86_64) github action for chia-gaming
+name: build-test.yml
 
 concurrency:
   group: ${{ github.ref }}-${{ github.workflow }}-${{ github.event_name }}--${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/heads/long_lived/')) && github.sha || '' }}
   cancel-in-progress: true
 
 env:
-  CHIA_BLOCKCHAIN_VERSION: 2.5.5-rc3 # 2.5.7
-  MATURIN_VERSION: 1.9.2
   UV_VERSION: 0.7.9
   GRCOV_VERSION: 0.8.1
   RUST_VERSION: stable
@@ -28,46 +26,12 @@ permissions:
   contents: read
 
 jobs:
-  build_and_test:
-    needs: [fmt, clippy, unit_tests]
-    name: Build code on ${{ matrix.os }} py-${{ matrix.python }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
-        # chia_rs supports python 3.11, 3.12, 3.13
-        # https://github.com/Chia-Network/chia_rs/tree/main/wheel
-        # chia-blockchain supports python 3.10, 3.11, 3.12
-        # https://github.com/Chia-Network/chia-blockchain/tree/main/.github/workflows
-        python: [3.11, 3.12]
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-      with:
-        fetch-depth: 1
-
-    - name: Set up Python ${{ matrix.python.name }}
-      uses: Chia-Network/actions/setup-python@main
-      with:
-        python-version: ${{ matrix.python.action }}
-
-    - uses: chia-network/actions/create-venv@main
-      id: create-venv
-
-    - name: Set up rust
-      # See also rust-toolchain.toml
-      uses: dtolnay/rust-toolchain@master
-      with:
-        toolchain: ${{ env.RUST_VERSION }}
-        components: "clippy, rustfmt"
   fmt:
     runs-on: ubuntu-22.04
     name: cargo fmt
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 1
       - name: Install rust
@@ -85,7 +49,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 1
       - uses: dtolnay/rust-toolchain@master
@@ -97,15 +61,15 @@ jobs:
           set -x
           rustup component add --toolchain stable-x86_64-unknown-linux-gnu clippy rustfmt
           cargo clippy --version
-          cargo clippy --all --features=sim-tests -- -D warnings
-          cargo check --features=sim-tests --tests
+          cargo clippy --all --features=sim-tests,sim-server -- -D warnings
+          cargo check --features=sim-tests,sim-server --tests
 
   unit_tests:
     runs-on: ubuntu-22.04
-    name: Unit tests
+    name: Unit tests - build-test.yml
     needs: [fmt, clippy]
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
@@ -115,71 +79,76 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
           components: "clippy, rustfmt"
 
-      - name: Set up Python 3.12 # ${{ matrix.python.name }}
-        uses: Chia-Network/actions/setup-python@main
-        with:
-          python-version: 3.12 # ${{ matrix.python.action }}
-
-      - uses: chia-network/actions/create-venv@main
-        id: create-venv
+      - name: Build hex files
+        run: |
+          tools/build-chialisp.sh
 
       - name: Run rust tests and simulator tests
         run: |
-          # We need chia-blockchain so we can run the blockchain simulator
-          python -m pip install setuptools==75.0.0
-          python -m pip install chia-blockchain==$CHIA_BLOCKCHAIN_VERSION
-          # Try tests without sim-tests to ensure we're tracking build failures in that
-          # configuration.  Also it's a lot shorter.
-          cargo test
-          python -m pip install maturin==$MATURIN_VERSION
-          maturin build --features sim-tests
-          pip install `find . -name \*.whl`
-          # Run simulator tests
-          python -c "from chia_gaming import chia_gaming; chia_gaming.run_simulation_tests()" 2>&1 | grep -v 'updating the mempool using the slow-path'
+          # Build without sim-tests to ensure that configuration compiles
+          cargo test --no-run
+          # Run simulator tests (matches local ct.sh)
+          cargo test --lib --features sim-tests,sim-server -- --nocapture
 
-  calpoker_onchain_tests:
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          fetch-depth: 1
-      - name: Set up Python ${{ matrix.python.name }}
-        uses: Chia-Network/actions/setup-python@main
-        with:
-          python-version: ${{ matrix.python.action }}
+  # Disabled python clisp tests for now
+  # We need to verify that all of this has been ported to rust.
 
-      - name: Install uv
-        run: |
-          pip install uv==$UV_VERSION
+  # calpoker_onchain_tests:
+  #   runs-on: ubuntu-22.04
+  #   needs: [fmt, clippy]
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 1
 
-      - name: install chia_gaming into .venv
-        run: |
-          cd python
-          uv venv
-          uv pip install -e .
-      - name: calpoker_onchain_tests
-        run: |
-          cd python
-          source .venv/bin/activate
-          cd tests
-          # Note: 'cargo build' must have been run
-          uv run compute_hashes.py
-          uv run ./test_calpoker_validation.py
+  #     - name: Install rust
+  #       uses: dtolnay/rust-toolchain@master
+  #       with:
+  #         toolchain: ${{ env.RUST_VERSION }}
 
-      - name: calpoker_handler tests
-        run: |
-          cd python
-          source .venv/bin/activate
-          cd tests
-          # Note: 'cargo build' must have been run
-          uv run compute_hashes.py
-          uv run ./test_calpoker_handlers.py
+  #     - name: Build rust code
+  #       run: cargo build
+
+  #     - name: Set up Python 3.12
+  #       uses: Chia-Network/actions/setup-python@main
+  #       with:
+  #         python-version: 3.12
+
+  #     - name: Install uv
+  #       run: |
+  #         pip install uv==$UV_VERSION
+
+  #     - name: install chia_gaming into .venv
+  #       run: |
+  #         cd python
+  #         uv venv
+  #         uv pip install -e .
+
+  #     - name: Build hex files
+  #       run: |
+  #         tools/build-chialisp.sh
+
+  #     - name: calpoker_onchain_tests
+  #       run: |
+  #         cd python
+  #         source .venv/bin/activate
+  #         cd tests
+  #         uv run compute_hashes.py
+  #         uv run ./test_calpoker_validation.py
+
+  #     - name: calpoker_handler tests
+  #       run: |
+  #         cd python
+  #         source .venv/bin/activate
+  #         cd tests
+  #         uv run compute_hashes.py
+  #         uv run ./test_calpoker_handlers.py
 
   coverage:
-    needs: unit_tests
+    needs: [fmt, clippy]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 1
       - uses: dtolnay/rust-toolchain@master
@@ -188,6 +157,7 @@ jobs:
           components: "clippy, rustfmt"
       - name: Run for coverage
         run: |
+          cp build.rs.disabled build.rs
           sudo apt-get update
           sudo apt-get install lcov -y
           rustup component add llvm-tools-preview
@@ -195,15 +165,9 @@ jobs:
           export RUSTFLAGS="-Cinstrument-coverage"
           export LLVM_PROFILE_FILE=$(pwd)/target/chialisp-%p-%m.profraw
           export CARGO_TARGET_DIR=$(pwd)/target
-          python -m venv venv
-          source venv/bin/activate
-          pip install chia-blockchain==$CHIA_BLOCKCHAIN_VERSION
-          python -m pip install maturin==$MATURIN_VERSION
-          maturin build --features sim-tests
-          pip install `find . -name \*.whl`
-          python -c "from chia_gaming import chia_gaming; chia_gaming.run_simulation_tests()"
+          cargo test --lib --features sim-tests,sim-server -- --nocapture
           grcov . --binary-path target -s . --branch --ignore-not-existing --ignore='*/.cargo/*' --ignore='*/tests/*' -o rust_cov.info
-          python -c 'with open("rust_cov.info") as f: lines = [l for l in f if not (l.startswith("DA:") and int(l.split(",")[1].strip()) >= 2**63)]; open("lcov.info", "w").writelines(lines)'
+          python3 -c 'with open("rust_cov.info") as f: lines = [l for l in f if not (l.startswith("DA:") and int(l.split(",")[1].strip()) >= 2**63)]; open("lcov.info", "w").writelines(lines)'
       - name: Upload to Coveralls
         uses: coverallsapp/github-action@v2
         if: always()

@@ -5,7 +5,6 @@ use crate::referee::types::TheirTurnCoinSpentResult;
 #[derive(Debug)]
 pub enum CoinSpentInformation {
     OurReward(PuzzleHash, Amount),
-    OurSpend(PuzzleHash, Amount),
     TheirSpend(TheirTurnCoinSpentResult),
 }
 
@@ -17,7 +16,7 @@ pub struct CoinSpentMoveUp {
 }
 
 #[derive(Debug, Clone)]
-pub struct CoinSpentAccept {
+pub struct CoinSpentAcceptTimeout {
     pub game_id: GameID,
     pub spend: CoinSpend,
     pub reward_coin: CoinString,
@@ -28,7 +27,7 @@ pub struct CoinSpentAccept {
 pub enum CoinSpentDisposition {
     CancelledUX(Vec<GameID>),
     Move(CoinSpentMoveUp),
-    Accept(CoinSpentAccept),
+    AcceptTimeout(CoinSpentAcceptTimeout),
 }
 
 #[derive(Debug, Clone)]

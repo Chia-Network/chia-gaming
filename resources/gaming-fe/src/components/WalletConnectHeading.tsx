@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect } from 'react';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import { Button } from './button';
 import { blockchainConnector } from '../hooks/BlockchainConnector';
 import { blockchainDataEmitter } from '../hooks/BlockchainInfo';
@@ -9,7 +9,7 @@ import {
 } from '../hooks/RealBlockchainInterface';
 import useDebug from '../hooks/useDebug';
 import { walletConnectState } from '../hooks/useWalletConnect';
-import { BLOCKCHAIN_SERVICE_URL } from '../settings';
+import { BLOCKCHAIN_SERVICE_URL, BLOCKCHAIN_DATA_URL } from '../settings';
 import { generateOrRetrieveUniqueId } from '../util';
 
 import Debug from './Debug';
@@ -43,6 +43,9 @@ const WalletConnectHeading = (_args: any) => {
   const [recvAddress, setRecvAddress] = useState();
   const [balance, setBalance] = useState<number | undefined>();
   const [haveBlock, setHaveBlock] = useState(false);
+
+  const balanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const addressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const uniqueId = generateOrRetrieveUniqueId();
 
@@ -106,6 +109,7 @@ const WalletConnectHeading = (_args: any) => {
   useEffect(() => {
     const subscription = walletConnectState.getObservable().subscribe({
       next: (evt: any) => {
+        console.log('[WC UI] state event:', evt.stateName, evt);
         if (evt.stateName === 'connected') {
           toggleExpanded();
           setAlreadyConnected(true);
@@ -114,7 +118,9 @@ const WalletConnectHeading = (_args: any) => {
             selection: REAL_BLOCKCHAIN_ID,
             uniqueId,
           });
-          connectRealBlockchain('https://api.coinset.org');
+          connectRealBlockchain(BLOCKCHAIN_DATA_URL);
+          if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
+          if (addressTimerRef.current) clearTimeout(addressTimerRef.current);
           requestBalance();
           requestRecvAddress();
         }
@@ -135,17 +141,19 @@ const WalletConnectHeading = (_args: any) => {
     setExpanded(!expanded);
   }, [expanded]);
 
-  useEffect(() => {
+  const initWalletConnect = useCallback(() => {
     if (!initializing) {
-      console.log(
-        'initialzing wallet connect if needed',
-        initializing,
-        initialized,
-      );
+      console.log('[WC UI] initWalletConnect() -- calling walletConnectState.init()');
       walletConnectState.init();
       setInitializing(true);
+    } else {
+      console.log('[WC UI] initWalletConnect() -- skipped (already initializing)');
     }
-  });
+  }, [initializing, initialized]);
+
+  useEffect(() => {
+    initWalletConnect();
+  }, []);
 
   useEffect(() => {
     function receivedWindowMessage(evt: any) {
@@ -170,11 +178,13 @@ const WalletConnectHeading = (_args: any) => {
       next: (evt: any) => {
         if (evt.getBalance) {
           setBalance(evt.getBalance);
-          setTimeout(requestBalance, 2000);
+          if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
+          balanceTimerRef.current = setTimeout(requestBalance, 15000);
         }
         if (evt.getAddress) {
           setRecvAddress(evt.getRecvAddress);
-          setTimeout(requestRecvAddress, 2000);
+          if (addressTimerRef.current) clearTimeout(addressTimerRef.current);
+          addressTimerRef.current = setTimeout(requestRecvAddress, 15000);
         }
         const subframe = document.getElementById('subframe');
         if (subframe) {
@@ -182,7 +192,7 @@ const WalletConnectHeading = (_args: any) => {
             {
               blockchain_reply: evt,
             },
-            window.location.origin,
+            '*',
           );
         } else {
           // TODO: Two cases:
@@ -197,6 +207,8 @@ const WalletConnectHeading = (_args: any) => {
       next: (evt: any) => {
         if (!haveBlock) {
           setHaveBlock(true);
+          if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
+          if (addressTimerRef.current) clearTimeout(addressTimerRef.current);
           requestBalance();
           requestRecvAddress();
         }
@@ -218,6 +230,8 @@ const WalletConnectHeading = (_args: any) => {
     });
 
     return function () {
+      if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
+      if (addressTimerRef.current) clearTimeout(addressTimerRef.current);
       window.removeEventListener('message', receivedWindowMessage);
       bcSubscription.unsubscribe();
       biSubscription.unsubscribe();
@@ -243,22 +257,30 @@ const WalletConnectHeading = (_args: any) => {
           selection: FAKE_BLOCKCHAIN_ID,
           uniqueId,
         });
+        if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
+        if (addressTimerRef.current) clearTimeout(addressTimerRef.current);
         requestBalance();
         requestRecvAddress();
-      });
+      })
+      .catch((e) => console.error('register failed:', e));
   }, []);
 
   const onDoWalletConnect = useCallback(() => {
+    console.log('[WC UI] "Link Wallet" clicked');
+    initWalletConnect();
     doConnectWallet(
       setShowQRModal,
       setConnectionUri,
       () => walletConnectState.startConnect(),
       () => {
-        console.warn('walletconnect should now be connected');
+        console.log('[WC UI] doConnectWallet complete -- session established');
       },
-      (e) => setWalletConnectError(e),
+      (e) => {
+        console.error('[WC UI] doConnectWallet error:', e);
+        setWalletConnectError(e);
+      },
     );
-  }, []);
+  }, [initWalletConnect]);
 
   const onWalletDismiss = useCallback(() => {
     // toggleExpanded();

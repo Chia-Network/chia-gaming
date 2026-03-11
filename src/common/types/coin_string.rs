@@ -41,8 +41,8 @@ impl CoinString {
             return None;
         }
 
-        let parent_id = CoinID::new(Hash32::from_slice(&self.0[..32]));
-        let puzzle_hash = PuzzleHash::from_hash(Hash32::from_slice(&self.0[32..64]));
+        let parent_id = CoinID::new(Hash32::from_slice(&self.0[..32]).ok()?);
+        let puzzle_hash = PuzzleHash::from_hash(Hash32::from_slice(&self.0[32..64]).ok()?);
         let amount_bytes = &self.0[64..];
         BigInt::from_bytes_be(Sign::Plus, amount_bytes)
             .to_u64()

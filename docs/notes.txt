@@ -141,7 +141,7 @@ calpoker_template contains pokera and pokera_hash
 
 game start contains pokera
 
-Driver a gives pokerb and pokerb_hash and curries driver b
+Handler a gives pokerb and pokerb_hash and curries handler b
 
 pokera needs to be called with pokerb_hash as the program part of new_validation_hash
 

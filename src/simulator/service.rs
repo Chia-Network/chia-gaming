@@ -10,7 +10,6 @@ use std::time::Duration;
 use lazy_static::lazy_static;
 use log::debug;
 
-use pyo3::Python;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
@@ -29,8 +28,6 @@ use crate::common::types::{
 };
 use crate::peer_container::{FullCoinSetAdapter, WatchReport};
 use crate::simulator::Simulator;
-use pyo3::pyfunction;
-
 trait HttpError<V> {
     fn report_err(self) -> Result<V, String>;
 }
@@ -65,7 +62,6 @@ impl<V> HttpError<V> for Result<V, salvo::http::ParseError> {
     }
 }
 
-#[allow(dead_code)]
 struct GameRunner {
     allocator: AllocEncoder,
     rng: ChaCha8Rng,
@@ -164,7 +160,7 @@ impl GameRunner {
 
     fn chase_block(&mut self) -> Result<u64, Error> {
         let new_height = self.simulator.get_current_height() as u64;
-        let new_coins = self.simulator.get_all_coins().into_gen()?;
+        let new_coins = self.simulator.get_all_coins()?;
         let watch_report = self
             .coinset_adapter
             .make_report_from_coin_set_update(new_height, &new_coins)?;
@@ -207,12 +203,7 @@ impl GameRunner {
         let identity = self.lookup_identity(who).cloned();
         let mut result_balance: u64 = 0;
         if let Some(pk) = identity {
-            for coin in self
-                .simulator
-                .get_my_coins(&pk.puzzle_hash)
-                .into_gen()?
-                .iter()
-            {
+            for coin in self.simulator.get_my_coins(&pk.puzzle_hash)?.iter() {
                 if let Some((_, _, amt)) = coin.to_parts() {
                     result_balance += amt.to_u64();
                 }
@@ -228,7 +219,7 @@ impl GameRunner {
             debug!("coin string: {cs:?}");
             cs.to_coin_id()
         } else {
-            CoinID::new(Hash::from_slice(&bytes))
+            CoinID::new(Hash::from_slice(&bytes)?)
         };
 
         if let Some((prog, sol)) = self
@@ -272,13 +263,10 @@ impl GameRunner {
     fn create_spendable(&mut self, who: &str, target: &str, amt: u64) -> StringWithError {
         let target_ph_bytes: Vec<u8> =
             hex::decode(target).map_err(|_| Error::StrErr("bad target hex".to_string()))?;
-        let target_ph = PuzzleHash::from_hash(Hash::from_slice(&target_ph_bytes));
+        let target_ph = PuzzleHash::from_hash(Hash::from_slice(&target_ph_bytes)?);
         let identity = self.lookup_identity(who).cloned();
         if let Some(identity) = identity {
-            let coins0 = self
-                .simulator
-                .get_my_coins(&identity.puzzle_hash)
-                .into_gen()?;
+            let coins0 = self.simulator.get_my_coins(&identity.puzzle_hash)?;
             let coin_amt = Amount::new(amt);
             for c in coins0.iter() {
                 if let Some((_, _ph, amt)) = c.to_parts() {
@@ -302,10 +290,7 @@ impl GameRunner {
     }
 
     fn spend_list_of_spends(&mut self, spends: &[CoinSpend]) -> StringWithError {
-        let result = self
-            .simulator
-            .push_tx(&mut self.allocator, spends)
-            .into_gen()?;
+        let result = self.simulator.push_tx(&mut self.allocator, spends)?;
         let e_res = result
             .e
             .map(|e| format!("{e}"))
@@ -317,7 +302,7 @@ impl GameRunner {
         let spend_program = Program::from_hex(blob)?;
         let spend_node = spend_program.to_nodeptr(&mut self.allocator)?;
         let spend_bundle = SpendBundle::from_clvm(&self.allocator, spend_node)?;
-        debug!("spend with bundle {spend_bundle:?}");
+        debug!("spend with bundle: {} spends", spend_bundle.spends.len());
         self.spend_list_of_spends(&spend_bundle.spends)
     }
 
@@ -371,7 +356,10 @@ impl GameRunner {
         });
         let value = serde_json::to_value(&spends).into_gen()?;
         let serialized = serde_json::to_string(&value).into_gen()?;
-        debug!("block spends for height {height} {serialized:?}");
+        debug!(
+            "block spends for height {height}: {} bytes",
+            serialized.len()
+        );
         Ok(serialized)
     }
 }
@@ -410,8 +398,12 @@ async fn index_css(response: &mut Response) -> Result<(), String> {
     get_file("resources/web/index.css", "text/css", response)
 }
 
-fn pass_on_request(req: &Request, response: &mut Response, wr: WebRequest) -> Result<(), String> {
-    debug!("pass on request {wr:?}");
+fn pass_on_request(
+    req: &mut Request,
+    response: &mut Response,
+    wr: WebRequest,
+) -> Result<(), String> {
+    debug!("pass on request");
 
     let locked = ONE_REQUEST.lock().unwrap();
 
@@ -438,7 +430,7 @@ async fn get_current_peak(req: &mut Request, response: &mut Response) -> Result<
     pass_on_request(req, response, WebRequest::GetCurrentPeak)
 }
 
-fn get_arg_string(req: &Request, name: &str) -> Result<String, Error> {
+fn get_arg_string(req: &mut Request, name: &str) -> Result<String, Error> {
     let uri_string = req.uri().to_string();
     let want_string = format!("{name}=");
     if let Some(found_eq) = uri_string.find(&want_string) {
@@ -453,7 +445,7 @@ fn get_arg_string(req: &Request, name: &str) -> Result<String, Error> {
     Err(Error::StrErr("no argument".to_string()))
 }
 
-fn get_arg_integer(req: &Request, name: &str) -> Result<u64, Error> {
+fn get_arg_integer(req: &mut Request, name: &str) -> Result<u64, Error> {
     let arg = get_arg_string(req, name)?;
     arg.parse::<u64>()
         .map_err(|_e| Error::StrErr(format!("{name} is not an integer")))
@@ -547,7 +539,7 @@ async fn push_tx(
     )
 }
 
-fn cors_origin(req: &Request, response: &mut Response) -> Result<(), String> {
+fn cors_origin(req: &mut Request, response: &mut Response) -> Result<(), String> {
     let origin_header: Option<String> = req.header("Origin");
     if let Some(origin) = origin_header {
         response
@@ -676,14 +668,9 @@ fn service_main_inner() {
     })
 }
 
-#[pyfunction]
 pub fn service_main() {
     if let Err(e) = std::panic::catch_unwind(|| {
-        Python::with_gil(|py| {
-            py.allow_threads(|| {
-                service_main_inner();
-            })
-        })
+        service_main_inner();
     }) {
         eprintln!("panic: {e:?}");
         std::process::exit(1);

@@ -17,11 +17,11 @@ export interface CalpokerProps {
   iStarted: boolean;
   isPlayerTurn: boolean;
   playerNumber: number;
-  playerHand: number[][];
-  opponentHand: number[][];
-  cardSelections: number;
-  setCardSelections: (n: number) => void;
-  handleMakeMove: (hex: string) => void;
+  playerHand: number[];
+  opponentHand: number[];
+  cardSelections: number[];
+  setCardSelections: (n: number[] | ((prev: number[]) => number[])) => void;
+  handleMakeMove: () => void;
   stopPlaying: () => void;
   addressData: any;
   log: OutcomeLogLine[];

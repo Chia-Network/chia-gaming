@@ -4,17 +4,13 @@ use clvm_traits::{clvm_curried_args, ToClvm};
 use clvm_utils::CurriedProgram;
 use clvmr::allocator::NodePtr;
 
-use log::debug;
-
 use rand::prelude::*;
 
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::types::ChannelHandlerEnv;
-use crate::common::constants::{CREATE_COIN, REM};
-use crate::common::standard_coin::{
-    private_to_public_key, puzzle_hash_for_pk, unsafe_sign_partial,
-};
+use crate::common::constants::{ASSERT_HEIGHT_RELATIVE, CREATE_COIN, REM};
+use crate::common::standard_coin::{private_to_public_key, unsafe_sign_partial};
 use crate::common::types::{
     Aggsig, Amount, Error, IntoErr, Node, PrivateKey, Program, ProgramRef, PublicKey, PuzzleHash,
     Sha256tree,
@@ -46,7 +42,6 @@ use crate::common::types::{
 /// if the other player doesn't successfully challenge by providing another program that
 /// produces new conditions that match the parity criteria.
 ///
-/// XXX TODO: Add time lock
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct UnrollCoin {
     pub started_with_potato: bool,
@@ -149,6 +144,8 @@ impl UnrollCoin {
         .into_gen()
     }
 
+    /// Build a solution for the challenge/preemption path: (metapuzzle, conditions).
+    /// The CLSP runs metapuzzle(conditions) which adds AGG_SIG_UNSAFE.
     pub fn make_unroll_puzzle_solution<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
@@ -163,11 +160,23 @@ impl UnrollCoin {
 
         let unroll_puzzle_solution = (
             Node(unroll_inner_puzzle),
-            (self.get_conditions_for_unroll_coin_spend()?, ()),
+            (self.get_internal_conditions_for_unroll_coin_spend()?, ()),
         )
             .to_clvm(env.allocator)
             .into_gen()?;
         Ok(unroll_puzzle_solution)
+    }
+
+    /// Build a solution for the default/timeout path: just (reveal).
+    /// The CLSP verifies shatree(reveal) == DEFAULT_CONDITIONS_HASH and
+    /// returns reveal.  The timeout conditions include ASSERT_HEIGHT_RELATIVE.
+    pub fn make_timeout_unroll_solution<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+    ) -> Result<NodePtr, Error> {
+        let timeout_conditions = self.get_conditions_for_unroll_coin_spend()?;
+        let solution = (timeout_conditions, ()).to_clvm(env.allocator).into_gen()?;
+        Ok(solution)
     }
 
     /// Returns a list of create coin conditions which the unroll coin should do.
@@ -184,16 +193,17 @@ impl UnrollCoin {
         let their_first_coin = (
             CREATE_COIN,
             (
-                inputs.their_referee_puzzle_hash.clone(),
+                inputs.their_reward_puzzle_hash.clone(),
                 (inputs.their_balance.clone(), ()),
             ),
         );
 
-        let standard_puzzle_hash_of_ref = puzzle_hash_for_pk(env.allocator, &inputs.ref_pubkey)?;
-
         let our_first_coin = (
             CREATE_COIN,
-            (standard_puzzle_hash_of_ref, (inputs.my_balance.clone(), ())),
+            (
+                inputs.my_reward_puzzle_hash.clone(),
+                (inputs.my_balance.clone(), ()),
+            ),
         );
 
         let (start_coin_one, start_coin_two) = if self.started_with_potato {
@@ -234,29 +244,39 @@ impl UnrollCoin {
         their_unroll_coin_public_key: &PublicKey,
         inputs: &UnrollCoinConditionInputs,
     ) -> Result<Aggsig, Error> {
-        let unroll_conditions = self.compute_unroll_coin_conditions(env, inputs)?;
-        let conditions_hash = unroll_conditions.sha256tree(env.allocator);
+        let base_conditions = self.compute_unroll_coin_conditions(env, inputs)?;
+
+        // Timeout conditions: prepend ASSERT_HEIGHT_RELATIVE to the base
+        // conditions.  The preemption path uses the base conditions (no
+        // timelock) so it can execute immediately.
+        let timeout_conditions = if inputs.unroll_timeout > 0 {
+            let timelock_cond = (ASSERT_HEIGHT_RELATIVE, (inputs.unroll_timeout, ()))
+                .to_clvm(env.allocator)
+                .into_gen()?;
+            let timeout_node = (
+                Node(timelock_cond),
+                Node(base_conditions.to_nodeptr(env.allocator)?),
+            )
+                .to_clvm(env.allocator)
+                .into_gen()?;
+            ProgramRef::new(Rc::new(Program::from_nodeptr(env.allocator, timeout_node)?))
+        } else {
+            base_conditions.clone()
+        };
+
+        let timeout_hash = timeout_conditions.sha256tree(env.allocator);
+        let base_hash = base_conditions.sha256tree(env.allocator);
         let unroll_public_key = private_to_public_key(unroll_private_key);
         let unroll_aggregate_key = unroll_public_key.clone() + their_unroll_coin_public_key.clone();
-        debug!("conditions_hash {conditions_hash:?}");
-        let unroll_signature = unsafe_sign_partial(
-            unroll_private_key,
-            &unroll_aggregate_key,
-            conditions_hash.bytes(),
-        );
+        let unroll_signature =
+            unsafe_sign_partial(unroll_private_key, &unroll_aggregate_key, base_hash.bytes());
         self.outcome = Some(UnrollCoinOutcome {
-            conditions: unroll_conditions.clone(),
-            conditions_without_hash: unroll_conditions,
-            state_number: inputs.rem_condition_state,
-            hash: conditions_hash,
+            conditions: timeout_conditions,
+            conditions_without_hash: base_conditions,
+            state_number: self.state_number,
+            hash: timeout_hash,
             signature: unroll_signature.clone(),
         });
-
-        debug!("AGGREGATE PUBLIC KEY {:?}", unroll_aggregate_key);
-        debug!(
-            "SIGNATURE {} {:?}",
-            self.started_with_potato, unroll_signature
-        );
 
         Ok(unroll_signature)
     }
@@ -272,7 +292,6 @@ impl UnrollCoin {
         let unroll_puzzle_solution_hash = unroll_puzzle_solution.sha256tree(env.allocator);
 
         let aggregate_unroll_signature = signature.clone() + self.get_unroll_coin_signature()?;
-        debug!("{} VERIFY: AGGREGATE UNROLL hash {unroll_puzzle_solution_hash:?} {aggregate_unroll_signature:?}", self.started_with_potato);
 
         Ok(aggregate_unroll_signature.verify(
             aggregate_unroll_public_key,
@@ -283,12 +302,12 @@ impl UnrollCoin {
 
 #[derive(Debug)]
 pub struct UnrollCoinConditionInputs {
-    pub ref_pubkey: PublicKey,
-    pub their_referee_puzzle_hash: PuzzleHash,
+    pub my_reward_puzzle_hash: PuzzleHash,
+    pub their_reward_puzzle_hash: PuzzleHash,
     pub my_balance: Amount,
     pub their_balance: Amount,
     pub puzzle_hashes_and_amounts: Vec<(PuzzleHash, Amount)>,
-    pub rem_condition_state: usize,
+    pub unroll_timeout: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

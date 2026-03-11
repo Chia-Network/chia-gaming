@@ -32,6 +32,14 @@ export function getSearchParams(): any {
   return getParamsFromString(search);
 }
 
+export function generateOrRetrieveUniqueId(): string {
+  let id = localStorage.getItem('uniqueId');
+  if (id) return id;
+  id = uuidv4();
+  localStorage.setItem('uniqueId', id);
+  return id;
+}
+
 export function updateAlias(alias: string) {
   localStorage.setItem('alias', alias);
 }

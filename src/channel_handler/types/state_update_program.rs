@@ -7,9 +7,8 @@ use crate::common::types::{AllocEncoder, Error, Hash, Program, ProgramRef, Sha25
 use serde::{Deserialize, Serialize};
 
 /// Represents a validation program, as opposed to validation info or any of the
-/// other kinds of things that are related.
-///
-/// This can give a validation program hash or a validation info hash, given state.
+/// other kinds of things that are related.  Exposes the program's hash via
+/// `hash()`; computing a validation *info* hash requires `ValidationInfo`.
 #[derive(Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct StateUpdateProgram {
     name: String,

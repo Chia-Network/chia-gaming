@@ -55,13 +55,12 @@ export class GameEventService {
     }
 
     this.socket.on('connect', () => {
-      console.log('Connected to game server');
       this.reconnectAttempts = 0;
       this.processEventQueue();
     });
 
     this.socket.on('disconnect', (reason: string) => {
-      console.log('Disconnected from game server:', reason);
+      console.warn('Disconnected from game server:', reason);
       if (reason === 'io server disconnect') {
         this.socket?.connect();
       }

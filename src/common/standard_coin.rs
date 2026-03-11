@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use chia_bls;
 
-use log::debug;
 use num_bigint::{BigInt, Sign};
 
 use chia_puzzles::P2_DELEGATED_PUZZLE_OR_HIDDEN_PUZZLE;
@@ -15,17 +14,14 @@ use clvmr::NodePtr;
 
 use crate::utils::{number_from_u8, u8_from_number};
 
-use crate::utils::map_m;
-
 use crate::common::constants::{
-    A_KW, CREATE_COIN, C_KW, DEFAULT_HIDDEN_PUZZLE_HASH, DEFAULT_PUZZLE_HASH, GROUP_ORDER, ONE,
-    Q_KW, Q_KW_TREEHASH, TWO,
+    A_KW, C_KW, DEFAULT_HIDDEN_PUZZLE_HASH, DEFAULT_PUZZLE_HASH, GROUP_ORDER, ONE, Q_KW,
+    Q_KW_TREEHASH, TWO,
 };
 use crate::common::types;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, Hash, IntoErr,
-    Node, PrivateKey, Program, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree,
-    ToQuotedProgram,
+    Aggsig, AllocEncoder, BrokenOutCoinSpendInfo, CoinCondition, CoinID, Hash, IntoErr, Node,
+    PrivateKey, Program, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, ToQuotedProgram,
 };
 
 pub fn get_standard_coin_puzzle(allocator: &mut AllocEncoder) -> Result<Puzzle, types::Error> {
@@ -247,7 +243,6 @@ pub fn signer(private_key: &PrivateKey, value: &[u8]) -> (PublicKey, Aggsig) {
     (public_key, sig)
 }
 
-// XXX Make one step conversions to puzzle hash and puzzle for private key.
 pub fn private_to_public_key(private_key: &types::PrivateKey) -> types::PublicKey {
     let sk = private_key.to_bls();
     PublicKey::from_bls(sk.public_key())
@@ -283,6 +278,30 @@ pub fn sign_agg_sig_me(
     let signed = secret_key.sign(&message);
     assert!(signed.verify(&public_key, &message));
     signed
+}
+
+pub fn reward_payout_message(reward_puzzle_hash: &PuzzleHash) -> Vec<u8> {
+    let mut message = Vec::with_capacity(33);
+    message.push(b'x');
+    message.extend(reward_puzzle_hash.bytes());
+    message
+}
+
+pub fn sign_reward_payout(secret_key: &PrivateKey, reward_puzzle_hash: &PuzzleHash) -> Aggsig {
+    let message = reward_payout_message(reward_puzzle_hash);
+    let public_key = private_to_public_key(secret_key);
+    let signed = secret_key.sign(&message);
+    assert!(signed.verify(&public_key, &message));
+    signed
+}
+
+pub fn verify_reward_payout_signature(
+    pubkey: &PublicKey,
+    reward_puzzle_hash: &PuzzleHash,
+    signature: &Aggsig,
+) -> bool {
+    let message = reward_payout_message(reward_puzzle_hash);
+    signature.verify(pubkey, &message)
 }
 
 pub fn standard_solution_unsafe(
@@ -327,7 +346,6 @@ pub fn standard_solution_partial(
     let quoted_conds = conditions.to_quoted_program(allocator)?;
     let quoted_conds_hash = quoted_conds.sha256tree(allocator);
     let solution = solution_for_conditions(allocator, conditions)?;
-    debug!("standard signing with parent coin {parent_coin:?}");
     let coin_agg_sig_me_message = agg_sig_me_message(
         quoted_conds_hash.bytes(),
         parent_coin,
@@ -353,7 +371,6 @@ pub fn standard_solution_partial(
     for cond in conds.iter() {
         match cond {
             CoinCondition::CreateCoin(_, _) => {
-                debug!("adding signature based on create coin: {aggregate_public_key:?} {coin_agg_sig_me_message:?}");
                 if !one_create {
                     one_create = true;
                     add_signature(
@@ -382,7 +399,6 @@ pub fn standard_solution_partial(
             }
             CoinCondition::AggSigUnsafe(pubkey, data) => {
                 // It's "unsafe" because it's just a hash of the data.
-                debug!("adding unsafe sig for {data:?}");
                 add_signature(
                     &mut aggregated_signature,
                     partial_signer(private_key, pubkey, data),
@@ -451,24 +467,5 @@ impl ChiaIdentity {
             public_key,
             synthetic_public_key,
         })
-    }
-
-    pub fn standard_solution(
-        &self,
-        allocator: &mut AllocEncoder,
-        targets: &[(PuzzleHash, Amount)],
-    ) -> Result<NodePtr, types::Error> {
-        let conditions: Vec<Node> = map_m(
-            |(ph, amt)| {
-                Ok(Node(
-                    (CREATE_COIN, (ph.clone(), (amt.clone(), ())))
-                        .to_clvm(allocator)
-                        .into_gen()?,
-                ))
-            },
-            targets,
-        )?;
-        let conditions_converted = conditions.to_clvm(allocator).into_gen()?;
-        solution_for_conditions(allocator, conditions_converted)
     }
 }

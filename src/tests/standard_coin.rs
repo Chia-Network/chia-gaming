@@ -25,7 +25,6 @@ use crate::tests::constants::{
 };
 use crate::utils::number_from_u8;
 
-#[test]
 fn test_puzzle_for_pk() {
     let mut allocator = AllocEncoder::new();
 
@@ -50,7 +49,6 @@ fn test_puzzle_for_pk() {
     assert_eq!(got_puzzle_hash, predicted_puzzle_hash);
 }
 
-#[test]
 fn test_calculate_synthetic_offset() {
     let pk_bytes: [u8; 48] = [
         0xa3, 0xbb, 0xce, 0xd3, 0x3d, 0x27, 0x32, 0x9d, 0xa1, 0xe3, 0x60, 0xff, 0x4b, 0x0f, 0x00,
@@ -70,7 +68,6 @@ fn test_calculate_synthetic_offset() {
     assert_eq!(offset, want_offset);
 }
 
-#[test]
 fn test_calculate_synthetic_public_key() {
     let pk_bytes: [u8; 48] = [
         0xa3, 0xbb, 0xce, 0xd3, 0x3d, 0x27, 0x32, 0x9d, 0xa1, 0xe3, 0x60, 0xff, 0x4b, 0x0f, 0x00,
@@ -92,7 +89,6 @@ fn test_calculate_synthetic_public_key() {
     assert_eq!(spk, want_spk);
 }
 
-#[test]
 fn test_puzzle_for_synthetic_public_key() {
     let mut allocator = AllocEncoder::new();
     let expect_hex = "ff02ffff01ff02ffff01ff02ffff03ff0bffff01ff02ffff03ffff09ff05ffff1dff0bffff1effff0bff0bffff02ff06ffff04ff02ffff04ff17ff8080808080808080ffff01ff02ff17ff2f80ffff01ff088080ff0180ffff01ff04ffff04ff04ffff04ff05ffff04ffff02ff06ffff04ff02ffff04ff17ff80808080ff80808080ffff02ff17ff2f808080ff0180ffff04ffff01ff32ff02ffff03ffff07ff0580ffff01ff0bffff0102ffff02ff06ffff04ff02ffff04ff09ff80808080ffff02ff06ffff04ff02ffff04ff0dff8080808080ffff01ff0bffff0101ff058080ff0180ff018080ffff04ffff01b0a3bbced33d27329da1e360ff4b0f00db1747eee8e66c0c0ae450f90b760f42972216c2ff027636aeeb5268bc2be2cedbff018080";
@@ -121,7 +117,6 @@ fn test_puzzle_for_synthetic_public_key() {
     );
 }
 
-#[test]
 fn test_standard_puzzle() {
     let mut allocator = AllocEncoder::new();
     let test_key = PublicKey::from_bytes(*TEST_PUBLIC_KEY_BYTES).expect("should be a public key");
@@ -133,7 +128,6 @@ fn test_standard_puzzle() {
     assert_eq!(expected_hash, puzzle_hash);
 }
 
-#[test]
 fn test_public_key_add() {
     let mut rng = ChaCha8Rng::from_seed([0; 32]);
     let private_key_1: PrivateKey = rng.gen();
@@ -146,7 +140,6 @@ fn test_public_key_add() {
     assert_ne!(pk3, pk2);
 }
 
-#[test]
 fn test_bram_2_of_2_signature() {
     let mut rng = ChaCha8Rng::from_seed([0; 32]);
     let private_key_1: PrivateKey = rng.gen();
@@ -163,7 +156,6 @@ fn test_bram_2_of_2_signature() {
     assert_eq!(signature_combined, total_sign_from_parts);
 }
 
-#[test]
 fn test_partial_signer() {
     let private_key = PrivateKey::from_bytes(&KEY_PAIR_PRIVATE.clone()).expect("should work");
     let public_key = PublicKey::from_bytes(*KEY_PAIR_PUBLIC).expect("should work");
@@ -175,7 +167,6 @@ fn test_partial_signer() {
     assert_eq!(want_signature, result_sig);
 }
 
-#[test]
 fn test_standard_puzzle_form() {
     let mut allocator = AllocEncoder::new();
     let std_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should work");
@@ -185,7 +176,6 @@ fn test_standard_puzzle_form() {
     );
 }
 
-#[test]
 fn test_calculate_synthetic_public_key_interface() {
     let public_key = PublicKey::from_bytes(*KEY_PAIR_PUBLIC).expect("should work");
     let synthetic_public_key =
@@ -197,7 +187,6 @@ fn test_calculate_synthetic_public_key_interface() {
     );
 }
 
-#[test]
 fn test_curry_and_treehash() {
     let mut allocator = AllocEncoder::new();
 
@@ -247,7 +236,6 @@ fn test_curry_and_treehash() {
     assert_eq!(curried_program_hash, pre_hashed);
 }
 
-#[test]
 // From: https://github.com/richardkiss/chialisp_stdlib/blob/bram-api/tests/test_signing.py
 // Thanks for giving this concise explanation.
 fn test_standard_puzzle_solution_maker() {
@@ -307,4 +295,36 @@ fn test_standard_puzzle_solution_maker() {
     assert!(spend_info
         .signature
         .verify(&public_key, quoted_conditions_hash.bytes()));
+}
+
+pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
+    vec![
+        ("test_puzzle_for_pk", &test_puzzle_for_pk),
+        (
+            "test_calculate_synthetic_offset",
+            &test_calculate_synthetic_offset,
+        ),
+        (
+            "test_calculate_synthetic_public_key",
+            &test_calculate_synthetic_public_key,
+        ),
+        (
+            "test_puzzle_for_synthetic_public_key",
+            &test_puzzle_for_synthetic_public_key,
+        ),
+        ("test_standard_puzzle", &test_standard_puzzle),
+        ("test_public_key_add", &test_public_key_add),
+        ("test_bram_2_of_2_signature", &test_bram_2_of_2_signature),
+        ("test_partial_signer", &test_partial_signer),
+        ("test_standard_puzzle_form", &test_standard_puzzle_form),
+        (
+            "test_calculate_synthetic_public_key_interface",
+            &test_calculate_synthetic_public_key_interface,
+        ),
+        ("test_curry_and_treehash", &test_curry_and_treehash),
+        (
+            "test_standard_puzzle_solution_maker",
+            &test_standard_puzzle_solution_maker,
+        ),
+    ]
 }

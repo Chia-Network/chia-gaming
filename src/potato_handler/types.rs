@@ -2,30 +2,29 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use rand::Rng;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use serde_json_any_key::*;
 
+use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::channel_handler::types::{
-    ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartFailed, GameStartInfo,
-    GameStartInfoInterface, MoveResult, PotatoMoveCachedData, PotatoSignatures, ReadableMove,
+    ChannelHandlerEnv, ChannelHandlerPrivateKeys, PotatoMoveCachedData, PotatoSignatures,
+    ReadableMove,
 };
-use crate::channel_handler::v1;
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinString, Error, GameID, GameType, Hash, Program, ProgramRef,
-    PuzzleHash, SpendBundle, Timeout,
+    Aggsig, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, Program, ProgramRef,
+    PuzzleHash, Spend, SpendBundle, Timeout,
 };
+use crate::potato_handler::effects::{Effect, ResyncInfo};
 use crate::potato_handler::handshake::{HandshakeA, HandshakeB};
 use crate::potato_handler::start::GameStart;
-use crate::referee::types::RefereeOnChainTransaction;
-use crate::shutdown::{BasicShutdownConditions, ShutdownConditions};
+use crate::referee::types::GameMoveDetails;
 
 // Internal: decide what kind of condition wait we're in.
 #[derive(Debug)]
 pub enum ConditionWaitKind {
     Channel(CoinString),
-    Unroll(CoinString),
-    Game,
+    Unroll(CoinString, usize),
 }
 
 /// Async interface for messaging out of the game layer toward the wallet.
@@ -35,11 +34,7 @@ pub enum ConditionWaitKind {
 /// to not take place in the potato handler.  The injected wallet bootstrap
 /// dependency must be stateful enough that it can cope with receiving a partly
 /// funded offer spend bundle and fully fund it if needed.
-pub trait BootstrapTowardGame<
-    G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
-    R: Rng,
->
-{
+pub trait BootstrapTowardGame {
     /// Gives a partly signed offer to the wallet bootstrap.
     ///
     /// Intended use: channel_puzzle_hash delivers the desired puzzle hash and this
@@ -76,14 +71,11 @@ pub trait BootstrapTowardGame<
     ///
     /// Only alice sends this spend bundle in message E, but only after receiving
     /// message D.
-    fn channel_offer<'a>(
+    fn channel_offer<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
         bundle: SpendBundle,
-    ) -> Result<(), Error>
-    where
-        R: 'a,
-        G: 'a;
+    ) -> Result<Option<Effect>, Error>;
 
     /// Gives the fully signed offer to the wallet bootstrap.
     /// Causes bob to send this spend bundle down the wire to the other peer.
@@ -92,8 +84,8 @@ pub trait BootstrapTowardGame<
     /// fully spendble transaction will result, to which fee might need to be
     /// added.
     ///
-    /// Alice sends this to the wallet interface via received_channel_transaction
-    /// completion to finish this phase of execution.
+    /// Alice receives this via the `channel_transaction_completion` callback
+    /// from the wallet interface to finish this phase of execution.
     ///
     /// Bob receives this callback from the wallet interface with the fully funded
     /// but not fee adjusted spend bundle on bob's side.  It is given back to alice
@@ -104,14 +96,11 @@ pub trait BootstrapTowardGame<
     ///
     /// Both alice and bob, upon knowing the full channel coin id, use the more
     /// general wallet interface to register for notifications of the channel coin.
-    fn channel_transaction_completion<'a>(
+    fn channel_transaction_completion<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
         bundle: &SpendBundle,
-    ) -> Result<(), Error>
-    where
-        R: 'a,
-        G: 'a;
+    ) -> Result<Option<Effect>, Error>;
 }
 
 /// Async interface implemented by Peer to receive notifications about wallet
@@ -138,58 +127,31 @@ pub trait BootstrapTowardWallet {
     /// wallet object injected dependency to finish funding this and actually
     /// spend it.
     fn received_channel_offer(&mut self, bundle: &SpendBundle) -> Result<(), Error>;
-
-    /// Bob has sent this to us via the potato interface and it is given here to
-    /// the wallet injected dependency to actually spend.  Alice must add a fee
-    /// if needed.
-    ///
-    /// Both alice and bob, upon knowing the full channel coin id, use the more
-    /// general wallet interface to register for notifications of the channel coin.
-    fn received_channel_transaction_completion(
-        &mut self,
-        bundle: &SpendBundle,
-    ) -> Result<(), Error>;
 }
 
 /// Spend wallet receiver
-pub trait SpendWalletReceiver<
-    G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
-    R: Rng,
->
-{
-    fn coin_created<'a>(
+pub trait SpendWalletReceiver {
+    fn coin_created<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
         coin_id: &CoinString,
-    ) -> Result<(), Error>
-    where
-        G: 'a,
-        R: 'a;
-    fn coin_spent<'a>(
+    ) -> Result<Option<Vec<Effect>>, Error>;
+    fn coin_spent<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
         coin_id: &CoinString,
-    ) -> Result<(), Error>
-    where
-        G: 'a,
-        R: 'a;
-    fn coin_timeout_reached<'a>(
+    ) -> Result<Vec<Effect>, Error>;
+    fn coin_timeout_reached<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
         coin_id: &CoinString,
-    ) -> Result<(), Error>
-    where
-        G: 'a,
-        R: 'a;
-    fn coin_puzzle_and_solution<'a>(
+    ) -> Result<Vec<Effect>, Error>;
+    fn coin_puzzle_and_solution<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
-    ) -> Result<(), Error>
-    where
-        G: 'a,
-        R: 'a;
+    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error>;
 }
 
 /// Unroll time wallet interface.
@@ -211,125 +173,59 @@ pub trait WalletSpendInterface {
 }
 
 pub trait ToLocalUI {
-    fn resync_move(
+    fn notification(
         &mut self,
-        _id: &GameID,
-        _state_number: usize,
-        _is_my_turn: bool,
-    ) -> Result<(), Error> {
-        Ok(())
-    }
-
-    fn self_move(
-        &mut self,
-        _id: &GameID,
-        _state_number: usize,
-        _readable: &[u8],
-    ) -> Result<(), Error> {
-        Ok(())
-    }
-    fn opponent_moved(
-        &mut self,
-        allocator: &AllocEncoder,
-        id: &GameID,
-        state_number: usize,
-        readable: ReadableMove,
-        mover_share: Amount,
+        notification: &crate::potato_handler::effects::GameNotification,
     ) -> Result<(), Error>;
-    fn raw_game_message(&mut self, _id: &GameID, _readable: &[u8]) -> Result<(), Error> {
-        Ok(())
-    }
-    fn game_message(
-        &mut self,
-        allocator: &AllocEncoder,
-        id: &GameID,
-        readable: ReadableMove,
-    ) -> Result<(), Error>;
-
-    fn game_start(&mut self, id: &[GameID], failed: Option<GameStartFailed>) -> Result<(), Error>;
-    fn game_finished(&mut self, id: &GameID, mover_share: Amount) -> Result<(), Error>;
-    fn game_cancelled(&mut self, id: &GameID) -> Result<(), Error>;
-
-    fn shutdown_started(&mut self) -> Result<(), Error>;
-    fn shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error>;
-    fn going_on_chain(&mut self, got_error: bool) -> Result<(), Error>;
 }
 
-pub trait FromLocalUI<
-    G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
-    R: Rng,
->
-{
-    /// Start games requires queueing so that we handle them one at a time only
-    /// when the previous start game.
-    ///
-    /// Queue of games we want to start that are also waiting after this.
-    ///
-    /// We must request the potato if not had.
-    ///
-    /// General flow:
-    ///
-    /// Have queues of games we're starting and other side is starting.
-    fn start_games<'a>(
+pub trait FromLocalUI {
+    fn propose_game<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
-        i_initiated: bool,
+        env: &mut ChannelHandlerEnv<'_, R>,
         game: &GameStart,
-    ) -> Result<Vec<GameID>, Error>
-    where
-        G: 'a,
-        R: 'a;
+    ) -> Result<(Vec<GameID>, Vec<Effect>), Error>;
 
-    fn make_move<'a>(
+    fn accept_proposal<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
+        game_id: &GameID,
+    ) -> Result<Vec<Effect>, Error>;
+
+    fn cancel_proposal<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+        game_id: &GameID,
+    ) -> Result<Vec<Effect>, Error>;
+
+    fn make_move<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
         id: &GameID,
         readable: &ReadableMove,
         new_entropy: Hash,
-    ) -> Result<(), Error>
-    where
-        G: 'a,
-        R: 'a;
+    ) -> Result<Vec<Effect>, Error>;
 
-    fn accept<'a>(&mut self, penv: &mut dyn PeerEnv<'a, G, R>, id: &GameID) -> Result<(), Error>
-    where
-        G: 'a,
-        R: 'a;
-
-    fn shut_down<'a>(
+    fn accept_timeout<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
-        condition: Rc<dyn ShutdownConditions>,
-    ) -> Result<(), Error>
-    where
-        G: 'a,
-        R: 'a;
+        env: &mut ChannelHandlerEnv<'_, R>,
+        id: &GameID,
+    ) -> Result<Vec<Effect>, Error>;
+
+    fn shut_down<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+    ) -> Result<Vec<Effect>, Error>;
 }
 
-#[derive(Debug, Clone)]
-pub struct GSI(pub Rc<dyn GameStartInfoInterface>);
-impl Serialize for GSI {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let doc = self.0.serialize().unwrap(); // deal with returning error
-        doc.serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for GSI {
-    fn deserialize<D>(deserializer: D) -> Result<GSI, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let bson_data: bson::Bson = bson::Bson::deserialize(deserializer)?;
-        if let Ok(gsi) = bson::from_bson::<GameStartInfo>(bson_data.clone()) {
-            return Ok(GSI(Rc::new(gsi)));
-        }
-        let gsi: v1::game_start_info::GameStartInfo = bson::from_bson(bson_data).unwrap(); // deal with error
-        Ok(GSI(Rc::new(gsi)))
-    }
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum BatchAction {
+    ProposeGame(Rc<GameStartInfo>),
+    AcceptProposal(GameID),
+    CancelProposal(GameID),
+    Move(GameID, GameMoveDetails),
+    #[serde(rename = "Accept")]
+    AcceptTimeout(GameID, Amount),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -346,13 +242,14 @@ pub enum PeerMessage {
         bundle: SpendBundle,
     },
 
-    Nil(PotatoSignatures),
-    Move(GameID, MoveResult),
-    Message(GameID, Vec<u8>),
-    Accept(GameID, Amount, PotatoSignatures),
-    Shutdown(Aggsig, ProgramRef),
+    Batch {
+        actions: Vec<BatchAction>,
+        signatures: PotatoSignatures,
+        clean_shutdown: Option<Box<(Aggsig, ProgramRef)>>,
+    },
+    CleanShutdownComplete(CoinSpend),
     RequestPotato(()),
-    StartGames(PotatoSignatures, Vec<GSI>),
+    Message(GameID, Vec<u8>),
 }
 
 impl PeerMessage {
@@ -371,15 +268,6 @@ pub trait PacketSender {
     fn send_message(&mut self, msg: &PeerMessage) -> Result<(), Error>;
 }
 
-pub trait PeerEnv<'inputs, G, R>
-where
-    G: ToLocalUI + WalletSpendInterface + BootstrapTowardWallet + PacketSender,
-    G: 'inputs,
-    R: Rng + 'inputs,
-{
-    fn env(&mut self) -> (&mut ChannelHandlerEnv<'inputs, R>, &mut G);
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub enum PotatoState {
     Absent,
@@ -387,82 +275,54 @@ pub enum PotatoState {
     Present,
 }
 
-/// For now, just pay to the reward puzzle hash if we come back from serialization.
-/// This gives the coins to the user and ensures we're not permanaently deadlocked.
-pub struct ShutdownActionHolder(pub Rc<dyn ShutdownConditions>);
-
-impl Serialize for ShutdownActionHolder {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        BasicShutdownConditions.serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for ShutdownActionHolder {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let deserialized = BasicShutdownConditions::deserialize(deserializer)?;
-        Ok(ShutdownActionHolder(Rc::new(deserialized)))
-    }
-}
-
 #[derive(Serialize, Deserialize)]
 pub enum GameAction {
     Move(GameID, ReadableMove, Hash),
-    RedoMoveV0(
-        GameID,
-        CoinString,
-        PuzzleHash,
-        Box<RefereeOnChainTransaction>,
-    ),
-    RedoMoveV1(
-        CoinString,
-        PuzzleHash,
-        Box<RefereeOnChainTransaction>,
-        Option<PotatoMoveCachedData>,
-        Amount,
-    ),
-    RedoAccept(
-        GameID,
-        CoinString,
-        PuzzleHash,
-        Box<RefereeOnChainTransaction>,
-    ),
-    Accept(GameID),
-    Shutdown(ShutdownActionHolder),
-    LocalStartGame,
+    RedoMove(GameID, CoinString, Rc<PotatoMoveCachedData>),
+    #[serde(rename = "RedoAccept")]
+    RedoAcceptTimeout(GameID, CoinString, PuzzleHash, Box<Spend>),
+    #[serde(rename = "Accept")]
+    AcceptTimeout(GameID),
+    CleanShutdown,
     SendPotato,
+    QueuedProposal(Rc<GameStartInfo>, Rc<GameStartInfo>),
+    QueuedAcceptProposal(GameID),
+    QueuedCancelProposal(GameID),
+    Cheat(GameID, Amount, Hash),
 }
 
 impl std::fmt::Debug for GameAction {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
             GameAction::Move(gi, rm, h) => write!(formatter, "Move({gi:?},{rm:?},{h:?})"),
-            GameAction::RedoMoveV0(gi, cs, ph, rt) => {
-                write!(formatter, "RedoMoveV0({gi:?},{cs:?},{ph:?},{rt:?})")
+            GameAction::RedoMove(gi, cs, md) => {
+                write!(formatter, "RedoMove({gi:?},{cs:?},{md:?})")
             }
-            GameAction::RedoMoveV1(cs, ph, rt, md, amt) => {
-                write!(formatter, "RedoMoveV1({cs:?},{ph:?},{rt:?},{md:?},{amt:?})")
+            GameAction::RedoAcceptTimeout(gi, cs, ph, rt) => {
+                write!(formatter, "RedoAcceptTimeout({gi:?},{cs:?},{ph:?},{rt:?})")
             }
-            GameAction::RedoAccept(gi, cs, ph, rt) => {
-                write!(formatter, "RedoAccept({gi:?},{cs:?},{ph:?},{rt:?})")
-            }
-            GameAction::Accept(gi) => write!(formatter, "Accept({gi:?})"),
-            GameAction::Shutdown(_) => write!(formatter, "Shutdown(..)"),
-            GameAction::LocalStartGame => write!(formatter, "LocalStartGame"),
+            GameAction::AcceptTimeout(gi) => write!(formatter, "AcceptTimeout({gi:?})"),
+            GameAction::CleanShutdown => write!(formatter, "CleanShutdown"),
             GameAction::SendPotato => write!(formatter, "SendPotato"),
+            GameAction::QueuedProposal(_, _) => write!(formatter, "QueuedProposal(..)"),
+            GameAction::QueuedAcceptProposal(gi) => {
+                write!(formatter, "QueuedAcceptProposal({gi:?})")
+            }
+            GameAction::QueuedCancelProposal(gi) => {
+                write!(formatter, "QueuedCancelProposal({gi:?})")
+            }
+            GameAction::Cheat(gi, ms, _) => write!(formatter, "Cheat({gi:?},{ms:?})"),
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameFactory {
-    pub version: usize,
     pub program: Rc<Program>,
+    /// The parser program used by the responder.
+    /// The `program` field holds the proposal (make_proposal) program.
+    #[serde(default)]
+    pub parser_program: Option<Rc<Program>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -493,70 +353,47 @@ pub trait PotatoHandlerImpl {
 
     fn my_move_in_game(&self, game_id: &GameID) -> Option<bool>;
 
-    fn get_game_state_id<'a, G, R: Rng + 'a>(
+    fn get_game_state_id<R: Rng>(
         &self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
-    ) -> Result<Option<Hash>, Error>
-    where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
+        env: &mut ChannelHandlerEnv<'_, R>,
+    ) -> Result<Option<Hash>, Error>;
 
-    fn check_game_coin_spent<'a, G, R: Rng + 'a>(
+    fn check_game_coin_spent(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
         coin_id: &CoinString,
-    ) -> Result<bool, Error>
-    where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
+    ) -> Result<(bool, Option<Effect>), Error>;
 
-    fn handle_game_coin_spent<'a, G, R: Rng + 'a>(
+    fn handle_game_coin_spent<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
         coin_id: &CoinString,
         puzzle: &Program,
         solution: &Program,
-    ) -> Result<(), Error>
-    where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
+    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error>;
 
-    fn coin_timeout_reached<'a, G, R: Rng + 'a>(
+    fn coin_timeout_reached<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
         coin_id: &CoinString,
-    ) -> Result<(), Error>
-    where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
+    ) -> Result<Vec<Effect>, Error>;
 
-    fn next_action<'a, G, R: Rng + 'a>(
+    fn next_action<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
-    ) -> Result<(), Error>
-    where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
+        env: &mut ChannelHandlerEnv<'_, R>,
+    ) -> Result<Vec<Effect>, Error>;
 
-    fn do_on_chain_move<'a, G, R: Rng + 'a>(
+    fn do_on_chain_move<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
         current_coin: &CoinString,
         game_id: GameID,
         readable_move: ReadableMove,
         entropy: Hash,
-    ) -> Result<(), Error>
-    where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
+    ) -> Result<Option<Effect>, Error>;
 
-    fn do_on_chain_action<'a, G, R: Rng + 'a>(
+    fn do_on_chain_action<R: Rng>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        env: &mut ChannelHandlerEnv<'_, R>,
         action: GameAction,
-    ) -> Result<(), Error>
-    where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
-
-    fn shut_down<'a, G, R: Rng + 'a>(
-        &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
-        conditions: Rc<dyn ShutdownConditions>,
-    ) -> Result<bool, Error>
-    where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
+    ) -> Result<Vec<Effect>, Error>;
 }

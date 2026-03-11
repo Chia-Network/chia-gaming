@@ -36,8 +36,6 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
   const socketRef = useRef<Socket>(undefined);
   const [fragment] = useState<FragmentData>(getFragmentParams());
   const [lobbyGames, setLobbyGames] = useState<GameDefinition[]>([]);
-  console.log('fragment retrieved', fragment);
-
   const joinRoom = useCallback(
     async (token: string) => {
       const { data } = await axios.post(`${LOBBY_URL}/lobby/join-room`, {
@@ -55,14 +53,10 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
 
   function tryJoinRoom() {
     for (const room of rooms) {
-      console.log('we have: uniqueId', uniqueId, 'params', params);
-      console.log('checking room', room);
       if (!room.host) {
-        console.log('either host or joiner missing');
         continue;
       }
       if (params.token && room.token != params.token) {
-        console.log('room with wrong token wanted', params.token);
         continue;
       }
 
@@ -74,13 +68,6 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
         continue;
       }
 
-      console.log(
-        'conditions to enter',
-        room.host === uniqueId,
-        room.joiner === uniqueId,
-        room.target,
-        walletConnect,
-      );
       if (
         (room.host === uniqueId || room.joiner === uniqueId) &&
         room.target &&
@@ -88,7 +75,6 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
       ) {
         const iStarted = room.host === uniqueId;
         // This room is inhabited and contains us, redirect.
-        console.log('take us to game', JSON.stringify(room));
         // This is gross but should work ok.
         fetch('/lobby/good', {
           method: 'POST',
@@ -112,7 +98,8 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
               `${room.target}&uniqueId=${uniqueId}&iStarted=${iStarted}&walletToken=${walletToken}` as string;
             console.warn(`from tryJoinRoom, navigate ${newUrl}`);
             window.location.href = newUrl;
-          });
+          })
+          .catch((e) => console.error('join-room failed:', e));
         break;
       }
     }
@@ -181,7 +168,6 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
 
   const setLobbyAlias = useCallback(
     async (id: string, alias: string) => {
-      console.log('setLobbyAlias', id, alias);
       const { data } = await axios.post(`${LOBBY_URL}/lobby/change-alias`, {
         id,
         newAlias: alias,

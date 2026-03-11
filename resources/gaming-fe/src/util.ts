@@ -1,4 +1,3 @@
-import { Program } from 'clvm-lib';
 import { v4 as uuidv4 } from 'uuid';
 
 export function toUint8(s: string) {
@@ -85,7 +84,6 @@ interface GameSelection {
 // Return true if game= and token= are present in the url.
 export function getGameSelection(): GameSelection | undefined {
   const search = getSearchParams();
-  console.log('getGameSelection', search);
   if (search.game && search.join) {
     return {
       game: search.game,
@@ -104,7 +102,6 @@ function clvm_enlist(clvms: string[]): string {
   }
 
   result.push('80');
-  console.log(result);
   return result.join('');
 }
 
@@ -124,7 +121,6 @@ function spend_to_clvm(spend: any): string {
     spend.solution,
     clvm_length(spend.signature),
   ]);
-  console.log('spend', spend_clvm);
   return spend_clvm;
 }
 
@@ -133,47 +129,14 @@ function coin_spend_to_clvm(coinspend: any): string {
     clvm_length(coinspend.coin),
     spend_to_clvm(coinspend.bundle),
   ]);
-  console.log('coin_spend', coin_spend_clvm);
   return coin_spend_clvm;
-}
-
-function explode(p: any): any {
-  if (p.value instanceof Uint8Array) {
-    return p.value;
-  } else {
-    return [explode(p.value[0]), explode(p.value[1])];
-  }
-}
-
-export function proper_list(p: any): any {
-  const result = [];
-  while (!(p instanceof Uint8Array)) {
-    result.push(p[0]);
-    p = p[1];
-  }
-  return result;
-}
-
-export function decode_sexp_hex(h: string): any {
-  const p = Program.deserialize(toUint8(h));
-  return explode(p);
 }
 
 export function spend_bundle_to_clvm(sbundle: any): string {
   const bundle_clvm = clvm_enlist(
     sbundle.spends.map((s: any) => coin_spend_to_clvm(s)),
   );
-  console.log('bundle', bundle_clvm);
   return bundle_clvm;
-}
-
-export function popcount(n: number): number {
-  let r = 0;
-  for (let i = 0; i < 8; i++) {
-    r += n & 1;
-    n >>= 1;
-  }
-  return r;
 }
 
 export async function empty() {
@@ -186,9 +149,8 @@ export function getRandomInt(max: number) {
 
 export function getEvenHexString(n: number) {
   let hexString = n.toString(16);
-  if ((hexString.length & 1) == 0) {
-    return hexString;
-  } else {
-    return hexString.slice(0, hexString.length - 1);
+  if (hexString.length & 1) {
+    hexString = '0' + hexString;
   }
+  return hexString;
 }

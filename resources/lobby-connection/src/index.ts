@@ -191,11 +191,11 @@ export function useLobbySocket(
   const [didJoin, setDidJoin] = useState(false);
   const [lobbyGames, setLobbyGames] = useState<GameDefinition[]>([]);
   const socketRef = useRef<Socket>(undefined);
-  console.log('fragment retrieved', fragment);
+  const navigatingRef = useRef(false);
 
   const joinRoom = useCallback(
     async (token: string) => {
-      const { data } = await fetch(
+      const room = await fetch(
         `${lobbyUrl}/lobby/join-room`,
         {
           method: "POST",
@@ -210,48 +210,32 @@ export function useLobbySocket(
         }
       ).then(res => res.json());
 
-      return data.room as Room;
+      return room as Room;
     },
     [uniqueId],
   );
 
   function tryJoinRoom() {
     for (const room of rooms) {
-      console.log('we have: uniqueId', uniqueId, 'params', params);
-      console.log('checking room', room);
-      if (!room.host) {
-        console.log('either host or joiner missing');
-        continue;
-      }
-      if (params.token && room.token != params.token) {
-        console.log('room with wrong token wanted', params.token);
-        continue;
-      }
+      if (!room.host) continue;
+      if (params.token && room.token != params.token) continue;
 
       if (params.token && room.host != uniqueId && !room.joiner && !didJoin) {
-        // We know this is the room we want and we're the joiner.  Join it.
-        // We'll get an update and ungate the rest.
         setDidJoin(true);
-        joinRoom(params.token);
+        joinRoom(params.token).catch(() => {});
         continue;
       }
 
-      console.log(
-        'conditions to enter',
-        room.host === uniqueId,
-        room.joiner === uniqueId,
-        room.target,
-        walletConnect,
-      );
       if (
         (room.host === uniqueId || room.joiner === uniqueId) &&
         room.target &&
-        walletConnect
+        walletConnect &&
+        !navigatingRef.current
       ) {
+        navigatingRef.current = true;
         const iStarted = room.host === uniqueId;
-        // This room is inhabited and contains us, redirect.
-        console.log('take us to game', JSON.stringify(room));
-        // This is gross but should work ok.
+        const newUrl =
+          `${room.target}&uniqueId=${uniqueId}&iStarted=${iStarted}` as string;
         fetch('/lobby/good', {
           method: 'POST',
           headers: {
@@ -261,13 +245,8 @@ export function useLobbySocket(
             id: uniqueId,
             token: room.token,
           }),
-        })
-          .then((res) => res.json())
-          .then(() => {
-            const newUrl =
-              `${room.target}&uniqueId=${uniqueId}&iStarted=${iStarted}` as string;
-            return navigate(newUrl);
-          });
+        }).catch(() => {});
+        navigate(newUrl);
         break;
       }
     }
@@ -342,8 +321,7 @@ export function useLobbySocket(
 
   const setLobbyAlias = useCallback(
     async (id: string, alias: string) => {
-      console.log('setLobbyAlias', id, alias);
-      const { data } = await fetch(
+      const result = await fetch(
         `${lobbyUrl}/lobby/change-alias`, {
           method: "POST",
           body: JSON.stringify({
@@ -353,7 +331,7 @@ export function useLobbySocket(
           headers: { "Content-Type": "application/json" }
         }
       ).then(res => res.json());
-      return data.player;
+      return result?.player;
     },
     [uniqueId],
   );
