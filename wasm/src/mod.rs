@@ -382,7 +382,13 @@ mod gaming_wasm {
     }
 
     fn hex_to_coinstring(hex: &str) -> Result<CoinString, types::Error> {
-        let coinstring_bytes = hex::decode(hex).into_gen()?;
+        let coinstring_bytes = hex::decode(hex).map_err(|e| {
+            types::Error::StrErr(format!(
+                "hex_to_coinstring failed: {e:?}, input length={}, input={:?}",
+                hex.len(),
+                if hex.len() > 64 { &hex[..64] } else { hex },
+            ))
+        })?;
         Ok(CoinString::from_bytes(&coinstring_bytes))
     }
 

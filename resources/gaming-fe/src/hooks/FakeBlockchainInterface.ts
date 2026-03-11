@@ -49,9 +49,9 @@ function requestBlockData(forWho: any, block_number: number): Promise<any> {
         });
       }
       const converted_res: WatchReport = {
-        created_watched: res.created,
-        deleted_watched: res.deleted,
-        timed_out: res.timed_out,
+        created_watched: Array.isArray(res.created) ? res.created : [],
+        deleted_watched: Array.isArray(res.deleted) ? res.deleted : [],
+        timed_out: Array.isArray(res.timed_out) ? res.timed_out : [],
       };
       forWho.deliverBlock(block_number, converted_res);
     });
