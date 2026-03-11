@@ -57,7 +57,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     (cd "$FE_DIR" && yarn install)
 
     echo "=== Building simulator ==="
-    cargo build --features sim-tests
+    cargo build --bin chia-gaming-sim --features sim-server
 fi
 
 echo "=== Starting simulator ==="

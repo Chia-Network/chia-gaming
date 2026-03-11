@@ -8,8 +8,6 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use lazy_static::lazy_static;
-use log::debug;
-
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
@@ -169,7 +167,6 @@ impl GameRunner {
     }
 
     fn wait_block(&mut self) -> StringWithError {
-        debug!("entering wait block");
         self.simulator
             .farm_block(&self.neutral_identity.puzzle_hash);
         let new_height = self.chase_block()?;
@@ -216,7 +213,6 @@ impl GameRunner {
         let bytes = hex_to_bytes(coin)?;
         let coin_id = if bytes.len() > 32 {
             let cs = CoinString::from_bytes(&bytes);
-            debug!("coin string: {cs:?}");
             cs.to_coin_id()
         } else {
             CoinID::new(Hash::from_slice(&bytes)?)
@@ -302,7 +298,6 @@ impl GameRunner {
         let spend_program = Program::from_hex(blob)?;
         let spend_node = spend_program.to_nodeptr(&mut self.allocator)?;
         let spend_bundle = SpendBundle::from_clvm(&self.allocator, spend_node)?;
-        debug!("spend with bundle: {} spends", spend_bundle.spends.len());
         self.spend_list_of_spends(&spend_bundle.spends)
     }
 
@@ -356,10 +351,6 @@ impl GameRunner {
         });
         let value = serde_json::to_value(&spends).into_gen()?;
         let serialized = serde_json::to_string(&value).into_gen()?;
-        debug!(
-            "block spends for height {height}: {} bytes",
-            serialized.len()
-        );
         Ok(serialized)
     }
 }
@@ -403,8 +394,6 @@ fn pass_on_request(
     response: &mut Response,
     wr: WebRequest,
 ) -> Result<(), String> {
-    debug!("pass on request");
-
     let locked = ONE_REQUEST.lock().unwrap();
 
     {
@@ -590,25 +579,18 @@ fn service_main_inner() {
 
         let s = std::thread::spawn(move || {
             std::panic::catch_unwind(move || {
-                debug!("starting simulator thread");
                 let simulator = Simulator::default();
-                debug!("have simulator");
                 let coinset_adapter = FullCoinSetAdapter::default();
                 let mut game_runner = GameRunner::new(simulator, coinset_adapter)
                     .map_err(|e| format!("{e}"))
                     .unwrap();
-                debug!("have game runner");
 
                 loop {
-                    debug!("simulator thread getting request");
                     let request = {
                         let channel = TO_WEB.1.lock().unwrap();
                         (*channel).recv().unwrap()
                     };
 
-                    if !matches!(request, WebRequest::GetBlockData(_) | WebRequest::WaitBlock) {
-                        debug!("request {request:?}");
-                    }
                     let result = {
                         match request {
                             WebRequest::Register(name) => game_runner.register(&name),

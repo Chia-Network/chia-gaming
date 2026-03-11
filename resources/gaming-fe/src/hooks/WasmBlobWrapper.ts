@@ -152,9 +152,6 @@ export class WasmBlobWrapper {
     if (!result || this.finished) return;
 
     const msgs = result.outbound_messages || [];
-    if (msgs.length > 0) {
-      console.log(`[wasm] sending ${msgs.length} outbound message(s)`);
-    }
     for (const msg of msgs) {
       this.sendMessage(this.messageNumber++, msg);
     }
@@ -166,12 +163,10 @@ export class WasmBlobWrapper {
       this.rxjsEmitter?.next({ type: 'finished' });
     }
     for (const err of result.receive_errors || []) {
-      console.error('[wasm] receive error:', err);
       this.rxjsEmitter?.next({ type: 'error', error: err });
     }
     for (const n of result.notifications || []) {
       const tag = typeof n === 'object' && n !== null ? Object.keys(n)[0] : String(n);
-      console.log('[wasm] notification:', tag);
       if (tag === 'ChannelCreated' && !this.channelReady) {
         this.channelReady = true;
       }
@@ -191,7 +186,6 @@ export class WasmBlobWrapper {
     }
     this.remoteNumber = msgno;
     const result = this.cradle.deliver_message(msg);
-    console.log(`[wasm] deliverMessage #${msgno} DELIVERED`);
     this.processResult(result);
   }
 

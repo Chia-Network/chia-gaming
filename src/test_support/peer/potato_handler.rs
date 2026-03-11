@@ -506,11 +506,11 @@ pub fn test_peer_smoke() {
     assert!(pipe_sender[0].message_pipe.queue.is_empty());
     assert!(pipe_sender[1].message_pipe.queue.is_empty());
 
-    let moves = prefix_test_moves(&mut allocator, 0);
+    let moves = prefix_test_moves(&mut allocator, GameID(0));
 
     for this_move in moves.iter() {
         let (who, what) = if let GameAction::Move(who, _, what, _) = this_move {
-            (who, what)
+            (*who, what.clone())
         } else {
             panic!();
         };
@@ -518,9 +518,8 @@ pub fn test_peer_smoke() {
         {
             let entropy = rng.gen();
             let mut env = ChannelHandlerEnv::new(&mut allocator, &mut rng).expect("should work");
-            let move_readable = what.clone();
             let effects = peers[who ^ 1]
-                .make_move(&mut env, &game_ids[0], &move_readable, entropy)
+                .make_move(&mut env, &game_ids[0], &what, entropy)
                 .expect("should work");
             apply_effects(effects, &mut allocator, &mut pipe_sender[who ^ 1]).expect("should work");
         }
