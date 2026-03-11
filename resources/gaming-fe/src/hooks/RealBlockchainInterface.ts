@@ -66,11 +66,6 @@ export class RealBlockchainInterface {
 
   async startMonitoring() {
     if (this.pollingTimer) return;
-    try {
-      await this.ensureRemoteWallet();
-    } catch (e) {
-      console.error('[wc-blockchain] failed to ensure remote wallet', e);
-    }
     this.poll();
   }
 
@@ -135,6 +130,14 @@ export class RealBlockchainInterface {
   }
 
   private async poll() {
+    if (this.remoteWalletId === undefined) {
+      try {
+        await this.ensureRemoteWallet();
+      } catch (e) {
+        console.warn('[wc-blockchain] remote wallet not ready, will retry next poll', e);
+      }
+    }
+
     try {
       const height = await rpc.getHeightInfo({});
       if (height > this.peak) {

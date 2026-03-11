@@ -13,5 +13,5 @@ export enum WalletType {
   DataLayer,
   DataLayerOffer,
   VC,
-  Remote,
+  Remote = 205,
 }
