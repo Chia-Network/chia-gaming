@@ -547,13 +547,11 @@ impl PotatoHandler {
                 }
                 BatchAction::CancelProposal(game_id) => {
                     let ch = self.channel_handler_mut()?;
-                    let found = ch.received_cancel_proposal(game_id)?;
-                    if found {
-                        effects.push(Effect::Notify(GameNotification::GameProposalCancelled {
-                            id: *game_id,
-                            reason: "cancelled by peer".to_string(),
-                        }));
-                    }
+                    ch.received_cancel_proposal(game_id)?;
+                    effects.push(Effect::Notify(GameNotification::GameProposalCancelled {
+                        id: *game_id,
+                        reason: "cancelled by peer".to_string(),
+                    }));
                 }
                 BatchAction::Move(game_id, game_move) => {
                     let move_result = {

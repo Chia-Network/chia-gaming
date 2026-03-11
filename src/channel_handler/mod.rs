@@ -1004,17 +1004,16 @@ impl ChannelHandler {
         Ok(())
     }
 
-    pub fn received_cancel_proposal(&mut self, game_id: &GameID) -> Result<bool, Error> {
-        if let Some(idx) = self
+    pub fn received_cancel_proposal(&mut self, game_id: &GameID) -> Result<(), Error> {
+        let idx = self
             .proposed_games
             .iter()
             .position(|p| p.game_id == *game_id)
-        {
-            self.proposed_games.remove(idx);
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+            .ok_or_else(|| {
+                Error::StrErr(format!("cancel for unknown proposal {game_id:?}"))
+            })?;
+        self.proposed_games.remove(idx);
+        Ok(())
     }
 
     pub fn cancel_all_proposals(&mut self) -> Vec<GameID> {

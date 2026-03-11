@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use log::debug;
+
 
 use serde::{Deserialize, Serialize};
 
@@ -102,7 +102,6 @@ impl LiveGame {
         self.referee_maker = new_ref;
         self.last_referee_puzzle_hash =
             self.referee_maker.outcome_referee_puzzle_hash(allocator)?;
-        debug!("MY MOVE: last_ref_ph={:?}", self.last_referee_puzzle_hash);
         Ok(referee_result)
     }
 
@@ -126,10 +125,6 @@ impl LiveGame {
         if their_move_result.puzzle_hash_for_unroll.is_some() {
             self.last_referee_puzzle_hash =
                 self.referee_maker.outcome_referee_puzzle_hash(allocator)?;
-            debug!(
-                "ACCEPT MOVE: last_ref_ph={:?}",
-                self.last_referee_puzzle_hash
-            );
         }
         Ok(their_move_result)
     }

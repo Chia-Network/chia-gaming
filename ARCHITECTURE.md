@@ -219,13 +219,35 @@ Every potato pass is a single `PeerMessage::Batch` containing:
    complete `CoinSpend` ready for on-chain submission.
 
 The receiver processes actions sequentially and rejects the entire batch if any
-action fails validation. The sender is responsible for ordering actions correctly
-(e.g., game acceptances before proposal acceptances to ensure funds are available).
+action fails validation. Rejection uses a **rollback mechanism**: the
+`ChannelHandler` (which derives `Clone`) is snapshot-cloned before processing
+begins. If any action or signature verification fails, the snapshot is restored,
+undoing all intermediate mutations from earlier actions in the batch. The error
+then triggers go-on-chain (the peer sent a bad batch, so we dispute on-chain).
+
+Because the batch comes with the potato, the sender constructed it while holding
+the definitive state. Every action in the batch should be valid against that
+state — any failure is a protocol violation by the peer, not a benign race.
+
+The sender is responsible for ordering actions correctly (e.g., game acceptances
+before proposal acceptances to ensure funds are available).
 
 Only one move per game is allowed per batch, enforced by the existing turn-taking
 rules (you can't move on your opponent's turn).
 
 The `current_state_number` increments once per batch, not per action.
+
+### Message-Level Validation
+
+Before batch processing begins, two checks protect the receiver:
+
+- **Message size limit:** Messages larger than 10 MiB are rejected immediately
+  in `process_incoming_message`, before deserialization. This prevents a
+  malicious peer from consuming unbounded memory.
+- **Double-potato detection:** If a `Batch` arrives while we already hold the
+  potato (`PotatoState::Present`), it is rejected as a protocol violation.
+  Only one player can hold the potato at a time; receiving a second batch
+  means the peer is misbehaving.
 
 ### Local Action Queueing
 
@@ -278,6 +300,28 @@ Games are initiated through a propose/accept flow:
   Both receive `GameProposalCancelled`. If a channel goes on-chain while a
    proposal is still pending, proposals not reflected in the unroll are
    automatically cancelled.
+
+### Receiver-Side Proposal Validation
+
+When `apply_received_proposal` processes an incoming `ProposeGame`, it enforces
+several checks before recording the proposal. Any failure rejects the batch
+(triggering rollback and go-on-chain):
+
+- **Nonce parity:** The proposal's `game_id` nonce must have the correct parity
+  for the sender's role (even for initiator, odd for responder).
+- **Nonce monotonicity:** The nonce must be >= the expected minimum (nonces may
+  skip due to cancelled proposals, but cannot go backwards).
+- **Nonce gap cap:** The nonce must not jump more than `MAX_NONCE_GAP` (1000)
+  ahead of the expected value. Prevents a malicious peer from claiming an
+  absurdly high nonce.
+- **Amount consistency:** The proposal's `amount` must equal
+  `my_contribution + their_contribution`. Prevents the peer from creating games
+  where money appears or disappears.
+- **Timeout cap:** The proposal's `timeout` must not exceed `MAX_GAME_TIMEOUT`
+  (10000 blocks). Prevents a peer from locking funds in unreasonably long games.
+- **Proposal count limit:** The total number of outstanding proposals must not
+  exceed `MAX_PROPOSALS` (100). Prevents a peer from flooding proposals to
+  exhaust memory or starve resources.
 
 Multiple proposals and acceptances can be batched in a single potato pass.
 Acceptances should be ordered before proposals in the batch to ensure funds
@@ -353,6 +397,20 @@ The `ChannelHandler` tracks `live_games`, `pending_accept_timeouts`,
 player balances (`my_allocated_balance`, `their_allocated_balance`), and the
 current `state_number`. Each batch increments the `state_number` once and
 produces a new signed unroll commitment.
+
+### Receiver-Side Move Validation
+
+When `apply_received_move` processes an incoming `BatchAction::Move`, it checks:
+
+- **`mover_share` <= game amount:** The peer cannot claim a timeout share larger
+  than the pot.
+- **Move size <= `max_move_size`:** The move bytes must not exceed the limit set
+  by the previous move's validator. The limit is read from `spend_this_coin()`
+  (the post-move referee args), which reflects the constraint the validator
+  declared for the *next* move.
+
+Both failures reject the batch (rollback and go-on-chain).
+
 See [AcceptTimeout Lifecycle](#accepttimeout-lifecycle) for details on what
 happens when accept_timeout hasn't been confirmed before going on-chain.
 
@@ -1492,7 +1550,9 @@ game. The full lifecycle is:
 4. When the potato comes back (acknowledgment), `drain_cached_accept_timeouts` processes
   the `PotatoAcceptTimeout` entries in `cached_last_actions`, emitting `WeTimedOut` for
    each accepted game. The opponent who receives the accept-timeout gets
-   `OpponentTimedOut` immediately upon processing the batch.
+   `OpponentTimedOut` immediately upon processing the batch — the receiver
+   computes the reward amount locally via `get_our_current_share()` rather than
+   trusting the peer's claimed amount.
 
 Multiple game acceptances in a single batch each get their own `PotatoAcceptTimeout`
 entry, and all fire `WeTimedOut` when the potato returns.
@@ -1501,6 +1561,15 @@ If the channel goes on-chain **before** the round-trip completes, the game
 is still in `pending_accept_timeouts`. The `set_state_for_coins` function
 searches both `live_games` and `pending_accept_timeouts` when matching game
 coins, so accepted-but-unconfirmed games are correctly tracked on-chain.
+
+When preemption resolves to the post-AcceptTimeout state (the newer state
+already incorporated the accept), no game coin is created — its value is folded
+into the reward coin. In this case `drain_preempt_resolved_accept_timeouts`
+checks `cached_last_actions` for `PotatoAcceptTimeout` entries whose game is
+absent from the on-chain game set. If an entry is found, the potato never came
+back (otherwise `drain_cached_accept_timeouts` would have removed it), so
+`WeTimedOut` is emitted now. This avoids both missed notifications and
+duplicates: if the potato had returned, the entry would already be gone.
 
 On clean shutdown, any remaining `PotatoAcceptTimeout` entries in `cached_last_actions`
 are drained, emitting `WeTimedOut` before the `CleanShutdownComplete`
@@ -1529,7 +1598,8 @@ on-chain timeout, or clean shutdown).
 **Key code:**
 
 - `src/channel_handler/mod.rs` — `send_accept_timeout_no_finalize`,
-`pending_accept_timeouts`, `drain_cached_accept_timeouts`
+`pending_accept_timeouts`, `drain_cached_accept_timeouts`,
+`drain_preempt_resolved_accept_timeouts`
 - `src/potato_handler/on_chain.rs` — `GameAction::AcceptTimeout`, `handle_game_coin_spent`,
 `coin_timeout_reached`
 

@@ -47,7 +47,7 @@ mod sim_tests {
         Sha256tree,
     };
     use crate::simulator::Simulator;
-    use log::debug;
+
     use rand::prelude::*;
     use std::rc::Rc;
 
@@ -143,7 +143,6 @@ mod sim_tests {
             spend: &ChannelCoinSpendInfo,
         ) -> Result<(), Error> {
             if let Some(r) = &mut self.handshake_result[player] {
-                debug!("UPDATE CHANNEL COIN AFTER RECEIVE");
                 r.spend = spend.clone();
                 return Ok(());
             }
@@ -358,8 +357,7 @@ mod sim_tests {
         let aggregate_public_key = private_to_public_key(&party.player(0).ch.channel_private_key())
             + private_to_public_key(&party.player(1).ch.channel_private_key());
 
-        let cc_ph = puzzle_hash_for_synthetic_public_key(env.allocator, &aggregate_public_key)?;
-        debug!("puzzle hash for state channel coin: {cc_ph:?}");
+        let _cc_ph = puzzle_hash_for_synthetic_public_key(env.allocator, &aggregate_public_key)?;
 
         let state_channel_coin = simulator.combine_coins(
             env.allocator,
@@ -367,10 +365,6 @@ mod sim_tests {
             &party.players[0].init_data.channel_puzzle_hash_up,
             &[u1, u2],
         )?;
-        debug!(
-            "actual state channel coin {:?}",
-            state_channel_coin.to_parts()
-        );
         simulator.farm_block(&identities[0].puzzle_hash);
 
         party
@@ -386,9 +380,6 @@ mod sim_tests {
             alice_game.game_start(game_id, &contributions[0], &contributions[1], &timeout);
         let their_game_start =
             bob_game.game_start(game_id, &contributions[1], &contributions[0], &timeout);
-
-        debug!("our_game_start {:?}", our_game_start);
-        debug!("their_game_start {:?}", their_game_start);
 
         let our_start: Rc<GameStartInfo> = Rc::new(our_game_start);
         let their_start: Rc<GameStartInfo> = Rc::new(their_game_start);

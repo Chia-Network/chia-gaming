@@ -114,7 +114,7 @@ mod sim_tests {
         ExpectedEvent, ExpectedNotification, GameRunOutcome, TestEvent,
     };
     use crate::test_support::game::{GameActionResult, ProposeTrigger};
-    use log::debug;
+
 
     fn extract_info_from_messages(
         game_results: &[GameActionResult],
@@ -132,8 +132,6 @@ mod sim_tests {
     }
 
     fn game_run_outcome_to_move_results(g: &GameRunOutcome) -> Vec<GameActionResult> {
-        debug!("UI 0: {:?}", g.local_uis[0]);
-        debug!("UI 1: {:?}", g.local_uis[1]);
         let mut output: Vec<GameActionResult> = Vec::new();
 
         let alice_iter = g.local_uis[0].opponent_moves.iter().enumerate();
@@ -145,7 +143,6 @@ mod sim_tests {
         while let Some((index, (_game_id, _state_number, readable_move, _amount))) =
             iters[who].next()
         {
-            debug!("processing move {who} {index}: {readable_move:?}, g.local_uis[{who}].opponent_messages {:?}", g.local_uis[who].opponent_messages);
             let message = g.local_uis[who].opponent_messages.iter().find_map(|m| {
                 if index + 1 == m.opponent_move_size {
                     return Some(m.opponent_message.clone());
@@ -405,7 +402,6 @@ mod sim_tests {
             let game_outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
                 .expect("game should complete");
             let game_results = game_run_outcome_to_move_results(&game_outcome);
-            debug!("endgame game_results count={}", game_results.len());
 
             let revealed_cards = extract_info_from_messages(&game_results)
                 .expect("expected revealed message payload");
@@ -501,7 +497,6 @@ mod sim_tests {
             let bob_clvm_data =
                 extract_info_from_messages(&game_results).expect("expected message payload");
             assert_ne!(bob_clvm_data.to_program().to_hex(), "80");
-            debug!("play_result {game_results:?}");
 
             assert_event_sequence(
                 &game_outcome.local_uis[0].events,
@@ -542,7 +537,6 @@ mod sim_tests {
             on_chain_moves.push(GameAction::GoOnChain(true as usize));
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                 .expect("should work");
-            debug!("play_result {:?}", outcome.local_uis);
 
             assert_event_sequence(
                 &outcome.local_uis[0].events,
@@ -581,7 +575,6 @@ mod sim_tests {
                 let outcome =
                     run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                         .expect("should work");
-                debug!("play_result {:?}", outcome.local_uis);
 
                 assert_event_sequence(
                     &outcome.local_uis[0].events,
@@ -617,7 +610,6 @@ mod sim_tests {
             on_chain_moves.push(GameAction::GoOnChain(true as usize));
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                 .expect("should work");
-            debug!("play_result {:?}", outcome.local_uis);
 
             assert_event_sequence(
                 &outcome.local_uis[0].events,
@@ -652,7 +644,6 @@ mod sim_tests {
             on_chain_moves.push(GameAction::GoOnChain(false as usize));
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                 .expect("should work");
-            debug!("play_result {:?}", outcome.local_uis);
 
             assert_event_sequence(
                 &outcome.local_uis[0].events,
@@ -690,7 +681,6 @@ mod sim_tests {
             on_chain_moves.push(GameAction::GoOnChain(true as usize));
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
                 .expect("should work");
-            debug!("play_result {:?}", outcome.local_uis);
 
             assert_event_sequence(
                 &outcome.local_uis[0].events,
@@ -727,7 +717,6 @@ mod sim_tests {
             moves.push(GameAction::AcceptTimeout(1));
             moves.push(GameAction::CleanShutdown(0));
 
-            debug!("running moves {moves:?}");
             let game_outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
                 .expect("end game reward should work");
             assert_stayed_off_chain(&game_outcome, "test_play_calpoker_end_game_reward");
