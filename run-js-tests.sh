@@ -28,7 +28,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Build WASM for Node.js (used by Jest tests)
 # Apple's system clang lacks the wasm32 backend; use Homebrew LLVM if available
 if [ -x /opt/homebrew/opt/llvm/bin/clang ]; then
     export CC_wasm32_unknown_unknown=/opt/homebrew/opt/llvm/bin/clang
@@ -38,6 +37,7 @@ elif [ -x /usr/local/opt/llvm/bin/clang ]; then
     export AR_wasm32_unknown_unknown=/usr/local/opt/llvm/bin/llvm-ar
 fi
 
+# build hex files
 "$SCRIPT_DIR/tools/build-chialisp.sh"
 
 echo "=== Building WASM (nodejs target) ==="
