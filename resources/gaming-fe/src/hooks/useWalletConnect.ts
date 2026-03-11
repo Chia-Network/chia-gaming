@@ -239,6 +239,10 @@ class WalletState {
         expiry: session.expiry,
       });
 
+      this.address = address;
+      this.chainId = detectedChain;
+      this.session = session;
+
       this.observable.next({
         stateName: 'connected',
         waitingApproval: false,
@@ -246,10 +250,6 @@ class WalletState {
         sessions: 1,
         address,
       });
-
-      this.address = address;
-      this.chainId = detectedChain;
-      this.session = session;
     } catch (err) {
       console.error('[WC] connect() approval FAILED or rejected', err);
       this.observable.next({

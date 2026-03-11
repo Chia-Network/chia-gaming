@@ -37,6 +37,8 @@ export class RealBlockchainInterface {
 
   private pollingTimer: ReturnType<typeof setTimeout> | undefined;
   private remoteWalletId: number | undefined;
+  private remoteWalletPending = false;
+  private registerCoinsPending = false;
   private registeredCoinNames: Set<string> = new Set();
   private previousCoinStates: Map<string, boolean> = new Map();
   private wc: WasmConnection | undefined;
@@ -112,31 +114,39 @@ export class RealBlockchainInterface {
 
   // --- Private ---
 
-  private async ensureRemoteWallet() {
+  private ensureRemoteWallet() {
+    if (this.remoteWalletPending || this.remoteWalletId !== undefined) return;
+    this.remoteWalletPending = true;
     console.log('[wc-blockchain] ensuring remote wallet exists...');
-    const wallets = await rpc.getWallets({ includeData: true });
-    const remote = wallets.find(
-      (w: any) => w.type === WalletType.Remote,
-    );
-    if (remote) {
-      this.remoteWalletId = remote.id;
-      console.log(`[wc-blockchain] found existing remote wallet id=${remote.id}`);
-    } else {
-      console.log('[wc-blockchain] no remote wallet found, creating...');
-      const created = await rpc.createNewRemoteWallet({});
-      this.remoteWalletId = created.id;
-      console.log(`[wc-blockchain] created remote wallet id=${created.id}`);
-    }
+    rpc.getWallets({ includeData: true })
+      .then((wallets) => {
+        const remote = wallets.find((w: any) => w.type === WalletType.Remote);
+        if (remote) {
+          this.remoteWalletId = remote.id;
+          this.remoteWalletPending = false;
+          console.log(`[wc-blockchain] found existing remote wallet id=${remote.id}`);
+        } else {
+          console.log('[wc-blockchain] no remote wallet found, creating...');
+          rpc.createNewRemoteWallet({})
+            .then((created) => {
+              this.remoteWalletId = created.id;
+              this.remoteWalletPending = false;
+              console.log(`[wc-blockchain] created remote wallet id=${created.id}`);
+            })
+            .catch((e) => {
+              this.remoteWalletPending = false;
+              console.warn('[wc-blockchain] createNewRemoteWallet failed, will retry', e);
+            });
+        }
+      })
+      .catch((e) => {
+        this.remoteWalletPending = false;
+        console.warn('[wc-blockchain] getWallets failed, will retry', e);
+      });
   }
 
   private async poll() {
-    if (this.remoteWalletId === undefined) {
-      try {
-        await this.ensureRemoteWallet();
-      } catch (e) {
-        console.warn('[wc-blockchain] remote wallet not ready, will retry next poll', e);
-      }
-    }
+    this.ensureRemoteWallet();
 
     try {
       const height = await rpc.getHeightInfo({});
@@ -173,21 +183,25 @@ export class RealBlockchainInterface {
 
     const allNames = Array.from(coinNameToString.keys());
 
-    if (this.remoteWalletId !== undefined) {
+    if (this.remoteWalletId !== undefined && !this.registerCoinsPending) {
       const newNames = allNames.filter((n) => !this.registeredCoinNames.has(n));
       if (newNames.length > 0) {
-        try {
-          console.log(`[wc-blockchain] registering ${newNames.length} new coin(s)`);
-          await rpc.registerRemoteCoins({
-            walletId: this.remoteWalletId,
-            coins: newNames,
+        this.registerCoinsPending = true;
+        console.log(`[wc-blockchain] registering ${newNames.length} new coin(s)`);
+        rpc.registerRemoteCoins({
+          walletId: this.remoteWalletId,
+          coins: newNames,
+        })
+          .then(() => {
+            for (const n of newNames) {
+              this.registeredCoinNames.add(n);
+            }
+            this.registerCoinsPending = false;
+          })
+          .catch((e) => {
+            this.registerCoinsPending = false;
+            console.error('[wc-blockchain] registerRemoteCoins failed', e);
           });
-          for (const n of newNames) {
-            this.registeredCoinNames.add(n);
-          }
-        } catch (e) {
-          console.error('[wc-blockchain] registerRemoteCoins failed', e);
-        }
       }
     }
 
@@ -300,8 +314,12 @@ export const REAL_BLOCKCHAIN_ID = blockchainDataEmitter.addUpstream(
 );
 
 let lastRecvAddress = "";
+let realBlockchainConnected = false;
 
 export function connectRealBlockchain() {
+  if (realBlockchainConnected) return;
+  realBlockchainConnected = true;
+
   blockchainConnector.getOutbound().subscribe({
     next: async (evt: BlockchainOutboundRequest) => {
       let initialSpend = evt.initialSpend;
@@ -409,7 +427,14 @@ export function connectRealBlockchain() {
             responseId: evt.requestId,
 	    getAddress: addressData
 	  });
-        });
+        })
+          .catch((e: any) => {
+            console.warn('[wc-blockchain] getCurrentAddress failed, will retry', e);
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              getAddress: undefined,
+            });
+          });
       } else if (getBalance) {
         rpc.getWalletBalance({
           walletId: 1
@@ -418,7 +443,14 @@ export function connectRealBlockchain() {
             responseId: evt.requestId,
 	    getBalance: balanceResult.spendableBalance
 	  });
-        });
+        })
+          .catch((e: any) => {
+            console.warn('[wc-blockchain] getWalletBalance failed, will retry', e);
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              getBalance: undefined,
+            });
+          });
       } else {
         console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);
         blockchainConnector.replyEmitter({
