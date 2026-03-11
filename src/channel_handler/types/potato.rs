@@ -12,7 +12,7 @@ pub struct PotatoSignatures {
     pub my_unroll_half_signature_peer: Aggsig,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 
 pub struct PotatoAcceptTimeoutCachedData {
     pub game_id: GameID,
@@ -58,7 +58,7 @@ impl std::fmt::Debug for PotatoMoveCachedData {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CachedPotatoRegenerateLastHop {
     #[serde(rename = "PotatoAccept")]
     PotatoAcceptTimeout(Box<PotatoAcceptTimeoutCachedData>),

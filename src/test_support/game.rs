@@ -228,6 +228,9 @@ mod sim_tests {
         SaveUnrollSnapshot(usize),
         /// Force-submit a stale unroll using a previously saved snapshot.
         ForceStaleUnroll(usize),
+        /// Inject raw bytes into a player's inbound message queue.
+        /// Used for testing message validation (e.g. oversized messages).
+        InjectRawMessage(usize, Vec<u8>),
     }
 
     impl std::fmt::Debug for GameAction {
@@ -267,6 +270,9 @@ mod sim_tests {
                 GameAction::CancelProposal(p) => write!(formatter, "CancelProposal({p})"),
                 GameAction::SaveUnrollSnapshot(p) => write!(formatter, "SaveUnrollSnapshot({p})"),
                 GameAction::ForceStaleUnroll(p) => write!(formatter, "ForceStaleUnroll({p})"),
+                GameAction::InjectRawMessage(p, data) => {
+                    write!(formatter, "InjectRawMessage({p}, {} bytes)", data.len())
+                }
             }
         }
     }

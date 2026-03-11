@@ -14,7 +14,7 @@ use crate::referee::types::{
 };
 use crate::referee::Referee;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LiveGame {
     pub game_id: GameID,
     pub last_referee_puzzle_hash: PuzzleHash,
@@ -42,6 +42,10 @@ impl LiveGame {
 
     pub fn is_my_turn(&self) -> bool {
         self.referee_maker.is_my_turn()
+    }
+
+    pub fn get_max_move_size(&self) -> usize {
+        self.referee_maker.get_max_move_size()
     }
 
     pub fn get_game_timeout(&self) -> Timeout {

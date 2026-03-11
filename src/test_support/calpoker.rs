@@ -82,7 +82,12 @@ pub fn prefix_test_moves(allocator: &mut AllocEncoder, game_num: usize) -> Vec<G
         // Final move: local input can be nil (just a UX trigger).
         // handler_e ignores local_move and emits curried NEXT_MOVE = salt+discards+selects
         // handler_e also emits the precomputed SPLIT from handler_d
-        GameAction::Move(0, game_num, ReadableMove::from_program(Rc::new(nil_move)), true),
+        GameAction::Move(
+            0,
+            game_num,
+            ReadableMove::from_program(Rc::new(nil_move)),
+            true,
+        ),
     ]
 }
 
@@ -105,8 +110,8 @@ mod sim_tests {
     use crate::simulator::tests::potato_handler_sim::{
         assert_event_sequence, game_accepted, game_proposed, parse_card_lists_from_readable,
         run_calpoker_container_with_action_list,
-        run_calpoker_container_with_action_list_with_success_predicate,
-        run_calpoker_proposal_only, ExpectedEvent, ExpectedNotification, GameRunOutcome, TestEvent,
+        run_calpoker_container_with_action_list_with_success_predicate, run_calpoker_proposal_only,
+        ExpectedEvent, ExpectedNotification, GameRunOutcome, TestEvent,
     };
     use crate::test_support::game::{GameActionResult, ProposeTrigger};
     use log::debug;
@@ -778,7 +783,7 @@ mod sim_tests {
             moves.push(GameAction::ProposeNewGame(0, ProposeTrigger::Channel));
             moves.push(GameAction::AcceptProposal(1, 0));
             moves.extend(prefix_test_moves(&mut allocator, 0));
-            moves.push(GameAction::AcceptTimeout(0));
+            moves.push(GameAction::AcceptTimeout(1));
             // Game 1: player 0 proposes again after game 0 finishes.
             // Cards differ so we can't reuse prefix_test_moves — just timeout.
             moves.push(GameAction::ProposeNewGame(0, ProposeTrigger::AfterGame(0)));
@@ -797,15 +802,21 @@ mod sim_tests {
 
             let mut moves = Vec::new();
             // Game 0: player 1 proposes, plays through all calpoker moves.
-            moves.push(GameAction::ProposeNewGameTheirTurn(1, ProposeTrigger::Channel));
+            moves.push(GameAction::ProposeNewGameTheirTurn(
+                1,
+                ProposeTrigger::Channel,
+            ));
             moves.push(GameAction::AcceptProposal(0, 0));
             moves.extend(prefix_test_moves(&mut allocator, 0));
-            moves.push(GameAction::AcceptTimeout(0));
+            moves.push(GameAction::AcceptTimeout(1));
             // Game 1: player 1 proposes again after game 0 finishes.
-            moves.push(GameAction::ProposeNewGameTheirTurn(1, ProposeTrigger::AfterGame(0)));
+            moves.push(GameAction::ProposeNewGameTheirTurn(
+                1,
+                ProposeTrigger::AfterGame(0),
+            ));
             moves.push(GameAction::AcceptProposal(0, 1));
             moves.push(GameAction::WaitBlocks(11, 0));
-            moves.push(GameAction::AcceptTimeout(1));
+            moves.push(GameAction::AcceptTimeout(0));
             moves.push(GameAction::CleanShutdown(0));
 
             let outcome = run_calpoker_proposal_only(&mut allocator, &moves, None, Some(200))

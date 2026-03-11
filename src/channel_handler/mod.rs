@@ -81,7 +81,7 @@ use crate::referee::Referee;
 /// onto the chain is the most recent 'their move'.  We preserve the ability to
 /// recall and sign this move via `unroll` and `timeout` which are updated when
 /// we send a move.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ChannelHandler {
     private_keys: ChannelHandlerPrivateKeys,
 
@@ -142,7 +142,6 @@ pub struct ChannelHandler {
     // set_state_for_coins and accept_or_timeout_game_on_chain can find them
     // if the channel goes on-chain before the round-trip completes.
     pending_accept_timeouts: Vec<LiveGame>,
-
     // Games that have been proposed but not yet accepted or cancelled.
     // These are metadata only — they do not affect the unroll commitment
     // or player balances until accepted.
@@ -870,6 +869,46 @@ impl ChannelHandler {
                 self.their_next_nonce
             )));
         }
+
+        // 4.3: Sanity limit on nonce gap to prevent absurd jumps.
+        const MAX_NONCE_GAP: usize = 1000;
+        if new_game_nonce > self.their_next_nonce + MAX_NONCE_GAP {
+            return Err(Error::StrErr(format!(
+                "received nonce {new_game_nonce} too far ahead of expected {} (max gap {MAX_NONCE_GAP})",
+                self.their_next_nonce
+            )));
+        }
+
+        // 4.6: amount must equal the sum of contributions.
+        let expected_amount = start_info.my_contribution_this_game.clone()
+            + start_info.their_contribution_this_game.clone();
+        if start_info.amount != expected_amount {
+            return Err(Error::StrErr(format!(
+                "proposal amount {} != my_contribution {} + their_contribution {}",
+                start_info.amount.to_u64(),
+                start_info.my_contribution_this_game.to_u64(),
+                start_info.their_contribution_this_game.to_u64(),
+            )));
+        }
+
+        // 4.8: Sanity limit on game timeout.
+        const MAX_GAME_TIMEOUT: u64 = 10000;
+        if start_info.timeout.to_u64() > MAX_GAME_TIMEOUT {
+            return Err(Error::StrErr(format!(
+                "proposal timeout {} exceeds maximum {MAX_GAME_TIMEOUT}",
+                start_info.timeout.to_u64(),
+            )));
+        }
+
+        // 4.9: Limit on outstanding proposal count.
+        const MAX_PROPOSALS: usize = 100;
+        if self.proposed_games.len() >= MAX_PROPOSALS {
+            return Err(Error::StrErr(format!(
+                "too many outstanding proposals ({}, max {MAX_PROPOSALS})",
+                self.proposed_games.len(),
+            )));
+        }
+
         self.their_next_nonce = new_game_nonce + 2;
 
         let referee_identity = ChiaIdentity::new(
@@ -965,14 +1004,17 @@ impl ChannelHandler {
         Ok(())
     }
 
-    pub fn received_cancel_proposal(&mut self, game_id: &GameID) -> Result<(), Error> {
-        let idx = self
+    pub fn received_cancel_proposal(&mut self, game_id: &GameID) -> Result<bool, Error> {
+        if let Some(idx) = self
             .proposed_games
             .iter()
             .position(|p| p.game_id == *game_id)
-            .ok_or_else(|| Error::StrErr(format!("no proposal with id {game_id:?}")))?;
-        self.proposed_games.remove(idx);
-        Ok(())
+        {
+            self.proposed_games.remove(idx);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     pub fn cancel_all_proposals(&mut self) -> Vec<GameID> {
@@ -1016,6 +1058,34 @@ impl ChannelHandler {
             "get_game_our_current_share: game {:?} not found",
             game_id
         )))
+    }
+
+    /// Drain PotatoAcceptTimeout entries from cached_last_actions for games
+    /// that are NOT in surviving_ids (i.e., preemption resolved them and no
+    /// game coin was created on-chain). Returns (game_id, our_share) pairs
+    /// that need WeTimedOut notifications.
+    ///
+    /// This only fires when the potato never came back — if it had,
+    /// drain_cached_accept_timeouts would have already removed these entries
+    /// and emitted WeTimedOut off-chain.
+    pub fn drain_preempt_resolved_accept_timeouts(
+        &mut self,
+        surviving_ids: &HashSet<GameID>,
+    ) -> Vec<(GameID, Amount)> {
+        let mut resolved = Vec::new();
+        self.cached_last_actions.retain(|entry| {
+            if let CachedPotatoRegenerateLastHop::PotatoAcceptTimeout(acc) = entry {
+                if !surviving_ids.contains(&acc.game_id) {
+                    resolved.push((acc.game_id, acc.our_share_amount.clone()));
+                    return false;
+                }
+            }
+            true
+        });
+        for (gid, _) in &resolved {
+            self.pending_accept_timeouts.retain(|g| g.game_id != *gid);
+        }
+        resolved
     }
 
     pub fn get_game_amount(&self, game_id: &GameID) -> Result<Amount, Error> {
@@ -1120,6 +1190,16 @@ impl ChannelHandler {
                 game_amount.to_u64(),
             )));
         }
+
+        let max_move_size = self.live_games[game_idx].get_max_move_size();
+        if game_move.basic.move_made.len() > max_move_size {
+            return Err(Error::StrErr(format!(
+                "received move of {} bytes exceeds max_move_size {}",
+                game_move.basic.move_made.len(),
+                max_move_size,
+            )));
+        }
+
         let state_number = self.current_state_number();
 
         let their_move_result = self.live_games[game_idx].internal_their_move(
@@ -1161,6 +1241,10 @@ impl ChannelHandler {
             "send_accept_timeout_no_finalize: must have potato"
         );
         let game_idx = self.get_game_by_id(game_id)?;
+        game_assert!(
+            self.live_games[game_idx].is_my_turn(),
+            "accept_timeout requires it to be our turn"
+        );
 
         let live_game = self.live_games.remove(game_idx);
         self.my_allocated_balance = self
@@ -1199,8 +1283,15 @@ impl ChannelHandler {
     }
 
     /// Apply a received accept (game finish) without verifying signatures.
-    pub fn apply_received_accept_timeout(&mut self, game_id: &GameID) -> Result<(), Error> {
+    /// Returns the locally computed reward amount for our side.
+    pub fn apply_received_accept_timeout(&mut self, game_id: &GameID) -> Result<Amount, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
+
+        if self.live_games[game_idx].is_my_turn() {
+            return Err(Error::StrErr(format!(
+                "received AcceptTimeout for game {game_id:?} but it is our turn"
+            )));
+        }
 
         let game_amount_for_me = self.live_games[game_idx].get_our_current_share()?;
         let game_amount_for_them = self.live_games[game_idx]
@@ -1213,12 +1304,12 @@ impl ChannelHandler {
         self.their_allocated_balance = self
             .their_allocated_balance
             .checked_sub(&self.live_games[game_idx].their_contribution)?;
-        self.my_out_of_game_balance += game_amount_for_me;
+        self.my_out_of_game_balance += game_amount_for_me.clone();
         self.their_out_of_game_balance += game_amount_for_them;
 
         let removed = self.live_games.remove(game_idx);
         self.pending_accept_timeouts.push(removed);
-        Ok(())
+        Ok(game_amount_for_me)
     }
 
     /// Uses the channel coin key to post standard format coin generation to the
