@@ -44,7 +44,6 @@ export async function configGameObject(
   gameObject.setGameCradle(cradle);
   let coin = await wasmStateInit.createStartCoin(blockchain, uniqueId, puzzleHash, amount, wasmConnection);
   gameObject.activateSpend(coin.coinString);
-  console.log('[config] game configured, puzzleHash:', puzzleHash.substring(0, 16) + '...');
   return gameObject;
 }
 

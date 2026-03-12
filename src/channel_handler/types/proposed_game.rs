@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::common::types::{Amount, GameID, PuzzleHash};
 use crate::referee::Referee;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ProposedGame {
     pub game_id: GameID,
     pub initial_puzzle_hash: PuzzleHash,

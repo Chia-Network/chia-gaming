@@ -158,9 +158,6 @@ export class WasmBlobWrapper {
     if (!result || this.finished) return;
 
     const msgs = result.outbound_messages || [];
-    if (msgs.length > 0) {
-      console.log(`[wasm] sending ${msgs.length} outbound message(s)`);
-    }
     for (const msg of msgs) {
       this.sendMessage(this.messageNumber++, msg);
     }
@@ -172,12 +169,10 @@ export class WasmBlobWrapper {
       this.rxjsEmitter?.next({ type: 'finished' });
     }
     for (const err of result.receive_errors || []) {
-      console.error('[wasm] receive error:', err);
       this.rxjsEmitter?.next({ type: 'error', error: err });
     }
     for (const n of result.notifications || []) {
       const tag = typeof n === 'object' && n !== null ? Object.keys(n)[0] : String(n);
-      console.log('[wasm] notification:', tag);
       if (tag === 'ChannelCreated' && !this.channelReady) {
         this.channelReady = true;
       }
@@ -197,7 +192,6 @@ export class WasmBlobWrapper {
     }
     this.remoteNumber = msgno;
     const result = this.cradle.deliver_message(msg);
-    console.log(`[wasm] deliverMessage #${msgno} DELIVERED`);
     this.processResult(result);
   }
 
@@ -263,15 +257,10 @@ export class WasmBlobWrapper {
     this.processResult(result);
   }
 
-  makeMove(gameId: string, readable: Program | null, entropy?: string): void {
+  makeMove(gameId: string, readable: Program | null): void {
     if (!this.cradle) throw new Error('no cradle');
     const bytes = clvmToBytes(readable);
-    let result;
-    if (entropy) {
-      result = this.cradle.make_move_entropy(gameId, bytes, entropy);
-    } else {
-      result = this.cradle.make_move_entropy(gameId, bytes, this.generateEntropy());
-    }
+    const result = this.cradle.make_move(gameId, bytes);
     this.processResult(result);
   }
 
@@ -281,22 +270,16 @@ export class WasmBlobWrapper {
     this.processResult(result);
   }
 
+  cheat(gameId: string, moverShare: number): void {
+    if (!this.cradle) throw new Error('no cradle');
+    const result = this.cradle.cheat(gameId, moverShare);
+    this.processResult(result);
+  }
+
   cleanShutdown(): void {
     if (!this.cradle) return;
     this.cleanShutdownCalled = true;
     const result = this.cradle.shut_down();
     this.processResult(result);
-  }
-
-  generateEntropy(): string {
-    const hexDigits = [];
-    for (let i = 0; i < 16; i++) {
-      hexDigits.push(Math.floor(Math.random() * 16).toString(16));
-    }
-    const entropy = this.wc?.sha256bytes(hexDigits.join(''));
-    if (!entropy) {
-      throw new Error('tried to make entropy without a wasm connection');
-    }
-    return entropy;
   }
 }

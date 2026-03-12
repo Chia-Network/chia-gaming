@@ -1,5 +1,7 @@
 #!/bin/bash
 set -e
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
@@ -23,7 +25,7 @@ else
     fi
 fi
 
-echo "=== Building chialisp ==="
+echo "=== Building chialisp (via cargo build.rs) ==="
 
 if [ "$needs_build" -eq 1 ]; then
     SECONDS=0

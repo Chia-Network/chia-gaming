@@ -107,7 +107,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     setOpponentCards(mappedOpponent);
     if (mappedPlayer.length && mappedOpponent.length) {
       const newRemCards = [mappedPlayer, mappedOpponent];
-      console.log('setRememberedCards', newRemCards);
       setRememberedCards(newRemCards);
     }
     if (outcome) {
@@ -121,7 +120,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       haveOutcome &&
       gameState === GAME_STATES.AWAITING_SWAP
     ) {
-      console.log('outcome is', JSON.stringify(haveOutcome));
       swapCards(haveOutcome);
     }
   }, [outcome, gameState, moveNumber, rememberedOutcome]);
@@ -146,7 +144,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   };
   const [showEndDialog, setShowEndDialog] = useState(false);
   const NewGame = () => {
-    console.log('starting again');
     doHandleMakeMove();
     setGameState(GAME_STATES.SELECTING);
     setRememberedCards([[], []]);
@@ -208,6 +205,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   }
 
   const doHandleMakeMove = () => {
+    console.log(`[UI] doHandleMakeMove | moveNumber:${moveNumber} | gameState:${gameState} | isPlayerTurn:${isPlayerTurn} | cardSelections:${cardSelections.length}`);
     if (gameState === GAME_STATES.SELECTING && cardSelections.length > 0) {
       setGameState(GAME_STATES.AWAITING_SWAP);
     }
@@ -352,7 +350,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
 
   const swapCards = (rememberedOutcome: CalpokerOutcome) => {
     const liveWinner = translateTopline(rememberedOutcome.my_win_outcome);
-    console.log('swapping, outcome', liveWinner, rememberedOutcome);
     setWinner(liveWinner);
     setGameState(GAME_STATES.SWAPPING);
 
@@ -375,7 +372,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       .filter((cardId): cardId is number => cardId !== undefined);
 
     setSwappingCards({ player: rememberedCards[0], ai: rememberedCards[1] });
-    console.log('calculate moving cards', playerSwapCardIds, aiSwapCardIds);
     const movingCardData = calculateMovingCards(
       playerSwapCardIds,
       aiSwapCardIds,
@@ -383,7 +379,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       rememberedCards[1],
     );
     setMovingCards(movingCardData);
-    console.log('moving cards', movingCardData);
     setShowSwapAnimation(true);
 
     setTimeout(() => {
@@ -436,16 +431,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         rank: { name: '', score: 0, tiebreakers: [] },
       });
 
-      console.log(
-        'done swapping',
-        log.length - 1,
-        log,
-        newPlayer,
-        newOpponent,
-        playerBestCards,
-        opponentBestCards,
-      );
-
       setMovingCards([]);
       setShowSwapAnimation(false);
       setGameState(GAME_STATES.FINAL);
@@ -459,7 +444,18 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   }, []);
 
   useEffect(() => {
-    if (moveNumber === 0) {
+    // Only reset when moveNumber goes to 0 AND:
+    //  - the end dialog is not open (user hasn't acknowledged yet), AND
+    //  - no swap animation is in progress / game is not mid-reveal
+    // This prevents the 2500ms reset in useWasmBlob from killing a running animation.
+    if (
+      moveNumber === 0 &&
+      !showEndDialog &&
+      !showSwapAnimation &&
+      gameState !== GAME_STATES.AWAITING_SWAP &&
+      gameState !== GAME_STATES.SWAPPING &&
+      gameState !== GAME_STATES.FINAL
+    ) {
       setGameState(GAME_STATES.SELECTING);
       setRememberedCards([[], []]);
       setRememberedOutcome(undefined);
@@ -472,10 +468,11 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       setOpponentDisplayText('');
       setSwappingCards({ player: [], ai: [] });
     }
-  }, [moveNumber]);
+  }, [moveNumber, showEndDialog, showSwapAnimation, gameState]);
 
   useEffect(() => {
     if (gameState === GAME_STATES.FINAL) {
+      console.log(`[UI] gameState=FINAL → opening EndDialog | moveNumber:${moveNumber}`);
       setShowEndDialog(true);
     }
   }, [gameState]);
@@ -622,13 +619,10 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
             {/* ACTION BAR */}
             <GameBottomBar
               isPlayerTurn={isPlayerTurn}
-              gameState={gameState}
               buttonText={buttonText}
               moveNumber={moveNumber}
               isDisabled={isDisabled}
-              NewGame={NewGame}
               doHandleMakeMove={doHandleMakeMove}
-              GAME_STATES={GAME_STATES}
             />
           </div>
         )}
@@ -638,7 +632,11 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         onOpenChange={setShowEndDialog}
         onPlayAgain={() => {
           setShowEndDialog(false);
-          NewGame(); // your existing restart logic
+          NewGame();
+          // The backend proposes a new game automatically after the terminal event.
+          // GameProposalAccepted will set isPlayerTurn and moveNumber=0.
+          // The user then clicks "Start Game" to commit the seed (move 0).
+          // Calling handleMakeMove here is too early — no game ID exists yet.
         }}
         onEndSession={stopPlaying} // same handler as your destructive button
         disableEndSession={moveNumber !== 0}
