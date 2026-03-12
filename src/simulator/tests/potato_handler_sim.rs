@@ -2754,7 +2754,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(150),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
             ],
             "debug_alice p0",
         );
@@ -2772,7 +2772,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(49),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
             ],
             "debug_alice p1",
         );
@@ -2792,7 +2792,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         ];
 
         let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
-        add_debug_test_accept_shutdown(&mut sim_setup, 20, 1);
+        add_debug_test_accept_shutdown(&mut sim_setup, 20, 0);
         let outcome = run_game_container_with_action_list_with_success_predicate(
             &mut allocator,
             &mut rng,
@@ -2930,7 +2930,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             GameAction::AcceptProposal(1, GameID(0)),
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
-        moves.push(GameAction::AcceptTimeout(0, GameID(0)));
+        moves.push(GameAction::AcceptTimeout(1, GameID(0)));
         moves.push(GameAction::NerfTransactions(0));
         moves.push(GameAction::CleanShutdown(1));
 
@@ -2950,7 +2950,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
             ],
             "shutdown_nerf_alice p0",
         );
@@ -2969,7 +2969,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(200),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
             ],
             "shutdown_nerf_alice p1",
         );
@@ -2983,7 +2983,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             GameAction::AcceptProposal(1, GameID(0)),
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
-        moves.push(GameAction::AcceptTimeout(0, GameID(0)));
+        moves.push(GameAction::AcceptTimeout(1, GameID(0)));
         moves.push(GameAction::NerfTransactions(1));
         moves.push(GameAction::CleanShutdown(1));
 
@@ -3003,7 +3003,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
             ],
             "shutdown_nerf_bob p0",
         );
@@ -3022,7 +3022,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(200),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
             ],
             "shutdown_nerf_bob p1",
         );
