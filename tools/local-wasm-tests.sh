@@ -62,7 +62,7 @@ fi
 
 echo "=== Starting simulator ==="
 SIM_BIN="${CARGO_TARGET_DIR:-$REPO_ROOT/target}/debug/chia-gaming-sim"
-RUST_LOG=debug "$SIM_BIN" &
+RUST_LOG=error "$SIM_BIN" &
 SIM_PID=$!
 
 echo "=== Waiting for simulator ==="

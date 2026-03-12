@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
+use std::path::Path;
 
 use clvmr::allocator::Allocator;
 use toml::{Table, Value};
@@ -70,8 +71,25 @@ fn compile_chialisp() -> Result<(), CompileError> {
     Ok(())
 }
 
-// Compile chialisp programs in this tree.
+fn emit_rerun_directives(dir: &Path) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                emit_rerun_directives(&path);
+            } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                if ext == "clsp" || ext == "clinc" {
+                    println!("cargo:rerun-if-changed={}", path.display());
+                }
+            }
+        }
+    }
+}
+
 fn main() {
+    emit_rerun_directives(Path::new("clsp"));
+    println!("cargo:rerun-if-changed=chialisp.toml");
+
     if std::env::var("CHIALISP_NOCOMPILE").is_err() {
         if let Err(e) = compile_chialisp() {
             panic!("error compiling chialisp: {e:?}");
