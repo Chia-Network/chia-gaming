@@ -44,7 +44,7 @@ QRCodeModal
 
      {"open": true, "uri": "wc:test-url", "onClose":"*function"}
 
-PlayerSection
+<!-- PlayerSection
 --
 
     {"playerNumber": 1,
@@ -54,7 +54,7 @@ PlayerSection
      "handleMakeMove": "*function",
      "cardSelections": 3,
      "setCardSelections": "*function"
-    }
+    } -->
 
 GameLog
 --

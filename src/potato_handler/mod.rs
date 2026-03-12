@@ -2465,7 +2465,9 @@ impl SpendWalletReceiver for PotatoHandler {
             return Ok(Some(effects));
         }
 
-        Ok(Some(vec![Effect::Notify(GameNotification::ChannelCreated {})]))
+        Ok(Some(vec![Effect::Notify(
+            GameNotification::ChannelCreated {},
+        )]))
     }
 
     fn coin_spent<R: Rng>(

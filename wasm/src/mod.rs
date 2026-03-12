@@ -18,19 +18,20 @@ mod gaming_wasm {
     use chia_gaming::common::load_clvm::wasm_deposit_file;
     use chia_gaming::common::standard_coin::{puzzle_hash_for_pk, ChiaIdentity};
 
+    use chia_gaming::channel_handler::types::ReadableMove;
     use chia_gaming::common::types;
     use chia_gaming::common::types::{
-        chia_dialect, Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinsetSpendBundle,
-        CoinsetSpendRecord, CoinsetCoin, CoinString, GameID, GameType, Hash, IntoErr, PrivateKey, Program, PublicKey,
-        PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout, convert_coinset_org_spend_to_spend, map_m
+        chia_dialect, convert_coinset_org_spend_to_spend, map_m, Aggsig, AllocEncoder, Amount,
+        CoinCondition, CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle,
+        CoinsetSpendRecord, GameID, GameType, Hash, IntoErr, PrivateKey, Program, PublicKey,
+        PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
     };
-    use chia_gaming::channel_handler::types::ReadableMove;
     use chia_gaming::peer_container::{
         DrainResult, GameCradle, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
     };
     use chia_gaming::potato_handler::effects::GameNotification;
-    use chia_gaming::potato_handler::types::GameFactory;
     use chia_gaming::potato_handler::start::GameStart;
+    use chia_gaming::potato_handler::types::GameFactory;
 
     #[cfg(target_arch = "wasm32")]
     use lol_alloc::{FreeListAllocator, LockedAllocator};
@@ -234,7 +235,9 @@ mod gaming_wasm {
             unroll_timeout: Timeout::new(jsconfig.unroll_timeout as u64),
             my_contribution: jsconfig.my_contribution.amt.clone(),
             their_contribution: jsconfig.their_contribution.amt.clone(),
-            reward_puzzle_hash: PuzzleHash::from_hash(Hash::from_slice(&reward_puzzle_hash_bytes).into_js()?),
+            reward_puzzle_hash: PuzzleHash::from_hash(
+                Hash::from_slice(&reward_puzzle_hash_bytes).into_js()?,
+            ),
             rng_id: jsconfig.rng_id,
         })
     }
@@ -285,7 +288,7 @@ mod gaming_wasm {
         let rng = ChaCha8Rng::from_seed(*hashed.bytes());
         let id = get_next_id();
         insert_rng(id, rng);
-        return Ok(id);
+        Ok(id)
     }
 
     pub fn with_rng<F, T>(cid: i32, f: F) -> Result<T, JsValue>
@@ -335,9 +338,15 @@ mod gaming_wasm {
             insert_cradle(new_id, cradle);
 
             #[derive(Serialize)]
-            struct CradleResult { id: i32, puzzle_hash: String }
-            serde_wasm_bindgen::to_value(&CradleResult { id: new_id, puzzle_hash: puzzle_hash_hex })
-                .map_err(|e| types::Error::StrErr(format!("{e:?}")))
+            struct CradleResult {
+                id: i32,
+                puzzle_hash: String,
+            }
+            serde_wasm_bindgen::to_value(&CradleResult {
+                id: new_id,
+                puzzle_hash: puzzle_hash_hex,
+            })
+            .map_err(|e| types::Error::StrErr(format!("{e:?}")))
         })
     }
 
@@ -346,7 +355,7 @@ mod gaming_wasm {
         let cradle = serde_wasm_bindgen::from_value::<JsCradle>(json.clone()).into_js()?;
         let new_id = get_next_id();
         insert_cradle(new_id, cradle);
-        return Ok(new_id);
+        Ok(new_id)
     }
 
     fn with_game<F, T>(cid: i32, f: F) -> Result<T, JsValue>
@@ -373,20 +382,23 @@ mod gaming_wasm {
     }
 
     fn hex_to_coinstring(hex: &str) -> Result<CoinString, types::Error> {
-        let coinstring_bytes = hex::decode(hex).into_gen()?;
+        let coinstring_bytes = hex::decode(hex).map_err(|e| {
+            types::Error::StrErr(format!(
+                "hex_to_coinstring failed: {e:?}, input length={}, input={:?}",
+                hex.len(),
+                if hex.len() > 64 { &hex[..64] } else { hex },
+            ))
+        })?;
         Ok(CoinString::from_bytes(&coinstring_bytes))
     }
-
 
     #[wasm_bindgen]
     pub fn opening_coin(cid: i32, hex_coinstring: &str) -> Result<JsValue, JsValue> {
         let coin = hex_to_coinstring(hex_coinstring).into_js()?;
         with_game_drain(cid, move |cradle: &mut JsCradle| {
-            cradle.cradle.opening_coin(
-                &mut cradle.allocator,
-                &mut cradle.rng.0,
-                coin,
-            )
+            cradle
+                .cradle
+                .opening_coin(&mut cradle.allocator, &mut cradle.rng.0, coin)
         })
     }
 
@@ -459,7 +471,7 @@ mod gaming_wasm {
         }
 
         Ok(CoinsetSpendBundle {
-            aggregated_signature: format!("0x{}", hex::encode(&aggsig.bytes())),
+            aggregated_signature: format!("0x{}", hex::encode(aggsig.bytes())),
             coin_spends,
         })
     }
@@ -498,12 +510,15 @@ mod gaming_wasm {
     }
 
     fn string_to_game_id(id: &str) -> Result<GameID, JsValue> {
-        Ok(GameID(id.parse::<u64>().map_err(|e| JsValue::from_str(&format!("bad game id: {e}")))?))
+        Ok(GameID(id.parse::<u64>().map_err(|e| {
+            JsValue::from_str(&format!("bad game id: {e}"))
+        })?))
     }
 
     #[wasm_bindgen]
     pub fn propose_game(cid: i32, game: JsValue, parameters: &[u8]) -> Result<JsValue, JsValue> {
-        let js_game_start = serde_wasm_bindgen::from_value::<JsGameStart>(game.clone()).into_js()?;
+        let js_game_start =
+            serde_wasm_bindgen::from_value::<JsGameStart>(game.clone()).into_js()?;
         let parameters_program = Program::from_bytes(parameters);
         with_game(cid, move |cradle: &mut JsCradle| {
             let game_start = GameStart {
@@ -539,7 +554,11 @@ mod gaming_wasm {
                 ids: ids.iter().map(game_id_to_string).collect(),
                 handshake_done: dr.handshake_done,
                 finished: dr.finished,
-                outbound_transactions: dr.outbound_transactions.iter().map(spend_bundle_to_js).collect(),
+                outbound_transactions: dr
+                    .outbound_transactions
+                    .iter()
+                    .map(spend_bundle_to_js)
+                    .collect(),
                 outbound_messages: dr.outbound_messages.iter().map(hex::encode).collect(),
                 notifications: notifications_to_js(&dr.notifications),
                 receive_errors: dr.receive_errors.iter().map(|e| format!("{e:?}")).collect(),
@@ -551,11 +570,9 @@ mod gaming_wasm {
     pub fn accept_proposal(cid: i32, game_id: &str) -> Result<JsValue, JsValue> {
         let game_id = string_to_game_id(game_id)?;
         with_game_drain(cid, move |cradle: &mut JsCradle| {
-            cradle.cradle.accept_proposal(
-                &mut cradle.allocator,
-                &mut cradle.rng.0,
-                &game_id,
-            )
+            cradle
+                .cradle
+                .accept_proposal(&mut cradle.allocator, &mut cradle.rng.0, &game_id)
         })
     }
 
@@ -563,11 +580,9 @@ mod gaming_wasm {
     pub fn cancel_proposal(cid: i32, game_id: &str) -> Result<JsValue, JsValue> {
         let game_id = string_to_game_id(game_id)?;
         with_game_drain(cid, move |cradle: &mut JsCradle| {
-            cradle.cradle.cancel_proposal(
-                &mut cradle.allocator,
-                &mut cradle.rng.0,
-                &game_id,
-            )
+            cradle
+                .cradle
+                .cancel_proposal(&mut cradle.allocator, &mut cradle.rng.0, &game_id)
         })
     }
 
@@ -578,7 +593,8 @@ mod gaming_wasm {
         entropy: Option<&str>,
     ) -> Result<JsValue, JsValue> {
         let game_id = string_to_game_id(id)?;
-        let readable_move = ReadableMove::from_program(std::rc::Rc::new(Program::from_bytes(readable)));
+        let readable_move =
+            ReadableMove::from_program(std::rc::Rc::new(Program::from_bytes(readable)));
         let new_entropy = if let Some(e) = entropy {
             Some(Hash::from_slice(&hex::decode(e).into_js()?).into_js()?)
         } else {
@@ -616,15 +632,15 @@ mod gaming_wasm {
     #[wasm_bindgen]
     pub fn cheat(cid: i32, id: &str, mover_share: &str) -> Result<JsValue, JsValue> {
         let game_id = string_to_game_id(id)?;
-        let share =
-            Amount::new(mover_share.parse::<u64>().map_err(|e| JsValue::from_str(&e.to_string()))?);
+        let share = Amount::new(
+            mover_share
+                .parse::<u64>()
+                .map_err(|e| JsValue::from_str(&e.to_string()))?,
+        );
         with_game_drain(cid, move |cradle: &mut JsCradle| {
-            cradle.cradle.cheat(
-                &mut cradle.allocator,
-                &mut cradle.rng.0,
-                &game_id,
-                share,
-            )
+            cradle
+                .cradle
+                .cheat(&mut cradle.allocator, &mut cradle.rng.0, &game_id, share)
         })
     }
 
@@ -635,7 +651,8 @@ mod gaming_wasm {
         readable: &[u8],
     ) -> Result<JsValue, JsValue> {
         let game_id = string_to_game_id(id)?;
-        let readable_move = ReadableMove::from_program(std::rc::Rc::new(Program::from_bytes(readable)));
+        let readable_move =
+            ReadableMove::from_program(std::rc::Rc::new(Program::from_bytes(readable)));
         with_game_drain(cid, move |cradle: &mut JsCradle| {
             let entropy: Hash = cradle.rng.0.gen();
             cradle.cradle.accept_proposal_and_move(
@@ -661,7 +678,10 @@ mod gaming_wasm {
     #[allow(deprecated)]
     pub fn get_game_state_id(cid: i32) -> Result<Option<String>, JsValue> {
         with_game(cid, move |cradle: &mut JsCradle| {
-            Ok(cradle.cradle.get_game_state_id(&mut cradle.allocator, &mut cradle.rng.0)?.map(|h| hex::encode(&h.bytes())))
+            Ok(cradle
+                .cradle
+                .get_game_state_id(&mut cradle.allocator, &mut cradle.rng.0)?
+                .map(|h| hex::encode(h.bytes())))
         })
     }
 
@@ -690,10 +710,9 @@ mod gaming_wasm {
     #[wasm_bindgen]
     pub fn shut_down(cid: i32) -> Result<JsValue, JsValue> {
         with_game_drain(cid, move |cradle: &mut JsCradle| {
-            cradle.cradle.shut_down(
-                &mut cradle.allocator,
-                &mut cradle.rng.0,
-            )
+            cradle
+                .cradle
+                .shut_down(&mut cradle.allocator, &mut cradle.rng.0)
         })
     }
 
@@ -704,7 +723,6 @@ mod gaming_wasm {
             cradle.cradle.deliver_message(&message_data)
         })
     }
-
 
     #[derive(Serialize)]
     struct JsSpend {
@@ -786,14 +804,16 @@ mod gaming_wasm {
     fn notifications_to_js(notifications: &[GameNotification]) -> Vec<serde_json::Value> {
         notifications
             .iter()
-            .map(|n| serde_json::to_value(n).unwrap_or_else(|_| serde_json::json!(format!("{n:?}"))))
+            .map(|n| {
+                serde_json::to_value(n).unwrap_or_else(|_| serde_json::json!(format!("{n:?}")))
+            })
             .collect()
     }
 
     fn to_js_compat<T: Serialize>(value: &T) -> Result<JsValue, types::Error> {
-        value.serialize(
-            &serde_wasm_bindgen::Serializer::json_compatible()
-        ).into_e()
+        value
+            .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+            .into_e()
     }
 
     fn drain_result_to_js(dr: &DrainResult) -> Result<JsValue, types::Error> {
@@ -826,9 +846,7 @@ mod gaming_wasm {
 
     #[wasm_bindgen]
     pub fn cradle_amount(cid: i32) -> Result<JsValue, JsValue> {
-        let amount = with_game(cid, move |cradle: &mut JsCradle| {
-            Ok(cradle.cradle.amount())
-        })?;
+        let amount = with_game(cid, move |cradle: &mut JsCradle| Ok(cradle.cradle.amount()))?;
         serde_wasm_bindgen::to_value(&JsAmount { amt: amount }).into_js()
     }
 
@@ -851,7 +869,6 @@ mod gaming_wasm {
         })?;
         serde_wasm_bindgen::to_value(&amount.map(|a| JsAmount { amt: a })).into_js()
     }
-
 
     #[derive(Serialize, Deserialize)]
     struct JsChiaIdentity {
@@ -877,11 +894,11 @@ mod gaming_wasm {
     }
 
     fn check_for_hex(hex_with_prefix: &str) -> Result<Vec<u8>, JsValue> {
-        if hex_with_prefix.starts_with("0x") {
-            return hex::decode(&hex_with_prefix[2..]).into_js();
+        if let Some(stripped) = hex_with_prefix.strip_prefix("0x") {
+            return hex::decode(stripped).into_js();
         }
 
-        return hex::decode(hex_with_prefix).into_js();
+        hex::decode(hex_with_prefix).into_js()
     }
 
     #[wasm_bindgen]
@@ -898,10 +915,20 @@ mod gaming_wasm {
             puzzle_hash,
             amount,
             puzzle_reveal,
-            solution
-        ).into_js()?;
-        let puzzle_reveal_node = converted_spend.bundle.puzzle.to_program().to_nodeptr(&mut allocator).into_js()?;
-        let solution_node = converted_spend.bundle.solution.to_nodeptr(&mut allocator).into_js()?;
+            solution,
+        )
+        .into_js()?;
+        let puzzle_reveal_node = converted_spend
+            .bundle
+            .puzzle
+            .to_program()
+            .to_nodeptr(&mut allocator)
+            .into_js()?;
+        let solution_node = converted_spend
+            .bundle
+            .solution
+            .to_nodeptr(&mut allocator)
+            .into_js()?;
         let coin_string = &converted_spend.coin;
         let parent_of_created = coin_string.to_coin_id();
         let run_output = run_program(
@@ -913,7 +940,7 @@ mod gaming_wasm {
         )
         .into_gen()
         .into_js()?;
-        let conditions = CoinCondition::from_nodeptr(&mut allocator, run_output.1);
+        let conditions = CoinCondition::from_nodeptr(&allocator, run_output.1);
         let mut watch_result = WatchReport::default();
         watch_result.deleted_watched.insert(coin_string.clone());
         for condition in conditions.into_iter() {
@@ -931,7 +958,7 @@ mod gaming_wasm {
         let spend_bytes = hex::decode(spend).into_js()?;
         let spend_program = Program::from_bytes(&spend_bytes);
         let spend_node = spend_program.to_nodeptr(&mut allocator).into_js()?;
-        let spend = SpendBundle::from_clvm(&mut allocator, spend_node).into_js()?;
+        let spend = SpendBundle::from_clvm(&allocator, spend_node).into_js()?;
         serde_wasm_bindgen::to_value(&spend_bundle_to_coinset_js(&spend)?).into_js()
     }
 
@@ -980,5 +1007,4 @@ mod gaming_wasm {
         let hashed = hex::encode(Sha256Input::Bytes(bytes_str.as_bytes()).hash().bytes());
         serde_wasm_bindgen::to_value(&hashed).into_js()
     }
-
 }

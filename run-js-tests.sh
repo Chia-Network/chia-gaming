@@ -2,10 +2,17 @@
 
 set -e
 
-. ~/.nvm/nvm.sh
+if [ -s "$HOME/.nvm/nvm.sh" ]; then
+    . "$HOME/.nvm/nvm.sh"
+elif [ -s "$(brew --prefix nvm 2>/dev/null)/nvm.sh" ]; then
+    export NVM_DIR="$HOME/.nvm"
+    . "$(brew --prefix nvm)/nvm.sh"
+else
+    echo "nvm not found; install via https://github.com/nvm-sh/nvm or brew install nvm" >&2
+    exit 1
+fi
 nvm use 20.19.0
 
-set -x
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FE_DIR="$SCRIPT_DIR/resources/gaming-fe"
@@ -21,7 +28,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Build WASM for Node.js (used by Jest tests)
 # Apple's system clang lacks the wasm32 backend; use Homebrew LLVM if available
 if [ -x /opt/homebrew/opt/llvm/bin/clang ]; then
     export CC_wasm32_unknown_unknown=/opt/homebrew/opt/llvm/bin/clang
@@ -30,6 +36,9 @@ elif [ -x /usr/local/opt/llvm/bin/clang ]; then
     export CC_wasm32_unknown_unknown=/usr/local/opt/llvm/bin/clang
     export AR_wasm32_unknown_unknown=/usr/local/opt/llvm/bin/llvm-ar
 fi
+
+# build hex files
+"$SCRIPT_DIR/tools/build-chialisp.sh"
 
 echo "=== Building WASM (nodejs target) ==="
 (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/node-pkg" --release --target=nodejs)

@@ -1,4 +1,4 @@
-#!/bin/bash -x
+#!/bin/bash
 
 docker kill chia-gaming-test 2>/dev/null || true
 

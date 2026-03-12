@@ -1,9 +1,16 @@
 #!/bin/bash
 
-. ~/.nvm/nvm.sh
+if [ -s "$HOME/.nvm/nvm.sh" ]; then
+    . "$HOME/.nvm/nvm.sh"
+elif [ -s "$(brew --prefix nvm 2>/dev/null)/nvm.sh" ]; then
+    export NVM_DIR="$HOME/.nvm"
+    . "$(brew --prefix nvm)/nvm.sh"
+else
+    echo "nvm not found; install via https://github.com/nvm-sh/nvm or brew install nvm" >&2
+    exit 1
+fi
 nvm use 20.19.0
 
-set -x
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -39,6 +46,8 @@ elif [ -x /usr/local/opt/llvm/bin/clang ]; then
 fi
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
+    "$SCRIPT_DIR/build-chialisp.sh"
+
     echo "=== Building WASM (nodejs target for tests) ==="
     (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/node-pkg" --release --target=nodejs)
 
