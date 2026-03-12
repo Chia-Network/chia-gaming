@@ -145,7 +145,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     const go = gameObjectRef.current;
     if (!go || !go.isChannelReady()) return;
     try {
-      const ids = go.proposeGame({
+      go.proposeGame({
         game_type: '63616c706f6b6572',
         timeout: 100,
         amount: perGameAmount,
@@ -153,8 +153,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
         my_turn: !iStarted,
         parameters: null,
       });
-      console.log('[calpoker] proposed game, ids:', ids);
-      setGameIds(prev => [...prev, ...ids]);
+      console.log('[calpoker] proposed game');
     } catch (e) {
       console.error('[calpoker] proposeGame failed:', e);
     }
@@ -234,20 +233,26 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     if ('GameProposed' in n) {
       if (!iStarted) {
         try {
-          // Accept and immediately submit move 0 (commit to random number) in one atomic call
-          go?.acceptProposalAndMove(n.GameProposed.id.toString(), null);
+          go?.acceptProposal(n.GameProposed.id.toString());
         } catch (e) {
-          console.error('acceptProposalAndMove failed:', e);
+          console.error('acceptProposal failed:', e);
         }
       }
     } else if ('GameProposalAccepted' in n) {
       const newId = n.GameProposalAccepted.id.toString();
       setGameIds(prev => [...prev, newId]);
       gameIdsRef.current = [...gameIdsRef.current, newId];
-      // Joiner already made move 0 via acceptProposalAndMove; proposer starts at move 0
-      setMyTurn(iStarted);
-      setMoveNumber(iStarted ? 0 : 1);
-      moveNumberRef.current = iStarted ? 0 : 1;
+      // Alice (joiner, iStarted=false) moves first at move 0
+      setMyTurn(!iStarted);
+      setMoveNumber(0);
+      moveNumberRef.current = 0;
+      setPlayerHand([]);
+      setOpponentHand([]);
+      playerHandRef.current = [];
+      opponentHandRef.current = [];
+      setOurCardSelections([]);
+      cardSelectionsRef.current = [];
+      setOutcome(undefined);
       setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
     } else if ('OpponentMoved' in n) {
       const currentMove = moveNumberRef.current;
@@ -278,18 +283,39 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
           n.OpponentMoved.readable,
         );
         recognizeOutcome(newOutcome);
+        const gameId = gameIdsRef.current[0];
+        // Reset wasm-facing refs immediately so no stale calls can happen.
+        setGameIds(prev => prev.slice(1));
+        gameIdsRef.current = gameIdsRef.current.slice(1);
+        setMyTurn(false);
+        setOurCardSelections([]);
+        cardSelectionsRef.current = [];
+        setLastOutcome(gameOutcomeRef.current);
+
         if (!iStarted && currentMove === 2) {
+          // Alice: send final reveal move, then reset immediately.
+          // CaliforniaPoker guards against resetting while animation is running.
           try {
-            go?.makeMove(gameIdsRef.current[0], null);
+            go?.makeMove(gameId, null);
           } catch (e) {
             console.error('makeMove failed:', e);
           }
+          setMoveNumber(0);
+          moveNumberRef.current = 0;
+          setPlayerHand([]);
+          setOpponentHand([]);
+          playerHandRef.current = [];
+          opponentHandRef.current = [];
         } else {
-          try {
-            go?.acceptTimeout(gameIdsRef.current[0]);
-          } catch (e) {
-            console.error('acceptTimeout failed:', e);
-          }
+          // Bob: reset immediately and propose new game.
+          // CaliforniaPoker guards against resetting while animation is running.
+          setMoveNumber(0);
+          moveNumberRef.current = 0;
+          setPlayerHand([]);
+          setOpponentHand([]);
+          playerHandRef.current = [];
+          opponentHandRef.current = [];
+          proposeNewGame();
         }
       }
     } else if ('GameMessage' in n) {
@@ -467,3 +493,4 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     lastOutcome,
   };
 }
+

@@ -34,7 +34,6 @@ const Game: React.FC<GameParams> = ({ params }) => {
     cardSelections,
     setCardSelections,
     outcome,
-    lastOutcome,
     stopPlaying,
   } = useWasmBlob(params, params.lobbyUrl, uniqueId);
 
@@ -86,7 +85,7 @@ const Game: React.FC<GameParams> = ({ params }) => {
   return (
     <>
       <Calpoker
-        outcome={outcome ? outcome : lastOutcome}
+        outcome={outcome}
         moveNumber={moveNumber}
         iStarted={iStarted}
         isPlayerTurn={isPlayerTurn}
