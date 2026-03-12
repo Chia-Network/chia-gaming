@@ -22,6 +22,7 @@ export interface CalpokerProps {
   cardSelections: number[];
   setCardSelections: (n: number[] | ((prev: number[]) => number[])) => void;
   handleMakeMove: () => void;
+  handleCheat: () => void;
   stopPlaying: () => void;
   addressData: any;
   log: OutcomeLogLine[];
@@ -40,13 +41,14 @@ const Calpoker: React.FC<CalpokerProps> = ({
   cardSelections,
   setCardSelections,
   handleMakeMove,
+  handleCheat,
   stopPlaying,
   addressData,
   log,
 }) => {
   const myWinOutcome = outcome?.my_win_outcome;
 
-  const iAmAlice = playerNumber === 2;
+  const iAmAlice = playerNumber === 1;
   const myHandValue = iAmAlice
     ? outcome?.alice_hand_value
     : outcome?.bob_hand_value;
@@ -102,7 +104,10 @@ const Calpoker: React.FC<CalpokerProps> = ({
       {/* Header */}
       <div className='flex w-full flex-col items-center pt-4 justify-between gap-4 sm:flex-row sm:gap-6'>
         <h1 className='w-full text-2xl font-semibold text-canvas-text-contrast sm:text-left sm:text-4xl'>
-          California Poker
+          California Poker V7
+          <span className='ml-3 text-sm font-normal text-canvas-text opacity-70'>
+            You are {iAmAlice ? 'Alice' : 'Bob'} (Player {playerNumber}{iAmAlice ? ', moves first' : ', moves second'})
+          </span>
         </h1>
 
         <div className='flex w-full items-center gap-2 flex-row justify-end'>
@@ -115,6 +120,17 @@ const Calpoker: React.FC<CalpokerProps> = ({
             leadingIcon={<Info size={'20px'} />}
           >
             Hint
+          </Button>
+
+          {/* CHEAT button (debug) */}
+          <Button
+            onClick={handleCheat}
+            color={'neutral'}
+            variant={'outline'}
+            size={'sm'}
+            disabled={!isPlayerTurn}
+          >
+            Cheat
           </Button>
 
           {/* Leave */}

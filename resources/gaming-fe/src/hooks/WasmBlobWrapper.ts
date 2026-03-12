@@ -258,6 +258,12 @@ export class WasmBlobWrapper {
     this.processResult(result);
   }
 
+  cheat(gameId: string, moverShare: number): void {
+    if (!this.cradle) throw new Error('no cradle');
+    const result = this.cradle.cheat(gameId, moverShare);
+    this.processResult(result);
+  }
+
   cleanShutdown(): void {
     if (!this.cradle) return;
     this.cleanShutdownCalled = true;

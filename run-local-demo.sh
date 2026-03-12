@@ -18,6 +18,7 @@ SIM_PORT=${SIM_PORT:-5800}
 LOBBY_SERVICE_PORT=${LOBBY_SERVICE_PORT:-5801}
 
 SKIP_BUILD=0
+PIDS=()
 
 for arg in "$@"; do
     case "$arg" in
@@ -36,9 +37,9 @@ sleep 0.5
 cleanup() {
     echo ""
     echo "=== Stopping all services ==="
-    pkill -f beacon.sh
-    pkill -f node
-    pkill -f chia-gaming-sim
+    for pid in "${PIDS[@]}"; do
+        kill "$pid" 2>/dev/null || true
+    done
     echo "All services stopped."
 }
 trap cleanup EXIT
@@ -137,6 +138,7 @@ echo "{\"tracker\": \"http://localhost:$LOBBY_PORT/?lobby=true\"}" > "$FE_DIR/di
 echo "=== Starting simulator (port $SIM_PORT) ==="
 SIM_BIN="${CARGO_TARGET_DIR:-$SCRIPT_DIR/target}/debug/chia-gaming-sim"
 RUST_LOG=debug "$SIM_BIN" &
+PIDS+=($!)
 
 echo "=== Waiting for simulator ==="
 for i in $(seq 1 5); do

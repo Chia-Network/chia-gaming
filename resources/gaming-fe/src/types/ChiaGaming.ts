@@ -108,6 +108,7 @@ export interface WasmConnection {
   // Game
   propose_game: (cid: number, game: any, parameters: Uint8Array) => any;
   accept_proposal: (cid: number, game_id: string) => any;
+  accept_proposal_and_move: (cid: number, id: string, readable: Uint8Array) => any;
   cancel_proposal: (cid: number, game_id: string) => any;
   make_move_with_entropy_for_testing: (
     cid: number,
@@ -116,6 +117,7 @@ export interface WasmConnection {
     new_entropy: string,
   ) => any;
   make_move: (cid: number, id: string, readable: Uint8Array) => any;
+  cheat: (cid: number, id: string, mover_share: string) => any;
   accept_timeout: (cid: number, id: string) => any;
   shut_down: (cid: number) => any;
   deliver_message: (cid: number, inbound_message: string) => any;
@@ -162,6 +164,10 @@ export class ChiaGame {
     return this.wasm.accept_proposal(this.cradle, game_id);
   }
 
+  accept_proposal_and_move(game_id: string, readable: Uint8Array): any {
+    return this.wasm.accept_proposal_and_move(this.cradle, game_id, readable);
+  }
+
   cancel_proposal(game_id: string): any {
     return this.wasm.cancel_proposal(this.cradle, game_id);
   }
@@ -200,6 +206,10 @@ export class ChiaGame {
 
   make_move_with_entropy_for_testing(id: string, readable: Uint8Array, new_entropy: string): any {
     return this.wasm.make_move_with_entropy_for_testing(this.cradle, id, readable, new_entropy);
+  }
+
+  cheat(game_id: string, mover_share: number): any {
+    return this.wasm.cheat(this.cradle, game_id, String(mover_share));
   }
 
   deliver_message(msg: string): any {
