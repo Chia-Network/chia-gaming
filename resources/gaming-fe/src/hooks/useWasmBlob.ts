@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Program } from 'clvm-lib';
+import { toast } from './use-toast';
 import {
   storeInitArgs,
 } from './WasmStateInit';
@@ -62,6 +63,7 @@ export interface UseWasmBlobResult {
   iStarted: boolean;
   moveNumber: number;
   handleMakeMove: () => void;
+  handleCheat: () => void;
   playerHand: number[];
   opponentHand: number[];
   playerNumber: number;
@@ -151,6 +153,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
         my_turn: !iStarted,
         parameters: null,
       });
+      console.log('[calpoker] proposed game');
     } catch (e) {
       console.error('[calpoker] proposeGame failed:', e);
     }
@@ -194,6 +197,39 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     const go = gameObjectRef.current;
     if (typeof n !== 'object' || n === null) return;
 
+    // Show toasts for notable game events
+    const type = Object.keys(n)[0];
+    const p = n[type]; // payload
+    type ToastCfg = { title: string; description?: string; variant?: 'default' | 'destructive' };
+    const toastMap: Record<string, ToastCfg> = {
+      // --- Channel-level notifications ---
+      GoingOnChain:                { variant: 'default',     title: 'Going On-Chain',              description: p?.reason ?? 'Dispute detected — submitting to blockchain' },
+      ChannelCoinSpent:            { variant: 'default',     title: 'Channel Coin Spent',           description: 'The state channel coin was spent on-chain' },
+      UnrollCoinSpent:             { variant: 'default',     title: 'Unroll Coin Spent',            description: p?.reward_coin ? 'Unroll resolved — reward coin received' : 'The unroll coin was spent on-chain' },
+      StaleChannelUnroll:          { variant: 'destructive', title: 'Stale Channel Unrolled',       description: p?.our_reward !== undefined ? `You received ${p.our_reward} mojos` : 'Opponent\'s stale unroll resolved on-chain' },
+      ChannelError:                { variant: 'destructive', title: 'Channel Error',                description: p?.reason },
+      // --- Dispute / slash (game-scoped) ---
+      OpponentPlayedIllegalMove:   { variant: 'default',     title: 'Illegal Move Detected',       description: `Game #${p?.id} — slashing opponent on-chain…` },
+      WeSlashedOpponent:           { variant: 'default',     title: 'Opponent Slashed!',            description: `Game #${p?.id} — successfully claimed all game funds` },
+      OpponentSlashedUs:           { variant: 'destructive', title: 'You Were Slashed',             description: `Game #${p?.id} — your illegal move was proven on-chain` },
+      OpponentSuccessfullyCheated: { variant: 'destructive', title: 'Opponent Got Away',            description: p?.our_reward !== undefined ? `Game #${p?.id} — slash window expired, you received ${p.our_reward} mojos` : `Game #${p?.id} — slash window expired` },
+      // --- Timeouts (game-scoped) ---
+      WeTimedOut:                  { variant: 'destructive', title: 'You Timed Out',                description: p?.our_reward !== undefined ? `Game #${p?.id} — you received ${p.our_reward} mojos` : `Game #${p?.id}` },
+      OpponentTimedOut:            { variant: 'default',     title: 'Opponent Timed Out',           description: p?.our_reward !== undefined ? `Game #${p?.id} — you received ${p.our_reward} mojos` : `Game #${p?.id}` },
+      // --- Game lifecycle ---
+      GameCancelled:               { variant: 'default',     title: 'Game Cancelled',               description: `Game #${p?.id} was cancelled` },
+      GameProposalCancelled:       { variant: 'destructive', title: 'Game Proposal Cancelled',      description: p?.reason ? `Game #${p?.id} — ${p.reason}` : `Game #${p?.id}` },
+      InsufficientBalance:         { variant: 'destructive', title: 'Insufficient Balance',         description: p?.our_balance_short && p?.their_balance_short ? 'Both sides have insufficient balance' : p?.our_balance_short ? 'Your balance is too low for this game' : 'Opponent\'s balance is too low for this game' },
+      GameError:                   { variant: 'destructive', title: 'Game Error',                   description: p?.reason ? `Game #${p?.id} — ${p.reason}` : `Game #${p?.id}` },
+      // --- Session lifecycle ---
+      CleanShutdownStarted:        { variant: 'default',     title: 'Session Ending',               description: 'Opponent initiated a clean shutdown' },
+      CleanShutdownComplete:       { variant: 'default',     title: 'Session Ended',                description: 'Channel closed — funds returned on-chain' },
+    };
+    if (type && toastMap[type]) {
+      const t = toastMap[type];
+      toast({ title: t.title, description: t.description, variant: t.variant });
+    }
+
     if ('GameProposed' in n) {
       if (!iStarted) {
         try {
@@ -206,6 +242,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
       const newId = n.GameProposalAccepted.id.toString();
       setGameIds(prev => [...prev, newId]);
       gameIdsRef.current = [...gameIdsRef.current, newId];
+      // Alice (joiner, iStarted=false) moves first at move 0
       setMyTurn(!iStarted);
       setMoveNumber(0);
       moveNumberRef.current = 0;
@@ -246,18 +283,39 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
           n.OpponentMoved.readable,
         );
         recognizeOutcome(newOutcome);
+        const gameId = gameIdsRef.current[0];
+        // Reset wasm-facing refs immediately so no stale calls can happen.
+        setGameIds(prev => prev.slice(1));
+        gameIdsRef.current = gameIdsRef.current.slice(1);
+        setMyTurn(false);
+        setOurCardSelections([]);
+        cardSelectionsRef.current = [];
+        setLastOutcome(gameOutcomeRef.current);
+
         if (!iStarted && currentMove === 2) {
+          // Alice: send final reveal move, then reset immediately.
+          // CaliforniaPoker guards against resetting while animation is running.
           try {
-            go?.makeMove(gameIdsRef.current[0], null);
+            go?.makeMove(gameId, null);
           } catch (e) {
             console.error('makeMove failed:', e);
           }
+          setMoveNumber(0);
+          moveNumberRef.current = 0;
+          setPlayerHand([]);
+          setOpponentHand([]);
+          playerHandRef.current = [];
+          opponentHandRef.current = [];
         } else {
-          try {
-            go?.acceptTimeout(gameIdsRef.current[0]);
-          } catch (e) {
-            console.error('acceptTimeout failed:', e);
-          }
+          // Bob: reset immediately and propose new game.
+          // CaliforniaPoker guards against resetting while animation is running.
+          setMoveNumber(0);
+          moveNumberRef.current = 0;
+          setPlayerHand([]);
+          setOpponentHand([]);
+          playerHandRef.current = [];
+          opponentHandRef.current = [];
+          proposeNewGame();
         }
       }
     } else if ('GameMessage' in n) {
@@ -281,6 +339,8 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
       }
     } else if ('CleanShutdownStarted' in n) {
       // Peer initiated clean shutdown
+    } else if ('GoingOnChain' in n) {
+      setGameConnectionState({ stateIdentifier: 'running', stateDetail: ['On-chain dispute in progress'] });
     } else if (isTerminal(n)) {
       setGameIds(prev => prev.slice(1));
       gameIdsRef.current = gameIdsRef.current.slice(1);
@@ -380,7 +440,14 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
       moveNumberRef.current = newMoveNum;
       setMyTurn(false);
     }
-  }, [iStarted]);
+  }, []);
+
+  const handleCheat = useCallback(() => {
+    const go = gameObjectRef.current;
+    const currentGameId = gameIdsRef.current[0];
+    if (!go || !currentGameId) return;
+    go.cheat(currentGameId, 0);
+  }, []);
 
   const setCardSelections = useCallback((selectionsOrFn: number[] | ((prev: number[]) => number[])) => {
     if (typeof selectionsOrFn === 'function') {
@@ -415,6 +482,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     iStarted,
     playerNumber,
     handleMakeMove,
+    handleCheat,
     playerHand,
     opponentHand,
     moveNumber,
@@ -425,3 +493,4 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     lastOutcome,
   };
 }
+
