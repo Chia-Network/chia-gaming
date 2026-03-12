@@ -185,9 +185,8 @@ echo "    Lobby view:     http://localhost:$LOBBY_PORT"
 echo "    WC stub:        http://localhost:$WC_PORT"
 echo "    Simulator:      http://localhost:$SIM_PORT"
 echo ""
-echo "  Press Ctrl-C to stop all services."
+echo "  Press any key (or Ctrl-C) to stop all services."
 echo "════════════════════════════════════════════════════════"
 echo ""
 
-# Wait for any child to exit (or Ctrl-C)
-wait
+read -r -s -n 1

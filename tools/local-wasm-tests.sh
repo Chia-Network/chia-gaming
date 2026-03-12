@@ -11,7 +11,6 @@ else
 fi
 nvm use 20.19.0
 
-set -x
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -47,6 +46,8 @@ elif [ -x /usr/local/opt/llvm/bin/clang ]; then
 fi
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
+    "$SCRIPT_DIR/build-chialisp.sh"
+
     echo "=== Building WASM (nodejs target for tests) ==="
     (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/node-pkg" --release --target=nodejs)
 

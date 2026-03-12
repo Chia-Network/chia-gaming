@@ -198,39 +198,11 @@ interface _JsonRpc {
   ) => Promise<GetNftWalletsWithDidsResponse>;
 }
 
-let walletBalanceLogCount = 0;
-const maxWalletBalanceLogCount = 1;
-
-let addressLogCount = 0;
-const maxAddressBalanceLogCount = 1;
-
 async function request<T>(method: ChiaMethod, data: any): Promise<T> {
   if (!walletConnectState.getClient())
     throw new Error('WalletConnect is not initialized');
   if (!walletConnectState.getSession())
     throw new Error('Session is not connected');
-
-  // DEBUG START
-  if (method === 'chia_getWalletBalance') {
-    walletBalanceLogCount += 1;
-  } else if (method === 'chia_getCurrentAddress') {
-    addressLogCount += 1;
-  }
-
-  if (
-    (! ['chia_getWalletBalance', 'chia_getCurrentAddress'].includes(method)) ||
-    (method === 'chia_getWalletBalance' && walletBalanceLogCount < maxWalletBalanceLogCount) ||
-    (method === 'chia_getCurrentAddress' && addressLogCount < maxAddressBalanceLogCount)
-  ) {
-    console.warn(
-      'walletconnect send request:',
-      method,
-      data,
-      walletConnectState.getSession()!.topic,
-      walletConnectState.getChainId(),
-    );
-    }
-  // DEBUG END
 
   const address = walletConnectState.getAddress();
   if (!address) {
@@ -240,15 +212,19 @@ async function request<T>(method: ChiaMethod, data: any): Promise<T> {
   const params = { ...data };
   params.fingerprint = parseInt(address);
 
+  console.log('[WC] >>>', method, params);
+
   const result = await walletConnectState.getClient()!.request({
     topic: walletConnectState.getSession()!.topic,
     chainId: walletConnectState.getChainId(),
     request: { method, params },
   });
 
-  if ('error' in result) throw new Error(JSON.stringify(result.error));
+  console.log('[WC] <<<', method, result);
 
-  return result.data;
+  if (result?.error) throw new Error(JSON.stringify(result.error));
+
+  return result?.data ?? result;
 }
 
 async function logIn(data: LogInRequest) {

@@ -17,6 +17,8 @@ echo "=== Building rust + chialisp ==="
 cargo build --features sim-tests
 echo "Build took: ${SECONDS} seconds"
 
+./tools/build-chialisp.sh
+
 echo "=== Running rust tests ==="
 cargo test --lib --features sim-tests -- --nocapture
 

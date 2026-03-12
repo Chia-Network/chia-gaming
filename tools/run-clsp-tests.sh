@@ -1,4 +1,7 @@
-#!/bin/bash -x
+#!/bin/bash
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+"$SCRIPT_DIR/build-chialisp.sh"
 
 cargo build
 cargo test chialisp

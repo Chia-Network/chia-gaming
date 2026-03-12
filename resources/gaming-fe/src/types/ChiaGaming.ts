@@ -211,6 +211,20 @@ export class ChiaGame {
   }
 
   block_data(block_number: number, block_data: WatchReport): any {
+    const arrays = [block_data.created_watched, block_data.deleted_watched, block_data.timed_out];
+    for (const arr of arrays) {
+      if (!Array.isArray(arr)) {
+        console.error('[wasm] block_data: non-array field in WatchReport:', block_data);
+        return undefined;
+      }
+      for (const s of arr) {
+        if (typeof s !== 'string' || s.length % 2 !== 0) {
+          console.error('[wasm] block_data: bad hex element:', JSON.stringify(s),
+            'type:', typeof s, 'in report:', JSON.stringify(block_data));
+          return undefined;
+        }
+      }
+    }
     return this.wasm.new_block(
       this.cradle,
       block_number,
