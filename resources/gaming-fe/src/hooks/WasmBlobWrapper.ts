@@ -232,15 +232,10 @@ export class WasmBlobWrapper {
     this.processResult(result);
   }
 
-  makeMove(gameId: string, readable: Program | null, entropy?: string): void {
+  makeMove(gameId: string, readable: Program | null): void {
     if (!this.cradle) throw new Error('no cradle');
     const bytes = clvmToBytes(readable);
-    let result;
-    if (entropy) {
-      result = this.cradle.make_move_entropy(gameId, bytes, entropy);
-    } else {
-      result = this.cradle.make_move_entropy(gameId, bytes, this.generateEntropy());
-    }
+    const result = this.cradle.make_move(gameId, bytes);
     this.processResult(result);
   }
 
@@ -255,17 +250,5 @@ export class WasmBlobWrapper {
     this.cleanShutdownCalled = true;
     const result = this.cradle.shut_down();
     this.processResult(result);
-  }
-
-  generateEntropy(): string {
-    const hexDigits = [];
-    for (let i = 0; i < 16; i++) {
-      hexDigits.push(Math.floor(Math.random() * 16).toString(16));
-    }
-    const entropy = this.wc?.sha256bytes(hexDigits.join(''));
-    if (!entropy) {
-      throw new Error('tried to make entropy without a wasm connection');
-    }
-    return entropy;
   }
 }

@@ -251,7 +251,10 @@ export class WasmStateInit {
     wasm: WasmConnection,
     serializedGame: any,
   ): ChiaGame {
-    let chiaGameId = wasm.create_serialized_game(serializedGame);
+    const entropy = new Uint8Array(32);
+    crypto.getRandomValues(entropy);
+    const seedHex = Array.from(entropy, b => b.toString(16).padStart(2, '0')).join('');
+    let chiaGameId = wasm.create_serialized_game(serializedGame, seedHex);
     return new ChiaGame(wasm, chiaGameId);
   }
 }
