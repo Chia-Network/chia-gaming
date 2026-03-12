@@ -78,7 +78,7 @@ export interface WasmConnection {
   init: (print: any) => any;
   create_rng: (seed: string) => number;
   create_game_cradle: (config: any) => { id: number; puzzle_hash: string };
-  create_serialized_game: (serialized: any) => number;
+  create_serialized_game: (serialized: any, new_seed: string) => number;
   deposit_file: (name: string, data: string) => any;
 
   // Blockchain
@@ -110,7 +110,7 @@ export interface WasmConnection {
   accept_proposal: (cid: number, game_id: string) => any;
   accept_proposal_and_move: (cid: number, id: string, readable: Uint8Array) => any;
   cancel_proposal: (cid: number, game_id: string) => any;
-  make_move_entropy: (
+  make_move_with_entropy_for_testing: (
     cid: number,
     id: string,
     readable: Uint8Array,
@@ -200,8 +200,12 @@ export class ChiaGame {
     return this.wasm.shut_down(this.cradle);
   }
 
-  make_move_entropy(id: string, readable: Uint8Array, new_entropy: string): any {
-    return this.wasm.make_move_entropy(this.cradle, id, readable, new_entropy);
+  make_move(id: string, readable: Uint8Array): any {
+    return this.wasm.make_move(this.cradle, id, readable);
+  }
+
+  make_move_with_entropy_for_testing(id: string, readable: Uint8Array, new_entropy: string): any {
+    return this.wasm.make_move_with_entropy_for_testing(this.cradle, id, readable, new_entropy);
   }
 
   cheat(game_id: string, mover_share: number): any {

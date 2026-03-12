@@ -107,7 +107,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     setOpponentCards(mappedOpponent);
     if (mappedPlayer.length && mappedOpponent.length) {
       const newRemCards = [mappedPlayer, mappedOpponent];
-      console.log('setRememberedCards', newRemCards);
       setRememberedCards(newRemCards);
     }
     if (outcome) {
@@ -121,7 +120,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       haveOutcome &&
       gameState === GAME_STATES.AWAITING_SWAP
     ) {
-      console.log('outcome is', JSON.stringify(haveOutcome));
       swapCards(haveOutcome);
     }
   }, [outcome, gameState, moveNumber, rememberedOutcome]);
@@ -146,7 +144,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   };
   const [showEndDialog, setShowEndDialog] = useState(false);
   const NewGame = () => {
-    console.log(`[UI] NewGame() called | moveNumber:${moveNumber} | isPlayerTurn:${isPlayerTurn}`);
+    doHandleMakeMove();
     setGameState(GAME_STATES.SELECTING);
     setRememberedCards([[], []]);
     setWinner(null);
@@ -352,7 +350,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
 
   const swapCards = (rememberedOutcome: CalpokerOutcome) => {
     const liveWinner = translateTopline(rememberedOutcome.my_win_outcome);
-    console.log('swapping, outcome', liveWinner, rememberedOutcome);
     setWinner(liveWinner);
     setGameState(GAME_STATES.SWAPPING);
 
@@ -375,7 +372,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       .filter((cardId): cardId is number => cardId !== undefined);
 
     setSwappingCards({ player: rememberedCards[0], ai: rememberedCards[1] });
-    console.log('calculate moving cards', playerSwapCardIds, aiSwapCardIds);
     const movingCardData = calculateMovingCards(
       playerSwapCardIds,
       aiSwapCardIds,
@@ -383,7 +379,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       rememberedCards[1],
     );
     setMovingCards(movingCardData);
-    console.log('moving cards', movingCardData);
     setShowSwapAnimation(true);
 
     setTimeout(() => {
@@ -435,16 +430,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         cards: opponentBestCards,
         rank: { name: '', score: 0, tiebreakers: [] },
       });
-
-      console.log(
-        'done swapping',
-        log.length - 1,
-        log,
-        newPlayer,
-        newOpponent,
-        playerBestCards,
-        opponentBestCards,
-      );
 
       setMovingCards([]);
       setShowSwapAnimation(false);

@@ -1,7 +1,5 @@
 use std::rc::Rc;
 
-use log::debug;
-
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::ReadableMove;
@@ -14,7 +12,7 @@ use crate::referee::types::{
 };
 use crate::referee::Referee;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LiveGame {
     pub game_id: GameID,
     pub last_referee_puzzle_hash: PuzzleHash,
@@ -42,6 +40,10 @@ impl LiveGame {
 
     pub fn is_my_turn(&self) -> bool {
         self.referee_maker.is_my_turn()
+    }
+
+    pub fn get_max_move_size(&self) -> usize {
+        self.referee_maker.get_max_move_size()
     }
 
     pub fn get_game_timeout(&self) -> Timeout {
@@ -98,7 +100,6 @@ impl LiveGame {
         self.referee_maker = new_ref;
         self.last_referee_puzzle_hash =
             self.referee_maker.outcome_referee_puzzle_hash(allocator)?;
-        debug!("MY MOVE: last_ref_ph={:?}", self.last_referee_puzzle_hash);
         Ok(referee_result)
     }
 
@@ -122,10 +123,6 @@ impl LiveGame {
         if their_move_result.puzzle_hash_for_unroll.is_some() {
             self.last_referee_puzzle_hash =
                 self.referee_maker.outcome_referee_puzzle_hash(allocator)?;
-            debug!(
-                "ACCEPT MOVE: last_ref_ph={:?}",
-                self.last_referee_puzzle_hash
-            );
         }
         Ok(their_move_result)
     }

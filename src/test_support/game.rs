@@ -14,8 +14,8 @@ use crate::channel_handler::types::ReadableMove;
 pub enum GameAction {
     /// Do a timeout
     Timeout(usize),
-    /// Move (player, game ordinal, clvm readable move, was received)
-    Move(usize, usize, ReadableMove, bool),
+    /// Move (player, game_id, clvm readable move, was received)
+    Move(usize, crate::common::types::GameID, ReadableMove, bool),
 }
 
 #[cfg(all(test, not(feature = "sim-tests")))]
@@ -23,7 +23,7 @@ impl std::fmt::Debug for GameAction {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
             GameAction::Timeout(t) => write!(formatter, "Timeout({t})"),
-            GameAction::Move(p, g, n, r) => write!(formatter, "Move({p},{g},{n:?},{r})"),
+            GameAction::Move(p, g, n, r) => write!(formatter, "Move({p},{g:?},{n:?},{r})"),
         }
     }
 }
@@ -47,7 +47,7 @@ mod sim_tests {
         Sha256tree,
     };
     use crate::simulator::Simulator;
-    use log::debug;
+
     use rand::prelude::*;
     use std::rc::Rc;
 
@@ -143,7 +143,6 @@ mod sim_tests {
             spend: &ChannelCoinSpendInfo,
         ) -> Result<(), Error> {
             if let Some(r) = &mut self.handshake_result[player] {
-                debug!("UPDATE CHANNEL COIN AFTER RECEIVE");
                 r.spend = spend.clone();
                 return Ok(());
             }
@@ -167,25 +166,22 @@ mod sim_tests {
     pub enum ProposeTrigger {
         /// Wait for the channel to be created (handshake complete).
         Channel,
-        /// Wait for a previous game (by ordinal) to finish.
-        AfterGame(usize),
+        /// Wait for a specific game (by GameID) to finish.
+        AfterGame(GameID),
     }
 
     #[derive(Clone)]
     pub enum GameAction {
         /// Do a timeout
         Timeout(usize),
-        /// Move (player, game ordinal, clvm readable move, was received)
-        Move(usize, usize, ReadableMove, bool),
-        /// Fake move (player, game ordinal, readable, sabotage bytes).
-        FakeMove(usize, usize, ReadableMove, Vec<u8>),
-        /// Cheat: enable cheating on the referee and queue a move with
-        /// invalid data. The given mover_share is the amount the victim
-        /// receives on timeout. For testing and demonstration only.
-        Cheat(usize, Amount),
-        /// Force-destroy a game coin: inject a fake deletion into WatchReport
-        /// to test impossible spend / game destroyed notifications.
-        ForceDestroyCoin(usize),
+        /// Move (player, game_id, clvm readable move, was received)
+        Move(usize, GameID, ReadableMove, bool),
+        /// Fake move (player, game_id, readable, sabotage bytes).
+        FakeMove(usize, GameID, ReadableMove, Vec<u8>),
+        /// Cheat (player, game_id, mover_share).
+        Cheat(usize, GameID, Amount),
+        /// Force-destroy a game coin (player, game_id).
+        ForceDestroyCoin(usize, GameID),
         /// Nerf (silently drop) all outbound transactions for a player.
         NerfTransactions(usize),
         /// Stop nerfing transactions. If true, replay the backlog to the
@@ -205,8 +201,8 @@ mod sim_tests {
         GoOnChainThenMove(usize),
         /// Wait a number of blocks
         WaitBlocks(usize, usize),
-        /// Accept timeout (claim game outcome)
-        AcceptTimeout(usize),
+        /// Accept timeout (player, game_id)
+        AcceptTimeout(usize, GameID),
         /// Shut down
         CleanShutdown(usize),
         /// Corrupt a player's current_state_number for testing edge cases.
@@ -220,26 +216,31 @@ mod sim_tests {
         NerfMessages(usize),
         /// Stop nerfing messages.
         UnNerfMessages,
-        /// Accept a proposed game. (player, proposal ordinal in all_game_ids)
-        AcceptProposal(usize, usize),
-        /// Cancel a proposed game from the specified player.
-        CancelProposal(usize),
+        /// Accept a proposed game. (player, game_id)
+        AcceptProposal(usize, GameID),
+        /// Cancel a proposed game (player, game_id).
+        CancelProposal(usize, GameID),
         /// Snapshot the current unroll spend info for later stale unroll.
         SaveUnrollSnapshot(usize),
         /// Force-submit a stale unroll using a previously saved snapshot.
         ForceStaleUnroll(usize),
+        /// Inject raw bytes into a player's inbound message queue.
+        /// Used for testing message validation (e.g. oversized messages).
+        InjectRawMessage(usize, Vec<u8>),
     }
 
     impl std::fmt::Debug for GameAction {
         fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
             match self {
                 GameAction::Timeout(t) => write!(formatter, "Timeout({t})"),
-                GameAction::Move(p, g, n, r) => write!(formatter, "Move({p},{g},{n:?},{r})"),
+                GameAction::Move(p, g, n, r) => write!(formatter, "Move({p},{g:?},{n:?},{r})"),
                 GameAction::FakeMove(p, g, n, v) => {
-                    write!(formatter, "FakeMove({p},{g},{n:?},{v:?})")
+                    write!(formatter, "FakeMove({p},{g:?},{n:?},{v:?})")
                 }
-                GameAction::Cheat(p, ms) => write!(formatter, "Cheat({p},{ms:?})"),
-                GameAction::ForceDestroyCoin(p) => write!(formatter, "ForceDestroyCoin({p})"),
+                GameAction::Cheat(p, g, ms) => write!(formatter, "Cheat({p},{g:?},{ms:?})"),
+                GameAction::ForceDestroyCoin(p, g) => {
+                    write!(formatter, "ForceDestroyCoin({p},{g:?})")
+                }
                 GameAction::NerfTransactions(p) => write!(formatter, "NerfTransactions({p})"),
                 GameAction::UnNerfTransactions(r) => write!(formatter, "UnNerfTransactions({r})"),
                 GameAction::ProposeNewGame(p, t) => {
@@ -252,7 +253,9 @@ mod sim_tests {
                 GameAction::GoOnChainThenMove(p) => {
                     write!(formatter, "GoOnChainThenMove({p})")
                 }
-                GameAction::AcceptTimeout(p) => write!(formatter, "AcceptTimeout({p})"),
+                GameAction::AcceptTimeout(p, g) => {
+                    write!(formatter, "AcceptTimeout({p},{g:?})")
+                }
                 GameAction::WaitBlocks(n, p) => write!(formatter, "WaitBlocks({n},{p})"),
                 GameAction::CleanShutdown(p) => write!(formatter, "CleanShutdown({p})"),
                 GameAction::CorruptStateNumber(p, sn) => {
@@ -261,12 +264,17 @@ mod sim_tests {
                 GameAction::ForceUnroll(p) => write!(formatter, "ForceUnroll({p})"),
                 GameAction::NerfMessages(p) => write!(formatter, "NerfMessages({p})"),
                 GameAction::UnNerfMessages => write!(formatter, "UnNerfMessages"),
-                GameAction::AcceptProposal(p, n) => {
-                    write!(formatter, "AcceptProposal({p},{n})")
+                GameAction::AcceptProposal(p, g) => {
+                    write!(formatter, "AcceptProposal({p},{g:?})")
                 }
-                GameAction::CancelProposal(p) => write!(formatter, "CancelProposal({p})"),
+                GameAction::CancelProposal(p, g) => {
+                    write!(formatter, "CancelProposal({p},{g:?})")
+                }
                 GameAction::SaveUnrollSnapshot(p) => write!(formatter, "SaveUnrollSnapshot({p})"),
                 GameAction::ForceStaleUnroll(p) => write!(formatter, "ForceStaleUnroll({p})"),
+                GameAction::InjectRawMessage(p, data) => {
+                    write!(formatter, "InjectRawMessage({p}, {} bytes)", data.len())
+                }
             }
         }
     }
@@ -352,8 +360,7 @@ mod sim_tests {
         let aggregate_public_key = private_to_public_key(&party.player(0).ch.channel_private_key())
             + private_to_public_key(&party.player(1).ch.channel_private_key());
 
-        let cc_ph = puzzle_hash_for_synthetic_public_key(env.allocator, &aggregate_public_key)?;
-        debug!("puzzle hash for state channel coin: {cc_ph:?}");
+        let _cc_ph = puzzle_hash_for_synthetic_public_key(env.allocator, &aggregate_public_key)?;
 
         let state_channel_coin = simulator.combine_coins(
             env.allocator,
@@ -361,10 +368,6 @@ mod sim_tests {
             &party.players[0].init_data.channel_puzzle_hash_up,
             &[u1, u2],
         )?;
-        debug!(
-            "actual state channel coin {:?}",
-            state_channel_coin.to_parts()
-        );
         simulator.farm_block(&identities[0].puzzle_hash);
 
         party
@@ -380,9 +383,6 @@ mod sim_tests {
             alice_game.game_start(game_id, &contributions[0], &contributions[1], &timeout);
         let their_game_start =
             bob_game.game_start(game_id, &contributions[1], &contributions[0], &timeout);
-
-        debug!("our_game_start {:?}", our_game_start);
-        debug!("their_game_start {:?}", their_game_start);
 
         let our_start: Rc<GameStartInfo> = Rc::new(our_game_start);
         let their_start: Rc<GameStartInfo> = Rc::new(their_game_start);

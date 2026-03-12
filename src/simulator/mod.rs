@@ -719,9 +719,23 @@ impl Simulator {
 }
 
 #[cfg(test)]
+thread_local! {
+    static CURRENT_TEST_NAME: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn current_test_name() -> Option<String> {
+    CURRENT_TEST_NAME.with(|cell| cell.borrow().clone())
+}
+
+#[cfg(test)]
 pub fn run_simulation_tests() {
     use std::backtrace::Backtrace;
     std::panic::set_hook(Box::new(|panic_info| {
+        let test_name = CURRENT_TEST_NAME.with(|cell| cell.borrow().clone());
+        if let Some(name) = test_name {
+            eprintln!("PANIC IN TEST: {name}");
+        }
         if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
             eprintln!("panic payload: {s}");
         } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
@@ -773,6 +787,7 @@ pub fn run_simulation_tests() {
         eprintln!("Running {} test(s) matching '{f}'", matched.len());
         let total_start = std::time::Instant::now();
         for (name, func) in &matched {
+            CURRENT_TEST_NAME.with(|cell| *cell.borrow_mut() = Some(name.to_string()));
             eprintln!("RUNNING TEST {name} ...");
             let start = std::time::Instant::now();
             func();
@@ -826,6 +841,7 @@ pub fn run_simulation_tests() {
                 s.spawn(move || loop {
                     let task = queue.lock().unwrap().pop();
                     let Some((name, f)) = task else { break };
+                    CURRENT_TEST_NAME.with(|cell| *cell.borrow_mut() = Some(name.to_string()));
                     eprintln!("RUNNING TEST {name} ...");
                     let start = std::time::Instant::now();
                     f();

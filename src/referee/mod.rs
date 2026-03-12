@@ -177,6 +177,10 @@ impl Referee {
         }
     }
 
+    pub fn get_max_move_size(&self) -> usize {
+        self.spend_this_coin().game_move.basic.max_move_size
+    }
+
     fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         match self {
             Referee::MyTurn(t) => t.spend_this_coin(),

@@ -155,7 +155,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
       });
       console.log('[calpoker] proposed game');
     } catch (e) {
-      console.error('[calpoker] proposeGame failed:', e);
+      console.error('proposeGame failed:', e);
     }
   }, [iStarted, perGameAmount]);
 
@@ -262,13 +262,12 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
       if (currentMove === 1 && !iStarted) {
         try {
           const cards = parseCards(n.OpponentMoved.readable, iStarted);
-          console.log('[calpoker] OpponentMoved cards (joiner):', cards);
           setPlayerHand(cards.playerHand);
           setOpponentHand(cards.opponentHand);
           playerHandRef.current = cards.playerHand;
           opponentHandRef.current = cards.opponentHand;
         } catch (e) {
-          console.error('[calpoker] parseCards from OpponentMoved failed:', e);
+          console.error('parseCards from OpponentMoved failed:', e);
         }
       } else if (currentMove >= 2) {
         const myDiscardsBitfield = selectedCardsToBitfield(
@@ -321,18 +320,16 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     } else if ('GameMessage' in n) {
       try {
         const cards = parseCards(n.GameMessage.readable, iStarted);
-        console.log('[calpoker] GameMessage cards:', cards);
         setPlayerHand(cards.playerHand);
         setOpponentHand(cards.opponentHand);
         playerHandRef.current = cards.playerHand;
         opponentHandRef.current = cards.opponentHand;
       } catch (e) {
-        console.error('[calpoker] parseCards failed:', e, 'readable:', n.GameMessage.readable);
+        console.error('parseCards failed:', e, 'readable:', n.GameMessage.readable);
       }
     } else if ('CleanShutdownComplete' in n) {
       setGameConnectionState({ stateIdentifier: 'clean_shutdown', stateDetail: [] });
     } else if ('ChannelCreated' in n) {
-      console.log('[calpoker] channel created, iStarted:', iStarted);
       setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
       if (iStarted) {
         proposeNewGame();
@@ -363,7 +360,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
         }, 2000);
       }
     } else {
-      console.warn('[calpoker] unhandled notification:', JSON.stringify(n));
+      console.warn('unhandled notification:', JSON.stringify(n));
     }
   }, [iStarted, recognizeOutcome, proposeNewGame]);
 
@@ -384,7 +381,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
             setAddressData(evt.data);
             break;
           default:
-            console.warn('[calpoker] unhandled event type:', (evt as any).type, evt);
+            console.warn('unhandled event type:', (evt as any).type, evt);
             break;
         }
       }

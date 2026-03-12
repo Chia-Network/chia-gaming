@@ -85,16 +85,19 @@ finishes. A test that starts but doesn't print `ok` is the one that failed.
 
 ### Panics
 
-The panic hook prints a `panic payload:` line with the error message, followed
-by a backtrace, then exits immediately. Example:
+The panic hook prints the test name first (via thread-local tracking), followed
+by the `panic payload:` line with the error message, then a backtrace, then
+exits immediately. Example:
 
 ```
+PANIC IN TEST: accept_finished_on_chain
 panic payload: tx include failed: move_number=10 tx_name=Some("false accept transaction") ...
    2: std::panicking::panic_with_hook
    ...
 ```
 
-The `panic payload:` line has the information you need.
+The `PANIC IN TEST:` line identifies which test panicked (even when multiple
+tests run in parallel). The `panic payload:` line has the error details.
 
 ### Saving output
 
@@ -159,17 +162,17 @@ message delivery, block farming, and notification dispatch.
 | `src/test_support/calpoker.rs` | `prefix_test_moves`, calpoker-specific tests |
 | `src/test_support/debug_game.rs` | Debug-game setup helpers |
 
-### Game ordinals and `all_game_ids`
+### Explicit GameIDs
 
-The sim loop tracks every game ID in chronological order in
-`all_game_ids: Vec<GameID>`. Game ordinal 0 is the initial game (if present),
-ordinal 1 is the first game proposed from the action list, etc. `GameAction`
-variants reference games by ordinal, not by raw `GameID`:
+`GameAction` variants reference games by explicit `GameID` values — not ordinal
+indices. `GameID` values are deterministic nonces assigned when proposing a
+game; each player's nonce counter increments independently (even for one
+player, odd for the other, depending on who holds the initial potato).
 
-- `Move(player, game_num, readable, share)` — move in `all_game_ids[game_num]`
-- `AcceptProposal(player, proposal_num)` — accept `all_game_ids[proposal_num]`
-- `ProposeNewGame(player, trigger)` — propose a new game; the ordinal is
-  implicit (the next index appended to `all_game_ids`)
+- `Move(player, game_id, readable, share)` — move in the specified game
+- `AcceptProposal(player, game_id)` — accept the proposal with this game ID
+- `ProposeNewGame(player, trigger)` — propose a new game; the `GameID` is
+  determined by the nonce counter at proposal time
 
 ### `ProposeTrigger`
 
@@ -178,15 +181,15 @@ specifies when the action is ready to fire:
 
 - `ProposeTrigger::Channel` — fires when `channel_created` is true for the
   proposing player.
-- `ProposeTrigger::AfterGame(n)` — fires when game ordinal `n` has a terminal
+- `ProposeTrigger::AfterGame(game_id)` — fires when `game_id` has a terminal
   notification in either player's `game_finished_ids`.
 
 ### GameAction variants
 
 **Game lifecycle (event-triggered):**
-- `Move(player, game_num, readable, share)` — Player makes a move. Triggered
+- `Move(player, game_id, readable, share)` — Player makes a move. Triggered
   when `game_accepted_ids` or `opponent_moved_in_game` contains the game ID.
-- `AcceptProposal(player, proposal_num)` — Two-phase: phase 1 calls
+- `AcceptProposal(player, game_id)` — Two-phase: phase 1 calls
   `accept_proposal` when the proposal is received; phase 2 advances past when
   the accept resolves (see [Two-phase AcceptProposal](#two-phase-acceptproposal)).
 - `ProposeNewGame(player, trigger)` — Propose (`my_turn=true`). Triggered by
@@ -194,9 +197,9 @@ specifies when the action is ready to fire:
 - `ProposeNewGameTheirTurn(player, trigger)` — Propose (`my_turn=false`).
 
 **Game lifecycle (global — fire unconditionally):**
-- `AcceptTimeout(player)` — Accept the game result.
+- `AcceptTimeout(player, game_id)` — Accept the game result.
 - `CleanShutdown(player)` — Cooperative channel closure.
-- `CancelProposal(player)` — Cancel the most recently proposed game.
+- `CancelProposal(player, game_id)` — Cancel a proposed game.
 
 **On-chain / fault injection (global):**
 - `GoOnChain(player)` — Unilaterally go on chain.
@@ -205,7 +208,8 @@ specifies when the action is ready to fire:
 - `NerfTransactions(player)` / `UnNerfTransactions(replay)` — Drop/restore
   outbound transactions.
 - `NerfMessages(player)` / `UnNerfMessages` — Drop/restore outbound messages.
-- `Cheat(player, mover_share)` — Queue a move with invalid data.
+- `Cheat(player, game_id, mover_share)` — Queue a move with invalid data.
+- `ForceDestroyCoin(player, game_id)` — Destroy a game coin on-chain.
 - `ForceUnroll(player)` / `ForceStaleUnroll(player)` — Submit an unroll outside
   normal flow.
 
@@ -218,9 +222,7 @@ Each iteration of the sim loop:
    - Call `drain_all` to process inbound messages and collect outbound.
    - Deliver outbound messages to the other player's inbound queue.
    - Dispatch notifications to `LocalTestUIReceiver`.
-3. **Auto-accept the initial game** (if `initial_game_id` is set and
-   player 1 has received the proposal).
-4. **Process the next action** from the script if a trigger condition is met.
+3. **Process the next action** from the script if a trigger condition is met.
 
 Because draining happens in fixed order (player 0 first), a message sent by
 player 1 takes one extra iteration to reach player 0 compared to the reverse
@@ -292,29 +294,37 @@ for the next action is never satisfied, which means either:
 
 ### Writing a new test
 
-1. Build a `Vec<GameAction>` describing the scenario using game ordinals.
-2. Call `run_calpoker_container_with_action_list` (with initial game) or
-   `run_calpoker_proposal_only` (proposal-only, no initial game).
-3. Inspect the returned `GameRunOutcome` for notifications, balances, and events.
-4. Register the test by adding a `res.push(("test_name", &|| { ... }))` entry
+1. Build a `Vec<GameAction>` describing the scenario using explicit `GameID`
+   values for every variant that needs one.
+2. Every test must explicitly `ProposeNewGame` and `AcceptProposal` to start
+   a game — there is no auto-propose/accept.
+3. Call `run_calpoker_container_with_action_list` (or the `_with_success_predicate`
+   variant for custom termination).
+4. Inspect the returned `GameRunOutcome` for notifications, balances, and events.
+5. Register the test by adding a `res.push(("test_name", &|| { ... }))` entry
    in the relevant `test_funs()` function.
 
 Example — two-game test where the initiator proposes both games:
 
 ```rust
-let mut moves = prefix_test_moves(&mut allocator, 0); // game ordinal 0 (initial game)
-moves.push(GameAction::AcceptTimeout(0));
-moves.push(GameAction::ProposeNewGame(0, ProposeTrigger::AfterGame(0)));
-moves.push(GameAction::AcceptProposal(1, 1)); // accept game ordinal 1
-moves.push(GameAction::AcceptTimeout(0));
+let mut moves = vec![
+    GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+    GameAction::AcceptProposal(1, GameID(0)),
+];
+moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+moves.push(GameAction::AcceptTimeout(0, GameID(0)));
+moves.push(GameAction::ProposeNewGame(0, ProposeTrigger::AfterGame(GameID(0))));
+moves.push(GameAction::AcceptProposal(1, GameID(2)));
+moves.push(GameAction::WaitBlocks(11, 0));
+moves.push(GameAction::AcceptTimeout(0, GameID(2)));
 moves.push(GameAction::CleanShutdown(0));
 
-let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, None)
+let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
     .expect("should complete");
 ```
 
-`prefix_test_moves(allocator, game_num)` returns the 5 hardcoded calpoker
-moves for game ordinal `game_num`. It only works for the first game in a
+`prefix_test_moves(allocator, game_id)` returns the 5 hardcoded calpoker
+moves for the given `GameID`. It only works for the first game in a
 deterministic-seed run; subsequent games produce different cards, so use
 timeout or other resolution strategies.
 

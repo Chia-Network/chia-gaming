@@ -803,36 +803,61 @@ fn reports_blocked(i: usize, blocked: &Option<(usize, usize)>) -> bool {
     false
 }
 
-fn move_ready(
-    moves: &[GameAction],
-    mn: usize,
-    all_game_ids: &[GameID],
-    local_uis: &[LocalTestUIReceiver; 2],
-) -> bool {
+fn gid_flipped(gid: &GameID) -> GameID {
+    GameID(gid.0 ^ 1)
+}
+
+fn gid_matches(set: &HashSet<GameID>, gid: &GameID) -> bool {
+    set.contains(gid) || set.contains(&gid_flipped(gid))
+}
+
+fn gid_resolve_from_sets(
+    gid: &GameID,
+    first: &HashSet<GameID>,
+    second: &HashSet<GameID>,
+) -> GameID {
+    if first.contains(gid) || second.contains(gid) {
+        return *gid;
+    }
+    let flipped = gid_flipped(gid);
+    if first.contains(&flipped) || second.contains(&flipped) {
+        return flipped;
+    }
+    *gid
+}
+
+fn gid_diag_enabled() -> bool {
+    std::env::var("SIM_GID_DIAG").is_ok()
+}
+
+fn gid_diag(test_name: &str, action_idx: usize, label: &str, requested: &GameID, runtime: &GameID) {
+    eprintln!(
+        "GID-DIAG test={test_name} action={action_idx} op={label} requested={:?} runtime={:?}",
+        requested, runtime
+    );
+}
+
+fn move_ready(moves: &[GameAction], mn: usize, local_uis: &[LocalTestUIReceiver; 2]) -> bool {
     if mn >= moves.len() {
         return false;
     }
     match &moves[mn] {
-        GameAction::Move(who, game_num, _, _) | GameAction::FakeMove(who, game_num, _, _) => {
-            if *game_num >= all_game_ids.len() {
-                return false;
-            }
-            let gid = &all_game_ids[*game_num];
-            local_uis[*who].game_accepted_ids.contains(gid)
-                || local_uis[*who].opponent_moved_in_game.contains(gid)
+        GameAction::Move(who, gid, _, _) | GameAction::FakeMove(who, gid, _, _) => {
+            gid_matches(&local_uis[*who].game_accepted_ids, gid)
+                || gid_matches(&local_uis[*who].opponent_moved_in_game, gid)
         }
         _ => false,
     }
 }
 
 fn accept_resolved(local_uis: &[LocalTestUIReceiver; 2], who: usize, gid: &GameID) -> bool {
-    local_uis[who].game_accepted_ids.contains(gid)
+    gid_matches(&local_uis[who].game_accepted_ids, gid)
         || local_uis[who].notifications.iter().any(|n| {
             matches!(n,
                 GameNotification::InsufficientBalance { id, .. }
                 | GameNotification::GameCancelled { id }
                 | GameNotification::GameProposalCancelled { id, .. }
-                    if id == gid
+                    if id == gid || *id == gid_flipped(gid)
             )
         })
 }
@@ -840,33 +865,30 @@ fn accept_resolved(local_uis: &[LocalTestUIReceiver; 2], who: usize, gid: &GameI
 fn accept_proposal_ready(
     moves: &[GameAction],
     mn: usize,
-    all_game_ids: &[GameID],
     local_uis: &[LocalTestUIReceiver; 2],
 ) -> bool {
     if mn >= moves.len() {
         return false;
     }
-    if let GameAction::AcceptProposal(who, proposal_num) = &moves[mn] {
-        if *proposal_num >= all_game_ids.len() {
-            return false;
-        }
-        let gid = &all_game_ids[*proposal_num];
-        if local_uis[*who].accepted_proposal_ids.contains(gid) {
+    if let GameAction::AcceptProposal(who, gid) = &moves[mn] {
+        if local_uis[*who].accepted_proposal_ids.contains(gid)
+            || local_uis[*who]
+                .accepted_proposal_ids
+                .contains(&gid_flipped(gid))
+        {
             accept_resolved(local_uis, *who, gid)
         } else {
             local_uis[*who].received_proposal_ids.contains(gid)
+                || local_uis[*who]
+                    .received_proposal_ids
+                    .contains(&gid_flipped(gid))
         }
     } else {
         false
     }
 }
 
-fn propose_ready(
-    moves: &[GameAction],
-    mn: usize,
-    all_game_ids: &[GameID],
-    local_uis: &[LocalTestUIReceiver; 2],
-) -> bool {
+fn propose_ready(moves: &[GameAction], mn: usize, local_uis: &[LocalTestUIReceiver; 2]) -> bool {
     if mn >= moves.len() {
         return false;
     }
@@ -874,10 +896,9 @@ fn propose_ready(
         GameAction::ProposeNewGame(who, trigger)
         | GameAction::ProposeNewGameTheirTurn(who, trigger) => match trigger {
             ProposeTrigger::Channel => local_uis[*who].channel_created,
-            ProposeTrigger::AfterGame(n) => {
-                *n < all_game_ids.len()
-                    && (local_uis[0].game_finished_ids.contains(&all_game_ids[*n])
-                        || local_uis[1].game_finished_ids.contains(&all_game_ids[*n]))
+            ProposeTrigger::AfterGame(gid) => {
+                local_uis[0].game_finished_ids.contains(gid)
+                    || local_uis[1].game_finished_ids.contains(gid)
             }
         },
         _ => false,
@@ -894,10 +915,11 @@ fn run_game_container_with_action_list_with_success_predicate(
     moves_input: &[GameAction],
     pred: GameRunEarlySuccessPredicate,
     per_player_balance: Option<u64>,
-    skip_initial_game: bool,
 ) -> Result<GameRunOutcome, Error> {
     let bal = per_player_balance.unwrap_or(100);
     let mut move_number = 0;
+    let gid_diag_on = gid_diag_enabled();
+    let test_name = crate::simulator::current_test_name().unwrap_or_else(|| "unknown".to_string());
     debug!("DEBUG: RNG {:?}", rng);
     // debug!("DEBUG: KEYS {:?}", private_keys);
     // Coinset adapter for each side.
@@ -964,8 +986,6 @@ fn run_game_container_with_action_list_with_success_predicate(
         private_keys[1].clone(),
     );
     let mut cradles = [cradle1, cradle2];
-    let mut game_ids = Vec::default();
-    let mut all_game_ids: Vec<GameID> = Vec::new();
     let mut handshake_done = false;
     let mut can_move = false;
     let mut ending = None;
@@ -977,7 +997,6 @@ fn run_game_container_with_action_list_with_success_predicate(
     let mut nerfed_tx_backlog: Vec<SpendBundle> = Vec::new();
     let mut nerf_messages_for: u8 = 0;
     let mut start_step = 0;
-    let mut initial_game_id: Option<GameID> = None;
     let mut num_steps = 0;
 
     // Give coins to the cradles.
@@ -992,19 +1011,20 @@ fn run_game_container_with_action_list_with_success_predicate(
                     | GameAction::WaitBlocks(_, _)
                     | GameAction::GoOnChain(_)
                     | GameAction::GoOnChainThenMove(_)
-                    | GameAction::AcceptTimeout(_)
+                    | GameAction::AcceptTimeout(_, _)
                     | GameAction::Timeout(_)
-                    | GameAction::Cheat(_, _)
-                    | GameAction::ForceDestroyCoin(_)
+                    | GameAction::Cheat(_, _, _)
+                    | GameAction::ForceDestroyCoin(_, _)
                     | GameAction::NerfTransactions(_)
                     | GameAction::UnNerfTransactions(_)
-                    | GameAction::CancelProposal(_)
+                    | GameAction::CancelProposal(_, _)
                     | GameAction::CorruptStateNumber(_, _)
                     | GameAction::ForceUnroll(_)
                     | GameAction::NerfMessages(_)
                     | GameAction::UnNerfMessages
                     | GameAction::SaveUnrollSnapshot(_)
                     | GameAction::ForceStaleUnroll(_)
+                    | GameAction::InjectRawMessage(_, _)
             )
     };
     let has_explicit_go_on_chain = moves_input.iter().any(|m| {
@@ -1267,43 +1287,6 @@ fn run_game_container_with_action_list_with_success_predicate(
             }
 
             handshake_done = true;
-
-            if !skip_initial_game {
-                let game_id = cradles[0].next_game_id().unwrap();
-                debug!("testing with game id {game_id:?}");
-                game_ids = cradles[0].propose_game(
-                    allocator,
-                    rng,
-                    &GameStart {
-                        game_id: game_id.clone(),
-                        amount: Amount::new(200),
-                        my_contribution: Amount::new(100),
-                        game_type: GameType(game_type.to_vec()),
-                        timeout: Timeout::new(10),
-                        my_turn: true,
-                        parameters: extras.clone(),
-                    },
-                )?;
-                local_uis[0]
-                    .proposed_game_ids
-                    .extend(game_ids.iter().cloned());
-                all_game_ids.extend(game_ids.iter().cloned());
-                initial_game_id = Some(game_id);
-                continue;
-            }
-        }
-
-        // Auto-accept the initial game when player 1 receives the proposal.
-        if let Some(ref igid) = initial_game_id {
-            if local_uis[1].received_proposal_ids.contains(igid)
-                && !local_uis[1].accepted_proposal_ids.contains(igid)
-            {
-                debug!("initial game: player 1 accepting proposal for {:?}", igid);
-                cradles[1].accept_proposal(allocator, rng, igid)?;
-                local_uis[1].accepted_proposal_ids.push(igid.clone());
-                initial_game_id = None;
-                continue;
-            }
         }
 
         if let Some((wb, _)) = &mut wait_blocks {
@@ -1319,28 +1302,42 @@ fn run_game_container_with_action_list_with_success_predicate(
             };
         } else if can_move
             || global_move(moves_input, move_number)
-            || move_ready(moves_input, move_number, &all_game_ids, &local_uis)
-            || accept_proposal_ready(moves_input, move_number, &all_game_ids, &local_uis)
-            || propose_ready(moves_input, move_number, &all_game_ids, &local_uis)
+            || move_ready(moves_input, move_number, &local_uis)
+            || accept_proposal_ready(moves_input, move_number, &local_uis)
+            || propose_ready(moves_input, move_number, &local_uis)
         {
             can_move = false;
 
             if move_number < moves_input.len() {
                 let ga = &moves_input[move_number];
                 move_number += 1;
+                let action_idx = move_number - 1;
 
                 match ga {
-                    GameAction::Move(who, game_num, readable, _share) => {
-                        let gid = &all_game_ids[*game_num];
+                    GameAction::Move(who, gid, readable, _share) => {
+                        let runtime_gid = gid_resolve_from_sets(
+                            gid,
+                            &local_uis[*who].game_accepted_ids,
+                            &local_uis[*who].opponent_moved_in_game,
+                        );
+                        if gid_diag_on {
+                            gid_diag(&test_name, action_idx, "Move", gid, &runtime_gid);
+                        }
                         let entropy = rng.gen();
                         let t_mv = std::time::Instant::now();
-                        cradles[*who].make_move(allocator, rng, gid, readable.clone(), entropy)?;
+                        cradles[*who].make_move(
+                            allocator,
+                            rng,
+                            &runtime_gid,
+                            readable.clone(),
+                            entropy,
+                        )?;
                         if timing_enabled {
                             let mv_elapsed = t_mv.elapsed();
                             eprintln!("  step {num_steps}: p{who} make_move(move_number={move_number}) {mv_elapsed:.2?}");
                         }
-                        local_uis[*who].game_accepted_ids.remove(gid);
-                        local_uis[*who].opponent_moved_in_game.remove(gid);
+                        local_uis[*who].game_accepted_ids.remove(&runtime_gid);
+                        local_uis[*who].opponent_moved_in_game.remove(&runtime_gid);
                     }
                     GameAction::ProposeNewGame(who, _trigger)
                     | GameAction::ProposeNewGameTheirTurn(who, _trigger) => {
@@ -1363,26 +1360,50 @@ fn run_game_container_with_action_list_with_success_predicate(
                         local_uis[*who]
                             .proposed_game_ids
                             .extend(new_ids.iter().cloned());
-                        all_game_ids.extend(new_ids.iter().cloned());
-                        game_ids.extend(new_ids);
                     }
-                    GameAction::AcceptProposal(who, proposal_num) => {
-                        let proposed_id = all_game_ids[*proposal_num].clone();
-                        if !local_uis[*who].accepted_proposal_ids.contains(&proposed_id) {
-                            debug!("AcceptProposal({who}, {proposal_num}): game_id={proposed_id:?} [phase 1: calling accept]");
-                            cradles[*who].accept_proposal(allocator, rng, &proposed_id)?;
-                            local_uis[*who].accepted_proposal_ids.push(proposed_id);
+                    GameAction::AcceptProposal(who, gid) => {
+                        let runtime_gid = if local_uis[*who].received_proposal_ids.contains(gid) {
+                            *gid
+                        } else if local_uis[*who]
+                            .received_proposal_ids
+                            .contains(&gid_flipped(gid))
+                        {
+                            gid_flipped(gid)
+                        } else {
+                            *gid
+                        };
+                        if gid_diag_on {
+                            gid_diag(&test_name, action_idx, "AcceptProposal", gid, &runtime_gid);
+                        }
+                        if !local_uis[*who].accepted_proposal_ids.contains(&runtime_gid) {
+                            debug!(
+                                "AcceptProposal({who}, {runtime_gid:?}) [phase 1: calling accept]"
+                            );
+                            cradles[*who].accept_proposal(allocator, rng, &runtime_gid)?;
+                            local_uis[*who].accepted_proposal_ids.push(runtime_gid);
                             move_number -= 1;
                         } else {
-                            debug!("AcceptProposal({who}, {proposal_num}): game_id={proposed_id:?} [phase 2: resolved, advancing]");
+                            debug!(
+                                "AcceptProposal({who}, {runtime_gid:?}) [phase 2: resolved, advancing]"
+                            );
                         }
                     }
-                    GameAction::CancelProposal(who) => {
-                        let proposed_id = game_ids.last().expect(
-                            &format!("CancelProposal({who}) at move_number={move_number} but game_ids is empty")
-                        ).clone();
-                        debug!("CancelProposal({who}): game_id={proposed_id:?}");
-                        cradles[*who].cancel_proposal(allocator, rng, &proposed_id)?;
+                    GameAction::CancelProposal(who, gid) => {
+                        let runtime_gid = if local_uis[*who].received_proposal_ids.contains(gid) {
+                            *gid
+                        } else if local_uis[*who]
+                            .received_proposal_ids
+                            .contains(&gid_flipped(gid))
+                        {
+                            gid_flipped(gid)
+                        } else {
+                            *gid
+                        };
+                        if gid_diag_on {
+                            gid_diag(&test_name, action_idx, "CancelProposal", gid, &runtime_gid);
+                        }
+                        debug!("CancelProposal({who}): game_id={runtime_gid:?}");
+                        cradles[*who].cancel_proposal(allocator, rng, &runtime_gid)?;
                     }
                     GameAction::GoOnChain(who) => {
                         assert!(
@@ -1403,10 +1424,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                         local_uis[*who].go_on_chain = true;
                     }
                     GameAction::GoOnChainThenMove(who) => {
-                        assert!(
-                            !game_ids.is_empty(),
-                            "GoOnChainThenMove({who}) but game_ids is empty"
-                        );
                         if !cradles[*who].handshake_finished() {
                             move_number -= 1;
                             continue;
@@ -1424,17 +1441,32 @@ fn run_game_container_with_action_list_with_success_predicate(
                         local_uis[*who].go_on_chain = false;
 
                         let next = moves_input.get(move_number);
-                        if let Some(GameAction::Move(mwho, game_num, readable, _)) = next {
+                        if let Some(GameAction::Move(mwho, gid, readable, _)) = next {
                             assert_eq!(
                                 *mwho, *who,
                                 "GoOnChainThenMove({who}) followed by Move({mwho},...) — player mismatch"
                             );
-                            let gid = &all_game_ids[*game_num];
+                            let runtime_gid = if cradles[*who].my_move_in_game(gid).is_some()
+                                || cradles[*who].get_game_coin(gid).is_some()
+                            {
+                                *gid
+                            } else {
+                                gid_flipped(gid)
+                            };
+                            if gid_diag_on {
+                                gid_diag(
+                                    &test_name,
+                                    move_number,
+                                    "GoOnChainThenMove/Move",
+                                    gid,
+                                    &runtime_gid,
+                                );
+                            }
                             let entropy = rng.gen();
                             cradles[*who].make_move(
                                 allocator,
                                 rng,
-                                gid,
+                                &runtime_gid,
                                 readable.clone(),
                                 entropy,
                             )?;
@@ -1445,13 +1477,26 @@ fn run_game_container_with_action_list_with_success_predicate(
                             );
                         }
                     }
-                    GameAction::FakeMove(who, game_num, readable, move_data) => {
-                        let gid = &all_game_ids[*game_num];
+                    GameAction::FakeMove(who, gid, readable, move_data) => {
+                        let runtime_gid = gid_resolve_from_sets(
+                            gid,
+                            &local_uis[*who].game_accepted_ids,
+                            &local_uis[*who].opponent_moved_in_game,
+                        );
+                        if gid_diag_on {
+                            gid_diag(&test_name, action_idx, "FakeMove", gid, &runtime_gid);
+                        }
                         debug!("make move (fake)");
                         let entropy = rng.gen();
-                        cradles[*who].make_move(allocator, rng, gid, readable.clone(), entropy)?;
-                        local_uis[*who].game_accepted_ids.remove(gid);
-                        local_uis[*who].opponent_moved_in_game.remove(gid);
+                        cradles[*who].make_move(
+                            allocator,
+                            rng,
+                            &runtime_gid,
+                            readable.clone(),
+                            entropy,
+                        )?;
+                        local_uis[*who].game_accepted_ids.remove(&runtime_gid);
+                        local_uis[*who].opponent_moved_in_game.remove(&runtime_gid);
 
                         cradles[*who].replace_last_message(|msg_envelope| {
                             debug!("sabotage envelope = {msg_envelope:?}");
@@ -1482,19 +1527,35 @@ fn run_game_container_with_action_list_with_success_predicate(
                             }
                         })?;
                     }
-                    GameAction::Cheat(who, cheat_share) => {
-                        assert!(
-                            !game_ids.is_empty(),
-                            "Cheat({who}) at move_number={move_number} but game_ids is empty"
-                        );
-                        cradles[*who].cheat(allocator, rng, &game_ids[0], cheat_share.clone())?;
+                    GameAction::Cheat(who, gid, cheat_share) => {
+                        let runtime_gid = if cradles[*who].my_move_in_game(gid).is_some()
+                            || cradles[*who].get_game_coin(gid).is_some()
+                        {
+                            *gid
+                        } else {
+                            gid_flipped(gid)
+                        };
+                        if gid_diag_on {
+                            gid_diag(&test_name, action_idx, "Cheat", gid, &runtime_gid);
+                        }
+                        cradles[*who].cheat(allocator, rng, &runtime_gid, cheat_share.clone())?;
                     }
-                    GameAction::ForceDestroyCoin(who) => {
-                        assert!(
-                            !game_ids.is_empty(),
-                            "ForceDestroyCoin({who}) at move_number={move_number} but game_ids is empty"
-                        );
-                        if let Some(game_coin) = cradles[*who].get_game_coin(&game_ids[0]) {
+                    GameAction::ForceDestroyCoin(who, gid) => {
+                        let runtime_gid = if cradles[*who].get_game_coin(gid).is_some() {
+                            *gid
+                        } else {
+                            gid_flipped(gid)
+                        };
+                        if gid_diag_on {
+                            gid_diag(
+                                &test_name,
+                                action_idx,
+                                "ForceDestroyCoin",
+                                gid,
+                                &runtime_gid,
+                            );
+                        }
+                        if let Some(game_coin) = cradles[*who].get_game_coin(&runtime_gid) {
                             force_destroyed_coins.push(game_coin);
                         } else {
                             move_number -= 1;
@@ -1538,14 +1599,22 @@ fn run_game_container_with_action_list_with_success_predicate(
                     GameAction::WaitBlocks(n, players) => {
                         wait_blocks = Some((*n, *players));
                     }
-                    GameAction::AcceptTimeout(who) | GameAction::Timeout(who) => {
-                        assert!(
-                            !game_ids.is_empty(),
-                            "Accept/Timeout({who}) at move_number={move_number} but game_ids is empty"
-                        );
-                        debug!("{who} doing ACCEPT");
-                        cradles[*who].accept_timeout(allocator, rng, &game_ids[0])?;
-                        game_ids.remove(0);
+                    GameAction::AcceptTimeout(who, gid) => {
+                        let runtime_gid = if cradles[*who].my_move_in_game(gid).is_some()
+                            || cradles[*who].get_game_coin(gid).is_some()
+                        {
+                            *gid
+                        } else {
+                            gid_flipped(gid)
+                        };
+                        if gid_diag_on {
+                            gid_diag(&test_name, action_idx, "AcceptTimeout", gid, &runtime_gid);
+                        }
+                        debug!("{who} doing ACCEPT for {runtime_gid:?}");
+                        cradles[*who].accept_timeout(allocator, rng, &runtime_gid)?;
+                    }
+                    GameAction::Timeout(_who) => {
+                        panic!("Timeout action is not supported in sim tests; use AcceptTimeout(player, game_id)");
                     }
                     GameAction::CleanShutdown(who) => {
                         assert!(
@@ -1578,13 +1647,12 @@ fn run_game_container_with_action_list_with_success_predicate(
                         cradles[*who].save_unroll_snapshot();
                     }
                     GameAction::ForceStaleUnroll(who) => {
-                        debug!("ForceStaleUnroll({who})");
                         let spend = cradles[*who].force_stale_unroll_spend(allocator, rng)?;
-                        let included_result = simulator.push_tx(allocator, &spend.spends)?;
-                        debug!(
-                            "ForceStaleUnroll TX result: code={} e={:?} diag={:?}",
-                            included_result.code, included_result.e, included_result.diagnostic
-                        );
+                        let _included_result = simulator.push_tx(allocator, &spend.spends)?;
+                    }
+                    GameAction::InjectRawMessage(who, data) => {
+                        debug!("InjectRawMessage({who}, {} bytes)", data.len());
+                        cradles[*who].deliver_message(data)?;
                     }
                 }
             }
@@ -1752,7 +1820,6 @@ pub fn run_calpoker_container_with_action_list_with_success_predicate(
         moves,
         predicate,
         per_player_balance,
-        false,
     )
 }
 
@@ -1769,26 +1836,11 @@ pub fn run_calpoker_proposal_only(
     predicate: GameRunEarlySuccessPredicate,
     per_player_balance: Option<u64>,
 ) -> Result<GameRunOutcome, Error> {
-    let seed_data: [u8; 32] = [0; 32];
-    let mut rng = ChaCha8Rng::from_seed(seed_data);
-    let pk1: PrivateKey = rng.gen();
-    let id1 = ChiaIdentity::new(allocator, pk1).expect("ok");
-    let pk2: PrivateKey = rng.gen();
-    let id2 = ChiaIdentity::new(allocator, pk2).expect("ok");
-
-    let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.gen();
-    let identities: [ChiaIdentity; 2] = [id1.clone(), id2.clone()];
-    run_game_container_with_action_list_with_success_predicate(
+    run_calpoker_container_with_action_list_with_success_predicate(
         allocator,
-        &mut rng,
-        private_keys,
-        &identities,
-        b"calpoker",
-        &Program::from_hex("80")?,
         moves,
         predicate,
         per_player_balance,
-        true,
     )
 }
 
@@ -1926,8 +1978,10 @@ impl DebugGameTestMove {
     }
 }
 
-pub fn add_debug_test_accept_shutdown(test_setup: &mut DebugGameSimSetup, wait: usize) {
-    test_setup.game_actions.push(GameAction::AcceptTimeout(0));
+pub fn add_debug_test_accept_shutdown(test_setup: &mut DebugGameSimSetup, wait: usize, who: usize) {
+    test_setup
+        .game_actions
+        .push(GameAction::AcceptTimeout(who, GameID(1)));
     test_setup
         .game_actions
         .push(GameAction::WaitBlocks(wait, 0));
@@ -1963,12 +2017,17 @@ pub fn setup_debug_test(
     let pid2 = ChiaIdentity::new(allocator, private_keys[1].my_referee_private_key.clone())?;
     let private_identities: [ChiaIdentity; 2] = [pid1, pid2];
 
-    // Player 0 (have_potato=true) gets ChannelHandler with we_start_with_potato=false,
-    // so my_next_nonce=1. The first ProposeNewGame(0) allocates nonce 1.
-    let first_game_nonce = 1;
+    // Player 0 (have_potato=true) allocates odd nonces in this harness.
+    // The first proposal from player 0 is therefore GameID(1).
+    let first_game_nonce: usize = 1;
     let mut debug_games = make_debug_games(allocator, rng, &private_identities, first_game_nonce)?;
 
     let mut game_actions = Vec::new();
+    game_actions.push(GameAction::ProposeNewGame(0, ProposeTrigger::Channel));
+    game_actions.push(GameAction::AcceptProposal(
+        1,
+        GameID(first_game_nonce as u64),
+    ));
 
     for (i, do_move) in moves.iter().enumerate() {
         let alice_turn = i % 2 == 0;
@@ -1991,7 +2050,12 @@ pub fn setup_debug_test(
             );
         }
 
-        game_actions.push(GameAction::Move(i % 2, 0, the_move.ui_move.clone(), true));
+        game_actions.push(GameAction::Move(
+            i % 2,
+            GameID(first_game_nonce as u64),
+            the_move.ui_move.clone(),
+            true,
+        ));
     }
 
     let args_curry = DebugGameCurry::new(
@@ -2020,7 +2084,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         // Play moves
-        let moves = prefix_test_moves(&mut allocator, 0);
+        let mut moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(0)),
+        ];
+        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
             &mut allocator,
             &moves,
@@ -2072,14 +2140,18 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.gen();
             let identities: [ChiaIdentity; 2] = [id1.clone(), id2.clone()];
 
-            let mut moves = prefix_test_moves(&mut allocator, 0).to_vec();
-            if let GameAction::Move(player, game_num, readable, _) = moves[3].clone() {
+            let mut moves = vec![
+                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                GameAction::AcceptProposal(1, GameID(0)),
+            ];
+            moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+            if let GameAction::Move(player, game_id, readable, _) = moves[5].clone() {
                 moves.insert(
-                    3,
-                    GameAction::FakeMove(player, game_num, readable, vec![0; 500]),
+                    5,
+                    GameAction::FakeMove(player, game_id, readable, vec![0; 500]),
                 );
             } else {
-                panic!("no move 3 to replace");
+                panic!("no move 5 to replace");
             }
             // No explicit GoOnChain needed: the fake move error forces player 0
             // on chain, and player 1 detects the channel coin spend and follows.
@@ -2093,7 +2165,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 &moves,
                 Some(&|_, cradles| cradles[0].is_on_chain() && cradles[1].is_on_chain()),
                 None,
-                false,
             )
             .expect("should finish");
             assert!(
@@ -2145,8 +2216,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     res.push(("sim_test_with_peer_container_off_chain_complete", &|| {
         let mut allocator = AllocEncoder::new();
 
-        let mut moves = prefix_test_moves(&mut allocator, 0).to_vec();
-        moves.push(GameAction::AcceptTimeout(0));
+        let mut moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(0)),
+        ];
+        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+        moves.push(GameAction::AcceptTimeout(1, GameID(0)));
         moves.push(GameAction::CleanShutdown(1));
         let outcome =
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
@@ -2175,7 +2250,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
             ],
             "off_chain_complete p0",
         );
@@ -2194,7 +2269,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(200),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
             ],
             "off_chain_complete p1",
         );
@@ -2205,15 +2280,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         &|| {
             let mut allocator = AllocEncoder::new();
 
-            let mut moves = prefix_test_moves(&mut allocator, 0).to_vec();
-            if let GameAction::Move(player, game_num, readable, _) = moves[3].clone() {
+            let mut moves = vec![
+                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                GameAction::AcceptProposal(1, GameID(0)),
+            ];
+            moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+            if let GameAction::Move(player, game_id, readable, _) = moves[5].clone() {
                 moves.insert(
-                    3,
-                    GameAction::FakeMove(player, game_num, readable, vec![0; 500]),
+                    5,
+                    GameAction::FakeMove(player, game_id, readable, vec![0; 500]),
                 );
-                moves.remove(4);
+                moves.remove(6);
             } else {
-                panic!("no move 3 to replace");
+                panic!("no move 5 to replace");
             }
             // After the remaining moves execute on-chain, let both players
             // process blocks so the game resolves via timeout.
@@ -2285,7 +2364,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         &|| {
             let mut allocator = AllocEncoder::new();
 
-            let moves = vec![GameAction::GoOnChain(1), GameAction::WaitBlocks(20, 1)];
+            let moves = vec![
+                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                GameAction::AcceptProposal(1, GameID(0)),
+                GameAction::GoOnChain(1),
+                GameAction::WaitBlocks(20, 1),
+            ];
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
                 .expect("should finish");
@@ -2323,8 +2407,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         &|| {
             let mut allocator = AllocEncoder::new();
 
-            let mut moves = prefix_test_moves(&mut allocator, 0).to_vec();
-            moves.push(GameAction::AcceptTimeout(0));
+            let mut moves = vec![
+                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                GameAction::AcceptProposal(1, GameID(0)),
+            ];
+            moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+            moves.push(GameAction::AcceptTimeout(1, GameID(0)));
             moves.push(GameAction::GoOnChain(1));
             moves.push(GameAction::WaitBlocks(20, 1));
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
@@ -2354,9 +2442,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
+                    ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
                     ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
                 ],
                 "after_accept p0",
             );
@@ -2389,7 +2477,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         &|| {
             let mut allocator = AllocEncoder::new();
 
-            let mut moves = prefix_test_moves(&mut allocator, 0).to_vec();
+            let mut moves = vec![
+                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                GameAction::AcceptProposal(1, GameID(0)),
+            ];
+            moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
             let moves_len = moves.len();
             moves.remove(moves_len - 2);
             moves.remove(moves_len - 2);
@@ -2445,10 +2537,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // via redo; once that lands it becomes Bob's turn for Move 4.
         // Cheat(1) defers until Bob is on-chain and it's his turn,
         // then submits a move with invalid data that Alice detects.
-        let mut moves = prefix_test_moves(&mut allocator, 0).to_vec();
-        moves.truncate(3);
+        let mut moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(0)),
+        ];
+        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+        moves.truncate(5);
         moves.push(GameAction::GoOnChain(0));
-        moves.push(GameAction::Cheat(1, Amount::default()));
+        moves.push(GameAction::Cheat(1, GameID(0), Amount::default()));
         // Let both players process blocks so Alice detects & slashes.
         moves.push(GameAction::WaitBlocks(30, 0));
 
@@ -2517,7 +2613,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &sim_setup.game_actions,
             None,
             None,
-            false,
         )
         .expect("should finish");
 
@@ -2583,7 +2678,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &sim_setup.game_actions,
             None,
             None,
-            false,
         )
         .expect("should finish");
 
@@ -2641,7 +2735,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         ];
 
         let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
-        add_debug_test_accept_shutdown(&mut sim_setup, 20);
+        add_debug_test_accept_shutdown(&mut sim_setup, 20, 1);
         let outcome = run_game_container_with_action_list_with_success_predicate(
             &mut allocator,
             &mut rng,
@@ -2652,7 +2746,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &sim_setup.game_actions,
             None,
             None,
-            false,
         )
         .expect("should finish");
 
@@ -2672,7 +2765,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(150),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
             ],
             "debug_alice p0",
         );
@@ -2690,7 +2783,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(49),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
             ],
             "debug_alice p1",
         );
@@ -2710,7 +2803,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         ];
 
         let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
-        add_debug_test_accept_shutdown(&mut sim_setup, 20);
+        add_debug_test_accept_shutdown(&mut sim_setup, 20, 0);
         let outcome = run_game_container_with_action_list_with_success_predicate(
             &mut allocator,
             &mut rng,
@@ -2721,7 +2814,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &sim_setup.game_actions,
             None,
             None,
-            false,
         )
         .expect("should finish");
 
@@ -2775,7 +2867,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let moves = [DebugGameTestMove::new(150, 0)];
 
         let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
-        add_debug_test_accept_shutdown(&mut sim_setup, 20);
+        add_debug_test_accept_shutdown(&mut sim_setup, 20, 1);
         let game_type: &[u8] = b"debug";
 
         let mut outcome = run_game_container_with_action_list_with_success_predicate(
@@ -2788,7 +2880,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &sim_setup.game_actions,
             Some(&|_, cradles| cradles[0].handshake_finished() && cradles[1].handshake_finished()),
             None,
-            false,
         )
         .expect("should finish");
 
@@ -2845,8 +2936,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     res.push(("test_calpoker_shutdown_nerf_alice", &|| {
         let mut allocator = AllocEncoder::new();
 
-        let mut moves = prefix_test_moves(&mut allocator, 0).to_vec();
-        moves.push(GameAction::AcceptTimeout(0));
+        let mut moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(0)),
+        ];
+        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+        moves.push(GameAction::AcceptTimeout(1, GameID(0)));
         moves.push(GameAction::NerfTransactions(0));
         moves.push(GameAction::CleanShutdown(1));
 
@@ -2866,7 +2961,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
             ],
             "shutdown_nerf_alice p0",
         );
@@ -2885,7 +2980,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(200),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
             ],
             "shutdown_nerf_alice p1",
         );
@@ -2894,8 +2989,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     res.push(("test_calpoker_shutdown_nerf_bob", &|| {
         let mut allocator = AllocEncoder::new();
 
-        let mut moves = prefix_test_moves(&mut allocator, 0).to_vec();
-        moves.push(GameAction::AcceptTimeout(0));
+        let mut moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(0)),
+        ];
+        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+        moves.push(GameAction::AcceptTimeout(1, GameID(0)));
         moves.push(GameAction::NerfTransactions(1));
         moves.push(GameAction::CleanShutdown(1));
 
@@ -2915,7 +3014,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
             ],
             "shutdown_nerf_bob p0",
         );
@@ -2934,7 +3033,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(200),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
             ],
             "shutdown_nerf_bob p1",
         );
@@ -2943,8 +3042,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     res.push(("test_clean_shutdown_opponent_unrolls", &|| {
         let mut allocator = AllocEncoder::new();
 
-        let mut moves = prefix_test_moves(&mut allocator, 0).to_vec();
-        moves.push(GameAction::AcceptTimeout(0));
+        let mut moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(0)),
+        ];
+        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+        moves.push(GameAction::AcceptTimeout(1, GameID(0)));
         // Nerf both so the clean shutdown tx is dropped for both sides.
         moves.push(GameAction::NerfTransactions(0));
         moves.push(GameAction::NerfTransactions(1));
@@ -2989,8 +3092,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     res.push(("test_clean_shutdown_unroll_before_response", &|| {
         let mut allocator = AllocEncoder::new();
 
-        let mut moves = prefix_test_moves(&mut allocator, 0).to_vec();
-        moves.push(GameAction::AcceptTimeout(0));
+        let mut moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(0)),
+        ];
+        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+        moves.push(GameAction::AcceptTimeout(1, GameID(0)));
         // Nerf all transactions so no clean shutdown tx lands.
         moves.push(GameAction::NerfTransactions(0));
         moves.push(GameAction::NerfTransactions(1));
@@ -3044,12 +3151,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // before the reveal so the reveal potato never reaches Bob.
         // hs.spend stays at pre-reveal (post-seed) state.  Alice's reveal
         // is cached for redo.  The unroll is NOT stale from Bob's view.
-        let all_moves = prefix_test_moves(&mut allocator, 0);
-        let mut moves = Vec::new();
-        moves.push(all_moves[0].clone()); // alice commit
-        moves.push(all_moves[1].clone()); // bob seed
+        let mut moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(0)),
+        ];
+        let game_moves = prefix_test_moves(&mut allocator, GameID(0));
+        moves.push(game_moves[0].clone()); // alice commit
+        moves.push(game_moves[1].clone()); // bob seed
         moves.push(GameAction::NerfMessages(0));
-        moves.push(all_moves[2].clone()); // alice reveal — potato dropped
+        moves.push(game_moves[2].clone()); // alice reveal — potato dropped
 
         // Go on chain; hs.spend is pre-reveal.
         moves.push(GameAction::GoOnChain(0));
@@ -3128,13 +3238,16 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // Alice's view (she never got the discard).  Bob redoes move 3
             // on-chain.  After the redo it's alice's turn (move 4).  Alice
             // is nerfed so she can't play and times out.
-            let all_moves = prefix_test_moves(&mut allocator, 0);
-            let mut moves = Vec::new();
-            moves.push(all_moves[0].clone()); // alice commit
-            moves.push(all_moves[1].clone()); // bob seed
-            moves.push(all_moves[2].clone()); // alice reveal
+            let mut moves = vec![
+                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                GameAction::AcceptProposal(1, GameID(0)),
+            ];
+            let game_moves = prefix_test_moves(&mut allocator, GameID(0));
+            moves.push(game_moves[0].clone()); // alice commit
+            moves.push(game_moves[1].clone()); // bob seed
+            moves.push(game_moves[2].clone()); // alice reveal
             moves.push(GameAction::NerfMessages(1));
-            moves.push(all_moves[3].clone()); // bob discard — potato dropped
+            moves.push(game_moves[3].clone()); // bob discard — potato dropped
             moves.push(GameAction::GoOnChain(1));
             // Nerf alice so she can't respond on-chain after bob's redo.
             moves.push(GameAction::NerfTransactions(0));
@@ -3191,8 +3304,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // cleared.  Bob goes on-chain: no redo needed.  The game
         // coin lands at bob's turn (to discard) and he never moves,
         // so his clock runs out.
-        let mut moves = prefix_test_moves(&mut allocator, 0).to_vec();
-        moves.truncate(3);
+        let mut moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(0)),
+        ];
+        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+        moves.truncate(5);
         moves.push(GameAction::GoOnChain(1));
         // 120 blocks covers the unroll timeout (5) and
         // game coin timeout (10).
@@ -3256,10 +3373,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         // 3 moves so that after the redo (alice's reveal) it's Bob's
         // turn, allowing Cheat(1) to fire.
-        let moves = prefix_test_moves(&mut allocator, 0);
-        let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(3).collect();
+        let mut on_chain_moves: Vec<GameAction> = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(0)),
+        ];
+        let game_moves = prefix_test_moves(&mut allocator, GameID(0));
+        on_chain_moves.extend(game_moves.into_iter().take(3));
         on_chain_moves.push(GameAction::GoOnChain(0));
-        on_chain_moves.push(GameAction::Cheat(1, Amount::default()));
+        on_chain_moves.push(GameAction::Cheat(1, GameID(0), Amount::default()));
         on_chain_moves.push(GameAction::WaitBlocks(30, 0));
 
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -3319,10 +3440,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         // 4 moves so that after the redo (bob's discard) it's Alice's
         // turn, allowing Cheat(0) to fire.
-        let moves = prefix_test_moves(&mut allocator, 0);
-        let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(4).collect();
+        let mut on_chain_moves: Vec<GameAction> = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(0)),
+        ];
+        let game_moves = prefix_test_moves(&mut allocator, GameID(0));
+        on_chain_moves.extend(game_moves.into_iter().take(4));
         on_chain_moves.push(GameAction::GoOnChain(0));
-        on_chain_moves.push(GameAction::Cheat(0, Amount::default()));
+        on_chain_moves.push(GameAction::Cheat(0, GameID(0), Amount::default()));
         on_chain_moves.push(GameAction::WaitBlocks(30, 0));
 
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -3384,10 +3509,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // illegal move and slash, getting the full pot. The funny share
         // lets us confirm the cheat mechanism actually uses our value
         // rather than a hardcoded default.
-        let moves = prefix_test_moves(&mut allocator, 0);
-        let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(3).collect();
+        let mut moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(0)),
+        ];
+        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+        let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(5).collect();
         on_chain_moves.push(GameAction::GoOnChain(0));
-        on_chain_moves.push(GameAction::Cheat(1, Amount::new(137)));
+        on_chain_moves.push(GameAction::Cheat(1, GameID(0), Amount::new(137)));
         on_chain_moves.push(GameAction::WaitBlocks(30, 0));
 
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -3474,11 +3603,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // the balance difference is exactly 200-137 = 63 (not the full 200).
             // This proves the funny mover_share flows all the way through to
             // the on-chain resolution.
-            let moves = prefix_test_moves(&mut allocator, 0);
-            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(3).collect();
+            let mut moves = vec![
+                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                GameAction::AcceptProposal(1, GameID(0)),
+            ];
+            moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(5).collect();
             on_chain_moves.push(GameAction::GoOnChain(0));
             on_chain_moves.push(GameAction::NerfTransactions(0));
-            on_chain_moves.push(GameAction::Cheat(1, Amount::new(137)));
+            on_chain_moves.push(GameAction::Cheat(1, GameID(0), Amount::new(137)));
             on_chain_moves.push(GameAction::WaitBlocks(120, 0));
             on_chain_moves.push(GameAction::UnNerfTransactions(false));
             on_chain_moves.push(GameAction::WaitBlocks(30, 0));
@@ -3537,10 +3670,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // After redo of bob's discard it's player 0's turn, so Accept(0)
         // fires.  Go on-chain first so Accept goes through the on-chain
         // handler (off-chain Accept immediately finishes the game).
-        let mut moves = prefix_test_moves(&mut allocator, 0).to_vec();
+        let mut moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(0)),
+        ];
+        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
         moves.pop();
         moves.push(GameAction::GoOnChain(0));
-        moves.push(GameAction::AcceptTimeout(0));
+        moves.push(GameAction::AcceptTimeout(0, GameID(0)));
         moves.push(GameAction::WaitBlocks(120, 1));
         moves.push(GameAction::WaitBlocks(5, 0));
 
@@ -3594,27 +3731,32 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     res.push(("test_accept_timeout_nerfed_then_on_chain", &|| {
         let mut allocator = AllocEncoder::new();
 
-        // Alice accepts off-chain but her potato is nerfed so Bob never
-        // receives it.  Then Alice goes on-chain.  The unroll resolves to
-        // the pre-accept state (Bob never countersigned the accept batch).
-        // Alice should still get WeTimedOut through the on-chain timeout
-        // path, which finds the game in pending_accept_timeouts.
-        let mut moves = prefix_test_moves(&mut allocator, 0).to_vec();
-        moves.push(GameAction::NerfMessages(0));
-        moves.push(GameAction::AcceptTimeout(0));
-        moves.push(GameAction::GoOnChain(0));
-        moves.push(GameAction::WaitBlocks(120, 1));
-        moves.push(GameAction::WaitBlocks(5, 0));
+        // Bob accepts off-chain (it's his turn after calpoker) but his
+        // potato is nerfed so Alice never receives it.  Then Bob goes
+        // on-chain.  The unroll resolves to the pre-accept state (Alice
+        // never countersigned the accept batch).  Bob should still get
+        // WeTimedOut through the on-chain timeout path, which finds the
+        // game in pending_accept_timeouts.
+        let mut moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(0)),
+        ];
+        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+        moves.push(GameAction::NerfMessages(1));
+        moves.push(GameAction::AcceptTimeout(1, GameID(0)));
+        moves.push(GameAction::GoOnChain(1));
+        moves.push(GameAction::WaitBlocks(120, 0));
+        moves.push(GameAction::WaitBlocks(5, 1));
 
         let outcome =
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
 
-        let p0_notifs = &outcome.local_uis[0].notifications;
+        let p1_notifs = &outcome.local_uis[1].notifications;
         assert!(
-            p0_notifs
+            p1_notifs
                 .iter()
                 .any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
-            "player 0 should get WeTimedOut after nerfed accept + on-chain, got: {p0_notifs:?}"
+            "player 1 should get WeTimedOut after nerfed accept + on-chain, got: {p1_notifs:?}"
         );
     }));
 
@@ -3634,7 +3776,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
         sim_setup.game_actions.push(GameAction::NerfTransactions(0));
         sim_setup.game_actions.push(GameAction::GoOnChain(0));
-        sim_setup.game_actions.push(GameAction::AcceptTimeout(1));
+        sim_setup.game_actions.push(GameAction::AcceptTimeout(1, GameID(1)));
         sim_setup.game_actions.push(GameAction::GoOnChain(1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(120, 0));
 
@@ -3648,7 +3790,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &sim_setup.game_actions,
             None,
             None,
-            false,
         )
         .expect("should finish");
 
@@ -3689,7 +3830,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     res.push(("test_game_cancellation_nerfed_proposal", &|| {
         let mut allocator = AllocEncoder::new();
 
-        // Game A (calpoker, 100+100) starts normally during the handshake.
+        // Set up game A (calpoker, 100+100) first.
         // Channel is funded with 200 per player (400 total) so there is
         // 100 per player left over for game B.
         //
@@ -3704,6 +3845,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         //  3. Alice detects the channel coin spend.  Game B is in
         //     pre_game_ids but not surviving_ids → GameCancelled.
         let moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(0)),
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
             GameAction::GoOnChain(1),
             GameAction::WaitBlocks(120, 0),
@@ -3760,11 +3903,16 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     res.push(("test_on_chain_before_any_moves_times_out", &|| {
         let mut allocator = AllocEncoder::new();
 
-        // Game is committed during handshake, so going on-chain before any
-        // moves creates the game coin on-chain where it times out normally.
+        // Create game A during test setup, then go on-chain before any
+        // moves. The game coin should time out normally on-chain.
         // GameCancelled only happens when a game was proposed but never
         // committed (unroll reverts to before the game existed).
-        let moves = vec![GameAction::GoOnChain(1), GameAction::WaitBlocks(20, 1)];
+        let moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(0)),
+            GameAction::GoOnChain(1),
+            GameAction::WaitBlocks(20, 1),
+        ];
 
         let outcome =
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
@@ -3816,11 +3964,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
             // 3 moves so that after the redo (alice's reveal) it's Bob's
             // turn, allowing Cheat(1) to fire.
-            let moves = prefix_test_moves(&mut allocator, 0);
-            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(3).collect();
+            let mut moves = vec![
+                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                GameAction::AcceptProposal(1, GameID(0)),
+            ];
+            moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(5).collect();
             on_chain_moves.push(GameAction::GoOnChain(0));
             on_chain_moves.push(GameAction::NerfTransactions(0));
-            on_chain_moves.push(GameAction::Cheat(1, Amount::default()));
+            on_chain_moves.push(GameAction::Cheat(1, GameID(0), Amount::default()));
             on_chain_moves.push(GameAction::WaitBlocks(120, 0));
             on_chain_moves.push(GameAction::UnNerfTransactions(false));
             on_chain_moves.push(GameAction::WaitBlocks(30, 0));
@@ -3868,10 +4020,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
             // 3 moves so after redo it's Bob's turn; destroying the coin
             // from Alice's view gives a GameError or ChannelError.
-            let moves = prefix_test_moves(&mut allocator, 0);
-            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(3).collect();
+            let mut moves = vec![
+                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                GameAction::AcceptProposal(1, GameID(0)),
+            ];
+            moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(5).collect();
             on_chain_moves.push(GameAction::GoOnChain(0));
-            on_chain_moves.push(GameAction::ForceDestroyCoin(0));
+            on_chain_moves.push(GameAction::ForceDestroyCoin(0, GameID(0)));
             on_chain_moves.push(GameAction::WaitBlocks(30, 0));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -3939,7 +4095,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 &moves,
                 None,
                 None,
-                true,
             )
             .expect("should finish");
 
@@ -3992,7 +4147,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 &moves,
                 None,
                 None,
-                true,
             )
             .expect("should finish");
 
@@ -4017,11 +4171,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     res.push(("test_notification_opponent_made_impossible_spend", &|| {
         let mut allocator = AllocEncoder::new();
 
-        let moves = prefix_test_moves(&mut allocator, 0);
-        let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(2).collect();
+        let mut moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(0)),
+        ];
+        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+        let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(4).collect();
         on_chain_moves.push(GameAction::GoOnChain(0));
         on_chain_moves.push(GameAction::WaitBlocks(5, 0));
-        on_chain_moves.push(GameAction::ForceDestroyCoin(1));
+        on_chain_moves.push(GameAction::ForceDestroyCoin(1, GameID(0)));
         on_chain_moves.push(GameAction::WaitBlocks(30, 0));
 
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -4073,11 +4231,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         &|| {
             let mut allocator = AllocEncoder::new();
 
-            let moves = prefix_test_moves(&mut allocator, 0);
-            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(2).collect();
+            let mut moves = vec![
+                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                GameAction::AcceptProposal(1, GameID(0)),
+            ];
+            moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+            let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(4).collect();
             on_chain_moves.push(GameAction::GoOnChain(0));
             on_chain_moves.push(GameAction::WaitBlocks(5, 0));
-            on_chain_moves.push(GameAction::ForceDestroyCoin(0));
+            on_chain_moves.push(GameAction::ForceDestroyCoin(0, GameID(0)));
             on_chain_moves.push(GameAction::WaitBlocks(30, 0));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -4112,6 +4274,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         let moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(1)),
             // Let the handshake + empty potato exchanges settle.
             GameAction::WaitBlocks(5, 0),
             // Corrupt player 1: pretend we're at state 0.
@@ -4178,6 +4342,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         let moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(1)),
             // Let the handshake + empty potato exchanges settle.
             GameAction::WaitBlocks(5, 0),
             // Corrupt player 1: pretend we're at state 100.
@@ -4253,13 +4419,20 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // (he never got the commit).  Alice redoes her commit on-chain,
         // then it's Bob's turn for the seed.  Bob is nerfed so he
         // times out.  The queued reveal never fires (game ends first).
-        let all_moves = prefix_test_moves(&mut allocator, 0);
+        let mut all_moves_vec = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(1)),
+        ];
+        all_moves_vec.extend(prefix_test_moves(&mut allocator, GameID(1)));
+        let all_moves = all_moves_vec;
         let mut moves = Vec::new();
         moves.push(GameAction::WaitBlocks(5, 0));
+        moves.push(all_moves[0].clone()); // propose game
+        moves.push(all_moves[1].clone()); // accept proposal
         moves.push(GameAction::NerfMessages(0));
-        moves.push(all_moves[0].clone()); // alice commit — potato dropped
+        moves.push(all_moves[2].clone()); // alice commit — potato dropped
         moves.push(GameAction::GoOnChainThenMove(0));
-        moves.push(all_moves[2].clone()); // alice reveal — consumed by GoOnChainThenMove
+        moves.push(all_moves[4].clone()); // alice reveal — consumed by GoOnChainThenMove
         moves.push(GameAction::NerfTransactions(1));
         moves.push(GameAction::WaitBlocks(120, 0));
 
@@ -4335,12 +4508,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // potato and initiates clean shutdown (no live games to block it).
         let moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::CancelProposal(1),
+            GameAction::CancelProposal(1, GameID(0)),
             GameAction::CleanShutdown(0),
         ];
 
-        let outcome = run_calpoker_proposal_only(&mut allocator, &moves, None, Some(200))
-            .expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         assert!(
@@ -4373,15 +4551,20 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // on-chain. Both sides should see GameProposed + GameProposalAccepted.
         let moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, 0),
+            GameAction::AcceptProposal(1, GameID(0)),
             GameAction::WaitBlocks(1, 2),
             GameAction::GoOnChain(0),
             GameAction::WaitBlocks(120, 0),
             GameAction::WaitBlocks(5, 0),
         ];
 
-        let outcome = run_calpoker_proposal_only(&mut allocator, &moves, None, Some(200))
-            .expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         assert!(
@@ -4417,8 +4600,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             GameAction::CleanShutdown(1),
         ];
 
-        let outcome = run_calpoker_proposal_only(&mut allocator, &moves, None, Some(200))
-            .expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         assert!(
@@ -4451,12 +4639,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // queues the cancel and requests the potato back.
         let moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::CancelProposal(0),
+            GameAction::CancelProposal(0, GameID(0)),
             GameAction::CleanShutdown(0),
         ];
 
-        let outcome = run_calpoker_proposal_only(&mut allocator, &moves, None, Some(200))
-            .expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         assert!(
@@ -4490,7 +4683,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // to resolve game A and cancel the pending proposal.
         let moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, 1),
+            GameAction::AcceptProposal(1, GameID(0)),
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(2)),
             GameAction::GoOnChain(0),
             GameAction::WaitBlocks(120, 0),
             GameAction::WaitBlocks(5, 0),
@@ -4528,15 +4723,20 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // should be silently discarded. The game resolves on-chain.
         let moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, 0),
-            GameAction::CancelProposal(0),
+            GameAction::AcceptProposal(1, GameID(0)),
+            GameAction::CancelProposal(0, GameID(0)),
             GameAction::GoOnChain(0),
             GameAction::WaitBlocks(120, 0),
             GameAction::WaitBlocks(5, 0),
         ];
 
-        let outcome = run_calpoker_proposal_only(&mut allocator, &moves, None, Some(200))
-            .expect("should finish without crashing on stale cancel");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish without crashing on stale cancel");
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         assert!(
@@ -4560,7 +4760,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Proposal round-trip advances player 0's last_received_state past
         // the snapshot without changing the first game's referee PH.
         sim_setup.game_actions.push(GameAction::ProposeNewGame(0, ProposeTrigger::Channel));
-        sim_setup.game_actions.push(GameAction::AcceptProposal(1, 1));
+        sim_setup.game_actions.push(GameAction::AcceptProposal(1, GameID(3)));
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
         // Nerf both players to prevent preemption during channel coin
         // spend detection.  After un-nerfing, only the timeout path fires.
@@ -4584,7 +4784,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 cradles[0].is_on_chain() || cradles[0].is_failed()
             }),
             Some(200),
-            false,
         )
         .expect("should finish");
 
@@ -4633,7 +4832,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // NOW snapshot: player 1 just received the proposal potato, so their
         // cached spend info includes the correct game PH (after 2 moves).
         sim_setup.game_actions.push(GameAction::SaveUnrollSnapshot(1));
-        sim_setup.game_actions.push(GameAction::AcceptProposal(1, 1));
+        sim_setup.game_actions.push(GameAction::AcceptProposal(1, GameID(3)));
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
         // Third move with player 1's reply nerfed: player 0 sends the move,
         // player 1 receives but reply is dropped → cached_last_actions set.
@@ -4661,7 +4860,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 cradles[0].is_on_chain() || cradles[0].is_failed()
             }),
             Some(200),
-            false,
         )
         .expect("should finish");
 
@@ -4712,7 +4910,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             .push(GameAction::ProposeNewGame(0, ProposeTrigger::Channel));
         sim_setup
             .game_actions
-            .push(GameAction::AcceptProposal(1, 1));
+            .push(GameAction::AcceptProposal(1, GameID(3)));
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
         // Nerf both to prevent preemption during channel coin spend detection.
         sim_setup.game_actions.push(GameAction::NerfTransactions(0));
@@ -4735,7 +4933,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &sim_setup.game_actions,
             Some(&|_, cradles| cradles[0].is_on_chain() || cradles[0].is_failed()),
             Some(200),
-            false,
         )
         .expect("should finish");
 
@@ -4782,7 +4979,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Proposal round-trip advances player 0's last_received_state past
         // the snapshot so that the stale detection triggers.
         sim_setup.game_actions.push(GameAction::ProposeNewGame(0, ProposeTrigger::Channel));
-        sim_setup.game_actions.push(GameAction::AcceptProposal(1, 1));
+        sim_setup.game_actions.push(GameAction::AcceptProposal(1, GameID(3)));
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
         // Player 1 proposes a third game; player 0 will accept it.
         // No ID collision possible: role-namespaced nonces ensure each
@@ -4792,7 +4989,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Nerf player 1's messages so the accept response never reaches
         // player 0 — the third game stays in cached_last_actions as ProposalAccepted.
         sim_setup.game_actions.push(GameAction::NerfMessages(1));
-        sim_setup.game_actions.push(GameAction::AcceptProposal(0, 2));
+        sim_setup.game_actions.push(GameAction::AcceptProposal(0, GameID(0)));
         sim_setup.game_actions.push(GameAction::WaitBlocks(3, 0));
         sim_setup.game_actions.push(GameAction::UnNerfMessages);
         sim_setup.game_actions.push(GameAction::NerfTransactions(0));
@@ -4815,7 +5012,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 cradles[0].is_on_chain() || cradles[0].is_failed()
             }),
             Some(300),
-            false,
         )
         .expect("should finish");
 
@@ -4872,7 +5068,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             .insert(0, GameAction::WaitBlocks(5, 0));
         sim_setup
             .game_actions
-            .insert(1, GameAction::NerfMessages(0));
+            .insert(3, GameAction::NerfMessages(0));
         sim_setup.game_actions.push(GameAction::GoOnChain(0));
         sim_setup.game_actions.push(GameAction::WaitBlocks(120, 1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
@@ -4887,7 +5083,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &sim_setup.game_actions,
             None,
             None,
-            false,
         )
         .expect("should finish");
 
@@ -4919,7 +5114,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
         sim_setup.game_actions.push(GameAction::NerfMessages(0));
-        sim_setup.game_actions.push(GameAction::AcceptTimeout(0));
+        sim_setup
+            .game_actions
+            .push(GameAction::AcceptTimeout(0, GameID(1)));
         sim_setup.game_actions.push(GameAction::GoOnChain(0));
         sim_setup.game_actions.push(GameAction::WaitBlocks(120, 1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
@@ -4934,7 +5131,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &sim_setup.game_actions,
             None,
             None,
-            false,
         )
         .expect("should finish");
 
@@ -4977,7 +5173,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &sim_setup.game_actions,
             None,
             None,
-            false,
         )
         .expect("should finish");
 
@@ -5029,7 +5224,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &sim_setup.game_actions,
             None,
             None,
-            false,
         )
         .expect("should finish");
 
@@ -5064,7 +5258,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         sim_setup.game_actions.push(GameAction::GoOnChain(0));
         sim_setup.game_actions.push(GameAction::WaitBlocks(120, 1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
-        sim_setup.game_actions.push(GameAction::AcceptTimeout(0));
+        sim_setup.game_actions.push(GameAction::AcceptTimeout(0, GameID(1)));
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
 
         let outcome = run_game_container_with_action_list_with_success_predicate(
@@ -5077,7 +5271,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &sim_setup.game_actions,
             None,
             None,
-            false,
         )
         .expect("should finish");
 
