@@ -837,11 +837,7 @@ fn gid_diag(test_name: &str, action_idx: usize, label: &str, requested: &GameID,
     );
 }
 
-fn move_ready(
-    moves: &[GameAction],
-    mn: usize,
-    local_uis: &[LocalTestUIReceiver; 2],
-) -> bool {
+fn move_ready(moves: &[GameAction], mn: usize, local_uis: &[LocalTestUIReceiver; 2]) -> bool {
     if mn >= moves.len() {
         return false;
     }
@@ -854,18 +850,16 @@ fn move_ready(
     }
 }
 
-fn accept_resolved(
-    local_uis: &[LocalTestUIReceiver; 2],
-    who: usize,
-    gid: &GameID,
-) -> bool {
+fn accept_resolved(local_uis: &[LocalTestUIReceiver; 2], who: usize, gid: &GameID) -> bool {
     gid_matches(&local_uis[who].game_accepted_ids, gid)
-        || local_uis[who].notifications.iter().any(|n| matches!(n,
-            GameNotification::InsufficientBalance { id, .. }
-            | GameNotification::GameCancelled { id }
-            | GameNotification::GameProposalCancelled { id, .. }
-                if id == gid || *id == gid_flipped(gid)
-        ))
+        || local_uis[who].notifications.iter().any(|n| {
+            matches!(n,
+                GameNotification::InsufficientBalance { id, .. }
+                | GameNotification::GameCancelled { id }
+                | GameNotification::GameProposalCancelled { id, .. }
+                    if id == gid || *id == gid_flipped(gid)
+            )
+        })
 }
 
 fn accept_proposal_ready(
@@ -884,9 +878,7 @@ fn accept_proposal_ready(
         {
             accept_resolved(local_uis, *who, gid)
         } else {
-            local_uis[*who]
-                .received_proposal_ids
-                .contains(gid)
+            local_uis[*who].received_proposal_ids.contains(gid)
                 || local_uis[*who]
                     .received_proposal_ids
                     .contains(&gid_flipped(gid))
@@ -896,11 +888,7 @@ fn accept_proposal_ready(
     }
 }
 
-fn propose_ready(
-    moves: &[GameAction],
-    mn: usize,
-    local_uis: &[LocalTestUIReceiver; 2],
-) -> bool {
+fn propose_ready(moves: &[GameAction], mn: usize, local_uis: &[LocalTestUIReceiver; 2]) -> bool {
     if mn >= moves.len() {
         return false;
     }
@@ -1171,7 +1159,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                         let saved = move_number;
                         while move_number > 0
                             && (move_number >= moves_input.len()
-                                || !matches!(moves_input[move_number], GameAction::Move(_, _, _, _)))
+                                || !matches!(
+                                    moves_input[move_number],
+                                    GameAction::Move(_, _, _, _)
+                                ))
                         {
                             move_number -= 1;
                         }
@@ -1348,7 +1339,8 @@ fn run_game_container_with_action_list_with_success_predicate(
                         local_uis[*who].game_accepted_ids.remove(&runtime_gid);
                         local_uis[*who].opponent_moved_in_game.remove(&runtime_gid);
                     }
-                    GameAction::ProposeNewGame(who, _trigger) | GameAction::ProposeNewGameTheirTurn(who, _trigger) => {
+                    GameAction::ProposeNewGame(who, _trigger)
+                    | GameAction::ProposeNewGameTheirTurn(who, _trigger) => {
                         let my_turn = matches!(ga, GameAction::ProposeNewGame(_, _));
                         let new_game_id = cradles[*who].next_game_id().unwrap();
                         debug!("ProposeNewGame({who}, my_turn={my_turn}): game_id={new_game_id:?}");
@@ -1384,7 +1376,9 @@ fn run_game_container_with_action_list_with_success_predicate(
                             gid_diag(&test_name, action_idx, "AcceptProposal", gid, &runtime_gid);
                         }
                         if !local_uis[*who].accepted_proposal_ids.contains(&runtime_gid) {
-                            debug!("AcceptProposal({who}, {runtime_gid:?}) [phase 1: calling accept]");
+                            debug!(
+                                "AcceptProposal({who}, {runtime_gid:?}) [phase 1: calling accept]"
+                            );
                             cradles[*who].accept_proposal(allocator, rng, &runtime_gid)?;
                             local_uis[*who].accepted_proposal_ids.push(runtime_gid);
                             move_number -= 1;
@@ -1553,7 +1547,13 @@ fn run_game_container_with_action_list_with_success_predicate(
                             gid_flipped(gid)
                         };
                         if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "ForceDestroyCoin", gid, &runtime_gid);
+                            gid_diag(
+                                &test_name,
+                                action_idx,
+                                "ForceDestroyCoin",
+                                gid,
+                                &runtime_gid,
+                            );
                         }
                         if let Some(game_coin) = cradles[*who].get_game_coin(&runtime_gid) {
                             force_destroyed_coins.push(game_coin);
@@ -1979,7 +1979,9 @@ impl DebugGameTestMove {
 }
 
 pub fn add_debug_test_accept_shutdown(test_setup: &mut DebugGameSimSetup, wait: usize, who: usize) {
-    test_setup.game_actions.push(GameAction::AcceptTimeout(who, GameID(1)));
+    test_setup
+        .game_actions
+        .push(GameAction::AcceptTimeout(who, GameID(1)));
     test_setup
         .game_actions
         .push(GameAction::WaitBlocks(wait, 0));
@@ -2022,7 +2024,10 @@ pub fn setup_debug_test(
 
     let mut game_actions = Vec::new();
     game_actions.push(GameAction::ProposeNewGame(0, ProposeTrigger::Channel));
-    game_actions.push(GameAction::AcceptProposal(1, GameID(first_game_nonce as u64)));
+    game_actions.push(GameAction::AcceptProposal(
+        1,
+        GameID(first_game_nonce as u64),
+    ));
 
     for (i, do_move) in moves.iter().enumerate() {
         let alice_turn = i % 2 == 0;
@@ -2141,7 +2146,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             ];
             moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
             if let GameAction::Move(player, game_id, readable, _) = moves[5].clone() {
-                moves.insert(5, GameAction::FakeMove(player, game_id, readable, vec![0; 500]));
+                moves.insert(
+                    5,
+                    GameAction::FakeMove(player, game_id, readable, vec![0; 500]),
+                );
             } else {
                 panic!("no move 5 to replace");
             }
@@ -2278,7 +2286,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             ];
             moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
             if let GameAction::Move(player, game_id, readable, _) = moves[5].clone() {
-                moves.insert(5, GameAction::FakeMove(player, game_id, readable, vec![0; 500]));
+                moves.insert(
+                    5,
+                    GameAction::FakeMove(player, game_id, readable, vec![0; 500]),
+                );
                 moves.remove(6);
             } else {
                 panic!("no move 5 to replace");
@@ -4501,8 +4512,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             GameAction::CleanShutdown(0),
         ];
 
-        let outcome = run_calpoker_container_with_action_list_with_success_predicate(&mut allocator, &moves, None, Some(200))
-            .expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         assert!(
@@ -4542,8 +4558,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             GameAction::WaitBlocks(5, 0),
         ];
 
-        let outcome = run_calpoker_container_with_action_list_with_success_predicate(&mut allocator, &moves, None, Some(200))
-            .expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         assert!(
@@ -4574,10 +4595,18 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // No initial game. Alice proposes, Bob has the potato and
         // initiates clean shutdown. The proposal should be cancelled
         // on both sides.
-        let moves = vec![GameAction::ProposeNewGame(0, ProposeTrigger::Channel), GameAction::CleanShutdown(1)];
+        let moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::CleanShutdown(1),
+        ];
 
-        let outcome = run_calpoker_container_with_action_list_with_success_predicate(&mut allocator, &moves, None, Some(200))
-            .expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         assert!(
@@ -4614,8 +4643,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             GameAction::CleanShutdown(0),
         ];
 
-        let outcome = run_calpoker_container_with_action_list_with_success_predicate(&mut allocator, &moves, None, Some(200))
-            .expect("should finish");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         assert!(
@@ -4696,8 +4730,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             GameAction::WaitBlocks(5, 0),
         ];
 
-        let outcome = run_calpoker_container_with_action_list_with_success_predicate(&mut allocator, &moves, None, Some(200))
-            .expect("should finish without crashing on stale cancel");
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish without crashing on stale cancel");
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         assert!(
@@ -4866,8 +4905,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         sim_setup.game_actions.push(second_move);
         // Proposal round-trip advances last_received_state past the snapshot
         // so the stale detection triggers.
-        sim_setup.game_actions.push(GameAction::ProposeNewGame(0, ProposeTrigger::Channel));
-        sim_setup.game_actions.push(GameAction::AcceptProposal(1, GameID(3)));
+        sim_setup
+            .game_actions
+            .push(GameAction::ProposeNewGame(0, ProposeTrigger::Channel));
+        sim_setup
+            .game_actions
+            .push(GameAction::AcceptProposal(1, GameID(3)));
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
         // Nerf both to prevent preemption during channel coin spend detection.
         sim_setup.game_actions.push(GameAction::NerfTransactions(0));
@@ -5071,7 +5114,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
         sim_setup.game_actions.push(GameAction::NerfMessages(0));
-        sim_setup.game_actions.push(GameAction::AcceptTimeout(0, GameID(1)));
+        sim_setup
+            .game_actions
+            .push(GameAction::AcceptTimeout(0, GameID(1)));
         sim_setup.game_actions.push(GameAction::GoOnChain(0));
         sim_setup.game_actions.push(GameAction::WaitBlocks(120, 1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));

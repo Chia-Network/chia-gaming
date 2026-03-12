@@ -1009,9 +1009,7 @@ impl ChannelHandler {
             .proposed_games
             .iter()
             .position(|p| p.game_id == *game_id)
-            .ok_or_else(|| {
-                Error::StrErr(format!("cancel for unknown proposal {game_id:?}"))
-            })?;
+            .ok_or_else(|| Error::StrErr(format!("cancel for unknown proposal {game_id:?}")))?;
         self.proposed_games.remove(idx);
         Ok(())
     }

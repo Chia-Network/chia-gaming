@@ -477,8 +477,13 @@ impl PotatoHandler {
                 clean_shutdown,
             } => {
                 let ch_snapshot = self.channel_handler.clone();
-                match self.process_received_batch(env, &timeout, actions, signatures, clean_shutdown)
-                {
+                match self.process_received_batch(
+                    env,
+                    &timeout,
+                    actions,
+                    signatures,
+                    clean_shutdown,
+                ) {
                     Ok(batch_effects) => {
                         effects.extend(batch_effects);
                     }
@@ -629,13 +634,9 @@ impl PotatoHandler {
                     }
                 }
 
-                let my_reward = CoinString::from_parts(
-                    &coin.to_coin_id(),
-                    &want_puzzle_hash,
-                    &want_amount,
-                );
-                let full_spend =
-                    ch.received_potato_clean_shutdown(env, sig, clvm_conditions)?;
+                let my_reward =
+                    CoinString::from_parts(&coin.to_coin_id(), &want_puzzle_hash, &want_amount);
+                let full_spend = ch.received_potato_clean_shutdown(env, sig, clvm_conditions)?;
                 let channel_puzzle_public_key = ch.get_aggregate_channel_public_key();
                 (coin, my_reward, full_spend, channel_puzzle_public_key)
             };
@@ -690,11 +691,8 @@ impl PotatoHandler {
             effects.push(Effect::PeerCleanShutdownComplete(coin_spend));
 
             self.have_potato = PotatoState::Present;
-            self.channel_state = ChannelState::OnChainWaitingForUnrollSpend(
-                coin.clone(),
-                0,
-                reward_coin_for_state,
-            );
+            self.channel_state =
+                ChannelState::OnChainWaitingForUnrollSpend(coin.clone(), 0, reward_coin_for_state);
             return Ok(effects);
         }
 
@@ -1424,9 +1422,7 @@ impl PotatoHandler {
                                     .to_string(),
                             ));
                         }
-                        effects.extend(
-                            self.pass_on_channel_handler_message(env, msg_envelope)?,
-                        );
+                        effects.extend(self.pass_on_channel_handler_message(env, msg_envelope)?);
                     }
                     _ => {
                         effects.extend(self.pass_on_channel_handler_message(env, msg_envelope)?);
@@ -2195,8 +2191,7 @@ impl PotatoHandler {
             // If a PotatoAcceptTimeout entry is still in cached_last_actions
             // (meaning the potato never came back, so WeTimedOut was never
             // emitted off-chain), emit it now.
-            let preempt_resolved =
-                player_ch.drain_preempt_resolved_accept_timeouts(&surviving_ids);
+            let preempt_resolved = player_ch.drain_preempt_resolved_accept_timeouts(&surviving_ids);
 
             (game_map_inner, reward_coin, preempt_resolved)
         };

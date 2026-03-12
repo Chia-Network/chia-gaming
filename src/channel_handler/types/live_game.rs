@@ -1,7 +1,5 @@
 use std::rc::Rc;
 
-
-
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::ReadableMove;
