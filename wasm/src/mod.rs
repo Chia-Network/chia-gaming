@@ -342,8 +342,10 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn create_serialized_game(json: JsValue) -> Result<i32, JsValue> {
-        let cradle = serde_wasm_bindgen::from_value::<JsCradle>(json.clone()).into_js()?;
+    pub fn create_serialized_game(json: JsValue, new_seed: &str) -> Result<i32, JsValue> {
+        let mut cradle = serde_wasm_bindgen::from_value::<JsCradle>(json.clone()).into_js()?;
+        let hashed = Sha256Input::Bytes(new_seed.as_bytes()).hash();
+        cradle.rng = ChaCha8SerializationWrapper(ChaCha8Rng::from_seed(*hashed.bytes()));
         let new_id = get_next_id();
         insert_cradle(new_id, cradle);
         return Ok(new_id);
@@ -597,7 +599,7 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn make_move_entropy(
+    pub fn make_move_with_entropy_for_testing(
         cid: i32,
         id: &str,
         readable: &[u8],
