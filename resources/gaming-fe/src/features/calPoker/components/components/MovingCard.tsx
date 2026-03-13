@@ -13,6 +13,7 @@ function MovingCard(props: MovingCardProps) {
     left: startX,
     top: startY,
     color: colorHex,
+    zIndex: cardData.zIndex,
     '--start-x': `${startX}px`,
     '--start-y': `${startY}px`,
     '--end-x': `${endX}px`,
@@ -21,7 +22,7 @@ function MovingCard(props: MovingCardProps) {
 
   return (
     <div
-      className={`border-2 border-canvas-border rounded-lg bg-canvas-bg shadow-lg flex flex-col items-center justify-center font-bold fixed pointer-events-none z-50 ${showAnimation ? 'animate-move' : ''}`}
+      className={`border-2 border-canvas-border rounded-lg bg-canvas-bg shadow-lg flex flex-col items-center justify-center font-bold fixed pointer-events-none ${showAnimation ? 'animate-move' : ''}`}
       style={styleVars}
     >
       <CardContent card={card} />

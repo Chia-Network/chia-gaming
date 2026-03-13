@@ -266,6 +266,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
           width: myRect.width,
           height: myRect.height,
           direction: 'playerToAi',
+          zIndex: 0,
         });
       }
     });
@@ -303,6 +304,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
           width: oppRect.width,
           height: oppRect.height,
           direction: 'aiToPlayer',
+          zIndex: 0,
         });
       }
     });
@@ -334,7 +336,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
           endY: myRect.top,
           width: myRect.width,
           height: myRect.height,
-          direction: 'payerToAi',
+          direction: 'self',
+          zIndex: 0,
         });
       }
     };
@@ -345,6 +348,21 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     opponentCards.forEach((card, i) =>
       selfCardAnimate(oppPrefix, usedAiCards, card, i),
     );
+
+    // Assign z-indexes: player swap cards highest (rightmost first),
+    // then opponent swap cards (rightmost first), then non-swapping cards lowest.
+    const playerSwaps = movingCardData
+      .filter(c => c.direction === 'playerToAi')
+      .sort((a, b) => (b.card.originalIndex ?? 0) - (a.card.originalIndex ?? 0));
+    const aiSwaps = movingCardData
+      .filter(c => c.direction === 'aiToPlayer')
+      .sort((a, b) => (b.card.originalIndex ?? 0) - (a.card.originalIndex ?? 0));
+    let z = 100;
+    for (const c of playerSwaps) { c.zIndex = z--; }
+    for (const c of aiSwaps) { c.zIndex = z--; }
+    for (const c of movingCardData) {
+      if (c.direction === 'self') c.zIndex = 50;
+    }
 
     return movingCardData;
   };

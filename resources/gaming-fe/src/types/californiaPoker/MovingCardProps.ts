@@ -10,6 +10,7 @@ interface MovingCardData {
   width: number;
   height: number;
   direction: string;
+  zIndex: number;
 };
 
 interface MovingCardProps {
