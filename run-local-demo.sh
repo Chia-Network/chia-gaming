@@ -40,6 +40,7 @@ cleanup() {
     for pid in "${PIDS[@]}"; do
         kill "$pid" 2>/dev/null || true
     done
+    kill $(lsof -i -n -P | grep LISTEN | grep :3004 | awk '{print $2}')
     echo "All services stopped."
 }
 trap cleanup EXIT
