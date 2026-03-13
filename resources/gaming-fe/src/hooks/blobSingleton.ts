@@ -11,7 +11,7 @@ import { getGameSocket } from '../services/GameSocket';
 import {
   startNewSession,
 } from './save';
-import { GENESIS_CHALLENGES } from '../constants/env';
+import { getGenesisChallenge } from '../constants/env';
 import { walletConnectState } from './useWalletConnect';
 
 export var blobSingleton: any = null;
@@ -43,7 +43,7 @@ export async function configGameObject(
   let address = await blockchain.getAddress();
   gameObject.setBlockchainAddress(address);
   const chainId = walletConnectState.getChainId();
-  const aggSigMe = GENESIS_CHALLENGES[chainId] ?? GENESIS_CHALLENGES['chia:mainnet'];
+  const aggSigMe = getGenesisChallenge(chainId);
   let { game: cradle, puzzleHash } = wasmStateInit.createGame(calpokerHexes.proposalHex, calpokerHexes.parserHex, rngId, wasmConnection, iStarted, amount, amount, address.puzzleHash, aggSigMe);
   gameObject.setGameCradle(cradle);
   let coin = await wasmStateInit.createStartCoin(blockchain, uniqueId, puzzleHash, amount, wasmConnection);

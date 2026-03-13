@@ -11,6 +11,7 @@ import useDebug from '../hooks/useDebug';
 import { walletConnectState } from '../hooks/useWalletConnect';
 import { BLOCKCHAIN_SERVICE_URL, BLOCKCHAIN_DATA_URL } from '../settings';
 import { generateOrRetrieveUniqueId } from '../util';
+import { CHAIN_ID, validateChainConfig } from '../constants/env';
 
 import Debug from './Debug';
 import { WalletConnectDialog, doConnectWallet } from './WalletConnect';
@@ -111,6 +112,15 @@ const WalletConnectHeading = (_args: any) => {
       next: (evt: any) => {
         console.log('[WC UI] state event:', evt.stateName, evt);
         if (evt.stateName === 'connected') {
+          const chainId = walletConnectState.getChainId();
+          try {
+            validateChainConfig(chainId);
+          } catch (e: any) {
+            console.error('[WC] Chain config validation failed:', e.message);
+            alert(`Wallet is on an unsupported network: ${e.message}`);
+            return;
+          }
+
           toggleExpanded();
           setAlreadyConnected(true);
           console.log('doing connect real blockchain');
@@ -240,6 +250,14 @@ const WalletConnectHeading = (_args: any) => {
 
   const useHeight = expanded ? '3em' : '50em';
   const handleConnectSimulator = useCallback(() => {
+    try {
+      validateChainConfig(CHAIN_ID);
+    } catch (e: any) {
+      console.error('[Simulator] Chain config validation failed:', e.message);
+      alert(`Chain configuration error: ${e.message}`);
+      return;
+    }
+
     const baseUrl = BLOCKCHAIN_SERVICE_URL;
 
     fetch(`${baseUrl}/register?name=${uniqueId}`, {
