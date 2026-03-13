@@ -264,6 +264,12 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                         },
                     );
 
+                    effects.push(Effect::Notify(GameNotification::GameOnChain {
+                        id: pending.game_id,
+                        coin: new_coin.clone(),
+                        amount: new_coin.amount().unwrap_or_default(),
+                        our_turn: false,
+                    }));
                     effects.push(Effect::RegisterCoin {
                         coin: new_coin,
                         timeout: gt,
@@ -312,6 +318,7 @@ impl PotatoHandlerImpl for OnChainGameHandler {
             let notification = if let Some(reward_coin) = reward_coin {
                 GameNotification::WeSlashedOpponent {
                     id: old_definition.game_id,
+                    reward_amount: reward_coin.amount().unwrap_or_default(),
                     reward_coin,
                 }
             } else {
@@ -396,6 +403,12 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                                 ..old_definition
                             },
                         );
+                        effects.push(Effect::Notify(GameNotification::GameOnChain {
+                            id: old_definition.game_id,
+                            coin: new_coin.clone(),
+                            amount: amt.clone(),
+                            our_turn: !old_definition.our_turn,
+                        }));
                         effects.push(Effect::RegisterCoin {
                             coin: new_coin,
                             timeout: gt,
@@ -504,6 +517,12 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                     },
                 );
 
+                effects.push(Effect::Notify(GameNotification::GameOnChain {
+                    id: old_definition.game_id,
+                    coin: new_coin_id.clone(),
+                    amount: amt.clone(),
+                    our_turn: on_chain_our_turn,
+                }));
                 effects.push(Effect::RegisterCoin {
                     coin: new_coin_id,
                     timeout: gt,
@@ -594,6 +613,12 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                     },
                 );
 
+                effects.push(Effect::Notify(GameNotification::GameOnChain {
+                    id: old_definition.game_id,
+                    coin: new_coin_string.clone(),
+                    amount: amt.clone(),
+                    our_turn: true,
+                }));
                 // Opponent moved on-chain, advancing the game state.
                 // If we had a cached move, check if it's now stale.
                 if let Some(cached) = self.player_ch.take_cached_move_for_game(&game_id) {

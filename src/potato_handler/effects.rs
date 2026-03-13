@@ -32,6 +32,7 @@ pub enum GameNotification {
     WeSlashedOpponent {
         id: GameID,
         reward_coin: CoinString,
+        reward_amount: Amount,
     },
     OpponentSlashedUs {
         id: GameID,
@@ -60,9 +61,12 @@ pub enum GameNotification {
         reason: String,
     },
 
-    ChannelCoinSpent {},
+    ChannelCoinSpent {
+        unroll_coin: CoinString,
+    },
     UnrollCoinSpent {
         reward_coin: Option<CoinString>,
+        reward_amount: Amount,
     },
 
     GameProposed {
@@ -93,13 +97,22 @@ pub enum GameNotification {
         id: GameID,
         readable: ReadableMove,
     },
-    ChannelCreated {},
+    ChannelCreated {
+        channel_coin: CoinString,
+    },
     CleanShutdownStarted {},
     CleanShutdownComplete {
         reward_coin: Option<CoinString>,
+        reward_amount: Amount,
     },
     GoingOnChain {
         reason: String,
+    },
+    GameOnChain {
+        id: GameID,
+        coin: CoinString,
+        amount: Amount,
+        our_turn: bool,
     },
 }
 

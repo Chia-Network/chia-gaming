@@ -8,7 +8,7 @@ import installThemeSyncListener from '../utils/themeSyncListener';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
 import { Box, Typography } from '@mui/material';
-import { Toaster } from './ui/toaster';
+import { Toaster } from 'sonner';
 
 export interface GameParams {
   params: any;
@@ -36,6 +36,10 @@ const Game: React.FC<GameParams> = ({ params }) => {
     outcome,
     playAgain,
     stopPlaying,
+    channelCoinHex,
+    channelStatus,
+    gameCoinHex,
+    gameStatus,
   } = useWasmBlob(params, params.lobbyUrl, uniqueId);
 
   useEffect(() => {
@@ -123,6 +127,10 @@ const Game: React.FC<GameParams> = ({ params }) => {
         addressData={addressData}
         ourShare={ourShare}
         theirShare={theirShare}
+        channelCoinHex={channelCoinHex}
+        channelStatus={channelStatus}
+        gameCoinHex={gameCoinHex}
+        gameStatus={gameStatus}
       />
       <Toaster />
     </>

@@ -301,6 +301,7 @@ struct SynchronousGameCradleState {
     #[serde(skip)]
     pending_notifications: VecDeque<GameNotification>,
     channel_created: bool,
+    channel_created_coin: Option<CoinString>,
     clean_shutdown_received: bool,
     finished: bool,
     clean_shutdown: Option<CoinString>,
@@ -396,6 +397,7 @@ impl SynchronousGameCradle {
                 game_messages: VecDeque::default(),
                 pending_notifications: VecDeque::default(),
                 channel_created: false,
+                channel_created_coin: None,
                 channel_puzzle_hash: None,
                 funding_coin: None,
                 unfunded_offer: None,
@@ -457,13 +459,14 @@ impl ToLocalUI for SynchronousGameCradleState {
             GameNotification::GameMessage { id, readable } => {
                 self.game_messages.push_back((*id, readable.clone()));
             }
-            GameNotification::ChannelCreated { .. } => {
+            GameNotification::ChannelCreated { channel_coin } => {
                 self.channel_created = true;
+                self.channel_created_coin = Some(channel_coin.clone());
             }
             GameNotification::CleanShutdownStarted { .. } => {
                 self.clean_shutdown_received = true;
             }
-            GameNotification::CleanShutdownComplete { reward_coin } => {
+            GameNotification::CleanShutdownComplete { reward_coin, reward_amount: _ } => {
                 self.clean_shutdown = reward_coin.clone();
                 self.finished = true;
             }
@@ -637,9 +640,14 @@ impl SynchronousGameCradle {
         result.resync = self.state.resync.take();
 
         if self.state.channel_created {
+            let channel_coin = self
+                .state
+                .channel_created_coin
+                .take()
+                .unwrap_or_else(CoinString::default);
             result
                 .notifications
-                .push(GameNotification::ChannelCreated {});
+                .push(GameNotification::ChannelCreated { channel_coin });
             self.state.channel_created = false;
         }
         while let Some(n) = self.state.pending_notifications.pop_front() {

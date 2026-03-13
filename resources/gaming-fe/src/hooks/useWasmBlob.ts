@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Program } from 'clvm-lib';
-import { toast } from './use-toast';
+import { toast } from 'sonner';
 import {
   storeInitArgs,
 } from './WasmStateInit';
@@ -20,6 +20,14 @@ import {
   setInitStarted,
 } from './blobSingleton';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
+import { toHexString } from '../util';
+
+function coinPayloadToHex(coin: unknown): string | undefined {
+  if (Array.isArray(coin) && coin.length > 0 && coin.every((b): b is number => typeof b === 'number')) {
+    return toHexString(coin);
+  }
+  return undefined;
+}
 
 const TERMINAL_TYPES = [
   'WeTimedOut', 'OpponentTimedOut', 'WeSlashedOpponent',
@@ -73,6 +81,10 @@ export interface UseWasmBlobResult {
   lastOutcome: CalpokerOutcome | undefined;
   playAgain: () => void;
   stopPlaying: () => void;
+  channelCoinHex: string | undefined;
+  channelStatus: string | undefined;
+  gameCoinHex: string | undefined;
+  gameStatus: string | undefined;
 }
 
 export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: string): UseWasmBlobResult {
@@ -98,6 +110,10 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
   const [error, setRealError] = useState<string | undefined>(undefined);
   const [cardSelections, setOurCardSelections] = useState<number[]>([]);
   const [gameIds, setGameIds] = useState<string[]>([]);
+  const [channelCoinHex, setChannelCoinHex] = useState<string | undefined>(undefined);
+  const [channelStatus, setChannelStatus] = useState<string | undefined>(undefined);
+  const [gameCoinHex, setGameCoinHex] = useState<string | undefined>(undefined);
+  const [gameStatus, setGameStatus] = useState<string | undefined>(undefined);
   const amount = parseInt(searchParams.amount);
 
   const playerHandRef = useRef<number[]>([]);
@@ -201,37 +217,73 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     const go = gameObjectRef.current;
     if (typeof n !== 'object' || n === null) return;
 
-    // Show toasts for notable game events
+    // Show toasts for notable game events. Channel vs game IDs so each category replaces its previous toast.
     const type = Object.keys(n)[0];
     const p = n[type]; // payload
-    type ToastCfg = { title: string; description?: string; variant?: 'default' | 'destructive' };
-    const toastMap: Record<string, ToastCfg> = {
-      // --- Channel-level notifications ---
+    const CHANNEL_TOAST_ID = 'channel-notification';
+    const GAME_TOAST_ID = 'game-notification';
+    type ToastCfg = { title: string; description?: string; variant?: 'default' | 'destructive'; toastId: string };
+    const channelToasts: Record<string, Omit<ToastCfg, 'toastId'>> = {
       GoingOnChain:                { variant: 'default',     title: 'Going On-Chain',              description: p?.reason ?? 'Dispute detected — submitting to blockchain' },
       ChannelCoinSpent:            { variant: 'default',     title: 'Channel Coin Spent',           description: 'The state channel coin was spent on-chain' },
       UnrollCoinSpent:             { variant: 'default',     title: 'Unroll Coin Spent',            description: p?.reward_coin ? 'Unroll resolved — reward coin received' : 'The unroll coin was spent on-chain' },
       StaleChannelUnroll:          { variant: 'destructive', title: 'Stale Channel Unrolled',       description: p?.our_reward !== undefined ? `You received ${p.our_reward} mojos` : 'Opponent\'s stale unroll resolved on-chain' },
       ChannelError:                { variant: 'destructive', title: 'Channel Error',                description: p?.reason },
-      // --- Dispute / slash (game-scoped) ---
+      CleanShutdownStarted:        { variant: 'default',     title: 'Session Ending',               description: 'Opponent initiated a clean shutdown' },
+      CleanShutdownComplete:       { variant: 'default',     title: 'Session Ended',                description: 'Channel closed — funds returned on-chain' },
+    };
+    const gameToasts: Record<string, Omit<ToastCfg, 'toastId'>> = {
       OpponentPlayedIllegalMove:   { variant: 'default',     title: 'Illegal Move Detected',       description: `Game #${p?.id} — slashing opponent on-chain…` },
       WeSlashedOpponent:           { variant: 'default',     title: 'Opponent Slashed!',            description: `Game #${p?.id} — successfully claimed all game funds` },
       OpponentSlashedUs:           { variant: 'destructive', title: 'You Were Slashed',             description: `Game #${p?.id} — your illegal move was proven on-chain` },
       OpponentSuccessfullyCheated: { variant: 'destructive', title: 'Opponent Got Away',            description: p?.our_reward !== undefined ? `Game #${p?.id} — slash window expired, you received ${p.our_reward} mojos` : `Game #${p?.id} — slash window expired` },
-      // --- Timeouts (game-scoped) ---
       WeTimedOut:                  { variant: 'destructive', title: 'You Timed Out',                description: p?.our_reward !== undefined ? `Game #${p?.id} — you received ${p.our_reward} mojos` : `Game #${p?.id}` },
       OpponentTimedOut:            { variant: 'default',     title: 'Opponent Timed Out',           description: p?.our_reward !== undefined ? `Game #${p?.id} — you received ${p.our_reward} mojos` : `Game #${p?.id}` },
-      // --- Game lifecycle ---
       GameCancelled:               { variant: 'default',     title: 'Game Cancelled',               description: `Game #${p?.id} was cancelled` },
       GameProposalCancelled:       { variant: 'destructive', title: 'Game Proposal Cancelled',      description: p?.reason ? `Game #${p?.id} — ${p.reason}` : `Game #${p?.id}` },
       InsufficientBalance:         { variant: 'destructive', title: 'Insufficient Balance',         description: p?.our_balance_short && p?.their_balance_short ? 'Both sides have insufficient balance' : p?.our_balance_short ? 'Your balance is too low for this game' : 'Opponent\'s balance is too low for this game' },
       GameError:                   { variant: 'destructive', title: 'Game Error',                   description: p?.reason ? `Game #${p?.id} — ${p.reason}` : `Game #${p?.id}` },
-      // --- Session lifecycle ---
-      CleanShutdownStarted:        { variant: 'default',     title: 'Session Ending',               description: 'Opponent initiated a clean shutdown' },
-      CleanShutdownComplete:       { variant: 'default',     title: 'Session Ended',                description: 'Channel closed — funds returned on-chain' },
+      GameOnChain:                 { variant: 'default',     title: 'Game On-Chain',                description: p?.coin ? `Game #${p?.id} — coin on-chain` : `Game #${p?.id}` },
     };
-    if (type && toastMap[type]) {
-      const t = toastMap[type];
-      toast({ title: t.title, description: t.description, variant: t.variant });
+    const tChannel = channelToasts[type];
+    const tGame = gameToasts[type];
+    const t = tChannel ?? tGame;
+    if (t) {
+      // Game-level notifications that carry an id must match the active game; otherwise escalate to channel error.
+      const activeGameId = gameIdsRef.current[0];
+      const notificationGameId = p?.id != null ? String(p.id) : null;
+      if (tGame && notificationGameId != null && activeGameId != null && notificationGameId !== activeGameId) {
+        toast.error(`Unexpected game notification for #${notificationGameId}`, { id: CHANNEL_TOAST_ID });
+      } else {
+        const toastId = tChannel ? CHANNEL_TOAST_ID : GAME_TOAST_ID;
+        const opts = { ...(t.description ? { description: t.description } : {}), id: toastId };
+        if (t.variant === 'destructive') {
+          toast.error(t.title, opts);
+        } else {
+          toast(t.title, opts);
+        }
+      }
+    }
+
+    // Update channel/game coin state for header and bar display (Task 4)
+    if ('ChannelCreated' in n) {
+      const hex = coinPayloadToHex(n.ChannelCreated?.channel_coin);
+      if (hex != null) setChannelCoinHex(hex);
+      setChannelStatus('Open');
+    } else if ('ChannelCoinSpent' in n) {
+      const hex = coinPayloadToHex(n.ChannelCoinSpent?.unroll_coin);
+      if (hex != null) setChannelCoinHex(hex);
+      setChannelStatus('Channel spent');
+    } else if ('UnrollCoinSpent' in n) {
+      const hex = coinPayloadToHex(n.UnrollCoinSpent?.reward_coin);
+      if (hex != null) setChannelCoinHex(hex);
+      setChannelStatus('Unroll spent');
+    }
+    if ('GameOnChain' in n) {
+      const hex = coinPayloadToHex(n.GameOnChain?.coin);
+      if (hex != null) setGameCoinHex(hex);
+      const ourTurn = n.GameOnChain?.our_turn;
+      setGameStatus(ourTurn === true ? 'Our turn' : ourTurn === false ? 'Their turn' : 'On-chain');
     }
 
     if ('GameProposed' in n) {
@@ -516,6 +568,10 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     stopPlaying,
     outcome,
     lastOutcome,
+    channelCoinHex,
+    channelStatus,
+    gameCoinHex,
+    gameStatus,
   };
 }
 

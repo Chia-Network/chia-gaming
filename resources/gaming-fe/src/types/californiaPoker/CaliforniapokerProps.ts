@@ -17,4 +17,6 @@ export interface CaliforniapokerProps {
   banner: string;
   balanceDisplay: string;
   stopPlaying: () => void;
+  gameCoinHex?: string;
+  gameStatus?: string;
 }

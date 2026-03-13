@@ -27,6 +27,15 @@ export interface CalpokerProps {
   stopPlaying: () => void;
   addressData: any;
   log: OutcomeLogLine[];
+  channelCoinHex?: string;
+  channelStatus?: string;
+  gameCoinHex?: string;
+  gameStatus?: string;
+}
+
+function truncateHex(hex: string, head = 6, tail = 4): string {
+  if (hex.length <= head + tail) return hex;
+  return `${hex.slice(0, head)}…${hex.slice(-tail)}`;
 }
 
 const Calpoker: React.FC<CalpokerProps> = ({
@@ -47,6 +56,10 @@ const Calpoker: React.FC<CalpokerProps> = ({
   stopPlaying,
   addressData,
   log,
+  channelCoinHex,
+  channelStatus,
+  gameCoinHex,
+  gameStatus,
 }) => {
   const myWinOutcome = outcome?.my_win_outcome;
 
@@ -105,12 +118,17 @@ const Calpoker: React.FC<CalpokerProps> = ({
     >
       {/* Header */}
       <div className='flex w-full flex-col items-center pt-4 justify-between gap-4 sm:flex-row sm:gap-6'>
-        <h1 className='w-full text-2xl font-semibold text-canvas-text-contrast sm:text-left sm:text-4xl'>
-          California Poker V7
-          <span className='ml-3 text-sm font-normal text-canvas-text opacity-70'>
-            You are {iAmAlice ? 'Alice' : 'Bob'} (Player {playerNumber}{iAmAlice ? ', moves first' : ', moves second'})
-          </span>
-        </h1>
+        <div className='w-full flex flex-col gap-1'>
+          <h1 className='text-2xl font-semibold text-canvas-text-contrast sm:text-4xl'>
+            California Poker V7
+          </h1>
+          {(channelCoinHex != null || channelStatus != null) && (
+            <p className='text-sm text-canvas-text'>
+              Channel coin: {channelCoinHex != null ? `0x${truncateHex(channelCoinHex)}` : '—'}
+              {channelStatus != null ? ` — ${channelStatus}` : ''}
+            </p>
+          )}
+        </div>
 
         <div className='flex w-full items-center gap-2 flex-row justify-end'>
           {/* HINT button */}
@@ -172,6 +190,8 @@ const Calpoker: React.FC<CalpokerProps> = ({
               banner={banner}
               balanceDisplay={balanceDisplay}
               stopPlaying={stopPlaying}
+              gameCoinHex={gameCoinHex}
+              gameStatus={gameStatus}
             />
           </div>
 

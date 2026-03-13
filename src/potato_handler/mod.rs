@@ -1861,7 +1861,9 @@ impl PotatoHandler {
             }
         }
 
-        effects.push(Effect::Notify(GameNotification::ChannelCoinSpent {}));
+        effects.push(Effect::Notify(GameNotification::ChannelCoinSpent {
+            unroll_coin: unroll_coin.clone(),
+        }));
 
         effects.extend(self.handle_unroll_from_channel_conditions(
             env,
@@ -2039,8 +2041,13 @@ impl PotatoHandler {
                     }));
                 }
             }
+            let reward_amount = reward_coin
+                .as_ref()
+                .and_then(|r| r.amount())
+                .unwrap_or_default();
             effects.push(Effect::Notify(GameNotification::CleanShutdownComplete {
                 reward_coin,
+                reward_amount,
             }));
             return Ok(effects);
         }
@@ -2061,7 +2068,9 @@ impl PotatoHandler {
                 Error::StrErr("channel conditions didn't include a coin creation".to_string())
             })?;
 
-        effects.push(Effect::Notify(GameNotification::ChannelCoinSpent {}));
+        effects.push(Effect::Notify(GameNotification::ChannelCoinSpent {
+            unroll_coin: unroll_coin.clone(),
+        }));
 
         effects.extend(self.handle_unroll_from_channel_conditions(
             env,
@@ -2126,6 +2135,7 @@ impl PotatoHandler {
                 .unwrap_or_default();
             effects.push(Effect::Notify(GameNotification::UnrollCoinSpent {
                 reward_coin: reward_coin.clone(),
+                reward_amount: reward_amount.clone(),
             }));
 
             let last_received = player_ch.get_last_received_state();
@@ -2206,8 +2216,13 @@ impl PotatoHandler {
 
         if game_map.is_empty() {
             self.channel_state = ChannelState::Completed;
+            let reward_amount = on_chain_reward_coin
+                .as_ref()
+                .and_then(|r| r.amount())
+                .unwrap_or_default();
             effects.push(Effect::Notify(GameNotification::CleanShutdownComplete {
                 reward_coin: on_chain_reward_coin,
+                reward_amount,
             }));
             return Ok(effects);
         }
@@ -2272,13 +2287,24 @@ impl PotatoHandler {
 
         if game_map.is_empty() {
             self.channel_state = ChannelState::Completed;
+            let reward_amount = on_chain_reward_coin
+                .as_ref()
+                .and_then(|r| r.amount())
+                .unwrap_or_default();
             effects.push(Effect::Notify(GameNotification::CleanShutdownComplete {
                 reward_coin: on_chain_reward_coin,
+                reward_amount,
             }));
             return Ok(effects);
         }
 
         for (coin, state) in game_map.iter() {
+            effects.push(Effect::Notify(GameNotification::GameOnChain {
+                id: state.game_id,
+                coin: coin.clone(),
+                amount: coin.amount().unwrap_or_default(),
+                our_turn: state.our_turn,
+            }));
             effects.push(Effect::RegisterCoin {
                 coin: coin.clone(),
                 timeout: state.game_timeout.clone(),
@@ -2505,6 +2531,12 @@ impl SpendWalletReceiver for PotatoHandler {
 
         self.waiting_to_start = false;
 
+        let channel_coin = self
+            .channel_handler()
+            .ok()
+            .map(|ch| ch.state_channel_coin().clone())
+            .expect("has_channel_coin was true");
+
         if let ChannelState::PostStepF(info) = &self.channel_state {
             let mut effects: Vec<Effect> = self
                 .try_complete_step_f(
@@ -2513,12 +2545,14 @@ impl SpendWalletReceiver for PotatoHandler {
                 )?
                 .into_iter()
                 .collect();
-            effects.push(Effect::Notify(GameNotification::ChannelCreated {}));
+            effects.push(Effect::Notify(GameNotification::ChannelCreated {
+                channel_coin: channel_coin.clone(),
+            }));
             return Ok(Some(effects));
         }
 
         Ok(Some(vec![Effect::Notify(
-            GameNotification::ChannelCreated {},
+            GameNotification::ChannelCreated { channel_coin },
         )]))
     }
 

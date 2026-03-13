@@ -60,6 +60,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   banner,
   balanceDisplay,
   stopPlaying,
+  gameCoinHex,
+  gameStatus,
 }) => {
   const isPlayerAlice = playerNumber === 1;
   const [gameState, setGameState] = useState(GAME_STATES.INITIAL);
@@ -642,6 +644,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
               moveNumber={moveNumber}
               isDisabled={isDisabled}
               doHandleMakeMove={doHandleMakeMove}
+              gameCoinHex={gameCoinHex}
+              gameStatus={gameStatus}
             />
           </div>
         )}
