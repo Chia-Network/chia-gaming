@@ -416,7 +416,6 @@ mod sim_tests {
                 GameAction::AcceptProposal(1, GameID(1)),
             ];
             moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
-            moves.push(GameAction::AcceptTimeout(1, GameID(1)));
             moves.push(GameAction::CleanShutdown(0));
             let game_outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
                 .expect("game should complete");
@@ -773,7 +772,6 @@ mod sim_tests {
                 GameAction::AcceptProposal(1, GameID(1)),
             ];
             moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
-            moves.push(GameAction::AcceptTimeout(1, GameID(1)));
             moves.push(GameAction::CleanShutdown(0));
 
             let game_outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
@@ -831,7 +829,6 @@ mod sim_tests {
             moves.push(GameAction::ProposeNewGame(0, ProposeTrigger::Channel));
             moves.push(GameAction::AcceptProposal(1, GameID(1)));
             moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
-            moves.push(GameAction::AcceptTimeout(1, GameID(1)));
             // Game 1: player 0 proposes again after game 0 finishes.
             // Cards differ so we can't reuse prefix_test_moves — just timeout.
             moves.push(GameAction::ProposeNewGame(
@@ -859,7 +856,6 @@ mod sim_tests {
             ));
             moves.push(GameAction::AcceptProposal(0, GameID(0)));
             moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
-            moves.push(GameAction::AcceptTimeout(1, GameID(0)));
             // Game 1: player 1 proposes again after game 0 finishes.
             moves.push(GameAction::ProposeNewGameTheirTurn(
                 1,

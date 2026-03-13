@@ -230,6 +230,13 @@ impl Referee {
         matches!(self, Referee::MyTurn(_))
     }
 
+    pub fn is_game_over(&self) -> bool {
+        match self {
+            Referee::MyTurn(r) => r.get_game_handler().is_none(),
+            Referee::TheirTurn(r) => r.get_game_handler().is_none(),
+        }
+    }
+
     pub fn processing_my_turn(&self) -> bool {
         matches!(self, Referee::TheirTurn(_))
     }

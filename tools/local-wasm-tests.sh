@@ -34,7 +34,7 @@ cleanup() {
         wait "$SIM_PID" 2>/dev/null || true
     fi
 }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 # macOS wasm32 clang workaround
 if [ -x /opt/homebrew/opt/llvm/bin/clang ]; then
@@ -60,6 +60,10 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     echo "=== Building simulator ==="
     cargo build --bin chia-gaming-sim --features sim-server
 fi
+
+# Kill any stale simulator on our port before starting a fresh one
+lsof -ti:5800 | xargs kill 2>/dev/null || true
+sleep 0.5
 
 echo "=== Starting simulator ==="
 SIM_BIN="${CARGO_TARGET_DIR:-$REPO_ROOT/target}/debug/chia-gaming-sim"

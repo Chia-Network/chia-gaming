@@ -574,6 +574,14 @@ impl PotatoHandler {
                     if !move_result.message.is_empty() {
                         effects.push(Effect::PeerGameMessage(*game_id, move_result.message));
                     }
+                    let finished = {
+                        let ch = self.channel_handler()?;
+                        ch.is_game_finished(game_id)
+                    };
+                    if finished {
+                        self.game_action_queue
+                            .push_back(GameAction::AcceptTimeout(*game_id));
+                    }
                 }
                 BatchAction::AcceptTimeout(game_id, _peer_amount) => {
                     let ch = self.channel_handler_mut()?;

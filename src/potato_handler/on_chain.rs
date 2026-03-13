@@ -532,6 +532,11 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                         "expected spend - their turn"
                     }),
                 });
+                if self.player_ch.is_game_finished(&game_id) {
+                    self.game_action_queue
+                        .push_back(GameAction::AcceptTimeout(game_id));
+                }
+
                 resync_info = Some(ResyncInfo {
                     state_number,
                     is_my_turn,

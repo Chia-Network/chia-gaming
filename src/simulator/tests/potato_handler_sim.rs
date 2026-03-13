@@ -2230,7 +2230,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             GameAction::AcceptProposal(1, GameID(0)),
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
-        moves.push(GameAction::AcceptTimeout(1, GameID(0)));
         moves.push(GameAction::CleanShutdown(1));
         let outcome =
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
@@ -2429,7 +2428,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 GameAction::AcceptProposal(1, GameID(0)),
             ];
             moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
-            moves.push(GameAction::AcceptTimeout(1, GameID(0)));
             moves.push(GameAction::GoOnChain(1));
             moves.push(GameAction::WaitBlocks(20, 1));
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
@@ -2969,7 +2967,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             GameAction::AcceptProposal(1, GameID(0)),
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
-        moves.push(GameAction::AcceptTimeout(1, GameID(0)));
         moves.push(GameAction::NerfTransactions(0));
         moves.push(GameAction::CleanShutdown(1));
 
@@ -3022,7 +3019,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             GameAction::AcceptProposal(1, GameID(0)),
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
-        moves.push(GameAction::AcceptTimeout(1, GameID(0)));
         moves.push(GameAction::NerfTransactions(1));
         moves.push(GameAction::CleanShutdown(1));
 
@@ -3075,7 +3071,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             GameAction::AcceptProposal(1, GameID(0)),
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
-        moves.push(GameAction::AcceptTimeout(1, GameID(0)));
         // Nerf both so the clean shutdown tx is dropped for both sides.
         moves.push(GameAction::NerfTransactions(0));
         moves.push(GameAction::NerfTransactions(1));
@@ -3125,7 +3120,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             GameAction::AcceptProposal(1, GameID(0)),
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
-        moves.push(GameAction::AcceptTimeout(1, GameID(0)));
         // Nerf all transactions so no clean shutdown tx lands.
         moves.push(GameAction::NerfTransactions(0));
         moves.push(GameAction::NerfTransactions(1));
@@ -3797,7 +3791,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
         moves.push(GameAction::NerfMessages(1));
-        moves.push(GameAction::AcceptTimeout(1, GameID(0)));
         moves.push(GameAction::GoOnChain(1));
         moves.push(GameAction::WaitBlocks(120, 0));
         moves.push(GameAction::WaitBlocks(5, 1));

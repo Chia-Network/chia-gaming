@@ -5,12 +5,12 @@ alwaysApply: true
 
 # Read Project Docs First
 
-At the start of each conversation, read these project docs before diving into the task:
+At the start of each conversation, read these project docs **in full** before diving into the task:
 
 1. `ARCHITECTURE.MD`
 2. `DEBUGGING_GUIDE.md`
 3. `HANDLER_GUIDE.md`
 
-This gives you the context you need to work effectively in this codebase.
+Read the entire contents of each file, not just the first few lines. These docs contain specific instructions (e.g., how to run tests, what patterns to avoid) that you will silently violate if you only skim the headers.
 
 **Build/test commands:** Always use `./cb.sh` and `./ct.sh`. Never use `cargo test` directly.

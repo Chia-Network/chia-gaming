@@ -2,21 +2,15 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::stdin;
 use std::mem::swap;
-use std::sync::mpsc;
-use std::sync::mpsc::{Receiver, Sender};
-use std::sync::Mutex;
 use std::time::Duration;
 
-use lazy_static::lazy_static;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
-use salvo::http::ResBody;
-use salvo::hyper::body::Bytes;
-use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use serde_json::{Map, Value};
+use tiny_http::{Header, Method, Response, Server, StatusCode};
 
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
@@ -26,6 +20,7 @@ use crate::common::types::{
 };
 use crate::peer_container::{FullCoinSetAdapter, WatchReport};
 use crate::simulator::Simulator;
+
 trait HttpError<V> {
     fn report_err(self) -> Result<V, String>;
 }
@@ -45,19 +40,13 @@ impl<V> HttpError<V> for Result<V, Error> {
     }
 }
 
-impl<V> HttpError<V> for Result<V, salvo::http::ParseError> {
-    fn report_err(self) -> Result<V, String> {
-        match self {
-            Ok(x) => Ok(x),
-            Err(e) => {
-                let mut error = Map::default();
-                error.insert("error".to_string(), Value::String(format!("{e:?}")));
-                let as_string = serde_json::to_string(&Value::Object(error))
-                    .map_err(|_| "\"bad json conversion\"".to_string())?;
-                Err(as_string)
-            }
-        }
-    }
+fn hex_to_bytes(hexstr: &str) -> Result<Vec<u8>, Error> {
+    hex::decode(hexstr).map_err(|_e| Error::StrErr("not hex".to_string()))
+}
+
+#[derive(Serialize)]
+struct CoinsetBlockSpends {
+    block_spends: Vec<CoinsetSpendRecord>,
 }
 
 struct GameRunner {
@@ -74,47 +63,7 @@ struct GameRunner {
     sim_record: BTreeMap<u64, WatchReport>,
 }
 
-#[derive(Debug, Clone)]
-enum WebRequest {
-    Reset,
-    Register(String),                     // Register a user
-    GetCurrentPeak,                       // Ask for the current peak
-    GetBalance(String),                   // Ask for the user's balance
-    GetBlockData(u64),                    // Get the additions and deletons from the given block
-    GetPuzzleAndSolution(String),         // Given a coin id, get the puzzle and solution
-    CreateSpendable(String, String, u64), // Use the named wallet to give n mojo to a target puzzle hash
-    Spend(String),                        // Perform this spend on the blockchain
-    WaitBlock,                            // Return when a new block arrives
-    BlockSpends(u64),                     // Get block spends in coinset.org style
-    PushTx(CoinsetSpendBundle),           // Spend with a coinset.org spend
-}
-
 type StringWithError = Result<String, Error>;
-
-lazy_static! {
-    static ref ONE_REQUEST: Mutex<()> = Mutex::new(());
-    static ref PERFORM_REQUEST: Mutex<()> = Mutex::new(());
-    static ref TO_WEB: (Mutex<Sender<WebRequest>>, Mutex<Receiver<WebRequest>>) = {
-        let (tx, rx) = mpsc::channel();
-        (tx.into(), rx.into())
-    };
-    static ref FROM_WEB: (
-        Mutex<Sender<StringWithError>>,
-        Mutex<Receiver<StringWithError>>
-    ) = {
-        let (tx, rx) = mpsc::channel();
-        (tx.into(), rx.into())
-    };
-}
-
-fn hex_to_bytes(hexstr: &str) -> Result<Vec<u8>, Error> {
-    hex::decode(hexstr).map_err(|_e| Error::StrErr("not hex".to_string()))
-}
-
-#[derive(Serialize)]
-struct CoinsetBlockSpends {
-    block_spends: Vec<CoinsetSpendRecord>,
-}
 
 impl GameRunner {
     fn new(simulator: Simulator, coinset_adapter: FullCoinSetAdapter) -> Result<Self, Error> {
@@ -355,75 +304,10 @@ impl GameRunner {
     }
 }
 
-fn get_file(name: &str, content_type: &str, response: &mut Response) -> Result<(), String> {
-    let content = fs::read_to_string(name).map_err(|e| format!("{e:?}"))?;
-    response
-        .add_header("Content-Type", content_type, true)
-        .map_err(|e| format!("{e:?}"))?;
-    response.replace_body(ResBody::Once(Bytes::from(content.as_bytes().to_vec())));
-    Ok(())
-}
-
-#[handler]
-async fn index(response: &mut Response) -> Result<(), String> {
-    get_file("resources/web/index.html", "text/html", response)
-}
-
-#[handler]
-async fn player_html(response: &mut Response) -> Result<(), String> {
-    get_file("resources/web/player.html", "text/html", response)
-}
-
-#[handler]
-async fn index_js(response: &mut Response) -> Result<(), String> {
-    get_file("resources/web/index.js", "text/javascript", response)
-}
-
-#[handler]
-async fn player_js(response: &mut Response) -> Result<(), String> {
-    get_file("resources/web/player.js", "text/javascript", response)
-}
-
-#[handler]
-async fn index_css(response: &mut Response) -> Result<(), String> {
-    get_file("resources/web/index.css", "text/css", response)
-}
-
-fn pass_on_request(
-    req: &mut Request,
-    response: &mut Response,
-    wr: WebRequest,
-) -> Result<(), String> {
-    let locked = ONE_REQUEST.lock().unwrap();
-
-    {
-        let to_web = TO_WEB.0.lock().unwrap();
-        (*to_web).send(wr).unwrap();
-    }
-
-    let from_web = FROM_WEB.1.lock().unwrap();
-    let result = (*from_web).recv().unwrap();
-    drop(locked);
-
-    result.report_err().and_then(|r| {
-        cors_origin(req, response)?;
-
-        let response_bytes: Vec<u8> = r.bytes().collect();
-        response.replace_body(ResBody::Once(Bytes::from(response_bytes)));
-        Ok(())
-    })
-}
-
-#[handler]
-async fn get_current_peak(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    pass_on_request(req, response, WebRequest::GetCurrentPeak)
-}
-
-fn get_arg_string(req: &mut Request, name: &str) -> Result<String, Error> {
-    let uri_string = req.uri().to_string();
+fn get_arg_string(url: &str, name: &str) -> Result<String, Error> {
     let want_string = format!("{name}=");
-    if let Some(found_eq) = uri_string.find(&want_string) {
-        let arg: String = uri_string
+    if let Some(found_eq) = url.find(&want_string) {
+        let arg: String = url
             .chars()
             .skip(found_eq + want_string.len())
             .take_while(|c| *c != '&')
@@ -434,220 +318,259 @@ fn get_arg_string(req: &mut Request, name: &str) -> Result<String, Error> {
     Err(Error::StrErr("no argument".to_string()))
 }
 
-fn get_arg_integer(req: &mut Request, name: &str) -> Result<u64, Error> {
-    let arg = get_arg_string(req, name)?;
+fn get_arg_integer(url: &str, name: &str) -> Result<u64, Error> {
+    let arg = get_arg_string(url, name)?;
     arg.parse::<u64>()
         .map_err(|_e| Error::StrErr(format!("{name} is not an integer")))
 }
 
-#[handler]
-async fn get_block_data(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    let arg = get_arg_integer(req, "block").report_err()?;
-    pass_on_request(req, response, WebRequest::GetBlockData(arg))
+fn get_origin(request: &tiny_http::Request) -> Option<String> {
+    for header in request.headers() {
+        if header.field.as_str() == "Origin" || header.field.as_str() == "origin" {
+            return Some(header.value.as_str().to_string());
+        }
+    }
+    None
 }
 
-#[handler]
-async fn get_balance(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    let arg = get_arg_string(req, "user").report_err()?;
-    pass_on_request(req, response, WebRequest::GetBalance(arg))
+fn cors_headers(origin: &Option<String>) -> Vec<Header> {
+    let mut headers = Vec::new();
+    if let Some(ref o) = origin {
+        if let Ok(h) = Header::from_bytes(&b"Access-Control-Allow-Origin"[..], o.as_bytes()) {
+            headers.push(h);
+        }
+    }
+    headers
 }
 
-#[handler]
-async fn exit(_req: &mut Request) -> Result<String, String> {
-    std::process::exit(0);
+fn respond_cors_preflight(request: tiny_http::Request, origin: &Option<String>) {
+    let mut response = Response::from_data(Vec::new());
+    for h in cors_headers(origin) {
+        response.add_header(h);
+    }
+    let _ = request.respond(response);
 }
 
-#[handler]
-async fn reset(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    pass_on_request(req, response, WebRequest::Reset)
+fn respond_ok(request: tiny_http::Request, body: String, origin: &Option<String>) {
+    let data = body.into_bytes();
+    let mut response = Response::from_data(data)
+        .with_header(
+            Header::from_bytes(&b"Content-Type"[..], &b"application/octet-stream"[..]).unwrap(),
+        );
+    for h in cors_headers(origin) {
+        response.add_header(h);
+    }
+    let _ = request.respond(response);
 }
 
-#[handler]
-async fn register(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    let arg = get_arg_string(req, "name").report_err()?;
-    pass_on_request(req, response, WebRequest::Register(arg))
+fn respond_err(request: tiny_http::Request, msg: String) {
+    let response = Response::from_data(msg.into_bytes())
+        .with_status_code(StatusCode(500));
+    let _ = request.respond(response);
 }
 
-#[handler]
-async fn get_peak(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    pass_on_request(req, response, WebRequest::GetCurrentPeak)
+fn respond_file(request: tiny_http::Request, path: &str, content_type: &str) {
+    match fs::read_to_string(path) {
+        Ok(content) => {
+            let response = Response::from_data(content.into_bytes())
+                .with_header(
+                    Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()).unwrap(),
+                );
+            let _ = request.respond(response);
+        }
+        Err(e) => {
+            let response = Response::from_data(format!("{e:?}").into_bytes())
+                .with_status_code(StatusCode(404));
+            let _ = request.respond(response);
+        }
+    }
 }
 
-#[handler]
-async fn wait_block(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    pass_on_request(req, response, WebRequest::WaitBlock)
+fn respond_not_found(request: tiny_http::Request) {
+    let response = Response::from_data(b"not found".to_vec())
+        .with_status_code(StatusCode(404));
+    let _ = request.respond(response);
 }
 
-#[handler]
-async fn get_puzzle_and_solution(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    let arg = get_arg_string(req, "coin").report_err()?;
-    pass_on_request(req, response, WebRequest::GetPuzzleAndSolution(arg))
-}
-
-#[handler]
-async fn create_spendable(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    let who = get_arg_string(req, "who").report_err()?;
-    let target = get_arg_string(req, "target").report_err()?;
-    let amount = get_arg_integer(req, "amount").report_err()?;
-    pass_on_request(
-        req,
-        response,
-        WebRequest::CreateSpendable(who, target, amount),
-    )
-}
-
-#[handler]
-async fn spend(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    let blob = get_arg_string(req, "blob").report_err()?;
-    pass_on_request(req, response, WebRequest::Spend(blob))
-}
-
-#[handler]
-async fn block_spends(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    let header_hash = get_arg_integer(req, "header_hash").report_err()?;
-    pass_on_request(req, response, WebRequest::BlockSpends(header_hash))
-}
-
-#[derive(Extractible, Serialize, Deserialize)]
-#[salvo(extract(default_source(from = "body")))]
+#[derive(Serialize, Deserialize)]
 struct PushTxRequest {
     spend_bundle: CoinsetSpendBundle,
 }
 
-#[handler]
-async fn push_tx(
-    req: &mut Request,
-    response: &mut Response,
-    salvo_depot: &mut Depot,
-) -> Result<(), String> {
-    let spend_decoded: PushTxRequest = req.extract(salvo_depot).await.report_err()?;
-    pass_on_request(
-        req,
-        response,
-        WebRequest::PushTx(spend_decoded.spend_bundle.clone()),
-    )
-}
-
-fn cors_origin(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    let origin_header: Option<String> = req.header("Origin");
-    if let Some(origin) = origin_header {
-        response
-            .add_header("Access-Control-Allow-Origin", origin, true)
-            .map_err(|e| format!("{e:?}"))?;
-    }
-    Ok(())
-}
-
-#[handler]
-async fn cors(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    cors_origin(req, response)?;
-    response.replace_body(ResBody::Once(Bytes::from(Vec::new())));
-    Ok(())
+fn url_path(url: &str) -> &str {
+    url.split('?').next().unwrap_or(url)
 }
 
 fn service_main_inner() {
-    let rt = tokio::runtime::Runtime::new().unwrap();
+    let server = Server::http("0.0.0.0:5800").expect("failed to bind port 5800");
 
-    rt.block_on(async {
-        let router = Router::new()
-            .get(index)
-            .push(Router::with_path("index.css").get(index_css))
-            .push(Router::with_path("index.js").get(index_js))
-            .push(Router::with_path("player.html").get(player_html))
-            .push(Router::with_path("player.js").get(player_js))
-            .push(Router::with_path("exit").post(exit))
-            .push(Router::with_path("reset").post(reset))
-            .push(Router::with_path("register").options(cors))
-            .push(Router::with_path("register").post(register))
-            .push(Router::with_path("get_peak").options(cors))
-            .push(Router::with_path("get_peak").post(get_peak))
-            .push(Router::with_path("get_block_data").options(cors))
-            .push(Router::with_path("get_block_data").post(get_block_data))
-            .push(Router::with_path("get_balance").post(get_balance))
-            .push(Router::with_path("get_balance").options(cors))
-            .push(Router::with_path("wait_block").options(cors))
-            .push(Router::with_path("wait_block").post(wait_block))
-            .push(Router::with_path("get_puzzle_and_solution").options(cors))
-            .push(Router::with_path("get_puzzle_and_solution").post(get_puzzle_and_solution))
-            .push(Router::with_path("spend").options(cors))
-            .push(Router::with_path("spend").post(spend))
-            .push(Router::with_path("create_spendable").options(cors))
-            .push(Router::with_path("create_spendable").post(create_spendable))
-            .push(Router::with_path("block_spends").post(block_spends))
-            .push(Router::with_path("push_tx").post(push_tx));
-        let acceptor = TcpListener::new("0.0.0.0:5800").bind().await;
+    let simulator = Simulator::default();
+    let coinset_adapter = FullCoinSetAdapter::default();
+    let mut game_runner = GameRunner::new(simulator, coinset_adapter)
+        .map_err(|e| format!("{e}"))
+        .unwrap();
 
-        let s = std::thread::spawn(move || {
-            std::panic::catch_unwind(move || {
-                let simulator = Simulator::default();
-                let coinset_adapter = FullCoinSetAdapter::default();
-                let mut game_runner = GameRunner::new(simulator, coinset_adapter)
-                    .map_err(|e| format!("{e}"))
-                    .unwrap();
+    println!("port 5800.  press return to exit gracefully...");
 
-                loop {
-                    let request = {
-                        let channel = TO_WEB.1.lock().unwrap();
-                        (*channel).recv().unwrap()
-                    };
+    std::thread::spawn(|| {
+        let mut buffer = String::default();
+        if !matches!(stdin().read_line(&mut buffer), Ok(0)) {
+            println!("simulator server stopping");
+            std::process::exit(0);
+        }
+    });
 
-                    let result = {
-                        match request {
-                            WebRequest::Register(name) => game_runner.register(&name),
-                            WebRequest::GetCurrentPeak => {
-                                let result = game_runner.simulator.get_current_height();
-                                Ok(format!("{result}\n"))
-                            }
-                            WebRequest::GetBlockData(n) => game_runner.get_block_data(n),
-                            WebRequest::GetBalance(user) => game_runner.get_balance(&user),
-                            WebRequest::WaitBlock => {
-                                let result = game_runner.wait_block();
-                                std::thread::spawn(move || {
-                                    std::thread::sleep(Duration::from_millis(1000));
-                                    let channel = FROM_WEB.0.lock().unwrap();
-                                    (*channel).send(result).unwrap();
-                                });
-                                continue;
-                            }
-                            WebRequest::GetPuzzleAndSolution(coin) => {
-                                game_runner.get_puzzle_and_solution(&coin)
-                            }
-                            WebRequest::CreateSpendable(who, target, amt) => {
-                                game_runner.create_spendable(&who, &target, amt)
-                            }
-                            WebRequest::Spend(blob) => game_runner.spend(&blob),
-                            WebRequest::BlockSpends(height) => game_runner.block_spends(height),
-                            WebRequest::PushTx(spend_data) => game_runner.push_tx(&spend_data),
-                            WebRequest::Reset => game_runner.reset_sim(),
-                        }
-                    };
+    println!("doing actual service");
+    loop {
+        let mut request = match server.recv() {
+            Ok(rq) => rq,
+            Err(e) => {
+                eprintln!("recv error: {e}");
+                continue;
+            }
+        };
 
-                    {
-                        let channel = FROM_WEB.0.lock().unwrap();
-                        (*channel).send(result).unwrap();
-                    }
-                }
-            })
-            .map_err(|e| {
-                eprintln!("error bringing up simulator thread: {e:?}");
-                std::process::exit(0);
-            })
-        });
+        let url = request.url().to_string();
+        let path = url_path(&url);
+        let method = request.method().clone();
+        let origin = get_origin(&request);
 
-        println!("port 5800.  press return to exit gracefully...");
-        let t = std::thread::spawn(|| {
-            let mut buffer = String::default();
-            if !matches!(stdin().read_line(&mut buffer), Ok(0)) {
-                println!("simulator server stopping");
+        if method == Method::Options {
+            respond_cors_preflight(request, &origin);
+            continue;
+        }
+
+        match (method, path) {
+            (Method::Get, "/") => {
+                respond_file(request, "resources/web/index.html", "text/html");
+            }
+            (Method::Get, "/index.css") => {
+                respond_file(request, "resources/web/index.css", "text/css");
+            }
+            (Method::Get, "/index.js") => {
+                respond_file(request, "resources/web/index.js", "text/javascript");
+            }
+            (Method::Get, "/player.html") => {
+                respond_file(request, "resources/web/player.html", "text/html");
+            }
+            (Method::Get, "/player.js") => {
+                respond_file(request, "resources/web/player.js", "text/javascript");
+            }
+            (Method::Post, "/exit") => {
+                let _ = request.respond(Response::from_data(Vec::new()));
                 std::process::exit(0);
             }
-        });
-
-        println!("doing actual service");
-        Server::new(acceptor).serve(router).await;
-        let _ = s.join().unwrap();
-        t.join().unwrap();
-    })
+            (Method::Post, "/reset") => {
+                match game_runner.reset_sim().report_err() {
+                    Ok(body) => respond_ok(request, body, &origin),
+                    Err(msg) => respond_err(request, msg),
+                }
+            }
+            (Method::Post, "/register") => {
+                match get_arg_string(&url, "name")
+                    .and_then(|name| game_runner.register(&name))
+                    .report_err()
+                {
+                    Ok(body) => respond_ok(request, body, &origin),
+                    Err(msg) => respond_err(request, msg),
+                }
+            }
+            (Method::Post, "/get_peak") => {
+                let result = game_runner.simulator.get_current_height();
+                respond_ok(request, format!("{result}\n"), &origin);
+            }
+            (Method::Post, "/get_block_data") => {
+                match get_arg_integer(&url, "block")
+                    .and_then(|n| game_runner.get_block_data(n))
+                    .report_err()
+                {
+                    Ok(body) => respond_ok(request, body, &origin),
+                    Err(msg) => respond_err(request, msg),
+                }
+            }
+            (Method::Post, "/get_balance") => {
+                match get_arg_string(&url, "user")
+                    .and_then(|user| game_runner.get_balance(&user))
+                    .report_err()
+                {
+                    Ok(body) => respond_ok(request, body, &origin),
+                    Err(msg) => respond_err(request, msg),
+                }
+            }
+            (Method::Post, "/wait_block") => {
+                let result = game_runner.wait_block();
+                std::thread::sleep(Duration::from_millis(1000));
+                match result.report_err() {
+                    Ok(body) => respond_ok(request, body, &origin),
+                    Err(msg) => respond_err(request, msg),
+                }
+            }
+            (Method::Post, "/get_puzzle_and_solution") => {
+                match get_arg_string(&url, "coin")
+                    .and_then(|coin| game_runner.get_puzzle_and_solution(&coin))
+                    .report_err()
+                {
+                    Ok(body) => respond_ok(request, body, &origin),
+                    Err(msg) => respond_err(request, msg),
+                }
+            }
+            (Method::Post, "/create_spendable") => {
+                match (|| -> Result<String, Error> {
+                    let who = get_arg_string(&url, "who")?;
+                    let target = get_arg_string(&url, "target")?;
+                    let amount = get_arg_integer(&url, "amount")?;
+                    game_runner.create_spendable(&who, &target, amount)
+                })()
+                .report_err()
+                {
+                    Ok(body) => respond_ok(request, body, &origin),
+                    Err(msg) => respond_err(request, msg),
+                }
+            }
+            (Method::Post, "/spend") => {
+                match get_arg_string(&url, "blob")
+                    .and_then(|blob| game_runner.spend(&blob))
+                    .report_err()
+                {
+                    Ok(body) => respond_ok(request, body, &origin),
+                    Err(msg) => respond_err(request, msg),
+                }
+            }
+            (Method::Post, "/block_spends") => {
+                match get_arg_integer(&url, "header_hash")
+                    .and_then(|h| game_runner.block_spends(h))
+                    .report_err()
+                {
+                    Ok(body) => respond_ok(request, body, &origin),
+                    Err(msg) => respond_err(request, msg),
+                }
+            }
+            (Method::Post, "/push_tx") => {
+                let mut body_bytes = Vec::new();
+                match std::io::Read::read_to_end(request.as_reader(), &mut body_bytes) {
+                    Ok(_) => {
+                        match serde_json::from_slice::<PushTxRequest>(&body_bytes) {
+                            Ok(decoded) => {
+                                match game_runner.push_tx(&decoded.spend_bundle).report_err() {
+                                    Ok(resp) => respond_ok(request, resp, &origin),
+                                    Err(msg) => respond_err(request, msg),
+                                }
+                            }
+                            Err(e) => {
+                                respond_err(request, format!("{{\"error\":\"{e}\"}}"));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        respond_err(request, format!("{{\"error\":\"read error: {e}\"}}"));
+                    }
+                }
+            }
+            _ => {
+                respond_not_found(request);
+            }
+        }
+    }
 }
 
 pub fn service_main() {

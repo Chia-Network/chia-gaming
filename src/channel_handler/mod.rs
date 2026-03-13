@@ -1040,6 +1040,12 @@ impl ChannelHandler {
         self.live_games.iter().any(|g| &g.game_id == game_id)
     }
 
+    pub fn is_game_finished(&self, game_id: &GameID) -> bool {
+        self.get_game_by_id(game_id)
+            .map(|idx| self.live_games[idx].is_my_turn() && self.live_games[idx].is_game_over())
+            .unwrap_or(false)
+    }
+
     pub fn get_game_our_current_share(&self, game_id: &GameID) -> Result<Amount, Error> {
         if let Some(g) = self.live_games.iter().find(|g| g.game_id == *game_id) {
             return g.get_our_current_share();

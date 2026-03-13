@@ -546,38 +546,6 @@ pub fn test_peer_smoke() {
     );
     assert!(pipe_sender[0].message_pipe.queue.is_empty());
     assert!(pipe_sender[1].message_pipe.queue.is_empty());
-
-    let have_potato = if peers[0].has_potato() { 0 } else { 1 };
-
-    {
-        let mut env = ChannelHandlerEnv::new(&mut allocator, &mut rng).expect("should work");
-        let effects = peers[have_potato]
-            .accept_timeout(&mut env, &game_ids[0])
-            .expect("should work");
-        apply_effects(effects, &mut allocator, &mut pipe_sender[have_potato]).expect("should work");
-    }
-
-    quiesce(
-        &mut rng,
-        &mut allocator,
-        Amount::new(200),
-        &mut peers,
-        &mut pipe_sender,
-    )
-    .expect("should work");
-
-    assert!(
-        pipe_sender[0].went_on_chain.is_none(),
-        "peer 0 went on chain after accept: {:?}",
-        pipe_sender[0].went_on_chain
-    );
-    assert!(
-        pipe_sender[1].went_on_chain.is_none(),
-        "peer 1 went on chain after accept: {:?}",
-        pipe_sender[1].went_on_chain
-    );
-    assert!(pipe_sender[0].message_pipe.queue.is_empty());
-    assert!(pipe_sender[1].message_pipe.queue.is_empty());
 }
 
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
