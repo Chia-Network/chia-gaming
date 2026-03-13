@@ -462,7 +462,8 @@ export function connectRealBlockchain() {
           });
       } else if (evt.selectCoins) {
         rpc.selectCoins({ walletId: 1, amount: evt.selectCoins.amount })
-          .then((coins) => {
+          .then((result: any) => {
+            const coins = Array.isArray(result) ? result : result?.coins;
             if (!coins || coins.length === 0) {
               blockchainConnector.replyEmitter({ responseId: evt.requestId, selectCoins: null });
               return;
@@ -477,7 +478,10 @@ export function connectRealBlockchain() {
             });
           })
           .catch((e: any) => {
-            blockchainConnector.replyEmitter({ responseId: evt.requestId, error: JSON.stringify(e) });
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              error: e?.message ?? String(e),
+            });
           });
       } else if (evt.getHeightInfo) {
         rpc.getHeightInfo({}).then((height) => {

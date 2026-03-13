@@ -9,4 +9,7 @@ export interface SelectCoinsCoin {
   amount: number;
 }
 
-export type SelectCoinsResponse = SelectCoinsCoin[];
+export interface SelectCoinsResponse {
+  coins: SelectCoinsCoin[];
+  success: boolean;
+}
