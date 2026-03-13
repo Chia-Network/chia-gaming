@@ -336,6 +336,7 @@ pub struct PotatoHandlerInit {
     pub channel_timeout: Timeout,
     pub unroll_timeout: Timeout,
     pub reward_puzzle_hash: PuzzleHash,
+    pub chain_id: Hash,
 }
 
 pub trait PotatoHandlerImpl {

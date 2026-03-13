@@ -375,6 +375,7 @@ pub struct SynchronousGameCradleConfig {
     pub channel_timeout: Timeout,
     pub unroll_timeout: Timeout,
     pub reward_puzzle_hash: PuzzleHash,
+    pub chain_id: Hash,
 }
 
 impl SynchronousGameCradle {
@@ -415,6 +416,7 @@ impl SynchronousGameCradle {
                 channel_timeout: config.channel_timeout,
                 unroll_timeout: config.unroll_timeout,
                 reward_puzzle_hash: config.reward_puzzle_hash,
+                chain_id: config.chain_id,
             }),
             #[cfg(test)]
             saved_unroll_snapshot: None,

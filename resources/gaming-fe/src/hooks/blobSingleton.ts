@@ -11,6 +11,8 @@ import { getGameSocket } from '../services/GameSocket';
 import {
   startNewSession,
 } from './save';
+import { GENESIS_CHALLENGES } from '../constants/env';
+import { walletConnectState } from './useWalletConnect';
 
 export var blobSingleton: any = null;
 export var initStarted = false;
@@ -40,7 +42,9 @@ export async function configGameObject(
   let rngId = wasmConnection.create_rng(seedHex);
   let address = await blockchain.getAddress();
   gameObject.setBlockchainAddress(address);
-  let { game: cradle, puzzleHash } = wasmStateInit.createGame(calpokerHexes.proposalHex, calpokerHexes.parserHex, rngId, wasmConnection, iStarted, amount, amount, address.puzzleHash);
+  const chainId = walletConnectState.getChainId();
+  const aggSigMe = GENESIS_CHALLENGES[chainId] ?? GENESIS_CHALLENGES['chia:mainnet'];
+  let { game: cradle, puzzleHash } = wasmStateInit.createGame(calpokerHexes.proposalHex, calpokerHexes.parserHex, rngId, wasmConnection, iStarted, amount, amount, address.puzzleHash, aggSigMe);
   gameObject.setGameCradle(cradle);
   let coin = await wasmStateInit.createStartCoin(blockchain, uniqueId, puzzleHash, amount, wasmConnection);
   gameObject.activateSpend(coin.coinString);

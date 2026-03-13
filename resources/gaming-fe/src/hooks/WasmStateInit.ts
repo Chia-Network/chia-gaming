@@ -223,6 +223,7 @@ export class WasmStateInit {
     my_contribution: number,
     their_contribution: number,
     rewardPuzzleHash: string,
+    aggSigMeAdditionalData: string,
   ): { game: ChiaGame, puzzleHash: string } {
     const result = wasm.create_game_cradle({
       rng_id: rngId,
@@ -239,6 +240,7 @@ export class WasmStateInit {
       channel_timeout: 100,
       unroll_timeout: 100,
       reward_puzzle_hash: rewardPuzzleHash,
+      agg_sig_me_additional_data: aggSigMeAdditionalData,
     });
 
     return {

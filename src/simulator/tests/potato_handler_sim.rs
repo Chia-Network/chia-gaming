@@ -9,13 +9,13 @@ use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
-use crate::common::constants::CREATE_COIN;
+use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN};
 use crate::common::standard_coin::{
     sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{atom_from_clvm, i64_from_atom, usize_from_atom};
 use crate::common::types::{
-    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, IntoErr, Node,
+    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr, Node,
     PrivateKey, Program, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
 use crate::games::poker_collection;
@@ -969,6 +969,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             channel_timeout: Timeout::new(100),
             unroll_timeout: Timeout::new(5),
             reward_puzzle_hash: identities[0].puzzle_hash.clone(),
+            chain_id: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
         },
         private_keys[0].clone(),
     );
@@ -982,6 +983,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             channel_timeout: Timeout::new(100),
             unroll_timeout: Timeout::new(5),
             reward_puzzle_hash: identities[1].puzzle_hash.clone(),
+            chain_id: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
         },
         private_keys[1].clone(),
     );
@@ -5282,6 +5284,145 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 if *our_reward == Amount::default()
             )),
             "Alice should get WeTimedOut with zero reward (on-chain AcceptTimeout), got: {p0_notifs:?}"
+        );
+    }));
+
+    res.push(("test_chain_id_mismatch", &|| {
+        let mut allocator = AllocEncoder::new();
+        let seed_data: [u8; 32] = [0; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed_data);
+        let pk1: PrivateKey = rng.gen();
+        let id1 = ChiaIdentity::new(&mut allocator, pk1).expect("ok");
+        let pk2: PrivateKey = rng.gen();
+        let id2 = ChiaIdentity::new(&mut allocator, pk2).expect("ok");
+        let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.gen();
+        let identities = [id1, id2];
+
+        let game_type_map = poker_collection(&mut allocator);
+        let neutral_pk: PrivateKey = rng.gen();
+        let neutral_identity =
+            ChiaIdentity::new(&mut allocator, neutral_pk).expect("ok");
+        let simulator = Simulator::new_strict();
+
+        simulator.farm_block(&identities[0].puzzle_hash);
+        simulator.farm_block(&identities[1].puzzle_hash);
+
+        let coins0 = simulator
+            .get_my_coins(&identities[0].puzzle_hash)
+            .expect("ok");
+        let coins1 = simulator
+            .get_my_coins(&identities[1].puzzle_hash)
+            .expect("ok");
+
+        let (parent_coin_0, _) = simulator
+            .transfer_coin_amount(
+                &mut allocator,
+                &identities[0].puzzle_hash,
+                &identities[0],
+                &coins0[0],
+                Amount::new(100),
+            )
+            .expect("ok");
+        let (parent_coin_1, _) = simulator
+            .transfer_coin_amount(
+                &mut allocator,
+                &identities[1].puzzle_hash,
+                &identities[1],
+                &coins1[0],
+                Amount::new(100),
+            )
+            .expect("ok");
+
+        simulator.farm_block(&neutral_identity.puzzle_hash);
+
+        let wrong_chain_id = Hash::from_bytes([0u8; 32]);
+
+        let cradle1 = SynchronousGameCradle::new_with_keys(
+            SynchronousGameCradleConfig {
+                game_types: game_type_map.clone(),
+                have_potato: true,
+                identity: identities[0].clone(),
+                my_contribution: Amount::new(100),
+                their_contribution: Amount::new(100),
+                channel_timeout: Timeout::new(100),
+                unroll_timeout: Timeout::new(5),
+                reward_puzzle_hash: identities[0].puzzle_hash.clone(),
+                chain_id: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+            },
+            private_keys[0].clone(),
+        );
+        let cradle2 = SynchronousGameCradle::new_with_keys(
+            SynchronousGameCradleConfig {
+                game_types: game_type_map.clone(),
+                have_potato: false,
+                identity: identities[1].clone(),
+                my_contribution: Amount::new(100),
+                their_contribution: Amount::new(100),
+                channel_timeout: Timeout::new(100),
+                unroll_timeout: Timeout::new(5),
+                reward_puzzle_hash: identities[1].puzzle_hash.clone(),
+                chain_id: wrong_chain_id,
+            },
+            private_keys[1].clone(),
+        );
+        let mut cradles = [cradle1, cradle2];
+        cradles[0]
+            .opening_coin(&mut allocator, &mut rng, parent_coin_0)
+            .expect("ok");
+        cradles[1]
+            .opening_coin(&mut allocator, &mut rng, parent_coin_1)
+            .expect("ok");
+
+        let mut all_notifications: [Vec<GameNotification>; 2] =
+            [Vec::new(), Vec::new()];
+        let mut coinset_adapter = FullCoinSetAdapter::default();
+
+        for _step in 0..20 {
+            simulator.farm_block(&neutral_identity.puzzle_hash);
+            let current_height = simulator.get_current_height();
+            let current_coins =
+                simulator.get_all_coins().expect("should work");
+            let watch_report = coinset_adapter
+                .make_report_from_coin_set_update(
+                    current_height as u64,
+                    &current_coins,
+                )
+                .expect("ok");
+
+            for i in 0..=1 {
+                cradles[i]
+                    .new_block(
+                        &mut allocator,
+                        &mut rng,
+                        current_height,
+                        &watch_report,
+                    )
+                    .expect("ok");
+                let dr = cradles[i]
+                    .drain_all(&mut allocator, &mut rng)
+                    .expect("ok");
+
+                for msg in dr.outbound_messages.iter() {
+                    let _ = cradles[i ^ 1].deliver_message(msg);
+                }
+
+                all_notifications[i].extend(dr.notifications);
+            }
+        }
+
+        let bob_got_mismatch = all_notifications[1].iter().any(|n| {
+            matches!(n, GameNotification::ChannelError { reason }
+                if reason.contains("Network mismatch"))
+        });
+        assert!(
+            bob_got_mismatch,
+            "Bob should get ChannelError with 'Network mismatch', got: {:?}",
+            all_notifications[1]
+        );
+
+        assert!(
+            !cradles[1].handshake_finished(),
+            "Bob's handshake should NOT have completed with mismatched chain_id"
         );
     }));
 
