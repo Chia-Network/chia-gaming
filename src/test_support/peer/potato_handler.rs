@@ -12,7 +12,7 @@ use crate::common::standard_coin::private_to_public_key;
 #[cfg(test)]
 use crate::common::types::GameType;
 use crate::common::types::{
-    AllocEncoder, Amount, CoinID, CoinString, Error, IntoErr, PuzzleHash, Spend, SpendBundle,
+    AllocEncoder, Amount, CoinID, CoinString, Error, Hash, IntoErr, PuzzleHash, Spend, SpendBundle,
 };
 #[cfg(test)]
 use crate::common::types::{GameID, PrivateKey, Program, Timeout};
@@ -36,7 +36,7 @@ use rand::SeedableRng;
 #[cfg(test)]
 use rand_chacha::ChaCha8Rng;
 
-use crate::common::constants::CREATE_COIN;
+use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN};
 #[cfg(test)]
 use crate::common::standard_coin::puzzle_hash_for_pk;
 use crate::common::standard_coin::standard_solution_partial;
@@ -378,6 +378,7 @@ pub fn test_peer_smoke() {
             channel_timeout: Timeout::new(1000),
             unroll_timeout: Timeout::new(5),
             reward_puzzle_hash: reward_puzzle_hash1.clone(),
+            chain_id: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
         })
     };
 

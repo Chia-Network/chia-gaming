@@ -133,6 +133,8 @@ pub struct PotatoHandler {
 
     peer_wants_potato: bool,
 
+    chain_id: Hash,
+
     // Cached from the most recent potato exchange so go_on_chain can fix
     // hs.spend even if the exchange happened before Finished was set.
     #[serde(skip)]
@@ -191,6 +193,7 @@ impl PotatoHandler {
             my_game_spends: HashSet::default(),
             incoming_messages: VecDeque::default(),
             peer_wants_potato: false,
+            chain_id: phi.chain_id,
             last_channel_coin_spend_info: None,
         }
     }
@@ -383,6 +386,7 @@ impl PotatoHandler {
                 referee_pubkey: referee_public_key,
                 reward_puzzle_hash: self.reward_puzzle_hash.clone(),
                 reward_payout_signature: reward_payout_sig,
+                chain_id: self.chain_id.clone(),
             },
         };
         self.channel_state = ChannelState::StepC(parent_coin.clone(), Box::new(my_hs_info.clone()));
@@ -1232,6 +1236,18 @@ impl PotatoHandler {
                     )));
                 };
 
+                if msg.chain_id != self.chain_id {
+                    self.channel_state = ChannelState::Failed;
+                    effects.push(Effect::Notify(GameNotification::ChannelError {
+                        reason: format!(
+                            "Network mismatch: our chain_id is {} but peer sent {}",
+                            hex::encode(self.chain_id.bytes()),
+                            hex::encode(msg.chain_id.bytes()),
+                        ),
+                    }));
+                    return Ok(effects);
+                }
+
                 let (mut channel_handler, _init_result) =
                     self.make_channel_handler(parent_coin.to_coin_id(), false, msg, env)?;
 
@@ -1262,6 +1278,7 @@ impl PotatoHandler {
                     reward_puzzle_hash: self.reward_puzzle_hash.clone(),
                     referee_pubkey: referee_public_key,
                     reward_payout_signature: reward_payout_sig,
+                    chain_id: self.chain_id.clone(),
                 };
 
                 {
@@ -1302,6 +1319,18 @@ impl PotatoHandler {
                     )));
                 };
 
+                if msg.simple.chain_id != self.chain_id {
+                    self.channel_state = ChannelState::Failed;
+                    effects.push(Effect::Notify(GameNotification::ChannelError {
+                        reason: format!(
+                            "Network mismatch: our chain_id is {} but peer sent {}",
+                            hex::encode(self.chain_id.bytes()),
+                            hex::encode(msg.simple.chain_id.bytes()),
+                        ),
+                    }));
+                    return Ok(effects);
+                }
+
                 let (channel_handler, _init_result) =
                     self.make_channel_handler(msg.parent.to_coin_id(), true, &msg.simple, env)?;
 
@@ -1322,6 +1351,7 @@ impl PotatoHandler {
                     reward_puzzle_hash: self.reward_puzzle_hash.clone(),
                     referee_pubkey: referee_public_key,
                     reward_payout_signature: reward_payout_sig,
+                    chain_id: self.chain_id.clone(),
                 };
 
                 self.channel_handler = Some(channel_handler);

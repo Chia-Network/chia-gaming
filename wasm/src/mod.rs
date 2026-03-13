@@ -89,7 +89,8 @@ mod gaming_wasm {
         "my_contribution": Amount,
         "their_contribution": Amount,
         "channel_timeout": number,
-        "reward_puzzle_hash": string
+        "reward_puzzle_hash": string,
+        "agg_sig_me_additional_data": string,
     };
 
     export type GameCradleResult = {
@@ -178,6 +179,7 @@ mod gaming_wasm {
         channel_timeout: i32,
         unroll_timeout: i32,
         reward_puzzle_hash: String,
+        agg_sig_me_additional_data: String,
     }
 
     fn convert_game_factory(
@@ -220,6 +222,7 @@ mod gaming_wasm {
         my_contribution: Amount,
         their_contribution: Amount,
         reward_puzzle_hash: PuzzleHash,
+        chain_id: Hash,
         rng_id: i32,
     }
 
@@ -227,6 +230,7 @@ mod gaming_wasm {
         let jsconfig: JsGameCradleConfig = serde_wasm_bindgen::from_value(js_config).into_js()?;
         let game_types = convert_game_types(&jsconfig.game_types)?;
         let reward_puzzle_hash_bytes = hex::decode(&jsconfig.reward_puzzle_hash).into_js()?;
+        let chain_id_bytes = hex::decode(&jsconfig.agg_sig_me_additional_data).into_js()?;
 
         Ok(GameConfigPartial {
             game_types,
@@ -238,6 +242,7 @@ mod gaming_wasm {
             reward_puzzle_hash: PuzzleHash::from_hash(
                 Hash::from_slice(&reward_puzzle_hash_bytes).into_js()?,
             ),
+            chain_id: Hash::from_slice(&chain_id_bytes).into_js()?,
             rng_id: jsconfig.rng_id,
         })
     }
@@ -327,6 +332,7 @@ mod gaming_wasm {
                 my_contribution: partial.my_contribution,
                 their_contribution: partial.their_contribution,
                 reward_puzzle_hash: partial.reward_puzzle_hash,
+                chain_id: partial.chain_id,
             };
 
             let game_cradle = SynchronousGameCradle::new(rng, config);

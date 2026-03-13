@@ -2,7 +2,7 @@ import Client from '@walletconnect/sign-client';
 import { SessionTypes } from '@walletconnect/types';
 import { Subject } from 'rxjs';
 
-import { PROJECT_ID, RELAY_URL, CHAIN_ID } from '../constants/env';
+import { PROJECT_ID, RELAY_URL, CHAIN_ID, validateChainConfig } from '../constants/env';
 
 export interface StartConnectResult {
   approval: () => Promise<SessionTypes.Struct>;
@@ -122,18 +122,28 @@ class WalletState {
           peer: session.peer?.metadata?.name,
         });
 
-        this.isConnected = true;
-        this.address = address;
-        this.chainId = detectedChain;
-        this.session = session;
-        this.observable.next({
-          stateName: 'connected',
-          initialized: true,
-          haveClient: true,
-          haveSession: true,
-          connected: true,
-          sessions: sessions.length,
-        });
+        let chainValid = true;
+        try {
+          validateChainConfig(detectedChain);
+        } catch (e: any) {
+          console.warn('[WC] Skipping session restore -- unsupported chain:', e.message);
+          chainValid = false;
+        }
+
+        if (chainValid) {
+          this.isConnected = true;
+          this.address = address;
+          this.chainId = detectedChain;
+          this.session = session;
+          this.observable.next({
+            stateName: 'connected',
+            initialized: true,
+            haveClient: true,
+            haveSession: true,
+            connected: true,
+            sessions: sessions.length,
+          });
+        }
       }
 
       this.observable.next({
@@ -243,6 +253,8 @@ class WalletState {
         peer: session.peer?.metadata?.name,
         expiry: session.expiry,
       });
+
+      validateChainConfig(detectedChain);
 
       this.observable.next({
         stateName: 'connected',
