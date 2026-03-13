@@ -5300,8 +5300,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let game_type_map = poker_collection(&mut allocator);
         let neutral_pk: PrivateKey = rng.gen();
-        let neutral_identity =
-            ChiaIdentity::new(&mut allocator, neutral_pk).expect("ok");
+        let neutral_identity = ChiaIdentity::new(&mut allocator, neutral_pk).expect("ok");
         let simulator = Simulator::new_strict();
 
         simulator.farm_block(&identities[0].puzzle_hash);
@@ -5373,34 +5372,22 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             .opening_coin(&mut allocator, &mut rng, parent_coin_1)
             .expect("ok");
 
-        let mut all_notifications: [Vec<GameNotification>; 2] =
-            [Vec::new(), Vec::new()];
+        let mut all_notifications: [Vec<GameNotification>; 2] = [Vec::new(), Vec::new()];
         let mut coinset_adapter = FullCoinSetAdapter::default();
 
         for _step in 0..20 {
             simulator.farm_block(&neutral_identity.puzzle_hash);
             let current_height = simulator.get_current_height();
-            let current_coins =
-                simulator.get_all_coins().expect("should work");
+            let current_coins = simulator.get_all_coins().expect("should work");
             let watch_report = coinset_adapter
-                .make_report_from_coin_set_update(
-                    current_height as u64,
-                    &current_coins,
-                )
+                .make_report_from_coin_set_update(current_height as u64, &current_coins)
                 .expect("ok");
 
             for i in 0..=1 {
                 cradles[i]
-                    .new_block(
-                        &mut allocator,
-                        &mut rng,
-                        current_height,
-                        &watch_report,
-                    )
+                    .new_block(&mut allocator, &mut rng, current_height, &watch_report)
                     .expect("ok");
-                let dr = cradles[i]
-                    .drain_all(&mut allocator, &mut rng)
-                    .expect("ok");
+                let dr = cradles[i].drain_all(&mut allocator, &mut rng).expect("ok");
 
                 for msg in dr.outbound_messages.iter() {
                     let _ = cradles[i ^ 1].deliver_message(msg);
