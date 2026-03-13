@@ -45,6 +45,19 @@ To run only matching test(s):
 SIM_TEST_ONLY=accept_finished cargo test --lib --features sim-tests -- --nocapture
 ```
 
+### Test debugging workflow
+
+When a test fails, use this sequence:
+
+1. **Isolate**: `./ct.sh -o failing_test` — run only that test while debugging.
+   Individual tests are fast (1–5s), so iteration is quick.
+2. **Full suite from that test**: Once the test passes, switch to
+   `./ct.sh failing_test` (no `-o`). This runs all tests starting from the
+   one you just fixed, then wraps around. The tests *before* it in the
+   default order already passed on the run that discovered the failure, so
+   there's no reason to re-run them first — start from the fix and cover
+   the rest.
+
 ### Typical durations
 
 | Scope | Typical time |

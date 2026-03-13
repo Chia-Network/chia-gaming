@@ -71,6 +71,7 @@ export interface UseWasmBlobResult {
   setCardSelections: (s: number[] | ((prev: number[]) => number[])) => void;
   outcome: CalpokerOutcome | undefined;
   lastOutcome: CalpokerOutcome | undefined;
+  playAgain: () => void;
   stopPlaying: () => void;
 }
 
@@ -105,6 +106,9 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
   const moveNumberRef = useRef<number>(0);
   const gameIdsRef = useRef<string[]>([]);
   const gameOutcomeRef = useRef<CalpokerOutcome | undefined>(undefined);
+  const pendingProposalIdRef = useRef<string | null>(null);
+  const wantsNewGameRef = useRef<boolean>(false);
+  const firstGameAcceptedRef = useRef<boolean>(false);
 
   playerHandRef.current = playerHand;
   opponentHandRef.current = opponentHand;
@@ -232,13 +236,22 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
 
     if ('GameProposed' in n) {
       if (!iStarted) {
-        try {
-          go?.acceptProposal(n.GameProposed.id.toString());
-        } catch (e) {
-          console.error('acceptProposal failed:', e);
+        const proposalId = n.GameProposed.id.toString();
+        if (!firstGameAcceptedRef.current || wantsNewGameRef.current) {
+          // First game: auto-accept. Or player already clicked Play Again.
+          wantsNewGameRef.current = false;
+          try {
+            go?.acceptProposal(proposalId);
+          } catch (e) {
+            console.error('acceptProposal failed:', e);
+          }
+        } else {
+          // Subsequent game: stash until player clicks Play Again.
+          pendingProposalIdRef.current = proposalId;
         }
       }
     } else if ('GameProposalAccepted' in n) {
+      firstGameAcceptedRef.current = true;
       const newId = n.GameProposalAccepted.id.toString();
       setGameIds(prev => [...prev, newId]);
       gameIdsRef.current = [...gameIdsRef.current, newId];
@@ -306,15 +319,13 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
           playerHandRef.current = [];
           opponentHandRef.current = [];
         } else {
-          // Bob: reset immediately and propose new game.
-          // CaliforniaPoker guards against resetting while animation is running.
+          // Bob: reset immediately. New game is proposed when he clicks Play Again.
           setMoveNumber(0);
           moveNumberRef.current = 0;
           setPlayerHand([]);
           setOpponentHand([]);
           playerHandRef.current = [];
           opponentHandRef.current = [];
-          proposeNewGame();
         }
       }
     } else if ('GameMessage' in n) {
@@ -354,11 +365,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
       setLastOutcome(gameOutcomeRef.current);
       setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
 
-      if (iStarted) {
-        setTimeout(() => {
-          proposeNewGame();
-        }, 2000);
-      }
+      // New game is proposed when the player clicks Play Again.
     } else {
       console.warn('unhandled notification:', JSON.stringify(n));
     }
@@ -459,6 +466,26 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     }
   }, []);
 
+  const playAgain = useCallback(() => {
+    if (iStarted) {
+      // Bob: propose a new game now that the user has opted in.
+      proposeNewGame();
+    } else {
+      // Alice: accept the pending proposal, or flag that we want the next one.
+      const pending = pendingProposalIdRef.current;
+      if (pending) {
+        pendingProposalIdRef.current = null;
+        try {
+          gameObjectRef.current?.acceptProposal(pending);
+        } catch (e) {
+          console.error('acceptProposal failed:', e);
+        }
+      } else {
+        wantsNewGameRef.current = true;
+      }
+    }
+  }, [iStarted, proposeNewGame]);
+
   const stopPlaying = useCallback(() => {
     gameObject?.cleanShutdown();
   }, [gameObject]);
@@ -485,6 +512,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     moveNumber,
     cardSelections,
     setCardSelections,
+    playAgain,
     stopPlaying,
     outcome,
     lastOutcome,

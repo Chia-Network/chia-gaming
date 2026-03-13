@@ -53,6 +53,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   cardSelections,
   setCardSelections,
   handleMakeMove,
+  playAgain,
   outcome,
   log,
   myWinOutcome,
@@ -144,7 +145,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   };
   const [showEndDialog, setShowEndDialog] = useState(false);
   const NewGame = () => {
-    doHandleMakeMove();
+    playAgain();
     setGameState(GAME_STATES.SELECTING);
     setRememberedCards([[], []]);
     setWinner(null);
@@ -633,10 +634,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         onPlayAgain={() => {
           setShowEndDialog(false);
           NewGame();
-          // The backend proposes a new game automatically after the terminal event.
-          // GameProposalAccepted will set isPlayerTurn and moveNumber=0.
-          // The user then clicks "Start Game" to commit the seed (move 0).
-          // Calling handleMakeMove here is too early — no game ID exists yet.
         }}
         onEndSession={stopPlaying} // same handler as your destructive button
         disableEndSession={moveNumber !== 0}

@@ -34,6 +34,7 @@ const Game: React.FC<GameParams> = ({ params }) => {
     cardSelections,
     setCardSelections,
     outcome,
+    playAgain,
     stopPlaying,
   } = useWasmBlob(params, params.lobbyUrl, uniqueId);
 
@@ -116,6 +117,7 @@ const Game: React.FC<GameParams> = ({ params }) => {
         setCardSelections={setCardSelections}
         handleMakeMove={handleMakeMove}
         handleCheat={handleCheat}
+        playAgain={playAgain}
         stopPlaying={stopPlaying}
         log={log}
         addressData={addressData}
