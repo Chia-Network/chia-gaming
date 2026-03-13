@@ -715,6 +715,12 @@ fn cors_origin(req: &mut Request, response: &mut Response) -> Result<(), String>
 #[handler]
 async fn cors(req: &mut Request, response: &mut Response) -> Result<(), String> {
     cors_origin(req, response)?;
+    response
+        .add_header("Access-Control-Allow-Headers", "content-type", true)
+        .map_err(|e| format!("{e:?}"))?;
+    response
+        .add_header("Access-Control-Allow-Methods", "POST, OPTIONS", true)
+        .map_err(|e| format!("{e:?}"))?;
     response.replace_body(ResBody::Once(Bytes::from(Vec::new())));
     Ok(())
 }
@@ -751,7 +757,9 @@ fn service_main_inner() {
             .push(Router::with_path("select_coins").post(select_coins))
             .push(Router::with_path("create_offer_for_ids").options(cors))
             .push(Router::with_path("create_offer_for_ids").post(create_offer_for_ids))
+            .push(Router::with_path("block_spends").options(cors))
             .push(Router::with_path("block_spends").post(block_spends))
+            .push(Router::with_path("push_tx").options(cors))
             .push(Router::with_path("push_tx").post(push_tx));
         let acceptor = TcpListener::new("0.0.0.0:5800").bind().await;
 
