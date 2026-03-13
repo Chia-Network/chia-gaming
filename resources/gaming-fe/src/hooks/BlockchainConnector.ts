@@ -4,6 +4,9 @@ import {
   DoInitialSpendResult,
   BlockchainInboundAddressResult,
 } from '../types/ChiaGaming';
+import { CreateNewRemoteWalletResponse } from '../types/rpc/CreateNewRemoteWallet';
+import { GetCoinRecordsByNamesResponse } from '../types/rpc/GetCoinRecordsByNames';
+import { RegisterRemoteCoinsResponse } from '../types/rpc/RegisterRemoteCoins';
 
 export interface BlockchainOutboundInitialSpendRequest {
   uniqueId: string;
@@ -20,12 +23,29 @@ export type BlockchainOutboundAddressRequest = boolean;
 
 export type BlockchainOutboundBalanceRequest = boolean;
 
+export interface BlockchainOutboundCoinRecordsByNamesRequest {
+  names: string[];
+  startHeight?: number;
+  endHeight?: number;
+  includeSpentCoins?: boolean;
+}
+
+export type BlockchainOutboundCreateNewRemoteWalletRequest = boolean;
+
+export interface BlockchainOutboundRegisterRemoteCoinsRequest {
+  walletId: number;
+  coinIds: string[];
+}
+
 export interface BlockchainOutboundRequest {
   requestId: number;
   initialSpend?: BlockchainOutboundInitialSpendRequest;
   transaction?: BlockchainOutboundTransactionRequest;
   getAddress?: BlockchainOutboundAddressRequest;
   getBalance?: BlockchainOutboundBalanceRequest;
+  getCoinRecordsByNames?: BlockchainOutboundCoinRecordsByNamesRequest;
+  createNewRemoteWallet?: BlockchainOutboundCreateNewRemoteWalletRequest;
+  registerRemoteCoins?: BlockchainOutboundRegisterRemoteCoinsRequest;
 }
 
 export interface BlockchainInboundReply {
@@ -34,6 +54,9 @@ export interface BlockchainInboundReply {
   transaction?: string;
   getAddress?: BlockchainInboundAddressResult;
   getBalance?: number;
+  getCoinRecordsByNames?: GetCoinRecordsByNamesResponse;
+  createNewRemoteWallet?: CreateNewRemoteWalletResponse;
+  registerRemoteCoins?: RegisterRemoteCoinsResponse;
   error?: string;
 }
 

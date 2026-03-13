@@ -191,15 +191,19 @@ class WalletState {
       stateName: 'connecting',
       connecting: true,
     });
-
-    try {
-      const { uri, approval } = await this.client.connect({
-        optionalNamespaces: {
-          chia: {
-            methods: ['chia_getCurrentAddress', 'chia_getWalletBalance', 'chia_sendTransaction'],
-            chains: ['chia:mainnet', 'chia:testnet'],
-            events: [],
-          },
+    const { uri, approval } = await this.client.connect({
+      requiredNamespaces: {
+        chia: {
+          methods: [
+            'chia_getCurrentAddress',
+            'chia_getWalletBalance',
+            'chia_sendTransaction',
+            'chia_getCoinRecordsByNames',
+            'chia_createNewRemoteWallet',
+            'chia_registerRemoteCoins',
+          ],
+          chains: [CHAIN_ID],
+          events: [],
         },
       });
 
