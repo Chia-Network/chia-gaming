@@ -5,6 +5,17 @@ import { Subject } from 'rxjs';
 import { PROJECT_ID, RELAY_URL, CHAIN_ID } from '../constants/env';
 import { REQUIRED_NAMESPACES } from '../constants/wallet-connect';
 
+const SESSION_PING_TIMEOUT_MS = 10_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error('timeout')), ms)
+    ),
+  ]);
+}
+
 export interface StartConnectResult {
   approval: () => Promise<SessionTypes.Struct>;
   uri: string;
@@ -121,20 +132,64 @@ class WalletState {
           chainId: detectedChain,
           methods: session.namespaces.chia.methods,
           peer: session.peer?.metadata?.name,
+          expiry: session.expiry,
         });
 
-        this.isConnected = true;
-        this.address = address;
-        this.chainId = detectedChain;
-        this.session = session;
-        this.observable.next({
-          stateName: 'connected',
-          initialized: true,
-          haveClient: true,
-          haveSession: true,
-          connected: true,
-          sessions: sessions.length,
-        });
+        const now = Date.now() / 1000;
+        let sessionAlive = false;
+
+        if (session.expiry && now > session.expiry) {
+          console.warn('[WC] session expired, discarding', {
+            expiry: session.expiry,
+            now: Math.floor(now),
+          });
+        } else {
+          try {
+            await withTimeout(
+              signClient.request({
+                topic: session.topic,
+                chainId: detectedChain,
+                request: {
+                  method: 'chia_getHeightInfo',
+                  params: { fingerprint: parseInt(address) },
+                },
+              }),
+              SESSION_PING_TIMEOUT_MS,
+            );
+            console.log('[WC] session liveness check succeeded -- wallet is reachable');
+            sessionAlive = true;
+          } catch (pingErr) {
+            console.warn('[WC] session liveness check failed/timed out, discarding stale session', pingErr);
+          }
+        }
+
+        if (sessionAlive) {
+          this.isConnected = true;
+          this.address = address;
+          this.chainId = detectedChain;
+          this.session = session;
+          this.observable.next({
+            stateName: 'connected',
+            initialized: true,
+            haveClient: true,
+            haveSession: true,
+            connected: true,
+            sessions: sessions.length,
+          });
+        } else {
+          try {
+            await withTimeout(
+              signClient.disconnect({
+                topic: session.topic,
+                reason: { code: 6000, message: 'Stale session cleaned up' },
+              }),
+              SESSION_PING_TIMEOUT_MS,
+            );
+            console.log('[WC] stale session disconnected from IndexedDB');
+          } catch (disconnectErr) {
+            console.warn('[WC] failed to disconnect stale session (may already be gone)', disconnectErr);
+          }
+        }
       }
 
       this.observable.next({
