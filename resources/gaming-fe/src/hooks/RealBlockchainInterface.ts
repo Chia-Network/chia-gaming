@@ -461,10 +461,24 @@ export function connectRealBlockchain() {
             });
           });
       } else if (evt.selectCoins) {
-        blockchainConnector.replyEmitter({
-          responseId: evt.requestId,
-          error: 'selectCoins not yet implemented for WalletConnect',
-        });
+        rpc.selectCoins({ walletId: 1, amount: evt.selectCoins.amount })
+          .then((coins) => {
+            if (!coins || coins.length === 0) {
+              blockchainConnector.replyEmitter({ responseId: evt.requestId, selectCoins: null });
+              return;
+            }
+            const c = coins[0];
+            const parent = c.parentCoinInfo.replace(/^0x/, '');
+            const puzzle = c.puzzleHash.replace(/^0x/, '');
+            const amtHex = toHexString(Array.from(encodeClvmInt(c.amount)));
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              selectCoins: parent + puzzle + amtHex,
+            });
+          })
+          .catch((e: any) => {
+            blockchainConnector.replyEmitter({ responseId: evt.requestId, error: JSON.stringify(e) });
+          });
       } else if (evt.getHeightInfo) {
         rpc.getHeightInfo({}).then((height) => {
           blockchainConnector.replyEmitter({ responseId: evt.requestId, getHeightInfo: height });
