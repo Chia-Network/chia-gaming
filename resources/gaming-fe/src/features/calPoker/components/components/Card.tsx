@@ -25,9 +25,9 @@ function Card(props: CardRenderProps) {
     }
 
     if (area === 'ai') {
-      return 'border-canvas-border bg-canvas-bg-subtle cursor-not-allowed';
+      return 'border-canvas-border bg-canvas-bg-hover cursor-not-allowed';
     }
-    return 'border-canvas-border hover:border-primary-solid bg-canvas-bg-hover cursor-pointer';
+    return 'border-canvas-border hover:border-primary-solid bg-canvas-bg-subtle cursor-pointer';
   };
 
   const colorClass = SUIT_COLORS[card.suit] || '#000000';
