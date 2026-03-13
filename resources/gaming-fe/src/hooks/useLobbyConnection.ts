@@ -36,6 +36,7 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
   const socketRef = useRef<Socket>(undefined);
   const [fragment] = useState<FragmentData>(getFragmentParams());
   const [lobbyGames, setLobbyGames] = useState<GameDefinition[]>([]);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const joinRoom = useCallback(
     async (token: string) => {
       const { data } = await axios.post(`${LOBBY_URL}/lobby/join-room`, {
@@ -112,6 +113,16 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
     socketRef.current = socket;
 
     socket.emit('join', { id: uniqueId, alias: alias });
+
+    socket.on('connect_error', (err: Error) => {
+      setConnectionError(`Connection error: ${err.message}`);
+    });
+    socket.on('disconnect', (reason: string) => {
+      setConnectionError(`Disconnected: ${reason}`);
+    });
+    socket.on('connect', () => {
+      setConnectionError(null);
+    });
 
     socket.on('lobby_update', (q: Player[]) => setPlayers(q));
     socket.on('room_update', (r: Room | Room[]) => {
@@ -196,5 +207,6 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
     uniqueId,
     fragment,
     lobbyGames,
+    connectionError,
   };
 }

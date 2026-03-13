@@ -99,7 +99,14 @@ export function getBlobSingleton(
         return;
       }
     },
-    () => []
+    () => [],
+    (msg: string) => {
+      if (msg) {
+        blobSingleton?.rxjsEmitter?.next({ type: 'connection_error', error: msg });
+      } else {
+        blobSingleton?.rxjsEmitter?.next({ type: 'connection_restored' });
+      }
+    },
   );
 
   blobSingleton = new WasmBlobWrapper(
