@@ -174,6 +174,7 @@ export interface UseLobbySocketReturn {
     uniqueId: string;
     fragment: any;
     lobbyGames: GameDefinition[];
+    connectionError: string | null;
 };
 
 export function useLobbySocket(
@@ -190,6 +191,7 @@ export function useLobbySocket(
   const [messages, setMessages] = useState<ChatEnvelope[]>([]);
   const [didJoin, setDidJoin] = useState(false);
   const [lobbyGames, setLobbyGames] = useState<GameDefinition[]>([]);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const socketRef = useRef<Socket>(undefined);
   const navigatingRef = useRef(false);
 
@@ -259,6 +261,16 @@ export function useLobbySocket(
     socketRef.current = socket;
 
     socket.emit('join', { id: uniqueId, alias: alias });
+
+    socket.on('connect_error', (err: Error) => {
+      setConnectionError(`Connection error: ${err.message}`);
+    });
+    socket.on('disconnect', (reason: string) => {
+      setConnectionError(`Disconnected: ${reason}`);
+    });
+    socket.on('connect', () => {
+      setConnectionError(null);
+    });
 
     socket.on('lobby_update', (q: Player[]) => setPlayers(q));
     socket.on('room_update', (r: Room | Room[]) => {
@@ -355,6 +367,7 @@ export function useLobbySocket(
     uniqueId,
     fragment,
     lobbyGames,
+    connectionError,
   };
 }
 

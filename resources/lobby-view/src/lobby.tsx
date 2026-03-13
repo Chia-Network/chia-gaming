@@ -24,6 +24,7 @@ const LobbyScreen = () => {
     generateRoom,
     joinRoom,
     lobbyGames,
+    connectionError,
   } = useLobbySocket(
     window.location.origin,
     uniqueId,
@@ -211,6 +212,13 @@ const LobbyScreen = () => {
           Change WalletConnect Connection
         </Button>
       </div>
+
+      {/* Connection error banner */}
+      {connectionError && (
+        <div className="mb-3 rounded-lg border border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950 px-4 py-3 text-sm text-red-700 dark:text-red-300">
+          {connectionError}
+        </div>
+      )}
 
       {/* Hidden automation URL */}
       <div className="absolute opacity-0" aria-label="partner-target-url">

@@ -71,7 +71,9 @@ export type WasmEvent =
   | { type: 'notification'; data: any }
   | { type: 'error'; error: string }
   | { type: 'finished' }
-  | { type: 'address'; data: BlockchainInboundAddressResult };
+  | { type: 'address'; data: BlockchainInboundAddressResult }
+  | { type: 'connection_error'; error: string }
+  | { type: 'connection_restored' };
 
 export interface WasmConnection {
   // System

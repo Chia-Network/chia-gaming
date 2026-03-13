@@ -49,6 +49,7 @@ export const getGameSocket = (
   deliverMessage: (msgno: number, m: string) => void,
   setSocketEnabled: (saves: string[]) => void,
   saves: () => string[],
+  onConnectionError?: (msg: string) => void,
 ): GameSocketReturn => {
   const token = searchParams.token;
   const iStarted = searchParams.iStarted !== 'false';
@@ -81,6 +82,16 @@ export const getGameSocket = (
   };
 
   socket?.on('waiting', handleWaiting);
+
+  socket?.on('connect_error', (err: Error) => {
+    onConnectionError?.(`Connection error: ${err.message}`);
+  });
+  socket?.on('disconnect', (reason: string) => {
+    onConnectionError?.(`Disconnected: ${reason}`);
+  });
+  socket?.io.on('reconnect', () => {
+    onConnectionError?.('');
+  });
 
   // Try to get through a 'peer' message until we succeed.
   const beaconId = uuidv4();

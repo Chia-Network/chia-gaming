@@ -105,6 +105,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
   const moveNumberRef = useRef<number>(0);
   const gameIdsRef = useRef<string[]>([]);
   const gameOutcomeRef = useRef<CalpokerOutcome | undefined>(undefined);
+  const connectionErrorShownRef = useRef(false);
 
   playerHandRef.current = playerHand;
   opponentHandRef.current = opponentHand;
@@ -379,6 +380,18 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
             break;
           case 'address':
             setAddressData(evt.data);
+            break;
+          case 'connection_error':
+            if (!connectionErrorShownRef.current) {
+              connectionErrorShownRef.current = true;
+              toast({ title: 'Connection Lost', description: 'Attempting to reconnect...', variant: 'destructive' });
+            }
+            break;
+          case 'connection_restored':
+            if (connectionErrorShownRef.current) {
+              connectionErrorShownRef.current = false;
+              toast({ title: 'Connection Restored', description: 'Reconnected to game server' });
+            }
             break;
           default:
             console.warn('unhandled event type:', (evt as any).type, evt);
