@@ -12,5 +12,6 @@ POST_CONTENT="{\"game\":\"calpoker\",\"target\":\"${SELF_URL}/?game=calpoker&lob
 
 while true ; do
 	curl -H "Content-Type: application/json" -d "${POST_CONTENT}" "${TRACKER_URL}/lobby/game"
+	echo
 	sleep 20
 done
