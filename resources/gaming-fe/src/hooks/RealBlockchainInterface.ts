@@ -1,6 +1,6 @@
 import bech32_module from 'bech32-buffer';
 import * as bech32_buffer from 'bech32-buffer';
-import { Subject } from 'rxjs';
+import { Subject, Subscription } from 'rxjs';
 
 import { rpc } from '../hooks/JsonRpcContext';
 import {
@@ -95,6 +95,13 @@ export class RealBlockchainInterface {
   async startMonitoring() {
     if (this.pollingTimer) return;
     this.poll();
+  }
+
+  stopMonitoring() {
+    if (this.pollingTimer) {
+      clearTimeout(this.pollingTimer);
+      this.pollingTimer = undefined;
+    }
   }
 
   getObservable() {
@@ -317,13 +324,12 @@ export const REAL_BLOCKCHAIN_ID = blockchainDataEmitter.addUpstream(
 );
 
 let lastRecvAddress = "";
-let realBlockchainConnected = false;
+let realOutboundSubscription: Subscription | undefined;
 
 export function connectRealBlockchain() {
-  if (realBlockchainConnected) return;
-  realBlockchainConnected = true;
+  if (realOutboundSubscription) return;
 
-  blockchainConnector.getOutbound().subscribe({
+  realOutboundSubscription = blockchainConnector.getOutbound().subscribe({
     next: async (evt: BlockchainOutboundRequest) => {
       let initialSpend = evt.initialSpend;
       let transaction = evt.transaction;
@@ -486,10 +492,21 @@ export function connectRealBlockchain() {
   });
 }
 
+export function disconnectRealBlockchain() {
+  realBlockchainInfo.stopMonitoring();
+  if (realOutboundSubscription) {
+    realOutboundSubscription.unsubscribe();
+    realOutboundSubscription = undefined;
+  }
+}
+
 blockchainDataEmitter.getSelectionObservable().subscribe({
   next: (e: SelectionMessage) => {
     if (e.selection == REAL_BLOCKCHAIN_ID) {
       realBlockchainInfo.startMonitoring();
+      connectRealBlockchain();
+    } else {
+      disconnectRealBlockchain();
     }
   },
 });

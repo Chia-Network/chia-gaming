@@ -404,9 +404,10 @@ export function disconnectSimulatorBlockchain() {
 blockchainDataEmitter.getSelectionObservable().subscribe({
   next: (e: SelectionMessage) => {
     if (e.selection == FAKE_BLOCKCHAIN_ID) {
-      // Simulator selected
       fakeBlockchainInfo.startMonitoring(e.uniqueId);
       connectSimulatorBlockchain();
+    } else {
+      disconnectSimulatorBlockchain();
     }
   },
 });

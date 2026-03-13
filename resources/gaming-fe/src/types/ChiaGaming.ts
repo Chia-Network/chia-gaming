@@ -557,7 +557,6 @@ export class ToggleEmitter<T> {
   upstream: Subject<T>[];
   subscriptions: Subscription[];
   downstream: Subject<T>;
-  upstreamSelect: (s: SelectionMessage) => void;
   upstreamSelection: Subject<SelectionMessage>;
   selection: number;
 
@@ -577,8 +576,7 @@ export class ToggleEmitter<T> {
 
   select(s: SelectionMessage) {
     this.selection = s.selection;
-    this.upstreamSelect(s);
-    this.upstreamSelect = (_s: SelectionMessage) => void 0;
+    this.upstreamSelection.next(s);
   }
 
   getObservable() {
@@ -595,14 +593,10 @@ export class ToggleEmitter<T> {
 
   constructor() {
     this.upstream = [];
-    this.upstreamSelect = (_s) => void 0;
     this.selection = -1;
     this.subscriptions = [];
     this.downstream = new Subject<T>();
-    this.subscriptions = [];
     this.upstreamSelection = new Subject<SelectionMessage>();
-    this.upstreamSelect = (s: SelectionMessage) =>
-      this.upstreamSelection.next(s);
   }
 }
 

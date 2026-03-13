@@ -5,7 +5,6 @@ import { blockchainDataEmitter } from '../hooks/BlockchainInfo';
 import { FAKE_BLOCKCHAIN_ID } from '../hooks/FakeBlockchainInterface';
 import {
   REAL_BLOCKCHAIN_ID,
-  connectRealBlockchain,
   realBlockchainInfo,
 } from '../hooks/RealBlockchainInterface';
 import useDebug from '../hooks/useDebug';
@@ -114,12 +113,10 @@ const WalletConnectHeading = (_args: any) => {
         if (evt.stateName === 'connected') {
           toggleExpanded();
           setAlreadyConnected(true);
-          console.log('doing connect real blockchain');
           blockchainDataEmitter.select({
             selection: REAL_BLOCKCHAIN_ID,
             uniqueId,
           });
-          connectRealBlockchain();
           if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
           if (addressTimerRef.current) clearTimeout(addressTimerRef.current);
           requestBalance();
