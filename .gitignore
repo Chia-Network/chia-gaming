@@ -1,6 +1,7 @@
 #Chialisp / CLVM output
 *.hex
 *.sym
+.build-chialisp.cache
 
 # cargo / rust
 vendor/
