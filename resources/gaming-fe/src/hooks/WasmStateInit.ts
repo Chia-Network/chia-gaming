@@ -2,8 +2,6 @@ import {
   WasmConnection,
   ChiaGame,
   RngId,
-  InternalBlockchainInterface,
-  CreateStartCoinReturn,
 } from '../types/ChiaGaming';
 import { Observable, Subject } from 'rxjs';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
@@ -150,60 +148,6 @@ export class WasmStateInit {
 
   getChiaIdentity(rngSeed: string) {
     // return this.wasmConnection?.chia_identity(rngSeed);
-  }
-
-  // need:
-  // blockchain for address, do_initial_spend
-  //
-  async createStartCoin(
-    blockchain: InternalBlockchainInterface,
-    uniqueId: string,
-    puzzleHash: string,
-    amount: number,
-    wc: WasmConnection,
-  ): Promise<CreateStartCoinReturn> {
-    if (!puzzleHash) {
-      throw new Error('create start coin with no puzzle hash');
-    }
-    if (!wc) {
-      throw new Error('create start coin with no wasm obj?');
-    }
-    if (amount < 1) {
-      let msg = 'createStartCoin: negative amount:' + amount;
-      throw new Error(msg);
-    }
-
-    let address = await blockchain.getAddress();
-
-    let inital_spend = await blockchain.do_initial_spend(
-      uniqueId,
-      puzzleHash,
-      amount,
-    );
-
-    let coin = inital_spend.coin;
-    if (!coin) {
-      throw new Error('tried to create spendable but failed');
-    }
-
-    // Handle data conversion back when Coin object was received.
-    if (typeof coin !== 'string') {
-      const coinset_coin = coin as any;
-      const new_coin_string = wc.convert_coinset_to_coin_string(
-        coinset_coin.parentCoinInfo,
-        coinset_coin.puzzleHash,
-        coinset_coin.amount.toString(),
-      );
-      if (!new_coin_string) {
-        throw new Error(
-          `Coin could not be converted to coinstring: ${JSON.stringify(coinset_coin)}`,
-        );
-      }
-
-      coin = new_coin_string;
-
-    }
-    return {coinString: coin, blockchainInboundAddressResult: address};
   }
 
   async loadCalpoker(): Promise<{proposalHex: string, parserHex: string}> {

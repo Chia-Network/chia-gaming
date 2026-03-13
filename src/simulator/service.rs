@@ -18,11 +18,15 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 use serde_json::{Map, Value};
 
-use crate::common::standard_coin::ChiaIdentity;
+use clvm_traits::ToClvm;
+use clvmr::NodePtr;
+
+use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
+use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
 use crate::common::types::{
     check_for_hex, convert_coinset_org_spend_to_spend, map_m, Aggsig, AllocEncoder, Amount, CoinID,
     CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord, Error, Hash,
-    IntoErr, PrivateKey, Program, PuzzleHash, SpendBundle,
+    IntoErr, PrivateKey, Program, PuzzleHash, Spend, SpendBundle,
 };
 use crate::peer_container::{FullCoinSetAdapter, WatchReport};
 use crate::simulator::Simulator;
@@ -83,10 +87,12 @@ enum WebRequest {
     GetBlockData(u64),                    // Get the additions and deletons from the given block
     GetPuzzleAndSolution(String),         // Given a coin id, get the puzzle and solution
     CreateSpendable(String, String, u64), // Use the named wallet to give n mojo to a target puzzle hash
-    Spend(String),                        // Perform this spend on the blockchain
-    WaitBlock,                            // Return when a new block arrives
-    BlockSpends(u64),                     // Get block spends in coinset.org style
-    PushTx(CoinsetSpendBundle),           // Spend with a coinset.org spend
+    SelectCoins(String, u64),             // Return a coin owned by this user with at least n mojo
+    CreateOfferForIds(String, String), // (who, json_body) -> build a signed single-coin SpendBundle
+    Spend(String),                     // Perform this spend on the blockchain
+    WaitBlock,                         // Return when a new block arrives
+    BlockSpends(u64),                  // Get block spends in coinset.org style
+    PushTx(CoinsetSpendBundle),        // Spend with a coinset.org spend
 }
 
 type StringWithError = Result<String, Error>;
@@ -283,6 +289,159 @@ impl GameRunner {
         }
 
         Ok("null\n".to_string())
+    }
+
+    fn select_coins(&self, who: &str, amt: u64) -> StringWithError {
+        let identity = self.lookup_identity(who).cloned();
+        if let Some(identity) = identity {
+            let coin_amt = Amount::new(amt);
+            if let Some(coin) = self
+                .simulator
+                .select_coins(&identity.puzzle_hash, &coin_amt)?
+            {
+                return Ok(format!("\"{}\"\n", hex::encode(coin.to_bytes())));
+            }
+        }
+        Ok("null\n".to_string())
+    }
+
+    fn create_offer_for_ids(&mut self, who: &str, json_body: &str) -> StringWithError {
+        let identity = self
+            .lookup_identity(who)
+            .cloned()
+            .ok_or_else(|| Error::StrErr(format!("identity not found: {who}")))?;
+
+        let body: serde_json::Value =
+            serde_json::from_str(json_body).map_err(|e| Error::StrErr(format!("bad JSON: {e}")))?;
+
+        let offer = body
+            .get("offer")
+            .ok_or_else(|| Error::StrErr("missing 'offer' field".into()))?;
+
+        let total_amount: u64 = offer
+            .as_object()
+            .ok_or_else(|| Error::StrErr("offer must be an object".into()))?
+            .values()
+            .filter_map(|v| v.as_i64())
+            .filter(|v| *v < 0)
+            .map(|v| (-v) as u64)
+            .sum();
+
+        if total_amount == 0 {
+            return Err(Error::StrErr(
+                "offer must include negative (giving) amounts".into(),
+            ));
+        }
+
+        let coin_ids = body.get("coinIds").and_then(|v| v.as_array());
+        let selected_coin = if let Some(ids) = coin_ids {
+            if let Some(first_id) = ids.first().and_then(|v| v.as_str()) {
+                let id_bytes = hex_to_bytes(first_id)?;
+                let target_id = CoinID::new(
+                    Hash::from_slice(&id_bytes)
+                        .map_err(|_| Error::StrErr("bad coinId length".into()))?,
+                );
+                self.simulator
+                    .find_coin_by_id(&target_id)?
+                    .ok_or_else(|| Error::StrErr(format!("coin not found: {first_id}")))?
+            } else {
+                self.simulator
+                    .select_coins(&identity.puzzle_hash, &Amount::new(total_amount))?
+                    .ok_or_else(|| {
+                        Error::StrErr(format!("no coin with enough balance for {who}"))
+                    })?
+            }
+        } else {
+            self.simulator
+                .select_coins(&identity.puzzle_hash, &Amount::new(total_amount))?
+                .ok_or_else(|| Error::StrErr(format!("no coin with enough balance for {who}")))?
+        };
+
+        let extra_conditions = body.get("extraConditions").and_then(|v| v.as_array());
+        let mut condition_nodes = Vec::new();
+
+        if let Some(conditions) = extra_conditions {
+            for cond in conditions {
+                let opcode = cond
+                    .get("opcode")
+                    .and_then(|v| v.as_u64())
+                    .ok_or_else(|| Error::StrErr("condition missing opcode".into()))?
+                    as u32;
+                let args = cond
+                    .get("args")
+                    .and_then(|v| v.as_array())
+                    .ok_or_else(|| Error::StrErr("condition missing args".into()))?;
+                let mut arg_nodes = Vec::new();
+                for arg in args {
+                    let hex_str = arg
+                        .as_str()
+                        .ok_or_else(|| Error::StrErr("condition arg must be hex string".into()))?;
+                    let bytes = hex_to_bytes(hex_str)?;
+                    let node = self.allocator.allocator().new_atom(&bytes).into_gen()?;
+                    arg_nodes.push(node);
+                }
+                let cond_node = self.build_condition(opcode, &arg_nodes)?;
+                condition_nodes.push(cond_node);
+            }
+        }
+
+        let conditions = self.build_conditions_list(&condition_nodes)?;
+
+        let agg_sig_me_data = Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA);
+
+        let spend_info = standard_solution_partial(
+            &mut self.allocator,
+            &identity.synthetic_private_key,
+            &selected_coin.to_coin_id(),
+            conditions,
+            &identity.synthetic_public_key,
+            &agg_sig_me_data,
+            false,
+        )?;
+
+        let spend_bundle = SpendBundle {
+            name: None,
+            spends: vec![CoinSpend {
+                coin: selected_coin,
+                bundle: Spend {
+                    puzzle: identity.puzzle.clone(),
+                    solution: spend_info.solution.clone(),
+                    signature: spend_info.signature.clone(),
+                },
+            }],
+        };
+
+        let result = serde_json::to_string(&spend_bundle)
+            .map_err(|e| Error::StrErr(format!("serialize error: {e}")))?;
+        Ok(format!("{result}\n"))
+    }
+
+    fn build_condition(&mut self, opcode: u32, args: &[NodePtr]) -> Result<NodePtr, Error> {
+        let opcode_node = opcode.to_clvm(&mut self.allocator).into_gen()?;
+        let mut result = NodePtr::NIL;
+        for arg in args.iter().rev() {
+            result = self
+                .allocator
+                .allocator()
+                .new_pair(*arg, result)
+                .into_gen()?;
+        }
+        self.allocator
+            .allocator()
+            .new_pair(opcode_node, result)
+            .into_gen()
+    }
+
+    fn build_conditions_list(&mut self, conditions: &[NodePtr]) -> Result<NodePtr, Error> {
+        let mut result = NodePtr::NIL;
+        for cond in conditions.iter().rev() {
+            result = self
+                .allocator
+                .allocator()
+                .new_pair(*cond, result)
+                .into_gen()?;
+        }
+        Ok(result)
     }
 
     fn spend_list_of_spends(&mut self, spends: &[CoinSpend]) -> StringWithError {
@@ -497,6 +656,21 @@ async fn create_spendable(req: &mut Request, response: &mut Response) -> Result<
 }
 
 #[handler]
+async fn select_coins(req: &mut Request, response: &mut Response) -> Result<(), String> {
+    let who = get_arg_string(req, "who").report_err()?;
+    let amount = get_arg_integer(req, "amount").report_err()?;
+    pass_on_request(req, response, WebRequest::SelectCoins(who, amount))
+}
+
+#[handler]
+async fn create_offer_for_ids(req: &mut Request, response: &mut Response) -> Result<(), String> {
+    let who = get_arg_string(req, "who").report_err()?;
+    let body = req.payload().await.map_err(|e| format!("{e:?}"))?;
+    let json_body = String::from_utf8_lossy(body).to_string();
+    pass_on_request(req, response, WebRequest::CreateOfferForIds(who, json_body))
+}
+
+#[handler]
 async fn spend(req: &mut Request, response: &mut Response) -> Result<(), String> {
     let blob = get_arg_string(req, "blob").report_err()?;
     pass_on_request(req, response, WebRequest::Spend(blob))
@@ -541,6 +715,12 @@ fn cors_origin(req: &mut Request, response: &mut Response) -> Result<(), String>
 #[handler]
 async fn cors(req: &mut Request, response: &mut Response) -> Result<(), String> {
     cors_origin(req, response)?;
+    response
+        .add_header("Access-Control-Allow-Headers", "content-type", true)
+        .map_err(|e| format!("{e:?}"))?;
+    response
+        .add_header("Access-Control-Allow-Methods", "POST, OPTIONS", true)
+        .map_err(|e| format!("{e:?}"))?;
     response.replace_body(ResBody::Once(Bytes::from(Vec::new())));
     Ok(())
 }
@@ -573,7 +753,13 @@ fn service_main_inner() {
             .push(Router::with_path("spend").post(spend))
             .push(Router::with_path("create_spendable").options(cors))
             .push(Router::with_path("create_spendable").post(create_spendable))
+            .push(Router::with_path("select_coins").options(cors))
+            .push(Router::with_path("select_coins").post(select_coins))
+            .push(Router::with_path("create_offer_for_ids").options(cors))
+            .push(Router::with_path("create_offer_for_ids").post(create_offer_for_ids))
+            .push(Router::with_path("block_spends").options(cors))
             .push(Router::with_path("block_spends").post(block_spends))
+            .push(Router::with_path("push_tx").options(cors))
             .push(Router::with_path("push_tx").post(push_tx));
         let acceptor = TcpListener::new("0.0.0.0:5800").bind().await;
 
@@ -614,6 +800,12 @@ fn service_main_inner() {
                             }
                             WebRequest::CreateSpendable(who, target, amt) => {
                                 game_runner.create_spendable(&who, &target, amt)
+                            }
+                            WebRequest::SelectCoins(who, amt) => {
+                                game_runner.select_coins(&who, amt)
+                            }
+                            WebRequest::CreateOfferForIds(who, json_body) => {
+                                game_runner.create_offer_for_ids(&who, &json_body)
                             }
                             WebRequest::Spend(blob) => game_runner.spend(&blob),
                             WebRequest::BlockSpends(height) => game_runner.block_spends(height),

@@ -3,6 +3,7 @@ import { SessionTypes } from '@walletconnect/types';
 import { Subject } from 'rxjs';
 
 import { PROJECT_ID, RELAY_URL, CHAIN_ID } from '../constants/env';
+import { REQUIRED_NAMESPACES } from '../constants/wallet-connect';
 
 export interface StartConnectResult {
   approval: () => Promise<SessionTypes.Struct>;
@@ -194,13 +195,7 @@ class WalletState {
 
     try {
       const { uri, approval } = await this.client.connect({
-        optionalNamespaces: {
-          chia: {
-            methods: ['chia_getCurrentAddress', 'chia_getWalletBalance', 'chia_sendTransaction'],
-            chains: ['chia:mainnet', 'chia:testnet'],
-            events: [],
-          },
-        },
+        optionalNamespaces: REQUIRED_NAMESPACES,
       });
 
       console.log('[WC] startConnect() got URI', {
@@ -244,6 +239,10 @@ class WalletState {
         expiry: session.expiry,
       });
 
+      this.address = address;
+      this.chainId = detectedChain;
+      this.session = session;
+
       this.observable.next({
         stateName: 'connected',
         waitingApproval: false,
@@ -251,10 +250,6 @@ class WalletState {
         sessions: 1,
         address,
       });
-
-      this.address = address;
-      this.chainId = detectedChain;
-      this.session = session;
     } catch (err) {
       console.error('[WC] connect() approval FAILED or rejected', err);
       this.observable.next({

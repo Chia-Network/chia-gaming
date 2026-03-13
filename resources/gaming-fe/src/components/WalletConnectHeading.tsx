@@ -5,11 +5,11 @@ import { blockchainDataEmitter } from '../hooks/BlockchainInfo';
 import { FAKE_BLOCKCHAIN_ID } from '../hooks/FakeBlockchainInterface';
 import {
   REAL_BLOCKCHAIN_ID,
-  connectRealBlockchain,
+  realBlockchainInfo,
 } from '../hooks/RealBlockchainInterface';
 import useDebug from '../hooks/useDebug';
 import { walletConnectState } from '../hooks/useWalletConnect';
-import { BLOCKCHAIN_SERVICE_URL, BLOCKCHAIN_DATA_URL } from '../settings';
+import { BLOCKCHAIN_SERVICE_URL } from '../settings';
 import { generateOrRetrieveUniqueId } from '../util';
 
 import Debug from './Debug';
@@ -113,12 +113,10 @@ const WalletConnectHeading = (_args: any) => {
         if (evt.stateName === 'connected') {
           toggleExpanded();
           setAlreadyConnected(true);
-          console.log('doing connect real blockchain');
           blockchainDataEmitter.select({
             selection: REAL_BLOCKCHAIN_ID,
             uniqueId,
           });
-          connectRealBlockchain(BLOCKCHAIN_DATA_URL);
           if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
           if (addressTimerRef.current) clearTimeout(addressTimerRef.current);
           requestBalance();
@@ -166,8 +164,10 @@ const WalletConnectHeading = (_args: any) => {
             `wrong origin for parent event: ${JSON.stringify(evt)}`,
           );
         }
-        // Ensure that requests from the child frame go to our request channel.
         blockchainConnector.getOutbound().next(data.blockchain_request);
+      }
+      if (data.watching_coins) {
+        realBlockchainInfo.setWatchingCoins(data.watching_coins);
       }
     }
 

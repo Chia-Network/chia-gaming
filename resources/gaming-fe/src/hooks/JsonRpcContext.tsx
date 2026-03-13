@@ -112,6 +112,30 @@ import {
   VerifySignatureRequest,
   VerifySignatureResponse,
 } from '../types/rpc/VerifySignature';
+import {
+  GetHeightInfoRequest,
+  GetHeightInfoResponse,
+} from '../types/rpc/GetHeightInfo';
+import {
+  CreateNewRemoteWalletRequest,
+  CreateNewRemoteWalletResponse,
+} from '../types/rpc/CreateNewRemoteWallet';
+import {
+  RegisterRemoteCoinsRequest,
+  RegisterRemoteCoinsResponse,
+} from '../types/rpc/RegisterRemoteCoins';
+import {
+  GetCoinRecordsByNamesRequest,
+  GetCoinRecordsByNamesResponse,
+} from '../types/rpc/GetCoinRecordsByNames';
+import {
+  PushTxRequest,
+  PushTxResponse,
+} from '../types/rpc/PushTx';
+import {
+  SelectCoinsRequest,
+  SelectCoinsResponse,
+} from '../types/rpc/SelectCoins';
 
 import { walletConnectState } from './useWalletConnect';
 
@@ -196,6 +220,24 @@ interface _JsonRpc {
   getNftWalletsWithDids: (
     data: GetNftWalletsWithDidsRequest,
   ) => Promise<GetNftWalletsWithDidsResponse>;
+
+  // Blockchain (remote wallet)
+  selectCoins: (
+    data: SelectCoinsRequest,
+  ) => Promise<SelectCoinsResponse>;
+  getHeightInfo: (
+    data: GetHeightInfoRequest,
+  ) => Promise<GetHeightInfoResponse>;
+  createNewRemoteWallet: (
+    data: CreateNewRemoteWalletRequest,
+  ) => Promise<CreateNewRemoteWalletResponse>;
+  registerRemoteCoins: (
+    data: RegisterRemoteCoinsRequest,
+  ) => Promise<RegisterRemoteCoinsResponse>;
+  getCoinRecordsByNames: (
+    data: GetCoinRecordsByNamesRequest,
+  ) => Promise<GetCoinRecordsByNamesResponse>;
+  pushTx: (data: PushTxRequest) => Promise<PushTxResponse>;
 }
 
 async function request<T>(method: ChiaMethod, data: any): Promise<T> {
@@ -416,6 +458,41 @@ async function getNftWalletsWithDids(data: GetNftWalletsWithDidsRequest) {
   );
 }
 
+// Blockchain (remote wallet)
+
+async function selectCoins(data: SelectCoinsRequest) {
+  return await request<SelectCoinsResponse>(ChiaMethod.SelectCoins, data);
+}
+
+async function getHeightInfo(data: GetHeightInfoRequest) {
+  return await request<GetHeightInfoResponse>(ChiaMethod.GetHeightInfo, data);
+}
+
+async function createNewRemoteWallet(data: CreateNewRemoteWalletRequest) {
+  return await request<CreateNewRemoteWalletResponse>(
+    ChiaMethod.CreateNewRemoteWallet,
+    data,
+  );
+}
+
+async function registerRemoteCoins(data: RegisterRemoteCoinsRequest) {
+  return await request<RegisterRemoteCoinsResponse>(
+    ChiaMethod.RegisterRemoteCoins,
+    data,
+  );
+}
+
+async function getCoinRecordsByNames(data: GetCoinRecordsByNamesRequest) {
+  return await request<GetCoinRecordsByNamesResponse>(
+    ChiaMethod.GetCoinRecordsByNames,
+    data,
+  );
+}
+
+async function pushTx(data: PushTxRequest) {
+  return await request<PushTxResponse>(ChiaMethod.PushTx, data);
+}
+
 export const rpc = {
   // Wallet
   logIn,
@@ -461,4 +538,12 @@ export const rpc = {
   setDidName,
   setNftDid,
   getNftWalletsWithDids,
+
+  // Blockchain (remote wallet)
+  selectCoins,
+  getHeightInfo,
+  createNewRemoteWallet,
+  registerRemoteCoins,
+  getCoinRecordsByNames,
+  pushTx,
 };

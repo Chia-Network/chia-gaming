@@ -9,7 +9,7 @@ use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
-use crate::common::constants::CREATE_COIN;
+use crate::common::constants::{CREATE_COIN, SINGLETON_LAUNCHER_HASH};
 use crate::common::standard_coin::{
     sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
 };
@@ -24,6 +24,7 @@ use crate::peer_container::{
     SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
 };
 use crate::potato_handler::effects::{apply_effects, Effect, GameNotification};
+use crate::potato_handler::handshake::CoinSpendRequest;
 use crate::potato_handler::start::GameStart;
 use crate::potato_handler::types::{
     BatchAction, BootstrapTowardGame, BootstrapTowardWallet, PacketSender, PeerMessage, ToLocalUI,
@@ -905,6 +906,101 @@ fn propose_ready(moves: &[GameAction], mn: usize, local_uis: &[LocalTestUIReceiv
     }
 }
 
+fn build_condition(
+    allocator: &mut AllocEncoder,
+    opcode: u32,
+    args: &[NodePtr],
+) -> Result<NodePtr, Error> {
+    let op_node = opcode.to_clvm(allocator).into_gen()?;
+    let mut result = allocator.allocator().nil();
+    for arg in args.iter().rev() {
+        result = allocator.allocator().new_pair(*arg, result).into_gen()?;
+    }
+    allocator.allocator().new_pair(op_node, result).into_gen()
+}
+
+fn build_conditions_list(
+    allocator: &mut AllocEncoder,
+    conditions: &[NodePtr],
+) -> Result<NodePtr, Error> {
+    let mut result = allocator.allocator().nil();
+    for cond in conditions.iter().rev() {
+        result = allocator.allocator().new_pair(*cond, result).into_gen()?;
+    }
+    Ok(result)
+}
+
+fn build_wallet_bundle_for_request(
+    allocator: &mut AllocEncoder,
+    rng: &mut ChaCha8Rng,
+    simulator: &Simulator,
+    identity: &ChiaIdentity,
+    req: &CoinSpendRequest,
+) -> Result<SpendBundle, Error> {
+    let coin_amount = Amount::new(req.amount.to_u64());
+    let selected_coin = if let Some(ref cid) = req.coin_id {
+        simulator
+            .find_coin_by_id(cid)?
+            .ok_or_else(|| Error::StrErr(format!("requested coin not found: {:?}", cid)))?
+    } else {
+        simulator
+            .select_coins(&identity.puzzle_hash, &coin_amount)?
+            .ok_or_else(|| Error::StrErr("no coin with enough balance".into()))?
+    };
+
+    let mut condition_nodes = Vec::new();
+    for cond in &req.conditions {
+        let mut arg_nodes = Vec::new();
+        for arg in &cond.args {
+            let node = allocator.allocator().new_atom(arg).into_gen()?;
+            arg_nodes.push(node);
+        }
+        let cond_node = build_condition(allocator, cond.opcode, &arg_nodes)?;
+        condition_nodes.push(cond_node);
+    }
+
+    let selected_amount = selected_coin
+        .to_parts()
+        .ok_or_else(|| Error::StrErr("bad coin string".into()))?
+        .2;
+    let excess = selected_amount.to_u64().saturating_sub(req.amount.to_u64());
+    if excess > 0 {
+        let ph_node = identity.puzzle_hash.to_clvm(allocator).into_gen()?;
+        let amt_node = excess.to_clvm(allocator).into_gen()?;
+        let change_cond = build_condition(allocator, CREATE_COIN, &[ph_node, amt_node])?;
+        condition_nodes.push(change_cond);
+    }
+
+    let conditions = build_conditions_list(allocator, &condition_nodes)?;
+
+    let agg_sig_me_data = {
+        let env = ChannelHandlerEnv::new(allocator, rng)?;
+        env.agg_sig_me_additional_data.clone()
+    };
+
+    let spend_info = standard_solution_partial(
+        allocator,
+        &identity.synthetic_private_key,
+        &selected_coin.to_coin_id(),
+        conditions,
+        &identity.synthetic_public_key,
+        &agg_sig_me_data,
+        false,
+    )?;
+
+    Ok(SpendBundle {
+        name: None,
+        spends: vec![CoinSpend {
+            coin: selected_coin,
+            bundle: Spend {
+                puzzle: identity.puzzle.clone(),
+                solution: spend_info.solution.clone(),
+                signature: spend_info.signature.clone(),
+            },
+        }],
+    })
+}
+
 fn run_game_container_with_action_list_with_success_predicate(
     allocator: &mut AllocEncoder,
     rng: &mut ChaCha8Rng,
@@ -949,7 +1045,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         &coins0[0],
         Amount::new(bal),
     )?;
-    let (parent_coin_1, _rest_1) = simulator.transfer_coin_amount(
+    let (_parent_coin_1, _rest_1) = simulator.transfer_coin_amount(
         allocator,
         &identities[1].puzzle_hash,
         &identities[1],
@@ -999,9 +1095,21 @@ fn run_game_container_with_action_list_with_success_predicate(
     let mut start_step = 0;
     let mut num_steps = 0;
 
-    // Give coins to the cradles.
-    cradles[0].opening_coin(allocator, rng, parent_coin_0)?;
-    cradles[1].opening_coin(allocator, rng, parent_coin_1)?;
+    // Compute the launcher coin ID upfront so the handshake uses the correct
+    // channel coin parent for all AGG_SIG_ME signatures.
+    let launcher_ph = PuzzleHash::from_bytes(SINGLETON_LAUNCHER_HASH);
+    let launcher_coin = CoinString::from_parts(
+        &parent_coin_0.to_coin_id(),
+        &launcher_ph,
+        &Amount::default(),
+    );
+    cradles[0].start_handshake(allocator, rng)?;
+    cradles[1].start_handshake(allocator, rng)?;
+    debug!(
+        "HANDSHAKE STARTED: cradle[0].handshake_finished={} cradle[1].handshake_finished={}",
+        cradles[0].handshake_finished(),
+        cradles[1].handshake_finished()
+    );
 
     let global_move = |moves: &[GameAction], move_number: usize| {
         move_number < moves.len()
@@ -1131,7 +1239,24 @@ fn run_game_container_with_action_list_with_success_predicate(
             }
 
             {
-                let result = cradles[i].drain_all(allocator, rng)?;
+                let mut result = cradles[i].drain_all(allocator, rng)?;
+
+                if result.need_launcher_coin && i == 0 {
+                    cradles[0].provide_launcher_coin(allocator, rng, launcher_coin.clone())?;
+                    result = cradles[0].drain_all(allocator, rng)?;
+                }
+
+                if let Some(ref req) = result.need_coin_spend {
+                    let wallet_bundle = build_wallet_bundle_for_request(
+                        allocator,
+                        rng,
+                        &simulator,
+                        &identities[i],
+                        req,
+                    )?;
+                    cradles[i].provide_coin_spend_bundle(allocator, rng, wallet_bundle)?;
+                    result = cradles[i].drain_all(allocator, rng)?;
+                }
 
                 // Feed puzzle/solution requests back, then drain again
                 // to collect the effects they produce.
@@ -1185,10 +1310,8 @@ fn run_game_container_with_action_list_with_success_predicate(
                             nerfed_tx_backlog.push(tx.clone());
                             continue;
                         }
-                        let any_stale = tx
-                            .spends
-                            .iter()
-                            .any(|cs| !simulator.is_coin_spendable(&cs.coin));
+                        let any_stale =
+                            tx.spends.iter().any(|cs| simulator.is_coin_spent(&cs.coin));
                         if any_stale {
                             debug!("step {num_steps}: p{i} skipping stale tx {:?}", tx.name);
                             continue;
@@ -1221,6 +1344,14 @@ fn run_game_container_with_action_list_with_success_predicate(
                         );
                     }
 
+                    if !handshake_done && !dr.outbound_messages.is_empty() {
+                        debug!(
+                            "MSGS step={} p{}: {} outbound messages",
+                            num_steps,
+                            i,
+                            dr.outbound_messages.len()
+                        );
+                    }
                     for msg in dr.outbound_messages.iter() {
                         if nerf_messages_for & (1 << i) != 0 {
                             debug!("NERFED msg from player {i}");
@@ -1280,6 +1411,14 @@ fn run_game_container_with_action_list_with_success_predicate(
             *ending -= 1;
         }
 
+        if !handshake_done {
+            debug!(
+                "HANDSHAKE CHECK step={}: [0]={} [1]={}",
+                num_steps,
+                cradles[0].handshake_finished(),
+                cradles[1].handshake_finished()
+            );
+        }
         if !handshake_done && cradles.iter().all(|c| c.handshake_finished()) {
             if start_step == 0 {
                 start_step += 1;
@@ -1287,6 +1426,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             }
 
             handshake_done = true;
+            debug!("HANDSHAKE DONE at step {}", num_steps);
         }
 
         if let Some((wb, _)) = &mut wait_blocks {
@@ -2878,7 +3018,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             game_type,
             &sim_setup.args_program,
             &sim_setup.game_actions,
-            Some(&|_, cradles| cradles[0].handshake_finished() && cradles[1].handshake_finished()),
+            Some(&|_, cradles| {
+                cradles[0].handshake_finished()
+                    && cradles[1].handshake_finished()
+                    && cradles[0].channel_coin_detected()
+            }),
             None,
         )
         .expect("should finish");

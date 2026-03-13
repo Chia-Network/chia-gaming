@@ -1,7 +1,6 @@
 import bech32_module from 'bech32-buffer';
 import * as bech32_buffer from 'bech32-buffer';
-import ReconnectingWebSocket from 'reconnecting-websocket';
-import { Subject } from 'rxjs';
+import { Subject, Subscription } from 'rxjs';
 
 import { rpc } from '../hooks/JsonRpcContext';
 import {
@@ -10,25 +9,53 @@ import {
   BlockchainInboundAddressResult,
 } from '../types/ChiaGaming';
 import { WalletBalance } from '../types/WalletBalance';
+import { WalletType } from '../types/WalletType';
+import { CoinRecord } from '../types/rpc/CoinRecord';
 import { toHexString, toUint8 } from '../util';
 
-import { BLOCKCHAIN_DATA_URL } from '../settings';
 import {
   blockchainConnector,
   BlockchainOutboundRequest,
 } from './BlockchainConnector';
 import { blockchainDataEmitter } from './BlockchainInfo';
 
-function wsUrl(baseurl: string) {
-  const url_with_new_method = baseurl.replace('http', 'ws');
-  return `${url_with_new_method}/ws`;
+const bech32: any = (bech32_module ? bech32_module : bech32_buffer);
+const PUSH_TX_RETRY_DELAY = 30000;
+const POLL_INTERVAL = 5000;
+
+function encodeClvmInt(n: number): Uint8Array {
+  if (n === 0) return new Uint8Array(0);
+  const bytes: number[] = [];
+  let v = n;
+  while (v > 0) {
+    bytes.unshift(v & 0xff);
+    v = Math.floor(v / 256);
+  }
+  if (bytes[0] & 0x80) {
+    bytes.unshift(0);
+  }
+  return new Uint8Array(bytes);
 }
 
-const bech32: any = (bech32_module ? bech32_module : bech32_buffer);
-const PUSH_TX_RETRY_TO_LET_UNCOFIRMED_TRANSACTIONS_BE_CONFIRMED = 30000;
+async function coinRecordToName(rec: CoinRecord): Promise<string | undefined> {
+  try {
+    const parentBytes = toUint8(rec.coin.parentCoinInfo.replace(/^0x/, ''));
+    const puzzleBytes = toUint8(rec.coin.puzzleHash.replace(/^0x/, ''));
+    const amountBytes = encodeClvmInt(rec.coin.amount);
+
+    const data = new Uint8Array(parentBytes.length + puzzleBytes.length + amountBytes.length);
+    data.set(parentBytes, 0);
+    data.set(puzzleBytes, parentBytes.length);
+    data.set(amountBytes, parentBytes.length + puzzleBytes.length);
+
+    const hash = await crypto.subtle.digest('SHA-256', data);
+    return toHexString(Array.from(new Uint8Array(hash)));
+  } catch {
+    return undefined;
+  }
+}
 
 export class RealBlockchainInterface {
-  baseUrl: string;
   addressData: BlockchainInboundAddressResult;
   fingerprint?: string;
   walletId: number;
@@ -36,49 +63,45 @@ export class RealBlockchainInterface {
   requests: any;
   peak: number;
   at_block: number;
-  handlingEvent: boolean;
-  incomingEvents: any[];
   publicKey?: string;
   observable: Subject<BlockchainReport>;
-  ws: any | undefined;
 
-  constructor(baseUrl: string) {
-    this.baseUrl = baseUrl;
+  private pollingTimer: ReturnType<typeof setTimeout> | undefined;
+  private remoteWalletId: number | undefined;
+  private remoteWalletPending = false;
+  private registerCoinsPending = false;
+  private registeredCoinNames: Set<string> = new Set();
+  private previousCoinStates: Map<string, boolean> = new Map();
+  private watchingCoins: { coin_name: string; coin_string: string }[] = [];
+
+  constructor() {
     this.addressData = { address: '', puzzleHash: '' };
     this.walletId = 1;
     this.requestId = 1;
     this.requests = {};
-    this.handlingEvent = false;
     this.peak = 0;
     this.at_block = 0;
-    this.incomingEvents = [];
     this.observable = new Subject();
+  }
+
+  setWatchingCoins(coins: { coin_name: string; coin_string: string }[]) {
+    this.watchingCoins = coins;
   }
 
   async getAddress() {
     return this.addressData;
   }
 
-  startMonitoring() {
-    if (this.ws) {
-      return;
-    }
+  async startMonitoring() {
+    if (this.pollingTimer) return;
+    this.poll();
+  }
 
-    const url = wsUrl(this.baseUrl);
-    console.log(`[coinset] ws connecting to ${url}`);
-    this.ws = new ReconnectingWebSocket(url);
-    this.ws?.addEventListener('open', () => {
-      console.log('[coinset] ws connected');
-    });
-    this.ws?.addEventListener('message', (m: any) => {
-      const raw = JSON.parse(m.data);
-      const json = raw.message ?? raw;
-      if (json.type === 'peak') {
-        console.log(`[coinset] ws peak height=${json.data.height}`);
-        this.peak = json.data.height;
-        this.pushEvent({ checkPeak: true });
-      }
-    });
+  stopMonitoring() {
+    if (this.pollingTimer) {
+      clearTimeout(this.pollingTimer);
+      this.pollingTimer = undefined;
+    }
   }
 
   getObservable() {
@@ -101,87 +124,181 @@ export class RealBlockchainInterface {
     // TODO: Implement puzzle hash setting
   }
 
-  async internalRetrieveBlock(height: number) {
-    console.log(`[coinset] >>> get_block_record_by_height height=${height}`);
-    const br_height = await fetch(
-      `${this.baseUrl}/get_block_record_by_height`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({ height }),
-      },
-    ).then((r) => r.json());
-    this.at_block = br_height.block_record.height + 1;
-    const header_hash = br_height.block_record.header_hash;
-    console.log(`[coinset] <<< get_block_record_by_height header_hash=${header_hash}`);
+  async spend(spend: any): Promise<string> {
+    console.log('[wc-blockchain] >>> pushTx');
+    try {
+      const result = await rpc.pushTx({ spendBundle: spend });
+      console.log('[wc-blockchain] <<< pushTx', result.status);
+      return result as any;
+    } catch (e: any) {
+      const errStr = typeof e === 'string' ? e : JSON.stringify(e);
+      if (errStr.indexOf('UNKNOWN_UNSPENT') !== -1) {
+        console.warn('[wc-blockchain] pushTx UNKNOWN_UNSPENT, retry in 60s');
+        return new Promise((resolve, reject) => {
+          setTimeout(() => {
+            this.spend(spend).then(resolve).catch(reject);
+          }, 60000);
+        });
+      }
+      console.error('[wc-blockchain] pushTx error', e);
+      throw e;
+    }
+  }
 
-    console.log(`[coinset] >>> get_block_spends header_hash=${header_hash}`);
-    const br_spends = await fetch(`${this.baseUrl}/get_block_spends`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({
-        header_hash: header_hash,
-      }),
-    }).then((r) => r.json());
-    const spendCount = br_spends.block_spends?.length ?? 0;
-    console.log(`[coinset] <<< get_block_spends spends=${spendCount}`);
+  // --- Private ---
+
+  private ensureRemoteWallet() {
+    if (this.remoteWalletPending || this.remoteWalletId !== undefined) return;
+    this.remoteWalletPending = true;
+    console.log('[wc-blockchain] ensuring remote wallet exists...');
+    rpc.getWallets({ includeData: true })
+      .then((wallets) => {
+        const remote = wallets.find((w: any) => w.type === WalletType.Remote);
+        if (remote) {
+          this.remoteWalletId = remote.id;
+          this.remoteWalletPending = false;
+          console.log(`[wc-blockchain] found existing remote wallet id=${remote.id}`);
+        } else {
+          console.log('[wc-blockchain] no remote wallet found, creating...');
+          rpc.createNewRemoteWallet({})
+            .then((created) => {
+              this.remoteWalletId = created.id;
+              this.remoteWalletPending = false;
+              console.log(`[wc-blockchain] created remote wallet id=${created.id}`);
+            })
+            .catch((e) => {
+              this.remoteWalletPending = false;
+              console.warn('[wc-blockchain] createNewRemoteWallet failed, will retry', e);
+            });
+        }
+      })
+      .catch((e) => {
+        this.remoteWalletPending = false;
+        console.warn('[wc-blockchain] getWallets failed, will retry', e);
+      });
+  }
+
+  private async poll() {
+    this.ensureRemoteWallet();
+
+    try {
+      const height = await rpc.getHeightInfo({});
+      if (height > this.peak) {
+        console.log(`[wc-blockchain] new peak height=${height} (was ${this.peak})`);
+        this.peak = height;
+        if (this.at_block === 0) {
+          this.at_block = height;
+        }
+        await this.checkCoinStates();
+      }
+    } catch (e) {
+      console.error('[wc-blockchain] height poll failed', e);
+    }
+    this.pollingTimer = setTimeout(() => this.poll(), POLL_INTERVAL);
+  }
+
+  private async checkCoinStates() {
+    const coinNameToString = new Map<string, string>();
+    for (const entry of this.watchingCoins) {
+      coinNameToString.set(entry.coin_name, entry.coin_string);
+    }
+
+    const allNames = Array.from(coinNameToString.keys());
+
+    if (this.remoteWalletId !== undefined && !this.registerCoinsPending) {
+      const newNames = allNames.filter((n) => !this.registeredCoinNames.has(n));
+      if (newNames.length > 0) {
+        this.registerCoinsPending = true;
+        console.log(`[wc-blockchain] registering ${newNames.length} new coin(s)`);
+        rpc.registerRemoteCoins({
+          walletId: this.remoteWalletId,
+          coinIds: newNames,
+        })
+          .then(() => {
+            for (const n of newNames) {
+              this.registeredCoinNames.add(n);
+            }
+            this.registerCoinsPending = false;
+          })
+          .catch((e) => {
+            this.registerCoinsPending = false;
+            console.error('[wc-blockchain] registerRemoteCoins failed', e);
+          });
+      }
+    }
+
+    const registeredNames = allNames.filter((n) => this.registeredCoinNames.has(n));
+
+    if (registeredNames.length === 0) {
+      this.observable.next({
+        peak: this.peak,
+        block: undefined,
+        report: { created_watched: [], deleted_watched: [], timed_out: [] },
+      });
+      return;
+    }
+
+    let records: CoinRecord[];
+    try {
+      records = await rpc.getCoinRecordsByNames({
+        names: registeredNames,
+        includeSpentCoins: true,
+      });
+    } catch (e) {
+      console.error('[wc-blockchain] getCoinRecordsByNames failed', e);
+      this.observable.next({
+        peak: this.peak,
+        block: undefined,
+        report: { created_watched: [], deleted_watched: [], timed_out: [] },
+      });
+      return;
+    }
+
+    const created_watched: string[] = [];
+    const deleted_watched: string[] = [];
+    const timed_out: string[] = [];
+
+    for (const rec of records) {
+      const coinName = await coinRecordToName(rec);
+      if (!coinName) continue;
+
+      const coinString = coinNameToString.get(coinName);
+      if (!coinString) continue;
+
+      const wasSpent = this.previousCoinStates.get(coinName);
+      const wasSeen = wasSpent !== undefined;
+
+      if (!wasSeen) {
+        created_watched.push(coinString);
+        this.previousCoinStates.set(coinName, rec.spent);
+      }
+
+      if (rec.spent && !wasSpent) {
+        deleted_watched.push(coinString);
+        this.previousCoinStates.set(coinName, true);
+      }
+    }
+
+    const report = { created_watched, deleted_watched, timed_out };
+    const hasChanges =
+      created_watched.length > 0 ||
+      deleted_watched.length > 0 ||
+      timed_out.length > 0;
+
+    if (hasChanges) {
+      console.log(
+        `[wc-blockchain] coin state changes: created=${created_watched.length} deleted=${deleted_watched.length} timed_out=${timed_out.length}`,
+      );
+    }
 
     this.observable.next({
-      peak: this.at_block,
-      block: br_spends.block_spends,
-      report: undefined,
+      peak: this.peak,
+      block: undefined,
+      report,
     });
   }
 
-  async internalCheckPeak() {
-    if (this.at_block === 0) {
-      this.at_block = this.peak;
-    }
-    if (this.at_block < this.peak) {
-      this.pushEvent({ retrieveBlock: this.at_block });
-    }
-  }
-
-  async handleEvent(evt: any) {
-    if (evt.checkPeak) {
-      await this.internalCheckPeak();
-      return;
-    } else if (evt.retrieveBlock) {
-      await this.internalRetrieveBlock(evt.retrieveBlock);
-      return;
-    }
-
-    console.error('useFullNode: unhandled event', evt);
-  }
-
-  async kickEvent() {
-    while (this.incomingEvents.length) {
-      this.handlingEvent = true;
-      try {
-        const event = this.incomingEvents.shift();
-        await this.handleEvent(event);
-      } catch (e) {
-        console.error('incoming event failed', e);
-      } finally {
-        this.handlingEvent = false;
-      }
-    }
-  }
-
-  async pushEvent(evt: any) {
-    this.incomingEvents.push(evt);
-    if (!this.handlingEvent) {
-      await this.kickEvent();
-    }
-  }
-
-  async push_request(req: any): Promise<any> {
+  private async push_request(req: any): Promise<any> {
     const requestId = this.requestId++;
     req.requestId = requestId;
     window.parent.postMessage(req, '*');
@@ -197,48 +314,22 @@ export class RealBlockchainInterface {
     };
     return p;
   }
-
-  async spend(spend: any): Promise<string> {
-    console.log('[coinset] >>> push_tx (spend)');
-    return await fetch(`${this.baseUrl}/push_tx`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({ spend_bundle: spend }),
-    })
-      .then((r) => r.json())
-      .then((r) => {
-        if (r.error && r.error.indexOf('UNKNOWN_UNSPENT') != -1) {
-          console.warn('[coinset] <<< push_tx UNKNOWN_UNSPENT, retry in 60s');
-          return new Promise((resolve, reject) => {
-            setTimeout(() => {
-              this.spend(spend)
-                .then((r) => resolve(r))
-                .catch(reject);
-            }, 60000);
-          });
-        }
-
-        console.log('[coinset] <<< push_tx', r.error ? `error: ${r.error}` : 'ok');
-        return r;
-      });
-  }
 }
 
 export const realBlockchainInfo: RealBlockchainInterface =
-  new RealBlockchainInterface(BLOCKCHAIN_DATA_URL);
+  new RealBlockchainInterface();
 
 export const REAL_BLOCKCHAIN_ID = blockchainDataEmitter.addUpstream(
   realBlockchainInfo.getObservable(),
 );
 
 let lastRecvAddress = "";
-let logRecvAddress = true;
+let realOutboundSubscription: Subscription | undefined;
 
-export function connectRealBlockchain(baseUrl: string) {
-  blockchainConnector.getOutbound().subscribe({
+export function connectRealBlockchain() {
+  if (realOutboundSubscription) return;
+
+  realOutboundSubscription = blockchainConnector.getOutbound().subscribe({
     next: async (evt: BlockchainOutboundRequest) => {
       let initialSpend = evt.initialSpend;
       let transaction = evt.transaction;
@@ -302,34 +393,32 @@ export function connectRealBlockchain(baseUrl: string) {
         }
       } else if (transaction) {
         while (true) {
-          console.log(`[coinset] >>> push_tx (transaction req #${evt.requestId})`);
-          const r = await fetch(`${baseUrl}/push_tx`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Accept: 'application/json',
-            },
-            body: JSON.stringify({ spend_bundle: transaction.spendObject }),
-          });
-          const j = await r.json();
-
-          if (!j.error || j.error.indexOf('UNKNOWN_UNSPENT') === -1) {
-            console.log(`[coinset] <<< push_tx (transaction req #${evt.requestId})`, j.error ? `error: ${j.error}` : 'ok');
-            const result = {
+          try {
+            console.log(`[wc-blockchain] >>> pushTx (transaction req #${evt.requestId})`);
+            const result = await rpc.pushTx({
+              spendBundle: transaction.spendObject,
+            });
+            console.log(`[wc-blockchain] <<< pushTx (transaction req #${evt.requestId})`, result.status);
+            blockchainConnector.replyEmitter({
               responseId: evt.requestId,
-              transaction: Object.assign({}, j),
-            };
-            blockchainConnector.replyEmitter(result);
+              transaction: result as any,
+            });
             return;
+          } catch (e: any) {
+            const errStr = typeof e === 'string' ? e : JSON.stringify(e);
+            if (errStr.indexOf('UNKNOWN_UNSPENT') === -1) {
+              console.error(`[wc-blockchain] pushTx error`, e);
+              blockchainConnector.replyEmitter({
+                responseId: evt.requestId,
+                transaction: { error: errStr } as any,
+              });
+              return;
+            }
+            console.warn(`[wc-blockchain] pushTx UNKNOWN_UNSPENT, retry in ${PUSH_TX_RETRY_DELAY / 1000}s`);
+            await new Promise((resolve) => {
+              setTimeout(resolve, PUSH_TX_RETRY_DELAY);
+            });
           }
-
-          console.warn(`[coinset] <<< push_tx UNKNOWN_UNSPENT, retry in ${PUSH_TX_RETRY_TO_LET_UNCOFIRMED_TRANSACTIONS_BE_CONFIRMED / 1000}s`);
-          await new Promise((resolve, _reject) => {
-            setTimeout(
-              resolve,
-              PUSH_TX_RETRY_TO_LET_UNCOFIRMED_TRANSACTIONS_BE_CONFIRMED,
-            );
-          });
         }
       } else if (getAddress) {
         rpc
@@ -347,7 +436,14 @@ export function connectRealBlockchain(baseUrl: string) {
             responseId: evt.requestId,
 	    getAddress: addressData
 	  });
-        });
+        })
+          .catch((e: any) => {
+            console.warn('[wc-blockchain] getCurrentAddress failed, will retry', e);
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              getAddress: undefined,
+            });
+          });
       } else if (getBalance) {
         rpc.getWalletBalance({
           walletId: 1
@@ -356,6 +452,34 @@ export function connectRealBlockchain(baseUrl: string) {
             responseId: evt.requestId,
 	    getBalance: balanceResult.spendableBalance
 	  });
+        })
+          .catch((e: any) => {
+            console.warn('[wc-blockchain] getWalletBalance failed, will retry', e);
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              getBalance: undefined,
+            });
+          });
+      } else if (evt.selectCoins) {
+        blockchainConnector.replyEmitter({
+          responseId: evt.requestId,
+          error: 'selectCoins not yet implemented for WalletConnect',
+        });
+      } else if (evt.getHeightInfo) {
+        rpc.getHeightInfo({}).then((height) => {
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, getHeightInfo: height });
+        }).catch((e: any) => {
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, error: JSON.stringify(e) });
+        });
+      } else if (evt.createOfferForIds) {
+        rpc.createOfferForIds({
+          offer: evt.createOfferForIds.offer,
+          extraConditions: evt.createOfferForIds.extraConditions,
+          coinIds: evt.createOfferForIds.coinIds,
+        } as any).then((result) => {
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, createOfferForIds: result });
+        }).catch((e: any) => {
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, error: JSON.stringify(e) });
         });
       } else {
         console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);
@@ -368,10 +492,21 @@ export function connectRealBlockchain(baseUrl: string) {
   });
 }
 
+export function disconnectRealBlockchain() {
+  realBlockchainInfo.stopMonitoring();
+  if (realOutboundSubscription) {
+    realOutboundSubscription.unsubscribe();
+    realOutboundSubscription = undefined;
+  }
+}
+
 blockchainDataEmitter.getSelectionObservable().subscribe({
   next: (e: SelectionMessage) => {
     if (e.selection == REAL_BLOCKCHAIN_ID) {
       realBlockchainInfo.startMonitoring();
+      connectRealBlockchain();
+    } else {
+      disconnectRealBlockchain();
     }
   },
 });

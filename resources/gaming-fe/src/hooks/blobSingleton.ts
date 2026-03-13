@@ -42,8 +42,8 @@ export async function configGameObject(
   gameObject.setBlockchainAddress(address);
   let { game: cradle, puzzleHash } = wasmStateInit.createGame(calpokerHexes.proposalHex, calpokerHexes.parserHex, rngId, wasmConnection, iStarted, amount, amount, address.puzzleHash);
   gameObject.setGameCradle(cradle);
-  let coin = await wasmStateInit.createStartCoin(blockchain, uniqueId, puzzleHash, amount, wasmConnection);
-  gameObject.activateSpend(coin.coinString);
+
+  gameObject.startHandshake();
   return gameObject;
 }
 
@@ -106,7 +106,6 @@ export function getBlobSingleton(
     blockchain,
     uniqueId,
     amount,
-    iStarted,
     peerconn,
   );
 

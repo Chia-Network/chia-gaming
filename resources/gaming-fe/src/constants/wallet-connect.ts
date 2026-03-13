@@ -36,6 +36,12 @@ export enum ChiaMethod {
   SetNftDid = 'chia_setNFTDID',
   GetNftWalletsWithDids = 'chia_getNFTWalletsWithDIDs',
   GetWalletAddresses = 'chia_getWalletAddresses',
+  GetHeightInfo = 'chia_getHeightInfo',
+  SelectCoins = 'chia_selectCoins',
+  CreateNewRemoteWallet = 'chia_createNewRemoteWallet',
+  RegisterRemoteCoins = 'chia_registerRemoteCoins',
+  GetCoinRecordsByNames = 'chia_getCoinRecordsByNames',
+  PushTx = 'chia_pushTx',
 }
 
 export const REQUIRED_NAMESPACES: ProposalTypes.RequiredNamespaces = {
