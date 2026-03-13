@@ -7,6 +7,7 @@ import {
 } from '../types/ChiaGaming';
 
 import { RANK_SYMBOLS } from '../features/calPoker/components/constants/constants';
+import { makeDescription } from '../features/calPoker/components/utils/MakeDescription';
 import { ChevronDown, Expand } from 'lucide-react';
 
 interface GameLogProps {
@@ -17,14 +18,6 @@ const getRankSymbol = (n: number) => RANK_SYMBOLS[n] ?? n.toString();
 
 const GameLog: React.FC<GameLogProps> = ({ log }) => {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
-
-  const makeDescription = (desc: OutcomeHandType) => {
-    const mappedValues = desc.values.map((v: number) => getRankSymbol(v));
-    if (desc.rank) {
-      return `${desc.name} ${mappedValues.join(', ')}`;
-    }
-    return `${desc.name} ${mappedValues[0]}`;
-  };
 
   const cardDisplay = (
     c: number,

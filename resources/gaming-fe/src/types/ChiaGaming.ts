@@ -602,7 +602,6 @@ export interface InternalBlockchainInterface {
 
 export interface OutcomeHandType {
   name: string;
-  rank: boolean;
   values: number[];
 }
 
@@ -654,39 +653,45 @@ export function handValueToDescription(
 ): OutcomeHandType {
   const handType = rget(handValue, 0, 3, 0);
 
+  // Hand encoding from onehandcalc.clinc:
+  //   straight flush: (5 high_card)
+  //   4 of a kind:    (4 1 quad_rank kicker)
+  //   full house:     (3 2 set_rank pair_rank)
+  //   flush:          (3 1 3 high_card k1 k2 k3 k4)
+  //   straight:       (3 1 2 high_card)
+  //   set:            (3 1 1 set_rank k1 k2)
+  //   two pair:       (2 2 1 high_pair low_pair kicker)
+  //   pair:           (2 1 1 1 pair_rank k1 k2 k3)
+  //   high card:      (1 1 1 1 1 high k1 k2 k3 k4)
+
   switch (handType.toString()) {
     case '3,1,3':
       return {
         name: 'Flush',
-        rank: false,
-        values: [cardIdToRankSuit(aget(myCards, 0, 0)).suit],
+        values: rget(handValue, 3, 8, 0),
       };
 
     case '3,1,2':
       return {
         name: 'Straight',
-        rank: true,
         values: [aget(handValue, 3, 0)],
       };
 
     case '3,1,1':
       return {
         name: 'Three of a kind',
-        rank: true,
         values: rget(handValue, 3, 6, 0),
       };
 
     case '2,2,1':
       return {
-        name: 'Two pairs',
-        rank: true,
+        name: 'Two Pair',
         values: rget(handValue, 3, 6, 0),
       };
 
     case '2,1,1':
       return {
         name: 'Pair',
-        rank: true,
         values: rget(handValue, 4, 8, 0),
       };
   }
@@ -697,14 +702,12 @@ export function handValueToDescription(
     case '4,1':
       return {
         name: 'Four of a kind',
-        rank: true,
         values: rget(handValue, 2, 4, 0),
       };
 
     case '3,2':
       return {
         name: 'Full house',
-        rank: true,
         values: rget(handValue, 2, 4, 0),
       };
   }
@@ -712,14 +715,12 @@ export function handValueToDescription(
   if (handType[0] == 5) {
     return {
       name: 'Straight flush',
-      rank: true,
       values: [aget(handValue, 1, 0)],
     };
   }
 
   return {
     name: 'High card',
-    rank: true,
-    values: [aget(handValue, 5, 0)],
+    values: rget(handValue, 5, 10, 0),
   };
 }

@@ -54,10 +54,12 @@ export const makeDescription = (desc: OutcomeHandType) => {
         : `${name}, ${main}s`;
 
     case 'two pair':
-      // e.g., "Two Pair, Aces over Fours, Queen kicker"
-      return values.length >= 2
-        ? `${name}, ${values[0]}s over ${values[1]}s${kickers.length ? ', ' + kickers[0] + ' kicker' : ''}`
-        : name;
+      // values = [high_pair, low_pair, kicker]
+      return values.length >= 3
+        ? `Two Pair, ${values[0]}s over ${values[1]}s, ${values[2]} kicker`
+        : values.length >= 2
+          ? `Two Pair, ${values[0]}s over ${values[1]}s`
+          : name;
 
     case 'pair':
       // e.g., "Pair, Twos. Ace, King, Jack kickers"
