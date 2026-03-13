@@ -16,7 +16,7 @@ use crate::common::types::{
     PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::potato_handler::effects::{Effect, ResyncInfo};
-use crate::potato_handler::handshake::{HandshakeA, HandshakeB};
+use crate::potato_handler::handshake::{HandshakeB, HandshakeC, HandshakeD};
 use crate::potato_handler::start::GameStart;
 use crate::referee::types::GameMoveDetails;
 
@@ -230,13 +230,13 @@ pub enum BatchAction {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum PeerMessage {
-    // Fixed in order sequence
-    HandshakeA(HandshakeA),
+    HandshakeA(HandshakeB),
     HandshakeB(HandshakeB),
-
-    /// Includes spend of launcher coin id.
+    HandshakeC(HandshakeC),
+    HandshakeD(HandshakeD),
     HandshakeE {
         bundle: SpendBundle,
+        signatures: PotatoSignatures,
     },
     HandshakeF {
         bundle: SpendBundle,
@@ -258,6 +258,8 @@ impl PeerMessage {
             self,
             PeerMessage::HandshakeA(_)
                 | PeerMessage::HandshakeB(_)
+                | PeerMessage::HandshakeC(_)
+                | PeerMessage::HandshakeD(_)
                 | PeerMessage::HandshakeE { .. }
                 | PeerMessage::HandshakeF { .. }
         )

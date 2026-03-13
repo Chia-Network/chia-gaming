@@ -106,11 +106,12 @@ function clvm_enlist(clvms: string[]): string {
 }
 
 function clvm_length(atom: string): string {
-  if (atom.length <= 0x80) {
-    const alen = ((atom.length / 2) | 0x80).toString(16);
+  const byteLen = atom.length / 2;
+  if (byteLen <= 63) {
+    const alen = (byteLen | 0x80).toString(16).padStart(2, '0');
     return alen + atom;
   } else {
-    const alen = ((atom.length / 2) | 0xc000).toString(16);
+    const alen = (byteLen | 0xc000).toString(16).padStart(4, '0');
     return alen + atom;
   }
 }

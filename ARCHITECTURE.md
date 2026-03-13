@@ -91,25 +91,34 @@ the other can preempt with the newer one.
 ```
 Funding coins (one per player)
     │
-    ▼  (both players co-sign)
-Channel Coin ── 2-of-2 multisig (aggregate channel keys)
-    │
-    ▼  (spend to unroll)
-Unroll Coin ── unroll_puzzle.clsp (sequence number, default conditions)
-    │
-    ▼  (timeout / preemption)
-┌───┴───────────────────────┐
-│                           │
-▼                           ▼
-Reward Coins (balances)     Game Coins ── referee puzzle (curried with RefereePuzzleArgs)
-                                │
-                                ▼  (move / timeout / slash)
-                            New Game Coin or Payout Coins
+    ├── Alice's coin creates 0-value launcher child
+    │       │
+    │       ▼
+    │   Launcher Coin ── SINGLETON_LAUNCHER puzzle
+    │       │
+    │       ▼  (launcher creates channel coin)
+    └──▶ Channel Coin ── 2-of-2 multisig (aggregate channel keys)
+             │
+             ▼  (spend to unroll)
+         Unroll Coin ── unroll_puzzle.clsp (sequence number, default conditions)
+             │
+             ▼  (timeout / preemption)
+         ┌───┴───────────────────────┐
+         │                           │
+         ▼                           ▼
+         Reward Coins (balances)     Game Coins ── referee puzzle (curried with RefereePuzzleArgs)
+                                         │
+                                         ▼  (move / timeout / slash)
+                                     New Game Coin or Payout Coins
 ```
 
 ### Channel Coin
 
-- Created from both players' funding transactions.
+- Created as a child of a **standard singleton launcher**.  The launcher's
+parent is a wallet coin selected by Alice during the handshake.  Both
+players' funding coins contribute to the launcher transaction, and both
+assert `ASSERT_COIN_ANNOUNCEMENT` on the launcher's output plus
+`ASSERT_BEFORE_HEIGHT_ABSOLUTE` as a timeout guard.
 - Controlled by a **2-of-2 aggregate signature** — neither player can spend it
 alone.
 - Every off-chain state update produces a new signed commitment for how this
@@ -200,7 +209,7 @@ Every potato pass is a single `PeerMessage::Batch` containing:
   - `CancelProposal` — cancel a pending proposal
   - `Move` — make a game move
   - `AcceptTimeout` — accept a game result (end game)
-2. `**signatures: PotatoSignatures**` — two half-signatures covering the final
+2. `**signatures: PotatoSignatures`** — two half-signatures covering the final
   channel state after all actions in the batch have been applied:
   - A half-signature of the **channel coin** spend committing to the new unroll
   coin (so both players can unroll to the latest agreed state).
@@ -242,12 +251,12 @@ The `current_state_number` increments once per batch, not per action.
 Before batch processing begins, two checks protect the receiver:
 
 - **Message size limit:** Messages larger than 10 MiB are rejected immediately
-  in `process_incoming_message`, before deserialization. This prevents a
-  malicious peer from consuming unbounded memory.
+in `process_incoming_message`, before deserialization. This prevents a
+malicious peer from consuming unbounded memory.
 - **Double-potato detection:** If a `Batch` arrives while we already hold the
-  potato (`PotatoState::Present`), it is rejected as a protocol violation.
-  Only one player can hold the potato at a time; receiving a second batch
-  means the peer is misbehaving.
+potato (`PotatoState::Present`), it is rejected as a protocol violation.
+Only one player can hold the potato at a time; receiving a second batch
+means the peer is misbehaving.
 
 ### Local Action Queueing
 
@@ -269,17 +278,140 @@ that does not carry the potato and can be sent at any time.
 
 **Key code:** `src/potato_handler/mod.rs` (`PotatoHandler`, `PotatoState`)
 
-### Handshake
+### Handshake (6-Message Protocol)
 
-Before play begins, the two players execute a multi-step handshake
-(steps A through F) to:
+Before play begins, the two players execute a 6-message handshake that
+establishes the state channel.  The protocol is designed so that Alice
+commits the channel coin ID (derived from a singleton launcher) before
+either party signs any unroll state.  This prevents either side from
+stealing funds or burning the other's money.
 
-1. Exchange public keys (channel keys, unroll keys, referee keys)
-2. Agree on channel parameters (timeout, amounts)
-3. Co-sign the initial channel coin creation
-4. Reach `ChannelState::Finished`
+#### Message Flow
 
-**Key code:** `src/potato_handler/handshake.rs`, `src/potato_handler/start.rs`
+
+| #   | Direction   | Message type | Payload                                                                                     |
+| --- | ----------- | ------------ | ------------------------------------------------------------------------------------------- |
+| 1   | Alice → Bob | HandshakeA   | Alice's public keys (channel, unroll, referee), reward puzzle hash, reward payout signature |
+| 2   | Bob → Alice | HandshakeB   | Bob's public keys (channel, unroll, referee), reward puzzle hash, reward payout signature   |
+| 3   | Alice → Bob | HandshakeC   | `CoinString` of the launcher coin (parent + SINGLETON_LAUNCHER_HASH + 0)                    |
+| 4   | Bob → Alice | HandshakeD   | Bob's state-0 `PotatoSignatures` (half-sigs for channel and unroll coins)                   |
+| 5   | Alice → Bob | HandshakeE   | Alice's partial `SpendBundle` (wallet spend + launcher spend) + state-0 `PotatoSignatures`   |
+| 6   | Bob → Alice | HandshakeF   | Final combined `SpendBundle` (Alice's spends + Bob's wallet spend)                           |
+
+
+Between messages 2 and 3 Alice must consult her wallet to select a coin
+that will serve as the launcher parent.  The library emits
+`Effect::NeedLauncherCoinId`; the hosting layer (WASM wrapper or
+simulator) calls `selectCoins`, computes the launcher coin, and feeds it
+back via `PotatoHandler::provide_launcher_coin`.
+
+Bob verifies in message 3 that the launcher coin's puzzle hash equals
+`SINGLETON_LAUNCHER_HASH`, ensuring the channel coin parent is a
+standard launcher.
+
+Between messages 4 and 5, Alice must obtain a wallet `SpendBundle`
+contributing her share of the channel funding.  The library emits
+`Effect::NeedCoinSpend(CoinSpendRequest)` containing the required
+amount, conditions (CREATE_COIN for the launcher, ASSERT_COIN_ANNOUNCEMENT,
+ASSERT_BEFORE_HEIGHT_ABSOLUTE), and the wallet coin ID to use.  The
+hosting layer calls `createOfferForIds` to get a `SpendBundle` from the
+wallet, then feeds it back via `provide_coin_spend_bundle`.  The library
+appends the launcher `CoinSpend` and sends the combined bundle in
+HandshakeE.
+
+Between messages 5 and 6, Bob must similarly obtain a wallet
+`SpendBundle` contributing his share.  The library emits
+`Effect::NeedCoinSpend` with Bob's conditions (ASSERT_COIN_ANNOUNCEMENT,
+ASSERT_BEFORE_HEIGHT_ABSOLUTE) and amount.  After receiving the wallet
+bundle, the library combines it with Alice's bundle from HandshakeE
+and sends the final transaction in HandshakeF.  Both players publish
+the same final `SpendBundle` to the network.
+
+#### State Machine (PotatoHandler `ChannelState`)
+
+Alice (initiator, `have_potato = true`):
+
+```
+StepA → WaitForBobKeys → WaitForLauncher → WaitForBobSigs → WaitForAliceSpend → WaitForCompletion → Finished
+          (send A)        (NeedLauncherCoinId)  (recv D,          (NeedCoinSpend,      (recv F)
+                          (provide_launcher →    NeedCoinSpend)    provide_coin_spend →
+                           send C)                                 send E)
+```
+
+Bob (responder, `have_potato = false`):
+
+```
+StepB → WaitForCoinId → WaitForOffer → WaitForBobSpend → Finished
+  (recv A, send B)   (recv C, send D) (recv E,           (NeedCoinSpend,
+                                       NeedCoinSpend)     provide_coin_spend →
+                                                          send F)
+```
+
+#### Security Properties
+
+1. **No unroll signatures before coin ID is known:** Alice sends the
+  channel coin ID in message 3.  Only after Bob has this ID does he
+   sign any unroll state (message 4).  Alice likewise only signs after
+   verifying Bob's signatures (message 5).
+2. **Launcher verification:** Bob checks that the launcher coin's puzzle
+  hash is `SINGLETON_LAUNCHER_HASH`, ensuring Alice cannot substitute an
+   arbitrary coin.
+3. **Signature symmetry:** Both sides call
+  `ChannelHandler::verify_and_store_initial_peer_signatures` to verify
+   the other's half-signatures against the agreed channel coin ID and
+   state-0 unroll conditions before proceeding.
+
+#### Wallet API Interaction
+
+The handshake requires interaction with the Chia wallet at three points:
+
+
+| Call                                    | When                          | Purpose                                                          |
+| --------------------------------------- | ----------------------------- | ---------------------------------------------------------------- |
+| `selectCoins(amount)`                   | After message 2 (Alice only)  | Select a wallet coin whose ID becomes the launcher parent        |
+| `createOfferForIds(amount, conditions)` | After message 4 (Alice)       | Get a signed `SpendBundle` contributing Alice's share of funding |
+| `createOfferForIds(amount, conditions)` | After message 5 (Bob)         | Get a signed `SpendBundle` contributing Bob's share of funding   |
+
+
+The `createOfferForIds` call takes the player's contribution amount,
+extra conditions (assertions and CREATE_COIN for the launcher), and
+optionally a specific coin ID to spend.  It returns a `SpendBundle`
+containing one wallet coin spend with the requested conditions.
+
+In the **simulator** these are implemented by `Simulator::select_coins`
+and the `create_offer_for_ids` HTTP endpoint (which calls
+`standard_solution_partial` to produce a signed spend).  In the **real
+wallet** they map to WalletConnect RPCs:
+
+- `chia_selectCoins` — select spendable coins totalling at least the
+required amount.
+- `chia_createOfferForIds` — create a signed `SpendBundle` with the
+specified conditions and amount.  The `extraConditions` parameter
+carries the channel-specific assertions; `coinIds` optionally pins
+the spend to a specific coin.
+- `chia_pushTx` — broadcast the final combined `SpendBundle` to the
+network (both players submit it).
+
+#### Channel Coin Funding
+
+The channel coin is created via a **standard singleton launcher**.  The
+funding transaction contains three spends:
+
+1. **Alice's wallet coin** — creates the 0-value launcher child and
+  asserts `ASSERT_COIN_ANNOUNCEMENT` (launcher announces the channel
+   coin creation) and `ASSERT_BEFORE_HEIGHT_ABSOLUTE` (timeout guard).
+2. **Bob's wallet coin** — asserts the same announcement and height
+  conditions.
+3. **Launcher coin** — the standard launcher puzzle, whose solution is
+  `(channel_puzzle_hash, total_amount, ())`.
+
+This produces the channel coin as a child of the launcher, with the
+agreed puzzle hash and combined amount.
+
+**Key code:** `src/potato_handler/mod.rs` (state machine),
+`src/potato_handler/handshake.rs` (message types, `ChannelState`),
+`src/channel_handler/mod.rs` (`get_initial_signatures`,
+`verify_and_store_initial_peer_signatures`)
 
 ---
 
@@ -308,20 +440,20 @@ several checks before recording the proposal. Any failure rejects the batch
 (triggering rollback and go-on-chain):
 
 - **Nonce parity:** The proposal's `game_id` nonce must have the correct parity
-  for the sender's role (even for initiator, odd for responder).
+for the sender's role (even for initiator, odd for responder).
 - **Nonce monotonicity:** The nonce must be >= the expected minimum (nonces may
-  skip due to cancelled proposals, but cannot go backwards).
+skip due to cancelled proposals, but cannot go backwards).
 - **Nonce gap cap:** The nonce must not jump more than `MAX_NONCE_GAP` (1000)
-  ahead of the expected value. Prevents a malicious peer from claiming an
-  absurdly high nonce.
+ahead of the expected value. Prevents a malicious peer from claiming an
+absurdly high nonce.
 - **Amount consistency:** The proposal's `amount` must equal
-  `my_contribution + their_contribution`. Prevents the peer from creating games
-  where money appears or disappears.
+`my_contribution + their_contribution`. Prevents the peer from creating games
+where money appears or disappears.
 - **Timeout cap:** The proposal's `timeout` must not exceed `MAX_GAME_TIMEOUT`
-  (10000 blocks). Prevents a peer from locking funds in unreasonably long games.
+(10000 blocks). Prevents a peer from locking funds in unreasonably long games.
 - **Proposal count limit:** The total number of outstanding proposals must not
-  exceed `MAX_PROPOSALS` (100). Prevents a peer from flooding proposals to
-  exhaust memory or starve resources.
+exceed `MAX_PROPOSALS` (100). Prevents a peer from flooding proposals to
+exhaust memory or starve resources.
 
 Multiple proposals and acceptances can be batched in a single potato pass.
 Acceptances should be ordered before proposals in the batch to ensure funds
@@ -402,12 +534,12 @@ produces a new signed unroll commitment.
 
 When `apply_received_move` processes an incoming `BatchAction::Move`, it checks:
 
-- **`mover_share` <= game amount:** The peer cannot claim a timeout share larger
-  than the pot.
+- `**mover_share` <= game amount:** The peer cannot claim a timeout share larger
+than the pot.
 - **Move size <= `max_move_size`:** The move bytes must not exceed the limit set
-  by the previous move's validator. The limit is read from `spend_this_coin()`
-  (the post-move referee args), which reflects the constraint the validator
-  declared for the *next* move.
+by the previous move's validator. The limit is read from `spend_this_coin()`
+(the post-move referee args), which reflects the constraint the validator
+declared for the *next* move.
 
 Both failures reject the batch (rollback and go-on-chain).
 
@@ -486,10 +618,10 @@ If the game coin landed at the pre-move state, `get_redo_action` returns a
 redo action that replays the cached action on-chain. There are two redo
 variants:
 
-- `**RedoMove*`*: The cached action was a game move. The redo replays the move
+- `**RedoMove`**: The cached action was a game move. The redo replays the move
 using the cached move data and the actual on-chain coin ID. After the redo,
 the game coin advances to the latest known state.
-- `**RedoAcceptTimeout**`: The cached action was an off-chain accept_timeout.
+- `**RedoAcceptTimeout*`*: The cached action was an off-chain accept_timeout.
 The redo replays the pre-computed accept transaction. After the redo, the
 game is resolved and timeout handling proceeds as below.
 
@@ -678,7 +810,7 @@ depending on whether the game was fully established or still in-flight:
   entry in `cached_last_actions`). The opponent hadn't acknowledged the
   accept when they published the stale unroll, so the game coin never
   existed in that state. The accept was simply rolled back.
-  - `**GameError**` — the game was an established live game (its accept
+  - `**GameError`** — the game was an established live game (its accept
   was acknowledged by a complete round-trip) that should have been
   present in the unroll but wasn't. This indicates genuinely adversarial
   or buggy behavior.
@@ -693,26 +825,26 @@ rather than attempting to resume the game from the stale state. This is
 intentional for several reasons:
 
 1. **Rarity.** This can only happen when you're having trouble posting
-   transactions (preemption failed, your timeout was too slow, etc.). In
+  transactions (preemption failed, your timeout was too slow, etc.). In
    that situation you're likely unable to transact reliably anyway.
 2. **Opponent divergence.** If the game were resumed from the stale state,
-   the opponent could play a *different* move than they did off-chain. The
+  the opponent could play a *different* move than they did off-chain. The
    code logic and UX for handling that divergence (re-validating a
    different move history, surfacing "they changed their move" to the
    player) are complex and error-prone.
 3. **One terminal condition.** The current approach guarantees exactly one
-   terminal event per game — either the game was matched and continues
+  terminal event per game — either the game was matched and continues
    normally, or it gets a `GameError`/`GameCancelled`. There is no
    ambiguous middle state where a game is "maybe recoverable."
 
 ### Notifications
 
 
-| Notification                                      | When                                                                                     |
-| ------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Notification                                     | When                                                                                     |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------- |
 | `StaleChannelUnroll { our_reward, reward_coin }` | Always emitted when `is_stale` is true                                                   |
-| `GameError { id, reason }`                        | Per-game: coin present but unrecognizable, or established live game missing from outputs |
-| `GameCancelled { id }`                            | Per-game: pending accept (in-flight) absent from outputs — the accept was rolled back    |
+| `GameError { id, reason }`                       | Per-game: coin present but unrecognizable, or established live game missing from outputs |
+| `GameCancelled { id }`                           | Per-game: pending accept (in-flight) absent from outputs — the accept was rolled back    |
 
 
 **Key code:** `src/potato_handler/mod.rs` — `finish_on_chain_transition`,
@@ -731,12 +863,12 @@ from tracking.
 ### Rationale
 
 1. **No rational incentive.**  When our share is zero the opponent has nothing
-   to gain by playing (they already have everything) and we have nothing to
+  to gain by playing (they already have everything) and we have nothing to
    claim.  Waiting for a timeout is pure overhead.
 2. **Avoids unnecessary transactions.**  Submitting a redo move or timeout
-   claim that yields zero reward wastes block space and fees.
+  claim that yields zero reward wastes block space and fees.
 3. **Clean terminal signal.**  The UX immediately learns the game is over,
-   rather than waiting many blocks for a timeout that produces nothing.
+  rather than waiting many blocks for a timeout that produces nothing.
 
 ### Trigger Points
 
@@ -746,18 +878,16 @@ The early-out fires at five distinct points.
 `set_state_for_coins` populates the `game_map`):
 
 1. **Pending redo with zero reward.**  A move was sent off-chain but the
-   potato hadn't come back.  The unroll lands at the pre-move state and a redo
+  potato hadn't come back.  The unroll lands at the pre-move state and a redo
    is queued.  If the post-redo `our_current_share` would be zero, the redo is
    skipped and `WeTimedOut(0)` fires.  Checked via `is_redo_zero_reward()`.
-
 2. **Pending AcceptTimeout with zero share.**  An `AcceptTimeout` was called
-   off-chain but the potato round-trip hadn't completed.  The coin matches via
+  off-chain but the potato round-trip hadn't completed.  The coin matches via
    `pending_accept_timeouts` with `accepted = true`.  If our share is zero,
    `WeTimedOut(0)` fires immediately instead of waiting for the on-chain
    timeout.
-
 3. **Opponent's turn, mover_share == coin_amount.**  The move was
-   acknowledged (no redo needed).  It's the opponent's turn and
+  acknowledged (no redo needed).  It's the opponent's turn and
    `mover_share == coin_amount`, meaning the opponent gets everything on
    timeout and has no incentive to move.  `WeTimedOut(0)` fires.  This
    only applies when it's the opponent's turn — when it's our turn and
@@ -766,15 +896,14 @@ The early-out fires at five distinct points.
 
 **During on-chain play** (action requested by UX):
 
-4. **On-chain move would produce mover_share == coin_amount.**  In
-   `do_on_chain_move`, after computing the move result, if the new
+1. **On-chain move would produce mover_share == coin_amount.**  In
+  `do_on_chain_move`, after computing the move result, if the new
    `mover_share == game_amount` (we as the new waiter get zero) and the move
    is non-terminal (`max_move_size > 0`), the move is not submitted and
    `WeTimedOut(0)` fires.  Terminal moves (`max_move_size == 0`) are always
    submitted because they resolve the game.
-
-5. **On-chain AcceptTimeout with zero share.**  In `do_on_chain_action`'s
-   `AcceptTimeout` handler, if `get_game_our_current_share() == 0`, the game
+2. **On-chain AcceptTimeout with zero share.**  In `do_on_chain_action`'s
+  `AcceptTimeout` handler, if `get_game_our_current_share() == 0`, the game
    is removed and `WeTimedOut(0)` fires instead of setting `accepted = true`
    and waiting for the timeout.
 
@@ -824,7 +953,7 @@ args. After each move, the new game coin swaps `mover_pubkey` and
 `waiter_pubkey` — the previous mover becomes the waiter, and vice versa. This
 is how the referee enforces alternating turns.
 
-**`mover_share` semantics.** On any game coin, `mover_share` is the amount the
+`**mover_share` semantics.** On any game coin, `mover_share` is the amount the
 current mover receives if the coin times out (the waiter receives
 `amount - mover_share`). However, `mover_share` is *set by the previous move*:
 when a player moves, they declare `new_mover_share` as part of their move, and
@@ -1104,13 +1233,13 @@ dispatches incoming messages via `received_message`
 ### Chialisp puzzles
 
 
-| File                                          | Purpose                                                 |
-| --------------------------------------------- | ------------------------------------------------------- |
-| `clsp/unroll/unroll_puzzle.clsp`              | Unroll coin: timeout vs challenge with sequence numbers |
-| `clsp/referee/onchain/referee.clsp`           | Game coin: move / timeout / slash enforcement           |
-| `clsp/games/calpoker/onchain/a-e.clsp`        | Calpoker validation programs (one per protocol step)    |
-| `clsp/games/calpoker/calpoker_generate.clinc` | Off-chain calpoker handlers (Alice & Bob sides)         |
-| `clsp/test/debug_game.clsp`                   | Debug game: validator, my-turn, their-turn, and factory |
+| File                                          | Purpose                                                   |
+| --------------------------------------------- | --------------------------------------------------------- |
+| `clsp/unroll/unroll_puzzle.clsp`              | Unroll coin: timeout vs challenge with sequence numbers   |
+| `clsp/referee/onchain/referee.clsp`           | Game coin: move / timeout / slash enforcement             |
+| `clsp/games/calpoker/onchain/a-e.clsp`        | Calpoker validation programs (one per protocol step)      |
+| `clsp/games/calpoker/calpoker_generate.clinc` | Off-chain calpoker handlers (Alice & Bob sides)           |
+| `clsp/test/debug_game.clsp`                   | Debug game: validator, my-turn, their-turn, and factory   |
 | `clsp/handler_api.txt`                        | Handler calling conventions (see also `HANDLER_GUIDE.md`) |
 
 
@@ -1245,7 +1374,7 @@ There are three kinds of cached entries:
 - `**PotatoMoveHappening`** — a move we sent but the opponent hasn't acknowledged.
 Stores the move data, the puzzle hash it operates on (`match_puzzle_hash`),
 and the post-move puzzle hash (`saved_post_move_last_ph`).
-- `**PotatoAcceptTimeout**` — a game acceptance we sent. Stores the game ID, puzzle
+- `**PotatoAcceptTimeout`** — a game acceptance we sent. Stores the game ID, puzzle
 hash, live game state, and reward amounts. When the potato returns
 (acknowledgment), `drain_cached_accept_timeouts` emits `WeTimedOut` for each cached
 accept.
@@ -1417,16 +1546,18 @@ cleanup and game-over transitions.
 These track the state of the channel itself, from creation through shutdown or
 failure.
 
-| Event                                                    | Delivery         | When                                 | Meaning                                                                                                                                                                        |
-| -------------------------------------------------------- | ---------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `channel_created` (callback)                             | `ToLocalUI`      | Channel coin confirmed on-chain      | The channel coin has been created on-chain and the channel is ready to use                                                                                                     |
-| `going_on_chain` (callback)                              | `ToLocalUI`      | Error detected in peer message       | We are automatically going on-chain due to an error; `reason` describes what went wrong (e.g., invalid peer message, opponent requested clean shutdown while games are active) |
-| `clean_shutdown_started` (callback)                      | `ToLocalUI`      | Clean shutdown sequence begun        | Clean shutdown has been initiated (advisory protocol, not yet on-chain)                                                                                                        |
-| `clean_shutdown_complete` (callback)                     | `ToLocalUI`      | Channel fully closed                 | Channel closed; optional reward coin returned                                                                                                                                  |
-| `ChannelCoinSpent`                                       | GameNotification | Channel coin spend detected on-chain | The channel is being unrolled (by either player)                                                                                                                               |
-| `UnrollCoinSpent { reward_coin }`                        | GameNotification | Unroll coin spend detected on-chain  | Game coins and reward coins are now live; `reward_coin` is `Some(CoinString)` for our change/reward coin from the unroll, `None` if our balance is zero                        |
-| `StaleChannelUnroll { our_reward, reward_coin }`        | GameNotification | Opponent's stale unroll resolved     | Emitted when `on_chain_state < last_received_state`; `our_reward` is the amount in our change coin, `reward_coin` is the coin if nonzero. Per-game outcomes follow separately. |
-| `ChannelError { reason }`                                | GameNotification | Channel or unroll coin unrecoverable | Everything is lost                                                                                                                                                             |
+
+| Event                                            | Delivery         | When                                 | Meaning                                                                                                                                                                        |
+| ------------------------------------------------ | ---------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `channel_created` (callback)                     | `ToLocalUI`      | Channel coin confirmed on-chain      | The channel coin has been created on-chain and the channel is ready to use                                                                                                     |
+| `going_on_chain` (callback)                      | `ToLocalUI`      | Error detected in peer message       | We are automatically going on-chain due to an error; `reason` describes what went wrong (e.g., invalid peer message, opponent requested clean shutdown while games are active) |
+| `clean_shutdown_started` (callback)              | `ToLocalUI`      | Clean shutdown sequence begun        | Clean shutdown has been initiated (advisory protocol, not yet on-chain)                                                                                                        |
+| `clean_shutdown_complete` (callback)             | `ToLocalUI`      | Channel fully closed                 | Channel closed; optional reward coin returned                                                                                                                                  |
+| `ChannelCoinSpent`                               | GameNotification | Channel coin spend detected on-chain | The channel is being unrolled (by either player)                                                                                                                               |
+| `UnrollCoinSpent { reward_coin }`                | GameNotification | Unroll coin spend detected on-chain  | Game coins and reward coins are now live; `reward_coin` is `Some(CoinString)` for our change/reward coin from the unroll, `None` if our balance is zero                        |
+| `StaleChannelUnroll { our_reward, reward_coin }` | GameNotification | Opponent's stale unroll resolved     | Emitted when `on_chain_state < last_received_state`; `our_reward` is the amount in our change coin, `reward_coin` is the coin if nonzero. Per-game outcomes follow separately. |
+| `ChannelError { reason }`                        | GameNotification | Channel or unroll coin unrecoverable | Everything is lost                                                                                                                                                             |
+
 
 `going_on_chain` and `clean_shutdown_started` are notable for not corresponding
 directly to transactions on chain — they are locally-initiated signals about
@@ -1440,11 +1571,13 @@ their own transaction is mined, exactly as if the opponent had initiated it.
 
 These fire during active gameplay (after a game proposal has been accepted).
 
-| Event                                                        | Delivery         | When                                         | Meaning                                                                                                                                                     |
-| ------------------------------------------------------------ | ---------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `opponent_moved` (callback)                                  | `ToLocalUI`      | Opponent made a move                         | `mover_share` is our share on timeout (declared by the opponent's move)                                                                                     |
-| `OpponentPlayedIllegalMove { id }`                           | GameNotification | Opponent's on-chain move detected as illegal | Emitted before submitting the slash transaction; precedes `WeSlashedOpponent` (if slash succeeds) or `OpponentSuccessfullyCheated` (if slash times out)      |
-| `game_message` (callback)                                    | `ToLocalUI`      | Informational message from the game          | E.g., revealed data during commit-reveal                                                                                                                    |
+
+| Event                              | Delivery         | When                                         | Meaning                                                                                                                                                 |
+| ---------------------------------- | ---------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `opponent_moved` (callback)        | `ToLocalUI`      | Opponent made a move                         | `mover_share` is our share on timeout (declared by the opponent's move)                                                                                 |
+| `OpponentPlayedIllegalMove { id }` | GameNotification | Opponent's on-chain move detected as illegal | Emitted before submitting the slash transaction; precedes `WeSlashedOpponent` (if slash succeeds) or `OpponentSuccessfullyCheated` (if slash times out) |
+| `game_message` (callback)          | `ToLocalUI`      | Informational message from the game          | E.g., revealed data during commit-reveal                                                                                                                |
+
 
 ### Proposal Notifications
 
@@ -1462,16 +1595,17 @@ These are the terminal notifications — each signals that a game is finished.
 The frontend should treat any of these as the "game ended" signal.
 
 
-| Notification                                                         | When                                            | Meaning                                                                                                                                                                                                                                                                                     |
-| -------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Notification                                                         | When                                            | Meaning                                                                                                                                                                                                                                                                                           |
+| -------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `InsufficientBalance { id, our_balance_short, their_balance_short }` | Accept attempted with insufficient funds        | The potato holder tried to accept a proposal but one or both players' contributions exceed available balance. The proposal is automatically cancelled (`CancelProposal` sent to peer, `GameProposalCancelled` emitted locally). This is a terminal condition for the `accept_proposal` invariant. |
-| `WeTimedOut { id, our_reward, reward_coin }`                         | Game resolved in our favor                      | Includes off-chain accept-timeout (fires when potato returns) and on-chain timeout; `our_reward` is the amount we received; `reward_coin` is `Some(CoinString)` when on-chain and reward is nonzero, `None` for off-chain resolution                                                       |
-| `OpponentTimedOut { id, our_reward, reward_coin }`            | Game resolved in opponent's favor               | Includes receiving opponent's off-chain accept-timeout; `our_reward` is the amount we received; `reward_coin` is `Some(CoinString)` when on-chain and reward is nonzero, `None` for off-chain                                              |
-| `GameCancelled { id }`                                        | Stale accept of already-cancelled proposal      | Emitted when a queued `AcceptProposal` finds the proposal already gone. Post-acceptance game disappearance uses `GameError`, not `GameCancelled`.                                                                                          |
-| `WeSlashedOpponent { id, reward_coin }`                       | Slash transaction confirmed                     | Opponent's illegal move was proven on-chain; `reward_coin` is the `CoinString` of the reward we received                                                                                                                                   |
-| `OpponentSlashedUs { id }`                                    | Opponent slashed us                             | Our move was proven illegal on-chain                                                                                                                                                                                                       |
-| `OpponentSuccessfullyCheated { id, our_reward, reward_coin }` | Illegal-move coin timed out before we slashed   | Opponent made an illegal move on-chain and we failed to slash before they claimed a timeout; `our_reward` is what the cheater left us (the `mover_share` they declared for us — zero if they maximized their own take)                      |
-| `GameError { id, reason }`                                    | A single game coin is in an unrecoverable state | Something went wrong with one game                                                                                                                                                                                                         |
+| `WeTimedOut { id, our_reward, reward_coin }`                         | Game resolved in our favor                      | Includes off-chain accept-timeout (fires when potato returns) and on-chain timeout; `our_reward` is the amount we received; `reward_coin` is `Some(CoinString)` when on-chain and reward is nonzero, `None` for off-chain resolution                                                              |
+| `OpponentTimedOut { id, our_reward, reward_coin }`                   | Game resolved in opponent's favor               | Includes receiving opponent's off-chain accept-timeout; `our_reward` is the amount we received; `reward_coin` is `Some(CoinString)` when on-chain and reward is nonzero, `None` for off-chain                                                                                                     |
+| `GameCancelled { id }`                                               | Stale accept of already-cancelled proposal      | Emitted when a queued `AcceptProposal` finds the proposal already gone. Post-acceptance game disappearance uses `GameError`, not `GameCancelled`.                                                                                                                                                 |
+| `WeSlashedOpponent { id, reward_coin }`                              | Slash transaction confirmed                     | Opponent's illegal move was proven on-chain; `reward_coin` is the `CoinString` of the reward we received                                                                                                                                                                                          |
+| `OpponentSlashedUs { id }`                                           | Opponent slashed us                             | Our move was proven illegal on-chain                                                                                                                                                                                                                                                              |
+| `OpponentSuccessfullyCheated { id, our_reward, reward_coin }`        | Illegal-move coin timed out before we slashed   | Opponent made an illegal move on-chain and we failed to slash before they claimed a timeout; `our_reward` is what the cheater left us (the `mover_share` they declared for us — zero if they maximized their own take)                                                                            |
+| `GameError { id, reason }`                                           | A single game coin is in an unrecoverable state | Something went wrong with one game                                                                                                                                                                                                                                                                |
+
 
 `GameError` covers situations that "should never happen" under normal
 operation but *can* happen if, for example, a trusted full node sends
@@ -1489,23 +1623,23 @@ notifications (`GameProposalCancelled` for pending proposals, `GameError` for
 live games) are emitted before `ChannelError`, ensuring every open item is
 explicitly resolved.
 
-1. **`propose_game` invariant.** Every `propose_game` call yields exactly one
+1. `**propose_game` invariant.** Every `propose_game` call yields exactly one
   `GameProposalAccepted` or `GameProposalCancelled` for the proposer. The
    `cancel_all_proposals()` call on every exit path (go-on-chain, clean
    shutdown, channel error) is the catch-all that ensures no proposal is left
    unresolved. Enforced by the simulation loop's post-test assertion.
-2. **`GameProposed` invariant.** Every `GameProposed` notification (received
+2. `**GameProposed` invariant.** Every `GameProposed` notification (received
   from the opponent) yields exactly one `GameProposalAccepted` or
    `GameProposalCancelled` for the receiver. Enforced by the simulation loop's
    post-test assertion.
-3. **`accept_proposal` invariant.** Every `AcceptProposal` call yields exactly one
+3. `**accept_proposal` invariant.** Every `AcceptProposal` call yields exactly one
   terminal game notification: `InsufficientBalance`, `GameCancelled` (stale
    accept where the proposal was already cancelled), `WeTimedOut`,
    `OpponentTimedOut`, `WeSlashedOpponent`, `OpponentSlashedUs`,
    `OpponentSuccessfullyCheated`, or `GameError`. Note:
    `InsufficientBalance` is terminal (it auto-cancels the proposal).
    Enforced by the simulation loop's post-test assertion.
-4. **`GameProposalAccepted` invariant.** Every `GameProposalAccepted` notification
+4. `**GameProposalAccepted` invariant.** Every `GameProposalAccepted` notification
   yields exactly one terminal game notification: `WeTimedOut`,
    `OpponentTimedOut`, `WeSlashedOpponent`, `OpponentSlashedUs`,
    `OpponentSuccessfullyCheated`, or `GameError`. Note: `GameCancelled` is
@@ -1636,9 +1770,9 @@ When `cheat()` is called on a `GameCradle`:
 ### Outcomes
 
 
-| Scenario                        | Notification (cheater)                              | Notification (victim)         |
-| ------------------------------- | --------------------------------------------------- | ----------------------------- |
-| Opponent detects and slashes    | `OpponentSlashedUs`                                 | `WeSlashedOpponent`           |
+| Scenario                        | Notification (cheater)                                       | Notification (victim)                                         |
+| ------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------- |
+| Opponent detects and slashes    | `OpponentSlashedUs`                                          | `WeSlashedOpponent`                                           |
 | Opponent fails to slash in time | `OpponentTimedOut` (cheater receives `amount - mover_share`) | `OpponentSuccessfullyCheated` (victim receives `mover_share`) |
 
 
@@ -1664,18 +1798,20 @@ there is a bug.
 
 **Strict-mode panics** (soft rejection when non-strict):
 
-| Check                            | What it catches                                                                                                                |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| **Puzzle hash mismatch**         | Computed puzzle hash differs from the coin record's puzzle hash. Indicates incorrect puzzle reconstruction.                     |
-| **Premature timelock**           | `ASSERT_HEIGHT_RELATIVE` not yet satisfied at submission time. The real chain silently drops these.                             |
-| **Conflicting mempool spends**   | Two different transactions spending the same coin. The real chain picks one.                                                    |
-| **CLVM execution error**         | Puzzle/solution fails to run. Means the code submitted a malformed transaction.                                                |
-| **Aggregate signature failure**  | Spend bundle's aggregate signature does not verify. Means signing logic has a bug.                                             |
-| **Implicit fees**                | Outputs total less than inputs but no matching `RESERVE_FEE`. Catches accidental value leakage (the real chain keeps the fee). |
-| **Coin not found**               | Spending a coin that doesn't exist. Means stale state or a logic error in coin tracking.                                       |
-| **Already spent**                | Spending a coin that was spent in a prior block. Means stale timeout or duplicate submission.                                  |
-| **Minting**                      | Outputs exceed inputs (creating value from nothing). Means incorrect amount calculation.                                       |
-| **RESERVE_FEE not satisfied**    | Declared fee exceeds available implicit fee. Means the fee arithmetic is wrong.                                                |
+
+| Check                           | What it catches                                                                                                                |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| **Puzzle hash mismatch**        | Computed puzzle hash differs from the coin record's puzzle hash. Indicates incorrect puzzle reconstruction.                    |
+| **Premature timelock**          | `ASSERT_HEIGHT_RELATIVE` not yet satisfied at submission time. The real chain silently drops these.                            |
+| **Conflicting mempool spends**  | Two different transactions spending the same coin. The real chain picks one.                                                   |
+| **CLVM execution error**        | Puzzle/solution fails to run. Means the code submitted a malformed transaction.                                                |
+| **Aggregate signature failure** | Spend bundle's aggregate signature does not verify. Means signing logic has a bug.                                             |
+| **Implicit fees**               | Outputs total less than inputs but no matching `RESERVE_FEE`. Catches accidental value leakage (the real chain keeps the fee). |
+| **Coin not found**              | Spending a coin that doesn't exist. Means stale state or a logic error in coin tracking.                                       |
+| **Already spent**               | Spending a coin that was spent in a prior block. Means stale timeout or duplicate submission.                                  |
+| **Minting**                     | Outputs exceed inputs (creating value from nothing). Means incorrect amount calculation.                                       |
+| **RESERVE_FEE not satisfied**   | Declared fee exceeds available implicit fee. Means the fee arithmetic is wrong.                                                |
+
 
 **Key code:** `src/simulator/mod.rs` — `push_tx`
 
@@ -1752,10 +1888,10 @@ The `game_assert!` and `game_assert_eq!` macros (defined in
 `src/common/types/macros.rs`) bridge these two needs:
 
 - **Debug / test builds:** the macro panics immediately (via `debug_assert!`),
-  making invariant violations impossible to miss during development.
+making invariant violations impossible to miss during development.
 - **Release builds:** the macro returns `Err(Error::StrErr(...))`, allowing the
-  caller to handle the failure gracefully (typically by emitting a `GameError`
-  notification and continuing).
+caller to handle the failure gracefully (typically by emitting a `GameError`
+notification and continuing).
 
 ### Usage
 
@@ -1769,13 +1905,15 @@ this because the macro contains a `return Err(...)`.
 
 ### When to use each pattern
 
-| Situation | Pattern |
-| --- | --- |
-| Internal invariant (own logic) | `game_assert!` / `game_assert_eq!` |
-| Data from peer or blockchain | Return `Err` directly (never trust external data) |
-| Deserialization of wire data | `map_err(serde::de::Error::custom)?` |
-| Infallible conversions (e.g. `0.to_bigint()`) | `.unwrap()` is acceptable |
-| Test-only code | Standard `assert!` / `assert_eq!` |
+
+| Situation                                     | Pattern                                           |
+| --------------------------------------------- | ------------------------------------------------- |
+| Internal invariant (own logic)                | `game_assert!` / `game_assert_eq!`                |
+| Data from peer or blockchain                  | Return `Err` directly (never trust external data) |
+| Deserialization of wire data                  | `map_err(serde::de::Error::custom)?`              |
+| Infallible conversions (e.g. `0.to_bigint()`) | `.unwrap()` is acceptable                         |
+| Test-only code                                | Standard `assert!` / `assert_eq!`                 |
+
 
 ### Rationale
 
@@ -1786,4 +1924,3 @@ macros replace these with a single consistent pattern that is strict during
 development but graceful in production.
 
 **Key code:** `src/common/types/macros.rs`
-

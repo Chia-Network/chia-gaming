@@ -83,6 +83,10 @@ export interface WasmConnection {
 
   // Blockchain
   opening_coin: (cid: number, coinstring: string) => any;
+  start_handshake: (cid: number) => any;
+  provide_launcher_coin: (cid: number, hex_launcher_coin: string) => any;
+  provide_coin_spend_bundle: (cid: number, bundle_json: string) => any;
+  get_channel_puzzle_hash: (cid: number) => string | null;
   new_block: (
     cid: number,
     height: number,
@@ -220,6 +224,22 @@ export class ChiaGame {
 
   opening_coin(coin_string: string): any {
     return this.wasm.opening_coin(this.cradle, coin_string);
+  }
+
+  start_handshake(): any {
+    return this.wasm.start_handshake(this.cradle);
+  }
+
+  provide_launcher_coin(hex_launcher_coin: string): any {
+    return this.wasm.provide_launcher_coin(this.cradle, hex_launcher_coin);
+  }
+
+  provide_coin_spend_bundle(bundle_json: string): any {
+    return this.wasm.provide_coin_spend_bundle(this.cradle, bundle_json);
+  }
+
+  get_channel_puzzle_hash(): string | null {
+    return this.wasm.get_channel_puzzle_hash(this.cradle);
   }
 
   block_data(block_number: number, block_data: WatchReport): any {
@@ -361,6 +381,17 @@ export class ExternalBlockchainInterface {
       },
     ).then((f) => f.json());
   }
+
+  selectCoins(amount: number): Promise<string | null> {
+    return fetch(
+      `${this.baseUrl}/select_coins?who=${this.token}&amount=${amount}`,
+      {
+        body: '',
+        method: 'POST',
+      },
+    ).then((f) => f.json());
+  }
+
 }
 
 function select_cards_using_bits<T>(card: T[], mask: number): T[][] {
@@ -600,6 +631,14 @@ export interface InternalBlockchainInterface {
   spend(convert: (blob: string) => any, spend: string): Promise<string>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
   getBalance(): Promise<number>;
+  selectCoins(uniqueId: string, amount: number): Promise<string | null>;
+  getHeightInfo(): Promise<number>;
+  createOfferForIds(
+    uniqueId: string,
+    offer: { [walletId: string]: number },
+    extraConditions?: Array<{ opcode: number; args: string[] }>,
+    coinIds?: string[],
+  ): Promise<any | null>;
 }
 
 export interface OutcomeHandType {

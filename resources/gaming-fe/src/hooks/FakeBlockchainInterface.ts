@@ -254,6 +254,35 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     return this.upstream.getBalance();
   }
 
+  selectCoins(uniqueId: string, amount: number): Promise<string | null> {
+    return this.upstream.getOrRequestToken(uniqueId).then(() => {
+      return this.upstream.selectCoins(amount);
+    });
+  }
+
+  getHeightInfo(): Promise<number> {
+    return this.upstream.getPeak();
+  }
+
+  createOfferForIds(
+    uniqueId: string,
+    offer: { [walletId: string]: number },
+    extraConditions?: Array<{ opcode: number; args: string[] }>,
+    coinIds?: string[],
+  ): Promise<any | null> {
+    const params: any = { offer };
+    if (extraConditions) params.extraConditions = extraConditions;
+    if (coinIds) params.coinIds = coinIds;
+    return fetch(
+      `${this.baseUrl}/create_offer_for_ids?who=${uniqueId}`,
+      {
+        body: JSON.stringify(params),
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      },
+    ).then((f) => f.json());
+  }
+
   close() {
     this.deleted = true;
     this.incomingEvents = [];
@@ -325,6 +354,29 @@ export function connectSimulatorBlockchain() {
       } else if (getBalance) {
         fakeBlockchainInfo.getBalance().then((balance) => {
           blockchainConnector.replyEmitter({ responseId: evt.requestId, getBalance: balance });
+        });
+      } else if (evt.selectCoins) {
+        fakeBlockchainInfo.selectCoins(evt.selectCoins.uniqueId, evt.selectCoins.amount).then((coin) => {
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, selectCoins: coin });
+        }).catch((e: any) => {
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, error: e.toString() });
+        });
+      } else if (evt.getHeightInfo) {
+        fakeBlockchainInfo.getHeightInfo().then((height) => {
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, getHeightInfo: height });
+        }).catch((e: any) => {
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, error: e.toString() });
+        });
+      } else if (evt.createOfferForIds) {
+        fakeBlockchainInfo.createOfferForIds(
+          evt.createOfferForIds.uniqueId,
+          evt.createOfferForIds.offer,
+          evt.createOfferForIds.extraConditions,
+          evt.createOfferForIds.coinIds,
+        ).then((result) => {
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, createOfferForIds: result });
+        }).catch((e: any) => {
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, error: e.toString() });
         });
       } else {
         console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);

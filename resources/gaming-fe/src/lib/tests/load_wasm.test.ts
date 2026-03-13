@@ -216,7 +216,6 @@ async function initWasmBlobWrapper(
     blockchain,
     uniqueId,
     amount,
-    iStarted,
     peer_conn,
   );
 

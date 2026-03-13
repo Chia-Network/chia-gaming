@@ -45,16 +45,15 @@ export class WasmBlobWrapper {
   finished: boolean;
   reloading: boolean;
   qualifyingEvents: number;
-  iStarted: boolean;
   blockchain: InternalBlockchainInterface;
   rxjsMessageSingleton: Subject<WasmEvent>;
   rxjsEmitter: NextObserver<WasmEvent> | undefined;
+  launcherProvided: boolean;
 
   constructor(
     blockchain: InternalBlockchainInterface,
     uniqueId: string,
     amount: number,
-    iStarted: boolean,
     peer_conn: PeerConnectionResult,
   ) {
     const { sendMessage } = peer_conn;
@@ -64,13 +63,13 @@ export class WasmBlobWrapper {
     this.sendMessage = sendMessage;
     this.amount = amount;
     this.channelReady = false;
-    this.iStarted = iStarted;
     this.storedMessages = [];
     this.cleanShutdownCalled = false;
     this.finished = false;
     this.reloading = false;
     this.qualifyingEvents = 0;
     this.blockchain = blockchain;
+    this.launcherProvided = false;
     this.rxjsMessageSingleton = new Subject<WasmEvent>();
     this.rxjsEmitter = {
       next: (evt: WasmEvent) => {
@@ -127,6 +126,66 @@ export class WasmBlobWrapper {
     this.sendWatchingCoins();
   }
 
+  startHandshake() {
+    if (!this.wc) { throw new Error("this.wc is falsey") }
+    const result = this.cradle?.start_handshake();
+    this.processResult(result);
+    this.sendWatchingCoins();
+  }
+
+  getChannelPuzzleHash(): string | null {
+    return this.cradle?.get_channel_puzzle_hash() ?? null;
+  }
+
+  private async handleNeedLauncherCoin() {
+    if (this.launcherProvided) return;
+    this.launcherProvided = true;
+
+    try {
+      const coin = await this.blockchain.selectCoins(this.uniqueId, this.amount);
+      if (!coin) {
+        console.error('[wasm] selectCoins returned null');
+        this.launcherProvided = false;
+        return;
+      }
+      const { computeLauncherCoin } = await import('../util/launcher');
+      const { launcherCoinHex } = await computeLauncherCoin(coin);
+      const result = this.cradle?.provide_launcher_coin(launcherCoinHex);
+      this.processResult(result);
+    } catch (e) {
+      this.launcherProvided = false;
+      console.error('[wasm] handleNeedLauncherCoin error:', e);
+    }
+  }
+
+  private async handleNeedCoinSpend(request: any) {
+    try {
+      const offerAmount = -request.amount;
+      const extraConditions = (request.conditions || []).map((c: any) => ({
+        opcode: c.opcode,
+        args: c.args,
+      }));
+      const coinIds = request.coin_id ? [request.coin_id] : undefined;
+
+      const bundle = await this.blockchain.createOfferForIds(
+        this.uniqueId,
+        { '1': offerAmount },
+        extraConditions,
+        coinIds,
+      );
+      if (!bundle) {
+        console.error('[wasm] createOfferForIds returned null');
+        return;
+      }
+
+      const bundleJson = typeof bundle === 'string' ? bundle : JSON.stringify(bundle);
+      const result = this.cradle?.provide_coin_spend_bundle(bundleJson);
+      this.processResult(result);
+    } catch (e) {
+      console.error('[wasm] handleNeedCoinSpend error:', e);
+    }
+  }
+
   setBlockchainAddress(a: BlockchainInboundAddressResult) {
     this.rxjsEmitter?.next({ type: 'address', data: a });
   }
@@ -151,7 +210,7 @@ export class WasmBlobWrapper {
     const cvt = (blob: string) => {
       return this.wc?.convert_spend_to_coinset_org(blob);
     };
-    this.blockchain.spend(cvt, blob).then(() => {});
+    this.blockchain.spend(cvt, blob).then(() => {}).catch(() => {});
   }
 
   processResult(result: any): void {
@@ -177,6 +236,12 @@ export class WasmBlobWrapper {
         this.channelReady = true;
       }
       this.rxjsEmitter?.next({ type: 'notification', data: n });
+    }
+    if (result.need_launcher_coin) {
+      this.handleNeedLauncherCoin();
+    }
+    if (result.need_coin_spend) {
+      this.handleNeedCoinSpend(result.need_coin_spend);
     }
   }
 
@@ -231,7 +296,7 @@ export class WasmBlobWrapper {
   }
 
   private sendWatchingCoins() {
-    if (!this.wc || !this.cradle || window.parent === window) return;
+    if (!this.wc || !this.cradle || typeof window === 'undefined' || window.parent === window) return;
     try {
       const coins = this.wc.get_watching_coins(this.cradle.cradle);
       window.parent.postMessage({ watching_coins: coins }, window.location.origin);

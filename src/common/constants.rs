@@ -7,8 +7,13 @@ lazy_static! {
 }
 
 pub const CREATE_COIN: u32 = 51;
+pub const CREATE_COIN_ANNOUNCEMENT: u32 = 60;
+pub const ASSERT_COIN_ANNOUNCEMENT: u32 = 61;
 pub const REM: u32 = 1;
 pub const ASSERT_HEIGHT_RELATIVE: u32 = 82;
+pub const ASSERT_BEFORE_HEIGHT_ABSOLUTE: u32 = 84;
+
+pub use chia_puzzles::{SINGLETON_LAUNCHER, SINGLETON_LAUNCHER_HASH};
 
 pub const AGG_SIG_UNSAFE_ATOM: [u8; 1] = [49];
 pub const AGG_SIG_ME_ATOM: [u8; 1] = [50];

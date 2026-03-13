@@ -454,6 +454,27 @@ export function connectRealBlockchain() {
               getBalance: undefined,
             });
           });
+      } else if (evt.selectCoins) {
+        blockchainConnector.replyEmitter({
+          responseId: evt.requestId,
+          error: 'selectCoins not yet implemented for WalletConnect',
+        });
+      } else if (evt.getHeightInfo) {
+        rpc.getHeightInfo({}).then((height) => {
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, getHeightInfo: height });
+        }).catch((e: any) => {
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, error: JSON.stringify(e) });
+        });
+      } else if (evt.createOfferForIds) {
+        rpc.createOfferForIds({
+          offer: evt.createOfferForIds.offer,
+          extraConditions: evt.createOfferForIds.extraConditions,
+          coinIds: evt.createOfferForIds.coinIds,
+        } as any).then((result) => {
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, createOfferForIds: result });
+        }).catch((e: any) => {
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, error: JSON.stringify(e) });
+        });
       } else {
         console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);
         blockchainConnector.replyEmitter({

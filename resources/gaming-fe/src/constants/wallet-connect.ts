@@ -37,6 +37,7 @@ export enum ChiaMethod {
   GetNftWalletsWithDids = 'chia_getNFTWalletsWithDIDs',
   GetWalletAddresses = 'chia_getWalletAddresses',
   GetHeightInfo = 'chia_getHeightInfo',
+  SelectCoins = 'chia_selectCoins',
   CreateNewRemoteWallet = 'chia_createNewRemoteWallet',
   RegisterRemoteCoins = 'chia_registerRemoteCoins',
   GetCoinRecordsByNames = 'chia_getCoinRecordsByNames',

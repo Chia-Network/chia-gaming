@@ -132,6 +132,10 @@ import {
   PushTxRequest,
   PushTxResponse,
 } from '../types/rpc/PushTx';
+import {
+  SelectCoinsRequest,
+  SelectCoinsResponse,
+} from '../types/rpc/SelectCoins';
 
 import { walletConnectState } from './useWalletConnect';
 
@@ -218,6 +222,9 @@ interface _JsonRpc {
   ) => Promise<GetNftWalletsWithDidsResponse>;
 
   // Blockchain (remote wallet)
+  selectCoins: (
+    data: SelectCoinsRequest,
+  ) => Promise<SelectCoinsResponse>;
   getHeightInfo: (
     data: GetHeightInfoRequest,
   ) => Promise<GetHeightInfoResponse>;
@@ -453,6 +460,10 @@ async function getNftWalletsWithDids(data: GetNftWalletsWithDidsRequest) {
 
 // Blockchain (remote wallet)
 
+async function selectCoins(data: SelectCoinsRequest) {
+  return await request<SelectCoinsResponse>(ChiaMethod.SelectCoins, data);
+}
+
 async function getHeightInfo(data: GetHeightInfoRequest) {
   return await request<GetHeightInfoResponse>(ChiaMethod.GetHeightInfo, data);
 }
@@ -529,6 +540,7 @@ export const rpc = {
   getNftWalletsWithDids,
 
   // Blockchain (remote wallet)
+  selectCoins,
   getHeightInfo,
   createNewRemoteWallet,
   registerRemoteCoins,

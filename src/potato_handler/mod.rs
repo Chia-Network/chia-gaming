@@ -18,8 +18,8 @@ use crate::channel_handler::types::{
 };
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::{
-    private_to_public_key, puzzle_for_synthetic_public_key, sign_reward_payout,
-    verify_reward_payout_signature,
+    private_to_public_key, puzzle_for_synthetic_public_key, puzzle_hash_for_synthetic_public_key,
+    sign_reward_payout, verify_reward_payout_signature,
 };
 use crate::common::types::{
     chia_dialect, Aggsig, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID,
@@ -36,7 +36,8 @@ use crate::potato_handler::types::{
 };
 
 use crate::potato_handler::handshake::{
-    ChannelState, HandshakeA, HandshakeB, HandshakeStepInfo, HandshakeStepWithSpend,
+    ChannelState, CoinSpendRequest, HandshakeB, HandshakeC, HandshakeD, HandshakeStepInfo,
+    HandshakeStepWithSpend, RawCoinCondition,
 };
 use crate::potato_handler::start::GameStart;
 
@@ -105,8 +106,6 @@ pub struct PotatoHandler {
     game_action_queue: VecDeque<GameAction>,
 
     channel_handler: Option<ChannelHandler>,
-    channel_initiation_transaction: Option<SpendBundle>,
-    channel_finished_transaction: Option<SpendBundle>,
 
     #[serde(
         serialize_with = "serialize_game_type_map",
@@ -122,10 +121,7 @@ pub struct PotatoHandler {
 
     reward_puzzle_hash: PuzzleHash,
 
-    waiting_to_start: bool,
-    // Timeout for the channel coin watcher; the unroll coin uses `unroll_timeout`.
     channel_timeout: Timeout,
-    // Unroll timeout
     unroll_timeout: Timeout,
 
     my_game_spends: HashSet<PuzzleHash>,
@@ -133,8 +129,8 @@ pub struct PotatoHandler {
 
     peer_wants_potato: bool,
 
-    // Cached from the most recent potato exchange so go_on_chain can fix
-    // hs.spend even if the exchange happened before Finished was set.
+    launcher_coin: Option<CoinString>,
+
     #[serde(skip)]
     last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
 }
@@ -177,10 +173,6 @@ impl PotatoHandler {
             game_action_queue: VecDeque::default(),
 
             channel_handler: None,
-            channel_initiation_transaction: None,
-            channel_finished_transaction: None,
-
-            waiting_to_start: true,
 
             private_keys: phi.private_keys,
             my_contribution: phi.my_contribution,
@@ -191,6 +183,7 @@ impl PotatoHandler {
             my_game_spends: HashSet::default(),
             incoming_messages: VecDeque::default(),
             peer_wants_potato: false,
+            launcher_coin: None,
             last_channel_coin_spend_info: None,
         }
     }
@@ -270,12 +263,14 @@ impl PotatoHandler {
             self.channel_state,
             ChannelState::StepA
                 | ChannelState::StepB
-                | ChannelState::StepC(_, _)
-                | ChannelState::StepD(_)
-                | ChannelState::StepE(_)
-                | ChannelState::PostStepE(_)
-                | ChannelState::StepF(_)
-                | ChannelState::PostStepF(_)
+                | ChannelState::WaitForBobKeys(_)
+                | ChannelState::WaitForLauncher(_)
+                | ChannelState::WaitForCoinId(_)
+                | ChannelState::WaitForBobSigs(_)
+                | ChannelState::WaitForAliceSpend(_, _)
+                | ChannelState::WaitForOffer(_)
+                | ChannelState::WaitForBobSpend(_, _)
+                | ChannelState::WaitForCompletion(_)
         )
     }
 
@@ -359,8 +354,261 @@ impl PotatoHandler {
     pub fn start<R: Rng>(
         &mut self,
         _env: &mut ChannelHandlerEnv<'_, R>,
-        parent_coin: CoinString,
     ) -> Result<Option<Effect>, Error> {
+        game_assert!(
+            matches!(self.channel_state, ChannelState::StepA),
+            "start: expected StepA state"
+        );
+
+        let our_keys = self.build_our_handshake_keys();
+        self.channel_state = ChannelState::WaitForBobKeys(Box::new(our_keys.clone()));
+        Ok(Some(Effect::PeerHandshakeA(our_keys)))
+    }
+
+    pub fn provide_launcher_coin<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+        launcher_coin: CoinString,
+    ) -> Result<Vec<Effect>, Error> {
+        let info = match &self.channel_state {
+            ChannelState::WaitForLauncher(info) => (**info).clone(),
+            _ => {
+                return Err(Error::StrErr(
+                    "provide_launcher_coin: not in WaitForLauncher state".to_string(),
+                ));
+            }
+        };
+
+        let launcher_coin_id = launcher_coin.to_coin_id();
+        let (channel_handler, _init_result) =
+            self.make_channel_handler(launcher_coin_id, false, &info.second_player_hs_info, env)?;
+
+        self.channel_handler = Some(channel_handler);
+        self.launcher_coin = Some(launcher_coin.clone());
+
+        let mut effects = Vec::new();
+        effects.push(Effect::PeerHandshakeC(HandshakeC { launcher_coin }));
+        self.channel_state = ChannelState::WaitForBobSigs(Box::new(info));
+        Ok(effects)
+    }
+
+    pub fn provide_coin_spend_bundle<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+        wallet_bundle: SpendBundle,
+    ) -> Result<Vec<Effect>, Error> {
+        let mut effects = Vec::new();
+
+        match std::mem::replace(&mut self.channel_state, ChannelState::Failed) {
+            ChannelState::WaitForAliceSpend(info, our_sigs) => {
+                let launcher_spend = self.build_launcher_coin_spend(env)?;
+
+                let mut combined_spends = wallet_bundle.spends;
+                combined_spends.push(launcher_spend);
+                let combined_bundle = SpendBundle {
+                    name: None,
+                    spends: combined_spends,
+                };
+
+                effects.push(Effect::PeerHandshakeE {
+                    bundle: combined_bundle,
+                    signatures: our_sigs,
+                });
+
+                self.channel_state = ChannelState::WaitForCompletion(info);
+            }
+
+            ChannelState::WaitForBobSpend(info, alice_bundle) => {
+                let mut all_spends = alice_bundle.spends;
+                all_spends.extend(wallet_bundle.spends);
+                let final_bundle = SpendBundle {
+                    name: None,
+                    spends: all_spends,
+                };
+
+                effects.push(Effect::PeerHandshakeF {
+                    bundle: final_bundle.clone(),
+                });
+                effects.push(Effect::SpendTransaction(final_bundle.clone()));
+
+                self.have_potato = PotatoState::Present;
+                effects.push(Effect::Notify(GameNotification::ChannelCreated {}));
+
+                self.transition_to_finished(*info, final_bundle);
+            }
+
+            other => {
+                self.channel_state = other;
+                return Err(Error::StrErr(
+                    "provide_coin_spend_bundle: not in WaitForAliceSpend or WaitForBobSpend state"
+                        .to_string(),
+                ));
+            }
+        }
+
+        Ok(effects)
+    }
+
+    fn get_launcher_coin(&self) -> Result<&CoinString, Error> {
+        self.launcher_coin
+            .as_ref()
+            .ok_or_else(|| Error::StrErr("launcher_coin not set".to_string()))
+    }
+
+    fn encode_u64_as_clvm_int(val: u64) -> Vec<u8> {
+        if val == 0 {
+            return vec![];
+        }
+        let mut bytes = Vec::new();
+        let mut h = val;
+        while h > 0 {
+            bytes.push((h & 0xff) as u8);
+            h >>= 8;
+        }
+        bytes.reverse();
+        if bytes[0] & 0x80 != 0 {
+            bytes.insert(0, 0);
+        }
+        bytes
+    }
+
+    fn build_alice_coin_spend_request<R: Rng>(
+        &self,
+        _env: &mut ChannelHandlerEnv<'_, R>,
+    ) -> Result<CoinSpendRequest, Error> {
+        let ch = self.channel_handler()?;
+        let channel_coin = ch.state_channel_coin();
+        let (_, channel_puzzle_hash, total_amount) = channel_coin.get_coin_string_parts()?;
+        let launcher_coin = self.get_launcher_coin()?;
+        let launcher_coin_id = launcher_coin.to_coin_id();
+        let (launcher_parent, _, _) = launcher_coin.get_coin_string_parts()?;
+
+        let ann_hash = self.compute_coin_announcement_hash(
+            &launcher_coin_id,
+            &channel_puzzle_hash,
+            &total_amount,
+        )?;
+
+        let per_player = Amount::new(total_amount.to_u64() / 2);
+
+        let launcher_ph_bytes = crate::common::constants::SINGLETON_LAUNCHER_HASH.to_vec();
+        let zero_bytes = Self::encode_u64_as_clvm_int(0);
+
+        let mut conditions = vec![
+            RawCoinCondition {
+                opcode: crate::common::constants::CREATE_COIN,
+                args: vec![launcher_ph_bytes, zero_bytes],
+            },
+            RawCoinCondition {
+                opcode: crate::common::constants::ASSERT_COIN_ANNOUNCEMENT,
+                args: vec![ann_hash.bytes().to_vec()],
+            },
+        ];
+
+        if let Some(height) = self.compute_not_valid_after_height() {
+            conditions.push(RawCoinCondition {
+                opcode: crate::common::constants::ASSERT_BEFORE_HEIGHT_ABSOLUTE,
+                args: vec![Self::encode_u64_as_clvm_int(height)],
+            });
+        }
+
+        Ok(CoinSpendRequest {
+            amount: per_player,
+            conditions,
+            coin_id: Some(launcher_parent),
+        })
+    }
+
+    fn build_bob_coin_spend_request<R: Rng>(
+        &self,
+        _env: &mut ChannelHandlerEnv<'_, R>,
+    ) -> Result<CoinSpendRequest, Error> {
+        let ch = self.channel_handler()?;
+        let channel_coin = ch.state_channel_coin();
+        let (_, channel_puzzle_hash, total_amount) = channel_coin.get_coin_string_parts()?;
+        let launcher_coin = self.get_launcher_coin()?;
+        let launcher_coin_id = launcher_coin.to_coin_id();
+
+        let ann_hash = self.compute_coin_announcement_hash(
+            &launcher_coin_id,
+            &channel_puzzle_hash,
+            &total_amount,
+        )?;
+
+        let per_player = Amount::new(total_amount.to_u64() / 2);
+
+        let mut conditions = vec![RawCoinCondition {
+            opcode: crate::common::constants::ASSERT_COIN_ANNOUNCEMENT,
+            args: vec![ann_hash.bytes().to_vec()],
+        }];
+
+        if let Some(height) = self.compute_not_valid_after_height() {
+            conditions.push(RawCoinCondition {
+                opcode: crate::common::constants::ASSERT_BEFORE_HEIGHT_ABSOLUTE,
+                args: vec![Self::encode_u64_as_clvm_int(height)],
+            });
+        }
+
+        Ok(CoinSpendRequest {
+            amount: per_player,
+            conditions,
+            coin_id: None,
+        })
+    }
+
+    fn compute_coin_announcement_hash(
+        &self,
+        launcher_coin_id: &CoinID,
+        channel_puzzle_hash: &PuzzleHash,
+        total_amount: &Amount,
+    ) -> Result<Hash, Error> {
+        use crate::common::types::{Sha256Input, Sha256tree};
+
+        let allocator_for_hash = &mut crate::common::types::AllocEncoder::new();
+        let solution_tree_hash = (channel_puzzle_hash.clone(), (total_amount.clone(), ()))
+            .sha256tree(allocator_for_hash);
+        Ok(Sha256Input::Array(vec![
+            Sha256Input::Bytes(launcher_coin_id.bytes()),
+            Sha256Input::Bytes(solution_tree_hash.bytes()),
+        ])
+        .hash())
+    }
+
+    fn compute_not_valid_after_height(&self) -> Option<u64> {
+        Some(self.channel_timeout.to_u64() + 100)
+    }
+
+    fn build_launcher_coin_spend<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+    ) -> Result<CoinSpend, Error> {
+        let ch = self.channel_handler()?;
+        let channel_coin = ch.state_channel_coin();
+        let (_, channel_puzzle_hash, total_amount) = channel_coin.get_coin_string_parts()?;
+
+        let launcher_coin = self.get_launcher_coin()?.clone();
+
+        let nil: () = ();
+        let launcher_solution_clvm = (
+            channel_puzzle_hash.clone(),
+            (total_amount.clone(), (nil, ())),
+        )
+            .to_clvm(env.allocator)
+            .into_gen()?;
+        let launcher_solution_program =
+            Program::from_nodeptr(env.allocator, launcher_solution_clvm)?;
+
+        Ok(CoinSpend {
+            coin: launcher_coin,
+            bundle: Spend {
+                puzzle: Puzzle::from_bytes(&crate::common::constants::SINGLETON_LAUNCHER),
+                solution: launcher_solution_program.into(),
+                signature: Aggsig::default(),
+            },
+        })
+    }
+
+    fn build_our_handshake_keys(&self) -> HandshakeB {
         let channel_public_key =
             private_to_public_key(&self.private_keys.my_channel_coin_private_key);
         let unroll_public_key =
@@ -370,24 +618,13 @@ impl PotatoHandler {
             &self.private_keys.my_referee_private_key,
             &self.reward_puzzle_hash,
         );
-
-        game_assert!(
-            matches!(self.channel_state, ChannelState::StepA),
-            "start: expected StepA state"
-        );
-        let my_hs_info = HandshakeA {
-            parent: parent_coin.clone(),
-            simple: HandshakeB {
-                channel_public_key,
-                unroll_public_key,
-                referee_pubkey: referee_public_key,
-                reward_puzzle_hash: self.reward_puzzle_hash.clone(),
-                reward_payout_signature: reward_payout_sig,
-            },
-        };
-        self.channel_state = ChannelState::StepC(parent_coin.clone(), Box::new(my_hs_info.clone()));
-
-        Ok(Some(Effect::PeerHandshakeA(my_hs_info)))
+        HandshakeB {
+            channel_public_key,
+            unroll_public_key,
+            referee_pubkey: referee_public_key,
+            reward_puzzle_hash: self.reward_puzzle_hash.clone(),
+            reward_payout_signature: reward_payout_sig,
+        }
     }
 
     fn update_channel_coin_after_receive<R: Rng>(
@@ -705,69 +942,9 @@ impl PotatoHandler {
         Ok(effects)
     }
 
-    pub fn try_complete_step_body<F>(
-        &mut self,
-        first_player_hs_info: HandshakeA,
-        second_player_hs_info: HandshakeB,
-        maybe_transaction: Option<SpendBundle>,
-        ctor: F,
-    ) -> Result<Option<Effect>, Error>
-    where
-        F: FnOnce(&SpendBundle) -> Result<Effect, Error>,
-    {
-        if let Some(spend) = maybe_transaction {
-            let send_effect = ctor(&spend)?;
-
-            self.channel_state = ChannelState::Finished(Box::new(HandshakeStepWithSpend {
-                info: HandshakeStepInfo {
-                    first_player_hs_info,
-                    second_player_hs_info,
-                },
-                spend,
-            }));
-
-            return Ok(Some(send_effect));
-        }
-
-        Ok(None)
-    }
-
-    pub fn try_complete_step_e(
-        &mut self,
-        first_player_hs_info: HandshakeA,
-        second_player_hs_info: HandshakeB,
-    ) -> Result<Option<Effect>, Error> {
-        self.try_complete_step_body(
-            first_player_hs_info,
-            second_player_hs_info,
-            self.channel_initiation_transaction.clone(),
-            |spend| {
-                Ok(Effect::PeerHandshakeE {
-                    bundle: spend.clone(),
-                })
-            },
-        )
-    }
-
-    pub fn try_complete_step_f(
-        &mut self,
-        first_player_hs_info: HandshakeA,
-        second_player_hs_info: HandshakeB,
-    ) -> Result<Option<Effect>, Error> {
-        if self.waiting_to_start {
-            return Ok(None);
-        }
-
-        self.try_complete_step_body(
-            first_player_hs_info,
-            second_player_hs_info,
-            self.channel_finished_transaction.clone(),
-            |spend| {
-                Ok(Effect::PeerHandshakeF {
-                    bundle: spend.clone(),
-                })
-            },
-        )
+    fn transition_to_finished(&mut self, info: HandshakeStepInfo, spend: SpendBundle) {
+        self.channel_state =
+            ChannelState::Finished(Box::new(HandshakeStepWithSpend { info, spend }));
     }
 
     // We have the potato so we can send a message that starts a game if there are games
@@ -1212,176 +1389,210 @@ impl PotatoHandler {
         };
 
         match &self.channel_state {
-            // non potato progression
             ChannelState::StepA => {
-                let _msg = if let PeerMessage::HandshakeA(msg) = msg_envelope.borrow() {
-                    msg
-                } else {
-                    return Err(Error::StrErr(format!(
-                        "Expected handshake a message, got {msg_envelope:?}"
-                    )));
-                };
+                return Err(Error::StrErr(
+                    "StepA should not receive messages (call start() first)".to_string(),
+                ));
             }
 
-            ChannelState::StepC(parent_coin, handshake_a) => {
+            // Alice: received Bob's keys
+            ChannelState::WaitForBobKeys(our_keys) => {
                 let msg = if let PeerMessage::HandshakeB(msg) = msg_envelope.borrow() {
                     msg
                 } else {
                     return Err(Error::StrErr(format!(
-                        "Expected handshake b message, got {msg_envelope:?}"
+                        "Expected HandshakeB, got {msg_envelope:?}"
                     )));
                 };
 
-                let (mut channel_handler, _init_result) =
-                    self.make_channel_handler(parent_coin.to_coin_id(), false, msg, env)?;
+                if !verify_reward_payout_signature(
+                    &msg.referee_pubkey,
+                    &msg.reward_puzzle_hash,
+                    &msg.reward_payout_signature,
+                ) {
+                    return Err(Error::Channel(
+                        "Invalid reward payout signature in HandshakeB".to_string(),
+                    ));
+                }
+
+                let our_channel_pk =
+                    private_to_public_key(&self.private_keys.my_channel_coin_private_key);
+                let aggregate_pk = our_channel_pk + msg.channel_public_key.clone();
+                let channel_puzzle_hash =
+                    puzzle_hash_for_synthetic_public_key(env.allocator, &aggregate_pk)?;
+
+                effects.push(Effect::ChannelPuzzleHash(channel_puzzle_hash));
+                effects.push(Effect::NeedLauncherCoinId);
+
+                let info = HandshakeStepInfo {
+                    first_player_hs_info: our_keys.as_ref().clone(),
+                    second_player_hs_info: msg.clone(),
+                };
+                self.channel_state = ChannelState::WaitForLauncher(Box::new(info));
+            }
+
+            // Alice: waiting for wallet callback; queue messages
+            ChannelState::WaitForLauncher(_) => {
+                self.incoming_messages.push_front(msg_envelope);
+                return Ok(effects);
+            }
+
+            // Bob: received Alice's keys
+            ChannelState::StepB => {
+                let peer_keys = if let PeerMessage::HandshakeA(msg) = msg_envelope.borrow() {
+                    msg
+                } else {
+                    return Err(Error::StrErr(format!(
+                        "Expected HandshakeA, got {msg_envelope:?}"
+                    )));
+                };
+
+                if !verify_reward_payout_signature(
+                    &peer_keys.referee_pubkey,
+                    &peer_keys.reward_puzzle_hash,
+                    &peer_keys.reward_payout_signature,
+                ) {
+                    return Err(Error::Channel(
+                        "Invalid reward payout signature in HandshakeA".to_string(),
+                    ));
+                }
+
+                let our_keys = self.build_our_handshake_keys();
+                effects.push(Effect::PeerHandshakeB(our_keys.clone()));
+
+                let info = HandshakeStepInfo {
+                    first_player_hs_info: peer_keys.clone(),
+                    second_player_hs_info: our_keys,
+                };
+                self.channel_state = ChannelState::WaitForCoinId(Box::new(info));
+            }
+
+            // Bob: received launcher coin info from Alice
+            ChannelState::WaitForCoinId(info) => {
+                let hsc = if let PeerMessage::HandshakeC(msg) = msg_envelope.borrow() {
+                    msg
+                } else {
+                    return Err(Error::StrErr(format!(
+                        "Expected HandshakeC, got {msg_envelope:?}"
+                    )));
+                };
+
+                let (_, launcher_ph, _) = hsc.launcher_coin.get_coin_string_parts()?;
+                let expected_ph =
+                    PuzzleHash::from_bytes(crate::common::constants::SINGLETON_LAUNCHER_HASH);
+                if launcher_ph != expected_ph {
+                    return Err(Error::Channel(
+                        "Launcher coin puzzle hash is not SINGLETON_LAUNCHER".to_string(),
+                    ));
+                }
+
+                let launcher_coin_id = hsc.launcher_coin.to_coin_id();
+                self.launcher_coin = Some(hsc.launcher_coin.clone());
+                let (channel_handler, _init_result) = self.make_channel_handler(
+                    launcher_coin_id,
+                    true,
+                    &info.first_player_hs_info,
+                    env,
+                )?;
 
                 let channel_coin = channel_handler.state_channel_coin().clone();
                 let (_, channel_puzzle_hash, _) = channel_coin.get_coin_string_parts()?;
-
                 effects.push(Effect::ChannelPuzzleHash(channel_puzzle_hash));
+
+                let sigs = channel_handler.get_initial_signatures()?;
+                self.channel_handler = Some(channel_handler);
+
+                effects.push(Effect::PeerHandshakeD(HandshakeD { signatures: sigs }));
+
                 effects.push(Effect::RegisterCoin {
                     coin: channel_coin,
                     timeout: self.channel_timeout.clone(),
                     name: Some("channel"),
                 });
 
-                let channel_public_key =
-                    private_to_public_key(&self.private_keys.my_channel_coin_private_key);
-                let unroll_public_key =
-                    private_to_public_key(&self.private_keys.my_unroll_coin_private_key);
-                let referee_public_key =
-                    private_to_public_key(&self.private_keys.my_referee_private_key);
-                let reward_payout_sig = sign_reward_payout(
-                    &self.private_keys.my_referee_private_key,
-                    &self.reward_puzzle_hash,
-                );
-
-                let our_handshake_data = HandshakeB {
-                    channel_public_key,
-                    unroll_public_key,
-                    reward_puzzle_hash: self.reward_puzzle_hash.clone(),
-                    referee_pubkey: referee_public_key,
-                    reward_payout_signature: reward_payout_sig,
-                };
-
-                {
-                    let sigs = channel_handler.send_empty_potato(env)?;
-                    effects.push(Effect::PeerBatch {
-                        actions: vec![],
-                        signatures: sigs,
-                        clean_shutdown: None,
-                    });
-                }
-
-                self.channel_handler = Some(channel_handler);
-
-                self.channel_state = ChannelState::StepE(Box::new(HandshakeStepInfo {
-                    first_player_hs_info: *handshake_a.clone(),
-                    second_player_hs_info: our_handshake_data.clone(),
-                }));
+                self.channel_state = ChannelState::WaitForOffer(Box::new(info.as_ref().clone()));
             }
 
-            ChannelState::StepE(info) => {
-                let first_player_hs = info.first_player_hs_info.clone();
-                let second_player_hs = info.second_player_hs_info.clone();
-
-                self.channel_state = ChannelState::PostStepE(info.clone());
-
-                effects.extend(self.pass_on_channel_handler_message(env, msg_envelope)?);
-
-                effects.extend(self.try_complete_step_e(first_player_hs, second_player_hs)?);
-            }
-
-            // potato progression
-            ChannelState::StepB => {
-                let msg = if let PeerMessage::HandshakeA(msg) = msg_envelope.borrow() {
-                    msg
+            // Alice: received Bob's initial signatures -> request wallet SpendBundle
+            ChannelState::WaitForBobSigs(info) => {
+                let info_clone = info.as_ref().clone();
+                let hsd = if let PeerMessage::HandshakeD(msg) = msg_envelope.borrow() {
+                    msg.clone()
                 } else {
                     return Err(Error::StrErr(format!(
-                        "Expected handshake a message, got {msg_envelope:?}"
+                        "Expected HandshakeD, got {msg_envelope:?}"
                     )));
                 };
 
-                let (channel_handler, _init_result) =
-                    self.make_channel_handler(msg.parent.to_coin_id(), true, &msg.simple, env)?;
-
-                let channel_public_key =
-                    private_to_public_key(&channel_handler.channel_private_key());
-                let unroll_public_key =
-                    private_to_public_key(&channel_handler.unroll_private_key());
-                let referee_public_key =
-                    private_to_public_key(&self.private_keys.my_referee_private_key);
-                let reward_payout_sig = sign_reward_payout(
-                    &self.private_keys.my_referee_private_key,
-                    &self.reward_puzzle_hash,
-                );
-
-                let my_hs_info = HandshakeB {
-                    channel_public_key,
-                    unroll_public_key,
-                    reward_puzzle_hash: self.reward_puzzle_hash.clone(),
-                    referee_pubkey: referee_public_key,
-                    reward_payout_signature: reward_payout_sig,
+                let our_sigs = {
+                    let ch = self.channel_handler()?;
+                    ch.get_initial_signatures()?
                 };
 
-                self.channel_handler = Some(channel_handler);
-                self.channel_state = ChannelState::StepD(Box::new(HandshakeStepInfo {
-                    first_player_hs_info: msg.clone(),
-                    second_player_hs_info: my_hs_info.clone(),
-                }));
-
-                effects.push(Effect::PeerHandshakeB(my_hs_info));
-            }
-
-            ChannelState::StepD(info) => {
-                self.channel_state = ChannelState::StepF(info.clone());
-
-                effects.extend(self.pass_on_channel_handler_message(env, msg_envelope)?);
-
-                let sigs = {
+                let spend_info = {
                     let ch = self.channel_handler_mut()?;
-                    ch.send_empty_potato(env)?
+                    ch.verify_and_store_initial_peer_signatures(env, &hsd.signatures)?
                 };
-                effects.push(Effect::PeerBatch {
-                    actions: vec![],
-                    signatures: sigs,
-                    clean_shutdown: None,
-                });
+                self.last_channel_coin_spend_info = Some(spend_info);
+
+                let coin_spend_request = self.build_alice_coin_spend_request(env)?;
+                effects.push(Effect::NeedCoinSpend(coin_spend_request));
+
+                self.channel_state =
+                    ChannelState::WaitForAliceSpend(Box::new(info_clone), our_sigs);
             }
 
-            ChannelState::StepF(info) => {
-                let bundle = if let PeerMessage::HandshakeE { bundle } = msg_envelope.borrow() {
+            // Bob: received Alice's offer + signatures -> request wallet SpendBundle
+            ChannelState::WaitForOffer(info) => {
+                let info_clone = info.as_ref().clone();
+                let (bundle, sigs) =
+                    if let PeerMessage::HandshakeE { bundle, signatures } = msg_envelope.borrow() {
+                        (bundle.clone(), signatures.clone())
+                    } else {
+                        return Err(Error::StrErr(format!(
+                            "Expected HandshakeE, got {msg_envelope:?}"
+                        )));
+                    };
+
+                let spend_info = {
+                    let ch = self.channel_handler_mut()?;
+                    ch.verify_and_store_initial_peer_signatures(env, &sigs)?
+                };
+                self.last_channel_coin_spend_info = Some(spend_info);
+
+                let coin_spend_request = self.build_bob_coin_spend_request(env)?;
+                effects.push(Effect::NeedCoinSpend(coin_spend_request));
+
+                self.channel_state = ChannelState::WaitForBobSpend(Box::new(info_clone), bundle);
+            }
+
+            // Alice: received completed transaction from Bob
+            ChannelState::WaitForCompletion(info) => {
+                let bundle = if let PeerMessage::HandshakeF { bundle } = msg_envelope.borrow() {
                     bundle
                 } else {
-                    self.incoming_messages.push_front(msg_envelope.clone());
-                    return Ok(effects);
+                    return Err(Error::StrErr(format!(
+                        "Expected HandshakeF, got {msg_envelope:?}"
+                    )));
                 };
 
                 let channel_coin = {
                     let ch = self.channel_handler()?;
-                    ch.state_channel_coin()
+                    ch.state_channel_coin().clone()
                 };
-
-                if bundle.spends.is_empty() {
-                    return Err(Error::StrErr(
-                        "No spends to draw the channel coin from".to_string(),
-                    ));
-                }
-
                 effects.push(Effect::RegisterCoin {
-                    coin: channel_coin.clone(),
+                    coin: channel_coin,
                     timeout: self.channel_timeout.clone(),
                     name: Some("channel"),
                 });
+
                 effects.push(Effect::ReceivedChannelOffer(bundle.clone()));
-
-                let first_player_hs = info.first_player_hs_info.clone();
-                let second_player_hs = info.second_player_hs_info.clone();
-
-                self.channel_state = ChannelState::PostStepF(info.clone());
+                effects.push(Effect::Notify(GameNotification::ChannelCreated {}));
 
                 self.have_potato = PotatoState::Absent;
-                effects.extend(self.try_complete_step_f(first_player_hs, second_player_hs)?);
+
+                let info_clone = info.as_ref().clone();
+                self.transition_to_finished(info_clone, bundle.clone());
             }
 
             ChannelState::Finished(_) => {
@@ -1395,10 +1606,6 @@ impl PotatoHandler {
                 }
 
                 match msg_envelope.borrow() {
-                    PeerMessage::HandshakeF { bundle } => {
-                        self.channel_finished_transaction = Some(bundle.clone());
-                        effects.push(Effect::ReceivedChannelOffer(bundle.clone()));
-                    }
                     PeerMessage::RequestPotato(_) => {
                         self.peer_wants_potato = true;
                         if matches!(self.have_potato, PotatoState::Present) {
@@ -2451,34 +2658,16 @@ impl BootstrapTowardGame for PotatoHandler {
     fn channel_offer<R: Rng>(
         &mut self,
         _env: &mut ChannelHandlerEnv<'_, R>,
-        bundle: SpendBundle,
+        _bundle: SpendBundle,
     ) -> Result<Option<Effect>, Error> {
-        self.channel_initiation_transaction = Some(bundle);
-
-        if let ChannelState::PostStepE(info) = &self.channel_state {
-            return self.try_complete_step_e(
-                info.first_player_hs_info.clone(),
-                info.second_player_hs_info.clone(),
-            );
-        }
-
         Ok(None)
     }
 
     fn channel_transaction_completion<R: Rng>(
         &mut self,
         _env: &mut ChannelHandlerEnv<'_, R>,
-        bundle: &SpendBundle,
+        _bundle: &SpendBundle,
     ) -> Result<Option<Effect>, Error> {
-        self.channel_finished_transaction = Some(bundle.clone());
-
-        if let ChannelState::PostStepF(info) = &self.channel_state {
-            return self.try_complete_step_f(
-                info.first_player_hs_info.clone(),
-                info.second_player_hs_info.clone(),
-            );
-        }
-
         Ok(None)
     }
 }
@@ -2489,37 +2678,7 @@ impl SpendWalletReceiver for PotatoHandler {
         _env: &mut ChannelHandlerEnv<'_, R>,
         _coin: &CoinString,
     ) -> Result<Option<Vec<Effect>>, Error> {
-        if !self.waiting_to_start {
-            return Ok(None);
-        }
-
-        let has_channel_coin = self
-            .channel_handler()
-            .ok()
-            .map(|ch| ch.state_channel_coin())
-            .is_some();
-
-        if !has_channel_coin {
-            return Ok(None);
-        }
-
-        self.waiting_to_start = false;
-
-        if let ChannelState::PostStepF(info) = &self.channel_state {
-            let mut effects: Vec<Effect> = self
-                .try_complete_step_f(
-                    info.first_player_hs_info.clone(),
-                    info.second_player_hs_info.clone(),
-                )?
-                .into_iter()
-                .collect();
-            effects.push(Effect::Notify(GameNotification::ChannelCreated {}));
-            return Ok(Some(effects));
-        }
-
-        Ok(Some(vec![Effect::Notify(
-            GameNotification::ChannelCreated {},
-        )]))
+        Ok(None)
     }
 
     fn coin_spent<R: Rng>(

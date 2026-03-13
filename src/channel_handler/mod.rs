@@ -339,6 +339,67 @@ impl ChannelHandler {
         &self.state_channel.coin
     }
 
+    pub fn set_launcher_coin_id(&mut self, launcher_coin_id: &CoinID) -> Result<(), Error> {
+        let (_, ph, amt) = self
+            .state_channel
+            .coin
+            .to_parts()
+            .ok_or_else(|| Error::StrErr("channel coin not initialized".into()))?;
+        self.state_channel.coin = CoinString::from_parts(launcher_coin_id, &ph, &amt);
+        Ok(())
+    }
+
+    pub fn get_initial_signatures(&self) -> Result<PotatoSignatures, Error> {
+        Ok(PotatoSignatures {
+            my_channel_half_signature_peer: self.state_channel.bundle.signature.clone(),
+            my_unroll_half_signature_peer: self.unroll.coin.get_unroll_coin_signature()?,
+        })
+    }
+
+    pub fn verify_and_store_initial_peer_signatures<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        signatures: &PotatoSignatures,
+    ) -> Result<ChannelCoinSpendInfo, Error> {
+        if !self.unroll.coin.verify(
+            env,
+            &self.get_aggregate_unroll_public_key(),
+            &signatures.my_unroll_half_signature_peer,
+        )? {
+            return Err(Error::StrErr("bad initial unroll signature".to_string()));
+        }
+
+        let channel_coin_spend =
+            self.create_conditions_and_signature_of_channel_coin(env, &self.unroll.coin)?;
+        let verified_spend = self.verify_channel_coin_from_peer_signatures(
+            env,
+            &signatures.my_channel_half_signature_peer,
+            channel_coin_spend.conditions.p(),
+        )?;
+
+        let aggregate_public_key = self.get_aggregate_channel_public_key();
+        self.state_channel.bundle = Spend {
+            puzzle: puzzle_for_synthetic_public_key(
+                env.allocator,
+                &env.standard_puzzle,
+                &aggregate_public_key,
+            )?,
+            solution: verified_spend.solution.clone(),
+            signature: verified_spend.signature.clone(),
+        };
+
+        self.timeout = Some(ChannelHandlerUnrollSpendInfo {
+            coin: self.unroll.coin.clone(),
+            signatures: signatures.clone(),
+        });
+
+        Ok(ChannelCoinSpendInfo {
+            aggsig: verified_spend.signature,
+            solution: verified_spend.solution.p(),
+            conditions: verified_spend.conditions.p(),
+        })
+    }
+
     /// Return the right amount to use for a clean shutdown coin output.
     pub fn clean_shutdown_amount(&self) -> Amount {
         self.my_out_of_game_balance.clone()
