@@ -386,8 +386,7 @@ impl PotatoHandler {
         self.channel_handler = Some(channel_handler);
         self.launcher_coin = Some(launcher_coin.clone());
 
-        let mut effects = Vec::new();
-        effects.push(Effect::PeerHandshakeC(HandshakeC { launcher_coin }));
+        let effects = vec![Effect::PeerHandshakeC(HandshakeC { launcher_coin })];
         self.channel_state = ChannelState::WaitForBobSigs(Box::new(info));
         Ok(effects)
     }
