@@ -29,8 +29,7 @@ export const makeDescription = (desc: OutcomeHandType) => {
   switch (name.toLowerCase()) {
     case 'straight flush':
     case 'straight':
-      // e.g., "Straight Flush Ten High"
-      return `${name} ${main} High`;
+      return `${name}, ${main} High`;
 
     case 'flush':
       // e.g., "Flush, Ace high, Nine, Eight, Four, Three kickers"
