@@ -402,20 +402,27 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     } else if ('GoingOnChain' in n) {
       setGameConnectionState({ stateIdentifier: 'running', stateDetail: ['On-chain dispute in progress'] });
     } else if (isTerminal(n)) {
-      setGameIds(prev => prev.slice(1));
-      gameIdsRef.current = gameIdsRef.current.slice(1);
-      setMyTurn(false);
-      setOurCardSelections([]);
-      cardSelectionsRef.current = [];
-      setMoveNumber(0);
-      moveNumberRef.current = 0;
-      setPlayerHand([]);
-      setOpponentHand([]);
-      playerHandRef.current = [];
-      opponentHandRef.current = [];
-      setOutcome(undefined);
+      // Only reset game-specific UI state when the game is still tracked.
+      // With auto-accept, WeTimedOut/OpponentTimedOut fire for games that
+      // were already cleaned up by the OpponentMoved handler; redundant
+      // resets cause CaliforniaPoker's cards to jump (pre-swap fallback).
+      const hadActiveGame = gameIdsRef.current.length > 0;
+      if (hadActiveGame) {
+        setGameIds(prev => prev.slice(1));
+        gameIdsRef.current = gameIdsRef.current.slice(1);
+        setMyTurn(false);
+        setOurCardSelections([]);
+        cardSelectionsRef.current = [];
+        setMoveNumber(0);
+        moveNumberRef.current = 0;
+        setPlayerHand([]);
+        setOpponentHand([]);
+        playerHandRef.current = [];
+        opponentHandRef.current = [];
+        setOutcome(undefined);
+        setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
+      }
       setLastOutcome(gameOutcomeRef.current);
-      setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
 
       // New game is proposed when the player clicks Play Again.
     } else {

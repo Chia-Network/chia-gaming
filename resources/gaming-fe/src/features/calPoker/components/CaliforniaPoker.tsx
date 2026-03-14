@@ -430,6 +430,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       // Update UI
       setPlayerCards(newPlayer);
       setOpponentCards(newOpponent);
+      setRememberedCards([newPlayer, newOpponent]);
 
       // --- Best hands ---
       const lastLog = log[0];
