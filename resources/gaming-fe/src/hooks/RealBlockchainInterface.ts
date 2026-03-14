@@ -37,6 +37,27 @@ function encodeClvmInt(n: number): Uint8Array {
   return new Uint8Array(bytes);
 }
 
+// Convert condition args from generic array format [{opcode, args: string[]}]
+// to the named-dict format the Chia wallet's conditions_from_json_dicts expects.
+// Without this, the wallet's UnknownCondition fallback tries Program(raw_bytes)
+// on non-CLVM data, producing "bad encoding".
+function convertConditionArgs(c: { opcode: number; args: string[] }): { opcode: number; args: any } {
+  switch (c.opcode) {
+    case 60: // CREATE_COIN_ANNOUNCEMENT
+    case 62: // CREATE_PUZZLE_ANNOUNCEMENT
+      return { opcode: c.opcode, args: { msg: c.args[0] } };
+    case 61: // ASSERT_COIN_ANNOUNCEMENT
+    case 63: // ASSERT_PUZZLE_ANNOUNCEMENT
+      return { opcode: c.opcode, args: { msg: c.args[0] } };
+    case 64: // ASSERT_CONCURRENT_SPEND
+      return { opcode: c.opcode, args: { coin_id: c.args[0] } };
+    case 51: // CREATE_COIN
+      return { opcode: c.opcode, args: { puzzle_hash: c.args[0], amount: parseInt(c.args[1], 16) } };
+    default:
+      return { opcode: c.opcode, args: c.args };
+  }
+}
+
 async function coinRecordToName(rec: CoinRecord): Promise<string | undefined> {
   try {
     const parentBytes = toUint8(rec.coin.parentCoinInfo.replace(/^0x/, ''));
@@ -493,7 +514,7 @@ export function connectRealBlockchain() {
         rpc.createOfferForIds({
           offer: evt.createOfferForIds.offer,
           driverDict: {},
-          extraConditions: evt.createOfferForIds.extraConditions,
+          extraConditions: (evt.createOfferForIds.extraConditions || []).map(convertConditionArgs),
           coinIds: evt.createOfferForIds.coinIds,
         } as any).then((result) => {
           blockchainConnector.replyEmitter({ responseId: evt.requestId, createOfferForIds: result });
