@@ -7,7 +7,6 @@ import { useEffect } from 'react';
 import installThemeSyncListener from '../utils/themeSyncListener';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
-import { Box, Typography } from '@mui/material';
 import { Toaster } from 'sonner';
 
 export interface GameParams {

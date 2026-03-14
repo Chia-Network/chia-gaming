@@ -56,7 +56,7 @@ const App = () => {
           let trackerURL = new URL(urls.tracker);
           setIframeAllowed(trackerURL.origin);
         })
-        .catch(() => {});
+        .catch(e => console.error('[App] failed to fetch /urls for iframe origin:', e));
     }
   }, [fetchedUrls]);
 
@@ -85,7 +85,7 @@ const App = () => {
             setIframeUrl(gameUrl);
           }
         })
-        .catch(() => {});
+        .catch(e => console.error('[App] failed to fetch /urls for lobby redirect:', e));
     }
   }, []);
   // no dependency on params so URL stays the same

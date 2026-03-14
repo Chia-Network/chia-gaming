@@ -105,7 +105,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
           }
           this.setNewPeak(peak);
         })
-        .catch(() => {});
+        .catch(e => console.error('[FakeBlockchain] failed to fetch peak:', e));
     });
   }
 

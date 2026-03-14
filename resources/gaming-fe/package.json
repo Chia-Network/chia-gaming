@@ -19,10 +19,6 @@
     "lint:report": "npm run lint:errors-only || echo 'Linting found issues but not blocking commit. Run npm run lint:fix to auto-fix many issues.'"
   },
   "dependencies": {
-    "@emotion/react": "^11.14.0",
-    "@emotion/styled": "^11.14.0",
-    "@mui/icons-material": "^7.1.0",
-    "@mui/material": "^7.1.0",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-scroll-area": "^1.2.10",
     "@radix-ui/react-separator": "^1.1.8",

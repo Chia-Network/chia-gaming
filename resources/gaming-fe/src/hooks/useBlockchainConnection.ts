@@ -23,7 +23,7 @@ export function setupBlockchainConnection(uniqueId: string) {
             if (matchingTracked.length !== 0) {
               blockchainConnector.getInbound().next(data.blockchain_reply);
             }
-          }).catch(() => {});
+          }).catch(e => console.error('[blockchain] failed to fetch /lobby/tracking:', e));
 
           return;
         }

@@ -150,7 +150,7 @@ export class WasmBlobWrapper {
     const cvt = (blob: string) => {
       return this.wc?.convert_spend_to_coinset_org(blob);
     };
-    this.blockchain.spend(cvt, blob).then(() => {});
+    this.blockchain.spend(cvt, blob).catch(e => console.error('[wasm] submitTransaction failed:', e));
   }
 
   processResult(result: any): void {

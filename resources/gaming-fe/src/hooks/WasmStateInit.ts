@@ -22,15 +22,6 @@ export const waitForReadyToInit = new Observable<boolean>((subscriber) => {
   readyToInit.subscribe(subscriber);
 });
 
-export const doInternalLoadWasm = async () => {
-  const fetchUrl = '/chia_gaming_wasm_bg.wasm';
-  return fetch(fetchUrl)
-    .then((wasm) => wasm.blob())
-    .then((blob) => {
-      return blob.arrayBuffer();
-    });
-};
-
 export async function fetchHex(fetchUrl: string): Promise<string> {
   // TODO: check
   return fetch(fetchUrl).then((wasm) => wasm.text());
