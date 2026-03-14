@@ -177,6 +177,23 @@ export class WasmBlobWrapper {
       }
       this.rxjsEmitter?.next({ type: 'notification', data: n });
     }
+    for (const coin of result.coin_solution_requests || []) {
+      this.fulfillPuzzleSolutionRequest(coin);
+    }
+  }
+
+  private async fulfillPuzzleSolutionRequest(coinHex: string) {
+    try {
+      const ps = await this.blockchain.getPuzzleAndSolution(coinHex);
+      if (this.cradle) {
+        const result = ps
+          ? this.cradle.report_puzzle_and_solution(coinHex, ps[0], ps[1])
+          : this.cradle.report_puzzle_and_solution(coinHex, undefined, undefined);
+        this.processResult(result);
+      }
+    } catch (e) {
+      console.error('[wasm] puzzle/solution fetch failed:', e);
+    }
   }
 
   // --- Inbound events ---
@@ -267,7 +284,15 @@ export class WasmBlobWrapper {
   cleanShutdown(): void {
     if (!this.cradle) return;
     this.cleanShutdownCalled = true;
-    const result = this.cradle.shut_down();
-    this.processResult(result);
+    try {
+      const result = this.cradle.shut_down();
+      this.processResult(result);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message
+        : typeof e === 'object' && e !== null && 'error' in e ? (e as any).error
+        : String(e);
+      console.error('[wasm] cleanShutdown failed:', msg);
+      this.rxjsEmitter?.next({ type: 'error', error: msg });
+    }
   }
 }

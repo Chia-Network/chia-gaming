@@ -80,6 +80,7 @@ mod gaming_wasm {
         "outbound_messages": Array<string>,
         "notifications": Array<any>,
         "receive_errors": Array<string>,
+        "coin_solution_requests": Array<string>,
     };
 
     export type GameCradleConfig = {
@@ -719,6 +720,40 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
+    pub fn report_puzzle_and_solution(
+        cid: i32,
+        coin_hex: &str,
+        puzzle_hex: Option<String>,
+        solution_hex: Option<String>,
+    ) -> Result<JsValue, JsValue> {
+        let coin_bytes = hex::decode(coin_hex).into_js()?;
+        let coin = CoinString::from_bytes(&coin_bytes);
+
+        let puzzle_program = puzzle_hex
+            .map(|h| Program::from_hex(&h))
+            .transpose()
+            .into_js()?;
+        let solution_program = solution_hex
+            .map(|h| Program::from_hex(&h))
+            .transpose()
+            .into_js()?;
+
+        let ps_pair = match (&puzzle_program, &solution_program) {
+            (Some(p), Some(s)) => Some((p, s)),
+            _ => None,
+        };
+
+        with_game_drain(cid, move |cradle: &mut JsCradle| {
+            cradle.cradle.report_puzzle_and_solution(
+                &mut cradle.allocator,
+                &mut cradle.rng.0,
+                &coin,
+                ps_pair,
+            )
+        })
+    }
+
+    #[wasm_bindgen]
     pub fn deliver_message(cid: i32, inbound_message: &str) -> Result<JsValue, JsValue> {
         let message_data = hex::decode(inbound_message).into_js()?;
         with_game_drain(cid, move |cradle: &mut JsCradle| {
@@ -752,6 +787,7 @@ mod gaming_wasm {
         outbound_messages: Vec<String>,
         notifications: Vec<serde_json::Value>,
         receive_errors: Vec<String>,
+        coin_solution_requests: Vec<String>,
     }
 
     fn spend_to_js(spend: &Spend) -> JsSpend {
@@ -830,6 +866,11 @@ mod gaming_wasm {
             outbound_messages: dr.outbound_messages.iter().map(hex::encode).collect(),
             notifications: notifications_to_js(&dr.notifications),
             receive_errors: dr.receive_errors.iter().map(|e| format!("{e:?}")).collect(),
+            coin_solution_requests: dr
+                .coin_solution_requests
+                .iter()
+                .map(coin_string_to_hex)
+                .collect(),
         })
     }
 

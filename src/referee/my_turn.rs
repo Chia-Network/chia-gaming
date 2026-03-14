@@ -395,16 +395,6 @@ impl MyTurnReferee {
             )?)
         };
 
-        debug!(
-            "my turn result name={} move_len={} max_move_size={} mover_share={:?} waiting_handler_is_my_turn={} has_message_parser={}",
-            result.name,
-            result.move_bytes.len(),
-            result.max_move_size,
-            result.mover_share,
-            result.waiting_handler.as_ref().is_some_and(|h| h.is_my_turn()),
-            result.message_parser.is_some()
-        );
-
         let puzzle_args = self.spend_this_coin();
         let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
         let v = ValidationInfo::new_state_update(

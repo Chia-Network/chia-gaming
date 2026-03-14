@@ -5,7 +5,6 @@ pub mod types;
 use std::rc::Rc;
 
 use log::debug;
-
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::game_start_info::GameStartInfo;
@@ -279,7 +278,6 @@ impl Referee {
         new_entropy: Hash,
         state_number: usize,
     ) -> Result<(Rc<Referee>, GameMoveWireData), Error> {
-        debug!("my_turn_make_move: state={}", state_number);
         let (replacement, result) = match self {
             Referee::MyTurn(t) => {
                 t.my_turn_make_move(allocator, readable_move, new_entropy, state_number)?
@@ -312,7 +310,6 @@ impl Referee {
         details: &GameMoveDetails,
         state_number: usize,
     ) -> Result<(Option<Rc<Referee>>, TheirTurnMoveResult), Error> {
-        debug!("their_turn_move_off_chain: state={}", state_number);
         let (new_self, result) = match self {
             Referee::MyTurn(_) => {
                 return Err(Error::Channel(

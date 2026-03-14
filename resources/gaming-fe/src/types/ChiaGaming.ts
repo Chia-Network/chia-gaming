@@ -120,6 +120,12 @@ export interface WasmConnection {
   cheat: (cid: number, id: string, mover_share: string) => any;
   accept_timeout: (cid: number, id: string) => any;
   shut_down: (cid: number) => any;
+  report_puzzle_and_solution: (
+    cid: number,
+    coin_hex: string,
+    puzzle_hex: string | undefined,
+    solution_hex: string | undefined,
+  ) => any;
   deliver_message: (cid: number, inbound_message: string) => any;
   cradle_amount: (cid: number) => any;
   cradle_our_share: (cid: number) => any;
@@ -198,6 +204,14 @@ export class ChiaGame {
 
   shut_down(): any {
     return this.wasm.shut_down(this.cradle);
+  }
+
+  report_puzzle_and_solution(
+    coin_hex: string,
+    puzzle_hex: string | undefined,
+    solution_hex: string | undefined,
+  ): any {
+    return this.wasm.report_puzzle_and_solution(this.cradle, coin_hex, puzzle_hex, solution_hex);
   }
 
   make_move(id: string, readable: Uint8Array): any {
@@ -598,6 +612,7 @@ export interface InternalBlockchainInterface {
   spend(convert: (blob: string) => any, spend: string): Promise<string>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
   getBalance(): Promise<number>;
+  getPuzzleAndSolution(coin: string): Promise<string[] | null>;
 }
 
 export interface OutcomeHandType {

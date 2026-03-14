@@ -98,6 +98,12 @@ export class ChildFrameBlockchainInterface {
     );
   }
 
+  getPuzzleAndSolution(coin: string): Promise<string[] | null> {
+    const requestId = requestNumber++;
+    const request = { requestId, getPuzzleAndSolution: { coin } };
+    return performTransaction((e: any) => e.getPuzzleAndSolution, requestId, request);
+  }
+
   getObservable() {
     return blockchainDataEmitter.getObservable();
   }

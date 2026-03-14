@@ -254,6 +254,10 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     return this.upstream.getBalance();
   }
 
+  getPuzzleAndSolution(coin: string): Promise<string[] | null> {
+    return this.upstream.getPuzzleAndSolution(coin);
+  }
+
   close() {
     this.deleted = true;
     this.incomingEvents = [];
@@ -326,6 +330,15 @@ export function connectSimulatorBlockchain() {
         fakeBlockchainInfo.getBalance().then((balance) => {
           blockchainConnector.replyEmitter({ responseId: evt.requestId, getBalance: balance });
         });
+      } else if (evt.getPuzzleAndSolution) {
+        fakeBlockchainInfo.upstream
+          .getPuzzleAndSolution(evt.getPuzzleAndSolution.coin)
+          .then((result) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              getPuzzleAndSolution: result,
+            });
+          });
       } else {
         console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);
         blockchainConnector.replyEmitter({

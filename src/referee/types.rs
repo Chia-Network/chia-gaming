@@ -6,7 +6,6 @@ use clvmr::allocator::NodePtr;
 use clvmr::run_program;
 
 use log::debug;
-
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::types::{
@@ -384,8 +383,6 @@ impl OnChainRefereeMoveData {
         fixed: &RMFixed,
         coin_string: &CoinString,
     ) -> Result<OnChainRefereeMove, Error> {
-        debug!("referee spend with parent coin {coin_string:?}");
-
         let infohash_c: Option<Hash> = if self.new_move.validation_info_hash.is_some() {
             let vi = ValidationInfo::new_state_update(
                 allocator,

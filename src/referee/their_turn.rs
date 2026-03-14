@@ -266,12 +266,9 @@ impl TheirTurnReferee {
         new_state: Rc<Program>,
         old_args: Rc<RefereePuzzleArgs>,
         referee_args: Rc<RefereePuzzleArgs>,
-        details: &GameMoveDetails,
+        _details: &GameMoveDetails,
         state_number: usize,
     ) -> Result<MyTurnReferee, Error> {
-        debug!("their turn: new_state {new_state:?}");
-        debug!("accept their move {details:?}");
-
         let new_state = MyTurnRefereeGameState::AfterTheirTurn {
             game_handler: game_handler.clone(),
             state_after_their_turn: new_state.clone(),
@@ -378,10 +375,6 @@ impl TheirTurnReferee {
         details: &GameMoveDetails,
         state_number: usize,
     ) -> Result<(Option<MyTurnReferee>, TheirTurnMoveResult), Error> {
-        // Did we get a slash?
-
-        debug!("do their turn {details:?}");
-
         let handler = self
             .get_game_handler()
             .ok_or_else(|| Error::StrErr("received their move after our final move".to_string()))?;

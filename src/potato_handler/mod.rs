@@ -595,6 +595,17 @@ impl PotatoHandler {
             }
         }
 
+        let has_new_game = actions.iter().any(|a| {
+            matches!(
+                a,
+                BatchAction::ProposeGame(_) | BatchAction::AcceptProposal(_)
+            )
+        });
+        if has_new_game {
+            self.game_action_queue
+                .retain(|a| !matches!(a, GameAction::CleanShutdown));
+        }
+
         if let Some(shutdown) = clean_shutdown {
             let (sig, conditions) = shutdown.as_ref();
             let has_active = {
@@ -905,12 +916,14 @@ impl PotatoHandler {
                 }
                 GameAction::CleanShutdown => {
                     {
-                        let ch = self.channel_handler_mut()?;
+                        let ch = self.channel_handler()?;
                         if ch.has_active_games() {
-                            return Err(Error::StrErr(
-                                "cannot clean-shutdown with active games".to_string(),
-                            ));
+                            deferred.push_back(GameAction::CleanShutdown);
+                            continue;
                         }
+                    }
+                    {
+                        let ch = self.channel_handler_mut()?;
                         let cancelled_ids = ch.cancel_all_proposals();
                         for id in cancelled_ids {
                             effects.push(Effect::Notify(GameNotification::GameProposalCancelled {
@@ -2467,6 +2480,14 @@ impl FromLocalUI for PotatoHandler {
             return Err(Error::StrErr(
                 "shut_down called while on-chain; on-chain completion is automatic".to_string(),
             ));
+        }
+
+        if matches!(
+            self.channel_state,
+            ChannelState::CleanShutdownWaitForConditions(..)
+                | ChannelState::OnChainWaitingForUnrollSpend(..)
+        ) {
+            return Ok(vec![]);
         }
 
         if !matches!(self.channel_state, ChannelState::Finished(_)) {

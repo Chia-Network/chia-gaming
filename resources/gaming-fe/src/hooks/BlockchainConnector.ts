@@ -26,6 +26,7 @@ export interface BlockchainOutboundRequest {
   transaction?: BlockchainOutboundTransactionRequest;
   getAddress?: BlockchainOutboundAddressRequest;
   getBalance?: BlockchainOutboundBalanceRequest;
+  getPuzzleAndSolution?: { coin: string };
 }
 
 export interface BlockchainInboundReply {
@@ -34,6 +35,7 @@ export interface BlockchainInboundReply {
   transaction?: string;
   getAddress?: BlockchainInboundAddressResult;
   getBalance?: number;
+  getPuzzleAndSolution?: string[] | null;
   error?: string;
 }
 
@@ -42,6 +44,7 @@ function describeRequest(r: BlockchainOutboundRequest): string {
   if (r.transaction) return 'transaction';
   if (r.getAddress) return 'getAddress';
   if (r.getBalance) return 'getBalance';
+  if (r.getPuzzleAndSolution) return 'getPuzzleAndSolution';
   return 'unknown';
 }
 
@@ -51,6 +54,7 @@ function describeReply(r: BlockchainInboundReply): string {
   if (r.transaction) return 'transaction';
   if (r.getAddress) return `getAddress`;
   if (r.getBalance !== undefined) return `getBalance=${r.getBalance}`;
+  if (r.getPuzzleAndSolution !== undefined) return 'getPuzzleAndSolution';
   return 'unknown';
 }
 
