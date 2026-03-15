@@ -35,7 +35,6 @@ export interface UseCalpokerHandResult {
   cardSelections: number[];
   setCardSelections: (s: number[] | ((prev: number[]) => number[])) => void;
   moveNumber: number;
-  isPlayerTurn: boolean;
   outcome: CalpokerOutcome | undefined;
   handleMakeMove: () => void;
   handleCheat: () => void;
@@ -64,6 +63,8 @@ export function useCalpokerHand(
   const gameObjectRef = useRef(gameObject);
   const gameIdRef = useRef(gameId);
   const handFinishedRef = useRef(false);
+  const pendingPlayRef = useRef(false);
+  const isPlayerTurnRef = useRef(!iStarted);
 
   playerHandRef.current = playerHand;
   opponentHandRef.current = opponentHand;
@@ -71,6 +72,7 @@ export function useCalpokerHand(
   moveNumberRef.current = moveNumber;
   gameObjectRef.current = gameObject;
   gameIdRef.current = gameId;
+  isPlayerTurnRef.current = isPlayerTurn;
 
   useEffect(() => {
     const subscription = gameplayEvent$.subscribe({
@@ -148,6 +150,21 @@ export function useCalpokerHand(
     };
   }, [gameplayEvent$, iStarted, onOutcome, onTurnChanged, appendGameLog]);
 
+  const submitMove1 = useCallback(() => {
+    const go = gameObjectRef.current;
+    if (!go || !go.isChannelReady()) return;
+    const gid = gameIdRef.current;
+    if (!gid) return;
+    if (cardSelectionsRef.current.length !== 4) return;
+    const cards = cardSelectionsRef.current;
+    go.makeMove(gid, Program.fromList(cards.map(c => Program.fromInt(c))));
+    setMoveNumber(2);
+    moveNumberRef.current = 2;
+    setMyTurn(false);
+    onTurnChanged(false);
+    pendingPlayRef.current = false;
+  }, [onTurnChanged]);
+
   const handleMakeMove = useCallback(() => {
     const go = gameObjectRef.current;
     if (!go || !go.isChannelReady()) return;
@@ -158,29 +175,36 @@ export function useCalpokerHand(
 
     if (currentMove === 0) {
       go.makeMove(gid, null);
-      const newMoveNum = currentMove + 1;
-      setMoveNumber(newMoveNum);
-      moveNumberRef.current = newMoveNum;
+      setMoveNumber(1);
+      moveNumberRef.current = 1;
       setMyTurn(false);
       onTurnChanged(false);
     } else if (currentMove === 1) {
       if (cardSelectionsRef.current.length !== 4) return;
-      const cards = cardSelectionsRef.current;
-      go.makeMove(gid, Program.fromList(cards.map(c => Program.fromInt(c))));
-      const newMoveNum = currentMove + 1;
-      setMoveNumber(newMoveNum);
-      moveNumberRef.current = newMoveNum;
-      setMyTurn(false);
-      onTurnChanged(false);
+      if (isPlayerTurnRef.current) {
+        submitMove1();
+      } else {
+        pendingPlayRef.current = true;
+      }
     } else if (currentMove === 2) {
       go.makeMove(gid, null);
-      const newMoveNum = currentMove + 1;
-      setMoveNumber(newMoveNum);
-      moveNumberRef.current = newMoveNum;
+      setMoveNumber(3);
+      moveNumberRef.current = 3;
       setMyTurn(false);
       onTurnChanged(false);
     }
-  }, [onTurnChanged]);
+  }, [onTurnChanged, submitMove1]);
+
+  // Autofire moves 0 and 2; auto-submit queued move 1
+  useEffect(() => {
+    if (!isPlayerTurn) return;
+    const m = moveNumberRef.current;
+    if (m === 0 || m === 2) {
+      handleMakeMove();
+    } else if (m === 1 && pendingPlayRef.current) {
+      submitMove1();
+    }
+  }, [isPlayerTurn, moveNumber, handleMakeMove, submitMove1]);
 
   const handleCheat = useCallback(() => {
     const go = gameObjectRef.current;
@@ -208,7 +232,6 @@ export function useCalpokerHand(
     cardSelections,
     setCardSelections,
     moveNumber,
-    isPlayerTurn,
     outcome,
     handleMakeMove,
     handleCheat,

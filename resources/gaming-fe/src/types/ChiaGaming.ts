@@ -150,6 +150,7 @@ export interface WasmConnection {
   cheat: (cid: number, id: string, mover_share: string) => any;
   accept_timeout: (cid: number, id: string) => any;
   shut_down: (cid: number) => any;
+  go_on_chain: (cid: number) => any;
   report_puzzle_and_solution: (
     cid: number,
     coin_hex: string,
@@ -234,6 +235,10 @@ export class ChiaGame {
 
   shut_down(): any {
     return this.wasm.shut_down(this.cradle);
+  }
+
+  go_on_chain(): any {
+    return this.wasm.go_on_chain(this.cradle);
   }
 
   report_puzzle_and_solution(

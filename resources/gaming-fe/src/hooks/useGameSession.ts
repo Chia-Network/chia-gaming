@@ -6,7 +6,6 @@ import {
   GameConnectionState,
   GameSessionParams,
   CalpokerOutcome,
-  BlockchainInboundAddressResult,
   BlockchainReport,
   WasmEvent,
   WasmNotification,
@@ -55,10 +54,9 @@ export interface CoinLifecycle<S> {
 export interface UseGameSessionResult {
   error: string | undefined;
   gameConnectionState: GameConnectionState;
-  addressData: BlockchainInboundAddressResult | undefined;
-  ourShare: number | undefined;
-  theirShare: number | undefined;
   amount: number;
+  perGameAmount: number;
+  myRunningBalance: number;
   iStarted: boolean;
   playerNumber: number;
   sessionEnded: boolean;
@@ -73,10 +71,13 @@ export interface UseGameSessionResult {
   appendGameLog: (line: string) => void;
   onHandOutcome: (outcome: CalpokerOutcome) => void;
   onTurnChanged: (isMyTurn: boolean) => void;
+  onDisplayComplete: () => void;
   playAgain: () => void;
   stopPlaying: () => void;
+  goOnChain: () => void;
   showBetweenHandOverlay: boolean;
   lastOutcome: CalpokerOutcome | undefined;
+  shutdownInitiated: boolean;
 }
 
 export function useGameSession(params: GameSessionParams, uniqueId: string): UseGameSessionResult {
@@ -86,10 +87,9 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
   const [gameConnectionState, setGameConnectionState] =
     useState<GameConnectionState>({ stateIdentifier: 'starting', stateDetail: ['before handshake'] });
   const [error, setRealError] = useState<string | undefined>(undefined);
-  const [addressData, setAddressData] = useState<BlockchainInboundAddressResult | undefined>(undefined);
-  const [ourShare, setOurShare] = useState<number | undefined>(undefined);
-  const [theirShare, setTheirShare] = useState<number | undefined>(undefined);
+  const [myRunningBalance, setMyRunningBalance] = useState(0);
   const [sessionEnded, setSessionEnded] = useState(false);
+  const [shutdownInitiated, setShutdownInitiated] = useState(false);
   const [channelCoin, setChannelCoin] = useState<CoinLifecycle<ChannelCoinState>>({ coinHex: null, state: 'not-created' });
   const [gameCoin, setGameCoin] = useState<CoinLifecycle<GameCoinState>>({ coinHex: null, state: 'off-chain-my-turn' });
   const [handKey, setHandKey] = useState(0);
@@ -103,6 +103,7 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
   const pendingProposalIdRef = useRef<string | null>(null);
   const wantsNewGameRef = useRef<boolean>(false);
   const firstGameAcceptedRef = useRef<boolean>(false);
+  const awaitingDisplayCompleteRef = useRef<boolean>(false);
   const gameplayEventSubject = useRef(new Subject<GameplayEvent>()).current;
 
   gameIdsRef.current = gameIds;
@@ -158,10 +159,13 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
     setGameIds(prev => prev.slice(1));
     gameIdsRef.current = gameIdsRef.current.slice(1);
     setGameCoin({ coinHex: null, state: 'off-chain-my-turn' });
-    appendDebugLog(`[hand] outcome: ${outcome.my_win_outcome}`);
-    // Delay overlay until after CaliforniaPoker's swap animation (2500ms + buffer)
-    setTimeout(() => setShowBetweenHandOverlay(true), 2800);
-  }, [appendDebugLog]);
+    const delta = outcome.my_win_outcome === 'win' ? perGameAmount / 2
+                : outcome.my_win_outcome === 'lose' ? -perGameAmount / 2
+                : 0;
+    setMyRunningBalance(prev => prev + delta);
+    appendDebugLog(`[hand] outcome: ${outcome.my_win_outcome} (${delta >= 0 ? '+' : ''}${delta} mojos)`);
+    awaitingDisplayCompleteRef.current = true;
+  }, [appendDebugLog, perGameAmount]);
 
   const onTurnChanged = useCallback((isMyTurn: boolean) => {
     setGameCoin(prev => {
@@ -170,6 +174,15 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
       }
       return { coinHex: null, state: isMyTurn ? 'off-chain-my-turn' : 'off-chain-their-turn' };
     });
+  }, []);
+
+  const onDisplayComplete = useCallback(() => {
+    if (!awaitingDisplayCompleteRef.current) {
+      console.error('[session] onDisplayComplete called but no hand outcome is pending');
+      return;
+    }
+    awaitingDisplayCompleteRef.current = false;
+    setShowBetweenHandOverlay(true);
   }, []);
 
   const handleNotification = useCallback((n: WasmNotification) => {
@@ -291,8 +304,9 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
         proposeNewGame();
       }
     } else if ('CleanShutdownStarted' in n) {
-      // Peer initiated clean shutdown -- toast already shown above
+      setShutdownInitiated(true);
     } else if ('GoingOnChain' in n) {
+      setShutdownInitiated(true);
       setGameConnectionState({ stateIdentifier: 'running', stateDetail: ['On-chain dispute in progress'] });
     } else if (isTerminal(n)) {
       const hadActiveGame = gameIdsRef.current.length > 0;
@@ -324,7 +338,7 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
             setChannelCoin(prev => ({ coinHex: prev.coinHex, state: 'closed' }));
             break;
           case 'address':
-            setAddressData(evt.data);
+            appendDebugLog(`[address] puzzle=${evt.data.puzzleHash?.slice(0, 12)}…`);
             break;
           default:
             console.warn('unhandled event type:', (evt as any).type, evt);
@@ -340,7 +354,7 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
     return () => {
       subscription.unsubscribe();
     };
-  }, [gameObject, handleNotification, setError]);
+  }, [gameObject, handleNotification, setError, appendDebugLog]);
 
   // Subscribe to blockchain block data
   useEffect(() => {
@@ -376,7 +390,13 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
   }, [iStarted, proposeNewGame]);
 
   const stopPlaying = useCallback(() => {
+    setShutdownInitiated(true);
     gameObject?.cleanShutdown();
+  }, [gameObject]);
+
+  const goOnChain = useCallback(() => {
+    setShutdownInitiated(true);
+    gameObject?.goOnChain();
   }, [gameObject]);
 
   (window as any).loadWasm = useCallback((chia_gaming_init: unknown, cg: unknown) => {
@@ -386,10 +406,9 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
   return {
     error,
     gameConnectionState,
-    addressData,
-    ourShare,
-    theirShare,
     amount,
+    perGameAmount,
+    myRunningBalance,
     iStarted,
     playerNumber,
     sessionEnded,
@@ -404,9 +423,12 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
     appendGameLog,
     onHandOutcome,
     onTurnChanged,
+    onDisplayComplete,
     playAgain,
     stopPlaying,
+    goOnChain,
     showBetweenHandOverlay,
     lastOutcome,
+    shutdownInitiated,
   };
 }

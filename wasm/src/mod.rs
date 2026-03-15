@@ -31,7 +31,17 @@ mod gaming_wasm {
     };
     use chia_gaming::potato_handler::effects::GameNotification;
     use chia_gaming::potato_handler::start::GameStart;
-    use chia_gaming::potato_handler::types::GameFactory;
+    use chia_gaming::potato_handler::types::{GameFactory, ToLocalUI};
+
+    struct NullLocalUI;
+    impl ToLocalUI for NullLocalUI {
+        fn notification(
+            &mut self,
+            _notification: &GameNotification,
+        ) -> Result<(), types::Error> {
+            Ok(())
+        }
+    }
 
     #[cfg(target_arch = "wasm32")]
     use lol_alloc::{FreeListAllocator, LockedAllocator};
@@ -716,6 +726,18 @@ mod gaming_wasm {
             cradle
                 .cradle
                 .shut_down(&mut cradle.allocator, &mut cradle.rng.0)
+        })
+    }
+
+    #[wasm_bindgen]
+    pub fn go_on_chain(cid: i32) -> Result<JsValue, JsValue> {
+        with_game_drain(cid, move |cradle: &mut JsCradle| {
+            cradle.cradle.go_on_chain(
+                &mut cradle.allocator,
+                &mut cradle.rng.0,
+                &mut NullLocalUI,
+                false,
+            )
         })
     }
 

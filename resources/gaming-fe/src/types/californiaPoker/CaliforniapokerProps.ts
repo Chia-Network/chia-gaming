@@ -4,7 +4,6 @@ export interface CaliforniapokerProps {
   outcome: CalpokerOutcome | undefined;
   moveNumber: number;
   iStarted: boolean;
-  isPlayerTurn: boolean;
   playerNumber: number;
   playerHand: number[];
   opponentHand: number[];
@@ -12,6 +11,5 @@ export interface CaliforniapokerProps {
   setCardSelections: (n: number[] | ((prev: number[]) => number[])) => void;
   handleMakeMove: () => void;
   myWinOutcome: 'win' | 'lose' | 'tie' | undefined;
-  banner: string;
-  balanceDisplay: string;
+  onDisplayComplete: () => void;
 }

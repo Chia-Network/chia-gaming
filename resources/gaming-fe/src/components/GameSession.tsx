@@ -2,16 +2,17 @@ import { useEffect, useRef } from 'react';
 import { Observable } from 'rxjs';
 import { useGameSession, ChannelCoinState, GameCoinState, GameplayEvent } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
-import { generateOrRetrieveUniqueId, parseGameSessionParams } from '../util';
-import { CalpokerOutcome, BlockchainInboundAddressResult } from '../types/ChiaGaming';
+import { generateOrRetrieveUniqueId, parseGameSessionParams, formatMojos } from '../util';
+import { CalpokerOutcome } from '../types/ChiaGaming';
 import { WasmBlobWrapper } from '../hooks/WasmBlobWrapper';
 import Calpoker from '../features/calPoker';
 import WaitingScreen from './WaitingScreen';
+import { motion } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
 import { Button } from './button';
 import { Toaster } from 'sonner';
-import { LogOut, RotateCcw } from 'lucide-react';
+import { Globe, LogOut, RotateCcw } from 'lucide-react';
 
 function truncateHex(hex: string, head = 6, tail = 4): string {
   if (hex.length <= head + tail) return hex;
@@ -37,7 +38,7 @@ const GAME_STATE_LABELS: Record<GameCoinState, string> = {
 
 function CoinStatus({ label, coinHex, stateLabel }: { label: string; coinHex: string | null; stateLabel: string }) {
   return (
-    <span className='text-sm text-canvas-text'>
+    <span>
       {label}: {coinHex ? `0x${truncateHex(coinHex)}` : '—'} · {stateLabel}
     </span>
   );
@@ -52,10 +53,7 @@ interface CalpokerHandProps {
   onOutcome: (outcome: CalpokerOutcome) => void;
   onTurnChanged: (isMyTurn: boolean) => void;
   appendGameLog: (line: string) => void;
-  stopPlaying: () => void;
-  addressData: BlockchainInboundAddressResult | undefined;
-  ourShare: number | undefined;
-  theirShare: number | undefined;
+  onDisplayComplete: () => void;
 }
 
 function CalpokerHand({
@@ -67,10 +65,7 @@ function CalpokerHand({
   onOutcome,
   onTurnChanged,
   appendGameLog,
-  stopPlaying,
-  addressData,
-  ourShare,
-  theirShare,
+  onDisplayComplete,
 }: CalpokerHandProps) {
   const {
     playerHand,
@@ -78,7 +73,6 @@ function CalpokerHand({
     cardSelections,
     setCardSelections,
     moveNumber,
-    isPlayerTurn,
     outcome,
     handleMakeMove,
     handleCheat,
@@ -97,7 +91,6 @@ function CalpokerHand({
       outcome={outcome}
       moveNumber={moveNumber}
       iStarted={iStarted}
-      isPlayerTurn={isPlayerTurn}
       playerNumber={playerNumber}
       playerHand={playerHand}
       opponentHand={opponentHand}
@@ -105,9 +98,7 @@ function CalpokerHand({
       setCardSelections={setCardSelections}
       handleMakeMove={handleMakeMove}
       handleCheat={handleCheat}
-      addressData={addressData}
-      ourShare={ourShare}
-      theirShare={theirShare}
+      onDisplayComplete={onDisplayComplete}
     />
   );
 }
@@ -145,7 +136,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params }) => {
 
   if (session.error) {
     return (
-      <div className='flex items-center justify-center min-h-screen p-4'>
+      <div className='flex items-center justify-center h-screen p-4'>
         <Card className='w-full max-w-md border-destructive'>
           <CardHeader>
             <CardTitle className='text-destructive'>Error</CardTitle>
@@ -168,59 +159,75 @@ const GameSession: React.FC<GameSessionProps> = ({ params }) => {
   }
 
   const handEverStarted = session.handKey > 0;
-  const handActive = session.activeGameId !== null;
+
+  const balanceSign = session.myRunningBalance >= 0 ? '+' : '';
+  const balanceColor = session.myRunningBalance > 0
+    ? 'text-success-text'
+    : session.myRunningBalance < 0
+      ? 'text-alert-text'
+      : 'text-canvas-text';
 
   return (
-    <div className='relative flex min-h-screen w-full flex-col bg-canvas-bg-subtle px-4 text-canvas-text sm:px-6 md:px-8'>
-      {/* Session header */}
-      <div className='flex w-full flex-col gap-1 pt-4 pb-2 sm:flex-row sm:items-center sm:justify-between'>
-        <div className='flex flex-col gap-0.5'>
-          <h1 className='text-2xl font-semibold text-canvas-text-contrast sm:text-3xl'>
-            California Poker
-          </h1>
-          <div className='flex flex-wrap gap-x-4 gap-y-0.5'>
-            <CoinStatus
-              label='Channel'
-              coinHex={session.channelCoin.coinHex}
-              stateLabel={CHANNEL_STATE_LABELS[session.channelCoin.state]}
-            />
-            <CoinStatus
-              label='Game'
-              coinHex={session.gameCoin.coinHex}
-              stateLabel={GAME_STATE_LABELS[session.gameCoin.state]}
-            />
+    <div className='flex h-screen w-full flex-col overflow-hidden bg-canvas-bg-subtle text-canvas-text pt-6'>
+      {/* Session header (shrink-0) */}
+      <div className='flex-shrink-0 px-4 pt-3 pb-2 sm:px-6 md:px-8'>
+        {/* Row 1: title + financial summary + end session */}
+        <div className='flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between'>
+          <div className='flex flex-col gap-0.5'>
+            <h1 className='text-2xl font-semibold text-canvas-text-contrast sm:text-3xl'>
+              California Poker
+            </h1>
+            <div className='flex flex-wrap items-center gap-x-4 gap-y-0.5 text-sm text-canvas-text'>
+              <span>Channel: {formatMojos(session.amount)}</span>
+              <span>Per hand: {formatMojos(session.perGameAmount)}</span>
+              <span className={balanceColor}>
+                Balance: {balanceSign}{formatMojos(Math.abs(session.myRunningBalance))}
+              </span>
+            </div>
+          </div>
+          <div className='flex items-center gap-2 mt-2 sm:mt-0'>
+            <Button
+              data-testid='go-on-chain'
+              variant='destructive'
+              onClick={session.goOnChain}
+              size='sm'
+              disabled={session.sessionEnded || session.shutdownInitiated}
+              leadingIcon={<Globe />}
+            >
+              Go On-Chain
+            </Button>
           </div>
         </div>
-        <div className='flex items-center gap-2 mt-2 sm:mt-0'>
-          <Button
-            data-testid='stop-playing'
-            variant='destructive'
-            onClick={session.stopPlaying}
-            size='sm'
-            disabled={session.sessionEnded || handActive}
-            leadingIcon={<LogOut />}
-          >
-            End Session
-          </Button>
-        </div>
-      </div>
 
-      <Separator className='mb-2' />
+        {/* Row 2: diagnostic coin info (subtle) */}
+        <div className='flex flex-wrap gap-x-4 gap-y-0.5 mt-1 text-xs text-canvas-text/60'>
+          <CoinStatus
+            label='Channel'
+            coinHex={session.channelCoin.coinHex}
+            stateLabel={CHANNEL_STATE_LABELS[session.channelCoin.state]}
+          />
+          <CoinStatus
+            label='Game'
+            coinHex={session.gameCoin.coinHex}
+            stateLabel={GAME_STATE_LABELS[session.gameCoin.state]}
+          />
+        </div>
+
+        <Separator className='mt-2' />
+      </div>
 
       {/* Session ended indicator */}
       {session.sessionEnded && (
-        <div className='rounded-md border border-canvas-border bg-canvas-bg p-3 mb-2 text-center'>
+        <div className='flex-shrink-0 mx-4 sm:mx-6 md:mx-8 rounded-md border border-canvas-border bg-canvas-bg p-3 mb-2 text-center'>
           <p className='text-lg font-semibold text-canvas-text-contrast'>Session Ended</p>
           <p className='text-sm text-canvas-text'>Channel closed — funds returned on-chain</p>
         </div>
       )}
 
-      {/* Main content area */}
-      <div className='flex w-full flex-1 flex-col gap-2 overflow-hidden lg:flex-row lg:min-h-0'>
+      {/* Main content area (flex-1 min-h-0) */}
+      <div className='flex flex-1 min-h-0 flex-col gap-2 px-4 pb-2 sm:px-6 md:px-8 lg:flex-row'>
         {/* Game area */}
-        <div className='relative flex-1 overflow-auto lg:flex-[18_1_0%] lg:min-h-0'>
-          {/* CalpokerHand persists through the hand lifecycle including post-outcome animation.
-              It only unmounts when a new hand starts (handKey changes) or session ends. */}
+        <div className='relative flex-1 min-h-0 flex flex-col lg:flex-[18_1_0%]'>
           {handEverStarted && !session.sessionEnded && (
             <CalpokerHand
               key={session.handKey}
@@ -232,17 +239,19 @@ const GameSession: React.FC<GameSessionProps> = ({ params }) => {
               onOutcome={session.onHandOutcome}
               onTurnChanged={session.onTurnChanged}
               appendGameLog={session.appendGameLog}
-              stopPlaying={session.stopPlaying}
-              addressData={session.addressData}
-              ourShare={session.ourShare}
-              theirShare={session.theirShare}
+              onDisplayComplete={session.onDisplayComplete}
             />
           )}
 
-          {/* Between-hand overlay floats on top of the game area */}
+          {/* Between-hand overlay (draggable, no backdrop) */}
           {session.showBetweenHandOverlay && !session.sessionEnded && (
-            <div className='absolute inset-0 z-10 flex flex-col items-center justify-center bg-canvas-bg-subtle/80 backdrop-blur-sm'>
-              <Card className='w-full max-w-md'>
+            <motion.div
+              drag
+              dragMomentum={false}
+              initial={false}
+              className='absolute z-30 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing'
+            >
+              <Card className='w-full max-w-md shadow-xl bg-canvas-bg border border-canvas-line'>
                 <CardHeader className='text-center pb-2'>
                   <CardTitle className='text-xl'>
                     {session.lastOutcome
@@ -256,44 +265,50 @@ const GameSession: React.FC<GameSessionProps> = ({ params }) => {
                 </CardHeader>
                 <Separator />
                 <CardContent className='pt-4 flex flex-col gap-2'>
-                  <Button
-                    variant='soft'
-                    onClick={session.playAgain}
-                    className='w-full'
-                    leadingIcon={<RotateCcw />}
-                  >
-                    Play Another Hand
-                  </Button>
-                  <Button
-                    variant='destructive'
-                    onClick={session.stopPlaying}
-                    className='w-full'
-                    leadingIcon={<LogOut />}
-                  >
-                    End Session
-                  </Button>
+                  {session.shutdownInitiated ? (
+                    <p className='text-sm text-center text-canvas-text'>Session ending…</p>
+                  ) : (
+                    <>
+                      <Button
+                        variant='soft'
+                        onClick={session.playAgain}
+                        className='w-full'
+                        leadingIcon={<RotateCcw />}
+                      >
+                        Play Another Hand
+                      </Button>
+                      <Button
+                        variant='destructive'
+                        onClick={session.stopPlaying}
+                        className='w-full'
+                        leadingIcon={<LogOut />}
+                      >
+                        End Session
+                      </Button>
+                    </>
+                  )}
                 </CardContent>
               </Card>
-            </div>
+            </motion.div>
           )}
 
           {/* Waiting for first hand */}
           {!handEverStarted && !session.sessionEnded && (
-            <div className='flex items-center justify-center h-full'>
+            <div className='flex flex-1 items-center justify-center'>
               <p className='text-canvas-text'>Waiting for game to start…</p>
             </div>
           )}
 
           {/* Session ended, no active hand */}
           {session.sessionEnded && !handEverStarted && (
-            <div className='flex items-center justify-center h-full'>
+            <div className='flex flex-1 items-center justify-center'>
               <p className='text-canvas-text'>Session complete.</p>
             </div>
           )}
         </div>
 
         {/* Logs panel */}
-        <div className='flex flex-col gap-2 lg:flex-[7_1_0%] lg:min-h-0 lg:overflow-y-auto'>
+        <div className='flex flex-col gap-2 lg:flex-[7_1_0%] lg:min-h-0 lg:overflow-y-auto max-h-48 lg:max-h-none'>
           <LogTextArea label='Game Log' lines={session.gameLog} />
           <LogTextArea label='Debug Log' lines={session.debugLog} />
         </div>

@@ -156,6 +156,14 @@ export function getEvenHexString(n: number) {
   return hexString;
 }
 
+export function formatMojos(mojos: number): string {
+  const xch = mojos / 1e12;
+  if (Math.abs(xch) >= 0.0001) {
+    return `${xch.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 })} XCH`;
+  }
+  return `${mojos.toLocaleString()} mojos`;
+}
+
 export function parseGameSessionParams(raw: Record<string, string | undefined>): GameSessionParams {
   const iStarted = raw.iStarted !== 'false';
   const amountStr = raw.amount;
