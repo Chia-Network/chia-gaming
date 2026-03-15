@@ -186,9 +186,19 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     const myPrefix = 'player';
     const oppPrefix = 'ai';
 
+    const sortByDomX = (ids: number[], prefix: string) =>
+      [...ids].sort((a, b) => {
+        const elA = document.querySelector(`[data-card-id="${prefix}-${a}"]`);
+        const elB = document.querySelector(`[data-card-id="${prefix}-${b}"]`);
+        if (!elA || !elB) return 0;
+        return elA.getBoundingClientRect().left - elB.getBoundingClientRect().left;
+      });
+    const sortedPlayerSwaps = sortByDomX(playerSwapCardIds, myPrefix);
+    const sortedAiSwaps = sortByDomX(aiSwapCardIds, oppPrefix);
+
     // Player -> Opponent animations
-    playerSwapCardIds.forEach((swapCardId, i) => {
-      const aiCardId = aiSwapCardIds[i];
+    sortedPlayerSwaps.forEach((swapCardId, i) => {
+      const aiCardId = sortedAiSwaps[i];
       if (aiCardId === undefined) {
         return;
       }
@@ -225,8 +235,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     });
 
     // Opponent -> Player animations
-    aiSwapCardIds.forEach((swapCardId, i) => {
-      const playerCardId = playerSwapCardIds[i];
+    sortedAiSwaps.forEach((swapCardId, i) => {
+      const playerCardId = sortedPlayerSwaps[i];
       if (playerCardId === undefined) {
         return;
       }
