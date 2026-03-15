@@ -216,19 +216,11 @@ const GameSession: React.FC<GameSessionProps> = ({ params }) => {
         <Separator className='mt-2' />
       </div>
 
-      {/* Session ended indicator */}
-      {session.sessionEnded && (
-        <div className='flex-shrink-0 mx-4 sm:mx-6 md:mx-8 rounded-md border border-canvas-border bg-canvas-bg p-3 mb-2 text-center'>
-          <p className='text-lg font-semibold text-canvas-text-contrast'>Session Ended</p>
-          <p className='text-sm text-canvas-text'>Channel closed — funds returned on-chain</p>
-        </div>
-      )}
-
       {/* Main content area (flex-1 min-h-0) */}
       <div className='flex flex-1 min-h-0 flex-col gap-2 px-4 pb-2 sm:px-6 md:px-8 lg:flex-row'>
         {/* Game area */}
         <div className='relative flex-1 min-h-0 flex flex-col lg:flex-[18_1_0%]'>
-          {handEverStarted && !session.sessionEnded && (
+          {handEverStarted && (
             <CalpokerHand
               key={session.handKey}
               gameObject={session.gameObject}
@@ -244,7 +236,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params }) => {
           )}
 
           {/* Between-hand overlay (draggable, no backdrop) */}
-          {session.showBetweenHandOverlay && !session.sessionEnded && (
+          {(session.showBetweenHandOverlay || session.sessionEnded) && (
             <motion.div
               drag
               dragMomentum={false}
@@ -254,18 +246,22 @@ const GameSession: React.FC<GameSessionProps> = ({ params }) => {
               <Card className='w-full max-w-md shadow-xl bg-canvas-bg border border-canvas-line'>
                 <CardHeader className='text-center pb-2'>
                   <CardTitle className='text-xl'>
-                    {session.lastOutcome
-                      ? session.lastOutcome.my_win_outcome === 'win'
-                        ? 'You Won!'
-                        : session.lastOutcome.my_win_outcome === 'lose'
-                          ? 'You Lost'
-                          : 'Tie Game'
-                      : 'Hand Finished'}
+                    {session.sessionEnded
+                      ? 'Session Ended'
+                      : session.lastOutcome
+                        ? session.lastOutcome.my_win_outcome === 'win'
+                          ? 'You Won!'
+                          : session.lastOutcome.my_win_outcome === 'lose'
+                            ? 'You Lost'
+                            : 'Tie Game'
+                        : 'Hand Finished'}
                   </CardTitle>
                 </CardHeader>
                 <Separator />
                 <CardContent className='pt-4 flex flex-col gap-2'>
-                  {session.shutdownInitiated ? (
+                  {session.sessionEnded ? (
+                    <p className='text-sm text-center text-canvas-text'>Channel closed — funds returned on-chain</p>
+                  ) : session.shutdownInitiated ? (
                     <p className='text-sm text-center text-canvas-text'>Session ending…</p>
                   ) : (
                     <>
