@@ -6,9 +6,55 @@ serves as a reference for future work.
 
 For the backend/WASM architecture, see `ARCHITECTURE.MD`.
 
-## Overview
+## System-Level View
 
-The frontend is organized as a set of nested frames with strict containment
+The system consists of two separate deployable artifacts:
+
+1. **Player App** — A fully static HTML/JS/CSS application. This is the main
+   application that players run. It contains the wallet connection, WASM cradle,
+   game session logic, and all game UIs. It is served as static files with no
+   server-side logic. The only dynamic configuration is a list of tracker URLs.
+
+2. **Tracker** — A separate dynamic service that provides two things: a lobby UI
+   for matchmaking (loaded as an iframe inside the player app), and a message
+   relay that ferries game messages between peers via socket.io. The tracker is
+   third-party code — anyone can run one, and players choose which trackers to
+   connect to.
+
+The player app maintains a **tracker list** — a set of tracker URLs that the
+user can add to or remove from. This list is persisted locally in the browser
+(localStorage), not on any server. The player app may ship with a default tracker
+URL, but the user's local list is the source of truth. The UX presents the
+tracker list as a set of lobbies the player can connect to.
+
+### Peer Messaging
+
+Currently, all game messages between peers are relayed through the tracker's
+socket.io server. Both players connect to the same tracker with a shared token,
+and the tracker routes messages between them. This is simple and works well
+behind NATs, but it means the tracker must stay connected for the duration of the
+session.
+
+A future option is to upgrade to WebRTC for peer-to-peer messaging after the
+initial matchmaking. This would remove the tracker as a runtime dependency once
+both peers are connected, but adds ICE/STUN/TURN complexity. Game messages are
+small and infrequent (a few per hand), so the relay approach is adequate for now.
+
+### Session Persistence
+
+The player app must survive accidental browser closes. Session state is
+continuously saved to localStorage so that reloading the page reconnects to the
+in-progress session automatically. When both peers reconnect (possibly after one
+or both closed their browser), they exchange save IDs through the tracker,
+find a matching session, and resume where they left off.
+
+This is always-on — not a feature the user has to opt into. The save
+infrastructure (`save.ts`) and the save-exchange protocol in `GameSocket.ts`
+already exist but are currently disabled pending testing.
+
+## Player App Internal Architecture
+
+The player app is organized as a set of nested frames with strict containment
 boundaries. Each frame has a well-defined trust level and responsibility. The
 design supports future extension to multiple game types and multiple simultaneous
 games, but the MVP is limited to one game at a time.
@@ -51,19 +97,20 @@ The parent window is our trusted code. It owns:
 
 The parent window does not know about game types or game protocol details.
 
-### Lobby Iframe
+### Lobby Iframe (Tracker)
 
-The lobby iframe is **untrusted**. It contains third-party code that provides
-matchmaking UX. It can have whatever visual design and user experience it wants.
+The lobby iframe is **untrusted**. It is served by a tracker from the user's
+tracker list (see "System-Level View" above). It provides matchmaking UX and can
+have whatever visual design and user experience the tracker operator wants.
 
 Its only capability visible to the rest of the application is firing a signal
 that triggers a peer connection. The parent window listens for this signal and
 ignores everything else from the lobby.
 
 The lobby connection is persistent and always visible (e.g. as a tab). The UX
-starts by allowing the user to navigate to a lobby. Both players connect to the
-same lobby/tracker, and the lobby triggers both of them connecting to each other
-— replacing the current manual URL-sharing flow.
+starts by allowing the user to navigate to a lobby from their tracker list. Both
+players connect to the same tracker, and the lobby triggers both of them
+connecting to each other — replacing the current manual URL-sharing flow.
 
 ### Game Session Frame
 
