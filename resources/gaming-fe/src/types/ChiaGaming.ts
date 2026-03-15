@@ -423,42 +423,6 @@ function select_cards_using_bits<T>(card: T[], mask: number): T[][] {
   return [result0, result1];
 }
 
-function card_matches(cards: number[], card: number): boolean {
-  for (const existingCard of cards) {
-    if (existingCard === card) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-export function card_color(
-  outcome: CalpokerOutcome,
-  iAmAlice: boolean,
-  card: number,
-): 'my-used' | 'my-final' | 'their-used' | 'their-final' {
-  const my_used_cards = iAmAlice
-    ? outcome.alice_used_cards
-    : outcome.bob_used_cards;
-  if (card_matches(my_used_cards, card)) {
-    return 'my-used';
-  }
-  const their_used_cards = iAmAlice
-    ? outcome.bob_used_cards
-    : outcome.alice_used_cards;
-  if (card_matches(their_used_cards, card)) {
-    return 'their-used';
-  }
-  const my_final_cards = iAmAlice
-    ? outcome.alice_final_hand
-    : outcome.bob_final_hand;
-  if (card_matches(my_final_cards, card)) {
-    return 'my-final';
-  }
-  return 'their-final';
-}
-
 function compare_card(a: number, b: number): number {
   const aRankSuit = cardIdToRankSuit(a);
   const bRankSuit = cardIdToRankSuit(b);
@@ -495,6 +459,15 @@ export class CalpokerOutcome {
 
   alice_used_cards: number[];
   bob_used_cards: number[];
+
+  my_cards: number[];
+  their_cards: number[];
+  my_final_hand: number[];
+  their_final_hand: number[];
+  my_used_cards: number[];
+  their_used_cards: number[];
+  my_hand_value: number[];
+  their_hand_value: number[];
 
   constructor(
     iStarted: boolean,
@@ -558,6 +531,16 @@ export class CalpokerOutcome {
       this.bob_final_hand,
       this.bob_selects,
     )[1];
+
+    const iAmAlice = !iStarted;
+    this.my_cards = iAmAlice ? this.alice_cards : this.bob_cards;
+    this.their_cards = iAmAlice ? this.bob_cards : this.alice_cards;
+    this.my_final_hand = iAmAlice ? this.alice_final_hand : this.bob_final_hand;
+    this.their_final_hand = iAmAlice ? this.bob_final_hand : this.alice_final_hand;
+    this.my_used_cards = iAmAlice ? this.alice_used_cards : this.bob_used_cards;
+    this.their_used_cards = iAmAlice ? this.bob_used_cards : this.alice_used_cards;
+    this.my_hand_value = iAmAlice ? this.alice_hand_value : this.bob_hand_value;
+    this.their_hand_value = iAmAlice ? this.bob_hand_value : this.alice_hand_value;
   }
 }
 

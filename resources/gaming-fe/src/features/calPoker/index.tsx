@@ -58,7 +58,6 @@ const Calpoker: React.FC<CalpokerProps> = ({
           cardSelections={cardSelections}
           setCardSelections={setCardSelections}
           handleMakeMove={handleMakeMove}
-          iStarted={iStarted}
           outcome={outcome}
           myWinOutcome={myWinOutcome}
           onDisplayComplete={onDisplayComplete}

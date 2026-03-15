@@ -9,6 +9,7 @@ interface CardRenderProps {
   isBeingSwapped: boolean;
   cardId: string;
   isInBestHand: boolean | undefined;
+  hasHalo: boolean;
   area: string;
 }
 

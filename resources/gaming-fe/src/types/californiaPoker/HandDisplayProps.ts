@@ -12,9 +12,10 @@ interface HandDisplayProps {
   bestHand: BestHandType | undefined;
   onCardClick?: (n: number) => void;
   selectedCards: number[];
-  swappingCards: CardValueSuit[];
   showSwapAnimation: boolean;
   gameState: string;
+  haloCardIds: number[];
+  onReorder?: (reorderedCards: CardValueSuit[]) => void;
   formatHandDescription: (f: FormatHandProps) => string;
 };
 

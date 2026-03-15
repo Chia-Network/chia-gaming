@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
+import { Reorder } from 'framer-motion';
 import { HandDisplayProps } from '../../../../types/californiaPoker';
+import { CardValueSuit } from '../../../../types/californiaPoker/CardValueSuit';
 import { GAME_STATES } from '../constants/constants';
 import Card from './Card';
+
+const NOOP = () => {};
 
 function HandDisplay(props: HandDisplayProps) {
   const {
@@ -14,26 +18,16 @@ function HandDisplay(props: HandDisplayProps) {
     bestHand,
     onCardClick,
     selectedCards,
-    swappingCards,
     showSwapAnimation,
     gameState,
+    haloCardIds,
+    onReorder,
     formatHandDescription,
   } = props;
-  const [containerWidth, setContainerWidth] = useState(600);
   const [winnerIndicatorOffset, setWinnerIndicatorOffset] = useState(0);
-  const containerRef = useRef<any | null>(null);
-
-  useEffect(() => {
-    const updateWidth = () => {
-      if (containerRef.current) {
-        setContainerWidth(containerRef.current.offsetWidth - 16); // Subtract padding
-      }
-    };
-
-    updateWidth();
-    window.addEventListener('resize', updateWidth);
-    return () => window.removeEventListener('resize', updateWidth);
-  }, []);
+  const [draggingCardId, setDraggingCardId] = useState<number | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const isDraggingRef = useRef(false);
 
   useEffect(() => {
     const updateWinnerPosition = () => {
@@ -46,14 +40,9 @@ function HandDisplay(props: HandDisplayProps) {
           const lastCardElement = cardElements[cardElements.length - 1];
           const lastCardRect = lastCardElement.getBoundingClientRect();
 
-          // Calculate offset to align right edge of indicator with right edge of rightmost card
           const containerCenter = containerRect.left + containerRect.width / 2;
           const cardRightEdge = lastCardRect.right;
-
-          // We need to position the indicator so its right edge aligns with the card's right edge
-          // Since the indicator starts centered, we need to account for half its width
-          // Estimate indicator width (will be refined by actual measurement if needed)
-          const indicatorWidth = 80; // Approximate width of "Winner!" text + padding
+          const indicatorWidth = 80;
           const offset = cardRightEdge - containerCenter - indicatorWidth / 2;
 
           setWinnerIndicatorOffset(offset);
@@ -61,8 +50,6 @@ function HandDisplay(props: HandDisplayProps) {
       }
     };
 
-    // Always update position when cards change, regardless of game state
-    // This ensures the position is calculated before the indicator becomes visible
     const timer = setTimeout(updateWinnerPosition, 50);
     window.addEventListener('resize', updateWinnerPosition);
 
@@ -70,15 +57,45 @@ function HandDisplay(props: HandDisplayProps) {
       clearTimeout(timer);
       window.removeEventListener('resize', updateWinnerPosition);
     };
-  }, [cards, area]); // Removed winner, winnerType, gameState dependencies
+  }, [cards, area]);
 
   const isWinner = winner === winnerType;
   const isTie = winner === 'tie';
-  const isPlayer = area === 'player';
 
-  // Only show the title, not the hand description
+  const handleCardClick = (cardId: number) => {
+    if (isDraggingRef.current) return;
+    onCardClick?.(cardId);
+  };
 
-  // We'll render cards in a responsive grid (2 -> 4 -> 6 -> 8 columns)
+  const renderCard = (card: CardValueSuit, idx: number) => {
+    const cardId = card.cardId ?? idx;
+    const isInBestHand =
+      gameState === GAME_STATES.FINAL &&
+      bestHand?.cards?.some(
+        (bestCard) =>
+          bestCard.cardId != null &&
+          bestCard.cardId === card.cardId,
+      );
+    const hasHalo = haloCardIds.includes(card.cardId ?? -1);
+
+    return (
+      <Card
+        index={idx}
+        id={`card-${playerNumber}-${idx}`}
+        card={card}
+        cardId={`${area}-${cardId}`}
+        isSelected={selectedCards.includes(cardId)}
+        onClick={() => handleCardClick(cardId)}
+        isBeingSwapped={showSwapAnimation}
+        isInBestHand={isInBestHand}
+        hasHalo={hasHalo}
+        area={area}
+      />
+    );
+  };
+
+  const gridClass = 'grid grid-cols-4 md:grid-cols-8 gap-2 w-full';
+  const dragEnabled = !!onReorder;
 
   return (
     <div
@@ -104,43 +121,45 @@ function HandDisplay(props: HandDisplayProps) {
         )}
 
         <div className='w-full'>
-          <div className='grid grid-cols-4 md:grid-cols-8 gap-2 w-full'>
-            {cards.map((card: any, idx: number) => {
-              const originalIndex =
-                card.originalIndex !== undefined ? card.originalIndex : idx;
-              const cardId = card.cardId ?? originalIndex;
-              const isBeingSwapped =
-                showSwapAnimation &&
-                swappingCards.some((c) => c.originalIndex === originalIndex);
-              const isInBestHand =
-                gameState === GAME_STATES.FINAL &&
-                bestHand?.cards?.some(
-                  (bestCard) =>
-                    bestCard.rank === card.rank &&
-                    bestCard.suit === card.suit,
-                );
-
+          <Reorder.Group
+            axis='x'
+            values={cards}
+            onReorder={onReorder ?? NOOP}
+            className={gridClass}
+            as='div'
+          >
+            {cards.map((card, idx) => {
+              const isDragging = draggingCardId === (card.cardId ?? idx);
               return (
-                <div
-                  key={`${area}-${cardId}`}
-                  className='flex items-center justify-center'
+                <Reorder.Item
+                  key={card.cardId ?? idx}
+                  value={card}
+                  as='div'
+                  className={`relative flex items-center justify-center ${isDragging ? 'z-50' : 'z-0'}`}
+                  layout={dragEnabled || undefined}
+                  dragListener={dragEnabled}
+                  onDragStart={() => {
+                    isDraggingRef.current = true;
+                    setDraggingCardId(card.cardId ?? idx);
+                  }}
+                  onDragEnd={() => {
+                    setDraggingCardId(null);
+                    setTimeout(() => { isDraggingRef.current = false; }, 0);
+                  }}
                 >
-                  <Card
-                    index={idx}
-                    id={`card-${playerNumber}-${idx}`}
-                    key={`${area}-${originalIndex}`}
-                    card={card}
-                    cardId={`${area}-${cardId}`}
-                    isSelected={selectedCards.includes(cardId)}
-                    onClick={() => onCardClick && onCardClick(cardId)}
-                    isBeingSwapped={isBeingSwapped}
-                    isInBestHand={isInBestHand}
-                    area={area}
-                  />
-                </div>
+                  <div
+                    className='w-full'
+                    style={{
+                      transform: isDragging ? 'scale(1.05)' : 'scale(1)',
+                      transition: isDragging ? 'none' : 'transform 0.2s ease',
+                    }}
+                  >
+                    {renderCard(card, idx)}
+                  </div>
+                </Reorder.Item>
               );
             })}
-          </div>
+          </Reorder.Group>
         </div>
       </div>
     </div>

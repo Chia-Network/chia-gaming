@@ -3,7 +3,6 @@ import { CalpokerOutcome } from '../ChiaGaming';
 export interface CaliforniapokerProps {
   outcome: CalpokerOutcome | undefined;
   moveNumber: number;
-  iStarted: boolean;
   playerNumber: number;
   playerHand: number[];
   opponentHand: number[];

@@ -1,11 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 // Types
 import {
   BestHandType,
   CaliforniapokerProps,
   CardValueSuit,
   MovingCardData,
-  SwappingCards,
 } from '../../../types/californiaPoker';
 // Constants
 import {
@@ -51,7 +50,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   myWinOutcome,
   onDisplayComplete,
 }) => {
-  const isPlayerAlice = playerNumber === 1;
   const [gameState, setGameState] = useState(GAME_STATES.INITIAL);
   // const [playerCards, setPlayerHand] = useState<CardValueSuit[]>([]);
   const suitMap: Record<number, SuitName> = {
@@ -67,41 +65,33 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const [rememberedOutcome, setRememberedOutcome] = useState<
     CalpokerOutcome | undefined
   >(undefined);
-  const [rememberedCards, setRememberedCards] = useState<CardValueSuit[][]>([
-    playerCards,
-    opponentCards,
-  ]);
+  const rememberedCardsRef = useRef<CardValueSuit[][]>([[], []]);
   const [playerDisplayText, setPlayerDisplayText] = useState<string>('');
   const [opponentDisplayText, setOpponentDisplayText] = useState<string>('');
 
-  const cvsFromCard: (cardId: number, index: number) => CardValueSuit = (
-    cardId,
-    index,
-  ) => {
+  const cvsFromCard = (cardId: number): CardValueSuit => {
     const { rank, suit } = cardIdToRankSuit(cardId);
-    return {
-      rank,
-      suit: suitMap[suit],
-      originalIndex: index,
-      cardId,
-    };
+    return { rank, suit: suitMap[suit], cardId };
   };
 
-  // whenever playerHand or aiHand changes → convert into CardValueSuit[]
   useEffect(() => {
-    const mappedPlayer = playerHand.map(cvsFromCard);
-    const mappedOpponent = opponentHand.map(cvsFromCard);
-
-    setPlayerCards(mappedPlayer);
-    setOpponentCards(mappedOpponent);
-    if (mappedPlayer.length && mappedOpponent.length) {
-      const newRemCards = [mappedPlayer, mappedOpponent];
-      setRememberedCards(newRemCards);
-    }
     if (outcome) {
       setRememberedOutcome(outcome);
     }
-  }, [playerHand, opponentHand, outcome]);
+    const inAnimation =
+      gameState === GAME_STATES.AWAITING_SWAP ||
+      gameState === GAME_STATES.SWAPPING ||
+      gameState === GAME_STATES.FINAL;
+    if (!inAnimation) {
+      const mappedPlayer = playerHand.map(cvsFromCard);
+      const mappedOpponent = opponentHand.map(cvsFromCard);
+      setPlayerCards(mappedPlayer);
+      setOpponentCards(mappedOpponent);
+      if (mappedPlayer.length && mappedOpponent.length) {
+        rememberedCardsRef.current = [mappedPlayer, mappedOpponent];
+      }
+    }
+  }, [playerHand, opponentHand, outcome, gameState]);
 
   useEffect(() => {
     const haveOutcome = outcome ? outcome : rememberedOutcome;
@@ -119,12 +109,10 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     BestHandType | undefined
   >();
   const [aiBestHand, setAiBestHand] = useState<BestHandType | undefined>();
-  const [swappingCards, setSwappingCards] = useState<SwappingCards>({
-    player: [],
-    ai: [],
-  });
   const [showSwapAnimation, setShowSwapAnimation] = useState(false);
   const [movingCards, setMovingCards] = useState<MovingCardData[]>([]);
+  const [playerHaloCardIds, setPlayerHaloCardIds] = useState<number[]>([]);
+  const [opponentHaloCardIds, setOpponentHaloCardIds] = useState<number[]>([]);
 
   const dealCards = () => {
     setGameState(GAME_STATES.SELECTING);
@@ -145,12 +133,22 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     });
   };
 
+  const handleReorder = useCallback((reordered: CardValueSuit[]) => {
+    setPlayerCards(reordered);
+    rememberedCardsRef.current = [reordered, rememberedCardsRef.current[1]];
+  }, []);
+
   const isDisabled =
     moveNumber !== 1 ||
     !(gameState === GAME_STATES.SELECTING && cardSelections.length === 4);
 
   const showAnimationPhase =
     gameState === GAME_STATES.SWAPPING || gameState === GAME_STATES.FINAL;
+
+  const playerHalos = gameState === GAME_STATES.SELECTING
+    ? cardSelections
+    : playerHaloCardIds;
+  const opponentHalos = opponentHaloCardIds;
 
   const buttonText = showAnimationPhase
     ? '\u00A0'
@@ -163,6 +161,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const doHandleMakeMove = () => {
     console.log(`[UI] doHandleMakeMove | moveNumber:${moveNumber} | gameState:${gameState} | cardSelections:${cardSelections.length}`);
     if (gameState === GAME_STATES.SELECTING && cardSelections.length > 0) {
+      setPlayerHaloCardIds([...cardSelections]);
       setGameState(GAME_STATES.AWAITING_SWAP);
     }
 
@@ -308,10 +307,10 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     // then opponent swap cards (rightmost first), then non-swapping cards lowest.
     const playerSwaps = movingCardData
       .filter(c => c.direction === 'playerToAi')
-      .sort((a, b) => (b.card.originalIndex ?? 0) - (a.card.originalIndex ?? 0));
+      .sort((a, b) => b.startX - a.startX);
     const aiSwaps = movingCardData
       .filter(c => c.direction === 'aiToPlayer')
-      .sort((a, b) => (b.card.originalIndex ?? 0) - (a.card.originalIndex ?? 0));
+      .sort((a, b) => b.startX - a.startX);
     let z = 100;
     for (const c of playerSwaps) { c.zIndex = z--; }
     for (const c of aiSwaps) { c.zIndex = z--; }
@@ -327,76 +326,66 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     setWinner(liveWinner);
     setGameState(GAME_STATES.SWAPPING);
 
-    const playerSelected = isPlayerAlice
-      ? rememberedOutcome.alice_discards
-      : rememberedOutcome.bob_discards;
-    const aiSelected = isPlayerAlice
-      ? rememberedOutcome.bob_discards
-      : rememberedOutcome.alice_discards;
+    const playerOriginal = rememberedOutcome.my_cards;
+    const opponentOriginal = rememberedOutcome.their_cards;
+    const playerFinal = rememberedOutcome.my_final_hand;
+    const opponentFinal = rememberedOutcome.their_final_hand;
 
-    const playerSwapCardIds: number[] = rememberedCards[0]
-      .filter((card) => (aiSelected & (1 << (card.originalIndex ?? 0))) !== 0)
-      .map((card) => card.cardId)
-      .filter((cardId): cardId is number => cardId !== undefined);
-    const aiSwapCardIds: number[] = rememberedCards[1]
-      .filter(
-        (card) => (playerSelected & (1 << (card.originalIndex ?? 0))) !== 0,
-      )
-      .map((card) => card.cardId)
-      .filter((cardId): cardId is number => cardId !== undefined);
+    const playerFinalSet = new Set(playerFinal);
+    const opponentFinalSet = new Set(opponentFinal);
+    const playerDiscardIds = playerOriginal.filter(id => !playerFinalSet.has(id));
+    const opponentDiscardIds = opponentOriginal.filter(id => !opponentFinalSet.has(id));
 
-    setSwappingCards({ player: rememberedCards[0], ai: rememberedCards[1] });
+    setPlayerHaloCardIds(playerDiscardIds);
+    setOpponentHaloCardIds(opponentDiscardIds);
+
+    const playerSwapCardIds = playerDiscardIds;
+    const aiSwapCardIds = opponentDiscardIds;
+
+    const remembered = rememberedCardsRef.current;
     const movingCardData = calculateMovingCards(
       playerSwapCardIds,
       aiSwapCardIds,
-      rememberedCards[0],
-      rememberedCards[1],
+      remembered[0],
+      remembered[1],
     );
     setMovingCards(movingCardData);
     setShowSwapAnimation(true);
 
     setTimeout(() => {
-      // Copy current hands
-      const newPlayer = [...playerCards];
-      const newOpponent = [...opponentCards];
-
-      // Apply exact card swaps based on animation index mapping
+      const playerDiscardToIncoming = new Map<number, number>();
       for (let i = 0; i < playerSwapCardIds.length; i++) {
-        const pCardId = playerSwapCardIds[i];
-        const aiCardId = aiSwapCardIds[i];
-        if (pCardId === undefined || aiCardId === undefined) {
-          continue;
-        }
-        const pIndex = newPlayer.findIndex((c) => c.cardId === pCardId);
-        const aiIndex = newOpponent.findIndex((c) => c.cardId === aiCardId);
-        if (pIndex === -1 || aiIndex === -1) {
-          continue;
-        }
-
-        // Player gives card to AI
-        newOpponent[aiIndex] = playerCards[pIndex];
-
-        // AI gives card to Player
-        newPlayer[pIndex] = opponentCards[aiIndex];
+        playerDiscardToIncoming.set(playerSwapCardIds[i], aiSwapCardIds[i]);
+      }
+      const opponentDiscardToIncoming = new Map<number, number>();
+      for (let i = 0; i < aiSwapCardIds.length; i++) {
+        opponentDiscardToIncoming.set(aiSwapCardIds[i], playerSwapCardIds[i]);
       }
 
-      // Update UI
+      const ref = rememberedCardsRef.current;
+      const newPlayer = ref[0].map(c => {
+        const incoming = playerDiscardToIncoming.get(c.cardId!);
+        return incoming !== undefined ? cvsFromCard(incoming) : c;
+      });
+      const newOpponent = ref[1].map(c => {
+        const incoming = opponentDiscardToIncoming.get(c.cardId!);
+        return incoming !== undefined ? cvsFromCard(incoming) : c;
+      });
+
       setPlayerCards(newPlayer);
       setOpponentCards(newOpponent);
-      setRememberedCards([newPlayer, newOpponent]);
+      rememberedCardsRef.current = [newPlayer, newOpponent];
 
-      // --- Best hands from outcome ---
-      const myUsedCards = isPlayerAlice ? rememberedOutcome.alice_used_cards : rememberedOutcome.bob_used_cards;
-      const oppUsedCards = isPlayerAlice ? rememberedOutcome.bob_used_cards : rememberedOutcome.alice_used_cards;
-      const myHandValue = isPlayerAlice ? rememberedOutcome.alice_hand_value : rememberedOutcome.bob_hand_value;
-      const oppHandValue = isPlayerAlice ? rememberedOutcome.bob_hand_value : rememberedOutcome.alice_hand_value;
+      setPlayerHaloCardIds(aiSwapCardIds);
+      setOpponentHaloCardIds(playerSwapCardIds);
 
-      const playerBestCards: CardValueSuit[] = myUsedCards.map((cardId, idx) =>
-        cvsFromCard(cardId, idx),
-      );
-      const opponentBestCards: CardValueSuit[] = oppUsedCards.map((cardId, idx) =>
-        cvsFromCard(cardId, idx),
-      );
+      const myUsedCards = rememberedOutcome.my_used_cards;
+      const oppUsedCards = rememberedOutcome.their_used_cards;
+      const myHandValue = rememberedOutcome.my_hand_value;
+      const oppHandValue = rememberedOutcome.their_hand_value;
+
+      const playerBestCards: CardValueSuit[] = myUsedCards.map(cvsFromCard);
+      const opponentBestCards: CardValueSuit[] = oppUsedCards.map(cvsFromCard);
 
       setPlayerBestHand({
         cards: playerBestCards,
@@ -431,7 +420,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       gameState !== GAME_STATES.FINAL
     ) {
       setGameState(GAME_STATES.SELECTING);
-      setRememberedCards([[], []]);
+      rememberedCardsRef.current = [[], []];
       setRememberedOutcome(undefined);
       setWinner(null);
       setMovingCards([]);
@@ -440,7 +429,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       setShowSwapAnimation(false);
       setPlayerDisplayText('');
       setOpponentDisplayText('');
-      setSwappingCards({ player: [], ai: [] });
+      setPlayerHaloCardIds([]);
+      setOpponentHaloCardIds([]);
     }
   }, [moveNumber, showSwapAnimation, gameState]);
   return (
@@ -478,16 +468,16 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 <HandDisplay
                   title=''
                   cards={
-                    opponentCards.length ? opponentCards : rememberedCards[1]
+                    opponentCards.length ? opponentCards : rememberedCardsRef.current[1]
                   }
                   playerNumber={playerNumber == 1 ? 2 : 1}
                   area='ai'
                   winner={winner}
                   winnerType='ai'
                   bestHand={aiBestHand}
-                  swappingCards={swappingCards.ai}
                   showSwapAnimation={showSwapAnimation}
                   gameState={gameState}
+                  haloCardIds={opponentHalos}
                   formatHandDescription={formatHandDescription}
                   selectedCards={[]}
                 />
@@ -523,7 +513,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 <HandDisplay
                   title=''
                   cards={
-                    playerCards.length ? playerCards : rememberedCards[0]
+                    playerCards.length ? playerCards : rememberedCardsRef.current[0]
                   }
                   playerNumber={playerNumber}
                   area='player'
@@ -532,9 +522,10 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                   bestHand={playerBestHand}
                   onCardClick={toggleCardSelection}
                   selectedCards={cardSelections}
-                  swappingCards={swappingCards.player}
                   showSwapAnimation={showSwapAnimation}
                   gameState={gameState}
+                  haloCardIds={playerHalos}
+                  onReorder={gameState === GAME_STATES.SELECTING ? handleReorder : undefined}
                   formatHandDescription={formatHandDescription}
                 />
               </CardContent>

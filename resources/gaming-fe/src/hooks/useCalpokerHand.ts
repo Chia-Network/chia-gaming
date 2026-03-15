@@ -109,11 +109,10 @@ export function useCalpokerHand(
             );
             setOutcome(newOutcome);
 
-            const iAmAlice = !iStarted;
-            const myValue = iAmAlice ? newOutcome.alice_hand_value : newOutcome.bob_hand_value;
-            const myCards = iAmAlice ? newOutcome.alice_used_cards : newOutcome.bob_used_cards;
-            const theirValue = iAmAlice ? newOutcome.bob_hand_value : newOutcome.alice_hand_value;
-            const theirCards = iAmAlice ? newOutcome.bob_used_cards : newOutcome.alice_used_cards;
+            const myValue = newOutcome.my_hand_value;
+            const myCards = newOutcome.my_used_cards;
+            const theirValue = newOutcome.their_hand_value;
+            const theirCards = newOutcome.their_used_cards;
             const myDesc = makeDescription(handValueToDescription(myValue, myCards));
             const theirDesc = makeDescription(handValueToDescription(theirValue, theirCards));
             const resultWord = newOutcome.my_win_outcome === 'win' ? 'You won' : newOutcome.my_win_outcome === 'lose' ? 'You lost' : 'Tied';

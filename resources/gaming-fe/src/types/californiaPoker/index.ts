@@ -5,7 +5,6 @@ import { MovingCardData, MovingCardProps } from './MovingCardProps';
 import { FormatHandProps } from './FormatHandProps';
 import { BestHandType } from './BestHandType';
 import { HandDisplayProps } from './HandDisplayProps';
-import { SwappingCards } from './SwappingCards';
 import { CaliforniapokerProps } from './CaliforniapokerProps';
 export type {  
     CardValueSuit,
@@ -16,6 +15,5 @@ export type {
     FormatHandProps,
     BestHandType,
     HandDisplayProps,
-    SwappingCards,
     CaliforniapokerProps,
     };
