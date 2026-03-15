@@ -67,8 +67,38 @@ export interface GameInitParams {
 
 export type IChiaIdentityFun = (seed: string) => IChiaIdentity;
 
+export interface GameSessionParams {
+  iStarted: boolean;
+  amount: number;          // mojos, total channel buy-in
+  perGameAmount: number;   // mojos per hand
+  token: string;
+  lobbyUrl: string;
+}
+
+export interface PeerIdentity {
+  token: string;
+  iStarted: boolean;
+}
+
+export type WasmNotificationTag =
+  | 'ChannelCreated' | 'ChannelCoinSpent' | 'UnrollCoinSpent'
+  | 'StaleChannelUnroll' | 'ChannelError'
+  | 'CleanShutdownStarted' | 'CleanShutdownComplete'
+  | 'GoingOnChain' | 'GameOnChain'
+  | 'GameProposed' | 'GameProposalAccepted' | 'GameProposalCancelled'
+  | 'OpponentMoved' | 'GameMessage'
+  | 'OpponentPlayedIllegalMove'
+  | 'WeSlashedOpponent' | 'OpponentSlashedUs' | 'OpponentSuccessfullyCheated'
+  | 'WeTimedOut' | 'OpponentTimedOut'
+  | 'GameCancelled' | 'GameError'
+  | 'InsufficientBalance';
+
+export type WasmNotification = {
+  [K in WasmNotificationTag]?: Record<string, unknown>;
+};
+
 export type WasmEvent =
-  | { type: 'notification'; data: any }
+  | { type: 'notification'; data: WasmNotification }
   | { type: 'error'; error: string }
   | { type: 'finished' }
   | { type: 'address'; data: BlockchainInboundAddressResult };

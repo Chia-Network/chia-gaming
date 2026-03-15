@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+import { GameSessionParams } from './types/ChiaGaming';
 
 export function toUint8(s: string) {
   if (s.length % 2 != 0) {
@@ -22,7 +23,7 @@ export function toHexString(byteArray: number[]) {
 
 export type FragmentData = Record<string, string>;
 
-export function getParamsFromString(paramString: string): any {
+export function getParamsFromString(paramString: string): Record<string, string> {
   const fragmentParts = paramString.split('&');
   const params = Object.fromEntries(
     fragmentParts.map((part) => {
@@ -44,7 +45,7 @@ export function getFragmentParams(): FragmentData {
   return getParamsFromString(fragment);
 }
 
-export function getSearchParams(): any {
+export function getSearchParams(): Record<string, string> {
   if (window.location.search === '') {
     return {};
   }
@@ -153,4 +154,23 @@ export function getEvenHexString(n: number) {
     hexString = '0' + hexString;
   }
   return hexString;
+}
+
+export function parseGameSessionParams(raw: Record<string, string | undefined>): GameSessionParams {
+  const iStarted = raw.iStarted !== 'false';
+  const amountStr = raw.amount;
+  if (!amountStr) throw new Error('Missing required URL param: amount');
+  const amount = parseInt(amountStr, 10);
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error(`Invalid amount: ${amountStr}`);
+  let perGameAmount = Math.floor(amount / 10);
+  if (raw.perGame) {
+    const parsed = parseInt(raw.perGame, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) throw new Error(`Invalid perGame: ${raw.perGame}`);
+    perGameAmount = parsed;
+  }
+  const token = raw.token;
+  if (!token) throw new Error('Missing required URL param: token');
+  const lobbyUrl = raw.lobbyUrl;
+  if (!lobbyUrl) throw new Error('Missing required URL param: lobbyUrl');
+  return { iStarted, amount, perGameAmount, token, lobbyUrl };
 }

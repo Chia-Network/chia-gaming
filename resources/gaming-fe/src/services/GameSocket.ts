@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import io, { Socket } from 'socket.io-client';
+import { PeerIdentity } from '../types/ChiaGaming';
 
 interface SendMessageInput {
   party: boolean;
@@ -14,20 +15,18 @@ export interface GameSocketReturn {
 }
 
 export const getGameSocket = (
-  searchParams: any,
+  peerIdentity: PeerIdentity,
   lobbyUrl: string,
   deliverMessage: (msgno: number, m: string) => void,
   setSocketEnabled: (saves: string[]) => void,
   saves: () => string[],
 ): GameSocketReturn => {
-  const token = searchParams.token;
-  const iStarted = searchParams.iStarted !== 'false';
+  const { token, iStarted } = peerIdentity;
 
   let socketRef: Socket | null = null;
 
   let fullyConnected = false;
-  const socketResult: any = io(lobbyUrl);
-  socketRef = socketResult;
+  socketRef = io(lobbyUrl);
   const socket = socketRef;
 
   const hostLog = (msg: string) => {

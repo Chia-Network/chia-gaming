@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Button } from '../../components/button';
 
-import { CalpokerOutcome } from '../../types/ChiaGaming';
+import { CalpokerOutcome, BlockchainInboundAddressResult } from '../../types/ChiaGaming';
 
 import { Info, X } from 'lucide-react';
 import { Alert } from '../../components/ui/alert';
@@ -22,7 +22,7 @@ export interface CalpokerProps {
   setCardSelections: (n: number[] | ((prev: number[]) => number[])) => void;
   handleMakeMove: () => void;
   handleCheat: () => void;
-  addressData: any;
+  addressData: BlockchainInboundAddressResult | undefined;
 }
 
 const Calpoker: React.FC<CalpokerProps> = ({

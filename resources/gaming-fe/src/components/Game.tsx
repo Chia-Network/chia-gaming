@@ -3,7 +3,7 @@ import installThemeSyncListener from '../utils/themeSyncListener';
 import GameSession from './GameSession';
 
 export interface GameParams {
-  params: any;
+  params: Record<string, string | undefined>;
 }
 
 const Game: React.FC<GameParams> = ({ params }) => {

@@ -4,6 +4,7 @@ import { setupBlockchainConnection } from './useBlockchainConnection';
 import { WasmStateInit, loadCalpoker } from './WasmStateInit';
 import {
   InternalBlockchainInterface,
+  PeerIdentity,
 } from '../types/ChiaGaming';
 import { blockchainDataEmitter } from './BlockchainInfo';
 import { FAKE_BLOCKCHAIN_ID } from './FakeBlockchainInterface';
@@ -12,7 +13,7 @@ import {
   startNewSession,
 } from './save';
 
-export var blobSingleton: any = null;
+export var blobSingleton: WasmBlobWrapper | null = null;
 export var initStarted = false;
 
 export function setInitStarted(value: boolean) {
@@ -49,12 +50,12 @@ export async function configGameObject(
 
 export function getBlobSingleton(
   blockchain: InternalBlockchainInterface,
-  searchParams: any,
+  peerIdentity: PeerIdentity,
   lobbyUrl: string,
   uniqueId: string,
   amount: number,
   iStarted: boolean,
-) {
+): { gameObject: WasmBlobWrapper } {
   if (blobSingleton) {
     return { gameObject: blobSingleton };
   }
@@ -74,16 +75,16 @@ export function getBlobSingleton(
 
   const wasmStateInit = new WasmStateInit(doInternalLoadWasm, fetchHex);
   const peerconn = getGameSocket(
-    searchParams,
+    peerIdentity,
     lobbyUrl,
     deliverMessage,
     (_saves: string[]) => {
-      const systemState = blobSingleton.systemState();
+      const systemState = blobSingleton!.systemState();
       const newSession = async () => {
         startNewSession();
         let calpokerHexes = await loadCalpoker(fetchHex);
         await configGameObject(
-          blobSingleton,
+          blobSingleton!,
           iStarted,
           wasmStateInit,
           calpokerHexes,
@@ -93,7 +94,7 @@ export function getBlobSingleton(
         );
       };
 
-      blobSingleton.kickSystem(2);
+      blobSingleton!.kickSystem(2);
       if ((systemState & 2) == 0) {
         newSession();
         return;

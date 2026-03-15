@@ -1,7 +1,10 @@
 import { useEffect, useRef } from 'react';
-import { useGameSession, ChannelCoinState, GameCoinState } from '../hooks/useGameSession';
+import { Observable } from 'rxjs';
+import { useGameSession, ChannelCoinState, GameCoinState, GameplayEvent } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
-import { generateOrRetrieveUniqueId } from '../util';
+import { generateOrRetrieveUniqueId, parseGameSessionParams } from '../util';
+import { CalpokerOutcome, BlockchainInboundAddressResult } from '../types/ChiaGaming';
+import { WasmBlobWrapper } from '../hooks/WasmBlobWrapper';
 import Calpoker from '../features/calPoker';
 import WaitingScreen from './WaitingScreen';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
@@ -41,16 +44,16 @@ function CoinStatus({ label, coinHex, stateLabel }: { label: string; coinHex: st
 }
 
 interface CalpokerHandProps {
-  gameObject: any;
+  gameObject: WasmBlobWrapper;
   gameId: string;
   iStarted: boolean;
   playerNumber: number;
-  gameplayEvent$: any;
-  onOutcome: (outcome: any) => void;
+  gameplayEvent$: Observable<GameplayEvent>;
+  onOutcome: (outcome: CalpokerOutcome) => void;
   onTurnChanged: (isMyTurn: boolean) => void;
   appendGameLog: (line: string) => void;
   stopPlaying: () => void;
-  addressData: any;
+  addressData: BlockchainInboundAddressResult | undefined;
   ourShare: number | undefined;
   theirShare: number | undefined;
 }
@@ -131,13 +134,14 @@ function LogTextArea({ label, lines }: { label: string; lines: string[] }) {
 }
 
 export interface GameSessionProps {
-  params: any;
+  params: Record<string, string | undefined>;
 }
 
 const GameSession: React.FC<GameSessionProps> = ({ params }) => {
   const uniqueId = generateOrRetrieveUniqueId();
+  const parsed = parseGameSessionParams(params);
 
-  const session = useGameSession(params, params.lobbyUrl, uniqueId);
+  const session = useGameSession(parsed, uniqueId);
 
   if (session.error) {
     return (

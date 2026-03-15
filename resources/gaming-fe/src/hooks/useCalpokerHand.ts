@@ -7,6 +7,7 @@ import {
 } from '../types/ChiaGaming';
 import { makeDescription } from '../features/calPoker/components/utils/MakeDescription';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
+import { GameplayEvent } from './useGameSession';
 
 function parseCards(readableBytes: number[], iStarted: boolean): { playerHand: number[], opponentHand: number[] } {
   const program = Program.deserialize(Uint8Array.from(readableBytes));
@@ -44,7 +45,7 @@ export function useCalpokerHand(
   gameObject: WasmBlobWrapper,
   gameId: string,
   iStarted: boolean,
-  gameplayEvent$: Observable<any>,
+  gameplayEvent$: Observable<GameplayEvent>,
   onOutcome: (outcome: CalpokerOutcome) => void,
   onTurnChanged: (isMyTurn: boolean) => void,
   appendGameLog: (line: string) => void,
@@ -73,7 +74,7 @@ export function useCalpokerHand(
 
   useEffect(() => {
     const subscription = gameplayEvent$.subscribe({
-      next: (evt: any) => {
+      next: (evt: GameplayEvent) => {
         if (handFinishedRef.current) return;
 
         if ('OpponentMoved' in evt) {
