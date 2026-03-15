@@ -1,8 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { Observable } from 'rxjs';
 import { useGameSession, ChannelCoinState, GameCoinState, GameplayEvent } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
-import { generateOrRetrieveUniqueId, parseGameSessionParams, formatMojos } from '../util';
+import { generateOrRetrieveUniqueId, parseGameSessionParams, formatMojos, formatAmount } from '../util';
 import { CalpokerOutcome } from '../types/ChiaGaming';
 import { WasmBlobWrapper } from '../hooks/WasmBlobWrapper';
 import Calpoker from '../features/calPoker';
@@ -51,6 +51,7 @@ interface CalpokerHandProps {
   onOutcome: (outcome: CalpokerOutcome) => void;
   onTurnChanged: (isMyTurn: boolean) => void;
   appendGameLog: (line: string) => void;
+  perGameAmount: bigint;
   onDisplayComplete: () => void;
 }
 
@@ -63,6 +64,7 @@ function CalpokerHand({
   onOutcome,
   onTurnChanged,
   appendGameLog,
+  perGameAmount,
   onDisplayComplete,
 }: CalpokerHandProps) {
   const {
@@ -81,8 +83,13 @@ function CalpokerHand({
     gameplayEvent$,
     onOutcome,
     onTurnChanged,
-    appendGameLog,
   );
+
+  const handleGameLog = useCallback((lines: string[]) => {
+    appendGameLog(`California Poker ${formatAmount(perGameAmount)}`);
+    lines.forEach(l => appendGameLog(l));
+    appendGameLog('');
+  }, [appendGameLog, perGameAmount]);
 
   return (
     <Calpoker
@@ -96,6 +103,7 @@ function CalpokerHand({
       handleMakeMove={handleMakeMove}
       handleCheat={handleCheat}
       onDisplayComplete={onDisplayComplete}
+      onGameLog={handleGameLog}
     />
   );
 }
@@ -227,6 +235,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params }) => {
               onOutcome={session.onHandOutcome}
               onTurnChanged={session.onTurnChanged}
               appendGameLog={session.appendGameLog}
+              perGameAmount={session.perGameAmount}
               onDisplayComplete={session.onDisplayComplete}
             />
           )}

@@ -156,6 +156,18 @@ export function getEvenHexString(n: number) {
   return hexString;
 }
 
+export function formatAmount(mojos: bigint): string {
+  if (mojos < 1_000_000n) {
+    return `${mojos} MOJO`;
+  }
+  const TRILLION = 1_000_000_000_000n;
+  const whole = mojos / TRILLION;
+  const frac = mojos % TRILLION;
+  if (frac === 0n) return `${whole} XCH`;
+  const fracStr = frac.toString().padStart(12, '0').replace(/0+$/, '');
+  return `${whole}.${fracStr} XCH`;
+}
+
 export function formatMojos(mojos: bigint): string {
   const TRILLION = 1_000_000_000_000n;
   const absMojos = mojos < 0n ? -mojos : mojos;

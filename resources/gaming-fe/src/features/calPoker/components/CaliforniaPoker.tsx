@@ -13,7 +13,7 @@ import {
 } from './constants/constants';
 
 // Utils
-import { formatHandDescription, makeDescription } from './utils';
+import { formatHandDescription, makeDescription, formatCardsForLog, formatOrderedCardsForLog, orderUsedCardsForLog } from './utils';
 import { HandDisplay, MovingCard } from './components';
 import {
   CalpokerOutcome,
@@ -49,6 +49,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   outcome,
   myWinOutcome,
   onDisplayComplete,
+  onGameLog,
 }) => {
   const [gameState, setGameState] = useState(GAME_STATES.INITIAL);
   // const [playerCards, setPlayerHand] = useState<CardValueSuit[]>([]);
@@ -344,6 +345,18 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     const opponentFinalSet = new Set(opponentFinal);
     const playerDiscardIds = playerOriginal.filter(id => !playerFinalSet.has(id));
     const opponentDiscardIds = opponentOriginal.filter(id => !opponentFinalSet.has(id));
+
+    const playerKeptIds = playerOriginal.filter(id => playerFinalSet.has(id));
+    const opponentKeptIds = opponentOriginal.filter(id => opponentFinalSet.has(id));
+    const resultWord = rememberedOutcome.my_win_outcome === 'win' ? 'Win'
+                     : rememberedOutcome.my_win_outcome === 'lose' ? 'Lose' : 'Tie';
+    const myOrdered = orderUsedCardsForLog(rememberedOutcome.my_used_cards, rememberedOutcome.my_hand_value);
+    const theirOrdered = orderUsedCardsForLog(rememberedOutcome.their_used_cards, rememberedOutcome.their_hand_value);
+    onGameLog([
+      `${formatCardsForLog(playerKeptIds)} give ${formatCardsForLog(playerDiscardIds)}`,
+      `${formatCardsForLog(opponentKeptIds)} give ${formatCardsForLog(opponentDiscardIds)}`,
+      `${resultWord} ${formatOrderedCardsForLog(myOrdered)} vs ${formatOrderedCardsForLog(theirOrdered)}`,
+    ]);
 
     setPlayerHaloCardIds(playerDiscardIds);
     setOpponentHaloCardIds(opponentDiscardIds);

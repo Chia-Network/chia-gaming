@@ -11,4 +11,5 @@ export interface CaliforniapokerProps {
   handleMakeMove: () => void;
   myWinOutcome: 'win' | 'lose' | 'tie' | undefined;
   onDisplayComplete: () => void;
+  onGameLog: (lines: string[]) => void;
 }

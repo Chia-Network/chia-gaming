@@ -3,9 +3,7 @@ import { Program } from 'clvm-lib';
 import { Observable } from 'rxjs';
 import {
   CalpokerOutcome,
-  handValueToDescription,
 } from '../types/ChiaGaming';
-import { makeDescription } from '../features/calPoker/components/utils/MakeDescription';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
 import { GameplayEvent } from './useGameSession';
 
@@ -47,7 +45,6 @@ export function useCalpokerHand(
   gameplayEvent$: Observable<GameplayEvent>,
   onOutcome: (outcome: CalpokerOutcome) => void,
   onTurnChanged: (isMyTurn: boolean) => void,
-  appendGameLog: (line: string) => void,
 ): UseCalpokerHandResult {
   const [playerHand, setPlayerHand] = useState<number[]>([]);
   const [opponentHand, setOpponentHand] = useState<number[]>([]);
@@ -109,15 +106,6 @@ export function useCalpokerHand(
             );
             setOutcome(newOutcome);
 
-            const myValue = newOutcome.my_hand_value;
-            const myCards = newOutcome.my_used_cards;
-            const theirValue = newOutcome.their_hand_value;
-            const theirCards = newOutcome.their_used_cards;
-            const myDesc = makeDescription(handValueToDescription(myValue, myCards));
-            const theirDesc = makeDescription(handValueToDescription(theirValue, theirCards));
-            const resultWord = newOutcome.my_win_outcome === 'win' ? 'You won' : newOutcome.my_win_outcome === 'lose' ? 'You lost' : 'Tied';
-            appendGameLog(`${resultWord} — You: ${myDesc} vs Opponent: ${theirDesc}`);
-
             if (!iStarted && currentMove === 2) {
               try {
                 gameObjectRef.current?.makeMove(gameIdRef.current, null);
@@ -147,7 +135,7 @@ export function useCalpokerHand(
     return () => {
       subscription.unsubscribe();
     };
-  }, [gameplayEvent$, iStarted, onOutcome, onTurnChanged, appendGameLog]);
+  }, [gameplayEvent$, iStarted, onOutcome, onTurnChanged]);
 
   const submitMove1 = useCallback(() => {
     const go = gameObjectRef.current;

@@ -4,3 +4,4 @@ export {
   formatHandDescription,
   makeDescription,
 };
+export { formatCardsForLog, formatOrderedCardsForLog, orderUsedCardsForLog } from './gameLog';

@@ -16,6 +16,7 @@ export interface CalpokerProps {
   handleMakeMove: () => void;
   handleCheat: () => void;
   onDisplayComplete: () => void;
+  onGameLog: (lines: string[]) => void;
 }
 
 const Calpoker: React.FC<CalpokerProps> = ({
@@ -29,6 +30,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
   handleMakeMove,
   handleCheat,
   onDisplayComplete,
+  onGameLog,
 }) => {
   const myWinOutcome = outcome?.my_win_outcome;
 
@@ -59,6 +61,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
           outcome={outcome}
           myWinOutcome={myWinOutcome}
           onDisplayComplete={onDisplayComplete}
+          onGameLog={onGameLog}
         />
       </div>
     </div>
