@@ -12,8 +12,6 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
 import { Button } from './button';
 import { Toaster } from 'sonner';
-import { Globe, LogOut, RotateCcw } from 'lucide-react';
-
 function truncateHex(hex: string, head = 6, tail = 4): string {
   if (hex.length <= head + tail) return hex;
   return `${hex.slice(0, head)}…${hex.slice(-tail)}`;
@@ -192,7 +190,6 @@ const GameSession: React.FC<GameSessionProps> = ({ params }) => {
               onClick={session.goOnChain}
               size='sm'
               disabled={session.sessionEnded || session.shutdownInitiated}
-              leadingIcon={<Globe />}
             >
               Go On-Chain
             </Button>
@@ -269,7 +266,6 @@ const GameSession: React.FC<GameSessionProps> = ({ params }) => {
                         variant='soft'
                         onClick={session.playAgain}
                         className='w-full'
-                        leadingIcon={<RotateCcw />}
                       >
                         Play Another Hand
                       </Button>
@@ -277,7 +273,6 @@ const GameSession: React.FC<GameSessionProps> = ({ params }) => {
                         variant='destructive'
                         onClick={session.stopPlaying}
                         className='w-full'
-                        leadingIcon={<LogOut />}
                       >
                         End Session
                       </Button>
