@@ -2,7 +2,7 @@ import { Subject, Subscription } from 'rxjs';
 import { Program } from 'clvm-lib';
 
 export interface Amount {
-  amt: number;
+  amt: bigint;
 }
 
 export interface Spend {
@@ -18,6 +18,39 @@ export interface CoinSpend {
 
 export interface SpendBundle {
   spends: CoinSpend[];
+}
+
+export interface WasmResult {
+  outbound_messages?: string[];
+  outbound_transactions?: SpendBundle[];
+  finished?: boolean;
+  receive_errors?: string[];
+  notifications?: WasmNotification[];
+  coin_solution_requests?: string[];
+  ids?: string[];
+}
+
+export type WasmInitFn = (opts: { module: ArrayBuffer }) => void;
+
+export interface CoinsetOrgBlockSpend {
+  coin: { parent_coin_info: string; puzzle_hash: string; amount: bigint };
+  puzzle_reveal: string;
+  solution: string;
+}
+
+export interface CoinsetCoin {
+  parentCoinInfo: string;
+  puzzleHash: string;
+  amount: bigint;
+}
+
+export interface ProposeGameParams {
+  game_type: string;
+  timeout: number;
+  amount: bigint;
+  my_contribution: bigint;
+  my_turn: boolean;
+  parameters: Program | null;
 }
 
 export interface IChiaIdentity {
@@ -38,7 +71,7 @@ export interface SaveData {
   ourTurn: boolean;
   turnNumber: number;
   unrollPuzzleHash: string;
-  gameCradle: any;
+  gameCradle: unknown;
 }
 
 export type StateIdentifier = 'starting' | 'running' | 'clean_shutdown' | 'end';
@@ -56,21 +89,20 @@ export interface GameCradleConfig {
 }
 
 export interface GameInitParams {
-  env: any;
+  env: WasmConnection;
   rng: RngId;
   chiaIdentity: IChiaIdentity;
-  iStarted: boolean; // iStarted, aka have_potato
-  // TODO: IEEE float ('number') is a slightly smaller range than MAX_NUM_MOJOS
-  myContribution: number;
-  theirContribution: number;
+  iStarted: boolean;
+  myContribution: bigint;
+  theirContribution: bigint;
 }
 
 export type IChiaIdentityFun = (seed: string) => IChiaIdentity;
 
 export interface GameSessionParams {
   iStarted: boolean;
-  amount: number;          // mojos, total channel buy-in
-  perGameAmount: number;   // mojos per hand
+  amount: bigint;          // mojos, total channel buy-in
+  perGameAmount: bigint;   // mojos per hand
   token: string;
   lobbyUrl: string;
 }
@@ -103,67 +135,78 @@ export type WasmEvent =
   | { type: 'finished' }
   | { type: 'address'; data: BlockchainInboundAddressResult };
 
+export interface GameCradleCreateConfig {
+  rng_id: number;
+  game_types: Record<string, { version: number; hex: string; parser_hex: string }>;
+  have_potato: boolean;
+  my_contribution: Amount;
+  their_contribution: Amount;
+  channel_timeout: number;
+  unroll_timeout: number;
+  reward_puzzle_hash: string;
+}
+
 export interface WasmConnection {
   // System
-  init: (print: any) => any;
+  init: (print: (msg: string) => void) => void;
   create_rng: (seed: string) => number;
-  create_game_cradle: (config: any) => { id: number; puzzle_hash: string };
-  create_serialized_game: (serialized: any, new_seed: string) => number;
-  deposit_file: (name: string, data: string) => any;
+  create_game_cradle: (config: GameCradleCreateConfig) => { id: number; puzzle_hash: string };
+  create_serialized_game: (serialized: unknown, new_seed: string) => number;
+  deposit_file: (name: string, data: string) => void;
 
   // Blockchain
-  opening_coin: (cid: number, coinstring: string) => any;
+  opening_coin: (cid: number, coinstring: string) => WasmResult | undefined;
   new_block: (
     cid: number,
     height: number,
     additions: string[],
     removals: string[],
     timed_out: string[],
-  ) => any;
+  ) => WasmResult | undefined;
   convert_coinset_org_block_spend_to_watch_report: (
     parent_coin_info: string,
     puzzle_hash: string,
-    amount: any,
+    amount: string,
     puzzle_reveal: string,
     solution: string,
-  ) => any;
-  convert_spend_to_coinset_org: (spend: string) => any;
+  ) => WatchReport | undefined;
+  convert_spend_to_coinset_org: (spend: string) => unknown;
   convert_coinset_to_coin_string: (
     parent_coin_info: string,
     puzzle_hash: string,
-    amount: any,
+    amount: string,
   ) => string;
   convert_chia_public_key_to_puzzle_hash: (public_key: string) => string;
 
   // Game
-  propose_game: (cid: number, game: any, parameters: Uint8Array) => any;
-  accept_proposal: (cid: number, game_id: string) => any;
-  accept_proposal_and_move: (cid: number, id: string, readable: Uint8Array) => any;
-  cancel_proposal: (cid: number, game_id: string) => any;
+  propose_game: (cid: number, game: Omit<ProposeGameParams, 'parameters'>, parameters: Uint8Array) => WasmResult | undefined;
+  accept_proposal: (cid: number, game_id: string) => WasmResult | undefined;
+  accept_proposal_and_move: (cid: number, id: string, readable: Uint8Array) => WasmResult | undefined;
+  cancel_proposal: (cid: number, game_id: string) => WasmResult | undefined;
   make_move_with_entropy_for_testing: (
     cid: number,
     id: string,
     readable: Uint8Array,
     new_entropy: string,
-  ) => any;
-  make_move: (cid: number, id: string, readable: Uint8Array) => any;
-  cheat: (cid: number, id: string, mover_share: string) => any;
-  accept_timeout: (cid: number, id: string) => any;
-  shut_down: (cid: number) => any;
-  go_on_chain: (cid: number) => any;
+  ) => WasmResult | undefined;
+  make_move: (cid: number, id: string, readable: Uint8Array) => WasmResult | undefined;
+  cheat: (cid: number, id: string, mover_share: string) => WasmResult | undefined;
+  accept_timeout: (cid: number, id: string) => WasmResult | undefined;
+  shut_down: (cid: number) => WasmResult | undefined;
+  go_on_chain: (cid: number) => WasmResult | undefined;
   report_puzzle_and_solution: (
     cid: number,
     coin_hex: string,
     puzzle_hex: string | undefined,
     solution_hex: string | undefined,
-  ) => any;
-  deliver_message: (cid: number, inbound_message: string) => any;
-  cradle_amount: (cid: number) => any;
-  cradle_our_share: (cid: number) => any;
-  cradle_their_share: (cid: number) => any;
+  ) => WasmResult | undefined;
+  deliver_message: (cid: number, inbound_message: string) => WasmResult | undefined;
+  cradle_amount: (cid: number) => number;
+  cradle_our_share: (cid: number) => number;
+  cradle_their_share: (cid: number) => number;
   get_identity: (cid: number) => IChiaIdentity;
   get_game_state_id: (cid: number) => string | undefined;
-  serialize_cradle: (cid: number) => any;
+  serialize_cradle: (cid: number) => unknown;
 
   // Misc
   sha256bytes: (hex: string) => string;
@@ -171,7 +214,7 @@ export interface WasmConnection {
 
 export interface CoinOutput {
   puzzle_hash: string;
-  amount: number;
+  amount: bigint;
 }
 
 export interface CreateStartCoinReturn {
@@ -193,51 +236,51 @@ export class ChiaGame {
     this.cradle = cradleId;
   }
 
-  propose_game(game: any, parameters: Uint8Array): any {
+  propose_game(game: Omit<ProposeGameParams, 'parameters'>, parameters: Uint8Array): WasmResult | undefined {
     return this.wasm.propose_game(this.cradle, game, parameters);
   }
 
-  accept_proposal(game_id: string): any {
+  accept_proposal(game_id: string): WasmResult | undefined {
     return this.wasm.accept_proposal(this.cradle, game_id);
   }
 
-  accept_proposal_and_move(game_id: string, readable: Uint8Array): any {
+  accept_proposal_and_move(game_id: string, readable: Uint8Array): WasmResult | undefined {
     return this.wasm.accept_proposal_and_move(this.cradle, game_id, readable);
   }
 
-  cancel_proposal(game_id: string): any {
+  cancel_proposal(game_id: string): WasmResult | undefined {
     return this.wasm.cancel_proposal(this.cradle, game_id);
   }
 
-  amount() {
+  amount(): number {
     return this.wasm.cradle_amount(this.cradle);
   }
 
-  our_share() {
+  our_share(): number {
     return this.wasm.cradle_our_share(this.cradle);
   }
 
-  their_share() {
+  their_share(): number {
     return this.wasm.cradle_their_share(this.cradle);
   }
 
-  get_game_state_id() {
+  get_game_state_id(): string | undefined {
     return this.wasm.get_game_state_id(this.cradle);
   }
 
-  serialize() {
+  serialize(): unknown {
     return this.wasm.serialize_cradle(this.cradle);
   }
 
-  accept(id: string): any {
+  accept(id: string): WasmResult | undefined {
     return this.wasm.accept_timeout(this.cradle, id);
   }
 
-  shut_down(): any {
+  shut_down(): WasmResult | undefined {
     return this.wasm.shut_down(this.cradle);
   }
 
-  go_on_chain(): any {
+  go_on_chain(): WasmResult | undefined {
     return this.wasm.go_on_chain(this.cradle);
   }
 
@@ -245,31 +288,31 @@ export class ChiaGame {
     coin_hex: string,
     puzzle_hex: string | undefined,
     solution_hex: string | undefined,
-  ): any {
+  ): WasmResult | undefined {
     return this.wasm.report_puzzle_and_solution(this.cradle, coin_hex, puzzle_hex, solution_hex);
   }
 
-  make_move(id: string, readable: Uint8Array): any {
+  make_move(id: string, readable: Uint8Array): WasmResult | undefined {
     return this.wasm.make_move(this.cradle, id, readable);
   }
 
-  make_move_with_entropy_for_testing(id: string, readable: Uint8Array, new_entropy: string): any {
+  make_move_with_entropy_for_testing(id: string, readable: Uint8Array, new_entropy: string): WasmResult | undefined {
     return this.wasm.make_move_with_entropy_for_testing(this.cradle, id, readable, new_entropy);
   }
 
-  cheat(game_id: string, mover_share: number): any {
+  cheat(game_id: string, mover_share: number): WasmResult | undefined {
     return this.wasm.cheat(this.cradle, game_id, String(mover_share));
   }
 
-  deliver_message(msg: string): any {
+  deliver_message(msg: string): WasmResult | undefined {
     return this.wasm.deliver_message(this.cradle, msg);
   }
 
-  opening_coin(coin_string: string): any {
+  opening_coin(coin_string: string): WasmResult | undefined {
     return this.wasm.opening_coin(this.cradle, coin_string);
   }
 
-  block_data(block_number: number, block_data: WatchReport): any {
+  block_data(block_number: number, block_data: WatchReport): WasmResult | undefined {
     const arrays = [block_data.created_watched, block_data.deleted_watched, block_data.timed_out];
     for (const arr of arrays) {
       if (!Array.isArray(arr)) {
@@ -321,7 +364,7 @@ export interface BlockchainConnection {
   spend: (clvm_hex_spend_blob: string) => Promise<(number | null)[]>;
   create_spendable: (
     target_ph: string,
-    amount: number,
+    amount: bigint,
   ) => Promise<string | null>;
 }
 
@@ -389,7 +432,7 @@ export class ExternalBlockchainInterface {
     }).then((f) => f.json());
   }
 
-  createSpendable(target_ph: string, amt: number): Promise<string | null> {
+  createSpendable(target_ph: string, amt: bigint): Promise<string | null> {
     return fetch(
       `${this.baseUrl}/create_spendable?who=${this.token}&target=${target_ph}&amount=${amt}`,
       {
@@ -607,13 +650,13 @@ export class ToggleEmitter<T> {
 
 export interface BlockchainReport {
   peak: number;
-  block: any[] | undefined;
-  report: any | undefined;
+  block: CoinsetOrgBlockSpend[] | undefined;
+  report: WatchReport | undefined;
 }
 
 export interface DoInitialSpendResult {
   fromPuzzleHash: string;
-  coin: string;
+  coin: string | { parentCoinInfo: string; puzzleHash: string; amount: number | bigint };
 }
 
 export interface BlockchainInboundAddressResult {
@@ -625,9 +668,9 @@ export interface InternalBlockchainInterface {
   do_initial_spend(
     uniqueId: string,
     target: string,
-    amt: number,
+    amt: bigint,
   ): Promise<DoInitialSpendResult>;
-  spend(convert: (blob: string) => any, spend: string): Promise<string>;
+  spend(convert: (blob: string) => unknown, spend: string): Promise<string>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
   getBalance(): Promise<number>;
   getPuzzleAndSolution(coin: string): Promise<string[] | null>;

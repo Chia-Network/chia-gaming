@@ -1,5 +1,6 @@
 import {
   WasmConnection,
+  WasmInitFn,
   ChiaGame,
   RngId,
   InternalBlockchainInterface,
@@ -8,8 +9,8 @@ import {
 import { Observable, Subject } from 'rxjs';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
 
-var chia_gaming_init: any = undefined;
-var cg: any = undefined;
+var chia_gaming_init: WasmInitFn | undefined = undefined;
+var cg: WasmConnection | undefined = undefined;
 var logInitialized = false;
 
 export const readyToInit = new Subject<boolean>();
@@ -29,8 +30,8 @@ export async function fetchHex(fetchUrl: string): Promise<string> {
 
 //    gameStateInit.foo().then()
 export async function storeInitArgs(
-  chia_gaming_init_ready: any,
-  cg_ready: any,
+  chia_gaming_init_ready: WasmInitFn,
+  cg_ready: WasmConnection,
 ) {
   // Store information we can't get until the window initializes us with valid data
   chia_gaming_init = chia_gaming_init_ready;
@@ -55,7 +56,7 @@ export class WasmStateInit {
   }
 
   async internalLoadWasm(
-    chia_gaming_init: any,
+    chia_gaming_init: WasmInitFn,
     cg: WasmConnection,
   ): Promise<WasmConnection> {
     // Fill out WasmConnection object
@@ -82,8 +83,9 @@ export class WasmStateInit {
   }
 
   getWasmConnection(): Promise<WasmConnection> {
-    let sub = waitForReadyToInit.subscribe({
+    const sub = waitForReadyToInit.subscribe({
       next: () => {
+        if (!chia_gaming_init || !cg) throw new Error('wasm init args not set');
         this.internalLoadWasm(chia_gaming_init, cg);
       },
     });
@@ -135,10 +137,6 @@ export class WasmStateInit {
     return undefined;
   }
 
-  // deserializeRng(serializedGame: any) {
-  //   return this.wasmConnection?.deserialize_rng(serializedGame);
-  // }
-
   getChiaIdentity(rngSeed: string) {
     // return this.wasmConnection?.chia_identity(rngSeed);
   }
@@ -150,7 +148,7 @@ export class WasmStateInit {
     blockchain: InternalBlockchainInterface,
     uniqueId: string,
     puzzleHash: string,
-    amount: number,
+    amount: bigint,
     wc: WasmConnection,
   ): Promise<CreateStartCoinReturn> {
     if (!puzzleHash) {
@@ -159,7 +157,7 @@ export class WasmStateInit {
     if (!wc) {
       throw new Error('create start coin with no wasm obj?');
     }
-    if (amount < 1) {
+    if (amount < 1n) {
       let msg = 'createStartCoin: negative amount:' + amount;
       throw new Error(msg);
     }
@@ -179,7 +177,7 @@ export class WasmStateInit {
 
     // Handle data conversion back when Coin object was received.
     if (typeof coin !== 'string') {
-      const coinset_coin = coin as any;
+      const coinset_coin = coin;
       const new_coin_string = wc.convert_coinset_to_coin_string(
         coinset_coin.parentCoinInfo,
         coinset_coin.puzzleHash,
@@ -211,8 +209,8 @@ export class WasmStateInit {
     rngId: number,
     wasm: WasmConnection,
     have_potato: boolean,
-    my_contribution: number,
-    their_contribution: number,
+    my_contribution: bigint,
+    their_contribution: bigint,
     rewardPuzzleHash: string,
   ): { game: ChiaGame, puzzleHash: string } {
     const result = wasm.create_game_cradle({
@@ -240,7 +238,7 @@ export class WasmStateInit {
 
   deserializeGame(
     wasm: WasmConnection,
-    serializedGame: any,
+    serializedGame: unknown,
   ): ChiaGame {
     const entropy = new Uint8Array(32);
     crypto.getRandomValues(entropy);

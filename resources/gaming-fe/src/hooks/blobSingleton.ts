@@ -31,7 +31,7 @@ export async function configGameObject(
   calpokerHexes: {proposalHex: string, parserHex: string},
   blockchain: InternalBlockchainInterface,
   uniqueId: string,
-  amount: number,
+  amount: bigint,
 ): Promise<WasmBlobWrapper> {
   let wasmConnection = await wasmStateInit.getWasmConnection();
   gameObject.loadWasm(wasmConnection);
@@ -53,7 +53,7 @@ export function getBlobSingleton(
   peerIdentity: PeerIdentity,
   lobbyUrl: string,
   uniqueId: string,
-  amount: number,
+  amount: bigint,
   iStarted: boolean,
 ): { gameObject: WasmBlobWrapper } {
   if (blobSingleton) {

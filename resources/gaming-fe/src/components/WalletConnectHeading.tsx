@@ -18,7 +18,11 @@ import WalletBadge from './WalletBadge';
 
 import { Wrench, Sun, Cross } from 'lucide-react';
 
-const WalletConnectHeading = (_args: any) => {
+import { WalletConnectOutboundState } from '../hooks/useWalletConnect';
+import { BlockchainReport } from '../types/ChiaGaming';
+import { BlockchainInboundReply, BlockchainOutboundRequest } from '../hooks/BlockchainConnector';
+
+const WalletConnectHeading = () => {
   const { wcInfo, setWcInfo } = useDebug();
   const [_alreadyConnected, setAlreadyConnected] = useState(false);
   const [_walletConnectError, setWalletConnectError] = useState<
@@ -40,7 +44,7 @@ const WalletConnectHeading = (_args: any) => {
   const [haveClient, setHaveClient] = useState(false);
   const [haveSession, setHaveSession] = useState(false);
   const [sessions, setSessions] = useState(0);
-  const [recvAddress, setRecvAddress] = useState();
+  const [recvAddress, setRecvAddress] = useState<string | undefined>();
   const [balance, setBalance] = useState<number | undefined>();
   const [haveBlock, setHaveBlock] = useState(false);
 
@@ -79,7 +83,7 @@ const WalletConnectHeading = (_args: any) => {
     setIsDark((d) => !d);
   }, []);
 
-  const walletConnectStates: any = {
+  const walletConnectStates: Record<string, (v: never) => void> = {
     stateName: setStateName,
     initializing: setInitializing,
     initialized: setInitialized,
@@ -108,7 +112,7 @@ const WalletConnectHeading = (_args: any) => {
 
   useEffect(() => {
     const subscription = walletConnectState.getObservable().subscribe({
-      next: (evt: any) => {
+      next: (evt: WalletConnectOutboundState) => {
         console.log('[WC UI] state event:', evt.stateName, evt);
         if (evt.stateName === 'connected') {
           toggleExpanded();
@@ -125,10 +129,10 @@ const WalletConnectHeading = (_args: any) => {
           requestRecvAddress();
         }
 
-        const keys = Object.keys(evt);
-        keys.forEach((k: string) => {
+        const record = evt as unknown as Record<string, unknown>;
+        Object.keys(record).forEach((k: string) => {
           if (walletConnectStates[k]) {
-            walletConnectStates[k](evt[k]);
+            walletConnectStates[k](record[k] as never);
           }
         });
       },
@@ -156,17 +160,14 @@ const WalletConnectHeading = (_args: any) => {
   }, []);
 
   useEffect(() => {
-    function receivedWindowMessage(evt: any) {
-      const key = evt.message ? 'message' : 'data';
-      // Not decoded, despite how it's displayed in console.log.
-      const data = evt[key];
+    function receivedWindowMessage(evt: MessageEvent<{ blockchain_request?: BlockchainOutboundRequest }>) {
+      const data = evt.data;
       if (data.blockchain_request) {
         if (evt.origin !== window.location.origin) {
           throw new Error(
-            `wrong origin for parent event: ${JSON.stringify(evt)}`,
+            `wrong origin for parent event: ${JSON.stringify(evt.data)}`,
           );
         }
-        // Ensure that requests from the child frame go to our request channel.
         blockchainConnector.getOutbound().next(data.blockchain_request);
       }
     }
@@ -175,36 +176,31 @@ const WalletConnectHeading = (_args: any) => {
 
     // Ensure that replies go to the child frame.
     const bcSubscription = blockchainConnector.getInbound().subscribe({
-      next: (evt: any) => {
+      next: (evt: BlockchainInboundReply) => {
         if (evt.getBalance) {
           setBalance(evt.getBalance);
           if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
           balanceTimerRef.current = setTimeout(requestBalance, 15000);
         }
         if (evt.getAddress) {
-          setRecvAddress(evt.getRecvAddress);
+          setRecvAddress(evt.getAddress.address);
           if (addressTimerRef.current) clearTimeout(addressTimerRef.current);
           addressTimerRef.current = setTimeout(requestRecvAddress, 15000);
         }
-        const subframe = document.getElementById('subframe');
-        if (subframe) {
-          (subframe as any).contentWindow.postMessage(
+        const subframe = document.getElementById('subframe') as HTMLIFrameElement | null;
+        if (subframe?.contentWindow) {
+          subframe.contentWindow.postMessage(
             {
               blockchain_reply: evt,
             },
             '*',
           );
-        } else {
-          // TODO: Two cases:
-          // 1. we don't have the subframe until we get the first block
-          // 2. Do throw in other cases
-          // throw new Error('blockchain reply to no subframe');
         }
       },
     });
 
     const biSubscription = blockchainDataEmitter.getObservable().subscribe({
-      next: (evt: any) => {
+      next: (evt: BlockchainReport) => {
         if (!haveBlock) {
           setHaveBlock(true);
           if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
@@ -212,19 +208,14 @@ const WalletConnectHeading = (_args: any) => {
           requestBalance();
           requestRecvAddress();
         }
-        const subframe = document.getElementById('subframe');
-        if (subframe) {
-          (subframe as any).contentWindow.postMessage(
+        const subframe = document.getElementById('subframe') as HTMLIFrameElement | null;
+        if (subframe?.contentWindow) {
+          subframe.contentWindow.postMessage(
             {
               blockchain_info: evt,
             },
             '*',
           );
-        } else {
-          // TODO: Two cases:
-          // 1. we don't have the subframe until we get the first block
-          // 2. Do throw in other cases
-          // throw new Error('blockchain reply to no subframe');
         }
       },
     });

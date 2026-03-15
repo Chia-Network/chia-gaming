@@ -2,33 +2,33 @@ import React from 'react';
 
 export interface ErrorProps {
   rerender: () => void;
-  children: any;
+  children: React.ReactNode;
 }
 
-export class ErrorBoundary extends React.Component<ErrorProps> {
-  state: any;
+interface ErrorState {
+  hasError: string | false;
+}
 
-  constructor(props: any) {
+export class ErrorBoundary extends React.Component<ErrorProps, ErrorState> {
+  constructor(props: ErrorProps) {
     super(props);
     this.state = { hasError: false };
   }
 
-  static getDerivedStateFromError(error: any) {
-    // Update state so the next render will show the fallback UI.
+  static getDerivedStateFromError(error: Error): ErrorState {
     return { hasError: error.toString() };
   }
 
-  componentDidCatch(_error: any, _info: any) {
+  componentDidCatch(_error: Error, _info: React.ErrorInfo) {
     // Ok.
   }
 
   render() {
     if (this.state.hasError) {
-      // You can render any custom fallback UI
       return (
         <button
           onClick={() => {
-            this.state.hasError = false;
+            this.setState({ hasError: false });
             this.props.rerender();
           }}
         >

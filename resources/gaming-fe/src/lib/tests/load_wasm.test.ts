@@ -24,6 +24,9 @@ import {
   InternalBlockchainInterface,
   PeerConnectionResult,
   BlockchainReport,
+  CoinsetOrgBlockSpend,
+  WatchReport,
+  WasmEvent,
 } from '../../types/ChiaGaming';
 import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
 import {
@@ -95,7 +98,7 @@ class WasmBlobWrapperAdapter {
     this.waiting_messages = [];
   }
 
-  take_block(peak: number, blocks: any[], block_report: any) {
+  take_block(peak: number, blocks: CoinsetOrgBlockSpend[], block_report: WatchReport | undefined) {
     this.blob?.blockNotification(peak, blocks, block_report);
   }
 
@@ -172,7 +175,7 @@ async function action_with_messages(
   let evt_results: Array<boolean> = [false, false];
   cradles.forEach((cradle, index) => {
     subscriptions.push(addActiveSubscription(cradle.getObservable().subscribe({
-      next: (evt: any) => {
+      next: (evt: WasmEvent) => {
         if (evt.type === 'notification' && evt.data && 'ChannelCreated' in evt.data) {
           evt_results[index] = true;
         }
@@ -206,7 +209,7 @@ async function initWasmBlobWrapper(
   peer_conn: PeerConnectionResult,
   wasmStateInit: WasmStateInit,
 ) {
-  const amount = 100;
+  const amount = 100n;
 
   // Ensure that each user has a wallet.
   await fetch(`${BLOCKCHAIN_SERVICE_URL}/register?name=${uniqueId}`, {

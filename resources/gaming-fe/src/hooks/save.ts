@@ -1,3 +1,10 @@
+export interface SavedGame {
+  id: string;
+  searchParams: Record<string, string>;
+  url: string;
+  [key: string]: unknown;
+}
+
 export function getSaveList(): string[] {
   const result = localStorage.getItem('saveNames');
   if (result) {
@@ -18,7 +25,7 @@ export function startNewSession() {
   setSaveList([]);
 }
 
-export function saveGame(g: any): [string, any] | undefined {
+export function saveGame(g: SavedGame): [string, unknown] | undefined {
   try {
     const saveList = getSaveList();
     if (saveList.length > 2) {
@@ -26,7 +33,6 @@ export function saveGame(g: any): [string, any] | undefined {
     }
     saveList.unshift(g.id);
     localStorage.setItem(`save-${g.id}`, JSON.stringify(g));
-    // We setSaveList last so the save is only included if everything worked.
     setSaveList(saveList);
     return undefined;
   } catch (e) {
@@ -34,17 +40,16 @@ export function saveGame(g: any): [string, any] | undefined {
   }
 }
 
-// Find a compatible save from the set of saves we have if it exists.
 export function findMatchingGame(peerSaves: string[]): string | undefined {
   const peerSet = new Set(peerSaves);
   const mySaves = getSaveList();
   return mySaves.find(save => peerSet.has(save));
 }
 
-export function loadSave(saveId: string): any | undefined {
+export function loadSave(saveId: string): SavedGame | undefined {
   const data = localStorage.getItem(`save-${saveId}`);
   if (data) {
-    return JSON.parse(data);
+    return JSON.parse(data) as SavedGame;
   }
 
   return undefined;

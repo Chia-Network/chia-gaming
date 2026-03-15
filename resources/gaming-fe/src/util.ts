@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { GameSessionParams } from './types/ChiaGaming';
+import { GameSessionParams, Spend, CoinSpend, SpendBundle } from './types/ChiaGaming';
 
 export function toUint8(s: string) {
   if (s.length % 2 != 0) {
@@ -15,7 +15,7 @@ export function toUint8(s: string) {
 }
 
 // Thanks: https://stackoverflow.com/questions/34309988/byte-array-to-hex-string-conversion-in-javascript
-export function toHexString(byteArray: number[]) {
+export function toHexString(byteArray: Uint8Array | number[]) {
   return Array.from(byteArray, function (byte) {
     return ('0' + (byte & 0xff).toString(16)).slice(-2);
   }).join('');
@@ -116,7 +116,7 @@ function clvm_length(atom: string): string {
   }
 }
 
-function spend_to_clvm(spend: any): string {
+function spend_to_clvm(spend: Spend): string {
   const spend_clvm = clvm_enlist([
     spend.puzzle,
     spend.solution,
@@ -125,7 +125,7 @@ function spend_to_clvm(spend: any): string {
   return spend_clvm;
 }
 
-function coin_spend_to_clvm(coinspend: any): string {
+function coin_spend_to_clvm(coinspend: CoinSpend): string {
   const coin_spend_clvm = clvm_enlist([
     clvm_length(coinspend.coin),
     spend_to_clvm(coinspend.bundle),
@@ -133,9 +133,9 @@ function coin_spend_to_clvm(coinspend: any): string {
   return coin_spend_clvm;
 }
 
-export function spend_bundle_to_clvm(sbundle: any): string {
+export function spend_bundle_to_clvm(sbundle: SpendBundle): string {
   const bundle_clvm = clvm_enlist(
-    sbundle.spends.map((s: any) => coin_spend_to_clvm(s)),
+    sbundle.spends.map((s) => coin_spend_to_clvm(s)),
   );
   return bundle_clvm;
 }
@@ -156,10 +156,15 @@ export function getEvenHexString(n: number) {
   return hexString;
 }
 
-export function formatMojos(mojos: number): string {
-  const xch = mojos / 1e12;
-  if (Math.abs(xch) >= 0.0001) {
-    return `${xch.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 })} XCH`;
+export function formatMojos(mojos: bigint): string {
+  const TRILLION = 1_000_000_000_000n;
+  const absMojos = mojos < 0n ? -mojos : mojos;
+  if (absMojos >= 100_000_000n) {
+    const sign = mojos < 0n ? '-' : '';
+    const whole = absMojos / TRILLION;
+    const frac = absMojos % TRILLION;
+    const fracStr = frac.toString().padStart(12, '0').slice(0, 4);
+    return `${sign}${whole.toLocaleString()}.${fracStr} XCH`;
   }
   return `${mojos.toLocaleString()} mojos`;
 }
@@ -168,13 +173,21 @@ export function parseGameSessionParams(raw: Record<string, string | undefined>):
   const iStarted = raw.iStarted !== 'false';
   const amountStr = raw.amount;
   if (!amountStr) throw new Error('Missing required URL param: amount');
-  const amount = parseInt(amountStr, 10);
-  if (!Number.isFinite(amount) || amount <= 0) throw new Error(`Invalid amount: ${amountStr}`);
-  let perGameAmount = Math.floor(amount / 10);
+  let amount: bigint;
+  try {
+    amount = BigInt(amountStr);
+  } catch {
+    throw new Error(`Invalid amount: ${amountStr}`);
+  }
+  if (amount <= 0n) throw new Error(`Invalid amount: ${amountStr}`);
+  let perGameAmount = amount / 10n;
   if (raw.perGame) {
-    const parsed = parseInt(raw.perGame, 10);
-    if (!Number.isFinite(parsed) || parsed <= 0) throw new Error(`Invalid perGame: ${raw.perGame}`);
-    perGameAmount = parsed;
+    try {
+      perGameAmount = BigInt(raw.perGame);
+    } catch {
+      throw new Error(`Invalid perGame: ${raw.perGame}`);
+    }
+    if (perGameAmount <= 0n) throw new Error(`Invalid perGame: ${raw.perGame}`);
   }
   const token = raw.token;
   if (!token) throw new Error('Missing required URL param: token');

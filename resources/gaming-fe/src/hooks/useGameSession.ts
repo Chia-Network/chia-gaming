@@ -10,6 +10,8 @@ import {
   WasmEvent,
   WasmNotification,
   WasmNotificationTag,
+  WasmInitFn,
+  WasmConnection,
 } from '../types/ChiaGaming';
 import { ChildFrameBlockchainInterface } from './ChildFrameBlockchainInterface';
 import {
@@ -54,9 +56,9 @@ export interface CoinLifecycle<S> {
 export interface UseGameSessionResult {
   error: string | undefined;
   gameConnectionState: GameConnectionState;
-  amount: number;
-  perGameAmount: number;
-  myRunningBalance: number;
+  amount: bigint;
+  perGameAmount: bigint;
+  myRunningBalance: bigint;
   iStarted: boolean;
   playerNumber: number;
   sessionEnded: boolean;
@@ -87,7 +89,7 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
   const [gameConnectionState, setGameConnectionState] =
     useState<GameConnectionState>({ stateIdentifier: 'starting', stateDetail: ['before handshake'] });
   const [error, setRealError] = useState<string | undefined>(undefined);
-  const [myRunningBalance, setMyRunningBalance] = useState(0);
+  const [myRunningBalance, setMyRunningBalance] = useState(0n);
   const [sessionEnded, setSessionEnded] = useState(false);
   const [shutdownInitiated, setShutdownInitiated] = useState(false);
   const [channelCoin, setChannelCoin] = useState<CoinLifecycle<ChannelCoinState>>({ coinHex: null, state: 'not-created' });
@@ -144,7 +146,7 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
         game_type: '63616c706f6b6572',
         timeout: 100,
         amount: perGameAmount,
-        my_contribution: perGameAmount / 2,
+        my_contribution: perGameAmount / 2n,
         my_turn: !iStarted,
         parameters: null,
       });
@@ -159,11 +161,11 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
     setGameIds(prev => prev.slice(1));
     gameIdsRef.current = gameIdsRef.current.slice(1);
     setGameCoin({ coinHex: null, state: 'off-chain-my-turn' });
-    const delta = outcome.my_win_outcome === 'win' ? perGameAmount / 2
-                : outcome.my_win_outcome === 'lose' ? -perGameAmount / 2
-                : 0;
+    const delta = outcome.my_win_outcome === 'win' ? perGameAmount / 2n
+                : outcome.my_win_outcome === 'lose' ? -(perGameAmount / 2n)
+                : 0n;
     setMyRunningBalance(prev => prev + delta);
-    appendDebugLog(`[hand] outcome: ${outcome.my_win_outcome} (${delta >= 0 ? '+' : ''}${delta} mojos)`);
+    appendDebugLog(`[hand] outcome: ${outcome.my_win_outcome} (${delta >= 0n ? '+' : ''}${delta} mojos)`);
     awaitingDisplayCompleteRef.current = true;
   }, [appendDebugLog, perGameAmount]);
 
@@ -340,9 +342,11 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
           case 'address':
             appendDebugLog(`[address] puzzle=${evt.data.puzzleHash?.slice(0, 12)}…`);
             break;
-          default:
-            console.warn('unhandled event type:', (evt as any).type, evt);
+          default: {
+            const _exhaustive: never = evt;
+            console.warn('unhandled event type:', _exhaustive);
             break;
+          }
         }
       }
     });
@@ -399,7 +403,7 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
     gameObject?.goOnChain();
   }, [gameObject]);
 
-  (window as any).loadWasm = useCallback((chia_gaming_init: unknown, cg: unknown) => {
+  window.loadWasm = useCallback((chia_gaming_init: WasmInitFn, cg: WasmConnection) => {
     storeInitArgs(chia_gaming_init, cg);
   }, []);
 

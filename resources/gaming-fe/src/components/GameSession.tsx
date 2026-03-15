@@ -88,7 +88,6 @@ function CalpokerHand({
     <Calpoker
       outcome={outcome}
       moveNumber={moveNumber}
-      iStarted={iStarted}
       playerNumber={playerNumber}
       playerHand={playerHand}
       opponentHand={opponentHand}
@@ -158,10 +157,10 @@ const GameSession: React.FC<GameSessionProps> = ({ params }) => {
 
   const handEverStarted = session.handKey > 0;
 
-  const balanceSign = session.myRunningBalance >= 0 ? '+' : '';
-  const balanceColor = session.myRunningBalance > 0
+  const balanceSign = session.myRunningBalance >= 0n ? '+' : '';
+  const balanceColor = session.myRunningBalance > 0n
     ? 'text-success-text'
-    : session.myRunningBalance < 0
+    : session.myRunningBalance < 0n
       ? 'text-alert-text'
       : 'text-canvas-text';
 
@@ -179,7 +178,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params }) => {
               <span>Channel: {formatMojos(session.amount)}</span>
               <span>Per hand: {formatMojos(session.perGameAmount)}</span>
               <span className={balanceColor}>
-                Balance: {balanceSign}{formatMojos(Math.abs(session.myRunningBalance))}
+                Balance: {balanceSign}{formatMojos(session.myRunningBalance < 0n ? -session.myRunningBalance : session.myRunningBalance)}
               </span>
             </div>
           </div>

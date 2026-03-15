@@ -8,12 +8,12 @@ import {
 export interface BlockchainOutboundInitialSpendRequest {
   uniqueId: string;
   target: string;
-  amount: number;
+  amount: bigint;
 }
 
 export interface BlockchainOutboundTransactionRequest {
   blob: string;
-  spendObject: any;
+  spendObject: unknown;
 }
 
 export type BlockchainOutboundAddressRequest = boolean;

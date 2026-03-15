@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 
-import Gallery from './components/Gallery';
 import Game from './components/Game';
 import WalletConnectHeading from './components/WalletConnectHeading';
 import { blockchainDataEmitter } from './hooks/BlockchainInfo';
+import { BlockchainReport } from './types/ChiaGaming';
 import { getSaveList, loadSave } from './hooks/save';
 import {
   getGameSelection,
@@ -25,8 +25,10 @@ const App = () => {
     saveList.length == 0 && !params.lobby && !params.iStarted;
   if (saveList.length > 0) {
     const decodedSave = loadSave(saveList[0]);
-    useParams = decodedSave.searchParams;
-    useIframeUrl = decodedSave.url;
+    if (decodedSave) {
+      useParams = decodedSave.searchParams;
+      useIframeUrl = decodedSave.url;
+    }
   }
   const [havePeak, setHavePeak] = useState(false);
   const [iframeUrl, setIframeUrl] = useState(useIframeUrl);
@@ -37,7 +39,7 @@ const App = () => {
 
   useEffect(() => {
     const subscription = blockchainDataEmitter.getObservable().subscribe({
-      next: (_peak: any) => {
+      next: (_peak: BlockchainReport) => {
         setHavePeak(true);
       },
     });
@@ -204,10 +206,6 @@ const App = () => {
     // Redirect to lobby
     window.location.href = '/?lobby=1';
   };
-
-  if (params.gallery) {
-    return <Gallery />;
-  }
 
   if (params.game && !params.join && !showPopup) {
     return <Game params={params} />;

@@ -6,6 +6,10 @@ import {
   WasmConnection,
   ChiaGame,
   WatchReport,
+  WasmResult,
+  SpendBundle,
+  CoinsetOrgBlockSpend,
+  ProposeGameParams,
   InternalBlockchainInterface,
   BlockchainInboundAddressResult,
   WasmEvent,
@@ -32,7 +36,7 @@ function combine_reports(old_report: WatchReport, new_report: WatchReport) {
 }
 
 export class WasmBlobWrapper {
-  amount: number;
+  amount: bigint;
   wc: WasmConnection | undefined;
   sendMessage: (msgno: number, msg: string) => void;
   messageNumber: number;
@@ -53,7 +57,7 @@ export class WasmBlobWrapper {
   constructor(
     blockchain: InternalBlockchainInterface,
     uniqueId: string,
-    amount: number,
+    amount: bigint,
     iStarted: boolean,
     peer_conn: PeerConnectionResult,
   ) {
@@ -145,7 +149,7 @@ export class WasmBlobWrapper {
     this.kickSystem(1);
   }
 
-  private submitTransaction(tx: any) {
+  private submitTransaction(tx: SpendBundle) {
     const blob = spend_bundle_to_clvm(tx);
     const cvt = (blob: string) => {
       return this.wc?.convert_spend_to_coinset_org(blob);
@@ -153,7 +157,7 @@ export class WasmBlobWrapper {
     this.blockchain.spend(cvt, blob).catch(e => console.error('[wasm] submitTransaction failed:', e));
   }
 
-  processResult(result: any): void {
+  processResult(result: WasmResult | undefined): void {
     if (!result || this.finished) return;
 
     const msgs = result.outbound_messages || [];
@@ -211,7 +215,8 @@ export class WasmBlobWrapper {
     this.processResult(result);
   }
 
-  blockNotification(peak: number, blocks: any[], block_report: any) {
+  blockNotification(peak: number, blocks: CoinsetOrgBlockSpend[], reportOrUndefined: WatchReport | undefined) {
+    let block_report = reportOrUndefined;
     if (block_report === undefined) {
       block_report = {
         created_watched: [],
@@ -247,7 +252,7 @@ export class WasmBlobWrapper {
 
   // --- Game actions (called by higher layer) ---
 
-  proposeGame(params: any): string[] {
+  proposeGame(params: ProposeGameParams): string[] {
     if (!this.cradle) throw new Error('no cradle');
     const paramBytes = clvmToBytes(params.parameters);
     const { parameters: _drop, ...wasmParams } = params;
@@ -289,7 +294,7 @@ export class WasmBlobWrapper {
       this.processResult(result);
     } catch (e) {
       const msg = e instanceof Error ? e.message
-        : typeof e === 'object' && e !== null && 'error' in e ? (e as any).error
+        : typeof e === 'object' && e !== null && 'error' in e ? (e as { error: string }).error
         : String(e);
       console.error('[wasm] cleanShutdown failed:', msg);
       this.rxjsEmitter?.next({ type: 'error', error: msg });
@@ -303,7 +308,7 @@ export class WasmBlobWrapper {
       this.processResult(result);
     } catch (e) {
       const msg = e instanceof Error ? e.message
-        : typeof e === 'object' && e !== null && 'error' in e ? (e as any).error
+        : typeof e === 'object' && e !== null && 'error' in e ? (e as { error: string }).error
         : String(e);
       console.error('[wasm] goOnChain failed:', msg);
       this.rxjsEmitter?.next({ type: 'error', error: msg });

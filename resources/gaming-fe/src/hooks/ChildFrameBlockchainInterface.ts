@@ -8,16 +8,17 @@ import {
 import {
   blockchainConnector,
   BlockchainInboundReply,
+  BlockchainOutboundRequest,
 } from './BlockchainConnector';
 import { blockchainDataEmitter } from './BlockchainInfo';
 
 let requestNumber = 1;
 
-function performTransaction(
-  checkReply: (reply: any) => any,
+function performTransaction<T>(
+  checkReply: (reply: BlockchainInboundReply) => T | undefined | null,
   requestId: number,
-  request: any,
-): Promise<any> {
+  request: BlockchainOutboundRequest,
+): Promise<T> {
   return new Promise((resolve, reject) => {
     const thisRequestChannel = blockchainConnector.getInbound().pipe(
       filter((e: BlockchainInboundReply) => e.responseId === requestId),
@@ -50,7 +51,7 @@ export class ChildFrameBlockchainInterface {
   do_initial_spend(
     uniqueId: string,
     target: string,
-    amount: number,
+    amount: bigint,
   ): Promise<DoInitialSpendResult> {
     const requestId = requestNumber++;
     const request = {
@@ -58,10 +59,10 @@ export class ChildFrameBlockchainInterface {
       initialSpend: { uniqueId, target, amount },
     };
 
-    return performTransaction((e: any) => e.initialSpend, requestId, request);
+    return performTransaction((e) => e.initialSpend, requestId, request);
   }
 
-  spend(cvt: (blob: string) => any, spend: string): Promise<string> {
+  spend(cvt: (blob: string) => unknown, spend: string): Promise<string> {
     const requestId = requestNumber++;
     const request = {
       requestId,
@@ -71,37 +72,37 @@ export class ChildFrameBlockchainInterface {
       },
     };
 
-    return performTransaction((e: any) => e.transaction, requestId, request);
+    return performTransaction((e) => e.transaction, requestId, request);
   }
 
   getAddress(): Promise<BlockchainInboundAddressResult> {
-    let requestId = requestNumber++;
-    let request = {
+    const requestId = requestNumber++;
+    const request = {
       requestId,
-      getAddress: { walletId: 1 },
+      getAddress: true as const,
     };
 
-    return performTransaction((e: any) => e.getAddress, requestId, request);
+    return performTransaction((e) => e.getAddress, requestId, request);
   }
 
   getBalance(): Promise<number> {
-    let requestId = requestNumber++;
-    let request = {
+    const requestId = requestNumber++;
+    const request = {
       requestId,
-      getBalance: { walletId: 1 }
+      getBalance: true as const,
     };
 
     return performTransaction(
-      (e: any) => e.getBalance,
+      (e) => e.getBalance,
       requestId,
-      request
+      request,
     );
   }
 
   getPuzzleAndSolution(coin: string): Promise<string[] | null> {
     const requestId = requestNumber++;
     const request = { requestId, getPuzzleAndSolution: { coin } };
-    return performTransaction((e: any) => e.getPuzzleAndSolution, requestId, request);
+    return performTransaction((e) => e.getPuzzleAndSolution, requestId, request);
   }
 
   getObservable() {

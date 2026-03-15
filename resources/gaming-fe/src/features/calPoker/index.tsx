@@ -8,7 +8,6 @@ import { CaliforniaPoker } from './components';
 export interface CalpokerProps {
   outcome: CalpokerOutcome | undefined;
   moveNumber: number;
-  iStarted: boolean;
   playerNumber: number;
   playerHand: number[];
   opponentHand: number[];
@@ -22,7 +21,6 @@ export interface CalpokerProps {
 const Calpoker: React.FC<CalpokerProps> = ({
   outcome,
   moveNumber,
-  iStarted,
   playerNumber,
   playerHand,
   opponentHand,

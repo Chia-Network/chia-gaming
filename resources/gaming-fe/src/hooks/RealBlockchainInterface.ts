@@ -24,8 +24,22 @@ function wsUrl(baseurl: string) {
   return `${url_with_new_method}/ws`;
 }
 
-const bech32: any = (bech32_module ? bech32_module : bech32_buffer);
+type Bech32Module = {
+  encode: (prefix: string, data: Uint8Array, encoding: string) => string;
+  decode: (str: string) => { data: Uint8Array };
+};
+const bech32: Bech32Module = (bech32_module ? bech32_module : bech32_buffer) as Bech32Module;
 const PUSH_TX_RETRY_TO_LET_UNCOFIRMED_TRANSACTIONS_BE_CONFIRMED = 30000;
+
+type RealBlockchainEvent =
+  | { checkPeak: true }
+  | { retrieveBlock: number };
+
+interface PendingRequest {
+  complete: (v: unknown) => void;
+  reject: (e: unknown) => void;
+  requestId: number;
+}
 
 export class RealBlockchainInterface {
   baseUrl: string;
@@ -33,14 +47,14 @@ export class RealBlockchainInterface {
   fingerprint?: string;
   walletId: number;
   requestId: number;
-  requests: any;
+  requests: Record<number, PendingRequest>;
   peak: number;
   at_block: number;
   handlingEvent: boolean;
-  incomingEvents: any[];
+  incomingEvents: RealBlockchainEvent[];
   publicKey?: string;
   observable: Subject<BlockchainReport>;
-  ws: any | undefined;
+  ws: ReconnectingWebSocket | undefined;
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
@@ -70,7 +84,7 @@ export class RealBlockchainInterface {
     this.ws?.addEventListener('open', () => {
       console.log('[coinset] ws connected');
     });
-    this.ws?.addEventListener('message', (m: any) => {
+    this.ws?.addEventListener('message', (m: MessageEvent) => {
       const raw = JSON.parse(m.data);
       const json = raw.message ?? raw;
       if (json.type === 'peak') {
@@ -86,7 +100,7 @@ export class RealBlockchainInterface {
   }
 
   does_initial_spend() {
-    return (target: string, amt: number) => {
+    return (target: string, amt: bigint) => {
       const targetXch = bech32.encode('xch', toUint8(target), 'bech32m');
       return this.push_request({
         method: 'create_spendable',
@@ -148,16 +162,16 @@ export class RealBlockchainInterface {
     }
   }
 
-  async handleEvent(evt: any) {
-    if (evt.checkPeak) {
+  async handleEvent(evt: RealBlockchainEvent) {
+    if ('checkPeak' in evt) {
       await this.internalCheckPeak();
       return;
-    } else if (evt.retrieveBlock) {
+    } else if ('retrieveBlock' in evt) {
       await this.internalRetrieveBlock(evt.retrieveBlock);
       return;
     }
-
-    console.error('useFullNode: unhandled event', evt);
+    const _exhaustive: never = evt;
+    console.error('useFullNode: unhandled event', _exhaustive);
   }
 
   async kickEvent() {
@@ -165,6 +179,7 @@ export class RealBlockchainInterface {
       this.handlingEvent = true;
       try {
         const event = this.incomingEvents.shift();
+        if (!event) continue;
         await this.handleEvent(event);
       } catch (e) {
         console.error('incoming event failed', e);
@@ -174,31 +189,27 @@ export class RealBlockchainInterface {
     }
   }
 
-  async pushEvent(evt: any) {
+  async pushEvent(evt: RealBlockchainEvent) {
     this.incomingEvents.push(evt);
     if (!this.handlingEvent) {
       await this.kickEvent();
     }
   }
 
-  async push_request(req: any): Promise<any> {
+  async push_request(req: Record<string, unknown>): Promise<unknown> {
     const requestId = this.requestId++;
-    req.requestId = requestId;
-    window.parent.postMessage(req, '*');
-    let promise_complete, promise_reject;
-    const p = new Promise((comp, rej) => {
-      promise_complete = comp;
-      promise_reject = rej;
+    const tagged = { ...req, requestId };
+    window.parent.postMessage(tagged, '*');
+    return new Promise((resolve, reject) => {
+      this.requests[requestId] = {
+        complete: resolve,
+        reject,
+        requestId,
+      };
     });
-    this.requests[requestId] = {
-      complete: promise_complete,
-      reject: promise_reject,
-      requestId: requestId,
-    };
-    return p;
   }
 
-  async spend(spend: any): Promise<string> {
+  async spend(spend: unknown): Promise<string> {
     console.log('[coinset] >>> push_tx (spend)');
     return await fetch(`${this.baseUrl}/push_tx`, {
       method: 'POST',
@@ -253,11 +264,11 @@ export function connectRealBlockchain(baseUrl: string) {
             lastRecvAddress = currentAddress;
           }
           const fromPuzzleHash = toHexString(
-            bech32.decode(currentAddress).data as any,
+            bech32.decode(currentAddress).data,
           );
           const result = await rpc.sendTransaction({
             walletId: 1,
-            amount: initialSpend.amount,
+            amount: Number(initialSpend.amount),
             fee: 0,
             address: bech32.encode(
               'xch',
@@ -267,7 +278,7 @@ export function connectRealBlockchain(baseUrl: string) {
             waitForConfirmation: false,
           });
 
-          let resultCoin = undefined;
+          let resultCoin: { parentCoinInfo: string; puzzleHash: string; amount: number | bigint } | undefined;
           if (result.transaction) {
             result.transaction.additions.forEach((c) => {
               if (
@@ -278,7 +289,10 @@ export function connectRealBlockchain(baseUrl: string) {
               }
             });
           } else {
-            resultCoin = (result as any).coin;
+            const r = result as unknown as Record<string, unknown>;
+            if (r.coin && typeof r.coin === 'object') {
+              resultCoin = r.coin as { parentCoinInfo: string; puzzleHash: string; amount: number | bigint };
+            }
           }
 
           if (!resultCoin) {
@@ -291,9 +305,9 @@ export function connectRealBlockchain(baseUrl: string) {
 
           blockchainConnector.replyEmitter({
             responseId: evt.requestId,
-            initialSpend: { coin: resultCoin as any, fromPuzzleHash },
+            initialSpend: { coin: resultCoin, fromPuzzleHash },
           });
-        } catch (e: any) {
+        } catch (e: unknown) {
           console.error('rpc error', evt, ':', e);
           blockchainConnector.replyEmitter({
             responseId: evt.requestId,
@@ -340,7 +354,7 @@ export function connectRealBlockchain(baseUrl: string) {
             if (address !== lastRecvAddress) {
               lastRecvAddress = address;
             }
-            const puzzleHash = toHexString(bech32.decode(address).data as any);
+            const puzzleHash = toHexString(bech32.decode(address).data);
             const addressData = { address, puzzleHash };
 
           blockchainConnector.replyEmitter({

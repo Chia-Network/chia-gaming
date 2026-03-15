@@ -21,9 +21,14 @@ import {
 } from './BlockchainConnector';
 import { blockchainDataEmitter } from './BlockchainInfo';
 
-const bech32: any = (bech32_module ? bech32_module : bech32_buffer);
+type Bech32Module = { encode: (prefix: string, data: Uint8Array, encoding?: 'bech32' | 'bech32m') => string };
+const bech32: Bech32Module = (bech32_module ? bech32_module : bech32_buffer);
 
-function requestBlockData(forWho: any, block_number: number): Promise<any> {
+type FakeBlockchainEvent =
+  | { setNewPeak: number }
+  | { deliverBlock: { block_number: number; block_data: WatchReport } };
+
+function requestBlockData(forWho: FakeBlockchainInterface, block_number: number): Promise<void> {
   if (forWho.deleted) {
     return Promise.resolve();
   }
@@ -31,12 +36,12 @@ function requestBlockData(forWho: any, block_number: number): Promise<any> {
     method: 'POST',
   })
     .then((res) => res.json())
-    .then((res) => {
+    .then((res: { created?: string[]; deleted?: string[]; timed_out?: string[] } | null) => {
       if (forWho.deleted) {
         return;
       }
       if (res === null) {
-        return new Promise((resolve, _reject) => {
+        return new Promise<void>((resolve) => {
           const handle = setTimeout(() => {
             forWho.timeoutHandles.delete(handle);
             if (forWho.deleted) {
@@ -64,7 +69,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   at_block: number;
   max_block: number;
   handlingEvent: boolean;
-  incomingEvents: any[];
+  incomingEvents: FakeBlockchainEvent[];
   blockEmitter: (b: BlockchainReport) => void;
   observable: Subject<BlockchainReport>;
   upstream: ExternalBlockchainInterface;
@@ -113,7 +118,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     return this.observable;
   }
 
-  do_initial_spend(uniqueId: string, target: string, amt: number) {
+  do_initial_spend(uniqueId: string, target: string, amt: bigint) {
     return this.upstream.getOrRequestToken(uniqueId).then((fromPuzzleHash) => {
       return this.upstream.createSpendable(target, amt).then((coin) => {
         if (!coin) {
@@ -133,6 +138,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       this.handlingEvent = true;
       try {
         const event = this.incomingEvents.shift();
+        if (!event) continue;
         // console.log('full node: do event', event);
         await this.handleEvent(event);
       } catch (e) {
@@ -143,7 +149,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     }
   }
 
-  async pushEvent(evt: any) {
+  async pushEvent(evt: FakeBlockchainEvent) {
     if (this.deleted) {
       return;
     }
@@ -153,13 +159,13 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     }
   }
 
-  async handleEvent(event: any) {
+  async handleEvent(event: FakeBlockchainEvent) {
     if (this.deleted) {
       return;
     }
-    if (event.setNewPeak) {
+    if ('setNewPeak' in event) {
       this.internalSetNewPeak(event.setNewPeak);
-    } else if (event.deliverBlock) {
+    } else if ('deliverBlock' in event) {
       this.internalDeliverBlock(
         event.deliverBlock.block_number,
         event.deliverBlock.block_data,
@@ -209,14 +215,14 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     this.pushEvent({ setNewPeak: peak });
   }
 
-  deliverBlock(block_number: number, block_data: any[]) {
+  deliverBlock(block_number: number, block_data: WatchReport) {
     if (this.deleted) {
       return;
     }
     this.pushEvent({ deliverBlock: { block_number, block_data } });
   }
 
-  internalDeliverBlock(block_number: number, block_data: any[]) {
+  internalDeliverBlock(block_number: number, block_data: WatchReport) {
     if (this.deleted) {
       return;
     }
@@ -231,7 +237,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     return this.internalNextBlock();
   }
 
-  spend(_convert: (blob: string) => any, spendBlob: string): Promise<string> {
+  spend(_convert: (blob: string) => unknown, spendBlob: string): Promise<string> {
     return this.upstream.spend(spendBlob).then((status_array) => {
       if (status_array.length < 1) {
         throw new Error('status result array was empty');
@@ -292,31 +298,31 @@ export function connectSimulatorBlockchain() {
             initialSpend.target,
             initialSpend.amount,
           )
-          .then((result: any) => {
+          .then((result) => {
             blockchainConnector.replyEmitter({
               responseId: evt.requestId,
               initialSpend: result,
             });
           })
-          .catch((e: any) => {
+          .catch((e: unknown) => {
             blockchainConnector.replyEmitter({
               responseId: evt.requestId,
-              error: e.toString(),
+              error: String(e),
             });
           });
       } else if (transaction) {
         fakeBlockchainInfo
           .spend((_blob: string) => transaction.spendObject, transaction.blob)
-          .then((response: any) => {
+          .then((response) => {
             blockchainConnector.replyEmitter({
               responseId: evt.requestId,
               transaction: response,
             });
           })
-          .catch((e: any) => {
+          .catch((e: unknown) => {
             blockchainConnector.replyEmitter({
               responseId: evt.requestId,
-              error: e.toString(),
+              error: String(e),
             });
           });
       } else if (getAddress) {

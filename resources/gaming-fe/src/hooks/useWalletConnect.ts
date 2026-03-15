@@ -29,7 +29,7 @@ class WalletState {
   chainId?: string;
   session?: SessionTypes.Struct;
   error?: string;
-  client?: any;
+  client?: InstanceType<typeof Client>;
   observable: Subject<WalletConnectOutboundState>;
 
   constructor() {
@@ -77,7 +77,7 @@ class WalletState {
     this.observable.next({ stateName: 'initializing', initializing: true });
 
     const originalConsoleError = console.error;
-    console.error = (...args: any[]) => {
+    console.error = (...args: unknown[]) => {
       if (args.some(a => typeof a === 'object' && a instanceof Error
         ? a.message?.includes('No matching key. history:')
         : String(a).includes('No matching key. history:'))) {
@@ -99,9 +99,10 @@ class WalletState {
         },
       });
 
+      const relayer = signClient.core?.relayer as unknown as Record<string, unknown> | undefined;
       console.log('[WC] Client.init() succeeded', {
-        relayConnected: (signClient.core?.relayer as any)?.connected,
-        relayTransportClosed: (signClient.core?.relayer as any)?.transportExplicitlyClosed,
+        relayConnected: relayer?.connected,
+        relayTransportClosed: relayer?.transportExplicitlyClosed,
       });
 
       this.client = signClient;
@@ -214,6 +215,7 @@ class WalletState {
         connecting: false,
       });
 
+      if (!uri) throw new Error('WalletConnect connect() returned no URI');
       return { uri, approval };
     } catch (err) {
       console.error('[WC] startConnect() FAILED', err);

@@ -553,16 +553,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
           showAnimation={showSwapAnimation}
         />
       ))}
-
-      <style>{`
-    .animate-move {
-      animation: moveCard 2s ease-in-out forwards;
-    }
-    @keyframes moveCard {
-      from { left: var(--start-x); top: var(--start-y); }
-      to { left: var(--end-x); top: var(--end-y); }
-    }
-  `}</style>
     </div>
   );
 };
