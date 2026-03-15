@@ -2162,15 +2162,6 @@ impl PotatoHandler {
             let last_received = player_ch.get_last_received_state();
             let is_stale = on_chain_state < last_received;
 
-            log::debug!(
-                "finish_on_chain_transition: on_chain_state={}, last_received_state={}, current_state_number={}, have_potato={}, is_stale={}",
-                on_chain_state,
-                last_received,
-                player_ch.get_state_number(),
-                player_ch.have_potato(),
-                is_stale,
-            );
-
             let created_coins: Vec<(PuzzleHash, Amount)> = conditions
                 .iter()
                 .filter_map(|c| {
@@ -2282,17 +2273,13 @@ impl PotatoHandler {
                     player_ch.is_redo_zero_reward(coin, &state.game_id)
                 };
                 if dominated {
-                    let reason = if state.accepted {
+                    let _reason = if state.accepted {
                         "pending AcceptTimeout with zero share"
                     } else if !state.our_turn {
                         "opponent's turn, mover_share == coin_amount"
                     } else {
                         "redo would produce zero reward"
                     };
-                    log::debug!(
-                        "zero-reward early-out for game {:?}: {reason}",
-                        state.game_id
-                    );
                     zero_reward_games.push((coin.clone(), state.game_id));
                 }
             }
@@ -2590,7 +2577,7 @@ impl SpendWalletReceiver for PotatoHandler {
         _env: &mut ChannelHandlerEnv<'_, R>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
-        let hs_desc = match &self.channel_state {
+        let _hs_desc = match &self.channel_state {
             ChannelState::OnChainWaitingForUnrollSpend(uc, sn, _) => {
                 format!("OnChainWaitingForUnrollSpend(coin={uc:?}, sn={sn})")
             }
@@ -2604,7 +2591,6 @@ impl SpendWalletReceiver for PotatoHandler {
             ChannelState::Failed => "Failed".to_string(),
             other => format!("{:?}", std::mem::discriminant(other)),
         };
-        log::debug!("coin_spent called: coin_id={coin_id:?} channel_state={hs_desc}");
         if matches!(self.channel_state, ChannelState::Failed) {
             return Ok(vec![]);
         }
@@ -2612,8 +2598,7 @@ impl SpendWalletReceiver for PotatoHandler {
         let (_matched_ch, effect) = self.check_channel_spent(coin_id)?;
         effects.extend(effect);
 
-        let (matched_unroll, effect) = self.check_unroll_spent(coin_id)?;
-        log::debug!("check_unroll_spent: matched={matched_unroll} for coin_id={coin_id:?}");
+        let (_matched_unroll, effect) = self.check_unroll_spent(coin_id)?;
         effects.extend(effect);
 
         let (_matched, effect) = self.check_game_coin_spent(coin_id)?;

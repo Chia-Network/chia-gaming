@@ -146,7 +146,6 @@ mod gaming_wasm {
 
     #[wasm_bindgen]
     pub fn init() {
-        wasm_logger::init(wasm_logger::Config::default());
     }
 
     #[wasm_bindgen]

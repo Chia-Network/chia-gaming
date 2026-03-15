@@ -7,8 +7,6 @@ use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 use clvmr::run_program;
 use clvmr::NodePtr;
 
-use log::debug;
-
 use crate::channel_handler::types::{Evidence, ReadableMove, StateUpdateProgram};
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
@@ -174,21 +172,6 @@ impl GameHandler {
         let handler_node = self.get_my_turn_handler(allocator)?;
         let run_result = run_code(allocator, handler_node, handler_args);
 
-        if let Err(Error::ClvmErr(e)) = &run_result {
-            let failing_hex = Node(e.node_ptr()).to_hex(allocator)?;
-            let failing_prefix = &failing_hex[..failing_hex.len().min(96)];
-            debug!(
-                "error {e:?} from clvm during my turn handler: node_len={} node_prefix={}{}",
-                failing_hex.len(),
-                failing_prefix,
-                if failing_hex.len() > failing_prefix.len() {
-                    "..."
-                } else {
-                    ""
-                }
-            );
-        }
-
         let run_result = run_result?;
 
         let pl = if let Some(pl) = proper_list(allocator.allocator(), run_result, true) {
@@ -311,21 +294,6 @@ impl GameHandler {
         let handler_node = self.get_their_turn_handler(allocator)?;
 
         let run_result_e = run_code(allocator, handler_node, handler_args);
-
-        if let Err(Error::ClvmErr(e)) = &run_result_e {
-            let failing_hex = Node(e.node_ptr()).to_hex(allocator)?;
-            let failing_prefix = &failing_hex[..failing_hex.len().min(96)];
-            debug!(
-                "error {e:?} from their turn handler: node_len={} node_prefix={}{}",
-                failing_hex.len(),
-                failing_prefix,
-                if failing_hex.len() > failing_prefix.len() {
-                    "..."
-                } else {
-                    ""
-                }
-            );
-        }
 
         let run_result = match run_result_e {
             Ok(v) => v,

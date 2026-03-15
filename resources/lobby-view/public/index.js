@@ -25972,7 +25972,6 @@
     const fragment = getFragmentParams();
     const uniqueId = params.uniqueId || generateOrRetrieveUniqueId();
     const { players, rooms, messages, sendMessage, setLobbyAlias, generateRoom, joinRoom, lobbyGames } = useLobbySocket(window.location.origin, uniqueId, myAlias, true, params, fragment, (newUrl) => {
-      console.warn(`from tryJoinRoom, navigate ${newUrl}`);
       window.location.href = newUrl;
     });
     const [chatInput, setChatInput] = (0, import_react6.useState)("");

@@ -4,8 +4,6 @@ use std::rc::Rc;
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
-use log::debug;
-
 use clvmr::{run_program, NodePtr};
 
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
@@ -150,7 +148,6 @@ impl BareDebugGameHandler {
             &identities[0].public_key,
             &identities[1].public_key,
         )?;
-        debug!("curried args into game {args:?}");
 
         let curried = CurriedProgram {
             program: args.self_prog.to_clvm(allocator).into_gen()?,
@@ -225,8 +222,6 @@ impl BareDebugGameHandler {
         };
         let alice_handler = make_bare_handler(&start_a);
         let bob_handler = make_bare_handler(&start_b);
-        debug!("created a mover share {:?}", alice_handler.mover_share);
-        debug!("created b mover share {:?}", bob_handler.mover_share);
         Ok([alice_handler, bob_handler])
     }
 
@@ -255,7 +250,6 @@ impl BareDebugGameHandler {
         exhaustive_inputs: &ExhaustiveMoveInputs,
     ) -> Result<(), Error> {
         let ui_move = exhaustive_inputs.get_ui_move(allocator)?;
-        debug!("my turn handler {:?}", self.handler);
         let handler = self
             .handler
             .as_ref()
@@ -349,17 +343,6 @@ impl BareDebugGameHandler {
     ) -> Result<StateUpdateResult, Error> {
         let (mover_pk, waiter_pk) = self.get_mover_and_waiter_pubkey();
 
-        debug!(
-            "{} debug test v program hash: {:?}",
-            self.move_count,
-            validation_program.sha256tree(allocator)
-        );
-        debug!(
-            "{} debug test v state hash {:?}",
-            self.move_count,
-            self.state.sha256tree(allocator)
-        );
-
         let update_args = InternalStateUpdateArgs {
             referee_args: Rc::new(
                 RefereePuzzleArgs {
@@ -406,11 +389,6 @@ impl BareDebugGameHandler {
         mover_share: Amount,
         slash: u8,
     ) -> Result<ExhaustiveMoveInputs, Error> {
-        debug!("generating move inputs with count {}", self.move_count);
-        debug!(
-            "validation program queue {}",
-            self.validation_program_queue.len()
-        );
         let (redo, validation_program) = if self.validation_program_queue.is_empty() {
             (
                 true,
@@ -463,7 +441,6 @@ impl BareDebugGameHandler {
         let previous_validation_info_hash = self
             .get_validation_info(allocator, 1)
             .map(|v| v.hash().clone());
-        debug!("validation_program hash={:?}", vprog.hash());
         self.generic_run_state_update(
             allocator,
             vprog,
@@ -488,8 +465,6 @@ impl BareDebugGameHandler {
             .as_ref()
             .map(|v| v.hash().clone());
         let evidence = Evidence::nil()?;
-        debug!("my mover share {:?}", self.mover_share);
-        debug!("validation program hash={:?}", vprog.hash());
 
         self.last_validation_data
             .push_back((vprog.clone(), self.state.clone()));
@@ -504,7 +479,6 @@ impl BareDebugGameHandler {
 
         let (state, tt_result) = match validator_response {
             Some(state) => {
-                debug!("debug their move: new state {state:?}");
                 let pre_state_node = self.state.to_nodeptr(allocator)?;
                 let state_node = state.to_clvm(allocator).into_gen()?;
                 (
@@ -551,7 +525,6 @@ impl BareDebugGameHandler {
                     evidence.clone(),
                 )?;
                 if validator_response.is_none() {
-                    debug!("SLASH DETECTED: EVIDENCE {evidence:?}");
                     self.slash_detected = Some(evidence.clone());
                     return Ok(Some(evidence.to_program()));
                 }
@@ -562,7 +535,6 @@ impl BareDebugGameHandler {
             self.last_validation_data
                 .push_back((vprog.clone(), self.state.clone()));
             self.state = state.clone().into();
-            debug!("Accepted their turn");
         } else {
             return Err(Error::StrErr(
                 "unexpected FinalMove in their_turn_handler (expected MakeMove)".to_string(),
@@ -584,7 +556,6 @@ impl BareDebugGameHandler {
             .get_move_inputs(allocator, mover_share.clone(), slash)
             .expect("good");
         let move_data = predicted_move.to_linear_move(allocator).expect("good");
-        debug!("move_data {move_data:?}");
         let validation_result = self
             .state_update_for_own_move(
                 allocator,
@@ -593,11 +564,8 @@ impl BareDebugGameHandler {
                 Evidence::nil().expect("good"),
             )
             .expect("good");
-        debug!("validation_result {validation_result:?}");
         assert!(validation_result.is_some());
-        debug!("end my turn");
         self.end_my_turn(allocator, &predicted_move).expect("good");
-        debug!("accept move");
         let move_success_0 = peer.accept_move(allocator, &predicted_move).expect("good");
         Ok(DebugGameMoveInfo {
             ui_move: predicted_move.get_ui_move(allocator)?,
@@ -795,11 +763,6 @@ impl ExhaustiveMoveInputs {
             .into_gen()?
             .1;
         if let Some(mut result_move_data) = atom_from_clvm(allocator, result_atom) {
-            debug!(
-                "generated move data {} {result_move_data:?}",
-                result_move_data.len()
-            );
-            debug!("tail_bytes {tail_bytes:?}");
             result_move_data.append(&mut tail_bytes);
             Ok(result_move_data)
         } else {
@@ -825,16 +788,11 @@ pub fn test_debug_game_validation_move() {
         debug_games.1.game.starts[0].initial_validation_program
     );
 
-    debug!("do move 0 (alice)");
     let _move1 = debug_games
         .0
         .do_move(&mut allocator, debug_games.1, Amount::default(), 0)
         .expect("ok");
 
-    debug!(
-        "do move 1 (bob) at {} {}",
-        debug_games.0.move_count, debug_games.1.move_count
-    );
     let _move2 = debug_games
         .1
         .do_move(&mut allocator, debug_games.0, Amount::default(), 0)

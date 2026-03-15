@@ -3,8 +3,6 @@ use rand_chacha::ChaCha8Rng;
 
 use clvm_traits::ToClvm;
 
-use log::debug;
-
 use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN};
 use crate::common::standard_coin::{sign_agg_sig_me, solution_for_conditions, ChiaIdentity};
 use crate::common::types::{
@@ -21,19 +19,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
         let s = Simulator::new_strict();
         let private_key: PrivateKey = rng.gen();
-        debug!("private_key: {private_key:?}");
-        let identity = ChiaIdentity::new(&mut allocator, private_key.clone())
-            .map_err(|err| {
-                debug!("{err:?}");
-                err
-            })
-            .expect("no");
-        debug!("identity public key {:?}", identity.public_key);
+        let identity = ChiaIdentity::new(&mut allocator, private_key.clone()).expect("no");
         s.farm_block(&identity.puzzle_hash);
 
         let coins = s.get_my_coins(&identity.puzzle_hash).expect("got coins");
-        debug!("coin 0 {:?}", coins[0].to_parts());
-        debug!("coin 0 id {:?}", coins[0].to_coin_id());
 
         let (_, _, amt) = coins[0].to_parts().unwrap();
         s.spend_coin_to_puzzle_hash(

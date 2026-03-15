@@ -4,7 +4,6 @@ use std::rc::Rc;
 
 use clvm_traits::ToClvm;
 use clvmr::NodePtr;
-use log::debug;
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
@@ -15,7 +14,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{atom_from_clvm, i64_from_atom, usize_from_atom};
 use crate::common::types::{
-    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, IntoErr, Node,
+    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, IntoErr,
     PrivateKey, Program, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
 use crate::games::poker_collection;
@@ -168,7 +167,6 @@ impl SimulatedWalletSpend {
         opt_name: Option<&'static str>,
     ) -> Result<(), Error> {
         let name: Option<String> = opt_name.map(str::to_string);
-        debug!("register coin {name:?}");
         self.watching_coins.insert(
             coin_id.clone(),
             WatchEntry {
@@ -184,7 +182,6 @@ impl SimulatedWalletSpend {
 impl WalletSpendInterface for SimulatedPeer {
     /// Enqueue an outbound transaction.
     fn spend_transaction_and_add_fee(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
-        debug!("waiting to spend transaction");
         self.outbound_transactions.push(bundle.clone());
         Ok(())
     }
@@ -196,7 +193,6 @@ impl WalletSpendInterface for SimulatedPeer {
         timeout: &Timeout,
         name: Option<&'static str>,
     ) -> Result<(), Error> {
-        debug!("register coin {coin_id:?}");
         self.simulated_wallet_spend
             .register_coin(coin_id, timeout, name)
     }
@@ -210,13 +206,11 @@ impl WalletSpendInterface for SimulatedPeer {
 
 impl BootstrapTowardWallet for SimulatedPeer {
     fn channel_puzzle_hash(&mut self, puzzle_hash: &PuzzleHash) -> Result<(), Error> {
-        debug!("channel puzzle hash");
         self.channel_puzzle_hash = Some(puzzle_hash.clone());
         Ok(())
     }
 
     fn received_channel_offer(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
-        debug!("received channel offer");
         self.unfunded_offer = Some(bundle.clone());
         Ok(())
     }
@@ -266,7 +260,6 @@ pub fn handshake<R: Rng>(
         steps += 1;
         assert!(steps < 50);
 
-        debug!("handshake iterate {who}");
         run_move(
             allocator,
             rng,
@@ -278,7 +271,6 @@ pub fn handshake<R: Rng>(
         .expect("should send");
 
         if let Some(ph) = pipes[who].channel_puzzle_hash.clone() {
-            debug!("puzzle hash");
             pipes[who].channel_puzzle_hash = None;
             let reported_effects = {
                 let mut env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
@@ -294,11 +286,6 @@ pub fn handshake<R: Rng>(
         }
 
         if let Some(u) = pipes[who].unfunded_offer.clone() {
-            debug!(
-                "unfunded offer received by {:?}",
-                identities[who].synthetic_private_key
-            );
-
             let reported_effect = {
                 let mut env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
                 peers[who].channel_transaction_completion(&mut env, &u)?
@@ -334,7 +321,6 @@ pub fn handshake<R: Rng>(
             let included_result = simulator.push_tx(env.allocator, &spends.spends)?;
 
             pipes[who].unfunded_offer = None;
-            debug!("included_result {included_result:?}");
             assert_eq!(included_result.code, 1);
 
             simulator.farm_block(&identities[who].puzzle_hash);
@@ -927,7 +913,6 @@ fn run_game_container_with_action_list_with_success_predicate(
     let mut move_number = 0;
     let gid_diag_on = gid_diag_enabled();
     let test_name = crate::simulator::current_test_name().unwrap_or_else(|| "unknown".to_string());
-    debug!("DEBUG: RNG {:?}", rng);
     // debug!("DEBUG: KEYS {:?}", private_keys);
     // Coinset adapter for each side.
     let game_type_map = poker_collection(allocator);
@@ -1049,24 +1034,7 @@ fn run_game_container_with_action_list_with_success_predicate(
 
     while !matches!(ending, Some(0)) {
         num_steps += 1;
-        debug!(
-            "{num_steps} can move {can_move} {move_number} {:?}",
-            &moves_input[move_number..]
-        );
-        let move_input = moves_input.get(move_number);
 
-        if let Some(GameAction::Move(_, _, rm, _)) = &move_input {
-            debug!("ReadableMove is {:?}", rm);
-        } else if let Some(GameAction::FakeMove(_, _, rm, _)) = &move_input {
-            debug!("ReadableMove is {:?}", rm);
-        } else {
-            let length = moves_input.len();
-            if move_number < length {
-                debug!("Got move_input {move_input:?} but could not construct ReadableMove!!");
-            } else {
-                debug!("We're past the end of the given actions, probably waiting to shut down");
-            }
-        }
         assert!(
             num_steps < 200,
             "simulation stalled: num_steps={num_steps} move_number={move_number} can_move={can_move} next_action={:?} explicit_go_on_chain={has_explicit_go_on_chain}",
@@ -1105,7 +1073,6 @@ fn run_game_container_with_action_list_with_success_predicate(
 
         for i in 0..=1 {
             if local_uis[i].go_on_chain && cradles[i].is_on_chain() {
-                debug!("go_on_chain flag set for player {i} but already on chain (handled internally), clearing flag");
                 local_uis[i].go_on_chain = false;
             } else if local_uis[i].go_on_chain && cradles[i].handshake_finished() {
                 if !has_explicit_go_on_chain && !local_uis[i].got_error {
@@ -1115,10 +1082,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                         moves_input.get(move_number)
                     );
                 }
-                debug!(
-                    "GO_ON_CHAIN: player {i} got_error={} move_number={move_number}",
-                    local_uis[i].got_error
-                );
                 local_uis[i].go_on_chain = false;
                 let got_error = local_uis[i].got_error;
                 cradles[i].go_on_chain(allocator, rng, &mut local_uis[i], got_error)?;
@@ -1180,15 +1143,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                         if dominated_by_other {
                             move_number = saved;
                         }
-                        debug!(
-                            "{num_steps} can move {can_move} {move_number} {:?}",
-                            &moves_input[move_number..]
-                        );
                     }
 
                     for tx in dr.outbound_transactions.iter() {
                         if nerf_transactions_for & (1 << i) != 0 {
-                            debug!("NERFED tx from player {i}: {:?}", tx.name);
                             nerfed_tx_backlog.push(tx.clone());
                             continue;
                         }
@@ -1197,7 +1155,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                             .iter()
                             .any(|cs| !simulator.is_coin_spendable(&cs.coin));
                         if any_stale {
-                            debug!("step {num_steps}: p{i} skipping stale tx {:?}", tx.name);
                             continue;
                         }
                         let t_tx = std::time::Instant::now();
@@ -1211,10 +1168,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 );
                             }
                         }
-                        debug!(
-                            "TX result: code={} e={:?} diag={:?}",
-                            included_result.code, included_result.e, included_result.diagnostic
-                        );
                         let is_expected_duplicate = included_result.code == 3
                             && matches!(included_result.e, Some(5) | Some(20));
                         let include_ok = included_result.code == 1 || is_expected_duplicate;
@@ -1230,11 +1183,9 @@ fn run_game_container_with_action_list_with_success_predicate(
 
                     for msg in dr.outbound_messages.iter() {
                         if nerf_messages_for & (1 << i) != 0 {
-                            debug!("NERFED msg from player {i}");
                             continue;
                         }
                         if cradles[i].is_peer_disconnected() {
-                            debug!("dropping outbound msg from player {i} (peer_disconnected)");
                             continue;
                         }
                         let t_msg = std::time::Instant::now();
@@ -1251,12 +1202,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                     }
 
                     for n in dr.notifications.iter() {
-                        debug!("NOTIFICATION player {i}: {n:?}");
                         local_uis[i].notification(n)?;
                     }
 
                     for e in dr.receive_errors.iter() {
-                        debug!("RECEIVE ERROR player {i}: {e:?}");
                         local_uis[i].notification(&GameNotification::GoingOnChain {
                             reason: format!("error receiving peer message: {e:?}"),
                         })?;
@@ -1350,7 +1299,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                     | GameAction::ProposeNewGameTheirTurn(who, _trigger) => {
                         let my_turn = matches!(ga, GameAction::ProposeNewGame(_, _));
                         let new_game_id = cradles[*who].next_game_id().unwrap();
-                        debug!("ProposeNewGame({who}, my_turn={my_turn}): game_id={new_game_id:?}");
                         let new_ids = cradles[*who].propose_game(
                             allocator,
                             rng,
@@ -1383,16 +1331,9 @@ fn run_game_container_with_action_list_with_success_predicate(
                             gid_diag(&test_name, action_idx, "AcceptProposal", gid, &runtime_gid);
                         }
                         if !local_uis[*who].accepted_proposal_ids.contains(&runtime_gid) {
-                            debug!(
-                                "AcceptProposal({who}, {runtime_gid:?}) [phase 1: calling accept]"
-                            );
                             cradles[*who].accept_proposal(allocator, rng, &runtime_gid)?;
                             local_uis[*who].accepted_proposal_ids.push(runtime_gid);
                             move_number -= 1;
-                        } else {
-                            debug!(
-                                "AcceptProposal({who}, {runtime_gid:?}) [phase 2: resolved, advancing]"
-                            );
                         }
                     }
                     GameAction::CancelProposal(who, gid) => {
@@ -1409,7 +1350,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "CancelProposal", gid, &runtime_gid);
                         }
-                        debug!("CancelProposal({who}): game_id={runtime_gid:?}");
                         cradles[*who].cancel_proposal(allocator, rng, &runtime_gid)?;
                     }
                     GameAction::GoOnChain(who) => {
@@ -1427,7 +1367,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                             move_number -= 1;
                             continue;
                         }
-                        debug!("go on chain");
                         local_uis[*who].go_on_chain = true;
                     }
                     GameAction::GoOnChainThenMove(who) => {
@@ -1436,7 +1375,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                             continue;
                         }
 
-                        debug!("go on chain then move for player {who}");
                         local_uis[*who].go_on_chain = true;
                         let got_error = local_uis[*who].got_error;
                         cradles[*who].go_on_chain(
@@ -1493,7 +1431,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "FakeMove", gid, &runtime_gid);
                         }
-                        debug!("make move (fake)");
                         let entropy = rng.gen();
                         cradles[*who].make_move(
                             allocator,
@@ -1506,7 +1443,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                         local_uis[*who].opponent_moved_in_game.remove(&runtime_gid);
 
                         cradles[*who].replace_last_message(|msg_envelope| {
-                            debug!("sabotage envelope = {msg_envelope:?}");
                             if let PeerMessage::Batch { actions, signatures, clean_shutdown } = msg_envelope {
                                 let mut new_actions = actions.clone();
                                 let mut found = false;
@@ -1581,17 +1517,9 @@ fn run_game_container_with_action_list_with_success_predicate(
                                     .iter()
                                     .any(|cs| !simulator.is_coin_spendable(&cs.coin));
                                 if any_stale {
-                                    debug!("REPLAY: skipping stale nerfed tx {:?}", tx.name);
                                     continue;
                                 }
-                                debug!("REPLAYING nerfed tx: {:?}", tx.name);
-                                let included_result = simulator.push_tx(allocator, &tx.spends)?;
-                                debug!(
-                                    "REPLAY result: code={} e={:?} diag={:?}",
-                                    included_result.code,
-                                    included_result.e,
-                                    included_result.diagnostic
-                                );
+                                simulator.push_tx(allocator, &tx.spends)?;
                             }
                         } else {
                             nerfed_tx_backlog.clear();
@@ -1617,7 +1545,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "AcceptTimeout", gid, &runtime_gid);
                         }
-                        debug!("{who} doing ACCEPT for {runtime_gid:?}");
                         cradles[*who].accept_timeout(allocator, rng, &runtime_gid)?;
                     }
                     GameAction::Timeout(_who) => {
@@ -1629,28 +1556,19 @@ fn run_game_container_with_action_list_with_success_predicate(
                             "CleanShutdown({who}) called while on chain; on-chain completion is automatic"
                         );
                         if !cradles[*who].handshake_finished() {
-                            debug!("CleanShutdown({who}) deferred: handshake not finished");
                             move_number -= 1;
                             continue;
                         }
-                        debug!("CleanShutdown({who}) processing");
                         cradles[*who].shut_down(allocator, rng)?;
                     }
                     GameAction::CorruptStateNumber(who, new_sn) => {
-                        debug!("CorruptStateNumber({who}, {new_sn})");
                         cradles[*who].corrupt_state_for_testing(*new_sn)?;
                     }
                     GameAction::ForceUnroll(who) => {
-                        debug!("ForceUnroll({who})");
                         let spend = cradles[*who].force_unroll_spend(allocator, rng)?;
-                        let included_result = simulator.push_tx(allocator, &spend.spends)?;
-                        debug!(
-                            "ForceUnroll TX result: code={} e={:?} diag={:?}",
-                            included_result.code, included_result.e, included_result.diagnostic
-                        );
+                        simulator.push_tx(allocator, &spend.spends)?;
                     }
                     GameAction::SaveUnrollSnapshot(who) => {
-                        debug!("SaveUnrollSnapshot({who})");
                         cradles[*who].save_unroll_snapshot();
                     }
                     GameAction::ForceStaleUnroll(who) => {
@@ -1658,7 +1576,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                         let _included_result = simulator.push_tx(allocator, &spend.spends)?;
                     }
                     GameAction::InjectRawMessage(who, data) => {
-                        debug!("InjectRawMessage({who}, {} bytes)", data.len());
                         cradles[*who].deliver_message(data)?;
                     }
                 }
@@ -1923,13 +1840,9 @@ fn check_calpoker_economic_result(
 ) {
     let (p1_balance, p2_balance) = get_balances_from_outcome(outcome).expect("should work");
 
-    for (pn, lui) in outcome.local_uis.iter().enumerate() {
-        for (mn, the_move) in lui.opponent_moves.iter().enumerate() {
-            let the_move_to_node = the_move.2.to_nodeptr(allocator).expect("should work");
-            debug!(
-                "player {pn} opponent move {mn} {the_move:?} {:?}",
-                Node(the_move_to_node).to_hex(allocator)
-            );
+    for (_pn, lui) in outcome.local_uis.iter().enumerate() {
+        for (_mn, the_move) in lui.opponent_moves.iter().enumerate() {
+            let _ = the_move.2.to_nodeptr(allocator).expect("should work");
         }
     }
 
@@ -1953,11 +1866,9 @@ fn check_calpoker_economic_result(
         .2
         .to_nodeptr(allocator)
         .expect("should work");
-    let alice_win_dir = parse_win_direction_from_readable(allocator, alice_outcome_node, true)
+    let _alice_win_dir = parse_win_direction_from_readable(allocator, alice_outcome_node, true)
         .expect("should parse alice win direction");
 
-    debug!("alice win_dir={alice_win_dir} bob win_dir={bob_win_dir}");
-    debug!("p1 balance {p1_balance:?} p2 {p2_balance:?}");
     if bob_win_dir == 1 {
         assert_eq!(p1_balance + 200, p2_balance);
     } else if bob_win_dir == -1 {
@@ -2070,12 +1981,8 @@ pub fn setup_debug_test(
         &debug_games[0].alice_identity.public_key,
         &debug_games[0].bob_identity.public_key,
     );
-    debug!("debug game curried data {args_curry:?}");
     let args = args_curry.expect("good").to_clvm(allocator).into_gen()?;
     let args_program = Rc::new(Program::from_nodeptr(allocator, args).expect("ok"));
-
-    debug!("alice mover puzzle hash is {:?}", identities[0].puzzle_hash);
-    debug!("bob   mover puzzle hash is {:?}", identities[0].puzzle_hash);
 
     Ok(DebugGameSimSetup {
         private_keys,
@@ -2317,10 +2224,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
             let (p1_balance, p2_balance) =
                 get_balances_from_outcome(&outcome).expect("should get balances");
-            debug!(
-                "piss_off_peer_complete: p1_balance={} p2_balance={}",
-                p1_balance, p2_balance
-            );
             assert!(
                 p1_balance > 0 && p2_balance > 0,
                 "both players should have non-zero balance after game"
@@ -2778,7 +2681,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
         // Alice assigned bob 49, so alice is greater.
         let amount_diff = 151 - 49;
-        debug!("p1_balance {p1_balance} p2_balance {p2_balance}");
         assert_eq!(p1_balance, p2_balance + amount_diff);
 
         assert_event_sequence(
@@ -2846,7 +2748,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
         // Alice assigned bob 49, so alice is greater.
         let amount_diff = 151 - 49;
-        debug!("p1_balance {p1_balance} p2_balance {p2_balance}");
         assert_eq!(p1_balance + amount_diff, p2_balance);
 
         assert_event_sequence(

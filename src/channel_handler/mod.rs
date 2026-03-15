@@ -1709,16 +1709,6 @@ impl ChannelHandler {
             })
             .collect();
 
-        log::debug!(
-            "set_state_for_coins: cached_moves={:?} live_games={} coins={}",
-            cached_moves
-                .iter()
-                .map(|(gid, ph)| format!("({gid:?},{ph:?})"))
-                .collect::<Vec<_>>(),
-            self.live_games.len(),
-            coins.len(),
-        );
-
         let mut matched_game_ids: HashSet<GameID> = HashSet::new();
 
         for (coin_ph, coin_amt) in coins.iter() {
@@ -1740,11 +1730,6 @@ impl ChannelHandler {
             };
 
             if let Some(live_game) = live_latest {
-                log::debug!(
-                    "set_state_for_coins: coin_ph={coin_ph:?} coin_amt={coin_amt:?} → latest match game_id={:?} (amount_ok={})",
-                    live_game.game_id,
-                    live_game.get_amount() == *coin_amt,
-                );
                 matched_game_ids.insert(live_game.game_id);
                 res.insert(
                     coin_id,
@@ -1765,11 +1750,6 @@ impl ChannelHandler {
             }
 
             if let Some(live_game) = live_redo {
-                log::debug!(
-                    "set_state_for_coins: coin_ph={coin_ph:?} coin_amt={coin_amt:?} → redo match game_id={:?} (amount_ok={})",
-                    live_game.game_id,
-                    live_game.get_amount() == *coin_amt,
-                );
                 matched_game_ids.insert(live_game.game_id);
                 res.insert(
                     coin_id,
@@ -1810,20 +1790,6 @@ impl ChannelHandler {
                     },
                 );
                 continue;
-            }
-
-            log::debug!(
-                "set_state_for_coins: coin_ph={coin_ph:?} coin_amt={coin_amt:?} → NO MATCH among {} live games and {} pending",
-                self.live_games.len(),
-                self.pending_accept_timeouts.len(),
-            );
-            for g in &self.live_games {
-                log::debug!(
-                    "  live game {:?}: last_ref_ph={:?} amount={:?}",
-                    g.game_id,
-                    g.last_referee_puzzle_hash,
-                    g.get_amount(),
-                );
             }
         }
 

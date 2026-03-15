@@ -3,8 +3,6 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
-use log::debug;
-
 use crate::channel_handler::game_handler::{
     GameHandler, MessageHandler, MessageInputs, TheirTurnInputs, TheirTurnResult,
 };
@@ -556,13 +554,11 @@ impl TheirTurnReferee {
                     ));
                 };
 
-            let spent_ph = if let Some((_, ph, _)) = referee_coin_string.to_parts() {
-                ph
-            } else {
+            if referee_coin_string.to_parts().is_none() {
                 return Err(Error::StrErr(
                     "slash: could not extract puzzle hash from referee coin string".to_string(),
                 ));
-            };
+            }
             let to_spend_ph = if let Some(p) = conditions
                 .iter()
                 .filter_map(|c| {
@@ -586,13 +582,8 @@ impl TheirTurnReferee {
                 &self.fixed.amount,
             );
 
-            debug!("their turn: slash specified {:?}", evidence);
             let after_args = self.spend_this_coin();
-            let expected_ph = self.outcome_referee_puzzle_hash(allocator)?;
-            debug!(
-                "slash: outcome_ph={expected_ph:?} spent_ph={spent_ph:?} match={}",
-                expected_ph == spent_ph
-            );
+            let _expected_ph = self.outcome_referee_puzzle_hash(allocator)?;
 
             let args = Rc::new(RefereePuzzleArgs {
                 mover_pubkey: self.fixed.my_identity.public_key.clone(),
@@ -637,7 +628,6 @@ impl TheirTurnReferee {
 
         let new_puzzle_hash =
             curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)?;
-        debug!("THEIR TURN MOVE OFF CHAIN SUCCEEDED {new_puzzle_hash:?}");
 
         let adjusted_self = match new_self.state.as_ref() {
             MyTurnRefereeGameState::AfterTheirTurn {
@@ -687,11 +677,6 @@ impl TheirTurnReferee {
         evidence: Evidence,
         cheating_move_mover_share: Amount,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
-        debug!(
-            "slash spend: parent coin is {coin_string:?} => {:?}",
-            self.fixed.reward_puzzle_hash
-        );
-
         let signature = self.fixed.my_reward_payout_signature.clone();
 
         let solution = OnChainRefereeSolution::Slash(Rc::new(OnChainRefereeSlash {

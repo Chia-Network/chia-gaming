@@ -8,7 +8,6 @@ use std::collections::HashMap;
 
 use chia_bls::signature::aggregate_verify;
 use clvm_traits::{ClvmEncoder, ToClvm};
-use log::debug;
 
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::constants::CREATE_COIN;
@@ -577,7 +576,6 @@ impl Simulator {
             &coin.to_coin_id(),
             &agg_sig_me_additional_data,
         );
-        debug!("our message {agg_sig_me_message:?}");
         let signature2 = identity.synthetic_private_key.sign(&agg_sig_me_message);
         assert_eq!(coin_spend_info.signature, signature2);
 

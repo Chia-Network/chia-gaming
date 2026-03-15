@@ -3,8 +3,6 @@ use std::collections::{HashMap, VecDeque};
 
 use clvm_traits::ToClvm;
 
-use log::debug;
-
 use crate::channel_handler::types::ChannelHandlerEnv;
 #[cfg(test)]
 use crate::channel_handler::types::{ChannelHandlerPrivateKeys, ReadableMove};
@@ -87,7 +85,6 @@ impl MessagePeerQueue for Pipe {
 
 impl PacketSender for MessagePipe {
     fn send_message(&mut self, msg: &PeerMessage) -> Result<(), Error> {
-        debug!("Send Message from {} {msg:?}", self.my_id);
         let bson_doc = bson::to_bson(&msg).map_err(|e| Error::StrErr(format!("{e:?}")))?;
         let msg_data = bson::to_vec(&bson_doc).map_err(|e| Error::StrErr(format!("{e:?}")))?;
         self.queue.push_back(msg_data);

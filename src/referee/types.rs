@@ -5,7 +5,6 @@ use clvm_utils::CurriedProgram;
 use clvmr::allocator::NodePtr;
 use clvmr::run_program;
 
-use log::debug;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::types::{
@@ -355,12 +354,6 @@ impl InternalStateUpdateArgs {
             0,
         )
         .into_gen();
-        if let Err(Error::ClvmErr(e)) = &raw_result_p {
-            debug!(
-                "validator error {e:#?} {:?}",
-                Program::from_nodeptr(allocator, e.node_ptr())
-            );
-        }
         let raw_result = raw_result_p?;
 
         parse_validator_result(allocator, raw_result.1)

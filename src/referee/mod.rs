@@ -4,7 +4,6 @@ pub mod types;
 
 use std::rc::Rc;
 
-use log::debug;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::game_start_info::GameStartInfo;
@@ -26,7 +25,6 @@ pub(crate) struct RefereeInitialSetup {
     pub fixed: Rc<RMFixed>,
     pub ref_puzzle_args: Rc<RefereePuzzleArgs>,
     pub puzzle_hash: PuzzleHash,
-    pub my_turn: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -101,7 +99,6 @@ pub(crate) fn referee_initial_setup(
         fixed,
         ref_puzzle_args,
         puzzle_hash,
-        my_turn,
     })
 }
 
@@ -334,8 +331,6 @@ impl Referee {
         conditions: &[CoinCondition],
         state_number: usize,
     ) -> Result<(Option<Rc<Referee>>, TheirTurnCoinSpentResult), Error> {
-        debug!("their_turn_coin_spent: state={}", state_number);
-
         if let Some((_, on_chain_ph, _)) = referee_coin_string.to_parts() {
             if let Some(CoinCondition::CreateCoin(ph, amt)) = conditions
                 .iter()
@@ -345,8 +340,6 @@ impl Referee {
                 let my_outcome = self.outcome_referee_puzzle_hash(allocator)?;
 
                 if on_chain_ph == my_on_chain && *ph == my_outcome {
-                    debug!("repeat: my turn {:?}", self.is_my_turn());
-
                     return Ok((
                         Some(Rc::new(self.clone())),
                         TheirTurnCoinSpentResult::Expected(
@@ -423,27 +416,17 @@ impl Referee {
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
     ) -> Result<Option<Spend>, Error> {
-        debug!("get_transaction_for_timeout turn {}", self.is_my_turn());
-
         let on_chain_ph = self.on_chain_referee_puzzle_hash(allocator)?;
         let outcome_ph = self.outcome_referee_puzzle_hash(allocator)?;
         let coin_ph = coin_string.to_parts().map(|(_, ph, _)| ph);
 
         let (puzzle, amount_for_timeout) =
             if coin_ph.as_ref() == Some(&outcome_ph) && coin_ph.as_ref() != Some(&on_chain_ph) {
-                debug!(
-                    "TIMEOUT: coin matches outcome_ph {:?}, using spend_this_coin args",
-                    outcome_ph
-                );
                 (
                     self.outcome_referee_puzzle(allocator)?,
                     self.fixed().amount.clone(),
                 )
             } else {
-                debug!(
-                    "TIMEOUT: coin matches on_chain_ph {:?} (or fallback)",
-                    on_chain_ph
-                );
                 (
                     self.on_chain_referee_puzzle(allocator)?,
                     self.fixed().amount.clone(),

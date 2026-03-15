@@ -32,7 +32,6 @@ const LobbyScreen = () => {
     params,
     fragment,
     (newUrl: string) => {
-      console.warn(`from tryJoinRoom, navigate ${newUrl}`);
       window.location.href = newUrl;
     }
   );

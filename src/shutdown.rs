@@ -1,6 +1,5 @@
 use clvm_traits::ToClvm;
 use clvmr::NodePtr;
-use log::debug;
 use rand::Rng;
 
 use crate::channel_handler::types::ChannelHandlerEnv;
@@ -30,10 +29,6 @@ fn compute_shutdown_conditions(
                 .into_gen()?,
         ));
     }
-
-    debug!("Reward coins:");
-    debug!("me   {our_share:?} {our_reward_ph:?}");
-    debug!("them {their_share:?} {their_reward_ph:?}");
 
     v.to_clvm(allocator).into_gen()
 }
