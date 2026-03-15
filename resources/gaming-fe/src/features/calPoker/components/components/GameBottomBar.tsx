@@ -1,18 +1,11 @@
 import { Button } from '@/src/components/button';
 
-function truncateHex(hex: string, head = 6, tail = 4): string {
-  if (hex.length <= head + tail) return hex;
-  return `${hex.slice(0, head)}…${hex.slice(-tail)}`;
-}
-
 interface GameBottomBarProps {
   isPlayerTurn: boolean,
   buttonText: string,
   moveNumber: number,
   isDisabled: boolean,
   doHandleMakeMove: () => void,
-  gameCoinHex?: string,
-  gameStatus?: string,
 }
 
 const GameBottomBar = ({
@@ -21,13 +14,10 @@ const GameBottomBar = ({
   moveNumber,
   isDisabled,
   doHandleMakeMove,
-  gameCoinHex,
-  gameStatus,
 }: GameBottomBarProps) => {
   return (
     <div className='flex rounded-lg flex-col lg:flex-row bg-canvas-bg shadow-md border border-canvas-line lg:flex-[0_0_10%]'>
 
-      {/* Top row on mobile: turn + move; game coin/status when on-chain */}
       <div className='flex w-full lg:flex-1 lg:order-0 order-1 lg:p-0 p-4 flex-col gap-0.5 lg:gap-1 items-center justify-center'>
         <div className='flex w-full items-center justify-between lg:justify-center'>
           <span
@@ -39,13 +29,6 @@ const GameBottomBar = ({
             Move {moveNumber}
           </span>
         </div>
-        {(gameCoinHex != null || gameStatus != null) && (
-          <p className='text-xs text-canvas-text opacity-80 w-full text-center lg:text-center'>
-            Game coin {gameCoinHex != null && `0x${truncateHex(gameCoinHex)}`}
-            {gameCoinHex != null && gameStatus != null && ' — '}
-            {gameStatus ?? ''}
-          </p>
-        )}
       </div>
 
       {/* Button section */}

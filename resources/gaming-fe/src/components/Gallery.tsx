@@ -10,12 +10,9 @@ import Calpoker from '../features/calPoker';
 import {
   CaliforniaPoker,
 } from '../features/calPoker/components';
-import GameLog from './GameLog';
-
 const componentList: Record<string, any> = {
   BramVibe1: CaliforniaPoker as any,
   Calpoker: Calpoker as any,
-  GameLog: GameLog as any,
   WaitingScreen: WaitingScreen as any,
   QRCodeModal: QRCodeModal as any,
   WalletConnectHeading: WalletConnectHeading as any,

@@ -20,9 +20,8 @@ import { formatHandDescription, makeDescription } from './utils';
 import { HandDisplay, MovingCard } from './components';
 import {
   CalpokerOutcome,
-  OutcomeHandType,
   cardIdToRankSuit,
-  suitNames,
+  handValueToDescription,
 } from '../../../types/ChiaGaming';
 import { SuitName } from '../../../types/californiaPoker/CardValueSuit';
 import {
@@ -35,7 +34,6 @@ import { WalletIcon } from 'lucide-react';
 
 import GameBottomBar from './components/GameBottomBar';
 import { cn } from '../../../lib/utils';
-import { EndGameDialog } from './components/AnotherHandPopup';
 
 function translateTopline(topline: string | undefined): string | null {
   if (!topline) return null;
@@ -53,15 +51,10 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   cardSelections,
   setCardSelections,
   handleMakeMove,
-  playAgain,
   outcome,
-  log,
   myWinOutcome,
   banner,
   balanceDisplay,
-  stopPlaying,
-  gameCoinHex,
-  gameStatus,
 }) => {
   const isPlayerAlice = playerNumber === 1;
   const [gameState, setGameState] = useState(GAME_STATES.INITIAL);
@@ -144,22 +137,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     setGameState(GAME_STATES.SELECTING);
     setCardSelections([]);
     setWinner(null);
-  };
-  const [showEndDialog, setShowEndDialog] = useState(false);
-  const NewGame = () => {
-    playAgain();
-    setGameState(GAME_STATES.SELECTING);
-    setRememberedCards([[], []]);
-    setWinner(null);
-    setRememberedOutcome(undefined);
-    setMovingCards([]);
-    setCardSelections([]);
-    setPlayerBestHand(undefined);
-    setAiBestHand(undefined);
-    setShowSwapAnimation(false);
-    setPlayerDisplayText('');
-    setOpponentDisplayText('');
-    setSwappingCards({ player: [], ai: [] });
   };
 
   const toggleCardSelection = (cardId: number) => {
@@ -432,15 +409,16 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       setOpponentCards(newOpponent);
       setRememberedCards([newPlayer, newOpponent]);
 
-      // --- Best hands ---
-      const lastLog = log[0];
+      // --- Best hands from outcome ---
+      const myUsedCards = isPlayerAlice ? rememberedOutcome.alice_used_cards : rememberedOutcome.bob_used_cards;
+      const oppUsedCards = isPlayerAlice ? rememberedOutcome.bob_used_cards : rememberedOutcome.alice_used_cards;
+      const myHandValue = isPlayerAlice ? rememberedOutcome.alice_hand_value : rememberedOutcome.bob_hand_value;
+      const oppHandValue = isPlayerAlice ? rememberedOutcome.bob_hand_value : rememberedOutcome.alice_hand_value;
 
-      // Convert hand arrays into CardValueSuit objects
-      const playerBestCards: CardValueSuit[] = lastLog.myHand.map((cardId, idx) =>
+      const playerBestCards: CardValueSuit[] = myUsedCards.map((cardId, idx) =>
         cvsFromCard(cardId, idx),
       );
-
-      const opponentBestCards: CardValueSuit[] = lastLog.opponentHand.map((cardId, idx) =>
+      const opponentBestCards: CardValueSuit[] = oppUsedCards.map((cardId, idx) =>
         cvsFromCard(cardId, idx),
       );
 
@@ -456,8 +434,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       setMovingCards([]);
       setShowSwapAnimation(false);
       setGameState(GAME_STATES.FINAL);
-      setPlayerDisplayText(makeDescription(log[0].myHandDescription));
-      setOpponentDisplayText(makeDescription(log[0].opponentHandDescription));
+      setPlayerDisplayText(makeDescription(handValueToDescription(myHandValue, myUsedCards)));
+      setOpponentDisplayText(makeDescription(handValueToDescription(oppHandValue, oppUsedCards)));
     }, SWAP_ANIMATION_DURATION);
   };
 
@@ -466,13 +444,10 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   }, []);
 
   useEffect(() => {
-    // Only reset when moveNumber goes to 0 AND:
-    //  - the end dialog is not open (user hasn't acknowledged yet), AND
-    //  - no swap animation is in progress / game is not mid-reveal
-    // This prevents the 2500ms reset in useWasmBlob from killing a running animation.
+    // Reset when moveNumber goes to 0 and no animation is in progress.
+    // With key-based remounting, this mostly fires on initial mount.
     if (
       moveNumber === 0 &&
-      !showEndDialog &&
       !showSwapAnimation &&
       gameState !== GAME_STATES.AWAITING_SWAP &&
       gameState !== GAME_STATES.SWAPPING &&
@@ -490,14 +465,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       setOpponentDisplayText('');
       setSwappingCards({ player: [], ai: [] });
     }
-  }, [moveNumber, showEndDialog, showSwapAnimation, gameState]);
-
-  useEffect(() => {
-    if (gameState === GAME_STATES.FINAL) {
-      console.log(`[UI] gameState=FINAL → opening EndDialog | moveNumber:${moveNumber}`);
-      setShowEndDialog(true);
-    }
-  }, [gameState]);
+  }, [moveNumber, showSwapAnimation, gameState]);
   return (
     <div className='flex flex-col w-full h-full overflow-hidden text-canvas-text'>
       <div className='flex-1 relative h-full overflow-y-auto overflow-x-hidden'>
@@ -645,22 +613,10 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
               moveNumber={moveNumber}
               isDisabled={isDisabled}
               doHandleMakeMove={doHandleMakeMove}
-              gameCoinHex={gameCoinHex}
-              gameStatus={gameStatus}
             />
           </div>
         )}
       </div>
-      <EndGameDialog
-        open={showEndDialog}
-        onOpenChange={setShowEndDialog}
-        onPlayAgain={() => {
-          setShowEndDialog(false);
-          NewGame();
-        }}
-        onEndSession={stopPlaying} // same handler as your destructive button
-        disableEndSession={moveNumber !== 0}
-      />
       {/* Animations */}
       {movingCards.map((cardData) => (
         <MovingCard

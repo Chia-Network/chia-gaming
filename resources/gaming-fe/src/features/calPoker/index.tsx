@@ -1,10 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Button } from '../../components/button';
 
-import { CalpokerOutcome, OutcomeLogLine } from '../../types/ChiaGaming';
-import GameLog from '../../components/GameLog';
+import { CalpokerOutcome } from '../../types/ChiaGaming';
 
-import { Info, LogOut, X } from 'lucide-react';
+import { Info, X } from 'lucide-react';
 import { Alert } from '../../components/ui/alert';
 import { cn } from '../../lib/utils';
 import { CaliforniaPoker } from './components';
@@ -23,19 +22,7 @@ export interface CalpokerProps {
   setCardSelections: (n: number[] | ((prev: number[]) => number[])) => void;
   handleMakeMove: () => void;
   handleCheat: () => void;
-  playAgain: () => void;
-  stopPlaying: () => void;
   addressData: any;
-  log: OutcomeLogLine[];
-  channelCoinHex?: string;
-  channelStatus?: string;
-  gameCoinHex?: string;
-  gameStatus?: string;
-}
-
-function truncateHex(hex: string, head = 6, tail = 4): string {
-  if (hex.length <= head + tail) return hex;
-  return `${hex.slice(0, head)}…${hex.slice(-tail)}`;
 }
 
 const Calpoker: React.FC<CalpokerProps> = ({
@@ -52,47 +39,24 @@ const Calpoker: React.FC<CalpokerProps> = ({
   setCardSelections,
   handleMakeMove,
   handleCheat,
-  playAgain,
-  stopPlaying,
   addressData,
-  log,
-  channelCoinHex,
-  channelStatus,
-  gameCoinHex,
-  gameStatus,
 }) => {
   const myWinOutcome = outcome?.my_win_outcome;
 
-  const iAmAlice = playerNumber === 1;
-  const myHandValue = iAmAlice
-    ? outcome?.alice_hand_value
-    : outcome?.bob_hand_value;
-  let banner = isPlayerTurn ? 'Your turn' : "Opponent's turn";
-  if (myWinOutcome === 'win') {
-    banner = `You win ${myHandValue}`;
-  } else if (myWinOutcome === 'lose') {
-    banner = `You lose ${myHandValue}`;
-  } else if (myWinOutcome === 'tie') {
-    banner = `Game tied ${myHandValue}`;
-  }
   const moveDescription = [
     'Commit to random number',
     'Choose 4 cards to discard',
     'Finish game',
   ][moveNumber];
 
-  // Toast (Snackbar) state for move description
   const [showMoveToast, setShowMoveToast] = useState(false);
 
   useEffect(() => {
-    // show toast on mount or when moveNumber changes
     setShowMoveToast(true);
   }, [moveNumber]);
 
   const handleHelpClick = () => {
-    // Re-trigger the toast so it animates again from the top
     setShowMoveToast(false);
-    // small timeout to allow exit animation before re-opening
     setTimeout(() => setShowMoveToast(true), 120);
   };
 
@@ -112,96 +76,60 @@ const Calpoker: React.FC<CalpokerProps> = ({
       ? ` - Our Share ${ourShare} vs ${theirShare}`
       : '';
 
+  const iAmAlice = playerNumber === 1;
+  const myHandValue = iAmAlice
+    ? outcome?.alice_hand_value
+    : outcome?.bob_hand_value;
+  let banner = isPlayerTurn ? 'Your turn' : "Opponent's turn";
+  if (myWinOutcome === 'win') {
+    banner = `You win ${myHandValue}`;
+  } else if (myWinOutcome === 'lose') {
+    banner = `You lose ${myHandValue}`;
+  } else if (myWinOutcome === 'tie') {
+    banner = `Game tied ${myHandValue}`;
+  }
+
   return (
-    <div
-      className='relative gap-4 flex min-h-screen w-full flex-col justify-center items-center bg-canvas-bg-subtle px-4 text-canvas-text sm:px-6 md:px-8'
-    >
-      {/* Header */}
-      <div className='flex w-full flex-col items-center pt-4 justify-between gap-4 sm:flex-row sm:gap-6'>
-        <div className='w-full flex flex-col gap-1'>
-          <h1 className='text-2xl font-semibold text-canvas-text-contrast sm:text-4xl'>
-            California Poker V7
-          </h1>
-          {(channelCoinHex != null || channelStatus != null) && (
-            <p className='text-sm text-canvas-text'>
-              Channel coin: {channelCoinHex != null ? `0x${truncateHex(channelCoinHex)}` : '—'}
-              {channelStatus != null ? ` — ${channelStatus}` : ''}
-            </p>
-          )}
-        </div>
-
-        <div className='flex w-full items-center gap-2 flex-row justify-end'>
-          {/* HINT button */}
-          <Button
-            onClick={handleHelpClick}
-            color={'neutral'}
-            variant={'outline'}
-            size={'sm'}
-            leadingIcon={<Info size={'20px'} />}
-          >
-            Hint
-          </Button>
-
-          {/* CHEAT button (debug) */}
-          <Button
-            onClick={handleCheat}
-            color={'neutral'}
-            variant={'outline'}
-            size={'sm'}
-            disabled={!isPlayerTurn}
-          >
-            Cheat
-          </Button>
-
-          {/* Leave */}
-          <Button
-            data-testid='stop-playing'
-            variant={'destructive'}
-            color={'outline'}
-            onClick={stopPlaying}
-            size={'sm'}
-            disabled={moveNumber !== 0}
-            leadingIcon={<LogOut />}
-          >
-            End Session
-          </Button>
-        </div>
+    <div className='relative flex h-full w-full flex-col'>
+      {/* Toolbar row */}
+      <div className='flex items-center justify-end gap-2 pb-2'>
+        <Button
+          onClick={handleHelpClick}
+          color='neutral'
+          variant='outline'
+          size='sm'
+          leadingIcon={<Info size='20px' />}
+        >
+          Hint
+        </Button>
+        <Button
+          onClick={handleCheat}
+          color='neutral'
+          variant='outline'
+          size='sm'
+          disabled={!isPlayerTurn}
+        >
+          Cheat
+        </Button>
       </div>
 
-      {/* Main Game Layout */}
-      <div className='flex w-full justify-center overflow-visible lg:h-[calc(100vh-100px)]'>
-        <div className='flex w-full flex-col gap-2 overflow-hidden lg:h-full lg:min-h-0 lg:flex-row'>
-          {/* MAIN GAME AREA */}
-          <div className='flex-1 overflow-auto lg:flex-[18_1_0%] lg:min-h-0'>
-            <CaliforniaPoker
-              playerNumber={playerNumber}
-              isPlayerTurn={isPlayerTurn}
-              moveNumber={moveNumber}
-              playerHand={playerHand}
-              opponentHand={opponentHand}
-              cardSelections={cardSelections}
-              setCardSelections={setCardSelections}
-              handleMakeMove={handleMakeMove}
-              playAgain={playAgain}
-              iStarted={iStarted}
-              outcome={outcome}
-              log={log}
-              myWinOutcome={myWinOutcome}
-              banner={banner}
-              balanceDisplay={balanceDisplay}
-              stopPlaying={stopPlaying}
-              gameCoinHex={gameCoinHex}
-              gameStatus={gameStatus}
-            />
-          </div>
-
-          {/* GAME LOG */}
-          <div className='bg-canvas-bg lg:flex-[7_1_0%] lg:min-h-0 lg:overflow-y-auto'>
-            <div className='h-full'>
-              <GameLog log={log} />
-            </div>
-          </div>
-        </div>
+      {/* Game area */}
+      <div className='flex-1 overflow-auto'>
+        <CaliforniaPoker
+          playerNumber={playerNumber}
+          isPlayerTurn={isPlayerTurn}
+          moveNumber={moveNumber}
+          playerHand={playerHand}
+          opponentHand={opponentHand}
+          cardSelections={cardSelections}
+          setCardSelections={setCardSelections}
+          handleMakeMove={handleMakeMove}
+          iStarted={iStarted}
+          outcome={outcome}
+          myWinOutcome={myWinOutcome}
+          banner={banner}
+          balanceDisplay={balanceDisplay}
+        />
       </div>
 
       {/* Move Description Toast */}
@@ -225,7 +153,6 @@ const Calpoker: React.FC<CalpokerProps> = ({
           </button>
         </Alert>
       </div>
-
 
       {/* Hidden blockchain address */}
       <div
