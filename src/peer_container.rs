@@ -647,7 +647,7 @@ impl SynchronousGameCradle {
                 .state
                 .channel_created_coin
                 .take()
-                .unwrap_or_else(CoinString::default);
+                .unwrap_or_default();
             result
                 .notifications
                 .push(GameNotification::ChannelCreated { channel_coin });
