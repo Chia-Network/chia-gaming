@@ -466,7 +466,10 @@ impl ToLocalUI for SynchronousGameCradleState {
             GameNotification::CleanShutdownStarted { .. } => {
                 self.clean_shutdown_received = true;
             }
-            GameNotification::CleanShutdownComplete { reward_coin, reward_amount: _ } => {
+            GameNotification::CleanShutdownComplete {
+                reward_coin,
+                reward_amount: _,
+            } => {
                 self.clean_shutdown = reward_coin.clone();
                 self.finished = true;
             }

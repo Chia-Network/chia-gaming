@@ -463,10 +463,7 @@ fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
                     GameNotification::UnrollCoinSpent { .. },
                     ExpectedNotification::UnrollCoinSpent,
                 ) => true,
-                (
-                    GameNotification::GameOnChain { .. },
-                    ExpectedNotification::GameOnChain,
-                ) => true,
+                (GameNotification::GameOnChain { .. }, ExpectedNotification::GameOnChain) => true,
                 (GameNotification::ChannelError { .. }, ExpectedNotification::ChannelError) => true,
                 (GameNotification::GameError { .. }, ExpectedNotification::GameError) => true,
                 (GameNotification::GameProposed { .. }, ExpectedNotification::GameProposed) => true,
@@ -635,7 +632,10 @@ pub fn assert_reward_coin_consistency(notifications: &[GameNotification], label:
                 // reward_coin is CoinString (not Option); may be default if
                 // no reward coin was found. No structural assertion here.
             }
-            GameNotification::UnrollCoinSpent { reward_coin, reward_amount: _ } => {
+            GameNotification::UnrollCoinSpent {
+                reward_coin,
+                reward_amount: _,
+            } => {
                 if let Some(rc) = reward_coin {
                     assert!(
                         rc.to_parts().is_some(),

@@ -353,10 +353,9 @@ fn respond_cors_preflight(request: tiny_http::Request, origin: &Option<String>) 
 
 fn respond_ok(request: tiny_http::Request, body: String, origin: &Option<String>) {
     let data = body.into_bytes();
-    let mut response = Response::from_data(data)
-        .with_header(
-            Header::from_bytes(&b"Content-Type"[..], &b"application/octet-stream"[..]).unwrap(),
-        );
+    let mut response = Response::from_data(data).with_header(
+        Header::from_bytes(&b"Content-Type"[..], &b"application/octet-stream"[..]).unwrap(),
+    );
     for h in cors_headers(origin) {
         response.add_header(h);
     }
@@ -364,18 +363,16 @@ fn respond_ok(request: tiny_http::Request, body: String, origin: &Option<String>
 }
 
 fn respond_err(request: tiny_http::Request, msg: String) {
-    let response = Response::from_data(msg.into_bytes())
-        .with_status_code(StatusCode(500));
+    let response = Response::from_data(msg.into_bytes()).with_status_code(StatusCode(500));
     let _ = request.respond(response);
 }
 
 fn respond_file(request: tiny_http::Request, path: &str, content_type: &str) {
     match fs::read_to_string(path) {
         Ok(content) => {
-            let response = Response::from_data(content.into_bytes())
-                .with_header(
-                    Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()).unwrap(),
-                );
+            let response = Response::from_data(content.into_bytes()).with_header(
+                Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()).unwrap(),
+            );
             let _ = request.respond(response);
         }
         Err(e) => {
@@ -387,8 +384,7 @@ fn respond_file(request: tiny_http::Request, path: &str, content_type: &str) {
 }
 
 fn respond_not_found(request: tiny_http::Request) {
-    let response = Response::from_data(b"not found".to_vec())
-        .with_status_code(StatusCode(404));
+    let response = Response::from_data(b"not found".to_vec()).with_status_code(StatusCode(404));
     let _ = request.respond(response);
 }
 
@@ -460,12 +456,10 @@ fn service_main_inner() {
                 let _ = request.respond(Response::from_data(Vec::new()));
                 std::process::exit(0);
             }
-            (Method::Post, "/reset") => {
-                match game_runner.reset_sim().report_err() {
-                    Ok(body) => respond_ok(request, body, &origin),
-                    Err(msg) => respond_err(request, msg),
-                }
-            }
+            (Method::Post, "/reset") => match game_runner.reset_sim().report_err() {
+                Ok(body) => respond_ok(request, body, &origin),
+                Err(msg) => respond_err(request, msg),
+            },
             (Method::Post, "/register") => {
                 match get_arg_string(&url, "name")
                     .and_then(|name| game_runner.register(&name))
@@ -548,19 +542,17 @@ fn service_main_inner() {
             (Method::Post, "/push_tx") => {
                 let mut body_bytes = Vec::new();
                 match std::io::Read::read_to_end(request.as_reader(), &mut body_bytes) {
-                    Ok(_) => {
-                        match serde_json::from_slice::<PushTxRequest>(&body_bytes) {
-                            Ok(decoded) => {
-                                match game_runner.push_tx(&decoded.spend_bundle).report_err() {
-                                    Ok(resp) => respond_ok(request, resp, &origin),
-                                    Err(msg) => respond_err(request, msg),
-                                }
-                            }
-                            Err(e) => {
-                                respond_err(request, format!("{{\"error\":\"{e}\"}}"));
+                    Ok(_) => match serde_json::from_slice::<PushTxRequest>(&body_bytes) {
+                        Ok(decoded) => {
+                            match game_runner.push_tx(&decoded.spend_bundle).report_err() {
+                                Ok(resp) => respond_ok(request, resp, &origin),
+                                Err(msg) => respond_err(request, msg),
                             }
                         }
-                    }
+                        Err(e) => {
+                            respond_err(request, format!("{{\"error\":\"{e}\"}}"));
+                        }
+                    },
                     Err(e) => {
                         respond_err(request, format!("{{\"error\":\"read error: {e}\"}}"));
                     }
