@@ -159,7 +159,7 @@ node "$SCRIPT_DIR/resources/local-server.js" "$SCRIPT_DIR" "$GAME_PORT" "$LOBBY_
 PIDS+=($!)
 
 echo "=== Starting wc-stub (port $WC_PORT) ==="
-(cd "$WC_DIR" && PORT=$WC_PORT node ./dist/index.js) &
+(cd "$WC_DIR" && PORT=$WC_PORT node --disable-warning=DEP0169 ./dist/index.js) &
 PIDS+=($!)
 
 echo "=== Starting lobby-service (port $LOBBY_SERVICE_PORT) ==="

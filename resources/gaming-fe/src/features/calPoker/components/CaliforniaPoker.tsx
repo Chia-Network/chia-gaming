@@ -159,7 +159,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         : `Select 4 cards (${cardSelections.length}/4)`;
 
   const doHandleMakeMove = () => {
-    console.log(`[UI] doHandleMakeMove | moveNumber:${moveNumber} | gameState:${gameState} | cardSelections:${cardSelections.length}`);
     if (gameState === GAME_STATES.SELECTING && cardSelections.length > 0) {
       setPlayerHaloCardIds([...cardSelections]);
       setGameState(GAME_STATES.AWAITING_SWAP);

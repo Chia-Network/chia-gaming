@@ -113,11 +113,9 @@ const WalletConnectHeading = () => {
   useEffect(() => {
     const subscription = walletConnectState.getObservable().subscribe({
       next: (evt: WalletConnectOutboundState) => {
-        console.log('[WC UI] state event:', evt.stateName, evt);
         if (evt.stateName === 'connected') {
           toggleExpanded();
           setAlreadyConnected(true);
-          console.log('doing connect real blockchain');
           blockchainDataEmitter.select({
             selection: REAL_BLOCKCHAIN_ID,
             uniqueId,
@@ -147,11 +145,8 @@ const WalletConnectHeading = () => {
 
   const initWalletConnect = useCallback(() => {
     if (!initializing) {
-      console.log('[WC UI] initWalletConnect() -- calling walletConnectState.init()');
       walletConnectState.init();
       setInitializing(true);
-    } else {
-      console.log('[WC UI] initWalletConnect() -- skipped (already initializing)');
     }
   }, [initializing, initialized]);
 
@@ -240,8 +235,6 @@ const WalletConnectHeading = () => {
         return res.json();
       })
       .then((res) => {
-        // Trigger fake connect if not connected.
-        console.warn('fake address is', res);
         setFakeAddress(res);
         toggleExpanded();
         blockchainDataEmitter.select({
@@ -257,17 +250,13 @@ const WalletConnectHeading = () => {
   }, []);
 
   const onDoWalletConnect = useCallback(() => {
-    console.log('[WC UI] "Link Wallet" clicked');
     initWalletConnect();
     doConnectWallet(
       setShowQRModal,
       setConnectionUri,
       () => walletConnectState.startConnect(),
-      () => {
-        console.log('[WC UI] doConnectWallet complete -- session established');
-      },
+      () => {},
       (e) => {
-        console.error('[WC UI] doConnectWallet error:', e);
         setWalletConnectError(e);
       },
     );

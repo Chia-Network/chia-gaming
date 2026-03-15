@@ -132,17 +132,14 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async kickEvent() {
-    // console.log('full node: kickEvent');
     while (!this.deleted && this.incomingEvents.length) {
-      // console.log('incoming events', this.incomingEvents.length);
       this.handlingEvent = true;
       try {
         const event = this.incomingEvents.shift();
         if (!event) continue;
-        // console.log('full node: do event', event);
         await this.handleEvent(event);
-      } catch (e) {
-        // console.log('incoming event failed', e);
+      } catch (_) {
+        // event processing failure; next event will be tried
       } finally {
         this.handlingEvent = false;
       }
@@ -186,7 +183,6 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
           if (this.deleted) {
             return;
           }
-          // console.log('wait_block returned', res);
           this.setNewPeak(res);
         });
     } else {
@@ -226,7 +222,6 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     if (this.deleted) {
       return;
     }
-    // console.log('fake::internalDeliverBlock', block_number, block_data);
     this.at_block += 1;
     this.blockEmitter({
       peak: block_number,

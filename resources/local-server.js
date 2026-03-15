@@ -7,7 +7,6 @@ const http = require('http');
 const net = require('net');
 const fs = require('fs');
 const path = require('path');
-const url = require('url');
 
 const PROJECT_ROOT = process.argv[2];
 if (!PROJECT_ROOT) {
@@ -93,7 +92,7 @@ function proxyWebSocket(req, clientSocket, head, port) {
 // ── Game frontend ─────────────────────────────────────────────────
 
 const gameServer = http.createServer((req, res) => {
-    const pathname = url.parse(req.url).pathname;
+    const pathname = new URL(req.url, 'http://localhost').pathname;
 
     // Proxy lobby API and socket.io to lobby-service so the game frontend
     // can reach them same-origin (avoids cross-origin issues with port 3003).
@@ -134,7 +133,7 @@ const gameServer = http.createServer((req, res) => {
 });
 
 gameServer.on('upgrade', (req, socket, head) => {
-    if (url.parse(req.url).pathname.startsWith('/socket.io')) {
+    if (new URL(req.url, 'http://localhost').pathname.startsWith('/socket.io')) {
         proxyWebSocket(req, socket, head, 5801);
     } else {
         socket.destroy();
@@ -154,7 +153,7 @@ gameServer.on('error', (e) => {
 // ── Lobby view ────────────────────────────────────────────────────
 
 const lobbyServer = http.createServer((req, res) => {
-    const pathname = url.parse(req.url).pathname;
+    const pathname = new URL(req.url, 'http://localhost').pathname;
 
     if (pathname.startsWith('/lobby') || pathname.startsWith('/socket.io')) {
         return proxyHttp(req, res, 5801);
@@ -177,7 +176,7 @@ const lobbyServer = http.createServer((req, res) => {
 });
 
 lobbyServer.on('upgrade', (req, socket, head) => {
-    if (url.parse(req.url).pathname.startsWith('/socket.io')) {
+    if (new URL(req.url, 'http://localhost').pathname.startsWith('/socket.io')) {
         proxyWebSocket(req, socket, head, 5801);
     } else {
         socket.destroy();

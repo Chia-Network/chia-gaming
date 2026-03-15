@@ -14,8 +14,8 @@ export function blockchainUpdate(): () => void {
       });
       const blockNumber = await res.json();
       blockFeed.next({ height: blockNumber });
-    } catch (error) {
-      console.error('Blockchain update failed:', error);
+    } catch (_) {
+      // simulator may not be up yet; will retry
     }
 
     if (active) {
@@ -33,7 +33,6 @@ export function blockchainUpdate(): () => void {
 export function bindBlockchain(app: any) {
   app.post('/get_block_record_by_height', async (req: any, res: any) => {
     const { height } = req.body;
-    console.log('get block record', height);
     res.set('Content-Type', 'application/json');
     res.send(JSON.stringify({ block_record: { height, header_hash: height } }));
   });
@@ -51,7 +50,6 @@ export function bindBlockchain(app: any) {
 
   app.post('/push_tx', async (req: any, res: any) => {
     const body = req.body;
-    console.log(`push_tx body ${JSON.stringify(body)}`);
     const lower_result: (number | undefined)[] = await fetch(
       `http://localhost:5800/push_tx`,
       {
@@ -61,7 +59,6 @@ export function bindBlockchain(app: any) {
       },
     ).then((res: any) => res.json());
     res.set('Content-Type', 'application/json');
-    console.log(`push_tx result = ${JSON.stringify(lower_result)}`);
     let result: any = { error: JSON.stringify(lower_result) };
     if (lower_result[0] === 1) {
       result = { success: 'SUCCESS' };

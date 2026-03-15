@@ -463,7 +463,6 @@ impl TheirTurnReferee {
         )?;
 
         for evidence in result.slash_evidence.iter() {
-            debug!("calling slash for given evidence {evidence:?}");
             if self
                 .run_state_update(
                     allocator,

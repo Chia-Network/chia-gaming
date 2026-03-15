@@ -58,7 +58,6 @@ export async function processSessionProposal(
     };
   },
 ) {
-  console.warn('session proposal', event);
   try {
     if (!client) {
       throw new Error('Client not initialized');
@@ -79,12 +78,10 @@ export async function processSessionProposal(
 
     let requiredNamespace: any = requiredNamespaces.chia;
     if (!requiredNamespace) {
-      console.warn('chia namespace was optional');
       event.params.requiredNamespaces.chia =
         event.params.optionalNamespaces.chia;
       requiredNamespace = event.params.requiredNamespaces.chia;
     }
-    console.warn('requiredNamespace?', requiredNamespace);
     if (!requiredNamespace) {
       throw new Error('Missing required chia namespace');
     }
@@ -136,7 +133,6 @@ export async function processSessionProposal(
 
     const result = await acknowledged();
     if (!('topic' in result) || !result.topic) {
-      console.error('no topic in result of acknowledged');
       return;
     }
 

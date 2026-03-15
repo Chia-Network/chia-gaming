@@ -7,21 +7,6 @@ interface DebugProps {
   setConnectString: (value: string) => void;
 }
 
-{
-  /*
-const onConnect = () => {
-    if (!client) throw new Error('WalletConnect is not initialized.');
-
-    if (pairings.length === 1) {
-        connect({ topic: pairings[0].topic });
-    } else if (pairings.length) {
-        console.log('The pairing modal is not implemented.', pairings);
-    } else {
-        connect();
-    }
-};
-*/
-}
 
 //const onSetConnectString = () => { 0; }
 // const setWCStringButtonHandler = () => { 0; }

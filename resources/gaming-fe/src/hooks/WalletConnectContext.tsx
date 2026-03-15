@@ -55,7 +55,6 @@ export function WalletConnectProvider({
   }, []);
 
   const onSessionConnected = useCallback((session: SessionTypes.Struct) => {
-    console.log('Session connected:', session);
     const allNamespaceAccounts = Object.values(session.namespaces)
       .map((namespace) => namespace.accounts)
       .flat();
@@ -69,32 +68,24 @@ export function WalletConnectProvider({
   }, []);
 
   const connect = useCallback(async () => {
-    if (!client) {
-      console.error('Client not initialized');
-      return;
-    }
+    if (!client) return;
 
     try {
-      console.log('Starting connection...');
       const { uri, approval } = await client.connect({
         requiredNamespaces: REQUIRED_NAMESPACES,
       });
 
       if (uri) {
-        console.log('Connection URI:', uri);
         setConnectionUri(uri);
         setShowQRModal(true);
 
         const session = await approval();
-        console.log('Session approved:', session);
-
         onSessionConnected(session);
         setPairings(client.pairing.getAll({ active: true }));
         setShowQRModal(false);
         setConnectionUri('');
       }
     } catch (e) {
-      console.error('Connection error:', e);
       setShowQRModal(false);
       setConnectionUri('');
     }
@@ -108,8 +99,8 @@ export function WalletConnectProvider({
         topic: session.topic,
         reason: { code: 6000, message: 'User disconnected' },
       });
-    } catch (e) {
-      console.error('Disconnect error:', e);
+    } catch (_) {
+      // WC disconnect can fail if session is already gone
     }
     reset();
   }, [client, session, reset]);
@@ -118,10 +109,6 @@ export function WalletConnectProvider({
     async function initClient() {
       try {
         setIsInitializing(true);
-        console.log('Initializing WalletConnect client...');
-        console.log('Project ID:', projectId);
-        console.log('Relay URL:', relayUrl);
-        console.log('Chain ID:', chainId);
 
         const client = await Client.init({
           logger: 'error',
@@ -130,26 +117,16 @@ export function WalletConnectProvider({
           metadata: METADATA,
         });
 
-        console.log('WalletConnect client initialized');
         setClient(client);
 
-        // Set up event listeners
         client.on('session_update', ({ topic, params }) => {
-          console.log('Session updated:', topic, params);
           const session = client.session.get(topic);
           const updatedSession = { ...session, namespaces: params.namespaces };
           onSessionConnected(updatedSession);
         });
 
-        client.on('session_delete', () => {
-          console.log('Session deleted');
-          reset();
-        });
-
-        client.on('session_expire', () => {
-          console.log('Session expired');
-          reset();
-        });
+        client.on('session_delete', () => reset());
+        client.on('session_expire', () => reset());
 
         // Check for existing sessions
         setPairings(client.pairing.getAll({ active: true }));
@@ -159,8 +136,8 @@ export function WalletConnectProvider({
           );
           onSessionConnected(lastSession);
         }
-      } catch (error) {
-        console.error('Failed to initialize WalletConnect:', error);
+      } catch (_) {
+        // WC init failure is recoverable; user can retry
       } finally {
         setIsInitializing(false);
       }

@@ -75,7 +75,6 @@ function processRequest(
   command: string,
   params: any,
 ) {
-  console.log('process', topic, command, params);
   let time = new Date().getTime();
   let result: any = {
     startedTimeStamp: time,
@@ -96,12 +95,10 @@ function processRequest(
     })
       .then((res: any) => res.json())
       .then((address: string) => {
-        console.error(`try to encode ${address}`);
         result.data = bech32.encode('xch', toUint8(address), 'bech32m');
         return result;
       });
   } else if (command === 'chia_sendTransaction') {
-    console.error(params);
     const hexTarget = toHexString(bech32.decode(params.address).data as any);
     return fetch(
       `http://localhost:5800/create_spendable?who=${topic}&target=${hexTarget}&amount=${params.amount}`,
@@ -116,7 +113,6 @@ function processRequest(
         return result;
       });
   } else if (command === 'chia_getBalance') {
-    console.error(params);
     return fetch(`http://localhost:5800/get_balance?user=${topic}`, {
       method: 'POST',
     })
@@ -128,7 +124,6 @@ function processRequest(
       });
   }
 
-  console.log('unknown rpc', command, params);
   return Promise.all([]).then(() => {});
 }
 
@@ -157,7 +152,6 @@ const handleDisconnect = (client: Client, topic: string) => {
 async function doWalletConnect(in_pairs: Pair[]) {
   let this_client_id = client_id++;
 
-  console.log('doWalletConnect', pairs);
   const address = await fetch(
     `http://localhost:5800/register?name=${this_client_id}`,
     {
@@ -235,7 +229,6 @@ function create_paired_connection(pairData: any, fingerprints: number[]) {
 
 app.post('/pair', async (req: any, res: any) => {
   const { pairdata, fingerprints } = req.body;
-  console.log('pair', pairdata, fingerprints);
   let pair = await create_paired_connection(pairdata, fingerprints);
   res.json({ pair });
 });

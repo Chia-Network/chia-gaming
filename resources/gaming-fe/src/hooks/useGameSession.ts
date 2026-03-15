@@ -150,9 +150,8 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
         my_turn: !iStarted,
         parameters: null,
       });
-      console.log('[session] proposed game');
-    } catch (e) {
-      console.error('proposeGame failed:', e);
+    } catch (_) {
+      // proposal can fail if channel isn't ready yet; user can retry
     }
   }, [iStarted, perGameAmount]);
 

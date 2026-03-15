@@ -27,8 +27,6 @@ async function request<T, D extends object>(method: ChiaMethod, data: D): Promis
 
   const params = { ...data, fingerprint: parseInt(address) } as Record<string, unknown>;
 
-  console.log('[WC] >>>', method, params);
-
   const raw = await walletConnectState.getClient()!.request({
     topic: walletConnectState.getSession()!.topic,
     chainId: walletConnectState.getChainId(),
@@ -36,7 +34,6 @@ async function request<T, D extends object>(method: ChiaMethod, data: D): Promis
   });
 
   const result = raw as Record<string, unknown> | undefined;
-  console.log('[WC] <<<', method, result);
 
   if (result?.error) throw new Error(JSON.stringify(result.error));
 

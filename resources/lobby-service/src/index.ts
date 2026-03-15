@@ -128,7 +128,6 @@ app.post('/lobby/generate-room', (req, res) => {
     parameters,
   };
   lobby.rooms[token] = newRoom;
-  console.log('generate room', game, lobby.games);
   const secureUrl = `${lobby.games[game].target}&join=${token}`;
   const result: GenerateRoomResult = { secureUrl, token };
   io.emit('room_update', newRoom);
@@ -137,7 +136,6 @@ app.post('/lobby/generate-room', (req, res) => {
 app.post('/lobby/game', (req, res) => {
   const { game, target } = req.body;
   const time = new Date().getTime();
-  console.log('update game', game, target);
   lobby.addGame(time, game, target);
   io.emit('game_update', lobby.getGames());
   res.json({"ok":true});
@@ -152,7 +150,6 @@ app.post('/lobby/join-room', (req, res) => {
     return res.status(400).json({ error: 'Room is already full.' });
   }
   room.joiner = id;
-  console.log('games', lobby.games);
   let fullTargetUrl = `${lobby.games[room.game].target}&token=${token}`;
   Object.keys(room.parameters).forEach((p) => {
     fullTargetUrl = `${fullTargetUrl}&${p}=${room.parameters[p]}`;
