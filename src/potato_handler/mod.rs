@@ -29,7 +29,6 @@ use crate::potato_handler::types::{
     PeerMessage, PotatoState, SpendWalletReceiver,
 };
 
-use crate::potato_handler::handshake::ChannelState;
 use crate::potato_handler::start::GameStart;
 
 pub mod effects;
@@ -95,8 +94,6 @@ where
 pub struct PotatoHandler {
     initiator: bool,
     have_potato: PotatoState,
-
-    channel_state: ChannelState,
 
     game_action_queue: VecDeque<GameAction>,
 
@@ -207,7 +204,6 @@ impl PotatoHandler {
         PotatoHandler {
             initiator,
             have_potato,
-            channel_state: ChannelState::Finished,
             game_types,
             game_action_queue: VecDeque::default(),
             channel_handler: Some(channel_handler),
@@ -254,7 +250,7 @@ impl PotatoHandler {
     }
 
     pub fn is_failed(&self) -> bool {
-        matches!(self.channel_state, ChannelState::Failed)
+        false
     }
 
     pub fn get_game_coin(&self, _game_id: &GameID) -> Option<CoinString> {
@@ -310,7 +306,7 @@ impl PotatoHandler {
     }
 
     pub fn handshake_finished(&self) -> bool {
-        matches!(self.channel_state, ChannelState::Finished)
+        true
     }
 
     #[cfg(test)]
@@ -333,9 +329,6 @@ impl PotatoHandler {
 
     pub fn flush_pending_actions(&mut self, env: &mut ChannelHandlerEnv<'_>) -> Result<Vec<Effect>, Error> {
         if !self.has_potato() || self.game_action_queue.is_empty() {
-            return Ok(vec![]);
-        }
-        if !matches!(self.channel_state, ChannelState::Finished) {
             return Ok(vec![]);
         }
         let (_sent, effects) = self.drain_queue_into_batch(env)?;
@@ -657,7 +650,6 @@ impl PotatoHandler {
                 self.last_channel_coin_spend_info.take(),
             );
             self.shutdown_replacement = Some(Box::new(sh));
-            self.channel_state = ChannelState::Completed;
             return Ok(effects);
         }
 
@@ -936,7 +928,6 @@ impl PotatoHandler {
                 self.last_channel_coin_spend_info.take(),
             );
             self.shutdown_replacement = Some(Box::new(sh));
-            self.channel_state = ChannelState::Completed;
         }
 
         Ok((true, effects))
@@ -1071,9 +1062,6 @@ impl PotatoHandler {
         env: &mut ChannelHandlerEnv<'_>,
         msg: Vec<u8>,
     ) -> Result<Vec<Effect>, Error> {
-        if matches!(self.channel_state, ChannelState::Failed) {
-            return Err(Error::StrErr("channel has failed".to_string()));
-        }
         let incoming_result = if msg.len() > Self::MAX_MESSAGE_SIZE {
             Err(Error::StrErr(format!(
                 "message too large: {} bytes (max {})",
@@ -1093,15 +1081,11 @@ impl PotatoHandler {
                 effects.extend(incoming_effects);
             }
             Err(e) => {
-                if matches!(self.channel_state, ChannelState::Finished) {
-                    effects.push(Effect::Notify(GameNotification::GoingOnChain {
-                        reason: format!("error processing peer message: {e:?}"),
-                    }));
-                    effects.extend(self.go_on_chain(env, true)?);
-                    return Ok(effects);
-                } else {
-                    return Err(e);
-                }
+                effects.push(Effect::Notify(GameNotification::GoingOnChain {
+                    reason: format!("error processing peer message: {e:?}"),
+                }));
+                effects.extend(self.go_on_chain(env, true)?);
+                return Ok(effects);
             }
         }
         Ok(effects)
@@ -1118,54 +1102,45 @@ impl PotatoHandler {
             return Ok(effects);
         };
 
-        match &self.channel_state {
-            ChannelState::Finished => {
-                match msg_envelope.borrow() {
-                    PeerMessage::HandshakeF { bundle } => {
-                        effects.push(Effect::ReceivedChannelOffer(bundle.clone()));
-                    }
-                    PeerMessage::RequestPotato(_) => {
-                        self.peer_wants_potato = true;
-                        if matches!(self.have_potato, PotatoState::Present) {
-                            let sigs = {
-                                let ch = self.channel_handler_mut()?;
-                                ch.send_empty_potato(env)?
-                            };
-                            {
-                                let ch = self.channel_handler()?;
-                                effects.push(Effect::DebugLog(make_send_debug_log(ch, &[], false)));
-                            }
-                            effects.push(Effect::PeerBatch {
-                                actions: vec![],
-                                signatures: sigs,
-                                clean_shutdown: None,
-                            });
-                            self.have_potato = PotatoState::Absent;
-                            self.peer_wants_potato = false;
-                        }
-                    }
-                    PeerMessage::Batch { .. } => {
-                        if matches!(self.have_potato, PotatoState::Present) {
-                            return Err(Error::StrErr(
-                                "received batch while we hold the potato (double-potato)"
-                                    .to_string(),
-                            ));
-                        }
-                        effects.extend(self.pass_on_channel_handler_message(env, msg_envelope)?);
-                    }
-                    _ => {
-                        effects.extend(self.pass_on_channel_handler_message(env, msg_envelope)?);
-                    }
-                }
-
-                return Ok(effects);
+        match msg_envelope.borrow() {
+            PeerMessage::HandshakeF { bundle } => {
+                effects.push(Effect::ReceivedChannelOffer(bundle.clone()));
             }
-
+            PeerMessage::RequestPotato(_) => {
+                self.peer_wants_potato = true;
+                if matches!(self.have_potato, PotatoState::Present) {
+                    let sigs = {
+                        let ch = self.channel_handler_mut()?;
+                        ch.send_empty_potato(env)?
+                    };
+                    {
+                        let ch = self.channel_handler()?;
+                        effects.push(Effect::DebugLog(make_send_debug_log(ch, &[], false)));
+                    }
+                    effects.push(Effect::PeerBatch {
+                        actions: vec![],
+                        signatures: sigs,
+                        clean_shutdown: None,
+                    });
+                    self.have_potato = PotatoState::Absent;
+                    self.peer_wants_potato = false;
+                }
+            }
+            PeerMessage::Batch { .. } => {
+                if matches!(self.have_potato, PotatoState::Present) {
+                    return Err(Error::StrErr(
+                        "received batch while we hold the potato (double-potato)"
+                            .to_string(),
+                    ));
+                }
+                effects.extend(self.pass_on_channel_handler_message(env, msg_envelope)?);
+            }
             _ => {
-                self.incoming_messages.push_back(msg_envelope);
-                return Ok(effects);
+                effects.extend(self.pass_on_channel_handler_message(env, msg_envelope)?);
             }
         }
+
+        Ok(effects)
     }
 
     fn check_channel_spent(&mut self, coin_id: &CoinString) -> Result<(bool, Vec<Effect>), Error> {
@@ -1176,15 +1151,6 @@ impl PotatoHandler {
 
         if let Some(channel_coin) = channel_coin {
             if *coin_id == channel_coin {
-                if matches!(self.channel_state, ChannelState::Failed) {
-                    return Ok((false, vec![]));
-                }
-                if !matches!(self.channel_state, ChannelState::Finished) {
-                    return Err(Error::StrErr(
-                        "channel coin spend in unexpected state".to_string(),
-                    ));
-                }
-
                 let debug_log = Effect::DebugLog(format!("[channel-coin-spent] {}", format_coin(coin_id)));
                 let uw = crate::potato_handler::unroll_watch_handler::UnrollWatchHandler::new_at_channel_conditions(
                     self.channel_handler.take(),
@@ -1195,7 +1161,6 @@ impl PotatoHandler {
                     self.unroll_timeout.clone(),
                 );
                 self.unroll_watch_replacement = Some(Box::new(uw));
-                self.channel_state = ChannelState::Completed;
 
                 return Ok((
                     true,
@@ -1206,24 +1171,15 @@ impl PotatoHandler {
         Ok((false, vec![]))
     }
 
-    /// Submit transactions to move the channel on-chain.  The handshake state
-    /// stays `Finished` — normal blockchain monitoring will detect the channel
-    /// coin spend and route through `handle_channel_coin_spent`, the same path
-    /// used when the opponent initiates the unroll.
+    /// Submit transactions to move the channel on-chain.  Normal blockchain
+    /// monitoring will detect the channel coin spend and route through
+    /// `handle_channel_coin_spent`, the same path used when the opponent
+    /// initiates the unroll.
     pub fn go_on_chain(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         got_error: bool,
     ) -> Result<Vec<Effect>, Error> {
-        if matches!(self.channel_state, ChannelState::Failed) {
-            return Err(Error::StrErr("channel has failed".to_string()));
-        }
-        if !matches!(self.channel_state, ChannelState::Finished) {
-            return Err(Error::StrErr(
-                "go on chain before handshake finished".to_string(),
-            ));
-        }
-
         let mut effects = Vec::new();
 
         {
@@ -1266,7 +1222,6 @@ impl PotatoHandler {
             self.unroll_timeout.clone(),
         );
         self.unroll_watch_replacement = Some(Box::new(uw));
-        self.channel_state = ChannelState::Completed;
 
         Ok(effects)
     }
@@ -1305,21 +1260,9 @@ impl PotatoHandler {
         &mut self,
         action: GameAction,
     ) -> Result<(bool, Vec<Effect>), Error> {
-        if matches!(self.channel_state, ChannelState::Completed) {
-            self.push_action(action);
-            return Ok((false, vec![]));
-        }
-
-        if matches!(self.channel_state, ChannelState::Finished) {
-            self.push_action(action);
-            let (_has_potato, effect) = self.send_potato_request_if_needed()?;
-            return Ok((false, effect.into_iter().collect()));
-        }
-
-        Err(Error::StrErr(format!(
-            "game action in unexpected state {:?}",
-            self.channel_state
-        )))
+        self.push_action(action);
+        let (_has_potato, effect) = self.send_potato_request_if_needed()?;
+        Ok((false, effect.into_iter().collect()))
     }
 
     pub fn get_game_state_id(
@@ -1340,13 +1283,6 @@ impl FromLocalUI for PotatoHandler {
         env: &mut ChannelHandlerEnv<'_>,
         game: &GameStart,
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
-        if !matches!(self.channel_state, ChannelState::Finished) {
-            return Err(Error::StrErr(format!(
-                "propose_game without finishing handshake: {:?}",
-                self.channel_state
-            )));
-        }
-
         self.game_action_queue
             .retain(|a| !matches!(a, GameAction::CleanShutdown));
 
@@ -1415,13 +1351,6 @@ impl FromLocalUI for PotatoHandler {
         &mut self,
         _env: &mut ChannelHandlerEnv<'_>,
     ) -> Result<Vec<Effect>, Error> {
-        if !matches!(self.channel_state, ChannelState::Finished) {
-            return Err(Error::StrErr(format!(
-                "shut_down in unexpected state {:?}",
-                self.channel_state
-            )));
-        }
-
         let (_continued, effects) = self.do_game_action(GameAction::CleanShutdown)?;
         Ok(effects)
     }
@@ -1441,9 +1370,6 @@ impl SpendWalletReceiver for PotatoHandler {
         _env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
-        if matches!(self.channel_state, ChannelState::Failed) {
-            return Ok(vec![]);
-        }
         let (_matched_ch, effects) = self.check_channel_spent(coin_id)?;
         Ok(effects)
     }

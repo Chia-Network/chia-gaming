@@ -277,7 +277,7 @@ Before play begins, the two players execute a multi-step handshake
 1. Exchange public keys (channel keys, unroll keys, referee keys)
 2. Agree on channel parameters (timeout, amounts)
 3. Co-sign the initial channel coin creation
-4. Reach `ChannelState::Finished`
+4. Transition to `PotatoHandler`
 
 **Key code:** `src/potato_handler/handshake.rs`, `src/potato_handler/start.rs`
 
@@ -423,9 +423,9 @@ When something goes wrong (opponent offline, invalid move detected, explicit
 protocol, peer messages, and batch exchanges — is effectively done. A
 fundamentally different component, `OnChainGameHandler`, takes over. It is
 driven entirely by blockchain coin-watching events (coin created, coin spent,
-timeout reached) rather than peer messages. The `PotatoHandler`'s
-`ChannelState` transitions through several intermediate states and ultimately
-reaches `OnChain(OnChainGameHandler)`, at which point all game actions
+timeout reached) rather than peer messages. The `PotatoHandler` creates an
+`UnrollWatchHandler` replacement, which in turn creates the
+`OnChainGameHandler`. At that point all game actions
 (moves, accept-timeouts) are routed to the on-chain handler. It maintains its
 own `game_map` tracking each game coin's state. There is no potato, no
 batching, no turn-taking — just monitoring the blockchain and submitting

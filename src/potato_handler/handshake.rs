@@ -27,10 +27,3 @@ pub struct HandshakeStepWithSpend {
     pub info: HandshakeStepInfo,
     pub spend: SpendBundle,
 }
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum ChannelState {
-    Finished,
-    Completed,
-    Failed,
-}
