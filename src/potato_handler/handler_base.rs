@@ -4,10 +4,11 @@ use clvmr::NodePtr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::types::{ChannelHandlerEnv, ReadableMove};
+use crate::channel_handler::types::{ChannelCoinSpendInfo, ChannelHandlerEnv, ReadableMove};
 use crate::channel_handler::ChannelHandler;
+use crate::common::standard_coin::puzzle_for_synthetic_public_key;
 use crate::common::types::{
-    Amount, CoinSpend, CoinString, Error, GameID, Hash, PuzzleHash, SpendBundle, Timeout,
+    Amount, CoinSpend, CoinString, Error, GameID, Hash, PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::potato_handler::effects::{Effect, GameNotification};
 use crate::potato_handler::types::{GameAction, PeerMessage, PotatoState};
@@ -52,6 +53,34 @@ pub fn classify_unroll(
             }
         }
     }
+}
+
+/// Build a SpendBundle that spends the channel coin into an unroll coin using
+/// a previously cached `ChannelCoinSpendInfo`.
+pub fn build_channel_to_unroll_bundle(
+    env: &mut ChannelHandlerEnv<'_>,
+    ch: &ChannelHandler,
+    channel_coin: &CoinString,
+    saved: &ChannelCoinSpendInfo,
+    name: &str,
+) -> Result<SpendBundle, Error> {
+    let channel_public_key = ch.get_aggregate_channel_public_key();
+    let channel_coin_puzzle = puzzle_for_synthetic_public_key(
+        env.allocator,
+        &env.standard_puzzle,
+        &channel_public_key,
+    )?;
+    Ok(SpendBundle {
+        name: Some(name.to_string()),
+        spends: vec![CoinSpend {
+            coin: channel_coin.clone(),
+            bundle: Spend {
+                solution: saved.solution.clone().into(),
+                signature: saved.aggsig.clone(),
+                puzzle: channel_coin_puzzle,
+            },
+        }],
+    })
 }
 
 /// Shared state and methods for handlers that hold a `ChannelHandler` and

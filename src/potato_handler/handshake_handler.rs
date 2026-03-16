@@ -343,20 +343,12 @@ impl HandshakeHandler {
             return;
         }
         if let HandshakeState::Finished(_) = &self.state {
-            let mut swap_state = HandshakeState::Done;
-            std::mem::swap(&mut self.state, &mut swap_state);
-            let hs = match swap_state {
-                HandshakeState::Finished(hs) => *hs,
-                _ => unreachable!(),
-            };
-
             let ch = self.channel_handler.take().expect("channel handler must exist at Finished");
             let queued_messages = std::mem::take(&mut self.incoming_messages);
 
             let ph = PotatoHandler::from_completed_handshake(
                 self.initiator,
                 ch,
-                hs,
                 std::mem::replace(&mut self.have_potato, PotatoState::Absent),
                 self.game_types.clone(),
                 self.private_keys.clone(),

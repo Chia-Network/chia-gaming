@@ -30,7 +30,7 @@ pub struct HandshakeStepWithSpend {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ChannelState {
-    Finished(Box<HandshakeStepWithSpend>),
+    Finished,
     Completed,
     Failed,
 }
