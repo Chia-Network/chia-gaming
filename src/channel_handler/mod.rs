@@ -8,8 +8,6 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use rand::prelude::*;
-
 use clvm_traits::{clvm_curried_args, ToClvm};
 use clvm_utils::CurriedProgram;
 use clvmr::allocator::NodePtr;
@@ -292,9 +290,9 @@ impl ChannelHandler {
         accepts
     }
 
-    pub fn get_reward_puzzle_hash<R: Rng>(
+    pub fn get_reward_puzzle_hash(
         &self,
-        _env: &mut ChannelHandlerEnv<R>,
+        _env: &mut ChannelHandlerEnv<'_>,
     ) -> Result<PuzzleHash, Error> {
         Ok(self.reward_puzzle_hash.clone())
     }
@@ -370,9 +368,9 @@ impl ChannelHandler {
         !self.live_games.is_empty()
     }
 
-    pub fn create_conditions_and_signature_of_channel_coin<R: Rng>(
+    pub fn create_conditions_and_signature_of_channel_coin(
         &self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         unroll_coin: &UnrollCoin,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
         let unroll_coin_parent = self.state_channel_coin();
@@ -400,8 +398,8 @@ impl ChannelHandler {
         public_key + self.their_channel_coin_public_key.clone()
     }
 
-    pub fn new<R: Rng>(
-        env: &mut ChannelHandlerEnv<R>,
+    pub fn new(
+        env: &mut ChannelHandlerEnv<'_>,
         private_keys: ChannelHandlerPrivateKeys,
         launcher_coin_id: CoinID,
         we_start_with_potato: bool,
@@ -540,9 +538,9 @@ impl ChannelHandler {
         ))
     }
 
-    pub fn finish_handshake<R: Rng>(
+    pub fn finish_handshake(
         &mut self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         their_initial_channel_half_signature: &Aggsig,
     ) -> Result<HandshakeResult, Error> {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
@@ -627,9 +625,9 @@ impl ChannelHandler {
             .collect())
     }
 
-    pub fn update_cached_unroll_state<R: Rng>(
+    pub fn update_cached_unroll_state(
         &mut self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
     ) -> Result<PotatoSignatures, Error> {
         let new_game_coins_on_chain: Vec<(PuzzleHash, Amount)> =
             self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
@@ -668,16 +666,16 @@ impl ChannelHandler {
         })
     }
 
-    pub fn send_empty_potato<R: Rng>(
+    pub fn send_empty_potato(
         &mut self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
     ) -> Result<PotatoSignatures, Error> {
         self.update_cached_unroll_state(env)
     }
 
-    pub fn verify_channel_coin_from_peer_signatures<R: Rng>(
+    pub fn verify_channel_coin_from_peer_signatures(
         &self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         their_channel_half_signature: &Aggsig,
         conditions: Rc<Program>,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
@@ -703,9 +701,9 @@ impl ChannelHandler {
         }
     }
 
-    pub fn received_potato_verify_signatures<R: Rng>(
+    pub fn received_potato_verify_signatures(
         &mut self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         signatures: &PotatoSignatures,
         inputs: &UnrollCoinConditionInputs,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
@@ -764,9 +762,9 @@ impl ChannelHandler {
 
     /// Verify batch signatures against the current channel state. Called once
     /// after all apply_received_* methods in a batch.
-    pub fn verify_received_batch_signatures<R: Rng>(
+    pub fn verify_received_batch_signatures(
         &mut self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         signatures: &PotatoSignatures,
     ) -> Result<ChannelCoinSpendInfo, Error> {
         let unroll_data = self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
@@ -791,9 +789,9 @@ impl ChannelHandler {
         })
     }
 
-    pub fn received_empty_potato<R: Rng>(
+    pub fn received_empty_potato(
         &mut self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         signatures: &PotatoSignatures,
     ) -> Result<ChannelCoinSpendInfo, Error> {
         let unroll_data = self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
@@ -820,9 +818,9 @@ impl ChannelHandler {
 
     /// Mutate state for sending a game proposal. Does NOT finalize signatures.
     /// Call `update_cached_unroll_state` once after all batch mutations.
-    pub fn send_propose_game<R: Rng>(
+    pub fn send_propose_game(
         &mut self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         start_info: &Rc<GameStartInfo>,
     ) -> Result<(), Error> {
         let new_game_nonce = start_info.game_id.0 as usize;
@@ -861,9 +859,9 @@ impl ChannelHandler {
     }
 
     /// Propose a game and finalize unroll signatures in one call.
-    pub fn propose_game<R: Rng>(
+    pub fn propose_game(
         &mut self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         start_info: &Rc<GameStartInfo>,
     ) -> Result<PotatoSignatures, Error> {
         self.send_propose_game(env, start_info)?;
@@ -871,9 +869,9 @@ impl ChannelHandler {
     }
 
     /// Apply a received proposal without verifying signatures.
-    pub fn apply_received_proposal<R: Rng>(
+    pub fn apply_received_proposal(
         &mut self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         start_info: &Rc<GameStartInfo>,
     ) -> Result<(), Error> {
         let new_game_nonce = start_info.game_id.0 as usize;
@@ -1142,9 +1140,9 @@ impl ChannelHandler {
 
     /// Apply a send-side move mutation. Does NOT finalize signatures.
     /// Pushes a cache entry for on-chain redo.
-    pub fn send_move_no_finalize<R: Rng>(
+    pub fn send_move_no_finalize(
         &mut self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         game_id: &GameID,
         readable_move: &ReadableMove,
         new_entropy: Hash,
@@ -1198,9 +1196,9 @@ impl ChannelHandler {
 
     /// Apply a received move to local state without verifying signatures.
     /// Call `verify_received_batch_signatures` once after all batch actions are applied.
-    pub fn apply_received_move<R: Rng>(
+    pub fn apply_received_move(
         &mut self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         game_id: &GameID,
         game_move: &GameMoveDetails,
     ) -> Result<ChannelHandlerMoveResult, Error> {
@@ -1245,9 +1243,9 @@ impl ChannelHandler {
         })
     }
 
-    pub fn received_message<R: Rng>(
+    pub fn received_message(
         &mut self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         game_id: &GameID,
         message: &[u8],
     ) -> Result<ReadableMove, Error> {
@@ -1337,9 +1335,9 @@ impl ChannelHandler {
 
     /// Uses the channel coin key to post standard format coin generation to the
     /// real blockchain via a Spend.
-    pub fn send_potato_clean_shutdown<R: Rng>(
+    pub fn send_potato_clean_shutdown(
         &self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         conditions: NodePtr,
     ) -> Result<Spend, Error> {
         game_assert!(
@@ -1365,10 +1363,10 @@ impl ChannelHandler {
         })
     }
 
-    pub fn get_solution_and_signature_from_conditions<R: Rng>(
+    pub fn get_solution_and_signature_from_conditions(
         &self,
         coin_id: &CoinID,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         private_key: &PrivateKey,
         aggregate_public_key: &PublicKey,
         conditions: Rc<Program>,
@@ -1386,10 +1384,10 @@ impl ChannelHandler {
         Ok(spend)
     }
 
-    pub fn get_solution_and_signature<R: Rng>(
+    pub fn get_solution_and_signature(
         &self,
         coin_id: &CoinID,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         private_key: &PrivateKey,
         aggregate_channel_public_key: &PublicKey,
         aggregate_unroll_public_key: &PublicKey,
@@ -1420,9 +1418,9 @@ impl ChannelHandler {
         )
     }
 
-    pub fn received_potato_clean_shutdown<R: Rng>(
+    pub fn received_potato_clean_shutdown(
         &self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         their_channel_half_signature: &Aggsig,
         conditions: NodePtr,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
@@ -1442,9 +1440,9 @@ impl ChannelHandler {
 
     /// Extract the on-chain unrolling state number from the channel-coin
     /// spend conditions.
-    pub fn unrolling_state_from_conditions<R: Rng>(
+    pub fn unrolling_state_from_conditions(
         &self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         conditions: NodePtr,
     ) -> Result<usize, Error> {
         let rem = self.break_out_conditions_for_spent_coin(env, conditions)?;
@@ -1452,9 +1450,9 @@ impl ChannelHandler {
             .ok_or_else(|| Error::StrErr("Unconvertible state number".to_string()))
     }
 
-    fn break_out_conditions_for_spent_coin<R: Rng>(
+    fn break_out_conditions_for_spent_coin(
         &self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         conditions: NodePtr,
     ) -> Result<Vec<Vec<u8>>, Error> {
         // Figure out our state number vs the one given in conditions.
@@ -1518,9 +1516,9 @@ impl ChannelHandler {
     ///
     /// Must have the option that games were outright canceled.
     /// Need to make the result richer to communicate that.
-    pub fn channel_coin_spent<R: Rng>(
+    pub fn channel_coin_spent(
         &self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         myself: bool,
         conditions: NodePtr,
     ) -> Result<ChannelCoinSpentResult, Error> {
@@ -1557,9 +1555,9 @@ impl ChannelHandler {
 
     /// Build the timeout (default-path) spend of the unroll coin using our
     /// own unroll data.  Both puzzle and solution come from `self.unroll`.
-    fn make_timeout_unroll_spend<R: Rng>(
+    fn make_timeout_unroll_spend(
         &self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
     ) -> Result<ChannelCoinSpentResult, Error> {
         let agg_key = self.get_aggregate_unroll_public_key();
         let curried_puzzle = self.unroll.coin.make_curried_unroll_puzzle(env, &agg_key)?;
@@ -1585,9 +1583,9 @@ impl ChannelHandler {
     /// matches the on-chain unroll).  The SOLUTION and SIGNATURE come from
     /// our latest state that satisfies the CLSP parity constraint:
     ///   logand(1, logxor(our_state_number, OLD_SEQUENCE_NUMBER)) == 1
-    fn make_preemption_unroll_spend<R: Rng>(
+    fn make_preemption_unroll_spend(
         &self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         unrolling_state_number: usize,
     ) -> Result<ChannelCoinSpentResult, Error> {
         // OLD_SEQUENCE_NUMBER equals state_number (both set during update()).
@@ -1708,9 +1706,9 @@ impl ChannelHandler {
     /// Matching is strictly by puzzle hash.  Each game matches at most one
     /// coin.  Games with no PH match will not appear in the returned map;
     /// the caller is responsible for emitting terminal errors for them.
-    pub fn set_state_for_coins<R: Rng>(
+    pub fn set_state_for_coins(
         &mut self,
-        _env: &mut ChannelHandlerEnv<R>,
+        _env: &mut ChannelHandlerEnv<'_>,
         unroll_coin: &CoinString,
         coins: &[(PuzzleHash, Amount)],
     ) -> Result<HashMap<CoinString, OnChainGameState>, Error> {
@@ -1868,9 +1866,9 @@ impl ChannelHandler {
         self.live_games[idx].get_transaction_for_move(allocator, game_coin)
     }
 
-    pub fn get_game_outcome_puzzle_hash<R: Rng>(
+    pub fn get_game_outcome_puzzle_hash(
         &self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         game_id: &GameID,
     ) -> Result<PuzzleHash, Error> {
         let idx = self.get_game_by_id(game_id)?;
@@ -1896,9 +1894,9 @@ impl ChannelHandler {
         None
     }
 
-    pub fn on_chain_our_move<R: Rng>(
+    pub fn on_chain_our_move(
         &mut self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         game_id: &GameID,
         readable_move: &ReadableMove,
         entropy: Hash,
@@ -1930,9 +1928,9 @@ impl ChannelHandler {
         ))
     }
 
-    pub fn game_coin_spent<R: Rng>(
+    pub fn game_coin_spent(
         &mut self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         game_id: &GameID,
         coin_string: &CoinString,
         conditions: &[CoinCondition],
@@ -2029,9 +2027,9 @@ impl ChannelHandler {
     /// Find a cached move whose puzzle hash matches `coin`, remove it from
     /// the cache, and return a `GameAction::RedoMove` so the move can be
     /// replayed on-chain.  Returns `Ok(None)` if no cached move matches.
-    pub fn get_redo_action<R: Rng>(
+    pub fn get_redo_action(
         &mut self,
-        _env: &mut ChannelHandlerEnv<R>,
+        _env: &mut ChannelHandlerEnv<'_>,
         coin: &CoinString,
     ) -> Result<Option<GameAction>, Error> {
         let pos = self.cached_last_actions.iter().position(|entry| {
@@ -2059,9 +2057,9 @@ impl ChannelHandler {
         Ok(None)
     }
 
-    pub fn accept_or_timeout_game_on_chain<R: Rng>(
+    pub fn accept_or_timeout_game_on_chain(
         &mut self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         game_id: &GameID,
         coin: &CoinString,
     ) -> Result<Option<Spend>, Error> {
@@ -2083,7 +2081,7 @@ impl ChannelHandler {
         }
     }
 
-    pub fn get_game_state_id<R: Rng>(&self, env: &mut ChannelHandlerEnv<R>) -> Result<Hash, Error> {
+    pub fn get_game_state_id(&self, env: &mut ChannelHandlerEnv<'_>) -> Result<Hash, Error> {
         let mut bytes: Vec<u8> = Vec::with_capacity(self.live_games.len() * 32);
         for l in self.live_games.iter() {
             let ph = l.current_puzzle_hash(env.allocator)?;

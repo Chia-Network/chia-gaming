@@ -21,11 +21,15 @@ pub(crate) mod sim_tests {
     use crate::test_support::game::{ChannelHandlerGame, DEFAULT_UNROLL_TIME_LOCK};
 
     /// Helper: create a ChannelHandlerGame with completed handshake.
-    fn setup_handshake(env: &mut ChannelHandlerEnv<impl rand::Rng>) -> ChannelHandlerGame {
+    fn setup_handshake(
+        rng: &mut impl rand::Rng,
+        env: &mut ChannelHandlerEnv<'_>,
+    ) -> ChannelHandlerGame {
         let game_id = GameID(42);
         let launcher_coin = CoinID::default();
 
         let mut game = ChannelHandlerGame::new(
+            rng,
             env,
             game_id,
             &launcher_coin,
@@ -43,7 +47,7 @@ pub(crate) mod sim_tests {
     /// Player `sender` sends first, then `sender^1` sends back.
     fn empty_potato_round_trip(
         game: &mut ChannelHandlerGame,
-        env: &mut ChannelHandlerEnv<impl rand::Rng>,
+        env: &mut ChannelHandlerEnv<'_>,
         sender: usize,
     ) {
         let sigs_a = game
@@ -107,7 +111,6 @@ pub(crate) mod sim_tests {
         let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should load");
         let mut env = ChannelHandlerEnv {
             allocator: &mut allocator,
-            rng: &mut rng,
             referee_coin_puzzle: ref_coin_puz,
             referee_coin_puzzle_hash: ref_coin_ph,
             unroll_metapuzzle,
@@ -116,7 +119,7 @@ pub(crate) mod sim_tests {
             agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
         };
 
-        let mut game = setup_handshake(&mut env);
+        let mut game = setup_handshake(&mut rng, &mut env);
 
         // 3 round-trips: state goes 0 → 2 → 4 → 6
         for _ in 0..3 {
@@ -198,7 +201,6 @@ pub(crate) fn test_unroll_can_verify_own_signature() {
     let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should load");
     let mut env = ChannelHandlerEnv {
         allocator: &mut allocator,
-        rng: &mut rng,
         referee_coin_puzzle: ref_coin_puz,
         referee_coin_puzzle_hash: ref_coin_ph.clone(),
         unroll_metapuzzle,

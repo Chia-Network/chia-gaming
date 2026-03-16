@@ -1,7 +1,5 @@
 use std::collections::VecDeque;
 
-use rand::Rng;
-
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::types::{ChannelHandlerEnv, ReadableMove};
@@ -73,16 +71,16 @@ impl ChannelHandlerBase {
             .and_then(|ch| ch.game_is_my_turn(game_id))
     }
 
-    pub fn get_reward_puzzle_hash<R: Rng>(
+    pub fn get_reward_puzzle_hash(
         &self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
     ) -> Result<PuzzleHash, Error> {
         self.channel_handler()?.get_reward_puzzle_hash(env)
     }
 
-    pub fn get_game_state_id<R: Rng>(
+    pub fn get_game_state_id(
         &self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
     ) -> Result<Option<Hash>, Error> {
         if let Some(ch) = self.channel_handler.as_ref() {
             return ch.get_game_state_id(env).map(Some);

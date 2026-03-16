@@ -4,8 +4,6 @@ use clvm_traits::{clvm_curried_args, ToClvm};
 use clvm_utils::CurriedProgram;
 use clvmr::allocator::NodePtr;
 
-use rand::prelude::*;
-
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::types::ChannelHandlerEnv;
@@ -51,8 +49,8 @@ pub struct UnrollCoin {
     pub outcome: Option<UnrollCoinOutcome>,
 }
 
-fn prepend_state_number_rem_to_conditions<R: Rng>(
-    env: &mut ChannelHandlerEnv<R>,
+fn prepend_state_number_rem_to_conditions(
+    env: &mut ChannelHandlerEnv<'_>,
     state_number: usize,
     conditions: NodePtr,
 ) -> Result<NodePtr, Error> {
@@ -63,8 +61,8 @@ fn prepend_state_number_rem_to_conditions<R: Rng>(
         .into_gen()
 }
 
-pub fn prepend_rem_conditions<R: Rng>(
-    env: &mut ChannelHandlerEnv<R>,
+pub fn prepend_rem_conditions(
+    env: &mut ChannelHandlerEnv<'_>,
     state_number: usize,
     conditions: NodePtr,
 ) -> Result<NodePtr, Error> {
@@ -116,9 +114,9 @@ impl UnrollCoin {
     /// Either a game creation that got cancelled happens,
     /// move we did that needs to be replayed on chain.
     /// game folding that we need to replay on chain.
-    pub fn make_curried_unroll_puzzle<R: Rng>(
+    pub fn make_curried_unroll_puzzle(
         &self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         aggregate_public_key: &PublicKey,
     ) -> Result<NodePtr, Error> {
         let conditions_hash = self.get_conditions_hash_for_unroll_puzzle()?;
@@ -144,9 +142,9 @@ impl UnrollCoin {
 
     /// Build a solution for the challenge/preemption path: (metapuzzle, conditions).
     /// The CLSP runs metapuzzle(conditions) which adds AGG_SIG_UNSAFE.
-    pub fn make_unroll_puzzle_solution<R: Rng>(
+    pub fn make_unroll_puzzle_solution(
         &self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         aggregate_public_key: &PublicKey,
     ) -> Result<NodePtr, Error> {
         let unroll_inner_puzzle = CurriedProgram {
@@ -168,9 +166,9 @@ impl UnrollCoin {
     /// Build a solution for the default/timeout path: just (reveal).
     /// The CLSP verifies shatree(reveal) == DEFAULT_CONDITIONS_HASH and
     /// returns reveal.  The timeout conditions include ASSERT_HEIGHT_RELATIVE.
-    pub fn make_timeout_unroll_solution<R: Rng>(
+    pub fn make_timeout_unroll_solution(
         &self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
     ) -> Result<NodePtr, Error> {
         let timeout_conditions = self.get_conditions_for_unroll_coin_spend()?;
         let solution = (timeout_conditions, ()).to_clvm(env.allocator).into_gen()?;
@@ -183,9 +181,9 @@ impl UnrollCoin {
     /// The order is important and the first two coins' order are determined by
     /// whether the potato was ours first.
     /// Needs rem of sequence number and the default conditions hash.
-    fn compute_unroll_coin_conditions<R: Rng>(
+    fn compute_unroll_coin_conditions(
         &self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         inputs: &UnrollCoinConditionInputs,
     ) -> Result<ProgramRef, Error> {
         let their_first_coin = (
@@ -235,9 +233,9 @@ impl UnrollCoin {
 
     /// Given new inputs, recompute the state of the unroll coin and store the
     /// conditions and signature necessary for the channel coin to create it.
-    pub fn update<R: Rng>(
+    pub fn update(
         &mut self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         unroll_private_key: &PrivateKey,
         their_unroll_coin_public_key: &PublicKey,
         inputs: &UnrollCoinConditionInputs,
@@ -279,9 +277,9 @@ impl UnrollCoin {
         Ok(unroll_signature)
     }
 
-    pub fn verify<R: Rng>(
+    pub fn verify(
         &self,
-        env: &mut ChannelHandlerEnv<R>,
+        env: &mut ChannelHandlerEnv<'_>,
         aggregate_unroll_public_key: &PublicKey,
         signature: &Aggsig,
     ) -> Result<bool, Error> {

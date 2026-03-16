@@ -76,9 +76,8 @@ impl MessagePeerQueue for SimulatedPeer {
 }
 
 /// Check the reported coins vs the current coin set and report changes.
-pub fn update_and_report_coins<'a, R: Rng>(
+pub fn update_and_report_coins<'a>(
     allocator: &mut AllocEncoder,
-    rng: &mut R,
     coinset_adapter: &mut FullCoinSetAdapter,
     peers: &mut [PotatoHandler; 2],
     pipes: &'a mut [SimulatedPeer; 2],
@@ -91,7 +90,7 @@ pub fn update_and_report_coins<'a, R: Rng>(
 
     for who in 0..=1 {
         {
-            let mut env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
+            let mut env = ChannelHandlerEnv::new(allocator).expect("should work");
             let reported_effects =
                 report_coin_changes_to_peer(&mut env, &mut peers[who], &watch_report)?;
             apply_effects(reported_effects, allocator, &mut pipes[who])?;
@@ -101,8 +100,8 @@ pub fn update_and_report_coins<'a, R: Rng>(
     Ok(watch_report)
 }
 
-fn handle_received_channel_puzzle_hash<R: Rng>(
-    env: &mut ChannelHandlerEnv<'_, R>,
+fn handle_received_channel_puzzle_hash(
+    env: &mut ChannelHandlerEnv<'_>,
     identity: &ChiaIdentity,
     peer: &mut PotatoHandler,
     parent: &CoinString,
@@ -241,8 +240,7 @@ impl ToLocalUI for SimulatedPeer {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn handshake<R: Rng>(
-    rng: &mut R,
+pub fn handshake(
     allocator: &mut AllocEncoder,
     _amount: Amount,
     coinset_adapter: &mut FullCoinSetAdapter,
@@ -262,7 +260,6 @@ pub fn handshake<R: Rng>(
 
         run_move(
             allocator,
-            rng,
             Amount::new(200),
             pipes,
             &mut peers[who],
@@ -273,7 +270,7 @@ pub fn handshake<R: Rng>(
         if let Some(ph) = pipes[who].channel_puzzle_hash.clone() {
             pipes[who].channel_puzzle_hash = None;
             let reported_effects = {
-                let mut env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
+                let mut env = ChannelHandlerEnv::new(allocator).expect("should work");
                 handle_received_channel_puzzle_hash(
                     &mut env,
                     &identities[who],
@@ -287,14 +284,14 @@ pub fn handshake<R: Rng>(
 
         if let Some(u) = pipes[who].unfunded_offer.clone() {
             let reported_effect = {
-                let mut env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
+                let mut env = ChannelHandlerEnv::new(allocator).expect("should work");
                 peers[who].channel_transaction_completion(&mut env, &u)?
             };
             if let Some(effect) = reported_effect {
                 apply_effects(vec![effect], allocator, &mut pipes[who])?;
             }
 
-            let env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
+            let env = ChannelHandlerEnv::new(allocator).expect("should work");
             let mut spends = u.clone();
             // Create no coins.  The target is already created in the partially funded
             // transaction.
@@ -326,7 +323,7 @@ pub fn handshake<R: Rng>(
             simulator.farm_block(&identities[who].puzzle_hash);
             simulator.farm_block(&identities[who].puzzle_hash);
 
-            update_and_report_coins(allocator, rng, coinset_adapter, peers, pipes, simulator)?;
+            update_and_report_coins(allocator, coinset_adapter, peers, pipes, simulator)?;
         }
 
         if !pipes[who].outbound_transactions.is_empty() {
@@ -992,8 +989,8 @@ fn run_game_container_with_action_list_with_success_predicate(
     let mut num_steps = 0;
 
     // Give coins to the cradles.
-    cradles[0].opening_coin(allocator, rng, parent_coin_0)?;
-    cradles[1].opening_coin(allocator, rng, parent_coin_1)?;
+    cradles[0].opening_coin(allocator, parent_coin_0)?;
+    cradles[1].opening_coin(allocator, parent_coin_1)?;
 
     let global_move = |moves: &[GameAction], move_number: usize| {
         move_number < moves.len()
@@ -1084,14 +1081,14 @@ fn run_game_container_with_action_list_with_success_predicate(
                 }
                 local_uis[i].go_on_chain = false;
                 let got_error = local_uis[i].got_error;
-                cradles[i].go_on_chain(allocator, rng, &mut local_uis[i], got_error)?;
+                cradles[i].go_on_chain(allocator, &mut local_uis[i], got_error)?;
             }
 
             if reports_blocked(i, &wait_blocks) {
                 report_backlogs[i].push((current_height, watch_report.clone()));
             } else {
                 let t_nb = std::time::Instant::now();
-                cradles[i].new_block(allocator, rng, current_height, &watch_report)?;
+                cradles[i].new_block(allocator, current_height, &watch_report)?;
                 if timing_enabled {
                     let nb_elapsed = t_nb.elapsed();
                     if nb_elapsed.as_millis() > 10 {
@@ -1101,7 +1098,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             }
 
             {
-                let result = cradles[i].drain_all(allocator, rng)?;
+                let result = cradles[i].drain_all(allocator)?;
 
                 // Feed puzzle/solution requests back, then drain again
                 // to collect the effects they produce.
@@ -1113,12 +1110,11 @@ fn run_game_container_with_action_list_with_success_predicate(
                     for (_ci, cradle) in cradles.iter_mut().enumerate() {
                         cradle.report_puzzle_and_solution(
                             allocator,
-                            rng,
                             coin,
                             ps_res.as_ref().map(|ps| (&ps.0, &ps.1)),
                         )?;
                     }
-                    extra_results.push(cradles[i].drain_all(allocator, rng)?);
+                    extra_results.push(cradles[i].drain_all(allocator)?);
                 }
 
                 // Process all drain results (initial + post-puzzle-solution).
@@ -1249,7 +1245,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             #[allow(clippy::needless_range_loop)]
             for i in 0..=1 {
                 for (current_height, watch_report) in report_backlogs[i].iter() {
-                    cradles[i].new_block(allocator, rng, *current_height, watch_report)?;
+                    cradles[i].new_block(allocator, *current_height, watch_report)?;
                 }
                 report_backlogs[i].clear();
             }
@@ -1283,7 +1279,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                         let t_mv = std::time::Instant::now();
                         cradles[*who].make_move(
                             allocator,
-                            rng,
                             &runtime_gid,
                             readable.clone(),
                             entropy,
@@ -1301,7 +1296,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                         let new_game_id = cradles[*who].next_game_id().unwrap();
                         let new_ids = cradles[*who].propose_game(
                             allocator,
-                            rng,
                             &GameStart {
                                 game_id: new_game_id,
                                 amount: Amount::new(200),
@@ -1331,7 +1325,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                             gid_diag(&test_name, action_idx, "AcceptProposal", gid, &runtime_gid);
                         }
                         if !local_uis[*who].accepted_proposal_ids.contains(&runtime_gid) {
-                            cradles[*who].accept_proposal(allocator, rng, &runtime_gid)?;
+                            cradles[*who].accept_proposal(allocator, &runtime_gid)?;
                             local_uis[*who].accepted_proposal_ids.push(runtime_gid);
                             move_number -= 1;
                         }
@@ -1350,7 +1344,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "CancelProposal", gid, &runtime_gid);
                         }
-                        cradles[*who].cancel_proposal(allocator, rng, &runtime_gid)?;
+                        cradles[*who].cancel_proposal(allocator, &runtime_gid)?;
                     }
                     GameAction::GoOnChain(who) => {
                         assert!(
@@ -1379,7 +1373,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                         let got_error = local_uis[*who].got_error;
                         cradles[*who].go_on_chain(
                             allocator,
-                            rng,
                             &mut local_uis[*who],
                             got_error,
                         )?;
@@ -1410,7 +1403,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                             let entropy = rng.gen();
                             cradles[*who].make_move(
                                 allocator,
-                                rng,
                                 &runtime_gid,
                                 readable.clone(),
                                 entropy,
@@ -1434,7 +1426,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                         let entropy = rng.gen();
                         cradles[*who].make_move(
                             allocator,
-                            rng,
                             &runtime_gid,
                             readable.clone(),
                             entropy,
@@ -1481,7 +1472,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "Cheat", gid, &runtime_gid);
                         }
-                        cradles[*who].cheat(allocator, rng, &runtime_gid, cheat_share.clone())?;
+                        cradles[*who].cheat(allocator, &runtime_gid, cheat_share.clone())?;
                     }
                     GameAction::ForceDestroyCoin(who, gid) => {
                         let runtime_gid = if cradles[*who].get_game_coin(gid).is_some() {
@@ -1545,7 +1536,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "AcceptTimeout", gid, &runtime_gid);
                         }
-                        cradles[*who].accept_timeout(allocator, rng, &runtime_gid)?;
+                        cradles[*who].accept_timeout(allocator, &runtime_gid)?;
                     }
                     GameAction::Timeout(_who) => {
                         panic!("Timeout action is not supported in sim tests; use AcceptTimeout(player, game_id)");
@@ -1559,20 +1550,20 @@ fn run_game_container_with_action_list_with_success_predicate(
                             move_number -= 1;
                             continue;
                         }
-                        cradles[*who].shut_down(allocator, rng)?;
+                        cradles[*who].shut_down(allocator)?;
                     }
                     GameAction::CorruptStateNumber(who, new_sn) => {
                         cradles[*who].corrupt_state_for_testing(*new_sn)?;
                     }
                     GameAction::ForceUnroll(who) => {
-                        let spend = cradles[*who].force_unroll_spend(allocator, rng)?;
+                        let spend = cradles[*who].force_unroll_spend(allocator)?;
                         simulator.push_tx(allocator, &spend.spends)?;
                     }
                     GameAction::SaveUnrollSnapshot(who) => {
                         cradles[*who].save_unroll_snapshot();
                     }
                     GameAction::ForceStaleUnroll(who) => {
-                        let spend = cradles[*who].force_stale_unroll_spend(allocator, rng)?;
+                        let spend = cradles[*who].force_stale_unroll_spend(allocator)?;
                         let _included_result = simulator.push_tx(allocator, &spend.spends)?;
                     }
                     GameAction::InjectRawMessage(who, data) => {
@@ -2814,7 +2805,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let borrowed: &Program = sim_setup.args_program.borrow();
         let result1 = outcome.cradles[0].propose_game(
             &mut allocator,
-            &mut rng,
             &GameStart {
                 game_id: game_id.clone(),
                 amount: Amount::new(2000),
@@ -2831,7 +2821,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let game_id2 = outcome.cradles[1].next_game_id().unwrap();
         let result2 = outcome.cradles[1].propose_game(
             &mut allocator,
-            &mut rng,
             &GameStart {
                 game_id: game_id2.clone(),
                 amount: Amount::new(2000),
@@ -2846,7 +2835,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         for _i in 0..100 {
             for c in 0..2 {
                 let result = outcome.cradles[c]
-                    .drain_all(&mut allocator, &mut rng)
+                    .drain_all(&mut allocator)
                     .unwrap();
                 for msg in result.outbound_messages.iter() {
                     outcome.cradles[c ^ 1].deliver_message(msg).unwrap();

@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json_any_key::*;
 
@@ -70,9 +69,9 @@ pub trait BootstrapTowardGame {
     ///
     /// Only alice sends this spend bundle in message E, but only after receiving
     /// message D.
-    fn channel_offer<R: Rng>(
+    fn channel_offer(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         bundle: SpendBundle,
     ) -> Result<Option<Effect>, Error>;
 
@@ -95,9 +94,9 @@ pub trait BootstrapTowardGame {
     ///
     /// Both alice and bob, upon knowing the full channel coin id, use the more
     /// general wallet interface to register for notifications of the channel coin.
-    fn channel_transaction_completion<R: Rng>(
+    fn channel_transaction_completion(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         bundle: &SpendBundle,
     ) -> Result<Option<Effect>, Error>;
 }
@@ -130,24 +129,24 @@ pub trait BootstrapTowardWallet {
 
 /// Spend wallet receiver
 pub trait SpendWalletReceiver {
-    fn coin_created<R: Rng>(
+    fn coin_created(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Option<Vec<Effect>>, Error>;
-    fn coin_spent<R: Rng>(
+    fn coin_spent(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error>;
-    fn coin_timeout_reached<R: Rng>(
+    fn coin_timeout_reached(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error>;
-    fn coin_puzzle_and_solution<R: Rng>(
+    fn coin_puzzle_and_solution(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error>;
@@ -179,41 +178,41 @@ pub trait ToLocalUI {
 }
 
 pub trait FromLocalUI {
-    fn propose_game<R: Rng>(
+    fn propose_game(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         game: &GameStart,
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error>;
 
-    fn accept_proposal<R: Rng>(
+    fn accept_proposal(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         game_id: &GameID,
     ) -> Result<Vec<Effect>, Error>;
 
-    fn cancel_proposal<R: Rng>(
+    fn cancel_proposal(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         game_id: &GameID,
     ) -> Result<Vec<Effect>, Error>;
 
-    fn make_move<R: Rng>(
+    fn make_move(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         id: &GameID,
         readable: &ReadableMove,
         new_entropy: Hash,
     ) -> Result<Vec<Effect>, Error>;
 
-    fn accept_timeout<R: Rng>(
+    fn accept_timeout(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         id: &GameID,
     ) -> Result<Vec<Effect>, Error>;
 
-    fn shut_down<R: Rng>(
+    fn shut_down(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
     ) -> Result<Vec<Effect>, Error>;
 }
 

@@ -44,9 +44,8 @@ pub struct ChannelHandlerUnrollSpendInfo {
     pub signatures: PotatoSignatures,
 }
 
-pub struct ChannelHandlerEnv<'a, R: Rng> {
+pub struct ChannelHandlerEnv<'a> {
     pub allocator: &'a mut AllocEncoder,
-    pub rng: &'a mut R,
     pub unroll_metapuzzle: Puzzle,
     pub unroll_puzzle: Puzzle,
 
@@ -58,11 +57,10 @@ pub struct ChannelHandlerEnv<'a, R: Rng> {
     pub agg_sig_me_additional_data: Hash,
 }
 
-impl<'a, R: Rng> ChannelHandlerEnv<'a, R> {
+impl<'a> ChannelHandlerEnv<'a> {
     pub fn new(
         allocator: &'a mut AllocEncoder,
-        rng: &'a mut R,
-    ) -> Result<ChannelHandlerEnv<'a, R>, Error> {
+    ) -> Result<ChannelHandlerEnv<'a>, Error> {
         let referee_coin_puzzle = read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex")?;
         let unroll_puzzle = read_hex_puzzle(
             allocator,
@@ -73,7 +71,6 @@ impl<'a, R: Rng> ChannelHandlerEnv<'a, R> {
         let referee_coin_puzzle_hash = referee_coin_puzzle.sha256tree(allocator);
         Ok(ChannelHandlerEnv {
             allocator,
-            rng,
             referee_coin_puzzle,
             referee_coin_puzzle_hash,
             unroll_metapuzzle,

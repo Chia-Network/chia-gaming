@@ -410,7 +410,7 @@ mod gaming_wasm {
         with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle
                 .cradle
-                .opening_coin(&mut cradle.allocator, &mut cradle.rng.0, coin)
+                .opening_coin(&mut cradle.allocator, coin)
         })
     }
 
@@ -500,7 +500,6 @@ mod gaming_wasm {
         with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle.cradle.new_block(
                 &mut cradle.allocator,
-                &mut cradle.rng.0,
                 height,
                 &watch_report,
             )
@@ -544,12 +543,11 @@ mod gaming_wasm {
             };
             let ids = cradle.cradle.propose_game(
                 &mut cradle.allocator,
-                &mut cradle.rng.0,
                 &game_start,
             )?;
             let dr = cradle
                 .cradle
-                .drain_all(&mut cradle.allocator, &mut cradle.rng.0)?;
+                .drain_all(&mut cradle.allocator)?;
 
             #[derive(Serialize)]
             struct ProposeGameResult {
@@ -584,7 +582,7 @@ mod gaming_wasm {
         with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle
                 .cradle
-                .accept_proposal(&mut cradle.allocator, &mut cradle.rng.0, &game_id)
+                .accept_proposal(&mut cradle.allocator, &game_id)
         })
     }
 
@@ -594,7 +592,7 @@ mod gaming_wasm {
         with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle
                 .cradle
-                .cancel_proposal(&mut cradle.allocator, &mut cradle.rng.0, &game_id)
+                .cancel_proposal(&mut cradle.allocator, &game_id)
         })
     }
 
@@ -616,7 +614,6 @@ mod gaming_wasm {
             let entropy: Hash = new_entropy.unwrap_or_else(|| cradle.rng.0.gen());
             cradle.cradle.make_move(
                 &mut cradle.allocator,
-                &mut cradle.rng.0,
                 &game_id,
                 readable_move,
                 entropy,
@@ -652,7 +649,7 @@ mod gaming_wasm {
         with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle
                 .cradle
-                .cheat(&mut cradle.allocator, &mut cradle.rng.0, &game_id, share)
+                .cheat(&mut cradle.allocator, &game_id, share)
         })
     }
 
@@ -669,7 +666,6 @@ mod gaming_wasm {
             let entropy: Hash = cradle.rng.0.gen();
             cradle.cradle.accept_proposal_and_move(
                 &mut cradle.allocator,
-                &mut cradle.rng.0,
                 &game_id,
                 readable_move,
                 entropy,
@@ -692,7 +688,7 @@ mod gaming_wasm {
         with_game(cid, move |cradle: &mut JsCradle| {
             Ok(cradle
                 .cradle
-                .get_game_state_id(&mut cradle.allocator, &mut cradle.rng.0)?
+                .get_game_state_id(&mut cradle.allocator)?
                 .map(|h| hex::encode(h.bytes())))
         })
     }
@@ -715,7 +711,7 @@ mod gaming_wasm {
         with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle
                 .cradle
-                .accept_timeout(&mut cradle.allocator, &mut cradle.rng.0, &game_id)
+                .accept_timeout(&mut cradle.allocator, &game_id)
         })
     }
 
@@ -724,7 +720,7 @@ mod gaming_wasm {
         with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle
                 .cradle
-                .shut_down(&mut cradle.allocator, &mut cradle.rng.0)
+                .shut_down(&mut cradle.allocator)
         })
     }
 
@@ -733,7 +729,6 @@ mod gaming_wasm {
         with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle.cradle.go_on_chain(
                 &mut cradle.allocator,
-                &mut cradle.rng.0,
                 &mut NullLocalUI,
                 false,
             )
@@ -767,7 +762,6 @@ mod gaming_wasm {
         with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle.cradle.report_puzzle_and_solution(
                 &mut cradle.allocator,
-                &mut cradle.rng.0,
                 &coin,
                 ps_pair,
             )
@@ -905,7 +899,7 @@ mod gaming_wasm {
             f(cradle)?;
             let dr = cradle
                 .cradle
-                .drain_all(&mut cradle.allocator, &mut cradle.rng.0)?;
+                .drain_all(&mut cradle.allocator)?;
             drain_result_to_js(&dr)
         })
     }

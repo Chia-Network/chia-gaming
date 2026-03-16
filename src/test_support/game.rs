@@ -59,16 +59,17 @@ mod sim_tests {
 
     impl ChannelHandlerGame {
         pub fn new<R: Rng>(
-            env: &mut ChannelHandlerEnv<R>,
+            rng: &mut R,
+            env: &mut ChannelHandlerEnv<'_>,
             game_id: GameID,
             launcher_coin_id: &CoinID,
             contributions: &[Amount; 2],
             unroll_advance_timeout: Timeout,
         ) -> Result<ChannelHandlerGame, Error> {
-            let private_keys: [ChannelHandlerPrivateKeys; 2] = env.rng.gen();
+            let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.gen();
 
             let make_ref_info =
-                |env: &mut ChannelHandlerEnv<R>,
+                |env: &mut ChannelHandlerEnv<'_>,
                  id: usize|
                  -> Result<(Rc<Puzzle>, PuzzleHash, PublicKey, Aggsig), Error> {
                     let ref_key = private_to_public_key(&private_keys[id].my_referee_private_key);
@@ -86,7 +87,7 @@ mod sim_tests {
             let referees = [ref1, ref2];
 
             let make_party =
-                |env: &mut ChannelHandlerEnv<R>, id: usize| -> Result<ChannelHandlerParty, Error> {
+                |env: &mut ChannelHandlerEnv<'_>, id: usize| -> Result<ChannelHandlerParty, Error> {
                     ChannelHandlerParty::new(
                         env,
                         private_keys[id].clone(),
@@ -120,9 +121,9 @@ mod sim_tests {
             &mut self.players[who]
         }
 
-        pub fn finish_handshake<R: Rng>(
+        pub fn finish_handshake(
             &mut self,
-            env: &mut ChannelHandlerEnv<R>,
+            env: &mut ChannelHandlerEnv<'_>,
             who: usize,
         ) -> Result<(), Error> {
             let channel_coin_0_aggsig = self.players[who ^ 1]
@@ -300,7 +301,8 @@ mod sim_tests {
 
     pub fn new_channel_handler_game<R: Rng>(
         simulator: &Simulator,
-        env: &mut ChannelHandlerEnv<R>,
+        rng: &mut R,
+        env: &mut ChannelHandlerEnv<'_>,
         game_id: &GameID,
         alice_game: &Game,
         bob_game: &Game,
@@ -348,6 +350,7 @@ mod sim_tests {
         simulator.farm_block(&identities[0].puzzle_hash);
 
         let mut party = ChannelHandlerGame::new(
+            rng,
             env,
             game_id.clone(),
             &u2.to_coin_id(),

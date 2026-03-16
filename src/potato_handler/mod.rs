@@ -6,7 +6,6 @@ use std::rc::Rc;
 use clvm_traits::ToClvm;
 use clvmr::{run_program, NodePtr};
 
-use rand::Rng;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -30,6 +29,7 @@ use crate::potato_handler::effects::{format_coin, Effect, GameNotification, Resy
 use crate::potato_handler::on_chain::OnChainGameHandler;
 use crate::shutdown::get_conditions_with_channel_handler;
 
+use crate::peer_container::PeerHandler;
 use crate::potato_handler::types::{
     BatchAction, BootstrapTowardGame, ConditionWaitKind, FromLocalUI, GameAction, GameFactory,
     PeerMessage, PotatoHandlerInit, PotatoState, SpendWalletReceiver,
@@ -300,9 +300,9 @@ impl PotatoHandler {
         None
     }
 
-    pub(crate) fn cheat_game<R: Rng>(
+    pub(crate) fn cheat_game(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         game_id: &GameID,
         mover_share: Amount,
         entropy: Hash,
@@ -384,17 +384,17 @@ impl PotatoHandler {
         matches!(self.have_potato, PotatoState::Present)
     }
 
-    pub fn get_reward_puzzle_hash<R: Rng>(
+    pub fn get_reward_puzzle_hash(
         &self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
     ) -> Result<PuzzleHash, Error> {
         let player_ch = self.channel_handler()?;
         player_ch.get_reward_puzzle_hash(env)
     }
 
-    pub fn start<R: Rng>(
+    pub fn start(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_, R>,
+        _env: &mut ChannelHandlerEnv<'_>,
         parent_coin: CoinString,
     ) -> Result<Option<Effect>, Error> {
         let channel_public_key =
@@ -426,9 +426,9 @@ impl PotatoHandler {
         Ok(Some(Effect::PeerHandshakeA(my_hs_info)))
     }
 
-    fn update_channel_coin_after_receive<R: Rng>(
+    fn update_channel_coin_after_receive(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         spend: &ChannelCoinSpendInfo,
     ) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
@@ -498,9 +498,9 @@ impl PotatoHandler {
         Ok(effects)
     }
 
-    fn pass_on_channel_handler_message<R: Rng>(
+    fn pass_on_channel_handler_message(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         msg_envelope: Rc<PeerMessage>,
     ) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
@@ -555,9 +555,9 @@ impl PotatoHandler {
         Ok(effects)
     }
 
-    fn process_received_batch<R: Rng>(
+    fn process_received_batch(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         timeout: &Timeout,
         actions: &[BatchAction],
         signatures: &PotatoSignatures,
@@ -882,9 +882,9 @@ impl PotatoHandler {
         Ok((false, None))
     }
 
-    fn drain_queue_into_batch<R: Rng>(
+    fn drain_queue_into_batch(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
     ) -> Result<(bool, Vec<Effect>), Error> {
         game_assert!(
             matches!(self.have_potato, PotatoState::Present),
@@ -1130,9 +1130,9 @@ impl PotatoHandler {
         Ok((true, effects))
     }
 
-    fn get_games_by_start_type<R: Rng>(
+    fn get_games_by_start_type(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         i_initiated: bool,
         game_start: &GameStart,
     ) -> Result<GameStartInfoPair, Error> {
@@ -1254,9 +1254,9 @@ impl PotatoHandler {
 
     const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
 
-    pub fn received_message<R: Rng>(
+    pub fn received_message(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         msg: Vec<u8>,
     ) -> Result<Vec<Effect>, Error> {
         if matches!(self.channel_state, ChannelState::Failed) {
@@ -1303,12 +1303,12 @@ impl PotatoHandler {
         Ok(effects)
     }
 
-    fn make_channel_handler<R: Rng>(
+    fn make_channel_handler(
         &self,
         parent: CoinID,
         start_potato: bool,
         msg: &HandshakeB,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
     ) -> Result<(ChannelHandler, ChannelHandlerInitiationResult), Error> {
         if !verify_reward_payout_signature(
             &msg.referee_pubkey,
@@ -1336,9 +1336,9 @@ impl PotatoHandler {
         )
     }
 
-    pub fn process_incoming_message<R: Rng>(
+    pub fn process_incoming_message(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
     ) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
         let msg_envelope = if let Some(msg) = self.incoming_messages.pop_front() {
@@ -1695,9 +1695,9 @@ impl PotatoHandler {
     /// created at.  We look up the matching stored UnrollCoin (via the
     /// channel handler's `unroll` or `timeout` field) so the puzzle hash
     /// matches.
-    pub fn do_unroll_spend_to_games<R: Rng>(
+    pub fn do_unroll_spend_to_games(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         unroll_coin: &CoinString,
         on_chain_state: usize,
     ) -> Result<Option<Effect>, Error> {
@@ -1735,9 +1735,9 @@ impl PotatoHandler {
     /// stays `Finished` — normal blockchain monitoring will detect the channel
     /// coin spend and route through `handle_channel_coin_spent`, the same path
     /// used when the opponent initiates the unroll.
-    pub fn go_on_chain<R: Rng>(
+    pub fn go_on_chain(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         got_error: bool,
     ) -> Result<Vec<Effect>, Error> {
         if matches!(self.channel_state, ChannelState::Failed) {
@@ -1823,9 +1823,9 @@ impl PotatoHandler {
     /// Build a channel-coin-to-unroll spend bundle regardless of current
     /// handshake state.  Used by test infrastructure to simulate a malicious
     /// peer that submits an unroll after agreeing to clean shutdown.
-    pub fn force_unroll_spend<R: Rng>(
+    pub fn force_unroll_spend(
         &self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
     ) -> Result<SpendBundle, Error> {
         let saved = self.last_channel_coin_spend_info.as_ref().ok_or_else(|| {
             Error::StrErr("force_unroll_spend: no channel coin spend info cached".to_string())
@@ -1858,9 +1858,9 @@ impl PotatoHandler {
     }
 
     #[cfg(test)]
-    pub fn force_stale_unroll_spend<R: Rng>(
+    pub fn force_stale_unroll_spend(
         &self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         saved: &ChannelCoinSpendInfo,
     ) -> Result<SpendBundle, Error> {
         let (channel_coin, channel_public_key) = {
@@ -1891,9 +1891,9 @@ impl PotatoHandler {
 
     /// If we have the potato and aren't going on-chain, flush the action queue
     /// into a batch. Otherwise request the potato from the peer.
-    fn flush_or_request_potato<R: Rng>(
+    fn flush_or_request_potato(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
     ) -> Result<(bool, Vec<Effect>), Error> {
         let (has_potato, effect) = self.send_potato_request_if_needed()?;
         let mut effects: Vec<Effect> = effect.into_iter().collect();
@@ -1906,9 +1906,9 @@ impl PotatoHandler {
         Ok((false, effects))
     }
 
-    fn do_game_action<R: Rng>(
+    fn do_game_action(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         action: GameAction,
     ) -> Result<(bool, Vec<Effect>), Error> {
         if matches!(
@@ -1934,9 +1934,9 @@ impl PotatoHandler {
         )))
     }
 
-    fn handle_channel_coin_spent<R: Rng>(
+    fn handle_channel_coin_spent(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<Vec<Effect>, Error> {
@@ -2009,9 +2009,9 @@ impl PotatoHandler {
     /// Called from both `handle_channel_coin_spent` (normal unroll path) and
     /// the clean-shutdown-fallback path when an unroll lands instead of the
     /// clean shutdown transaction.
-    fn handle_unroll_from_channel_conditions<R: Rng>(
+    fn handle_unroll_from_channel_conditions(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         conditions_nodeptr: NodePtr,
         unroll_coin: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
@@ -2117,9 +2117,9 @@ impl PotatoHandler {
     /// spent while we were in clean-shutdown mode.  Inspects the actual
     /// conditions to decide whether the clean shutdown transaction landed
     /// (our expected reward coin is present) or an unroll landed instead.
-    fn handle_clean_shutdown_conditions<R: Rng>(
+    fn handle_clean_shutdown_conditions(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<Vec<Effect>, Error> {
@@ -2231,9 +2231,9 @@ impl PotatoHandler {
     // All remaining work to finish the on chain transition.  We have the state number and
     // the actual coins used to go on chain with.  We must construct a view of the games that
     // matches the state system given so on chain play can proceed.
-    fn finish_on_chain_transition<R: Rng>(
+    fn finish_on_chain_transition(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         unroll_coin: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
         on_chain_state: usize,
@@ -2492,9 +2492,9 @@ impl PotatoHandler {
         Ok(effects)
     }
 
-    pub fn get_game_state_id<R: Rng>(
+    pub fn get_game_state_id(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
     ) -> Result<Option<Hash>, Error> {
         let player_ch = self.channel_handler().ok();
         if let Some(player_ch) = player_ch {
@@ -2505,9 +2505,9 @@ impl PotatoHandler {
 }
 
 impl FromLocalUI for PotatoHandler {
-    fn propose_game<R: Rng>(
+    fn propose_game(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         game: &GameStart,
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
         if !matches!(self.channel_state, ChannelState::Finished(_)) {
@@ -2538,9 +2538,9 @@ impl FromLocalUI for PotatoHandler {
         Ok((game_id_list, effects))
     }
 
-    fn accept_proposal<R: Rng>(
+    fn accept_proposal(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         game_id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
         let (_continued, effects) =
@@ -2548,9 +2548,9 @@ impl FromLocalUI for PotatoHandler {
         Ok(effects)
     }
 
-    fn cancel_proposal<R: Rng>(
+    fn cancel_proposal(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         game_id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
         let (_continued, effects) =
@@ -2558,9 +2558,9 @@ impl FromLocalUI for PotatoHandler {
         Ok(effects)
     }
 
-    fn make_move<R: Rng>(
+    fn make_move(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         id: &GameID,
         readable: &ReadableMove,
         new_entropy: Hash,
@@ -2571,9 +2571,9 @@ impl FromLocalUI for PotatoHandler {
         Ok(effects)
     }
 
-    fn accept_timeout<R: Rng>(
+    fn accept_timeout(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
         let (_continued, effects) = self.do_game_action(env, GameAction::AcceptTimeout(*id))?;
@@ -2581,9 +2581,9 @@ impl FromLocalUI for PotatoHandler {
         Ok(effects)
     }
 
-    fn shut_down<R: Rng>(
+    fn shut_down(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
     ) -> Result<Vec<Effect>, Error> {
         if matches!(
             self.channel_state,
@@ -2606,9 +2606,9 @@ impl FromLocalUI for PotatoHandler {
 }
 
 impl BootstrapTowardGame for PotatoHandler {
-    fn channel_offer<R: Rng>(
+    fn channel_offer(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_, R>,
+        _env: &mut ChannelHandlerEnv<'_>,
         bundle: SpendBundle,
     ) -> Result<Option<Effect>, Error> {
         self.channel_initiation_transaction = Some(bundle);
@@ -2623,9 +2623,9 @@ impl BootstrapTowardGame for PotatoHandler {
         Ok(None)
     }
 
-    fn channel_transaction_completion<R: Rng>(
+    fn channel_transaction_completion(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_, R>,
+        _env: &mut ChannelHandlerEnv<'_>,
         bundle: &SpendBundle,
     ) -> Result<Option<Effect>, Error> {
         self.channel_finished_transaction = Some(bundle.clone());
@@ -2642,9 +2642,9 @@ impl BootstrapTowardGame for PotatoHandler {
 }
 
 impl SpendWalletReceiver for PotatoHandler {
-    fn coin_created<R: Rng>(
+    fn coin_created(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_, R>,
+        _env: &mut ChannelHandlerEnv<'_>,
         _coin: &CoinString,
     ) -> Result<Option<Vec<Effect>>, Error> {
         if !self.waiting_to_start {
@@ -2706,9 +2706,9 @@ impl SpendWalletReceiver for PotatoHandler {
         ]))
     }
 
-    fn coin_spent<R: Rng>(
+    fn coin_spent(
         &mut self,
-        _env: &mut ChannelHandlerEnv<'_, R>,
+        _env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
         if matches!(self.channel_state, ChannelState::Failed) {
@@ -2724,9 +2724,9 @@ impl SpendWalletReceiver for PotatoHandler {
         Ok(effects)
     }
 
-    fn coin_timeout_reached<R: Rng>(
+    fn coin_timeout_reached(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
         if matches!(self.channel_state, ChannelState::Failed) {
@@ -2771,9 +2771,9 @@ impl SpendWalletReceiver for PotatoHandler {
         Ok(effects)
     }
 
-    fn coin_puzzle_and_solution<R: Rng>(
+    fn coin_puzzle_and_solution(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
+        env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
@@ -2862,5 +2862,138 @@ impl SpendWalletReceiver for PotatoHandler {
         }
 
         Ok((effects, None))
+    }
+}
+
+#[typetag::serde]
+impl PeerHandler for PotatoHandler {
+    fn amount(&self) -> Amount {
+        PotatoHandler::amount(self)
+    }
+    fn get_our_current_share(&self) -> Option<Amount> {
+        PotatoHandler::get_our_current_share(self)
+    }
+    fn get_their_current_share(&self) -> Option<Amount> {
+        PotatoHandler::get_their_current_share(self)
+    }
+    fn my_move_in_game(&self, game_id: &GameID) -> Option<bool> {
+        PotatoHandler::my_move_in_game(self, game_id)
+    }
+    fn get_game_coin(&self, game_id: &GameID) -> Option<CoinString> {
+        PotatoHandler::get_game_coin(self, game_id)
+    }
+    fn get_reward_puzzle_hash(&self, env: &mut ChannelHandlerEnv<'_>) -> Result<PuzzleHash, Error> {
+        PotatoHandler::get_reward_puzzle_hash(self, env)
+    }
+    fn get_game_state_id(&mut self, env: &mut ChannelHandlerEnv<'_>) -> Result<Option<Hash>, Error> {
+        PotatoHandler::get_game_state_id(self, env)
+    }
+    fn is_failed(&self) -> bool {
+        PotatoHandler::is_failed(self)
+    }
+    fn has_potato(&self) -> bool {
+        PotatoHandler::has_potato(self)
+    }
+    fn has_pending_incoming(&self) -> bool {
+        PotatoHandler::has_pending_incoming(self)
+    }
+    fn take_debug_lines(&mut self) -> Vec<String> {
+        PotatoHandler::take_debug_lines(self)
+    }
+    fn process_incoming_message(&mut self, env: &mut ChannelHandlerEnv<'_>) -> Result<Vec<Effect>, Error> {
+        PotatoHandler::process_incoming_message(self, env)
+    }
+    fn received_message(&mut self, env: &mut ChannelHandlerEnv<'_>, msg: Vec<u8>) -> Result<Vec<Effect>, Error> {
+        PotatoHandler::received_message(self, env, msg)
+    }
+    fn coin_spent(&mut self, env: &mut ChannelHandlerEnv<'_>, coin_id: &CoinString) -> Result<Vec<Effect>, Error> {
+        <Self as SpendWalletReceiver>::coin_spent(self, env, coin_id)
+    }
+    fn coin_timeout_reached(&mut self, env: &mut ChannelHandlerEnv<'_>, coin_id: &CoinString) -> Result<Vec<Effect>, Error> {
+        <Self as SpendWalletReceiver>::coin_timeout_reached(self, env, coin_id)
+    }
+    fn coin_created(&mut self, env: &mut ChannelHandlerEnv<'_>, coin_id: &CoinString) -> Result<Option<Vec<Effect>>, Error> {
+        <Self as SpendWalletReceiver>::coin_created(self, env, coin_id)
+    }
+    fn coin_puzzle_and_solution(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_>,
+        coin_id: &CoinString,
+        puzzle_and_solution: Option<(&Program, &Program)>,
+    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
+        <Self as SpendWalletReceiver>::coin_puzzle_and_solution(self, env, coin_id, puzzle_and_solution)
+    }
+    fn make_move(&mut self, env: &mut ChannelHandlerEnv<'_>, id: &GameID, readable: &ReadableMove, new_entropy: Hash) -> Result<Vec<Effect>, Error> {
+        <Self as FromLocalUI>::make_move(self, env, id, readable, new_entropy)
+    }
+    fn accept_timeout(&mut self, env: &mut ChannelHandlerEnv<'_>, id: &GameID) -> Result<Vec<Effect>, Error> {
+        <Self as FromLocalUI>::accept_timeout(self, env, id)
+    }
+    fn cheat_game(&mut self, env: &mut ChannelHandlerEnv<'_>, game_id: &GameID, mover_share: Amount, entropy: Hash) -> Result<Vec<Effect>, Error> {
+        PotatoHandler::cheat_game(self, env, game_id, mover_share, entropy)
+    }
+    fn take_replacement(&mut self) -> Option<Box<dyn PeerHandler>> {
+        if let Some(sh) = self.take_shutdown_replacement() {
+            return Some(sh as Box<dyn PeerHandler>);
+        }
+        if let Some(uw) = self.take_unroll_watch_replacement() {
+            return Some(uw as Box<dyn PeerHandler>);
+        }
+        self.take_on_chain_replacement().map(|oc| oc as Box<dyn PeerHandler>)
+    }
+    fn handshake_done(&self) -> bool {
+        PotatoHandler::handshake_done(self)
+    }
+    fn handshake_finished(&self) -> bool {
+        PotatoHandler::handshake_finished(self)
+    }
+    fn channel_offer(&mut self, env: &mut ChannelHandlerEnv<'_>, bundle: SpendBundle) -> Result<Option<Effect>, Error> {
+        <Self as BootstrapTowardGame>::channel_offer(self, env, bundle)
+    }
+    fn channel_transaction_completion(&mut self, env: &mut ChannelHandlerEnv<'_>, bundle: &SpendBundle) -> Result<Option<Effect>, Error> {
+        <Self as BootstrapTowardGame>::channel_transaction_completion(self, env, bundle)
+    }
+    fn start(&mut self, env: &mut ChannelHandlerEnv<'_>, parent_coin: CoinString) -> Result<Option<Effect>, Error> {
+        PotatoHandler::start(self, env, parent_coin)
+    }
+    fn is_initiator(&self) -> bool {
+        PotatoHandler::is_initiator(self)
+    }
+    fn propose_game(&mut self, env: &mut ChannelHandlerEnv<'_>, game: &GameStart) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
+        <Self as FromLocalUI>::propose_game(self, env, game)
+    }
+    fn accept_proposal(&mut self, env: &mut ChannelHandlerEnv<'_>, game_id: &GameID) -> Result<Vec<Effect>, Error> {
+        <Self as FromLocalUI>::accept_proposal(self, env, game_id)
+    }
+    fn cancel_proposal(&mut self, env: &mut ChannelHandlerEnv<'_>, game_id: &GameID) -> Result<Vec<Effect>, Error> {
+        <Self as FromLocalUI>::cancel_proposal(self, env, game_id)
+    }
+    fn shut_down(&mut self, env: &mut ChannelHandlerEnv<'_>) -> Result<Vec<Effect>, Error> {
+        <Self as FromLocalUI>::shut_down(self, env)
+    }
+    fn go_on_chain(&mut self, env: &mut ChannelHandlerEnv<'_>, got_error: bool) -> Result<Vec<Effect>, Error> {
+        PotatoHandler::go_on_chain(self, env, got_error)
+    }
+    fn next_game_id(&mut self) -> Result<GameID, Error> {
+        PotatoHandler::next_game_id(self)
+    }
+    fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
+        PotatoHandler::channel_handler(self)
+    }
+    #[cfg(test)]
+    fn force_unroll_spend(&self, env: &mut ChannelHandlerEnv<'_>) -> Result<SpendBundle, Error> {
+        PotatoHandler::force_unroll_spend(self, env)
+    }
+    #[cfg(test)]
+    fn get_last_channel_coin_spend_info(&self) -> Option<&ChannelCoinSpendInfo> {
+        PotatoHandler::get_last_channel_coin_spend_info(self)
+    }
+    #[cfg(test)]
+    fn corrupt_state_for_testing(&mut self, new_sn: usize) -> Result<(), Error> {
+        PotatoHandler::corrupt_state_for_testing(self, new_sn)
+    }
+    #[cfg(test)]
+    fn force_stale_unroll_spend(&self, env: &mut ChannelHandlerEnv<'_>, saved: &ChannelCoinSpendInfo) -> Result<SpendBundle, Error> {
+        PotatoHandler::force_stale_unroll_spend(self, env, saved)
     }
 }
