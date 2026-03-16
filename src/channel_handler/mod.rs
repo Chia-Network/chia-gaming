@@ -232,6 +232,34 @@ impl ChannelHandler {
         self.live_games.iter().find(|g| g.game_id == *game_id)
     }
 
+    pub fn private_keys(&self) -> &ChannelHandlerPrivateKeys {
+        &self.private_keys
+    }
+
+    pub fn my_allocated_balance(&self) -> Amount {
+        self.my_allocated_balance.clone()
+    }
+
+    pub fn their_allocated_balance(&self) -> Amount {
+        self.their_allocated_balance.clone()
+    }
+
+    pub fn unroll_advance_timeout(&self) -> &Timeout {
+        &self.unroll_advance_timeout
+    }
+
+    pub fn take_live_games(&mut self) -> Vec<LiveGame> {
+        std::mem::take(&mut self.live_games)
+    }
+
+    pub fn take_pending_accept_timeouts(&mut self) -> Vec<LiveGame> {
+        std::mem::take(&mut self.pending_accept_timeouts)
+    }
+
+    pub fn take_cached_last_actions(&mut self) -> Vec<CachedPotatoRegenerateLastHop> {
+        std::mem::take(&mut self.cached_last_actions)
+    }
+
     pub fn amount(&self, on_chain: bool) -> Amount {
         let allocated = self.my_allocated_balance.clone() + self.their_allocated_balance.clone();
 

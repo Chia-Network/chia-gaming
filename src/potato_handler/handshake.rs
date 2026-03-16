@@ -1,5 +1,4 @@
 use crate::common::types::{Aggsig, CoinString, PublicKey, PuzzleHash, SpendBundle};
-use crate::potato_handler::on_chain::OnChainGameHandler;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -46,7 +45,6 @@ pub enum ChannelState {
     OnChainWaitingForUnrollSpend(CoinString, usize, Option<CoinString>),
     OnChainWaitingForUnrollConditions(CoinString, usize),
     CleanShutdownWaitForConditions(CoinString, Option<CoinString>),
-    OnChain(Box<OnChainGameHandler>),
     Completed,
     Failed,
 }

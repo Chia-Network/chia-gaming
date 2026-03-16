@@ -32,7 +32,7 @@ use crate::shutdown::get_conditions_with_channel_handler;
 
 use crate::potato_handler::types::{
     BatchAction, BootstrapTowardGame, ConditionWaitKind, FromLocalUI, GameAction, GameFactory,
-    PeerMessage, PotatoHandlerImpl, PotatoHandlerInit, PotatoState, SpendWalletReceiver,
+    PeerMessage, PotatoHandlerInit, PotatoState, SpendWalletReceiver,
 };
 
 use crate::potato_handler::handshake::{
@@ -140,6 +140,9 @@ pub struct PotatoHandler {
 
     #[serde(skip)]
     debug_lines: Vec<String>,
+
+    #[serde(skip)]
+    on_chain_replacement: Option<Box<OnChainGameHandler>>,
 }
 
 fn format_batch_action(action: &BatchAction) -> String {
@@ -216,15 +219,16 @@ impl PotatoHandler {
             peer_wants_potato: false,
             last_channel_coin_spend_info: None,
             debug_lines: Vec::new(),
+            on_chain_replacement: None,
         }
     }
 
     pub fn take_debug_lines(&mut self) -> Vec<String> {
-        let mut lines = std::mem::take(&mut self.debug_lines);
-        if let ChannelState::OnChain(on_chain) = &mut self.channel_state {
-            lines.extend(on_chain.take_debug_lines());
-        }
-        lines
+        std::mem::take(&mut self.debug_lines)
+    }
+
+    pub fn take_on_chain_replacement(&mut self) -> Option<Box<OnChainGameHandler>> {
+        self.on_chain_replacement.take()
     }
 
     pub fn amount(&self) -> Amount {
@@ -241,10 +245,6 @@ impl PotatoHandler {
         self.channel_handler
             .as_ref()
             .map(|ch| ch.get_their_current_share())
-    }
-
-    pub fn is_on_chain(&self) -> bool {
-        matches!(self.channel_state, ChannelState::OnChain(_))
     }
 
     pub fn is_failed(&self) -> bool {
@@ -272,12 +272,8 @@ impl PotatoHandler {
         effects
     }
 
-    pub fn get_game_coin(&self, game_id: &GameID) -> Option<CoinString> {
-        if let ChannelState::OnChain(on_chain) = &self.channel_state {
-            on_chain.get_game_coin(game_id)
-        } else {
-            None
-        }
+    pub fn get_game_coin(&self, _game_id: &GameID) -> Option<CoinString> {
+        None
     }
 
     pub(crate) fn cheat_game<R: Rng>(
@@ -316,14 +312,9 @@ impl PotatoHandler {
     }
 
     pub fn my_move_in_game(&self, game_id: &GameID) -> Option<bool> {
-        if let ChannelState::OnChain(ocs) = &self.channel_state {
-            return ocs.my_move_in_game(game_id);
-        }
-
         if let Ok(ch) = self.channel_handler() {
             return ch.game_is_my_turn(game_id);
         }
-
         None
     }
 
@@ -332,34 +323,19 @@ impl PotatoHandler {
     }
 
     pub fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
-        if let Some(ch) = &self.channel_handler {
-            return Ok(ch);
-        }
-
-        if let ChannelState::OnChain(on_chain) = &self.channel_state {
-            return Ok(on_chain.channel_handler());
-        }
-
-        Err(Error::StrErr("no channel handler".to_string()))
+        self.channel_handler
+            .as_ref()
+            .ok_or_else(|| Error::StrErr("no channel handler".to_string()))
     }
 
     fn channel_handler_mut(&mut self) -> Result<&mut ChannelHandler, Error> {
-        if let Some(ch) = &mut self.channel_handler {
-            return Ok(ch);
-        }
-
-        if let ChannelState::OnChain(on_chain) = &mut self.channel_state {
-            return Ok(on_chain.channel_handler_mut());
-        }
-
-        Err(Error::StrErr("no channel handler".to_string()))
+        self.channel_handler
+            .as_mut()
+            .ok_or_else(|| Error::StrErr("no channel handler".to_string()))
     }
 
     pub fn handshake_finished(&self) -> bool {
-        matches!(
-            self.channel_state,
-            ChannelState::Finished(_) | ChannelState::OnChain(_)
-        )
+        matches!(self.channel_state, ChannelState::Finished(_))
     }
 
     #[cfg(test)]
@@ -1889,11 +1865,6 @@ impl PotatoHandler {
         env: &mut ChannelHandlerEnv<'_, R>,
         action: GameAction,
     ) -> Result<(bool, Vec<Effect>), Error> {
-        if let ChannelState::OnChain(on_chain) = &mut self.channel_state {
-            let effects = on_chain.do_on_chain_action(env, action)?;
-            return Ok((true, effects));
-        }
-
         if matches!(
             &self.channel_state,
             ChannelState::OnChainWaitForConditions(_, _)
@@ -2445,49 +2416,44 @@ impl PotatoHandler {
             }
         }
 
-        let mut swap_player_ch: Option<ChannelHandler> = None;
-        swap(&mut self.channel_handler, &mut swap_player_ch);
-        if let Some(channel_handler) = swap_player_ch {
-            let mut on_chain = OnChainGameHandler::new(
-                PotatoState::Present,
-                self.channel_timeout.clone(),
-                channel_handler,
-                on_chain_queue,
-                game_map,
-            );
-            effects.extend(on_chain.next_action(env)?);
-            self.channel_state = ChannelState::OnChain(Box::new(on_chain));
-        } else {
-            return Err(Error::StrErr("no channel handler yet".to_string()));
-        }
+        let mut player_ch = self.channel_handler.take().ok_or_else(|| {
+            Error::StrErr("no channel handler yet".to_string())
+        })?;
+
+        let mut on_chain = OnChainGameHandler::new(on_chain::OnChainGameHandlerArgs {
+            have_potato: PotatoState::Present,
+            channel_timeout: self.channel_timeout.clone(),
+            game_action_queue: on_chain_queue,
+            game_map,
+            private_keys: player_ch.private_keys().clone(),
+            reward_puzzle_hash: player_ch.my_reward_puzzle_hash().clone(),
+            their_reward_puzzle_hash: player_ch.their_reward_puzzle_hash().clone(),
+            my_out_of_game_balance: player_ch.my_out_of_game_balance(),
+            their_out_of_game_balance: player_ch.their_out_of_game_balance(),
+            my_allocated_balance: player_ch.my_allocated_balance(),
+            their_allocated_balance: player_ch.their_allocated_balance(),
+            live_games: player_ch.take_live_games(),
+            pending_accept_timeouts: player_ch.take_pending_accept_timeouts(),
+            cached_last_actions: player_ch.take_cached_last_actions(),
+            unroll_advance_timeout: player_ch.unroll_advance_timeout().clone(),
+            is_initial_potato: player_ch.is_initial_potato(),
+            state_number: player_ch.state_number(),
+        });
+        effects.extend(on_chain.next_action(env)?);
+        self.on_chain_replacement = Some(Box::new(on_chain));
+        self.channel_state = ChannelState::Completed;
 
         Ok(effects)
-    }
-
-    fn check_game_coin_spent(
-        &mut self,
-        coin_id: &CoinString,
-    ) -> Result<(bool, Option<Effect>), Error> {
-        if let ChannelState::OnChain(on_chain) = &mut self.channel_state {
-            let (result, effect) = on_chain.check_game_coin_spent(coin_id)?;
-            return Ok((result, effect));
-        }
-
-        Ok((false, None))
     }
 
     pub fn get_game_state_id<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
     ) -> Result<Option<Hash>, Error> {
-        if let ChannelState::OnChain(on_chain) = &mut self.channel_state {
-            return on_chain.get_game_state_id(env);
-        }
         let player_ch = self.channel_handler().ok();
         if let Some(player_ch) = player_ch {
             return player_ch.get_game_state_id(env).map(Some);
         }
-
         Ok(None)
     }
 }
@@ -2573,12 +2539,6 @@ impl FromLocalUI for PotatoHandler {
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
     ) -> Result<Vec<Effect>, Error> {
-        if matches!(self.channel_state, ChannelState::OnChain(_)) {
-            return Err(Error::StrErr(
-                "shut_down called while on-chain; on-chain completion is automatic".to_string(),
-            ));
-        }
-
         if matches!(
             self.channel_state,
             ChannelState::CleanShutdownWaitForConditions(..)
@@ -2705,20 +2665,6 @@ impl SpendWalletReceiver for PotatoHandler {
         _env: &mut ChannelHandlerEnv<'_, R>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
-        let _hs_desc = match &self.channel_state {
-            ChannelState::OnChainWaitingForUnrollSpend(uc, sn, _) => {
-                format!("OnChainWaitingForUnrollSpend(coin={uc:?}, sn={sn})")
-            }
-            ChannelState::OnChainWaitingForUnrollTimeoutOrSpend(uc, sn) => {
-                format!("OnChainWaitingForUnrollTimeoutOrSpend(coin={uc:?}, sn={sn})")
-            }
-            ChannelState::OnChainWaitingForUnrollConditions(uc, sn) => {
-                format!("OnChainWaitingForUnrollConditions(coin={uc:?}, sn={sn})")
-            }
-            ChannelState::OnChain(_) => "OnChain".to_string(),
-            ChannelState::Failed => "Failed".to_string(),
-            other => format!("{:?}", std::mem::discriminant(other)),
-        };
         if matches!(self.channel_state, ChannelState::Failed) {
             return Ok(vec![]);
         }
@@ -2727,9 +2673,6 @@ impl SpendWalletReceiver for PotatoHandler {
         effects.extend(effect);
 
         let (_matched_unroll, effect) = self.check_unroll_spent(coin_id)?;
-        effects.extend(effect);
-
-        let (_matched, effect) = self.check_game_coin_spent(coin_id)?;
         effects.extend(effect);
 
         Ok(effects)
@@ -2779,11 +2722,6 @@ impl SpendWalletReceiver for PotatoHandler {
             return Ok(effects);
         }
 
-        if let ChannelState::OnChain(on_chain) = &mut self.channel_state {
-            effects.extend(on_chain.coin_timeout_reached(env, coin_id)?);
-            return Ok(effects);
-        }
-
         Ok(effects)
     }
 
@@ -2797,30 +2735,6 @@ impl SpendWalletReceiver for PotatoHandler {
             return Ok((vec![], None));
         }
         let mut effects = Vec::new();
-        if let ChannelState::OnChain(on_chain) = &mut self.channel_state {
-            if let Some((p, s)) = puzzle_and_solution {
-                let (game_effects, resync) = on_chain.handle_game_coin_spent(env, coin_id, p, s)?;
-                effects.extend(game_effects);
-                return Ok((effects, resync));
-            } else if let Some((game_id, our_turn)) = on_chain.remove_game_coin_info(coin_id) {
-                let reason = if our_turn {
-                    "our turn coin spent unexpectedly".to_string()
-                } else {
-                    "opponent made impossible spend".to_string()
-                };
-                self.debug_lines.push(format!(
-                    "[game-error] {} {reason}",
-                    format_coin(coin_id),
-                ));
-                let notification = GameNotification::GameError {
-                    id: game_id,
-                    reason,
-                };
-                effects.push(Effect::Notify(notification));
-                effects.extend(on_chain.next_action(env)?);
-                return Ok((effects, None));
-            }
-        }
 
         if let ChannelState::CleanShutdownWaitForConditions(ref channel_coin_id, _) =
             self.channel_state

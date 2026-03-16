@@ -10,7 +10,6 @@ use crate::channel_handler::types::{
     ChannelHandlerEnv, ChannelHandlerPrivateKeys, PotatoMoveCachedData, PotatoSignatures,
     ReadableMove,
 };
-use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
     Aggsig, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, Program, ProgramRef,
     PuzzleHash, Spend, SpendBundle, Timeout,
@@ -338,62 +337,3 @@ pub struct PotatoHandlerInit {
     pub reward_puzzle_hash: PuzzleHash,
 }
 
-pub trait PotatoHandlerImpl {
-    fn channel_handler(&self) -> &ChannelHandler;
-
-    fn channel_handler_mut(&mut self) -> &mut ChannelHandler;
-
-    fn into_channel_handler(self) -> ChannelHandler;
-
-    fn amount(&self) -> Amount;
-
-    fn get_our_current_share(&self) -> Option<Amount>;
-
-    fn get_their_current_share(&self) -> Option<Amount>;
-
-    fn my_move_in_game(&self, game_id: &GameID) -> Option<bool>;
-
-    fn get_game_state_id<R: Rng>(
-        &self,
-        env: &mut ChannelHandlerEnv<'_, R>,
-    ) -> Result<Option<Hash>, Error>;
-
-    fn check_game_coin_spent(
-        &mut self,
-        coin_id: &CoinString,
-    ) -> Result<(bool, Option<Effect>), Error>;
-
-    fn handle_game_coin_spent<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
-        coin_id: &CoinString,
-        puzzle: &Program,
-        solution: &Program,
-    ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error>;
-
-    fn coin_timeout_reached<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
-        coin_id: &CoinString,
-    ) -> Result<Vec<Effect>, Error>;
-
-    fn next_action<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
-    ) -> Result<Vec<Effect>, Error>;
-
-    fn do_on_chain_move<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
-        current_coin: &CoinString,
-        game_id: GameID,
-        readable_move: ReadableMove,
-        entropy: Hash,
-    ) -> Result<Option<Effect>, Error>;
-
-    fn do_on_chain_action<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_, R>,
-        action: GameAction,
-    ) -> Result<Vec<Effect>, Error>;
-}
