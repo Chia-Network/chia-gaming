@@ -32,7 +32,7 @@ if [ "$needs_build" -eq 1 ]; then
     find clsp -name '*.hex' -delete
     cp build.rs.disabled build.rs
     trap 'rm -f "$REPO_ROOT/build.rs"' EXIT
-    cargo build
+    cargo build --features sim-server
     echo "Build took: ${SECONDS} seconds"
     current_stamps > "$CACHE_FILE"
 else

@@ -78,7 +78,7 @@ needs_build() {
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
     echo "=== Building simulator + chialisp (if needed) ==="
-    cargo build --features sim-tests,sim-server --bin chia-gaming-sim
+    cargo build --features sim-server --bin chia-gaming-sim
 
     WASM_STAMP="$FE_DIR/dist/.wasm-stamp"
     if needs_build "$WASM_STAMP" "$WASM_DIR/src" "$WASM_DIR/Cargo.toml" "$SCRIPT_DIR/src" "$SCRIPT_DIR/Cargo.toml"; then

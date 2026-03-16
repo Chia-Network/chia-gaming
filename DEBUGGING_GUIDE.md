@@ -8,7 +8,7 @@ to build, run tests, read output, and debug failures.
 ### Use `./cb.sh` and `./ct.sh`
 
 **Always use `./ct.sh` to run tests. Never use `cargo test` directly.** The
-script handles feature flags (`--features sim-tests`), output capture
+script handles feature flags (`--features sim-server`), output capture
 (`--nocapture`), log rotation, and wraparound test ordering.
 
 - **`./cb.sh`** — Build the test binary without running tests. Passes extra
@@ -29,7 +29,7 @@ script handles feature flags (`--features sim-tests`), output capture
 If you must bypass the scripts, replicate what `ct.sh` does:
 
 ```bash
-cargo test --lib --features sim-tests -- --nocapture
+cargo test --lib --features sim-server -- --nocapture
 ```
 
 The `--lib` flag skips doc-test compilation (which adds ~14s even when there
@@ -37,12 +37,12 @@ are no doc-tests).
 
 To start from a specific test (wraparound):
 ```bash
-SIM_TEST_FROM=accept_finished cargo test --lib --features sim-tests -- --nocapture
+SIM_TEST_FROM=accept_finished cargo test --lib --features sim-server -- --nocapture
 ```
 
 To run only matching test(s):
 ```bash
-SIM_TEST_ONLY=accept_finished cargo test --lib --features sim-tests -- --nocapture
+SIM_TEST_ONLY=accept_finished cargo test --lib --features sim-server -- --nocapture
 ```
 
 ### Test debugging workflow

@@ -53,7 +53,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     fi
 
     echo "=== Building WASM (nodejs target for tests) ==="
-    (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/node-pkg" --release --target=nodejs)
+    (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/node-pkg" --dev --target=nodejs)
 
     echo "=== Building lobby-connection ==="
     (cd "$LOBBY_CONN_DIR" && yarn install && yarn build)

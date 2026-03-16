@@ -20,7 +20,7 @@ echo "Build took: ${SECONDS} seconds"
 ./tools/build-chialisp.sh
 
 echo "=== Running rust tests ==="
-cargo test --lib --features sim-tests -- --nocapture
+cargo test --lib --features sim-server -- --nocapture
 
 if [ "$RUN_AUX_TESTS" -eq 1 ]; then
     echo "=== Running JS/WASM tests ==="
