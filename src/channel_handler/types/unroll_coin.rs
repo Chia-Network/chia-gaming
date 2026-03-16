@@ -45,9 +45,7 @@ use crate::common::types::{
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct UnrollCoin {
     pub started_with_potato: bool,
-    // State number for unroll.
-    // Always equal to or 1 less than the current state number.
-    // Updated when potato arrives.
+    // Potato number. Equals the latest state_number after send or receive.
     pub state_number: usize,
 
     pub outcome: Option<UnrollCoinOutcome>,

@@ -4728,7 +4728,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
 
         sim_setup.game_actions.push(GameAction::SaveUnrollSnapshot(1));
-        // Proposal round-trip advances player 0's last_received_state past
+        // Proposal round-trip advances player 0's state_number past
         // the snapshot without changing the first game's referee PH.
         sim_setup.game_actions.push(GameAction::ProposeNewGame(0, ProposeTrigger::Channel));
         sim_setup.game_actions.push(GameAction::AcceptProposal(1, GameID(3)));
@@ -4874,7 +4874,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             .push(GameAction::SaveUnrollSnapshot(1));
         // Move 2 changes the game PH.
         sim_setup.game_actions.push(second_move);
-        // Proposal round-trip advances last_received_state past the snapshot
+        // Proposal round-trip advances state_number past the snapshot
         // so the stale detection triggers.
         sim_setup
             .game_actions
@@ -4947,7 +4947,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
 
         sim_setup.game_actions.push(GameAction::SaveUnrollSnapshot(1));
-        // Proposal round-trip advances player 0's last_received_state past
+        // Proposal round-trip advances player 0's state_number past
         // the snapshot so that the stale detection triggers.
         sim_setup.game_actions.push(GameAction::ProposeNewGame(0, ProposeTrigger::Channel));
         sim_setup.game_actions.push(GameAction::AcceptProposal(1, GameID(3)));

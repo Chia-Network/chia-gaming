@@ -17,7 +17,7 @@ use crate::common::types::{
     Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, Program, PuzzleHash,
     SpendBundle, Timeout,
 };
-use crate::potato_handler::effects::{Effect, GameNotification, ResyncInfo};
+use crate::potato_handler::effects::{format_coin, Effect, GameNotification, ResyncInfo};
 use crate::potato_handler::types::{GameAction, PotatoHandlerImpl, PotatoState};
 use crate::referee::types::{SlashOutcome, TheirTurnCoinSpentResult};
 use crate::referee::Referee;
@@ -48,6 +48,9 @@ pub struct OnChainGameHandler {
     game_map: HashMap<CoinString, OnChainGameState>,
     #[serde(skip)]
     pending_move: Option<PendingMoveSavedState>,
+
+    #[serde(skip)]
+    debug_lines: Vec<String>,
 }
 
 impl std::fmt::Debug for OnChainGameHandler {
@@ -71,7 +74,12 @@ impl OnChainGameHandler {
             game_action_queue,
             game_map,
             pending_move: None,
+            debug_lines: Vec::new(),
         }
+    }
+
+    pub fn take_debug_lines(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.debug_lines)
     }
 
     fn try_emit_terminal(
@@ -308,6 +316,13 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 }
                 None
             });
+            if let Some(ref rc) = reward_coin {
+                self.debug_lines.push(format!(
+                    "[slash-on-chain] {} reward={}",
+                    format_coin(coin_id),
+                    format_coin(rc),
+                ));
+            }
             let notification = if let Some(reward_coin) = reward_coin {
                 GameNotification::WeSlashedOpponent {
                     id: old_definition.game_id,
@@ -315,6 +330,10 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                     reward_coin,
                 }
             } else {
+                self.debug_lines.push(format!(
+                    "[game-error] {} slash succeeded but no reward coin found",
+                    format_coin(coin_id),
+                ));
                 GameNotification::GameError {
                     id: old_definition.game_id,
                     reason: "slash succeeded but no reward coin found".to_string(),
@@ -424,11 +443,16 @@ impl PotatoHandlerImpl for OnChainGameHandler {
         let their_turn_result = if let Ok(result) = result {
             result
         } else {
+            let reason = format!("game_coin_spent failed: {result:?}");
+            self.debug_lines.push(format!(
+                "[game-error] {} {reason}",
+                format_coin(coin_id),
+            ));
             if let Some(eff) = self.try_emit_terminal(
                 &old_definition.game_id,
                 GameNotification::GameError {
                     id: old_definition.game_id,
-                    reason: format!("game_coin_spent failed: {result:?}"),
+                    reason,
                 },
             ) {
                 effects.push(eff);
@@ -445,11 +469,16 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                     | CoinSpentInformation::OurReward(..)
             );
             if !is_expected {
+                let reason = format!("our turn coin spent unexpectedly: {their_turn_result:?}");
+                self.debug_lines.push(format!(
+                    "[game-error] {} {reason}",
+                    format_coin(coin_id),
+                ));
                 if let Some(eff) = self.try_emit_terminal(
                     &old_definition.game_id,
                     GameNotification::GameError {
                         id: old_definition.game_id,
-                        reason: format!("our turn coin spent unexpectedly: {their_turn_result:?}"),
+                        reason,
                     },
                 ) {
                     effects.push(eff);
@@ -467,6 +496,11 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 _redo,
             )) => {
                 let new_coin_id = CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt);
+                self.debug_lines.push(format!(
+                    "[move-on-chain] {} new_coin={}",
+                    format_coin(coin_id),
+                    format_coin(&new_coin_id),
+                ));
 
                 let game_id = old_definition.game_id;
                 let is_my_turn = matches!(self.player_ch.game_is_my_turn(&game_id), Some(true));
@@ -532,6 +566,18 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                     .and_then(|c| c.to_parts())
                     .map(|(_, _, amt)| amt.clone())
                     .unwrap_or_default();
+                if let Some(ref rc) = my_reward_coin_string {
+                    self.debug_lines.push(format!(
+                        "[timeout-on-chain] {} reward={}",
+                        format_coin(coin_id),
+                        format_coin(rc),
+                    ));
+                } else {
+                    self.debug_lines.push(format!(
+                        "[timeout-on-chain] {} no reward",
+                        format_coin(coin_id),
+                    ));
+                }
                 if !old_definition.notification_sent {
                     let notif = if old_definition.our_turn {
                         GameNotification::WeTimedOut {
@@ -568,6 +614,11 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 mover_share,
                 ..
             }) => {
+                self.debug_lines.push(format!(
+                    "[move-on-chain] {} new_coin={} mover_share={mover_share}",
+                    format_coin(coin_id),
+                    format_coin(&new_coin_string),
+                ));
                 let (puzzle_hash, amt) =
                     if let Some((orig_coin_id, ph, amt)) = new_coin_string.to_parts() {
                         game_assert_eq!(
@@ -626,6 +677,10 @@ impl PotatoHandlerImpl for OnChainGameHandler {
             CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Slash(outcome)) => {
                 self.have_potato = PotatoState::Present;
 
+                self.debug_lines.push(format!(
+                    "[slash-on-chain] {}",
+                    format_coin(coin_id),
+                ));
                 effects.push(Effect::Notify(
                     GameNotification::OpponentPlayedIllegalMove {
                         id: old_definition.game_id,
@@ -676,6 +731,12 @@ impl PotatoHandlerImpl for OnChainGameHandler {
                 }
             }
             CoinSpentInformation::OurReward(ph, amt) => {
+                let reward_coin_debug = CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt);
+                self.debug_lines.push(format!(
+                    "[timeout-on-chain] {} reward={}",
+                    format_coin(coin_id),
+                    format_coin(&reward_coin_debug),
+                ));
                 if !old_definition.notification_sent {
                     let reward_coin = if amt > Amount::default() {
                         Some(CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt))
@@ -720,6 +781,11 @@ impl PotatoHandlerImpl for OnChainGameHandler {
         if let Some(game_def) = self.game_map.remove(coin_id) {
             let initial_potato = self.player_ch.is_initial_potato();
             let game_id = game_def.game_id;
+
+            self.debug_lines.push(format!(
+                "[timeout-on-chain] {}",
+                format_coin(coin_id),
+            ));
 
             if let Some(_slash_amount) = game_def.pending_slash_amount {
                 let our_reward = game_def.cheating_move_mover_share.unwrap_or_default();

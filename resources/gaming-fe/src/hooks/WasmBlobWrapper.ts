@@ -184,6 +184,9 @@ export class WasmBlobWrapper {
     for (const coin of result.coin_solution_requests || []) {
       this.fulfillPuzzleSolutionRequest(coin);
     }
+    for (const line of result.debug_lines || []) {
+      this.rxjsEmitter?.next({ type: 'debug_log', message: line });
+    }
   }
 
   private async fulfillPuzzleSolutionRequest(coinHex: string) {

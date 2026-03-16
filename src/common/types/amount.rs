@@ -40,6 +40,12 @@ impl Amount {
     }
 }
 
+impl std::fmt::Display for Amount {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 impl AddAssign for Amount {
     fn add_assign(&mut self, rhs: Self) {
         self.0 += rhs.0;

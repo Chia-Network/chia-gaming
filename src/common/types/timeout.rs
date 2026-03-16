@@ -29,6 +29,12 @@ impl Timeout {
     }
 }
 
+impl std::fmt::Display for Timeout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 impl Add for Timeout {
     type Output = Timeout;
 

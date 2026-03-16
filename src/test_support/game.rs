@@ -205,7 +205,7 @@ mod sim_tests {
         AcceptTimeout(usize, GameID),
         /// Shut down
         CleanShutdown(usize),
-        /// Corrupt a player's current_state_number for testing edge cases.
+        /// Corrupt a player's state_number for testing edge cases.
         /// (player, new_state_number)
         CorruptStateNumber(usize, usize),
         /// Force-submit an unroll transaction for a player, bypassing

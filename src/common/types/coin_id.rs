@@ -18,6 +18,12 @@ impl CoinID {
     }
 }
 
+impl std::fmt::Display for CoinID {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for CoinID {
     fn to_clvm(&self, encoder: &mut E) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
         self.0.to_clvm(encoder)

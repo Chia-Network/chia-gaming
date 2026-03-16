@@ -6,6 +6,15 @@ use crate::common::types::{
 use crate::potato_handler::handshake::{HandshakeA, HandshakeB};
 use crate::potato_handler::types::{BatchAction, PeerMessage};
 
+pub fn format_coin(coin: &CoinString) -> String {
+    match coin.to_parts() {
+        Some((parent, ph, amt)) => {
+            format!("parent={} ph={} amt={}", parent, ph, amt)
+        }
+        None => format!("(unparseable {} bytes)", coin.to_bytes().len()),
+    }
+}
+
 pub struct ResyncInfo {
     pub state_number: usize,
     pub is_my_turn: bool,

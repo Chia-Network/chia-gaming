@@ -164,9 +164,8 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
                 : outcome.my_win_outcome === 'lose' ? -(perGameAmount / 2n)
                 : 0n;
     setMyRunningBalance(prev => prev + delta);
-    appendDebugLog(`[hand] outcome: ${outcome.my_win_outcome} (${delta >= 0n ? '+' : ''}${delta} mojos)`);
     awaitingDisplayCompleteRef.current = true;
-  }, [appendDebugLog, perGameAmount]);
+  }, [perGameAmount]);
 
   const onTurnChanged = useCallback((isMyTurn: boolean) => {
     setGameCoin(prev => {
@@ -240,8 +239,6 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
         }
       }
     }
-
-    appendDebugLog(`[notification] ${type}`);
 
     // Channel coin lifecycle
     if ('ChannelCreated' in n) {
@@ -321,7 +318,7 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
     } else if (!('GameProposed' in n) && !('GameProposalAccepted' in n) && !('OpponentMoved' in n) && !('GameMessage' in n)) {
       console.warn('unhandled notification:', JSON.stringify(n));
     }
-  }, [iStarted, proposeNewGame, appendDebugLog, gameplayEventSubject]);
+  }, [iStarted, proposeNewGame, gameplayEventSubject]);
 
   // Subscribe to WASM events
   useEffect(() => {
@@ -339,7 +336,9 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
             setChannelCoin(prev => ({ coinHex: prev.coinHex, state: 'closed' }));
             break;
           case 'address':
-            appendDebugLog(`[address] puzzle=${evt.data.puzzleHash?.slice(0, 12)}…`);
+            break;
+          case 'debug_log':
+            appendDebugLog(evt.message);
             break;
           default: {
             const _exhaustive: never = evt;

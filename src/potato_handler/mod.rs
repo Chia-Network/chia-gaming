@@ -26,7 +26,7 @@ use crate::common::types::{
     GameType, GetCoinStringParts, Hash, IntoErr, Program, ProgramRef, Puzzle, PuzzleHash, Spend,
     SpendBundle, Timeout,
 };
-use crate::potato_handler::effects::{Effect, GameNotification, ResyncInfo};
+use crate::potato_handler::effects::{format_coin, Effect, GameNotification, ResyncInfo};
 use crate::potato_handler::on_chain::OnChainGameHandler;
 use crate::shutdown::get_conditions_with_channel_handler;
 
@@ -137,26 +137,49 @@ pub struct PotatoHandler {
     // hs.spend even if the exchange happened before Finished was set.
     #[serde(skip)]
     last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
+
+    #[serde(skip)]
+    debug_lines: Vec<String>,
 }
 
-/// Peer interface for high level opaque messages.
-///
-/// ch1 has generated public key and passed that info via handshake a message to
-/// peer 2 into ch2.
-/// When alice gets message b, she sends a nil potato.
-/// and at the same time calls up the stack, telling the owner "here is the initial
-/// channel public key".
-///
-/// bob is going to do the same thing when he gets message b.
-///
-/// Alice is just going to get a message back from her peer after giving the
-/// channel public key (finished aggregating).
-///
-/// Alice forgets the channel offer after sending it to bob (received via received_channel_offer from the wallet bootstrap object).
-/// Bob receivs channel offer then is given the transaction completion by watching
-/// the blockchain.
-///
-/// once this object knows the channel puzzle hash they should register the coin.
+fn format_batch_action(action: &BatchAction) -> String {
+    match action {
+        BatchAction::ProposeGame(gsi) => {
+            format!(
+                "ProposeGame id={} amt={} my={} their={} timeout={}",
+                gsi.game_id,
+                gsi.amount,
+                gsi.my_contribution_this_game,
+                gsi.their_contribution_this_game,
+                gsi.timeout,
+            )
+        }
+        BatchAction::AcceptProposal(id) => format!("AcceptProposal id={id}"),
+        BatchAction::CancelProposal(id) => format!("CancelProposal id={id}"),
+        BatchAction::Move(id, details) => {
+            format!(
+                "Move id={id} mover_share={} max_move_size={} validation_info_hash={}",
+                details.basic.mover_share,
+                details.basic.max_move_size,
+                details
+                    .validation_info_hash
+                    .as_ref()
+                    .map_or("none".to_string(), |h| h.to_string()),
+            )
+        }
+        BatchAction::AcceptTimeout(id, amount) => {
+            format!("AcceptTimeout id={id} amt={amount}")
+        }
+    }
+}
+
+fn format_reward_coin(label: &str, ph: &PuzzleHash, amount: &Amount) -> Option<String> {
+    if *amount == Amount::default() {
+        return None;
+    }
+    Some(format!("{label} ph={ph} amt={amount}"))
+}
+
 impl PotatoHandler {
     pub fn new(phi: PotatoHandlerInit) -> PotatoHandler {
         PotatoHandler {
@@ -192,7 +215,16 @@ impl PotatoHandler {
             incoming_messages: VecDeque::default(),
             peer_wants_potato: false,
             last_channel_coin_spend_info: None,
+            debug_lines: Vec::new(),
         }
+    }
+
+    pub fn take_debug_lines(&mut self) -> Vec<String> {
+        let mut lines = std::mem::take(&mut self.debug_lines);
+        if let ChannelState::OnChain(on_chain) = &mut self.channel_state {
+            lines.extend(on_chain.take_debug_lines());
+        }
+        lines
     }
 
     pub fn amount(&self) -> Amount {
@@ -719,6 +751,35 @@ impl PotatoHandler {
             let ch = self.channel_handler_mut()?;
             ch.verify_received_batch_signatures(env, signatures)?
         };
+
+        {
+            let ch = self.channel_handler()?;
+            let state_num = ch.state_number();
+            let actions_str: Vec<String> = actions.iter().map(format_batch_action).collect();
+            let mut parts = vec![format!("[recv] state={state_num}")];
+            for a in &actions_str {
+                parts.push(format!("  {a}"));
+            }
+            if clean_shutdown.is_some() {
+                parts.push("  clean_shutdown=true".to_string());
+            }
+            if let Some(s) = format_reward_coin(
+                "my_reward",
+                ch.my_reward_puzzle_hash(),
+                &ch.my_out_of_game_balance(),
+            ) {
+                parts.push(format!("  {s}"));
+            }
+            if let Some(s) = format_reward_coin(
+                "their_reward",
+                ch.their_reward_puzzle_hash(),
+                &ch.their_out_of_game_balance(),
+            ) {
+                parts.push(format!("  {s}"));
+            }
+            self.debug_lines.push(parts.join("\n"));
+        }
+
         effects.extend(self.update_channel_coin_after_receive(env, &spend_info)?);
 
         Ok(effects)
@@ -1004,6 +1065,35 @@ impl PotatoHandler {
             let ch = self.channel_handler_mut()?;
             ch.update_cached_unroll_state(env)?
         };
+
+        {
+            let ch = self.channel_handler()?;
+            let state_num = ch.state_number();
+            let actions_str: Vec<String> =
+                batch_actions.iter().map(format_batch_action).collect();
+            let mut parts = vec![format!("[send] state={state_num}")];
+            for a in &actions_str {
+                parts.push(format!("  {a}"));
+            }
+            if clean_shutdown_data.is_some() {
+                parts.push("  clean_shutdown=true".to_string());
+            }
+            if let Some(s) = format_reward_coin(
+                "my_reward",
+                ch.my_reward_puzzle_hash(),
+                &ch.my_out_of_game_balance(),
+            ) {
+                parts.push(format!("  {s}"));
+            }
+            if let Some(s) = format_reward_coin(
+                "their_reward",
+                ch.their_reward_puzzle_hash(),
+                &ch.their_out_of_game_balance(),
+            ) {
+                parts.push(format!("  {s}"));
+            }
+            self.debug_lines.push(parts.join("\n"));
+        }
 
         self.have_potato = PotatoState::Absent;
         effects.push(Effect::PeerBatch {
@@ -1959,8 +2049,16 @@ impl PotatoHandler {
             }
         };
 
+        self.debug_lines.push(format!(
+            "[unroll-started] {} state={on_chain_state}",
+            format_coin(unroll_coin),
+        ));
+
         match outcome {
             Outcome::Preempted => {
+                self.debug_lines.push(format!(
+                    "[unroll-preempt] state={on_chain_state}",
+                ));
                 self.channel_state = ChannelState::OnChainWaitingForUnrollSpend(
                     unroll_coin.clone(),
                     on_chain_state,
@@ -1984,6 +2082,9 @@ impl PotatoHandler {
                 });
             }
             Outcome::Unrecoverable(ref reason) => {
+                self.debug_lines.push(format!(
+                    "[unroll-error] {reason}",
+                ));
                 effects.extend(self.emit_failure_cleanup());
                 effects.push(Effect::Notify(GameNotification::ChannelError {
                     reason: reason.clone(),
@@ -2052,6 +2153,14 @@ impl PotatoHandler {
         if is_clean_shutdown {
             self.channel_state = ChannelState::Completed;
             let mut effects = Vec::new();
+            if let Some(ref rc) = reward_coin {
+                self.debug_lines.push(format!(
+                    "[clean-end] reward {}",
+                    format_coin(rc),
+                ));
+            } else {
+                self.debug_lines.push("[clean-end] no reward".to_string());
+            }
             {
                 let ch = self.channel_handler_mut()?;
                 for (id, amount) in ch.drain_cached_accept_timeouts() {
@@ -2159,8 +2268,9 @@ impl PotatoHandler {
                 reward_amount: reward_amount.clone(),
             }));
 
-            let last_received = player_ch.get_last_received_state();
-            let is_stale = on_chain_state < last_received;
+            let is_stale = player_ch
+                .timeout_state_number()
+                .map_or(false, |t| on_chain_state + 1 < t);
 
             let created_coins: Vec<(PuzzleHash, Amount)> = conditions
                 .iter()
@@ -2561,15 +2671,33 @@ impl SpendWalletReceiver for PotatoHandler {
                 )?
                 .into_iter()
                 .collect();
+            {
+                let ch = self.channel_handler()?;
+                self.debug_lines.push(format!(
+                    "[channel-created] {} state={} have_potato={}",
+                    format_coin(&channel_coin),
+                    ch.state_number(),
+                    ch.have_potato(),
+                ));
+            }
             effects.push(Effect::Notify(GameNotification::ChannelCreated {
                 channel_coin: channel_coin.clone(),
             }));
             return Ok(Some(effects));
         }
 
-        Ok(Some(vec![Effect::Notify(
-            GameNotification::ChannelCreated { channel_coin },
-        )]))
+        {
+            let ch = self.channel_handler()?;
+            self.debug_lines.push(format!(
+                "[channel-created] {} state={} have_potato={}",
+                format_coin(&channel_coin),
+                ch.state_number(),
+                ch.have_potato(),
+            ));
+        }
+        Ok(Some(vec![
+            Effect::Notify(GameNotification::ChannelCreated { channel_coin }),
+        ]))
     }
 
     fn coin_spent<R: Rng>(
@@ -2633,12 +2761,16 @@ impl SpendWalletReceiver for PotatoHandler {
         };
 
         if let Some(on_chain_state) = unroll_timed_out {
+            self.debug_lines.push(format!(
+                "[unroll-timeout] state={on_chain_state}",
+            ));
             match self.do_unroll_spend_to_games(env, coin_id, on_chain_state) {
                 Ok(effect) => {
                     effects.extend(effect);
                 }
                 Err(e) => {
                     let reason = format!("timeout unroll failed for state {on_chain_state}: {e:?}");
+                    self.debug_lines.push(format!("[unroll-error] {reason}"));
                     effects.extend(self.emit_failure_cleanup());
                     effects.push(Effect::Notify(GameNotification::ChannelError { reason }));
                     self.channel_state = ChannelState::Failed;
@@ -2676,6 +2808,10 @@ impl SpendWalletReceiver for PotatoHandler {
                 } else {
                     "opponent made impossible spend".to_string()
                 };
+                self.debug_lines.push(format!(
+                    "[game-error] {} {reason}",
+                    format_coin(coin_id),
+                ));
                 let notification = GameNotification::GameError {
                     id: game_id,
                     reason,
@@ -2696,6 +2832,7 @@ impl SpendWalletReceiver for PotatoHandler {
                     }
                     Err(e) => {
                         let reason = format!("clean shutdown condition check failed: {e:?}");
+                        self.debug_lines.push(format!("[channel-error] {reason}"));
                         effects.extend(self.emit_failure_cleanup());
                         effects.push(Effect::Notify(GameNotification::ChannelError { reason }));
                         self.channel_state = ChannelState::Failed;
@@ -2730,6 +2867,7 @@ impl SpendWalletReceiver for PotatoHandler {
                         }
                         Err(e) => {
                             let reason = format!("channel coin spent to non-unroll: {e:?}");
+                            self.debug_lines.push(format!("[channel-error] {reason}"));
                             effects.extend(self.emit_failure_cleanup());
                             effects.push(Effect::Notify(GameNotification::ChannelError { reason }));
                             self.channel_state = ChannelState::Failed;
@@ -2751,6 +2889,7 @@ impl SpendWalletReceiver for PotatoHandler {
                         }
                         Err(e) => {
                             let reason = format!("unroll coin spent with unexpected state: {e:?}");
+                            self.debug_lines.push(format!("[unroll-error] {reason}"));
                             effects.extend(self.emit_failure_cleanup());
                             effects.push(Effect::Notify(GameNotification::ChannelError { reason }));
                             self.channel_state = ChannelState::Failed;

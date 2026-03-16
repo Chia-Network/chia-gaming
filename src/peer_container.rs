@@ -138,6 +138,7 @@ pub struct DrainResult {
     pub notifications: Vec<GameNotification>,
     pub receive_errors: Vec<Error>,
     pub resync: Option<(usize, bool)>,
+    pub debug_lines: Vec<String>,
 }
 
 pub trait GameCradle {
@@ -677,6 +678,8 @@ impl SynchronousGameCradle {
                 .push(GameNotification::GoingOnChain { reason });
         }
 
+        result.debug_lines = self.peer.take_debug_lines();
+
         Ok(result)
     }
 
@@ -685,7 +688,8 @@ impl SynchronousGameCradle {
         effects: Vec<Effect>,
         allocator: &mut AllocEncoder,
     ) -> Result<(), Error> {
-        apply_effects(effects, allocator, &mut self.state)
+        apply_effects(effects, allocator, &mut self.state)?;
+        Ok(())
     }
 
     fn create_partial_spend_for_channel_coin<R: Rng>(

@@ -28,6 +28,7 @@ export interface WasmResult {
   notifications?: WasmNotification[];
   coin_solution_requests?: string[];
   ids?: string[];
+  debug_lines?: string[];
 }
 
 export type WasmInitFn = (opts: { module: ArrayBuffer }) => void;
@@ -133,7 +134,8 @@ export type WasmEvent =
   | { type: 'notification'; data: WasmNotification }
   | { type: 'error'; error: string }
   | { type: 'finished' }
-  | { type: 'address'; data: BlockchainInboundAddressResult };
+  | { type: 'address'; data: BlockchainInboundAddressResult }
+  | { type: 'debug_log'; message: string };
 
 export interface GameCradleCreateConfig {
   rng_id: number;

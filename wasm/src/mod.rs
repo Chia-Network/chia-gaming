@@ -809,6 +809,7 @@ mod gaming_wasm {
         notifications: Vec<serde_json::Value>,
         receive_errors: Vec<String>,
         coin_solution_requests: Vec<String>,
+        debug_lines: Vec<String>,
     }
 
     fn spend_to_js(spend: &Spend) -> JsSpend {
@@ -892,6 +893,7 @@ mod gaming_wasm {
                 .iter()
                 .map(coin_string_to_hex)
                 .collect(),
+            debug_lines: dr.debug_lines.clone(),
         })
     }
 
