@@ -33,6 +33,7 @@ For debugging and testing operational guidance, see `DEBUGGING_GUIDE.md`.
 - [Calpoker: The Reference Game](#calpoker-the-reference-game)
   - [Commit-Reveal Protocol](#commit-reveal-protocol)
   - [On-Chain Steps (a through e)](#on-chain-steps-a-through-e)
+- [Handler Architecture](#handler-architecture)
 - [Code Organization](#code-organization)
 - [Key Types](#key-types)
 - [Timeouts](#timeouts)
@@ -272,14 +273,35 @@ that does not carry the potato and can be sent at any time.
 ### Handshake
 
 Before play begins, the two players execute a multi-step handshake
-(steps A through F) to:
+(steps A through F) to exchange public keys, agree on channel parameters,
+co-sign the initial channel coin, and transition to `PotatoHandler`.
 
-1. Exchange public keys (channel keys, unroll keys, referee keys)
-2. Agree on channel parameters (timeout, amounts)
-3. Co-sign the initial channel coin creation
-4. Transition to `PotatoHandler`
+Each side runs its own handler: `HandshakeInitiatorHandler` (the player who
+starts the channel) and `HandshakeReceiverHandler`. Each step uses a dedicated
+`PeerMessage` variant — handshake messages are not sent via `Batch`:
 
-**Key code:** `src/potato_handler/handshake.rs`, `src/potato_handler/start.rs`
+| Step | Sender | Message | Payload |
+|------|--------|---------|---------|
+| A | Initiator | `HandshakeA` | Parent coin, public keys |
+| B | Receiver | `HandshakeB` | Public keys, reward payout signature |
+| C | Initiator | `HandshakeC` | `PotatoSignatures` (channel + unroll half-sigs) |
+| D | Receiver | `HandshakeD` | `PotatoSignatures` (channel + unroll half-sigs) |
+| E | Initiator | `HandshakeE` | `SpendBundle` (initiator's funding half) |
+| F | Receiver | `HandshakeF` | `SpendBundle` (completed funding transaction) |
+
+After C/D, both sides have exchanged signatures and the `ChannelHandler` is
+fully constructed. E carries the initiator's partial funding transaction; the
+receiver adds their funding coin, broadcasts the combined transaction, and
+sends the completed bundle back in F.
+
+The transition to `PotatoHandler` is driven by `coin_created` — the channel
+coin appearing on-chain. Since the coin cannot exist before E is sent, this
+is the ground truth for "the channel is live." A late-arriving `HandshakeF`
+after the transition is silently ignored by `PotatoHandler`.
+
+**Key code:** `src/potato_handler/handshake_initiator.rs`,
+`src/potato_handler/handshake_receiver.rs`,
+`src/potato_handler/handshake.rs` (shared types)
 
 ---
 
@@ -435,7 +457,7 @@ transactions in response to what it sees.
 
 A key design principle is that **self-initiated and opponent-initiated on-chain
 transitions follow the same code path**. When a player calls `go_on_chain`, it
-submits the pre-signed channel coin spend (`hs.spend`) and sets a flag to stop
+builds and submits a channel coin spend from `last_channel_coin_spend_info` and sets a flag to stop
 sending peer messages — but from that point on, the actual state machine
 progression is driven entirely by **coin-watching events**. The player detects
 its own channel coin spend the same way it would detect the opponent's: by
@@ -445,10 +467,11 @@ transitions themselves.
 
 ### Step 1: Channel → Unroll
 
-`go_on_chain` submits the single `SpendBundle` stored in `hs.spend`. This
-spend is maintained by `update_channel_coin_after_receive` on every potato
-exchange, so it always reflects the latest co-signed state. The spend creates
-the unroll coin on-chain.
+`go_on_chain` builds a `SpendBundle` from `last_channel_coin_spend_info`
+(a `ChannelCoinSpendInfo` containing the solution, conditions, and aggregate
+signature). This info is updated by `update_channel_coin_after_receive` on
+every potato exchange, so it always reflects the latest co-signed state.
+The spend creates the unroll coin on-chain.
 
 When the channel coin spend is detected (by either player), `ChannelCoinSpent`
 is emitted as a notification and the state number of the unroll is extracted
@@ -522,7 +545,8 @@ be closed.
 
 **Key code:**
 
-- `src/potato_handler/mod.rs` — `go_on_chain`, `handle_channel_coin_spent`,
+- `src/potato_handler/mod.rs` — `go_on_chain`
+- `src/potato_handler/unroll_watch_handler.rs` — `handle_channel_coin_spent`,
 `finish_on_chain_transition`
 - `src/potato_handler/on_chain.rs` — `OnChainGameHandler`
 - `src/channel_handler/mod.rs` — `set_state_for_coins`,
@@ -571,27 +595,28 @@ initiate an unroll (via `go_on_chain`) around the same time. Both spend the
 channel coin, so only one can land on-chain.
 
 Because of this, the system never blindly trusts that the clean shutdown
-landed. When the channel coin is detected as spent, the handler transitions
-to `CleanShutdownWaitForConditions` and inspects the actual spend conditions:
+landed. When the channel coin is detected as spent, the `ShutdownHandler`
+inspects the actual spend conditions:
 
 1. **Clean shutdown landed:** The conditions contain a `CreateCoin` matching
   the expected reward coin (puzzle hash and amount). The handler transitions
    to `Completed` and emits `CleanShutdownComplete`.
 2. **An unroll landed instead:** The conditions do not match (or, when the
   player's expected reward is zero, they contain a `Rem` — which clean
-   shutdown conditions never include). The handler falls through to the
-   standard `handle_unroll_from_channel_conditions` path, which compares the
-   on-chain state number against the local state to decide preempt vs timeout.
-   Since no games are active, the unroll creates only reward coins;
+   shutdown conditions never include). The `ShutdownHandler` falls through
+   to `UnrollWatchHandler`, which compares
+   the on-chain state number against the local state to decide preempt vs
+   timeout. Since no games are active, the unroll creates only reward coins;
    `finish_on_chain_transition` finds an empty game map, skips the
    `OnChainGameHandler`, and transitions directly to `Completed`. The
    outcome is the same correct balances, just with more on-chain transactions.
 
 ### Key Code
 
-- `src/potato_handler/mod.rs` — `handle_clean_shutdown_conditions`,
+- `src/potato_handler/shutdown_handler.rs` — `ShutdownHandler`,
+`handle_clean_shutdown_conditions`
+- `src/potato_handler/unroll_watch_handler.rs` —
 `handle_unroll_from_channel_conditions`
-- `src/potato_handler/handshake.rs` — `CleanShutdownWaitForConditions` variant
 
 ---
 
@@ -715,8 +740,9 @@ intentional for several reasons:
 | `GameCancelled { id }`                            | Per-game: pending accept (in-flight) absent from outputs — the accept was rolled back    |
 
 
-**Key code:** `src/potato_handler/mod.rs` — `finish_on_chain_transition`,
-`src/channel_handler/mod.rs` — `set_state_for_coins`, `get_redo_action`
+**Key code:** `src/potato_handler/unroll_watch_handler.rs` —
+`finish_on_chain_transition`, `src/channel_handler/mod.rs` —
+`set_state_for_coins`, `get_redo_action`
 
 ---
 
@@ -784,8 +810,9 @@ Off-chain `AcceptTimeout` with zero reward is already handled by
 `drain_cached_accept_timeouts` in `src/channel_handler/mod.rs`, which emits
 `WeTimedOut` with whatever `our_share_amount` is, including zero.
 
-**Key code:** `src/potato_handler/mod.rs` — `finish_on_chain_transition` (unroll
-scan), `src/potato_handler/on_chain.rs` — `do_on_chain_move` (scenario 4),
+**Key code:** `src/potato_handler/unroll_watch_handler.rs` —
+`finish_on_chain_transition` (unroll scan),
+`src/potato_handler/on_chain.rs` — `do_on_chain_move` (scenario 4),
 `do_on_chain_action` (scenario 5), `src/channel_handler/mod.rs` —
 `is_redo_zero_reward`, `get_game_our_current_share`, `get_game_amount`
 
@@ -1085,20 +1112,62 @@ dispatches incoming messages via `received_message`
 
 ---
 
+## Handler Architecture
+
+The system uses a **handler chain** pattern to manage the channel lifecycle.
+All handlers implement the `PeerHandler` trait (defined in `src/peer_container.rs`),
+which provides a uniform interface for receiving messages, responding to
+coin-watching events, and performing game actions. The `SynchronousGameCradle`
+holds a single `Box<dyn PeerHandler>` and routes all events through it.
+
+When a handler's phase is complete, it produces a replacement handler via
+`take_replacement()`. The cradle detects this in `detect_phase_transition`
+and swaps in the new handler. This creates a linear progression through
+the channel lifecycle:
+
+```
+HandshakeInitiator ─┐
+                     ├─→ PotatoHandler ─→ UnrollWatchHandler ─→ OnChainGameHandler
+HandshakeReceiver  ─┘         │                  ↑
+                              ├─→ ShutdownHandler─┘
+```
+
+### Handlers
+
+| Handler | File | Role |
+|---------|------|------|
+| `HandshakeInitiatorHandler` | `potato_handler/handshake_initiator.rs` | Initiator side of the handshake (sends A, C, E). Linear state machine; transitions to `PotatoHandler` when the channel coin appears on-chain. |
+| `HandshakeReceiverHandler` | `potato_handler/handshake_receiver.rs` | Receiver side of the handshake (sends B, D, F). Same transition trigger. |
+| `PotatoHandler` | `potato_handler/mod.rs` | Off-chain game play: batching actions, exchanging the potato, proposing/accepting/playing games. |
+| `ShutdownHandler` | `potato_handler/shutdown_handler.rs` | Clean cooperative shutdown. Watches the channel coin spend and inspects the on-chain conditions. Falls through to `UnrollWatchHandler` if an unroll landed instead of the clean shutdown transaction. |
+| `UnrollWatchHandler` | `potato_handler/unroll_watch_handler.rs` | Watches the unroll coin after the channel goes on-chain. Handles preemption, forward-aligns game state, creates `OnChainGameHandler`. |
+| `OnChainGameHandler` | `potato_handler/on_chain.rs` | On-chain dispute resolution: submits moves, claims timeouts, detects slashes. Driven entirely by coin-watching events, not peer messages. |
+
+Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle`,
+`emit_failure_cleanup`) live in `src/potato_handler/handler_base.rs`.
+
+**Key code:** `src/peer_container.rs` (`PeerHandler` trait, `detect_phase_transition`)
+
+---
+
 ## Code Organization
 
 ### Core layers (bottom to top)
 
 
-| Layer                     | Directory                        | Responsibility                                                               |
-| ------------------------- | -------------------------------- | ---------------------------------------------------------------------------- |
-| **Types & Utilities**     | `src/common/`                    | `CoinString`, `PuzzleHash`, `Amount`, `Hash`, `AllocEncoder`, etc.           |
-| **Referee**               | `src/referee/`                   | Per-game state machine: moves, timeouts, slashes                             |
-| **Channel Handler**       | `src/channel_handler/`           | Channel/unroll/game coin management, balance tracking                        |
-| **Potato Handler**        | `src/potato_handler/`            | Turn-taking protocol, handshake                                              |
-| **On-Chain Game Handler** | `src/potato_handler/on_chain.rs` | Post-unroll dispute resolution: coin watching, timeouts, slashes (no potato) |
-| **Peer Container**        | `src/peer_container.rs`          | Synchronous test adapter (`GameCradle` trait)                                |
-| **Simulator**             | `src/simulator/`                 | Block-level simulation for integration tests                                 |
+| Layer                     | Directory / File                             | Responsibility                                                               |
+| ------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------- |
+| **Types & Utilities**     | `src/common/`                                | `CoinString`, `PuzzleHash`, `Amount`, `Hash`, `AllocEncoder`, etc.           |
+| **Referee**               | `src/referee/`                               | Per-game state machine: moves, timeouts, slashes                             |
+| **Channel Handler**       | `src/channel_handler/`                       | Channel/unroll/game coin management, balance tracking                        |
+| **Handshake Handlers**    | `src/potato_handler/handshake_initiator.rs`, `handshake_receiver.rs` | Handshake state machines (A-F), one per side              |
+| **Potato Handler**        | `src/potato_handler/mod.rs`                  | Off-chain game play: batching, potato exchange, proposals, moves             |
+| **Shutdown Handler**      | `src/potato_handler/shutdown_handler.rs`     | Clean cooperative shutdown; falls through to unroll if needed                |
+| **Unroll Watch Handler**  | `src/potato_handler/unroll_watch_handler.rs` | Watches unroll coin, handles preemption, creates OnChainGameHandler          |
+| **On-Chain Game Handler** | `src/potato_handler/on_chain.rs`             | Post-unroll dispute resolution: coin watching, timeouts, slashes (no potato) |
+| **Handler Base**          | `src/potato_handler/handler_base.rs`         | Shared utilities: `build_channel_to_unroll_bundle`, `emit_failure_cleanup`   |
+| **Peer Container**        | `src/peer_container.rs`                      | `PeerHandler` trait, `GameCradle` trait, `SynchronousGameCradle`             |
+| **Simulator**             | `src/simulator/`                             | Block-level simulation for integration tests                                 |
 
 
 ### Chialisp puzzles
@@ -1150,11 +1219,18 @@ dispatches incoming messages via `received_message`
 | `ValidationInfo`                | `channel_handler/types/validation_info.rs`     | Game validation program + state                                                                              |
 | `CachedPotatoRegenerateLastHop` | `channel_handler/types/potato.rs`              | Enum for `cached_last_actions` entries: `PotatoMoveHappening`, `PotatoAcceptTimeout`, `ProposalAccepted`     |
 | `BatchAction`                   | `potato_handler/types.rs`                      | Peer-level batch action variants: `ProposeGame`, `AcceptProposal`, `CancelProposal`, `Move`, `AcceptTimeout` |
-| `GameAction`                    | `potato_handler/types.rs`                      | Actions: `Move`, `AcceptTimeout`, `GoOnChain`, `CleanShutdown`, etc.                                         |
+| `GameAction`                    | `potato_handler/types.rs`                      | Actions: `Move`, `AcceptTimeout`, `RedoMove`, `SendPotato`, `QueuedProposal`, `CleanShutdown`                |
 | `SynchronousGameCradleState`    | `peer_container.rs`                            | Per-peer mutable state: queues, flags, `peer_disconnected`                                                   |
 | `OnChainGameState`              | `channel_handler/types/on_chain_game_state.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `accepted`, `pending_slash_amount`, `game_timeout`        |
 | `GameNotification`              | `potato_handler/effects.rs`                    | Notifications to the UI: `ChannelCoinSpent`, `UnrollCoinSpent`, `WeTimedOut`, etc.                           |
 | `Effect`                        | `potato_handler/effects.rs`                    | All side effects returned by handler methods (notifications, transactions, coin registrations)               |
+| `PeerHandler`                   | `peer_container.rs`                            | Trait implemented by all handlers — uniform interface for messages, coin events, game actions                |
+| `HandshakeInitiatorHandler`     | `potato_handler/handshake_initiator.rs`        | Initiator handshake state machine (A → C → E → coin_created)                                                |
+| `HandshakeReceiverHandler`      | `potato_handler/handshake_receiver.rs`         | Receiver handshake state machine (B → D → F → coin_created)                                                 |
+| `ShutdownHandler`               | `potato_handler/shutdown_handler.rs`           | Clean shutdown flow; can fall through to `UnrollWatchHandler`                                                |
+| `UnrollWatchHandler`            | `potato_handler/unroll_watch_handler.rs`       | Watches unroll coin post-channel-spend, creates `OnChainGameHandler`                                        |
+| `ChannelCoinSpendInfo`          | `channel_handler/types/`                       | Solution, conditions, and aggregate signature for spending the channel coin                                  |
+| `PeerMessage`                   | `potato_handler/types.rs`                      | Wire message enum: `HandshakeA`–`HandshakeF`, `Batch`, `RequestPotato`, `Message`, etc.                     |
 
 
 ---
@@ -1532,8 +1608,8 @@ puzzle hashes from the created-coins list before calling
 `set_state_for_coins`. This prevents reward coins from being incorrectly
 matched to live games and generating spurious terminal notifications.
 
-**Key code:** `src/potato_handler/effects.rs`, `src/potato_handler/mod.rs`
-(`emit_failure_cleanup`)
+**Key code:** `src/potato_handler/effects.rs`,
+`src/potato_handler/handler_base.rs` (`emit_failure_cleanup`)
 
 ---
 
