@@ -148,6 +148,12 @@ pub enum Effect {
     // PacketSender — one variant per peer message type
     PeerHandshakeA(HandshakeA),
     PeerHandshakeB(HandshakeB),
+    PeerHandshakeC {
+        signatures: PotatoSignatures,
+    },
+    PeerHandshakeD {
+        signatures: PotatoSignatures,
+    },
     PeerHandshakeE {
         bundle: SpendBundle,
     },
@@ -199,6 +205,12 @@ pub fn apply_effects(
             }
             Effect::PeerHandshakeB(msg) => {
                 system.send_message(&PeerMessage::HandshakeB(msg))?;
+            }
+            Effect::PeerHandshakeC { signatures } => {
+                system.send_message(&PeerMessage::HandshakeC { signatures })?;
+            }
+            Effect::PeerHandshakeD { signatures } => {
+                system.send_message(&PeerMessage::HandshakeD { signatures })?;
             }
             Effect::PeerHandshakeE { bundle } => {
                 system.send_message(&PeerMessage::HandshakeE { bundle })?;

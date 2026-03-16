@@ -27,15 +27,11 @@ use crate::potato_handler::types::{
 use crate::potato_handler::{make_send_debug_log, PotatoHandler};
 
 #[derive(Debug, Serialize, Deserialize)]
-enum HandshakeState {
-    StepA,
-    StepB,
-    StepC(CoinString, Box<HandshakeA>),
-    StepD(Box<HandshakeStepInfo>),
-    StepE(Box<HandshakeStepInfo>),
-    PostStepE(Box<HandshakeStepInfo>),
-    StepF(Box<HandshakeStepInfo>),
-    PostStepF(Box<HandshakeStepInfo>),
+enum InitiatorState {
+    WaitingForStart,
+    SentA(CoinString, Box<HandshakeA>),
+    SentC(Box<HandshakeStepInfo>),
+    WaitingForOffer(Box<HandshakeStepInfo>),
     Finished(Box<HandshakeStepWithSpend>),
     Done,
 }
@@ -63,14 +59,12 @@ where
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct HandshakeHandler {
-    state: HandshakeState,
-    initiator: bool,
+pub struct HandshakeInitiatorHandler {
+    state: InitiatorState,
     have_potato: PotatoState,
 
     channel_handler: Option<ChannelHandler>,
     channel_initiation_transaction: Option<SpendBundle>,
-    channel_finished_transaction: Option<SpendBundle>,
 
     private_keys: ChannelHandlerPrivateKeys,
     #[serde(
@@ -96,24 +90,13 @@ pub struct HandshakeHandler {
 
 const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 
-impl HandshakeHandler {
+impl HandshakeInitiatorHandler {
     pub fn new(phi: PotatoHandlerInit) -> Self {
-        let state = if phi.have_potato {
-            HandshakeState::StepA
-        } else {
-            HandshakeState::StepB
-        };
-        HandshakeHandler {
-            state,
-            initiator: phi.have_potato,
-            have_potato: if phi.have_potato {
-                PotatoState::Present
-            } else {
-                PotatoState::Absent
-            },
+        HandshakeInitiatorHandler {
+            state: InitiatorState::WaitingForStart,
+            have_potato: PotatoState::Present,
             channel_handler: None,
             channel_initiation_transaction: None,
-            channel_finished_transaction: None,
             private_keys: phi.private_keys,
             game_types: phi.game_types,
             my_contribution: phi.my_contribution,
@@ -131,13 +114,13 @@ impl HandshakeHandler {
     fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
         self.channel_handler
             .as_ref()
-            .ok_or_else(|| Error::StrErr("handshake: no channel handler yet".to_string()))
+            .ok_or_else(|| Error::StrErr("initiator handshake: no channel handler yet".to_string()))
     }
 
     fn channel_handler_mut(&mut self) -> Result<&mut ChannelHandler, Error> {
         self.channel_handler
             .as_mut()
-            .ok_or_else(|| Error::StrErr("handshake: no channel handler yet".to_string()))
+            .ok_or_else(|| Error::StrErr("initiator handshake: no channel handler yet".to_string()))
     }
 
     pub fn start(
@@ -146,16 +129,15 @@ impl HandshakeHandler {
         parent_coin: CoinString,
     ) -> Result<Option<Effect>, Error> {
         game_assert!(
-            matches!(self.state, HandshakeState::StepA),
-            "start: expected StepA state"
+            matches!(self.state, InitiatorState::WaitingForStart),
+            "start: expected WaitingForStart state"
         );
 
         let my_hs_info = HandshakeA {
             parent: parent_coin.clone(),
             simple: self.my_handshake_b(),
         };
-        self.state =
-            HandshakeState::StepC(parent_coin.clone(), Box::new(my_hs_info.clone()));
+        self.state = InitiatorState::SentA(parent_coin, Box::new(my_hs_info.clone()));
 
         Ok(Some(Effect::PeerHandshakeA(my_hs_info)))
     }
@@ -213,142 +195,21 @@ impl HandshakeHandler {
         }
     }
 
-    fn receive_empty_potato(
+    fn try_send_step_e(
         &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
-        msg_envelope: &PeerMessage,
-    ) -> Result<Vec<Effect>, Error> {
-        let mut effects = Vec::new();
-        let (signatures,) = match msg_envelope {
-            PeerMessage::Batch {
-                actions,
-                signatures,
-                clean_shutdown,
-            } => {
-                if !actions.is_empty() || clean_shutdown.is_some() {
-                    return Err(Error::StrErr(
-                        "handshake: expected empty potato batch".to_string(),
-                    ));
-                }
-                (signatures,)
-            }
-            _ => {
-                return Err(Error::StrErr(format!(
-                    "handshake: expected batch message, got {msg_envelope:?}"
-                )));
-            }
-        };
-
-        let spend_info = {
-            let ch = self.channel_handler_mut()?;
-            ch.verify_received_batch_signatures(env, signatures)?
-        };
-        self.last_channel_coin_spend_info = Some(spend_info);
-
-        {
-            let ch = self.channel_handler()?;
-            let state_num = ch.state_number();
-            let mut parts = vec![format!("[recv] state={state_num}")];
-            if let Some(s) = super::format_reward_coin(
-                "my_reward",
-                ch.my_reward_puzzle_hash(),
-                &ch.my_out_of_game_balance(),
-            ) {
-                parts.push(format!("  {s}"));
-            }
-            if let Some(s) = super::format_reward_coin(
-                "their_reward",
-                ch.their_reward_puzzle_hash(),
-                &ch.their_out_of_game_balance(),
-            ) {
-                parts.push(format!("  {s}"));
-            }
-            effects.push(Effect::DebugLog(parts.join("\n")));
-        }
-
-        self.have_potato = PotatoState::Present;
-        Ok(effects)
-    }
-
-    fn send_empty_potato(&mut self, env: &mut ChannelHandlerEnv<'_>) -> Result<Vec<Effect>, Error> {
-        let mut effects = Vec::new();
-        let sigs = self.channel_handler_mut()?.send_empty_potato(env)?;
-        {
-            let ch = self.channel_handler()?;
-            effects.push(Effect::DebugLog(make_send_debug_log(ch, &[], false)));
-        }
-        effects.push(Effect::PeerBatch {
-            actions: vec![],
-            signatures: sigs,
-            clean_shutdown: None,
-        });
-        self.have_potato = PotatoState::Absent;
-        Ok(effects)
-    }
-
-    fn try_complete_step_body<F>(
-        &mut self,
-        first_player_hs_info: HandshakeA,
-        second_player_hs_info: HandshakeB,
-        maybe_transaction: Option<SpendBundle>,
-        ctor: F,
-    ) -> Result<Option<Effect>, Error>
-    where
-        F: FnOnce(&SpendBundle) -> Result<Effect, Error>,
-    {
-        if let Some(spend) = maybe_transaction {
-            let send_effect = ctor(&spend)?;
-
-            self.state = HandshakeState::Finished(Box::new(HandshakeStepWithSpend {
-                info: HandshakeStepInfo {
-                    first_player_hs_info,
-                    second_player_hs_info,
-                },
+        info: HandshakeStepInfo,
+    ) -> Result<Option<Effect>, Error> {
+        if let Some(spend) = self.channel_initiation_transaction.clone() {
+            let send_effect = Effect::PeerHandshakeE {
+                bundle: spend.clone(),
+            };
+            self.state = InitiatorState::Finished(Box::new(HandshakeStepWithSpend {
+                info,
                 spend,
             }));
-
             return Ok(Some(send_effect));
         }
-
         Ok(None)
-    }
-
-    fn try_complete_step_e(
-        &mut self,
-        first_player_hs_info: HandshakeA,
-        second_player_hs_info: HandshakeB,
-    ) -> Result<Option<Effect>, Error> {
-        self.try_complete_step_body(
-            first_player_hs_info,
-            second_player_hs_info,
-            self.channel_initiation_transaction.clone(),
-            |spend| {
-                Ok(Effect::PeerHandshakeE {
-                    bundle: spend.clone(),
-                })
-            },
-        )
-    }
-
-    fn try_complete_step_f(
-        &mut self,
-        first_player_hs_info: HandshakeA,
-        second_player_hs_info: HandshakeB,
-    ) -> Result<Option<Effect>, Error> {
-        if self.waiting_to_start {
-            return Ok(None);
-        }
-
-        self.try_complete_step_body(
-            first_player_hs_info,
-            second_player_hs_info,
-            self.channel_finished_transaction.clone(),
-            |spend| {
-                Ok(Effect::PeerHandshakeF {
-                    bundle: spend.clone(),
-                })
-            },
-        )
     }
 
     pub fn take_potato_handler(&mut self) -> Option<PotatoHandler> {
@@ -362,12 +223,12 @@ impl HandshakeHandler {
         if self.waiting_to_start {
             return;
         }
-        if let HandshakeState::Finished(_) = &self.state {
+        if let InitiatorState::Finished(_) = &self.state {
             let ch = self.channel_handler.take().expect("channel handler must exist at Finished");
             let queued_messages = std::mem::take(&mut self.incoming_messages);
 
             let ph = PotatoHandler::from_completed_handshake(
-                self.initiator,
+                true,
                 ch,
                 std::mem::replace(&mut self.have_potato, PotatoState::Absent),
                 self.game_types.clone(),
@@ -381,7 +242,7 @@ impl HandshakeHandler {
                 self.last_channel_coin_spend_info.take(),
             );
             self.replacement = Some(Box::new(ph));
-            self.state = HandshakeState::Done;
+            self.state = InitiatorState::Done;
         }
     }
 
@@ -397,59 +258,18 @@ impl HandshakeHandler {
         };
 
         match &self.state {
-            HandshakeState::StepA => {
+            InitiatorState::WaitingForStart => {
                 return Err(Error::StrErr(format!(
-                    "handshake StepA: unexpected message before start: {msg_envelope:?}"
+                    "initiator WaitingForStart: unexpected message before start: {msg_envelope:?}"
                 )));
             }
 
-            HandshakeState::StepB => {
-                let msg = if let PeerMessage::HandshakeA(msg) = msg_envelope.borrow() {
-                    msg
-                } else {
-                    return Err(Error::StrErr(format!(
-                        "Expected handshake a message, got {msg_envelope:?}"
-                    )));
-                };
-
-                let (channel_handler, _init_result) =
-                    self.make_channel_handler(msg.parent.to_coin_id(), true, &msg.simple, env)?;
-
-                let my_hs_info = {
-                    let channel_public_key =
-                        private_to_public_key(&channel_handler.channel_private_key());
-                    let unroll_public_key =
-                        private_to_public_key(&channel_handler.unroll_private_key());
-                    let referee_public_key =
-                        private_to_public_key(&self.private_keys.my_referee_private_key);
-                    let reward_payout_sig = sign_reward_payout(
-                        &self.private_keys.my_referee_private_key,
-                        &self.reward_puzzle_hash,
-                    );
-                    HandshakeB {
-                        channel_public_key,
-                        unroll_public_key,
-                        reward_puzzle_hash: self.reward_puzzle_hash.clone(),
-                        referee_pubkey: referee_public_key,
-                        reward_payout_signature: reward_payout_sig,
-                    }
-                };
-
-                self.channel_handler = Some(channel_handler);
-                self.state = HandshakeState::StepD(Box::new(HandshakeStepInfo {
-                    first_player_hs_info: msg.clone(),
-                    second_player_hs_info: my_hs_info.clone(),
-                }));
-
-                effects.push(Effect::PeerHandshakeB(my_hs_info));
-            }
-
-            HandshakeState::StepC(parent_coin, handshake_a) => {
+            InitiatorState::SentA(parent_coin, handshake_a) => {
                 let msg = if let PeerMessage::HandshakeB(msg) = msg_envelope.borrow() {
                     msg
                 } else {
                     return Err(Error::StrErr(format!(
-                        "Expected handshake b message, got {msg_envelope:?}"
+                        "Expected handshake B message, got {msg_envelope:?}"
                     )));
                 };
 
@@ -468,107 +288,84 @@ impl HandshakeHandler {
 
                 let our_handshake_data = self.my_handshake_b();
 
-                {
-                    let sigs = channel_handler.send_empty_potato(env)?;
-                    effects.push(Effect::DebugLog(make_send_debug_log(
-                        &channel_handler,
-                        &[],
-                        false,
-                    )));
-                    effects.push(Effect::PeerBatch {
-                        actions: vec![],
-                        signatures: sigs,
-                        clean_shutdown: None,
-                    });
-                }
+                let sigs = channel_handler.send_empty_potato(env)?;
+                effects.push(Effect::DebugLog(make_send_debug_log(
+                    &channel_handler,
+                    &[],
+                    false,
+                )));
+                effects.push(Effect::PeerHandshakeC { signatures: sigs });
 
                 let first_player_hs_info = *handshake_a.clone();
                 self.channel_handler = Some(channel_handler);
-                self.state = HandshakeState::StepE(Box::new(HandshakeStepInfo {
+                self.state = InitiatorState::SentC(Box::new(HandshakeStepInfo {
                     first_player_hs_info,
                     second_player_hs_info: our_handshake_data,
                 }));
             }
 
-            HandshakeState::StepD(_info) => {
-                effects.extend(self.receive_empty_potato(env, msg_envelope.borrow())?);
-
-                let info = match std::mem::replace(&mut self.state, HandshakeState::StepA) {
-                    HandshakeState::StepD(info) => info,
-                    _ => unreachable!(),
-                };
-                self.state = HandshakeState::StepF(info);
-
-                effects.extend(self.send_empty_potato(env)?);
-            }
-
-            HandshakeState::StepE(_info) => {
-                effects.extend(self.receive_empty_potato(env, msg_envelope.borrow())?);
-
-                let info = match std::mem::replace(&mut self.state, HandshakeState::StepA) {
-                    HandshakeState::StepE(info) => info,
-                    _ => unreachable!(),
-                };
-                let first_player_hs = info.first_player_hs_info.clone();
-                let second_player_hs = info.second_player_hs_info.clone();
-                self.state = HandshakeState::PostStepE(info);
-
-                effects.extend(self.try_complete_step_e(first_player_hs, second_player_hs)?);
-            }
-
-            HandshakeState::StepF(info) => {
-                let bundle = if let PeerMessage::HandshakeE { bundle } = msg_envelope.borrow() {
-                    bundle
+            InitiatorState::SentC(_info) => {
+                let signatures = if let PeerMessage::HandshakeD { signatures } = msg_envelope.borrow() {
+                    signatures
                 } else {
-                    self.incoming_messages.push_front(msg_envelope.clone());
-                    return Ok(effects);
+                    return Err(Error::StrErr(format!(
+                        "Expected handshake D message, got {msg_envelope:?}"
+                    )));
                 };
 
-                let channel_coin = self.channel_handler()?.state_channel_coin();
-                if bundle.spends.is_empty() {
-                    return Err(Error::StrErr(
-                        "No spends to draw the channel coin from".to_string(),
-                    ));
+                let spend_info = {
+                    let ch = self.channel_handler_mut()?;
+                    ch.verify_received_batch_signatures(env, signatures)?
+                };
+                self.last_channel_coin_spend_info = Some(spend_info);
+
+                {
+                    let ch = self.channel_handler()?;
+                    let state_num = ch.state_number();
+                    let mut parts = vec![format!("[recv] state={state_num}")];
+                    if let Some(s) = super::format_reward_coin(
+                        "my_reward",
+                        ch.my_reward_puzzle_hash(),
+                        &ch.my_out_of_game_balance(),
+                    ) {
+                        parts.push(format!("  {s}"));
+                    }
+                    if let Some(s) = super::format_reward_coin(
+                        "their_reward",
+                        ch.their_reward_puzzle_hash(),
+                        &ch.their_out_of_game_balance(),
+                    ) {
+                        parts.push(format!("  {s}"));
+                    }
+                    effects.push(Effect::DebugLog(parts.join("\n")));
                 }
 
-                effects.push(Effect::RegisterCoin {
-                    coin: channel_coin.clone(),
-                    timeout: self.channel_timeout.clone(),
-                    name: Some("channel"),
-                });
-                effects.push(Effect::ReceivedChannelOffer(bundle.clone()));
+                self.have_potato = PotatoState::Present;
 
-                let first_player_hs = info.first_player_hs_info.clone();
-                let second_player_hs = info.second_player_hs_info.clone();
-
-                self.state = HandshakeState::PostStepF(Box::new(HandshakeStepInfo {
-                    first_player_hs_info: first_player_hs.clone(),
-                    second_player_hs_info: second_player_hs.clone(),
-                }));
-
-                self.have_potato = PotatoState::Absent;
-                effects.extend(self.try_complete_step_f(first_player_hs, second_player_hs)?);
+                let info = match std::mem::replace(&mut self.state, InitiatorState::WaitingForStart) {
+                    InitiatorState::SentC(info) => *info,
+                    _ => unreachable!(),
+                };
+                self.state = InitiatorState::WaitingForOffer(Box::new(info.clone()));
+                effects.extend(self.try_send_step_e(info)?);
             }
 
-            HandshakeState::PostStepE(_) | HandshakeState::PostStepF(_) => {
-                // Waiting for wallet callback; re-queue the message.
+            InitiatorState::WaitingForOffer(_) => {
                 self.incoming_messages.push_front(msg_envelope);
             }
 
-            HandshakeState::Finished(_) => {
+            InitiatorState::Finished(_) => {
                 match msg_envelope.borrow() {
                     PeerMessage::HandshakeF { bundle } => {
                         effects.push(Effect::ReceivedChannelOffer(bundle.clone()));
                     }
                     _ => {
-                        // Non-handshake message arrived after handshake finished
-                        // but before transition. Queue for PotatoHandler.
                         self.incoming_messages.push_front(msg_envelope);
                     }
                 }
             }
 
-            HandshakeState::Done => {
+            InitiatorState::Done => {
                 self.incoming_messages.push_front(msg_envelope);
             }
         }
@@ -595,7 +392,7 @@ impl HandshakeHandler {
     }
 }
 
-impl SpendWalletReceiver for HandshakeHandler {
+impl SpendWalletReceiver for HandshakeInitiatorHandler {
     fn coin_created(
         &mut self,
         _env: &mut ChannelHandlerEnv<'_>,
@@ -625,17 +422,6 @@ impl SpendWalletReceiver for HandshakeHandler {
 
         let mut effects = Vec::new();
 
-        if let HandshakeState::PostStepF(info) = &self.state {
-            let step_f_effects: Vec<Effect> = self
-                .try_complete_step_f(
-                    info.first_player_hs_info.clone(),
-                    info.second_player_hs_info.clone(),
-                )?
-                .into_iter()
-                .collect();
-            effects.extend(step_f_effects);
-        }
-
         {
             let ch = self.channel_handler()?;
             effects.push(Effect::DebugLog(format!(
@@ -659,7 +445,7 @@ impl SpendWalletReceiver for HandshakeHandler {
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
         Ok(vec![Effect::DebugLog(format!(
-            "[handshake:coin-spent] {}",
+            "[initiator-handshake:coin-spent] {}",
             format_coin(coin_id),
         ))])
     }
@@ -670,7 +456,7 @@ impl SpendWalletReceiver for HandshakeHandler {
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
         Ok(vec![Effect::DebugLog(format!(
-            "[handshake:coin-timeout] {}",
+            "[initiator-handshake:coin-timeout] {}",
             format_coin(coin_id),
         ))])
     }
@@ -683,7 +469,7 @@ impl SpendWalletReceiver for HandshakeHandler {
     ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
         Ok((
             vec![Effect::DebugLog(format!(
-                "[handshake:coin-puzzle] {}",
+                "[initiator-handshake:coin-puzzle] {}",
                 format_coin(coin_id),
             ))],
             None,
@@ -692,7 +478,7 @@ impl SpendWalletReceiver for HandshakeHandler {
 }
 
 #[typetag::serde]
-impl PeerHandler for HandshakeHandler {
+impl PeerHandler for HandshakeInitiatorHandler {
     fn has_pending_incoming(&self) -> bool {
         !self.incoming_messages.is_empty()
     }
@@ -700,14 +486,14 @@ impl PeerHandler for HandshakeHandler {
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
     ) -> Result<Vec<Effect>, Error> {
-        HandshakeHandler::process_incoming_message(self, env)
+        HandshakeInitiatorHandler::process_incoming_message(self, env)
     }
     fn received_message(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         msg: Vec<u8>,
     ) -> Result<Vec<Effect>, Error> {
-        HandshakeHandler::received_message(self, env, msg)
+        HandshakeInitiatorHandler::received_message(self, env, msg)
     }
     fn coin_spent(
         &mut self,
@@ -787,29 +573,9 @@ impl PeerHandler for HandshakeHandler {
     ) -> Result<Option<Effect>, Error> {
         self.channel_initiation_transaction = Some(bundle);
 
-        if let HandshakeState::PostStepE(info) = &self.state {
-            let result = self.try_complete_step_e(
-                info.first_player_hs_info.clone(),
-                info.second_player_hs_info.clone(),
-            )?;
-            self.try_transition_to_potato();
-            return Ok(result);
-        }
-
-        Ok(None)
-    }
-    fn channel_transaction_completion(
-        &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
-        bundle: &SpendBundle,
-    ) -> Result<Option<Effect>, Error> {
-        self.channel_finished_transaction = Some(bundle.clone());
-
-        if let HandshakeState::PostStepF(info) = &self.state {
-            let result = self.try_complete_step_f(
-                info.first_player_hs_info.clone(),
-                info.second_player_hs_info.clone(),
-            )?;
+        if let InitiatorState::WaitingForOffer(info) = &self.state {
+            let info = *info.clone();
+            let result = self.try_send_step_e(info)?;
             self.try_transition_to_potato();
             return Ok(result);
         }
@@ -817,7 +583,7 @@ impl PeerHandler for HandshakeHandler {
         Ok(None)
     }
     fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
-        HandshakeHandler::channel_handler(self)
+        HandshakeInitiatorHandler::channel_handler(self)
     }
     fn as_any(&self) -> &dyn std::any::Any {
         self

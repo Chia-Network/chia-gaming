@@ -229,6 +229,13 @@ pub enum PeerMessage {
     HandshakeA(HandshakeA),
     HandshakeB(HandshakeB),
 
+    HandshakeC {
+        signatures: PotatoSignatures,
+    },
+    HandshakeD {
+        signatures: PotatoSignatures,
+    },
+
     /// Includes spend of launcher coin id.
     HandshakeE {
         bundle: SpendBundle,
@@ -253,6 +260,8 @@ impl PeerMessage {
             self,
             PeerMessage::HandshakeA(_)
                 | PeerMessage::HandshakeB(_)
+                | PeerMessage::HandshakeC { .. }
+                | PeerMessage::HandshakeD { .. }
                 | PeerMessage::HandshakeE { .. }
                 | PeerMessage::HandshakeF { .. }
         )

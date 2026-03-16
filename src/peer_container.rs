@@ -25,7 +25,8 @@ use crate::potato_handler::types::{
     BootstrapTowardWallet, GameFactory, PacketSender,
     PeerMessage, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
-use crate::potato_handler::handshake_handler::HandshakeHandler;
+use crate::potato_handler::handshake_initiator::HandshakeInitiatorHandler;
+use crate::potato_handler::handshake_receiver::HandshakeReceiverHandler;
 
 #[cfg(test)]
 use crate::potato_handler::shutdown_handler::ShutdownHandler;
@@ -438,16 +439,23 @@ impl SynchronousGameCradle {
                 is_on_chain: false,
                 events: CradleEventQueue::default(),
             },
-            peer: Box::new(HandshakeHandler::new(PotatoHandlerInit {
-                have_potato: config.have_potato,
-                private_keys,
-                game_types: config.game_types,
-                my_contribution: config.my_contribution.clone(),
-                their_contribution: config.their_contribution.clone(),
-                channel_timeout: config.channel_timeout,
-                unroll_timeout: config.unroll_timeout,
-                reward_puzzle_hash: config.reward_puzzle_hash,
-            })),
+            peer: {
+                let phi = PotatoHandlerInit {
+                    have_potato: config.have_potato,
+                    private_keys,
+                    game_types: config.game_types,
+                    my_contribution: config.my_contribution.clone(),
+                    their_contribution: config.their_contribution.clone(),
+                    channel_timeout: config.channel_timeout,
+                    unroll_timeout: config.unroll_timeout,
+                    reward_puzzle_hash: config.reward_puzzle_hash,
+                };
+                if config.have_potato {
+                    Box::new(HandshakeInitiatorHandler::new(phi)) as Box<dyn PeerHandler>
+                } else {
+                    Box::new(HandshakeReceiverHandler::new(phi)) as Box<dyn PeerHandler>
+                }
+            },
             amount: config.my_contribution + config.their_contribution,
             #[cfg(test)]
             saved_unroll_snapshot: None,
@@ -951,7 +959,7 @@ impl GameCradle for SynchronousGameCradle {
 
         let start_effect = {
             let mut env = ChannelHandlerEnv::new(allocator)?;
-            if let Some(hh) = self.peer.as_any_mut().downcast_mut::<HandshakeHandler>() {
+            if let Some(hh) = self.peer.as_any_mut().downcast_mut::<HandshakeInitiatorHandler>() {
                 hh.start(&mut env, coin)?
             } else {
                 None
