@@ -1,14 +1,58 @@
 use std::collections::VecDeque;
 
+use clvmr::NodePtr;
+
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::types::{ChannelHandlerEnv, ReadableMove};
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
-    Amount, Error, GameID, Hash, PuzzleHash, SpendBundle, Timeout,
+    Amount, CoinSpend, CoinString, Error, GameID, Hash, PuzzleHash, SpendBundle, Timeout,
 };
 use crate::potato_handler::effects::{Effect, GameNotification};
 use crate::potato_handler::types::{GameAction, PeerMessage, PotatoState};
+
+pub enum UnrollOutcome {
+    Preempted(SpendBundle),
+    WaitForTimeout,
+    Unrecoverable(String),
+}
+
+/// Determine whether an unroll can be preempted, needs to wait for timeout, or
+/// is unrecoverable.  Shared by ShutdownHandler and UnrollWatchHandler.
+pub fn classify_unroll(
+    ch: &ChannelHandler,
+    env: &mut ChannelHandlerEnv<'_>,
+    conditions_nodeptr: NodePtr,
+    unroll_coin: &CoinString,
+    on_chain_state: usize,
+) -> Result<UnrollOutcome, Error> {
+    let spend_result = ch.channel_coin_spent(env, false, conditions_nodeptr);
+
+    match spend_result {
+        Ok(result) if !result.timeout => {
+            let bundle = SpendBundle {
+                name: Some("preempt unroll".to_string()),
+                spends: vec![CoinSpend {
+                    bundle: result.transaction,
+                    coin: unroll_coin.clone(),
+                }],
+            };
+            Ok(UnrollOutcome::Preempted(bundle))
+        }
+        Ok(_) => Ok(UnrollOutcome::WaitForTimeout),
+        Err(e) => {
+            let can_timeout = ch.get_unroll_for_state(on_chain_state).is_ok();
+            if can_timeout {
+                Ok(UnrollOutcome::WaitForTimeout)
+            } else {
+                Ok(UnrollOutcome::Unrecoverable(format!(
+                    "cannot preempt ({e:?}) and no stored state for timeout at {on_chain_state}"
+                )))
+            }
+        }
+    }
+}
 
 /// Shared state and methods for handlers that hold a `ChannelHandler` and
 /// park game actions while waiting for on-chain resolution (Phases 2a and 3).

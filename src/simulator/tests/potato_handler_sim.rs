@@ -20,12 +20,12 @@ use crate::common::types::{
 use crate::games::poker_collection;
 use crate::peer_container::{
     report_coin_changes_to_peer, FullCoinSetAdapter, GameCradle, MessagePeerQueue, MessagePipe,
-    SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
+    PeerHandler, SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
 };
 use crate::potato_handler::effects::{apply_effects, CradleEvent, Effect, GameNotification};
 use crate::potato_handler::start::GameStart;
 use crate::potato_handler::types::{
-    BatchAction, BootstrapTowardGame, BootstrapTowardWallet, PacketSender, PeerMessage, ToLocalUI,
+    BatchAction, BootstrapTowardWallet, PacketSender, PeerMessage, ToLocalUI,
     WalletSpendInterface,
 };
 use crate::potato_handler::PotatoHandler;
@@ -147,7 +147,7 @@ fn handle_received_channel_puzzle_hash(
             }],
         },
     )
-    .map(|effect| effect.into_iter().collect())
+    .map(|effect| effect.into_iter().collect::<Vec<_>>())
 }
 
 impl PacketSender for SimulatedPeer {
@@ -782,6 +782,7 @@ pub struct GameRunOutcome {
     pub cradles: [SynchronousGameCradle; 2],
     pub local_uis: [LocalTestUIReceiver; 2],
     pub simulator: Simulator,
+    pub debug_logs: [Vec<String>; 2],
 }
 
 fn reports_blocked(i: usize, blocked: &Option<(usize, usize)>) -> bool {
@@ -986,6 +987,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     let mut nerf_messages_for: u8 = 0;
     let mut start_step = 0;
     let mut num_steps = 0;
+    let mut debug_logs: [Vec<String>; 2] = [Vec::new(), Vec::new()];
 
     // Give coins to the cradles.
     cradles[0].opening_coin(allocator, parent_coin_0)?;
@@ -1063,6 +1065,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                     cradles,
                     local_uis,
                     simulator,
+                    debug_logs,
                 });
             }
         }
@@ -1193,7 +1196,9 @@ fn run_game_container_with_action_list_with_success_predicate(
                             CradleEvent::CoinSolutionRequest(coin) => {
                                 coin_requests.push(coin.clone());
                             }
-                            CradleEvent::DebugLog(_) => {}
+                            CradleEvent::DebugLog(line) => {
+                                debug_logs[i].push(line.clone());
+                            }
                         }
                     }
 
@@ -1719,6 +1724,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         cradles,
         local_uis,
         simulator,
+        debug_logs,
     })
 }
 

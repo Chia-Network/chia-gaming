@@ -18,13 +18,6 @@ use crate::potato_handler::handshake::{HandshakeA, HandshakeB};
 use crate::potato_handler::start::GameStart;
 use crate::referee::types::GameMoveDetails;
 
-// Internal: decide what kind of condition wait we're in.
-#[derive(Debug)]
-pub enum ConditionWaitKind {
-    Channel(CoinString),
-    Unroll(CoinString, usize),
-}
-
 /// Async interface for messaging out of the game layer toward the wallet.
 ///
 /// For this and its companion if instances are left in the documentation which

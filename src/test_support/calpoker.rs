@@ -871,7 +871,99 @@ mod sim_tests {
             assert_stayed_off_chain(&outcome, "two_games_joiner");
         }));
 
+        res.push(("test_debug_log_state_numbers_monotonic", &|| {
+            let mut allocator = AllocEncoder::new();
+            let mut moves = vec![
+                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                GameAction::AcceptProposal(1, GameID(1)),
+            ];
+            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            moves.push(GameAction::CleanShutdown(0));
+
+            let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
+                .expect("game should complete");
+            assert_stayed_off_chain(&outcome, "debug_log_state_numbers");
+
+            for who in 0..2 {
+                let log = &outcome.debug_logs[who];
+                assert!(
+                    !log.is_empty(),
+                    "p{who}: debug log is empty"
+                );
+
+                // Must contain [channel-created] somewhere.
+                let cc_idx = log.iter().position(|l| l.starts_with("[channel-created]"));
+                assert!(
+                    cc_idx.is_some(),
+                    "p{who}: no [channel-created] in log\n{}",
+                    format_log(log)
+                );
+
+                // Collect state numbers from [send] and [recv] lines only.
+                // Other lines like [channel-created] report the current state
+                // as a snapshot, not a transition.
+                let states: Vec<(usize, usize)> = log
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, line)| line.starts_with("[send]") || line.starts_with("[recv]"))
+                    .filter_map(|(idx, line)| {
+                        extract_state_number(line).map(|s| (idx, s))
+                    })
+                    .collect();
+
+                assert!(
+                    states.len() >= 2,
+                    "p{who}: expected at least 2 state entries, got {}\n{}",
+                    states.len(),
+                    format_log(log)
+                );
+
+                // Every consecutive pair must differ by exactly 1.
+                for window in states.windows(2) {
+                    let (prev_idx, prev_state) = window[0];
+                    let (curr_idx, curr_state) = window[1];
+                    assert_eq!(
+                        curr_state,
+                        prev_state + 1,
+                        "p{who}: log[{curr_idx}] state={curr_state} is not prev+1 (prev={prev_state} at log[{prev_idx}])\n  prev: {:?}\n  curr: {:?}\n  full log:\n{}",
+                        log[prev_idx].lines().next().unwrap_or(""),
+                        log[curr_idx].lines().next().unwrap_or(""),
+                        format_log(log)
+                    );
+                }
+
+                // Log must end with a channel-coin-spent then [clean-end].
+                let len = log.len();
+                assert!(
+                    len >= 2
+                        && log[len - 2].contains("channel-coin-spent")
+                        && log[len - 1].starts_with("[clean-end]"),
+                    "p{who}: log should end with *channel-coin-spent* then [clean-end], got:\n  [-2] {:?}\n  [-1] {:?}",
+                    log.get(len.wrapping_sub(2)),
+                    log.last()
+                );
+            }
+        }));
+
         res
+    }
+
+    fn extract_state_number(line: &str) -> Option<usize> {
+        let idx = line.find("state=")?;
+        let rest = &line[idx + 6..];
+        let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+        rest[..end].parse().ok()
+    }
+
+    fn format_log(log: &[String]) -> String {
+        log.iter()
+            .enumerate()
+            .map(|(i, l)| {
+                let first_line = l.lines().next().unwrap_or(l);
+                format!("  [{i}] {first_line}")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 

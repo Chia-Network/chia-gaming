@@ -21,9 +21,11 @@ WASM_DIR="$REPO_ROOT/wasm"
 LOBBY_CONN_DIR="$REPO_ROOT/resources/lobby-connection"
 
 SKIP_BUILD=0
+SKIP_NATIVE=0
 for arg in "$@"; do
     case "$arg" in
         --skip-build) SKIP_BUILD=1 ;;
+        --skip-native) SKIP_NATIVE=1 ;;
         *) echo "Unknown argument: $arg"; exit 1 ;;
     esac
 done
@@ -46,7 +48,9 @@ elif [ -x /usr/local/opt/llvm/bin/clang ]; then
 fi
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
-    "$SCRIPT_DIR/build-chialisp.sh"
+    if [ "$SKIP_NATIVE" -eq 0 ]; then
+        "$SCRIPT_DIR/build-chialisp.sh"
+    fi
 
     echo "=== Building WASM (nodejs target for tests) ==="
     (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/node-pkg" --release --target=nodejs)
@@ -57,8 +61,10 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     echo "=== Installing gaming-fe deps ==="
     (cd "$FE_DIR" && yarn install)
 
-    echo "=== Building simulator ==="
-    cargo build --bin chia-gaming-sim --features sim-server
+    if [ "$SKIP_NATIVE" -eq 0 ]; then
+        echo "=== Building simulator ==="
+        cargo build --bin chia-gaming-sim --features sim-server
+    fi
 fi
 
 # Kill any stale simulator on our port before starting a fresh one

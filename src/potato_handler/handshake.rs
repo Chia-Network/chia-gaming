@@ -30,21 +30,7 @@ pub struct HandshakeStepWithSpend {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ChannelState {
-    StepA,
-    StepB,
-    StepC(CoinString, Box<HandshakeA>),
-    StepD(Box<HandshakeStepInfo>),
-    StepE(Box<HandshakeStepInfo>),
-    PostStepE(Box<HandshakeStepInfo>),
-    StepF(Box<HandshakeStepInfo>),
-    PostStepF(Box<HandshakeStepInfo>),
     Finished(Box<HandshakeStepWithSpend>),
-    OnChainWaitingForUnrollTimeoutOrSpend(CoinString, usize),
-    OnChainWaitForConditions(CoinString, Box<HandshakeStepWithSpend>),
-    // Converge here to on chain state.
-    OnChainWaitingForUnrollSpend(CoinString, usize, Option<CoinString>),
-    OnChainWaitingForUnrollConditions(CoinString, usize),
-    CleanShutdownWaitForConditions(CoinString, Option<CoinString>),
     Completed,
     Failed,
 }

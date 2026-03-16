@@ -1439,8 +1439,20 @@ impl OnChainGameHandler {
         _env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
-        let (_matched, effect) = self.check_game_coin_spent(coin_id)?;
-        Ok(effect.into_iter().collect())
+        let (matched, effect) = self.check_game_coin_spent(coin_id)?;
+        let mut effects: Vec<Effect> = effect.into_iter().collect();
+        if matched {
+            effects.insert(0, Effect::DebugLog(format!(
+                "[on-chain:game-coin-spent] {}",
+                format_coin(coin_id),
+            )));
+        } else {
+            effects.push(Effect::DebugLog(format!(
+                "[on-chain:coin-spent] {}",
+                format_coin(coin_id),
+            )));
+        }
+        Ok(effects)
     }
 
     pub fn coin_created(

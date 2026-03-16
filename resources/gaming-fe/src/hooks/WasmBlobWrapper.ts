@@ -2,6 +2,7 @@ import { Subject, NextObserver } from 'rxjs';
 import { Program } from 'clvm-lib';
 
 import {
+  CradleEvent,
   PeerConnectionResult,
   WasmConnection,
   ChiaGame,
@@ -53,6 +54,8 @@ export class WasmBlobWrapper {
   blockchain: InternalBlockchainInterface;
   rxjsMessageSingleton: Subject<WasmEvent>;
   rxjsEmitter: NextObserver<WasmEvent> | undefined;
+  private eventQueue: CradleEvent[] = [];
+  private draining = false;
 
   constructor(
     blockchain: InternalBlockchainInterface,
@@ -164,25 +167,39 @@ export class WasmBlobWrapper {
       this.finished = true;
       this.rxjsEmitter?.next({ type: 'finished' });
     }
+
     for (const event of result.events || []) {
-      if ('OutboundMessage' in event) {
-        this.sendMessage(this.messageNumber++, event.OutboundMessage);
-      } else if ('OutboundTransaction' in event) {
-        this.submitTransaction(event.OutboundTransaction);
-      } else if ('Notification' in event) {
-        const n = event.Notification;
-        const tag = typeof n === 'object' && n !== null ? Object.keys(n)[0] : String(n);
-        if (tag === 'ChannelCreated' && !this.channelReady) {
-          this.channelReady = true;
-        }
-        this.rxjsEmitter?.next({ type: 'notification', data: n });
-      } else if ('ReceiveError' in event) {
-        this.rxjsEmitter?.next({ type: 'error', error: event.ReceiveError });
-      } else if ('CoinSolutionRequest' in event) {
-        this.fulfillPuzzleSolutionRequest(event.CoinSolutionRequest);
-      } else if ('DebugLog' in event) {
-        this.rxjsEmitter?.next({ type: 'debug_log', message: event.DebugLog });
+      this.eventQueue.push(event);
+    }
+
+    if (this.draining) return;
+
+    this.draining = true;
+    while (this.eventQueue.length > 0) {
+      const event = this.eventQueue.shift()!;
+      this.dispatchEvent(event);
+    }
+    this.draining = false;
+  }
+
+  private dispatchEvent(event: CradleEvent): void {
+    if ('OutboundMessage' in event) {
+      this.sendMessage(this.messageNumber++, event.OutboundMessage);
+    } else if ('OutboundTransaction' in event) {
+      this.submitTransaction(event.OutboundTransaction);
+    } else if ('Notification' in event) {
+      const n = event.Notification;
+      const tag = typeof n === 'object' && n !== null ? Object.keys(n)[0] : String(n);
+      if (tag === 'ChannelCreated' && !this.channelReady) {
+        this.channelReady = true;
       }
+      this.rxjsEmitter?.next({ type: 'notification', data: n });
+    } else if ('ReceiveError' in event) {
+      this.rxjsEmitter?.next({ type: 'error', error: event.ReceiveError });
+    } else if ('CoinSolutionRequest' in event) {
+      this.fulfillPuzzleSolutionRequest(event.CoinSolutionRequest);
+    } else if ('DebugLog' in event) {
+      this.rxjsEmitter?.next({ type: 'debug_log', message: event.DebugLog });
     }
   }
 
