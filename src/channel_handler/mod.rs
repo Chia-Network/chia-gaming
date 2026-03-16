@@ -1528,18 +1528,14 @@ impl ChannelHandler {
             .ok_or_else(|| Error::StrErr("Unconvertible state number".to_string()))?;
 
         // Three cases based on comparing on-chain state to our current state:
-        let mut result = match (
-            myself,
-            unrolling_state_number.cmp(&self.state_number),
-        ) {
+        let mut result = match (myself, unrolling_state_number.cmp(&self.state_number)) {
             // We initiated this spend, or the on-chain state matches ours:
             // use the timeout (default) path.
             (true, _) | (_, Ordering::Equal) => self.make_timeout_unroll_spend(env),
             // On-chain state is from the future relative to us - error.
             (_, Ordering::Greater) => Err(Error::StrErr(format!(
                 "Reply from the future onchain {} (me {})",
-                unrolling_state_number,
-                self.state_number,
+                unrolling_state_number, self.state_number,
             ))),
             // On-chain state is behind ours - preempt.  We have two
             // adjacent states (unroll and timeout); exactly one will

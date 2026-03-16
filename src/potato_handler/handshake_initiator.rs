@@ -180,8 +180,7 @@ impl HandshakeInitiatorHandler {
             private_to_public_key(&self.private_keys.my_channel_coin_private_key);
         let unroll_public_key =
             private_to_public_key(&self.private_keys.my_unroll_coin_private_key);
-        let referee_public_key =
-            private_to_public_key(&self.private_keys.my_referee_private_key);
+        let referee_public_key = private_to_public_key(&self.private_keys.my_referee_private_key);
         let reward_payout_sig = sign_reward_payout(
             &self.private_keys.my_referee_private_key,
             &self.reward_puzzle_hash,
@@ -195,18 +194,12 @@ impl HandshakeInitiatorHandler {
         }
     }
 
-    fn try_send_step_e(
-        &mut self,
-        info: HandshakeStepInfo,
-    ) -> Result<Option<Effect>, Error> {
+    fn try_send_step_e(&mut self, info: HandshakeStepInfo) -> Result<Option<Effect>, Error> {
         if let Some(spend) = self.channel_initiation_transaction.clone() {
             let send_effect = Effect::PeerHandshakeE {
                 bundle: spend.clone(),
             };
-            self.state = InitiatorState::Finished(Box::new(HandshakeStepWithSpend {
-                info,
-                spend,
-            }));
+            self.state = InitiatorState::Finished(Box::new(HandshakeStepWithSpend { info, spend }));
             return Ok(Some(send_effect));
         }
         Ok(None)
@@ -224,7 +217,10 @@ impl HandshakeInitiatorHandler {
             return;
         }
         if let InitiatorState::Finished(_) = &self.state {
-            let ch = self.channel_handler.take().expect("channel handler must exist at Finished");
+            let ch = self
+                .channel_handler
+                .take()
+                .expect("channel handler must exist at Finished");
             let queued_messages = std::mem::take(&mut self.incoming_messages);
 
             let ph = PotatoHandler::from_completed_handshake(
@@ -305,13 +301,14 @@ impl HandshakeInitiatorHandler {
             }
 
             InitiatorState::SentC(_info) => {
-                let signatures = if let PeerMessage::HandshakeD { signatures } = msg_envelope.borrow() {
-                    signatures
-                } else {
-                    return Err(Error::StrErr(format!(
-                        "Expected handshake D message, got {msg_envelope:?}"
-                    )));
-                };
+                let signatures =
+                    if let PeerMessage::HandshakeD { signatures } = msg_envelope.borrow() {
+                        signatures
+                    } else {
+                        return Err(Error::StrErr(format!(
+                            "Expected handshake D message, got {msg_envelope:?}"
+                        )));
+                    };
 
                 let spend_info = {
                     let ch = self.channel_handler_mut()?;
@@ -342,7 +339,8 @@ impl HandshakeInitiatorHandler {
 
                 self.have_potato = PotatoState::Present;
 
-                let info = match std::mem::replace(&mut self.state, InitiatorState::WaitingForStart) {
+                let info = match std::mem::replace(&mut self.state, InitiatorState::WaitingForStart)
+                {
                     InitiatorState::SentC(info) => *info,
                     _ => unreachable!(),
                 };
@@ -355,14 +353,7 @@ impl HandshakeInitiatorHandler {
             }
 
             InitiatorState::Finished(_) => {
-                match msg_envelope.borrow() {
-                    PeerMessage::HandshakeF { bundle } => {
-                        effects.push(Effect::ReceivedChannelOffer(bundle.clone()));
-                    }
-                    _ => {
-                        self.incoming_messages.push_front(msg_envelope);
-                    }
-                }
+                self.incoming_messages.push_front(msg_envelope);
             }
 
             InitiatorState::Done => {

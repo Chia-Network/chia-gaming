@@ -65,11 +65,8 @@ pub fn build_channel_to_unroll_bundle(
     name: &str,
 ) -> Result<SpendBundle, Error> {
     let channel_public_key = ch.get_aggregate_channel_public_key();
-    let channel_coin_puzzle = puzzle_for_synthetic_public_key(
-        env.allocator,
-        &env.standard_puzzle,
-        &channel_public_key,
-    )?;
+    let channel_coin_puzzle =
+        puzzle_for_synthetic_public_key(env.allocator, &env.standard_puzzle, &channel_public_key)?;
     Ok(SpendBundle {
         name: Some(name.to_string()),
         spends: vec![CoinSpend {
@@ -201,17 +198,9 @@ impl ChannelHandlerBase {
         Ok(vec![])
     }
 
-    pub fn park_move(
-        &mut self,
-        id: &GameID,
-        readable: &ReadableMove,
-        new_entropy: Hash,
-    ) {
-        self.game_action_queue.push_back(GameAction::Move(
-            *id,
-            readable.clone(),
-            new_entropy,
-        ));
+    pub fn park_move(&mut self, id: &GameID, readable: &ReadableMove, new_entropy: Hash) {
+        self.game_action_queue
+            .push_back(GameAction::Move(*id, readable.clone(), new_entropy));
     }
 
     pub fn park_accept_timeout(&mut self, id: &GameID) {

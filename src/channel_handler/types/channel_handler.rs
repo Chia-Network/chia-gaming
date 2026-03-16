@@ -58,9 +58,7 @@ pub struct ChannelHandlerEnv<'a> {
 }
 
 impl<'a> ChannelHandlerEnv<'a> {
-    pub fn new(
-        allocator: &'a mut AllocEncoder,
-    ) -> Result<ChannelHandlerEnv<'a>, Error> {
+    pub fn new(allocator: &'a mut AllocEncoder) -> Result<ChannelHandlerEnv<'a>, Error> {
         let referee_coin_puzzle = read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex")?;
         let unroll_puzzle = read_hex_puzzle(
             allocator,

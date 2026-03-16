@@ -14,8 +14,8 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{atom_from_clvm, i64_from_atom, usize_from_atom};
 use crate::common::types::{
-    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, IntoErr,
-    PrivateKey, Program, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
+    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, IntoErr, PrivateKey,
+    Program, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
 use crate::games::poker_collection;
 use crate::peer_container::{
@@ -25,8 +25,7 @@ use crate::peer_container::{
 use crate::potato_handler::effects::{apply_effects, CradleEvent, Effect, GameNotification};
 use crate::potato_handler::start::GameStart;
 use crate::potato_handler::types::{
-    BatchAction, BootstrapTowardWallet, PacketSender, PeerMessage, ToLocalUI,
-    WalletSpendInterface,
+    BatchAction, BootstrapTowardWallet, PacketSender, PeerMessage, ToLocalUI, WalletSpendInterface,
 };
 use crate::potato_handler::PotatoHandler;
 use crate::utils::proper_list;
@@ -258,14 +257,7 @@ pub fn handshake(
         steps += 1;
         assert!(steps < 50);
 
-        run_move(
-            allocator,
-            Amount::new(200),
-            pipes,
-            &mut peers[who],
-            who,
-        )
-        .expect("should send");
+        run_move(allocator, Amount::new(200), pipes, &mut peers[who], who).expect("should send");
 
         if let Some(ph) = pipes[who].channel_puzzle_hash.clone() {
             pipes[who].channel_puzzle_hash = None;
@@ -1081,10 +1073,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                     let saved = move_number;
                     while move_number > 0
                         && (move_number >= moves_input.len()
-                            || !matches!(
-                                moves_input[move_number],
-                                GameAction::Move(_, _, _, _)
-                            ))
+                            || !matches!(moves_input[move_number], GameAction::Move(_, _, _, _)))
                     {
                         move_number -= 1;
                     }
@@ -1322,11 +1311,7 @@ fn run_game_container_with_action_list_with_success_predicate(
 
                         local_uis[*who].go_on_chain = true;
                         let got_error = local_uis[*who].got_error;
-                        cradles[*who].go_on_chain(
-                            allocator,
-                            &mut local_uis[*who],
-                            got_error,
-                        )?;
+                        cradles[*who].go_on_chain(allocator, &mut local_uis[*who], got_error)?;
                         local_uis[*who].go_on_chain = false;
 
                         let next = moves_input.get(move_number);
@@ -1402,13 +1387,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                     }
                     GameAction::ForceDestroyCoin(who, gid) => {
                         if gid_diag_on {
-                            gid_diag(
-                                &test_name,
-                                action_idx,
-                                "ForceDestroyCoin",
-                                gid,
-                                gid,
-                            );
+                            gid_diag(&test_name, action_idx, "ForceDestroyCoin", gid, gid);
                         }
                         if let Some(game_coin) = cradles[*who].get_game_coin(gid) {
                             force_destroyed_coins.push(game_coin);
@@ -2745,9 +2724,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         for _i in 0..100 {
             for c in 0..2 {
-                let result = outcome.cradles[c]
-                    .drain_all(&mut allocator)
-                    .unwrap();
+                let result = outcome.cradles[c].drain_all(&mut allocator).unwrap();
                 for event in result.events.iter() {
                     match event {
                         CradleEvent::OutboundMessage(msg) => {

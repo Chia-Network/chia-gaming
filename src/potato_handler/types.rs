@@ -207,10 +207,7 @@ pub trait FromLocalUI {
         id: &GameID,
     ) -> Result<Vec<Effect>, Error>;
 
-    fn shut_down(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
-    ) -> Result<Vec<Effect>, Error>;
+    fn shut_down(&mut self, env: &mut ChannelHandlerEnv<'_>) -> Result<Vec<Effect>, Error>;
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -341,4 +338,3 @@ pub struct PotatoHandlerInit {
     pub unroll_timeout: Timeout,
     pub reward_puzzle_hash: PuzzleHash,
 }
-

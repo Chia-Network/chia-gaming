@@ -13,14 +13,12 @@ use crate::common::standard_coin::{
     private_to_public_key, sign_reward_payout, verify_reward_payout_signature,
 };
 use crate::common::types::{
-    Amount, CoinID, CoinString, Error, GameID, GameType, Hash, IntoErr,
-    Program, PuzzleHash, SpendBundle, Timeout,
+    Amount, CoinID, CoinString, Error, GameID, GameType, Hash, IntoErr, Program, PuzzleHash,
+    SpendBundle, Timeout,
 };
 use crate::peer_container::PeerHandler;
 use crate::potato_handler::effects::{format_coin, Effect, GameNotification, ResyncInfo};
-use crate::potato_handler::handshake::{
-    HandshakeB, HandshakeStepInfo, HandshakeStepWithSpend,
-};
+use crate::potato_handler::handshake::{HandshakeB, HandshakeStepInfo, HandshakeStepWithSpend};
 use crate::potato_handler::types::{
     GameFactory, PeerMessage, PotatoHandlerInit, PotatoState, SpendWalletReceiver,
 };
@@ -156,10 +154,7 @@ impl HandshakeReceiverHandler {
         )
     }
 
-    fn try_send_step_f(
-        &mut self,
-        info: HandshakeStepInfo,
-    ) -> Result<Option<Effect>, Error> {
+    fn try_send_step_f(&mut self, info: HandshakeStepInfo) -> Result<Option<Effect>, Error> {
         if self.waiting_to_start {
             return Ok(None);
         }
@@ -168,10 +163,7 @@ impl HandshakeReceiverHandler {
             let send_effect = Effect::PeerHandshakeF {
                 bundle: spend.clone(),
             };
-            self.state = ReceiverState::Finished(Box::new(HandshakeStepWithSpend {
-                info,
-                spend,
-            }));
+            self.state = ReceiverState::Finished(Box::new(HandshakeStepWithSpend { info, spend }));
             return Ok(Some(send_effect));
         }
 
@@ -190,7 +182,10 @@ impl HandshakeReceiverHandler {
             return;
         }
         if let ReceiverState::Finished(_) = &self.state {
-            let ch = self.channel_handler.take().expect("channel handler must exist at Finished");
+            let ch = self
+                .channel_handler
+                .take()
+                .expect("channel handler must exist at Finished");
             let queued_messages = std::mem::take(&mut self.incoming_messages);
 
             let ph = PotatoHandler::from_completed_handshake(
@@ -266,13 +261,14 @@ impl HandshakeReceiverHandler {
             }
 
             ReceiverState::SentB(_info) => {
-                let signatures = if let PeerMessage::HandshakeC { signatures } = msg_envelope.borrow() {
-                    signatures
-                } else {
-                    return Err(Error::StrErr(format!(
-                        "Expected handshake C message, got {msg_envelope:?}"
-                    )));
-                };
+                let signatures =
+                    if let PeerMessage::HandshakeC { signatures } = msg_envelope.borrow() {
+                        signatures
+                    } else {
+                        return Err(Error::StrErr(format!(
+                            "Expected handshake C message, got {msg_envelope:?}"
+                        )));
+                    };
 
                 let spend_info = {
                     let ch = self.channel_handler_mut()?;
@@ -421,10 +417,7 @@ impl SpendWalletReceiver for HandshakeReceiverHandler {
 
         if let ReceiverState::WaitingForCompletion(info) = &self.state {
             let info = *info.clone();
-            let step_f_effects: Vec<Effect> = self
-                .try_send_step_f(info)?
-                .into_iter()
-                .collect();
+            let step_f_effects: Vec<Effect> = self.try_send_step_f(info)?.into_iter().collect();
             effects.extend(step_f_effects);
         }
 

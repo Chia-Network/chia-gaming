@@ -951,7 +951,9 @@ mod sim_tests {
     fn extract_state_number(line: &str) -> Option<usize> {
         let idx = line.find("state=")?;
         let rest = &line[idx + 6..];
-        let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+        let end = rest
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(rest.len());
         rest[..end].parse().ok()
     }
 

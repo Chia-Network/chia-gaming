@@ -292,7 +292,10 @@ fn get_channel_coin_for_handler(p: &dyn PeerHandler) -> Result<CoinString, Error
 
 #[cfg(test)]
 fn extract_potato_handler(peer: &mut Box<dyn PeerHandler>) -> Option<PotatoHandler> {
-    if let Some(ih) = peer.as_any_mut().downcast_mut::<HandshakeInitiatorHandler>() {
+    if let Some(ih) = peer
+        .as_any_mut()
+        .downcast_mut::<HandshakeInitiatorHandler>()
+    {
         return ih.take_potato_handler();
     }
     if let Some(rh) = peer.as_any_mut().downcast_mut::<HandshakeReceiverHandler>() {
@@ -326,11 +329,8 @@ where
                 let mut env = ChannelHandlerEnv::new(allocator)?;
 
                 if let Some(ch) = pipes[who].get_channel_puzzle_hash() {
-                    let parent = CoinString::from_parts(
-                        &CoinID::default(),
-                        &PuzzleHash::default(),
-                        &amount,
-                    );
+                    let parent =
+                        CoinString::from_parts(&CoinID::default(), &PuzzleHash::default(), &amount);
                     let effects = test_handle_received_channel_puzzle_hash(
                         &mut env,
                         &mut *handlers[who],
@@ -342,11 +342,8 @@ where
                 }
 
                 if let Some(ufo) = pipes[who].get_unfunded_offer() {
-                    let effects = test_handle_received_unfunded_offer(
-                        &mut env,
-                        &mut *handlers[who],
-                        &ufo,
-                    )?;
+                    let effects =
+                        test_handle_received_unfunded_offer(&mut env, &mut *handlers[who], &ufo)?;
                     immediate_effects.extend(effects);
                 }
                 drop(env);
@@ -384,30 +381,32 @@ pub fn test_peer_smoke() {
 
     let game_type_map = poker_collection(&mut allocator);
 
-    let new_handler =
-        |allocator: &mut AllocEncoder, rng: &mut ChaCha8Rng, have_potato: bool| -> Box<dyn PeerHandler> {
-            let private_keys1: ChannelHandlerPrivateKeys = rng.gen();
-            let reward_private_key1: PrivateKey = rng.gen();
-            let reward_public_key1 = private_to_public_key(&reward_private_key1);
-            let reward_puzzle_hash1 =
-                puzzle_hash_for_pk(allocator, &reward_public_key1).expect("should work");
+    let new_handler = |allocator: &mut AllocEncoder,
+                       rng: &mut ChaCha8Rng,
+                       have_potato: bool|
+     -> Box<dyn PeerHandler> {
+        let private_keys1: ChannelHandlerPrivateKeys = rng.gen();
+        let reward_private_key1: PrivateKey = rng.gen();
+        let reward_public_key1 = private_to_public_key(&reward_private_key1);
+        let reward_puzzle_hash1 =
+            puzzle_hash_for_pk(allocator, &reward_public_key1).expect("should work");
 
-            let phi = PotatoHandlerInit {
-                have_potato,
-                private_keys: private_keys1,
-                game_types: game_type_map.clone(),
-                my_contribution: Amount::new(100),
-                their_contribution: Amount::new(100),
-                channel_timeout: Timeout::new(1000),
-                unroll_timeout: Timeout::new(5),
-                reward_puzzle_hash: reward_puzzle_hash1.clone(),
-            };
-            if have_potato {
-                Box::new(HandshakeInitiatorHandler::new(phi))
-            } else {
-                Box::new(HandshakeReceiverHandler::new(phi))
-            }
+        let phi = PotatoHandlerInit {
+            have_potato,
+            private_keys: private_keys1,
+            game_types: game_type_map.clone(),
+            my_contribution: Amount::new(100),
+            their_contribution: Amount::new(100),
+            channel_timeout: Timeout::new(1000),
+            unroll_timeout: Timeout::new(5),
+            reward_puzzle_hash: reward_puzzle_hash1.clone(),
         };
+        if have_potato {
+            Box::new(HandshakeInitiatorHandler::new(phi))
+        } else {
+            Box::new(HandshakeReceiverHandler::new(phi))
+        }
+    };
 
     let parent_private_key: PrivateKey = rng.gen();
     let parent_public_key = private_to_public_key(&parent_private_key);
@@ -429,8 +428,7 @@ pub fn test_peer_smoke() {
                 .as_any_mut()
                 .downcast_mut::<HandshakeInitiatorHandler>()
                 .expect("handler[0] should be initiator");
-            ih.start(&mut env, parent_coin)
-                .expect("should work")
+            ih.start(&mut env, parent_coin).expect("should work")
         };
         apply_effects(
             start_effect.into_iter().collect(),
@@ -473,17 +471,17 @@ pub fn test_peer_smoke() {
             let nil = Program::from_hex("80").unwrap();
             let (game_ids, effects1) = FromLocalUI::propose_game(
                 &mut peers[1],
-                    &mut env,
-                    &GameStart {
-                        amount: Amount::new(200),
-                        my_contribution: Amount::new(100),
-                        game_type: GameType(b"ca1poker".to_vec()),
-                        timeout: Timeout::new(10),
-                        my_turn: true,
-                        parameters: nil,
-                    },
-                )
-                .expect("should run");
+                &mut env,
+                &GameStart {
+                    amount: Amount::new(200),
+                    my_contribution: Amount::new(100),
+                    game_type: GameType(b"ca1poker".to_vec()),
+                    timeout: Timeout::new(10),
+                    my_turn: true,
+                    parameters: nil,
+                },
+            )
+            .expect("should run");
             (game_ids, effects1)
         };
         apply_effects(effects1, &mut allocator, &mut pipe_sender[1]).expect("should work");
@@ -541,10 +539,10 @@ pub fn test_peer_smoke() {
         {
             let entropy = rng.gen();
             let mut env = ChannelHandlerEnv::new(&mut allocator).expect("should work");
-            let effects = FromLocalUI::make_move(&mut peers[who ^ 1], &mut env, &game_ids[0], &what, entropy)
-                .expect("should work");
-            apply_effects(effects, &mut allocator, &mut pipe_sender[who ^ 1])
-                .expect("should work");
+            let effects =
+                FromLocalUI::make_move(&mut peers[who ^ 1], &mut env, &game_ids[0], &what, entropy)
+                    .expect("should work");
+            apply_effects(effects, &mut allocator, &mut pipe_sender[who ^ 1]).expect("should work");
         }
 
         quiesce(

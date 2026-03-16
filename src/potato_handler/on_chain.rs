@@ -5,15 +5,15 @@ use serde::{Deserialize, Serialize};
 use serde_json_any_key::*;
 
 use crate::channel_handler::types::ChannelHandlerEnv;
-use crate::peer_container::PeerHandler;
 use crate::channel_handler::types::{
-    AcceptTransactionState, CoinSpentInformation, OnChainGameState, PotatoMoveCachedData,
-    ReadableMove, CachedPotatoRegenerateLastHop, ChannelHandlerPrivateKeys, LiveGame,
+    AcceptTransactionState, CachedPotatoRegenerateLastHop, ChannelHandlerPrivateKeys,
+    CoinSpentInformation, LiveGame, OnChainGameState, PotatoMoveCachedData, ReadableMove,
 };
 use crate::common::types::{
     AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, Program,
-    PuzzleHash, Sha256Input, SpendBundle, Spend, Timeout,
+    PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
 };
+use crate::peer_container::PeerHandler;
 use crate::potato_handler::effects::{format_coin, Effect, GameNotification, ResyncInfo};
 use crate::potato_handler::types::{GameAction, PotatoState};
 use crate::referee::types::{GameMoveDetails, SlashOutcome, TheirTurnCoinSpentResult};
@@ -446,8 +446,7 @@ impl OnChainGameHandler {
 
         self.restore_game_state(&game_id, saved_referee.clone(), saved_ph.clone())?;
 
-        let transaction =
-            self.get_transaction_for_game_move(env.allocator, &game_id, &coin)?;
+        let transaction = self.get_transaction_for_game_move(env.allocator, &game_id, &coin)?;
 
         let new_ph = self.get_game_outcome_puzzle_hash(env.allocator, &game_id)?;
 
@@ -714,8 +713,7 @@ impl OnChainGameHandler {
             return Ok((effects, None));
         }
 
-        let result =
-            self.game_coin_spent(env, &old_definition.game_id, coin_id, &conditions);
+        let result = self.game_coin_spent(env, &old_definition.game_id, coin_id, &conditions);
 
         let their_turn_result = if let Ok(result) = result {
             result
@@ -1142,8 +1140,8 @@ impl OnChainGameHandler {
                 let already_notified = game_def.notification_sent;
                 self.game_map.insert(coin_id.clone(), game_def);
 
-                let result_transaction = self
-                    .accept_or_timeout_game_on_chain(env, &game_id, coin_id)?;
+                let result_transaction =
+                    self.accept_or_timeout_game_on_chain(env, &game_id, coin_id)?;
 
                 if let Some(game_def) = self.game_map.get_mut(coin_id) {
                     game_def.accept = AcceptTransactionState::Finished;
@@ -1214,10 +1212,7 @@ impl OnChainGameHandler {
         Ok(effects)
     }
 
-    pub fn next_action(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
-    ) -> Result<Vec<Effect>, Error> {
+    pub fn next_action(&mut self, env: &mut ChannelHandlerEnv<'_>) -> Result<Vec<Effect>, Error> {
         if let Some(action) = self.game_action_queue.pop_front() {
             return self.do_on_chain_action(env, action);
         }
@@ -1246,8 +1241,8 @@ impl OnChainGameHandler {
         let game_amount = self.get_game_amount(&game_id)?;
         let (pre_referee, pre_last_ph) = self.save_game_state(&game_id)?;
 
-        let (old_ph, new_ph, _state_number, move_result, transaction) = self
-            .on_chain_our_move(env, &game_id, &readable_move, entropy.clone(), current_coin)?;
+        let (old_ph, new_ph, _state_number, move_result, transaction) =
+            self.on_chain_our_move(env, &game_id, &readable_move, entropy.clone(), current_coin)?;
 
         if move_result.basic.mover_share == game_amount && move_result.basic.max_move_size > 0 {
             self.restore_game_state(&game_id, pre_referee, pre_last_ph)?;
@@ -1312,9 +1307,7 @@ impl OnChainGameHandler {
                     .do_on_chain_move(env, &current_coin, game_id, readable_move, hash)?
                     .into_iter()
                     .collect()),
-                Err(_) => {
-                    self.next_action(env)
-                }
+                Err(_) => self.next_action(env),
             },
             GameAction::Cheat(game_id, mover_share, entropy) => match get_current_coin(&game_id) {
                 Ok(current_coin) => {
@@ -1338,9 +1331,7 @@ impl OnChainGameHandler {
                         Ok(Vec::new())
                     }
                 }
-                Err(_) => {
-                    self.next_action(env)
-                }
+                Err(_) => self.next_action(env),
             },
             GameAction::RedoMove(game_id, coin, cached_move) => {
                 Ok(vec![self.do_on_chain_redo_move(
@@ -1364,22 +1355,19 @@ impl OnChainGameHandler {
                 Ok(effects)
             }
             GameAction::AcceptTimeout(game_id) => {
-                match get_current_coin(&game_id) {
-                    Ok(current_coin) => {
-                        let our_share = self.get_game_our_current_share(&game_id);
-                        if matches!(our_share, Ok(ref s) if *s == Amount::default()) {
-                            self.game_map.remove(&current_coin);
-                            return Ok(vec![Effect::Notify(GameNotification::WeTimedOut {
-                                id: game_id,
-                                our_reward: Amount::default(),
-                                reward_coin: None,
-                            })]);
-                        }
-                        if let Some(def) = self.game_map.get_mut(&current_coin) {
-                            def.accepted = true;
-                        }
+                if let Ok(current_coin) = get_current_coin(&game_id) {
+                    let our_share = self.get_game_our_current_share(&game_id);
+                    if matches!(our_share, Ok(ref s) if *s == Amount::default()) {
+                        self.game_map.remove(&current_coin);
+                        return Ok(vec![Effect::Notify(GameNotification::WeTimedOut {
+                            id: game_id,
+                            our_reward: Amount::default(),
+                            reward_coin: None,
+                        })]);
                     }
-                    Err(_) => {}
+                    if let Some(def) = self.game_map.get_mut(&current_coin) {
+                        def.accepted = true;
+                    }
                 }
                 Ok(Vec::new())
             }
@@ -1387,9 +1375,7 @@ impl OnChainGameHandler {
             GameAction::SendPotato => Ok(Vec::new()),
             GameAction::QueuedProposal(_, _)
             | GameAction::QueuedAcceptProposal(_)
-            | GameAction::QueuedCancelProposal(_) => {
-                Ok(vec![])
-            }
+            | GameAction::QueuedCancelProposal(_) => Ok(vec![]),
         }
     }
 
@@ -1442,10 +1428,13 @@ impl OnChainGameHandler {
         let (matched, effect) = self.check_game_coin_spent(coin_id)?;
         let mut effects: Vec<Effect> = effect.into_iter().collect();
         if matched {
-            effects.insert(0, Effect::DebugLog(format!(
-                "[on-chain:game-coin-spent] {}",
-                format_coin(coin_id),
-            )));
+            effects.insert(
+                0,
+                Effect::DebugLog(format!(
+                    "[on-chain:game-coin-spent] {}",
+                    format_coin(coin_id),
+                )),
+            );
         } else {
             effects.push(Effect::DebugLog(format!(
                 "[on-chain:coin-spent] {}",
@@ -1502,23 +1491,42 @@ impl PeerHandler for OnChainGameHandler {
         OnChainGameHandler::has_pending_incoming(self)
     }
 
-    fn process_incoming_message(&mut self, env: &mut ChannelHandlerEnv<'_>) -> Result<Vec<Effect>, Error> {
+    fn process_incoming_message(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_>,
+    ) -> Result<Vec<Effect>, Error> {
         OnChainGameHandler::process_incoming_message(self, env)
     }
 
-    fn received_message(&mut self, _env: &mut ChannelHandlerEnv<'_>, _msg: Vec<u8>) -> Result<Vec<Effect>, Error> {
+    fn received_message(
+        &mut self,
+        _env: &mut ChannelHandlerEnv<'_>,
+        _msg: Vec<u8>,
+    ) -> Result<Vec<Effect>, Error> {
         Ok(vec![])
     }
 
-    fn coin_spent(&mut self, env: &mut ChannelHandlerEnv<'_>, coin_id: &CoinString) -> Result<Vec<Effect>, Error> {
+    fn coin_spent(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_>,
+        coin_id: &CoinString,
+    ) -> Result<Vec<Effect>, Error> {
         OnChainGameHandler::coin_spent(self, env, coin_id)
     }
 
-    fn coin_timeout_reached(&mut self, env: &mut ChannelHandlerEnv<'_>, coin_id: &CoinString) -> Result<Vec<Effect>, Error> {
+    fn coin_timeout_reached(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_>,
+        coin_id: &CoinString,
+    ) -> Result<Vec<Effect>, Error> {
         OnChainGameHandler::coin_timeout_reached(self, env, coin_id)
     }
 
-    fn coin_created(&mut self, env: &mut ChannelHandlerEnv<'_>, coin_id: &CoinString) -> Result<Option<Vec<Effect>>, Error> {
+    fn coin_created(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_>,
+        coin_id: &CoinString,
+    ) -> Result<Option<Vec<Effect>>, Error> {
         OnChainGameHandler::coin_created(self, env, coin_id)
     }
 
@@ -1541,7 +1549,11 @@ impl PeerHandler for OnChainGameHandler {
         OnChainGameHandler::make_move(self, env, id, readable, new_entropy)
     }
 
-    fn accept_timeout(&mut self, env: &mut ChannelHandlerEnv<'_>, id: &GameID) -> Result<Vec<Effect>, Error> {
+    fn accept_timeout(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_>,
+        id: &GameID,
+    ) -> Result<Vec<Effect>, Error> {
         OnChainGameHandler::accept_timeout(self, env, id)
     }
 
