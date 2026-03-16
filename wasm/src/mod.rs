@@ -29,7 +29,7 @@ mod gaming_wasm {
     use chia_gaming::peer_container::{
         DrainResult, GameCradle, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
     };
-    use chia_gaming::potato_handler::effects::GameNotification;
+    use chia_gaming::potato_handler::effects::{CradleEvent, GameNotification};
     use chia_gaming::potato_handler::start::GameStart;
     use chia_gaming::potato_handler::types::{GameFactory, ToLocalUI};
 
@@ -83,14 +83,18 @@ mod gaming_wasm {
         "puzzle_hash": string,
     };
 
+    export type CradleEvent =
+        | { OutboundMessage: string }
+        | { OutboundTransaction: SpendBundle }
+        | { Notification: any }
+        | { DebugLog: string }
+        | { CoinSolutionRequest: string }
+        | { ReceiveError: string };
+
     export type DrainResult = {
         "handshake_done": boolean,
         "finished": boolean,
-        "outbound_transactions": Array<SpendBundle>,
-        "outbound_messages": Array<string>,
-        "notifications": Array<any>,
-        "receive_errors": Array<string>,
-        "coin_solution_requests": Array<string>,
+        "events": Array<CradleEvent>,
     };
 
     export type GameCradleConfig = {
@@ -554,24 +558,14 @@ mod gaming_wasm {
                 ids: Vec<String>,
                 handshake_done: bool,
                 finished: bool,
-                outbound_transactions: Vec<JsSpendBundle>,
-                outbound_messages: Vec<String>,
-                notifications: Vec<serde_json::Value>,
-                receive_errors: Vec<String>,
+                events: Vec<serde_json::Value>,
             }
 
             to_js_compat(&ProposeGameResult {
                 ids: ids.iter().map(game_id_to_string).collect(),
                 handshake_done: dr.handshake_done,
                 finished: dr.finished,
-                outbound_transactions: dr
-                    .outbound_transactions
-                    .iter()
-                    .map(spend_bundle_to_js)
-                    .collect(),
-                outbound_messages: dr.outbound_messages.iter().map(hex::encode).collect(),
-                notifications: notifications_to_js(&dr.notifications),
-                receive_errors: dr.receive_errors.iter().map(|e| format!("{e:?}")).collect(),
+                events: dr.events.iter().map(cradle_event_to_js).collect(),
             })
         })
     }
@@ -798,12 +792,7 @@ mod gaming_wasm {
     struct JsDrainResult {
         handshake_done: bool,
         finished: bool,
-        outbound_transactions: Vec<JsSpendBundle>,
-        outbound_messages: Vec<String>,
-        notifications: Vec<serde_json::Value>,
-        receive_errors: Vec<String>,
-        coin_solution_requests: Vec<String>,
-        debug_lines: Vec<String>,
+        events: Vec<serde_json::Value>,
     }
 
     fn spend_to_js(spend: &Spend) -> JsSpend {
@@ -855,39 +844,42 @@ mod gaming_wasm {
         }
     }
 
-    fn notifications_to_js(notifications: &[GameNotification]) -> Vec<serde_json::Value> {
-        notifications
-            .iter()
-            .map(|n| {
-                serde_json::to_value(n).unwrap_or_else(|_| serde_json::json!(format!("{n:?}")))
-            })
-            .collect()
-    }
-
     fn to_js_compat<T: Serialize>(value: &T) -> Result<JsValue, types::Error> {
         value
             .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
             .into_e()
     }
 
+    fn cradle_event_to_js(event: &CradleEvent) -> serde_json::Value {
+        match event {
+            CradleEvent::OutboundMessage(data) => {
+                serde_json::json!({ "OutboundMessage": hex::encode(data) })
+            }
+            CradleEvent::OutboundTransaction(bundle) => {
+                serde_json::json!({ "OutboundTransaction": spend_bundle_to_js(bundle) })
+            }
+            CradleEvent::Notification(n) => {
+                let val = serde_json::to_value(n)
+                    .unwrap_or_else(|_| serde_json::json!(format!("{n:?}")));
+                serde_json::json!({ "Notification": val })
+            }
+            CradleEvent::DebugLog(line) => {
+                serde_json::json!({ "DebugLog": line })
+            }
+            CradleEvent::CoinSolutionRequest(coin) => {
+                serde_json::json!({ "CoinSolutionRequest": coin_string_to_hex(coin) })
+            }
+            CradleEvent::ReceiveError(msg) => {
+                serde_json::json!({ "ReceiveError": msg })
+            }
+        }
+    }
+
     fn drain_result_to_js(dr: &DrainResult) -> Result<JsValue, types::Error> {
         to_js_compat(&JsDrainResult {
             handshake_done: dr.handshake_done,
             finished: dr.finished,
-            outbound_transactions: dr
-                .outbound_transactions
-                .iter()
-                .map(spend_bundle_to_js)
-                .collect(),
-            outbound_messages: dr.outbound_messages.iter().map(hex::encode).collect(),
-            notifications: notifications_to_js(&dr.notifications),
-            receive_errors: dr.receive_errors.iter().map(|e| format!("{e:?}")).collect(),
-            coin_solution_requests: dr
-                .coin_solution_requests
-                .iter()
-                .map(coin_string_to_hex)
-                .collect(),
-            debug_lines: dr.debug_lines.clone(),
+            events: dr.events.iter().map(cradle_event_to_js).collect(),
         })
     }
 

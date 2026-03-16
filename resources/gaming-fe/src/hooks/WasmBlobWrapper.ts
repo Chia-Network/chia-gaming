@@ -160,32 +160,29 @@ export class WasmBlobWrapper {
   processResult(result: WasmResult | undefined): void {
     if (!result || this.finished) return;
 
-    const msgs = result.outbound_messages || [];
-    for (const msg of msgs) {
-      this.sendMessage(this.messageNumber++, msg);
-    }
-    for (const tx of result.outbound_transactions || []) {
-      this.submitTransaction(tx);
-    }
     if (result.finished && !this.finished) {
       this.finished = true;
       this.rxjsEmitter?.next({ type: 'finished' });
     }
-    for (const err of result.receive_errors || []) {
-      this.rxjsEmitter?.next({ type: 'error', error: err });
-    }
-    for (const n of result.notifications || []) {
-      const tag = typeof n === 'object' && n !== null ? Object.keys(n)[0] : String(n);
-      if (tag === 'ChannelCreated' && !this.channelReady) {
-        this.channelReady = true;
+    for (const event of result.events || []) {
+      if ('OutboundMessage' in event) {
+        this.sendMessage(this.messageNumber++, event.OutboundMessage);
+      } else if ('OutboundTransaction' in event) {
+        this.submitTransaction(event.OutboundTransaction);
+      } else if ('Notification' in event) {
+        const n = event.Notification;
+        const tag = typeof n === 'object' && n !== null ? Object.keys(n)[0] : String(n);
+        if (tag === 'ChannelCreated' && !this.channelReady) {
+          this.channelReady = true;
+        }
+        this.rxjsEmitter?.next({ type: 'notification', data: n });
+      } else if ('ReceiveError' in event) {
+        this.rxjsEmitter?.next({ type: 'error', error: event.ReceiveError });
+      } else if ('CoinSolutionRequest' in event) {
+        this.fulfillPuzzleSolutionRequest(event.CoinSolutionRequest);
+      } else if ('DebugLog' in event) {
+        this.rxjsEmitter?.next({ type: 'debug_log', message: event.DebugLog });
       }
-      this.rxjsEmitter?.next({ type: 'notification', data: n });
-    }
-    for (const coin of result.coin_solution_requests || []) {
-      this.fulfillPuzzleSolutionRequest(coin);
-    }
-    for (const line of result.debug_lines || []) {
-      this.rxjsEmitter?.next({ type: 'debug_log', message: line });
     }
   }
 

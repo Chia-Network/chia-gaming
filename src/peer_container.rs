@@ -19,7 +19,7 @@ use crate::common::types::{
     AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr, Program,
     PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
-use crate::potato_handler::effects::{apply_effects, Effect, GameNotification, ResyncInfo};
+use crate::potato_handler::effects::{apply_effects, CradleEvent, CradleEventQueue, Effect, GameNotification, ResyncInfo};
 use crate::potato_handler::start::GameStart;
 use crate::potato_handler::types::{
     BootstrapTowardWallet, GameFactory, PacketSender,
@@ -39,7 +39,6 @@ pub trait PeerHandler {
     fn is_failed(&self) -> bool;
     fn has_potato(&self) -> bool;
     fn has_pending_incoming(&self) -> bool;
-    fn take_debug_lines(&mut self) -> Vec<String>;
     fn process_incoming_message(&mut self, env: &mut ChannelHandlerEnv<'_>) -> Result<Vec<Effect>, Error>;
     fn received_message(&mut self, env: &mut ChannelHandlerEnv<'_>, msg: Vec<u8>) -> Result<Vec<Effect>, Error>;
     fn coin_spent(&mut self, env: &mut ChannelHandlerEnv<'_>, coin_id: &CoinString) -> Result<Vec<Effect>, Error>;
@@ -74,6 +73,9 @@ pub trait PeerHandler {
         Err(Error::StrErr("shut_down: not in off-chain phase".to_string()))
     }
     fn go_on_chain(&mut self, _env: &mut ChannelHandlerEnv<'_>, _got_error: bool) -> Result<Vec<Effect>, Error> {
+        Ok(vec![])
+    }
+    fn flush_pending_actions(&mut self, _env: &mut ChannelHandlerEnv<'_>) -> Result<Vec<Effect>, Error> {
         Ok(vec![])
     }
     fn next_game_id(&mut self) -> Result<GameID, Error> {
@@ -219,13 +221,8 @@ impl MessagePeerQueue for SimulatedPeer<SimulatedWalletSpend> {
 pub struct DrainResult {
     pub handshake_done: bool,
     pub finished: bool,
-    pub outbound_messages: VecDeque<Vec<u8>>,
-    pub outbound_transactions: VecDeque<SpendBundle>,
-    pub coin_solution_requests: VecDeque<CoinString>,
-    pub notifications: Vec<GameNotification>,
-    pub receive_errors: Vec<Error>,
+    pub events: CradleEventQueue,
     pub resync: Option<(usize, bool)>,
-    pub debug_lines: Vec<String>,
 }
 
 pub trait GameCradle {
@@ -366,22 +363,15 @@ struct SynchronousGameCradleState {
     funding_coin: Option<CoinString>,
     unfunded_offer: Option<SpendBundle>,
     inbound_messages: VecDeque<Vec<u8>>,
-    outbound_messages: VecDeque<Vec<u8>>,
-    outbound_transactions: VecDeque<SpendBundle>,
-    coin_solution_requests: VecDeque<CoinString>,
     resync: Option<(usize, bool)>,
-    opponent_moves: VecDeque<(GameID, usize, ReadableMove, Amount)>,
-    game_messages: VecDeque<(GameID, ReadableMove)>,
-    #[serde(skip)]
-    pending_notifications: VecDeque<GameNotification>,
-    channel_created: bool,
-    channel_created_coin: Option<CoinString>,
     clean_shutdown_received: bool,
     finished: bool,
     clean_shutdown: Option<CoinString>,
     identity: ChiaIdentity,
     peer_disconnected: bool,
-    went_on_chain: Option<String>,
+
+    #[serde(skip)]
+    events: CradleEventQueue,
 }
 
 impl PacketSender for SynchronousGameCradleState {
@@ -391,19 +381,16 @@ impl PacketSender for SynchronousGameCradleState {
         }
         let bson_doc = bson::to_bson(&msg).map_err(|e| Error::StrErr(format!("{e:?}")))?;
         let msg_data = bson::to_vec(&bson_doc).map_err(|e| Error::StrErr(format!("{e:?}")))?;
-        self.outbound_messages.push_back(msg_data);
+        self.events.push_back(CradleEvent::OutboundMessage(msg_data));
         Ok(())
     }
 }
 
 impl WalletSpendInterface for SynchronousGameCradleState {
-    /// Enqueue an outbound transaction.
     fn spend_transaction_and_add_fee(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
-        self.outbound_transactions.push_back(bundle.clone());
+        self.events.push_back(CradleEvent::OutboundTransaction(bundle.clone()));
         Ok(())
     }
-    /// Coin should report its lifecycle until it gets spent, then should be
-    /// de-registered.
     fn register_coin(
         &mut self,
         coin_id: &CoinString,
@@ -422,9 +409,8 @@ impl WalletSpendInterface for SynchronousGameCradleState {
 
         Ok(())
     }
-    /// Request the puzzle and solution from a coin spend.
     fn request_puzzle_and_solution(&mut self, coin_id: &CoinString) -> Result<(), Error> {
-        self.coin_solution_requests.push_back(coin_id.clone());
+        self.events.push_back(CradleEvent::CoinSolutionRequest(coin_id.clone()));
         Ok(())
     }
 }
@@ -464,14 +450,6 @@ impl SynchronousGameCradle {
                 watching_coins: HashMap::default(),
                 identity: config.identity.clone(),
                 inbound_messages: VecDeque::default(),
-                outbound_transactions: VecDeque::default(),
-                outbound_messages: VecDeque::default(),
-                coin_solution_requests: VecDeque::default(),
-                opponent_moves: VecDeque::default(),
-                game_messages: VecDeque::default(),
-                pending_notifications: VecDeque::default(),
-                channel_created: false,
-                channel_created_coin: None,
                 channel_puzzle_hash: None,
                 funding_coin: None,
                 unfunded_offer: None,
@@ -480,7 +458,7 @@ impl SynchronousGameCradle {
                 clean_shutdown_received: false,
                 finished: false,
                 peer_disconnected: false,
-                went_on_chain: None,
+                events: CradleEventQueue::default(),
             },
             peer: Box::new(HandshakeHandler::new(PotatoHandlerInit {
                 have_potato: config.have_potato,
@@ -516,27 +494,8 @@ impl BootstrapTowardWallet for SynchronousGameCradleState {
 
 impl ToLocalUI for SynchronousGameCradleState {
     fn notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
+        // Set state flags that other code checks.
         match notification {
-            GameNotification::OpponentMoved {
-                id,
-                state_number,
-                readable,
-                mover_share,
-            } => {
-                self.opponent_moves.push_back((
-                    *id,
-                    *state_number,
-                    readable.clone(),
-                    mover_share.clone(),
-                ));
-            }
-            GameNotification::GameMessage { id, readable } => {
-                self.game_messages.push_back((*id, readable.clone()));
-            }
-            GameNotification::ChannelCreated { channel_coin } => {
-                self.channel_created = true;
-                self.channel_created_coin = Some(channel_coin.clone());
-            }
             GameNotification::CleanShutdownStarted { .. } => {
                 self.clean_shutdown_received = true;
             }
@@ -547,14 +506,17 @@ impl ToLocalUI for SynchronousGameCradleState {
                 self.clean_shutdown = reward_coin.clone();
                 self.finished = true;
             }
-            GameNotification::GoingOnChain { reason } => {
+            GameNotification::GoingOnChain { .. } => {
                 self.peer_disconnected = true;
-                self.went_on_chain = Some(reason.clone());
             }
-            other => {
-                self.pending_notifications.push_back(other.clone());
-            }
+            _ => {}
         }
+        self.events.push_back(CradleEvent::Notification(notification.clone()));
+        Ok(())
+    }
+
+    fn debug_log(&mut self, line: &str) -> Result<(), Error> {
+        self.events.push_back(CradleEvent::DebugLog(line.to_string()));
         Ok(())
     }
 }
@@ -661,7 +623,7 @@ impl SynchronousGameCradle {
             match recv_result {
                 Ok(effects) => self.process_effects(effects, allocator)?,
                 Err(e) => {
-                    result.receive_errors.push(e);
+                    self.state.events.push_back(CradleEvent::ReceiveError(format!("{e:?}")));
                 }
             }
         }
@@ -696,58 +658,25 @@ impl SynchronousGameCradle {
                         self.detect_phase_transition();
                     }
                     Err(e) => {
-                        result.receive_errors.push(e);
+                        self.state.events.push_back(CradleEvent::ReceiveError(format!("{e:?}")));
                     }
                 }
             }
         }
 
-        // Re-check after processing - handshake may have just completed.
+        // Flush any queued game actions if we have the potato.
+        {
+            let effects = {
+                let mut env = ChannelHandlerEnv::new(allocator)?;
+                self.peer.flush_pending_actions(&mut env)?
+            };
+            self.process_effects(effects, allocator)?;
+        }
+
         result.handshake_done = self.peer.handshake_done();
         result.finished = self.finished();
-
-        // Collect everything that accumulated.
-        result.outbound_messages = std::mem::take(&mut self.state.outbound_messages);
-        result.outbound_transactions = std::mem::take(&mut self.state.outbound_transactions);
-        result.coin_solution_requests = std::mem::take(&mut self.state.coin_solution_requests);
         result.resync = self.state.resync.take();
-
-        if self.state.channel_created {
-            let channel_coin = self
-                .state
-                .channel_created_coin
-                .take()
-                .unwrap_or_default();
-            result
-                .notifications
-                .push(GameNotification::ChannelCreated { channel_coin });
-            self.state.channel_created = false;
-        }
-        while let Some(n) = self.state.pending_notifications.pop_front() {
-            result.notifications.push(n);
-        }
-        while let Some((id, readable)) = self.state.game_messages.pop_front() {
-            result
-                .notifications
-                .push(GameNotification::GameMessage { id, readable });
-        }
-        while let Some((id, state_number, readable, mover_share)) =
-            self.state.opponent_moves.pop_front()
-        {
-            result.notifications.push(GameNotification::OpponentMoved {
-                id,
-                state_number,
-                readable,
-                mover_share,
-            });
-        }
-        if let Some(reason) = self.state.went_on_chain.take() {
-            result
-                .notifications
-                .push(GameNotification::GoingOnChain { reason });
-        }
-
-        result.debug_lines = self.peer.take_debug_lines();
+        result.events = std::mem::take(&mut self.state.events);
 
         Ok(result)
     }
@@ -885,7 +814,7 @@ impl SynchronousGameCradle {
                 "respond_to_unfunded_offer: expected 2 spends"
             );
 
-            self.state.outbound_transactions.push_back(spends);
+            self.state.events.push_back(CradleEvent::OutboundTransaction(spends));
 
             self.peer
                 .channel_transaction_completion(&mut env, &unfunded_offer)?
@@ -899,15 +828,25 @@ impl SynchronousGameCradle {
 }
 
 impl SynchronousGameCradle {
+    #[cfg(test)]
+    pub fn flush_pending(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
+        let effects = {
+            let mut env = ChannelHandlerEnv::new(allocator)?;
+            self.peer.flush_pending_actions(&mut env)?
+        };
+        self.process_effects(effects, allocator)?;
+        Ok(())
+    }
+
     pub fn replace_last_message<F>(&mut self, f: F) -> Result<(), Error>
     where
         F: FnOnce(&PeerMessage) -> Result<PeerMessage, Error>,
     {
-        // Grab and decode the message.
-        let msg = if let Some(msg) = self.state.outbound_messages.pop_back() {
-            msg
-        } else {
-            return Err(Error::StrErr("no message to replace".to_string()));
+        let idx = self.state.events.iter().rposition(|e| matches!(e, CradleEvent::OutboundMessage(_)))
+            .ok_or_else(|| Error::StrErr("no message to replace".to_string()))?;
+        let msg = match self.state.events.remove(idx) {
+            Some(CradleEvent::OutboundMessage(data)) => data,
+            _ => unreachable!(),
         };
 
         let doc = bson::Document::from_reader(&mut msg.as_slice()).into_gen()?;

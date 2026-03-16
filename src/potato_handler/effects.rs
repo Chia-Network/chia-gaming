@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use crate::channel_handler::types::PotatoSignatures;
 use crate::channel_handler::types::ReadableMove;
 use crate::common::types::{
@@ -125,6 +127,19 @@ pub enum GameNotification {
     },
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub enum CradleEvent {
+    OutboundMessage(Vec<u8>),
+    OutboundTransaction(SpendBundle),
+    Notification(GameNotification),
+    DebugLog(String),
+    CoinSolutionRequest(CoinString),
+    ReceiveError(String),
+}
+
+/// Collect CradleEvents in insertion order.
+pub type CradleEventQueue = VecDeque<CradleEvent>;
+
 #[derive(Debug, Clone)]
 pub enum Effect {
     // ToLocalUI
@@ -160,6 +175,10 @@ pub enum Effect {
     // BootstrapTowardWallet
     ChannelPuzzleHash(PuzzleHash),
     ReceivedChannelOffer(SpendBundle),
+
+    // Debug logging — first-class effect so it lands in the FIFO event queue
+    // at the correct temporal position.
+    DebugLog(String),
 }
 
 pub fn apply_effects(
@@ -225,6 +244,9 @@ pub fn apply_effects(
             }
             Effect::ReceivedChannelOffer(bundle) => {
                 system.received_channel_offer(&bundle)?;
+            }
+            Effect::DebugLog(line) => {
+                system.debug_log(&line)?;
             }
         }
     }

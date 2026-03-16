@@ -19,9 +19,6 @@ pub struct ChannelHandlerBase {
     pub have_potato: PotatoState,
     pub channel_timeout: Timeout,
     pub unroll_timeout: Timeout,
-
-    #[serde(skip)]
-    pub debug_lines: Vec<String>,
 }
 
 impl ChannelHandlerBase {
@@ -38,12 +35,7 @@ impl ChannelHandlerBase {
             have_potato,
             channel_timeout,
             unroll_timeout,
-            debug_lines: Vec::new(),
         }
-    }
-
-    pub fn take_debug_lines(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.debug_lines)
     }
 
     pub fn amount(&self) -> Amount {

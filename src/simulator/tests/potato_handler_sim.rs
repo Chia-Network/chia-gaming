@@ -22,7 +22,7 @@ use crate::peer_container::{
     report_coin_changes_to_peer, FullCoinSetAdapter, GameCradle, MessagePeerQueue, MessagePipe,
     SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
 };
-use crate::potato_handler::effects::{apply_effects, Effect, GameNotification};
+use crate::potato_handler::effects::{apply_effects, CradleEvent, Effect, GameNotification};
 use crate::potato_handler::start::GameStart;
 use crate::potato_handler::types::{
     BatchAction, BootstrapTowardGame, BootstrapTowardWallet, PacketSender, PeerMessage, ToLocalUI,
@@ -757,7 +757,6 @@ impl ToLocalUI for LocalTestUIReceiver {
             GameNotification::CleanShutdownComplete { .. } => {
                 self.assert_channel_created("clean_shutdown_complete");
                 self.clean_shutdown_complete = true;
-                self.events.push(TestEvent::CleanShutdownComplete);
             }
             GameNotification::GoingOnChain { reason } => {
                 self.go_on_chain = true;
@@ -1100,112 +1099,121 @@ fn run_game_container_with_action_list_with_success_predicate(
             {
                 let result = cradles[i].drain_all(allocator)?;
 
-                // Feed puzzle/solution requests back, then drain again
-                // to collect the effects they produce.
-                let mut extra_results = Vec::new();
-                for coin in result.coin_solution_requests.iter() {
-                    let ps_res = simulator
-                        .get_puzzle_and_solution(&coin.to_coin_id())
-                        .expect("should work");
-                    for (_ci, cradle) in cradles.iter_mut().enumerate() {
-                        cradle.report_puzzle_and_solution(
-                            allocator,
-                            coin,
-                            ps_res.as_ref().map(|ps| (&ps.0, &ps.1)),
-                        )?;
+                // Collect coin solution requests from this drain and all
+                // subsequent drains they trigger, processing every other
+                // event inline in FIFO order.
+                let mut pending_events = result.events;
+                if matches!(result.resync, Some((_, true))) {
+                    can_move = true;
+                    let saved = move_number;
+                    while move_number > 0
+                        && (move_number >= moves_input.len()
+                            || !matches!(
+                                moves_input[move_number],
+                                GameAction::Move(_, _, _, _)
+                            ))
+                    {
+                        move_number -= 1;
                     }
-                    extra_results.push(cradles[i].drain_all(allocator)?);
+                    let dominated_by_other = match moves_input.get(move_number) {
+                        Some(GameAction::Move(who, _, _, _)) => *who != i,
+                        _ => true,
+                    };
+                    if dominated_by_other {
+                        move_number = saved;
+                    }
                 }
 
-                // Process all drain results (initial + post-puzzle-solution).
-                let all_results = std::iter::once(&result).chain(extra_results.iter());
-                for dr in all_results {
-                    if matches!(dr.resync, Some((_, true))) {
-                        can_move = true;
-                        let saved = move_number;
-                        while move_number > 0
-                            && (move_number >= moves_input.len()
-                                || !matches!(
-                                    moves_input[move_number],
-                                    GameAction::Move(_, _, _, _)
-                                ))
-                        {
-                            move_number -= 1;
-                        }
-                        let dominated_by_other = match moves_input.get(move_number) {
-                            Some(GameAction::Move(who, _, _, _)) => *who != i,
-                            _ => true,
-                        };
-                        if dominated_by_other {
-                            move_number = saved;
-                        }
-                    }
-
-                    for tx in dr.outbound_transactions.iter() {
-                        if nerf_transactions_for & (1 << i) != 0 {
-                            nerfed_tx_backlog.push(tx.clone());
-                            continue;
-                        }
-                        let any_stale = tx
-                            .spends
-                            .iter()
-                            .any(|cs| !simulator.is_coin_spendable(&cs.coin));
-                        if any_stale {
-                            continue;
-                        }
-                        let t_tx = std::time::Instant::now();
-                        let included_result = simulator.push_tx(allocator, &tx.spends)?;
-                        if timing_enabled {
-                            let tx_elapsed = t_tx.elapsed();
-                            if tx_elapsed.as_millis() > 10 {
-                                eprintln!(
-                                    "  step {num_steps}: p{i} push_tx({:?}) {tx_elapsed:.2?}",
-                                    tx.name
+                loop {
+                    let mut coin_requests = Vec::new();
+                    for event in pending_events.iter() {
+                        match event {
+                            CradleEvent::OutboundTransaction(tx) => {
+                                if nerf_transactions_for & (1 << i) != 0 {
+                                    nerfed_tx_backlog.push(tx.clone());
+                                    continue;
+                                }
+                                let any_stale = tx
+                                    .spends
+                                    .iter()
+                                    .any(|cs| !simulator.is_coin_spendable(&cs.coin));
+                                if any_stale {
+                                    continue;
+                                }
+                                let t_tx = std::time::Instant::now();
+                                let included_result = simulator.push_tx(allocator, &tx.spends)?;
+                                if timing_enabled {
+                                    let tx_elapsed = t_tx.elapsed();
+                                    if tx_elapsed.as_millis() > 10 {
+                                        eprintln!(
+                                            "  step {num_steps}: p{i} push_tx({:?}) {tx_elapsed:.2?}",
+                                            tx.name
+                                        );
+                                    }
+                                }
+                                let is_expected_duplicate = included_result.code == 3
+                                    && matches!(included_result.e, Some(5) | Some(20));
+                                let include_ok = included_result.code == 1 || is_expected_duplicate;
+                                assert!(
+                                    include_ok,
+                                    "tx include failed: move_number={move_number} tx_name={:?} code={} e={:?} diagnostic={:?}",
+                                    tx.name,
+                                    included_result.code,
+                                    included_result.e,
+                                    included_result.diagnostic
                                 );
                             }
-                        }
-                        let is_expected_duplicate = included_result.code == 3
-                            && matches!(included_result.e, Some(5) | Some(20));
-                        let include_ok = included_result.code == 1 || is_expected_duplicate;
-                        assert!(
-                            include_ok,
-                            "tx include failed: move_number={move_number} tx_name={:?} code={} e={:?} diagnostic={:?}",
-                            tx.name,
-                            included_result.code,
-                            included_result.e,
-                            included_result.diagnostic
-                        );
-                    }
-
-                    for msg in dr.outbound_messages.iter() {
-                        if nerf_messages_for & (1 << i) != 0 {
-                            continue;
-                        }
-                        if cradles[i].is_peer_disconnected() {
-                            continue;
-                        }
-                        let t_msg = std::time::Instant::now();
-                        cradles[i ^ 1].deliver_message(msg)?;
-                        if timing_enabled {
-                            let msg_elapsed = t_msg.elapsed();
-                            if msg_elapsed.as_millis() > 10 {
-                                eprintln!(
-                                    "  step {num_steps}: p{i}->p{} deliver_message {msg_elapsed:.2?}",
-                                    i ^ 1
-                                );
+                            CradleEvent::OutboundMessage(msg) => {
+                                if nerf_messages_for & (1 << i) != 0 {
+                                    continue;
+                                }
+                                if cradles[i].is_peer_disconnected() {
+                                    continue;
+                                }
+                                let t_msg = std::time::Instant::now();
+                                cradles[i ^ 1].deliver_message(msg)?;
+                                if timing_enabled {
+                                    let msg_elapsed = t_msg.elapsed();
+                                    if msg_elapsed.as_millis() > 10 {
+                                        eprintln!(
+                                            "  step {num_steps}: p{i}->p{} deliver_message {msg_elapsed:.2?}",
+                                            i ^ 1
+                                        );
+                                    }
+                                }
                             }
+                            CradleEvent::Notification(n) => {
+                                local_uis[i].notification(n)?;
+                            }
+                            CradleEvent::ReceiveError(e) => {
+                                local_uis[i].notification(&GameNotification::GoingOnChain {
+                                    reason: format!("error receiving peer message: {e}"),
+                                })?;
+                            }
+                            CradleEvent::CoinSolutionRequest(coin) => {
+                                coin_requests.push(coin.clone());
+                            }
+                            CradleEvent::DebugLog(_) => {}
                         }
                     }
 
-                    for n in dr.notifications.iter() {
-                        local_uis[i].notification(n)?;
+                    if coin_requests.is_empty() {
+                        break;
                     }
-
-                    for e in dr.receive_errors.iter() {
-                        local_uis[i].notification(&GameNotification::GoingOnChain {
-                            reason: format!("error receiving peer message: {e:?}"),
-                        })?;
+                    for coin in coin_requests.iter() {
+                        let ps_res = simulator
+                            .get_puzzle_and_solution(&coin.to_coin_id())
+                            .expect("should work");
+                        for (_ci, cradle) in cradles.iter_mut().enumerate() {
+                            cradle.report_puzzle_and_solution(
+                                allocator,
+                                coin,
+                                ps_res.as_ref().map(|ps| (&ps.0, &ps.1)),
+                            )?;
+                        }
                     }
+                    let follow_up = cradles[i].drain_all(allocator)?;
+                    pending_events = follow_up.events;
                 }
             }
         }
@@ -1430,6 +1438,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                             readable.clone(),
                             entropy,
                         )?;
+                        // Flush pending actions into the events queue
+                        // (without draining) so replace_last_message can
+                        // find the outbound batch.
+                        cradles[*who].flush_pending(allocator)?;
                         local_uis[*who].game_accepted_ids.remove(&runtime_gid);
                         local_uis[*who].opponent_moved_in_game.remove(&runtime_gid);
 
@@ -2837,11 +2849,16 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 let result = outcome.cradles[c]
                     .drain_all(&mut allocator)
                     .unwrap();
-                for msg in result.outbound_messages.iter() {
-                    outcome.cradles[c ^ 1].deliver_message(msg).unwrap();
-                }
-                for n in result.notifications.iter() {
-                    outcome.local_uis[c].notification(n).unwrap();
+                for event in result.events.iter() {
+                    match event {
+                        CradleEvent::OutboundMessage(msg) => {
+                            outcome.cradles[c ^ 1].deliver_message(msg).unwrap();
+                        }
+                        CradleEvent::Notification(n) => {
+                            outcome.local_uis[c].notification(n).unwrap();
+                        }
+                        _ => {}
+                    }
                 }
             }
         }

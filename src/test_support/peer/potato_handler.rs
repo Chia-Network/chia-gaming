@@ -259,11 +259,22 @@ where
     P: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + MessagePeerQueue,
 {
     loop {
-        let mut msgs = 0;
+        let mut activity = 0;
         for (who, peer) in peers.iter_mut().enumerate() {
-            msgs += run_move(allocator, amount.clone(), pipes, peer, who)? as usize;
+            activity += run_move(allocator, amount.clone(), pipes, peer, who)? as usize;
         }
-        if msgs == 0 {
+        // Flush pending actions for each peer that has the potato.
+        for (who, peer) in peers.iter_mut().enumerate() {
+            let effects = {
+                let mut env = ChannelHandlerEnv::new(allocator)?;
+                peer.flush_pending_actions(&mut env)?
+            };
+            if !effects.is_empty() {
+                activity += 1;
+                apply_effects(effects, allocator, &mut pipes[who])?;
+            }
+        }
+        if activity == 0 {
             break;
         }
     }

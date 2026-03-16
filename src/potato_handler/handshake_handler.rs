@@ -15,9 +15,6 @@ pub struct HandshakeHandler {
     inner: Option<PotatoHandler>,
 
     #[serde(skip)]
-    debug_lines: Vec<String>,
-
-    #[serde(skip)]
     replacement: Option<Box<PotatoHandler>>,
 }
 
@@ -25,7 +22,6 @@ impl HandshakeHandler {
     pub fn new(phi: PotatoHandlerInit) -> Self {
         HandshakeHandler {
             inner: Some(PotatoHandler::new(phi)),
-            debug_lines: Vec::new(),
             replacement: None,
         }
     }
@@ -48,8 +44,7 @@ impl HandshakeHandler {
         }
         if let Some(ref inner) = self.inner {
             if inner.handshake_finished() && !inner.is_waiting_to_start() {
-                let mut ph = self.inner.take().unwrap();
-                self.debug_lines.extend(ph.take_debug_lines());
+                let ph = self.inner.take().unwrap();
                 self.replacement = Some(Box::new(ph));
             }
         }
@@ -83,14 +78,6 @@ impl HandshakeHandler {
 
     pub fn is_initiator(&self) -> bool {
         self.ph().is_initiator()
-    }
-
-    pub fn take_debug_lines(&mut self) -> Vec<String> {
-        let mut lines = std::mem::take(&mut self.debug_lines);
-        if let Some(ref mut inner) = self.inner {
-            lines.extend(inner.take_debug_lines());
-        }
-        lines
     }
 
     pub fn get_our_current_share(&self) -> Option<Amount> {
@@ -286,9 +273,6 @@ impl PeerHandler for HandshakeHandler {
     fn has_pending_incoming(&self) -> bool {
         HandshakeHandler::has_pending_incoming(self)
     }
-    fn take_debug_lines(&mut self) -> Vec<String> {
-        HandshakeHandler::take_debug_lines(self)
-    }
     fn process_incoming_message(&mut self, env: &mut ChannelHandlerEnv<'_>) -> Result<Vec<Effect>, Error> {
         HandshakeHandler::process_incoming_message(self, env)
     }
@@ -320,6 +304,9 @@ impl PeerHandler for HandshakeHandler {
     }
     fn cheat_game(&mut self, env: &mut ChannelHandlerEnv<'_>, game_id: &GameID, mover_share: Amount, entropy: Hash) -> Result<Vec<Effect>, Error> {
         HandshakeHandler::cheat_game(self, env, game_id, mover_share, entropy)
+    }
+    fn flush_pending_actions(&mut self, env: &mut ChannelHandlerEnv<'_>) -> Result<Vec<Effect>, Error> {
+        self.ph_mut().flush_pending_actions(env)
     }
     fn take_replacement(&mut self) -> Option<Box<dyn PeerHandler>> {
         HandshakeHandler::take_replacement(self).map(|ph| ph as Box<dyn PeerHandler>)

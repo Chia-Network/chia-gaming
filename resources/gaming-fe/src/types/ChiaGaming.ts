@@ -20,15 +20,18 @@ export interface SpendBundle {
   spends: CoinSpend[];
 }
 
+export type CradleEvent =
+  | { OutboundMessage: string }
+  | { OutboundTransaction: SpendBundle }
+  | { Notification: WasmNotification }
+  | { DebugLog: string }
+  | { CoinSolutionRequest: string }
+  | { ReceiveError: string };
+
 export interface WasmResult {
-  outbound_messages?: string[];
-  outbound_transactions?: SpendBundle[];
   finished?: boolean;
-  receive_errors?: string[];
-  notifications?: WasmNotification[];
-  coin_solution_requests?: string[];
+  events?: CradleEvent[];
   ids?: string[];
-  debug_lines?: string[];
 }
 
 export type WasmInitFn = (opts: { module: ArrayBuffer }) => void;
