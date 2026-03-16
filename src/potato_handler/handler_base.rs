@@ -130,12 +130,6 @@ impl ChannelHandlerBase {
             .map(|ch| ch.their_out_of_game_balance())
     }
 
-    pub fn my_move_in_game(&self, game_id: &GameID) -> Option<bool> {
-        self.channel_handler
-            .as_ref()
-            .and_then(|ch| ch.game_is_my_turn(game_id))
-    }
-
     pub fn get_reward_puzzle_hash(
         &self,
         env: &mut ChannelHandlerEnv<'_>,

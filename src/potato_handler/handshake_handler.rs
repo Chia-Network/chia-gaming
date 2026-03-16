@@ -140,6 +140,26 @@ impl HandshakeHandler {
             .ok_or_else(|| Error::StrErr("handshake: no channel handler yet".to_string()))
     }
 
+    pub fn start(
+        &mut self,
+        _env: &mut ChannelHandlerEnv<'_>,
+        parent_coin: CoinString,
+    ) -> Result<Option<Effect>, Error> {
+        game_assert!(
+            matches!(self.state, HandshakeState::StepA),
+            "start: expected StepA state"
+        );
+
+        let my_hs_info = HandshakeA {
+            parent: parent_coin.clone(),
+            simple: self.my_handshake_b(),
+        };
+        self.state =
+            HandshakeState::StepC(parent_coin.clone(), Box::new(my_hs_info.clone()));
+
+        Ok(Some(Effect::PeerHandshakeA(my_hs_info)))
+    }
+
     fn make_channel_handler(
         &self,
         parent: CoinID,
@@ -673,43 +693,6 @@ impl SpendWalletReceiver for HandshakeHandler {
 
 #[typetag::serde]
 impl PeerHandler for HandshakeHandler {
-    fn amount(&self) -> Amount {
-        self.my_contribution.clone() + self.their_contribution.clone()
-    }
-    fn get_our_current_share(&self) -> Option<Amount> {
-        self.channel_handler
-            .as_ref()
-            .map(|ch| ch.get_our_current_share())
-    }
-    fn get_their_current_share(&self) -> Option<Amount> {
-        self.channel_handler
-            .as_ref()
-            .map(|ch| ch.get_their_current_share())
-    }
-    fn my_move_in_game(&self, _game_id: &GameID) -> Option<bool> {
-        None
-    }
-    fn get_game_coin(&self, _game_id: &GameID) -> Option<CoinString> {
-        None
-    }
-    fn get_reward_puzzle_hash(
-        &self,
-        env: &mut ChannelHandlerEnv<'_>,
-    ) -> Result<PuzzleHash, Error> {
-        self.channel_handler()?.get_reward_puzzle_hash(env)
-    }
-    fn get_game_state_id(
-        &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
-    ) -> Result<Option<Hash>, Error> {
-        Ok(None)
-    }
-    fn is_failed(&self) -> bool {
-        false
-    }
-    fn has_potato(&self) -> bool {
-        matches!(self.have_potato, PotatoState::Present)
-    }
     fn has_pending_incoming(&self) -> bool {
         !self.incoming_messages.is_empty()
     }
@@ -794,9 +777,6 @@ impl PeerHandler for HandshakeHandler {
     fn take_replacement(&mut self) -> Option<Box<dyn PeerHandler>> {
         self.replacement.take().map(|ph| ph as Box<dyn PeerHandler>)
     }
-    fn handshake_done(&self) -> bool {
-        false
-    }
     fn handshake_finished(&self) -> bool {
         false
     }
@@ -836,29 +816,13 @@ impl PeerHandler for HandshakeHandler {
 
         Ok(None)
     }
-    fn start(
-        &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
-        parent_coin: CoinString,
-    ) -> Result<Option<Effect>, Error> {
-        game_assert!(
-            matches!(self.state, HandshakeState::StepA),
-            "start: expected StepA state"
-        );
-
-        let my_hs_info = HandshakeA {
-            parent: parent_coin.clone(),
-            simple: self.my_handshake_b(),
-        };
-        self.state =
-            HandshakeState::StepC(parent_coin.clone(), Box::new(my_hs_info.clone()));
-
-        Ok(Some(Effect::PeerHandshakeA(my_hs_info)))
-    }
-    fn is_initiator(&self) -> bool {
-        self.initiator
-    }
     fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
         HandshakeHandler::channel_handler(self)
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }

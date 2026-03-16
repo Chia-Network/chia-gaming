@@ -797,6 +797,29 @@ fn gid_flipped(gid: &GameID) -> GameID {
     GameID(gid.0 ^ 1)
 }
 
+/// Resolve a logical test-script game ID to the actual runtime game ID using
+/// LocalTestUIReceiver state. Test scripts use hardcoded IDs (e.g. GameID(0))
+/// that may not match the IDs allocated by propose_game (initiator/receiver
+/// use opposite nonce ranges). This checks known-ID sets and returns the
+/// matching runtime ID.
+fn resolve_game_id(local_ui: &LocalTestUIReceiver, gid: &GameID) -> GameID {
+    let known = |id: &GameID| {
+        local_ui.proposed_game_ids.contains(id)
+            || local_ui.received_proposal_ids.contains(id)
+            || local_ui.game_accepted_ids.contains(id)
+            || local_ui.opponent_moved_in_game.contains(id)
+            || local_ui.game_finished_ids.contains(id)
+    };
+    if known(gid) {
+        return *gid;
+    }
+    let flipped = gid_flipped(gid);
+    if known(&flipped) {
+        return flipped;
+    }
+    *gid
+}
+
 fn gid_matches(set: &HashSet<GameID>, gid: &GameID) -> bool {
     set.contains(gid) || set.contains(&gid_flipped(gid))
 }
@@ -1306,11 +1329,9 @@ fn run_game_container_with_action_list_with_success_predicate(
                     GameAction::ProposeNewGame(who, _trigger)
                     | GameAction::ProposeNewGameTheirTurn(who, _trigger) => {
                         let my_turn = matches!(ga, GameAction::ProposeNewGame(_, _));
-                        let new_game_id = cradles[*who].next_game_id().unwrap();
                         let new_ids = cradles[*who].propose_game(
                             allocator,
                             &GameStart {
-                                game_id: new_game_id,
                                 amount: Amount::new(200),
                                 my_contribution: Amount::new(100),
                                 game_type: GameType(game_type.to_vec()),
@@ -1397,13 +1418,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 *mwho, *who,
                                 "GoOnChainThenMove({who}) followed by Move({mwho},...) — player mismatch"
                             );
-                            let runtime_gid = if cradles[*who].my_move_in_game(gid).is_some()
-                                || cradles[*who].get_game_coin(gid).is_some()
-                            {
-                                *gid
-                            } else {
-                                gid_flipped(gid)
-                            };
+                            let runtime_gid = resolve_game_id(&local_uis[*who], gid);
                             if gid_diag_on {
                                 gid_diag(
                                     &test_name,
@@ -1479,24 +1494,14 @@ fn run_game_container_with_action_list_with_success_predicate(
                         })?;
                     }
                     GameAction::Cheat(who, gid, cheat_share) => {
-                        let runtime_gid = if cradles[*who].my_move_in_game(gid).is_some()
-                            || cradles[*who].get_game_coin(gid).is_some()
-                        {
-                            *gid
-                        } else {
-                            gid_flipped(gid)
-                        };
+                        let runtime_gid = resolve_game_id(&local_uis[*who], gid);
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "Cheat", gid, &runtime_gid);
                         }
                         cradles[*who].cheat(allocator, &runtime_gid, cheat_share.clone())?;
                     }
                     GameAction::ForceDestroyCoin(who, gid) => {
-                        let runtime_gid = if cradles[*who].get_game_coin(gid).is_some() {
-                            *gid
-                        } else {
-                            gid_flipped(gid)
-                        };
+                        let runtime_gid = resolve_game_id(&local_uis[*who], gid);
                         if gid_diag_on {
                             gid_diag(
                                 &test_name,
@@ -1543,13 +1548,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                         wait_blocks = Some((*n, *players));
                     }
                     GameAction::AcceptTimeout(who, gid) => {
-                        let runtime_gid = if cradles[*who].my_move_in_game(gid).is_some()
-                            || cradles[*who].get_game_coin(gid).is_some()
-                        {
-                            *gid
-                        } else {
-                            gid_flipped(gid)
-                        };
+                        let runtime_gid = resolve_game_id(&local_uis[*who], gid);
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "AcceptTimeout", gid, &runtime_gid);
                         }
@@ -2819,12 +2818,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         )
         .expect("should finish");
 
-        let game_id = outcome.cradles[0].next_game_id().unwrap();
         let borrowed: &Program = sim_setup.args_program.borrow();
         let result1 = outcome.cradles[0].propose_game(
             &mut allocator,
             &GameStart {
-                game_id: game_id.clone(),
                 amount: Amount::new(2000),
                 my_contribution: Amount::new(1000),
                 game_type: GameType(game_type.to_vec()),
@@ -2836,11 +2833,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         assert!(result1.is_ok());
 
-        let game_id2 = outcome.cradles[1].next_game_id().unwrap();
         let result2 = outcome.cradles[1].propose_game(
             &mut allocator,
             &GameStart {
-                game_id: game_id2.clone(),
                 amount: Amount::new(2000),
                 my_contribution: Amount::new(1000),
                 game_type: GameType(game_type.to_vec()),

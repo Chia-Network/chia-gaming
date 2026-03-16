@@ -527,12 +527,10 @@ pub fn test_peer_smoke() {
             let mut env = ChannelHandlerEnv::new(&mut allocator).expect("should work");
 
             let nil = Program::from_hex("80").unwrap();
-            let game_id = peers[1].next_game_id().unwrap();
             let (game_ids, effects1) = FromLocalUI::propose_game(
                 &mut peers[1],
                     &mut env,
                     &GameStart {
-                        game_id: game_id.clone(),
                         amount: Amount::new(200),
                         my_contribution: Amount::new(100),
                         game_type: GameType(b"ca1poker".to_vec()),

@@ -1498,42 +1498,6 @@ impl OnChainGameHandler {
 
 #[typetag::serde]
 impl PeerHandler for OnChainGameHandler {
-    fn amount(&self) -> Amount {
-        OnChainGameHandler::amount(self)
-    }
-
-    fn get_our_current_share(&self) -> Option<Amount> {
-        OnChainGameHandler::get_our_current_share(self)
-    }
-
-    fn get_their_current_share(&self) -> Option<Amount> {
-        OnChainGameHandler::get_their_current_share(self)
-    }
-
-    fn my_move_in_game(&self, game_id: &GameID) -> Option<bool> {
-        OnChainGameHandler::my_move_in_game(self, game_id)
-    }
-
-    fn get_game_coin(&self, game_id: &GameID) -> Option<CoinString> {
-        OnChainGameHandler::get_game_coin(self, game_id)
-    }
-
-    fn get_reward_puzzle_hash(&self, _env: &mut ChannelHandlerEnv<'_>) -> Result<PuzzleHash, Error> {
-        Ok(OnChainGameHandler::get_reward_puzzle_hash(self))
-    }
-
-    fn get_game_state_id(&mut self, env: &mut ChannelHandlerEnv<'_>) -> Result<Option<Hash>, Error> {
-        OnChainGameHandler::get_game_state_id(self, env.allocator)
-    }
-
-    fn is_failed(&self) -> bool {
-        OnChainGameHandler::is_failed(self)
-    }
-
-    fn has_potato(&self) -> bool {
-        false
-    }
-
     fn has_pending_incoming(&self) -> bool {
         OnChainGameHandler::has_pending_incoming(self)
     }
@@ -1595,7 +1559,10 @@ impl PeerHandler for OnChainGameHandler {
         None
     }
 
-    fn is_on_chain(&self) -> bool {
-        true
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }

@@ -253,10 +253,6 @@ impl PotatoHandler {
         false
     }
 
-    pub fn get_game_coin(&self, _game_id: &GameID) -> Option<CoinString> {
-        None
-    }
-
     pub(crate) fn cheat_game(
         &mut self,
         _env: &mut ChannelHandlerEnv<'_>,
@@ -274,19 +270,8 @@ impl PotatoHandler {
         !self.incoming_messages.is_empty()
     }
 
-    pub fn handshake_done(&self) -> bool {
-        true
-    }
-
     pub fn push_action(&mut self, action: GameAction) {
         self.game_action_queue.push_back(action);
-    }
-
-    pub fn my_move_in_game(&self, game_id: &GameID) -> Option<bool> {
-        if let Ok(ch) = self.channel_handler() {
-            return ch.game_is_my_turn(game_id);
-        }
-        None
     }
 
     pub fn is_initiator(&self) -> bool {
@@ -937,6 +922,7 @@ impl PotatoHandler {
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         i_initiated: bool,
+        game_id: &GameID,
         game_start: &GameStart,
     ) -> Result<GameStartInfoPair, Error> {
         let starter = if let Some(starter) = self.game_types.get(&game_start.game_type) {
@@ -954,7 +940,7 @@ impl PotatoHandler {
             let alice_game = game::Game::new_from_proposal(
                 env.allocator,
                 i_initiated,
-                &game_start.game_id,
+                game_id,
                 starter.program.clone().into(),
                 Some(parser_prog.clone().into()),
                 &game_start.my_contribution,
@@ -964,7 +950,7 @@ impl PotatoHandler {
                 .iter()
                 .map(|g| {
                     Rc::new(g.game_start(
-                        &game_start.game_id,
+                        game_id,
                         &game_start.amount,
                         &game_start.timeout,
                         &game_start.my_contribution,
@@ -975,7 +961,7 @@ impl PotatoHandler {
             let bob_game = game::Game::new_from_proposal(
                 env.allocator,
                 !i_initiated,
-                &game_start.game_id,
+                game_id,
                 starter.program.clone().into(),
                 Some(parser_prog.clone().into()),
                 &game_start.my_contribution,
@@ -985,7 +971,7 @@ impl PotatoHandler {
                 .iter()
                 .map(|g| {
                     Rc::new(g.game_start(
-                        &game_start.game_id,
+                        game_id,
                         &game_start.amount,
                         &game_start.timeout,
                         &their_contribution,
@@ -1008,7 +994,7 @@ impl PotatoHandler {
             let alice_game = game::Game::new_program(
                 env.allocator,
                 i_initiated,
-                &game_start.game_id,
+                game_id,
                 starter.program.clone().into(),
                 params_prog.clone(),
             )?;
@@ -1017,7 +1003,7 @@ impl PotatoHandler {
                 .iter()
                 .map(|g| {
                     Rc::new(g.game_start(
-                        &game_start.game_id,
+                        game_id,
                         &game_start.amount,
                         &game_start.timeout,
                         &game_start.my_contribution,
@@ -1028,7 +1014,7 @@ impl PotatoHandler {
             let bob_game = game::Game::new_program(
                 env.allocator,
                 !i_initiated,
-                &game_start.game_id,
+                game_id,
                 starter.program.clone().into(),
                 params_prog,
             )?;
@@ -1037,7 +1023,7 @@ impl PotatoHandler {
                 .iter()
                 .map(|g| {
                     Rc::new(g.game_start(
-                        &game_start.game_id,
+                        game_id,
                         &game_start.amount,
                         &game_start.timeout,
                         &their_contribution,
@@ -1047,12 +1033,6 @@ impl PotatoHandler {
                 .collect();
             Ok((alice_result, bob_result))
         }
-    }
-
-    pub fn next_game_id(&mut self) -> Result<GameID, Error> {
-        let ch = self.channel_handler_mut()?;
-        let nonce = ch.allocate_my_nonce();
-        Ok(GameID(nonce as u64))
     }
 
     const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
@@ -1286,7 +1266,12 @@ impl FromLocalUI for PotatoHandler {
         self.game_action_queue
             .retain(|a| !matches!(a, GameAction::CleanShutdown));
 
-        let (my_games, their_games) = self.get_games_by_start_type(env, true, game)?;
+        let game_id = {
+            let ch = self.channel_handler_mut()?;
+            GameID(ch.allocate_my_nonce() as u64)
+        };
+
+        let (my_games, their_games) = self.get_games_by_start_type(env, true, &game_id, game)?;
 
         let (my_games, their_games) = if game.my_turn {
             (my_games, their_games)
@@ -1394,33 +1379,6 @@ impl SpendWalletReceiver for PotatoHandler {
 
 #[typetag::serde]
 impl PeerHandler for PotatoHandler {
-    fn amount(&self) -> Amount {
-        PotatoHandler::amount(self)
-    }
-    fn get_our_current_share(&self) -> Option<Amount> {
-        PotatoHandler::get_our_current_share(self)
-    }
-    fn get_their_current_share(&self) -> Option<Amount> {
-        PotatoHandler::get_their_current_share(self)
-    }
-    fn my_move_in_game(&self, game_id: &GameID) -> Option<bool> {
-        PotatoHandler::my_move_in_game(self, game_id)
-    }
-    fn get_game_coin(&self, game_id: &GameID) -> Option<CoinString> {
-        PotatoHandler::get_game_coin(self, game_id)
-    }
-    fn get_reward_puzzle_hash(&self, env: &mut ChannelHandlerEnv<'_>) -> Result<PuzzleHash, Error> {
-        PotatoHandler::get_reward_puzzle_hash(self, env)
-    }
-    fn get_game_state_id(&mut self, env: &mut ChannelHandlerEnv<'_>) -> Result<Option<Hash>, Error> {
-        PotatoHandler::get_game_state_id(self, env)
-    }
-    fn is_failed(&self) -> bool {
-        PotatoHandler::is_failed(self)
-    }
-    fn has_potato(&self) -> bool {
-        PotatoHandler::has_potato(self)
-    }
     fn has_pending_incoming(&self) -> bool {
         PotatoHandler::has_pending_incoming(self)
     }
@@ -1466,14 +1424,8 @@ impl PeerHandler for PotatoHandler {
         self.take_unroll_watch_replacement()
             .map(|uw| uw as Box<dyn PeerHandler>)
     }
-    fn handshake_done(&self) -> bool {
-        PotatoHandler::handshake_done(self)
-    }
     fn handshake_finished(&self) -> bool {
         PotatoHandler::handshake_finished(self)
-    }
-    fn is_initiator(&self) -> bool {
-        PotatoHandler::is_initiator(self)
     }
     fn propose_game(&mut self, env: &mut ChannelHandlerEnv<'_>, game: &GameStart) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
         <Self as FromLocalUI>::propose_game(self, env, game)
@@ -1490,26 +1442,13 @@ impl PeerHandler for PotatoHandler {
     fn go_on_chain(&mut self, env: &mut ChannelHandlerEnv<'_>, got_error: bool) -> Result<Vec<Effect>, Error> {
         PotatoHandler::go_on_chain(self, env, got_error)
     }
-    fn next_game_id(&mut self) -> Result<GameID, Error> {
-        PotatoHandler::next_game_id(self)
-    }
     fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
         PotatoHandler::channel_handler(self)
     }
-    #[cfg(test)]
-    fn force_unroll_spend(&self, env: &mut ChannelHandlerEnv<'_>) -> Result<SpendBundle, Error> {
-        PotatoHandler::force_unroll_spend(self, env)
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
-    #[cfg(test)]
-    fn get_last_channel_coin_spend_info(&self) -> Option<&ChannelCoinSpendInfo> {
-        PotatoHandler::get_last_channel_coin_spend_info(self)
-    }
-    #[cfg(test)]
-    fn corrupt_state_for_testing(&mut self, new_sn: usize) -> Result<(), Error> {
-        PotatoHandler::corrupt_state_for_testing(self, new_sn)
-    }
-    #[cfg(test)]
-    fn force_stale_unroll_spend(&self, env: &mut ChannelHandlerEnv<'_>, saved: &ChannelCoinSpendInfo) -> Result<SpendBundle, Error> {
-        PotatoHandler::force_stale_unroll_spend(self, env, saved)
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }

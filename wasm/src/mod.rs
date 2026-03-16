@@ -537,7 +537,6 @@ mod gaming_wasm {
         let parameters_program = Program::from_bytes(parameters);
         with_game(cid, move |cradle: &mut JsCradle| {
             let game_start = GameStart {
-                game_id: cradle.cradle.next_game_id()?,
                 game_type: GameType(hex::decode(&js_game_start.game_type).into_gen()?),
                 timeout: Timeout::new(js_game_start.timeout),
                 amount: Amount::new(js_game_start.amount),
