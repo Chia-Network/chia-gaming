@@ -25,46 +25,67 @@ use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameFactory, PacketSender,
     PeerMessage, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
+use crate::potato_handler::handshake_handler::HandshakeHandler;
+use crate::potato_handler::shutdown_handler::ShutdownHandler;
+use crate::potato_handler::unroll_watch_handler::UnrollWatchHandler;
 use crate::potato_handler::PotatoHandler;
 
 #[derive(Serialize, Deserialize)]
 pub enum PeerHandler {
+    Handshake(Box<HandshakeHandler>),
     OffChain(PotatoHandler),
+    Shutdown(Box<ShutdownHandler>),
+    UnrollWatch(Box<UnrollWatchHandler>),
     OnChain(Box<OnChainGameHandler>),
 }
 
 impl PeerHandler {
     pub fn amount(&self) -> Amount {
         match self {
+            PeerHandler::Handshake(hs) => hs.amount(),
             PeerHandler::OffChain(ph) => ph.amount(),
+            PeerHandler::Shutdown(sh) => sh.amount(),
+            PeerHandler::UnrollWatch(uw) => uw.amount(),
             PeerHandler::OnChain(oc) => oc.amount(),
         }
     }
 
     pub fn get_our_current_share(&self) -> Option<Amount> {
         match self {
+            PeerHandler::Handshake(hs) => hs.get_our_current_share(),
             PeerHandler::OffChain(ph) => ph.get_our_current_share(),
+            PeerHandler::Shutdown(sh) => sh.get_our_current_share(),
+            PeerHandler::UnrollWatch(uw) => uw.get_our_current_share(),
             PeerHandler::OnChain(oc) => oc.get_our_current_share(),
         }
     }
 
     pub fn get_their_current_share(&self) -> Option<Amount> {
         match self {
+            PeerHandler::Handshake(hs) => hs.get_their_current_share(),
             PeerHandler::OffChain(ph) => ph.get_their_current_share(),
+            PeerHandler::Shutdown(sh) => sh.get_their_current_share(),
+            PeerHandler::UnrollWatch(uw) => uw.get_their_current_share(),
             PeerHandler::OnChain(oc) => oc.get_their_current_share(),
         }
     }
 
     pub fn my_move_in_game(&self, game_id: &GameID) -> Option<bool> {
         match self {
+            PeerHandler::Handshake(hs) => hs.my_move_in_game(game_id),
             PeerHandler::OffChain(ph) => ph.my_move_in_game(game_id),
+            PeerHandler::Shutdown(sh) => sh.my_move_in_game(game_id),
+            PeerHandler::UnrollWatch(uw) => uw.my_move_in_game(game_id),
             PeerHandler::OnChain(oc) => oc.my_move_in_game(game_id),
         }
     }
 
     pub fn get_game_coin(&self, game_id: &GameID) -> Option<CoinString> {
         match self {
+            PeerHandler::Handshake(hs) => hs.get_game_coin(game_id),
             PeerHandler::OffChain(ph) => ph.get_game_coin(game_id),
+            PeerHandler::Shutdown(sh) => sh.get_game_coin(game_id),
+            PeerHandler::UnrollWatch(uw) => uw.get_game_coin(game_id),
             PeerHandler::OnChain(oc) => oc.get_game_coin(game_id),
         }
     }
@@ -74,7 +95,10 @@ impl PeerHandler {
         env: &mut ChannelHandlerEnv<'_, R>,
     ) -> Result<PuzzleHash, Error> {
         match self {
+            PeerHandler::Handshake(hs) => hs.get_reward_puzzle_hash(env),
             PeerHandler::OffChain(ph) => ph.get_reward_puzzle_hash(env),
+            PeerHandler::Shutdown(sh) => sh.get_reward_puzzle_hash(env),
+            PeerHandler::UnrollWatch(uw) => uw.get_reward_puzzle_hash(env),
             PeerHandler::OnChain(oc) => Ok(oc.get_reward_puzzle_hash()),
         }
     }
@@ -84,7 +108,10 @@ impl PeerHandler {
         env: &mut ChannelHandlerEnv<'_, R>,
     ) -> Result<Option<Hash>, Error> {
         match self {
+            PeerHandler::Handshake(hs) => hs.get_game_state_id(env),
             PeerHandler::OffChain(ph) => ph.get_game_state_id(env),
+            PeerHandler::Shutdown(sh) => sh.get_game_state_id(env),
+            PeerHandler::UnrollWatch(uw) => uw.get_game_state_id(env),
             PeerHandler::OnChain(oc) => oc.get_game_state_id(env.allocator),
         }
     }
@@ -95,35 +122,50 @@ impl PeerHandler {
 
     pub fn is_failed(&self) -> bool {
         match self {
+            PeerHandler::Handshake(hs) => hs.is_failed(),
             PeerHandler::OffChain(ph) => ph.is_failed(),
+            PeerHandler::Shutdown(sh) => sh.is_failed(),
+            PeerHandler::UnrollWatch(uw) => uw.is_failed(),
             PeerHandler::OnChain(oc) => oc.is_failed(),
         }
     }
 
     pub fn handshake_done(&self) -> bool {
         match self {
+            PeerHandler::Handshake(hs) => hs.handshake_done(),
             PeerHandler::OffChain(ph) => ph.handshake_done(),
+            PeerHandler::Shutdown(_) => true,
+            PeerHandler::UnrollWatch(_) => true,
             PeerHandler::OnChain(_) => true,
         }
     }
 
     pub fn handshake_finished(&self) -> bool {
         match self {
+            PeerHandler::Handshake(hs) => hs.handshake_finished(),
             PeerHandler::OffChain(ph) => ph.handshake_finished(),
+            PeerHandler::Shutdown(_) => true,
+            PeerHandler::UnrollWatch(_) => true,
             PeerHandler::OnChain(_) => true,
         }
     }
 
     pub fn has_pending_incoming(&self) -> bool {
         match self {
+            PeerHandler::Handshake(hs) => hs.has_pending_incoming(),
             PeerHandler::OffChain(ph) => ph.has_pending_incoming(),
+            PeerHandler::Shutdown(sh) => sh.has_pending_incoming(),
+            PeerHandler::UnrollWatch(uw) => uw.has_pending_incoming(),
             PeerHandler::OnChain(oc) => oc.has_pending_incoming(),
         }
     }
 
     pub fn take_debug_lines(&mut self) -> Vec<String> {
         match self {
+            PeerHandler::Handshake(hs) => hs.take_debug_lines(),
             PeerHandler::OffChain(ph) => ph.take_debug_lines(),
+            PeerHandler::Shutdown(sh) => sh.take_debug_lines(),
+            PeerHandler::UnrollWatch(uw) => uw.take_debug_lines(),
             PeerHandler::OnChain(oc) => oc.take_debug_lines(),
         }
     }
@@ -133,7 +175,10 @@ impl PeerHandler {
         env: &mut ChannelHandlerEnv<'_, R>,
     ) -> Result<Vec<Effect>, Error> {
         match self {
+            PeerHandler::Handshake(hs) => hs.process_incoming_message(env),
             PeerHandler::OffChain(ph) => ph.process_incoming_message(env),
+            PeerHandler::Shutdown(sh) => sh.process_incoming_message(env),
+            PeerHandler::UnrollWatch(uw) => uw.process_incoming_message(env),
             PeerHandler::OnChain(oc) => oc.process_incoming_message(env),
         }
     }
@@ -144,7 +189,10 @@ impl PeerHandler {
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
         match self {
+            PeerHandler::Handshake(hs) => hs.coin_spent(env, coin_id),
             PeerHandler::OffChain(ph) => ph.coin_spent(env, coin_id),
+            PeerHandler::Shutdown(sh) => sh.coin_spent(env, coin_id),
+            PeerHandler::UnrollWatch(uw) => uw.coin_spent(env, coin_id),
             PeerHandler::OnChain(oc) => oc.coin_spent(env, coin_id),
         }
     }
@@ -155,7 +203,10 @@ impl PeerHandler {
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
         match self {
+            PeerHandler::Handshake(hs) => hs.coin_timeout_reached(env, coin_id),
             PeerHandler::OffChain(ph) => ph.coin_timeout_reached(env, coin_id),
+            PeerHandler::Shutdown(sh) => sh.coin_timeout_reached(env, coin_id),
+            PeerHandler::UnrollWatch(uw) => uw.coin_timeout_reached(env, coin_id),
             PeerHandler::OnChain(oc) => oc.coin_timeout_reached(env, coin_id),
         }
     }
@@ -166,7 +217,10 @@ impl PeerHandler {
         coin_id: &CoinString,
     ) -> Result<Option<Vec<Effect>>, Error> {
         match self {
+            PeerHandler::Handshake(hs) => hs.coin_created(env, coin_id),
             PeerHandler::OffChain(ph) => ph.coin_created(env, coin_id),
+            PeerHandler::Shutdown(sh) => sh.coin_created(env, coin_id),
+            PeerHandler::UnrollWatch(uw) => uw.coin_created(env, coin_id),
             PeerHandler::OnChain(oc) => oc.coin_created(env, coin_id),
         }
     }
@@ -178,7 +232,10 @@ impl PeerHandler {
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(Vec<Effect>, Option<crate::potato_handler::effects::ResyncInfo>), Error> {
         match self {
+            PeerHandler::Handshake(hs) => hs.coin_puzzle_and_solution(env, coin_id, puzzle_and_solution),
             PeerHandler::OffChain(ph) => ph.coin_puzzle_and_solution(env, coin_id, puzzle_and_solution),
+            PeerHandler::Shutdown(sh) => sh.coin_puzzle_and_solution(env, coin_id, puzzle_and_solution),
+            PeerHandler::UnrollWatch(uw) => uw.coin_puzzle_and_solution(env, coin_id, puzzle_and_solution),
             PeerHandler::OnChain(oc) => oc.coin_puzzle_and_solution(env, coin_id, puzzle_and_solution),
         }
     }
@@ -191,7 +248,10 @@ impl PeerHandler {
         new_entropy: Hash,
     ) -> Result<Vec<Effect>, Error> {
         match self {
+            PeerHandler::Handshake(hs) => hs.make_move(env, id, readable, new_entropy),
             PeerHandler::OffChain(ph) => ph.make_move(env, id, readable, new_entropy),
+            PeerHandler::Shutdown(sh) => sh.make_move(env, id, readable, new_entropy),
+            PeerHandler::UnrollWatch(uw) => uw.make_move(env, id, readable, new_entropy),
             PeerHandler::OnChain(oc) => oc.make_move(env, id, readable, new_entropy),
         }
     }
@@ -202,7 +262,10 @@ impl PeerHandler {
         id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
         match self {
+            PeerHandler::Handshake(hs) => hs.accept_timeout(env, id),
             PeerHandler::OffChain(ph) => ph.accept_timeout(env, id),
+            PeerHandler::Shutdown(sh) => sh.accept_timeout(env, id),
+            PeerHandler::UnrollWatch(uw) => uw.accept_timeout(env, id),
             PeerHandler::OnChain(oc) => oc.accept_timeout(env, id),
         }
     }
@@ -215,7 +278,10 @@ impl PeerHandler {
         entropy: Hash,
     ) -> Result<Vec<Effect>, Error> {
         match self {
+            PeerHandler::Handshake(hs) => hs.cheat_game(env, game_id, mover_share, entropy),
             PeerHandler::OffChain(ph) => ph.cheat_game(env, game_id, mover_share, entropy),
+            PeerHandler::Shutdown(sh) => sh.cheat_game(env, game_id, mover_share, entropy),
+            PeerHandler::UnrollWatch(uw) => uw.cheat_game(env, game_id, mover_share, entropy),
             PeerHandler::OnChain(oc) => oc.cheat_game(env, game_id, mover_share, entropy),
         }
     }
@@ -223,14 +289,66 @@ impl PeerHandler {
     pub fn off_chain(&self) -> Result<&PotatoHandler, Error> {
         match self {
             PeerHandler::OffChain(ph) => Ok(ph),
-            PeerHandler::OnChain(_) => Err(Error::StrErr("operation not available on-chain".to_string())),
+            _ => Err(Error::StrErr("operation not available: not in off-chain phase".to_string())),
         }
     }
 
     pub fn off_chain_mut(&mut self) -> Result<&mut PotatoHandler, Error> {
         match self {
             PeerHandler::OffChain(ph) => Ok(ph),
-            PeerHandler::OnChain(_) => Err(Error::StrErr("operation not available on-chain".to_string())),
+            _ => Err(Error::StrErr("operation not available: not in off-chain phase".to_string())),
+        }
+    }
+
+    pub fn channel_offer<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+        bundle: SpendBundle,
+    ) -> Result<Option<Effect>, Error> {
+        match self {
+            PeerHandler::Handshake(hs) => hs.channel_offer(env, bundle),
+            PeerHandler::OffChain(ph) => ph.channel_offer(env, bundle),
+            _ => Ok(None),
+        }
+    }
+
+    pub fn channel_transaction_completion<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_, R>,
+        bundle: &SpendBundle,
+    ) -> Result<Option<Effect>, Error> {
+        match self {
+            PeerHandler::Handshake(hs) => hs.channel_transaction_completion(env, bundle),
+            PeerHandler::OffChain(ph) => ph.channel_transaction_completion(env, bundle),
+            _ => Ok(None),
+        }
+    }
+
+    pub fn take_replacement(&mut self) -> Option<PeerHandler> {
+        match self {
+            PeerHandler::Handshake(hs) => {
+                hs.take_replacement()
+                    .map(|ph| PeerHandler::OffChain(*ph))
+            }
+            PeerHandler::OffChain(ph) => {
+                if let Some(sh) = ph.take_shutdown_replacement() {
+                    return Some(PeerHandler::Shutdown(sh));
+                }
+                if let Some(uw) = ph.take_unroll_watch_replacement() {
+                    return Some(PeerHandler::UnrollWatch(uw));
+                }
+                ph.take_on_chain_replacement()
+                    .map(PeerHandler::OnChain)
+            }
+            PeerHandler::Shutdown(sh) => {
+                sh.take_unroll_watch_replacement()
+                    .map(PeerHandler::UnrollWatch)
+            }
+            PeerHandler::UnrollWatch(uw) => {
+                uw.take_replacement()
+                    .map(PeerHandler::OnChain)
+            }
+            PeerHandler::OnChain(_) => None,
         }
     }
 }
@@ -650,7 +768,7 @@ impl SynchronousGameCradle {
                 peer_disconnected: false,
                 went_on_chain: None,
             },
-            peer: PeerHandler::OffChain(PotatoHandler::new(PotatoHandlerInit {
+            peer: PeerHandler::Handshake(Box::new(HandshakeHandler::new(PotatoHandlerInit {
                 have_potato: config.have_potato,
                 private_keys,
                 game_types: config.game_types,
@@ -659,7 +777,7 @@ impl SynchronousGameCradle {
                 channel_timeout: config.channel_timeout,
                 unroll_timeout: config.unroll_timeout,
                 reward_puzzle_hash: config.reward_puzzle_hash,
-            })),
+            }))),
             #[cfg(test)]
             saved_unroll_snapshot: None,
         }
@@ -751,7 +869,10 @@ pub fn report_coin_changes_to_peer<R: Rng, P: SpendWalletReceiver>(
 impl SynchronousGameCradle {
     pub fn has_potato(&self) -> bool {
         match &self.peer {
+            PeerHandler::Handshake(hs) => hs.has_potato(),
             PeerHandler::OffChain(ph) => ph.has_potato(),
+            PeerHandler::Shutdown(sh) => sh.has_potato(),
+            PeerHandler::UnrollWatch(uw) => uw.has_potato(),
             PeerHandler::OnChain(_) => false,
         }
     }
@@ -768,7 +889,11 @@ impl SynchronousGameCradle {
         rng: &mut R,
     ) -> Result<SpendBundle, Error> {
         let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-        self.peer.off_chain()?.force_unroll_spend(&mut env)
+        match &self.peer {
+            PeerHandler::OffChain(ph) => ph.force_unroll_spend(&mut env),
+            PeerHandler::Shutdown(sh) => sh.force_unroll_spend(&mut env),
+            _ => Err(Error::StrErr("force_unroll_spend: not in off-chain or shutdown phase".to_string())),
+        }
     }
 
     #[cfg(test)]
@@ -829,29 +954,75 @@ impl SynchronousGameCradle {
             ..Default::default()
         };
 
-        // Process inbound messages (off-chain only; on-chain has no wire messages).
+        // Process inbound messages. OnChain has no wire messages; UnrollWatch
+        // and Shutdown only accept CleanShutdownComplete.
         while !self.state.inbound_messages.is_empty() {
-            if let PeerHandler::OffChain(ph) = &mut self.peer {
-                if let Some(msg) = self.state.inbound_messages.pop_front() {
-                    let recv_result = {
-                        let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-                        ph.received_message(&mut env, msg)
-                    };
-                    match recv_result {
-                        Ok(effects) => self.process_effects(effects, allocator)?,
-                        Err(e) => {
-                            result.receive_errors.push(e);
+            match &mut self.peer {
+                PeerHandler::Handshake(hs) => {
+                    if let Some(msg) = self.state.inbound_messages.pop_front() {
+                        let recv_result = {
+                            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+                            hs.received_message(&mut env, msg)
+                        };
+                        match recv_result {
+                            Ok(effects) => self.process_effects(effects, allocator)?,
+                            Err(e) => {
+                                result.receive_errors.push(e);
+                            }
                         }
                     }
                 }
-            } else {
-                self.state.inbound_messages.clear();
-                break;
+                PeerHandler::OffChain(ph) => {
+                    if let Some(msg) = self.state.inbound_messages.pop_front() {
+                        let recv_result = {
+                            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+                            ph.received_message(&mut env, msg)
+                        };
+                        match recv_result {
+                            Ok(effects) => self.process_effects(effects, allocator)?,
+                            Err(e) => {
+                                result.receive_errors.push(e);
+                            }
+                        }
+                    }
+                }
+                PeerHandler::Shutdown(sh) => {
+                    if let Some(msg) = self.state.inbound_messages.pop_front() {
+                        let recv_result = {
+                            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+                            sh.received_message(&mut env, msg)
+                        };
+                        match recv_result {
+                            Ok(effects) => self.process_effects(effects, allocator)?,
+                            Err(e) => {
+                                result.receive_errors.push(e);
+                            }
+                        }
+                    }
+                }
+                PeerHandler::UnrollWatch(uw) => {
+                    if let Some(msg) = self.state.inbound_messages.pop_front() {
+                        let recv_result = {
+                            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+                            uw.received_message(&mut env, msg)
+                        };
+                        match recv_result {
+                            Ok(effects) => self.process_effects(effects, allocator)?,
+                            Err(e) => {
+                                result.receive_errors.push(e);
+                            }
+                        }
+                    }
+                }
+                PeerHandler::OnChain(_) => {
+                    self.state.inbound_messages.clear();
+                    break;
+                }
             }
         }
 
-        // Channel setup steps (off-chain only).
-        if let PeerHandler::OffChain(_) = &self.peer {
+        // Channel setup steps (handshake or off-chain only).
+        if matches!(self.peer, PeerHandler::Handshake(_) | PeerHandler::OffChain(_)) {
             if let Some(ph) = self.state.channel_puzzle_hash.take() {
                 if !self.create_partial_spend_for_channel_coin(allocator, rng, ph.clone())? {
                     self.state.channel_puzzle_hash = Some(ph);
@@ -877,7 +1048,7 @@ impl SynchronousGameCradle {
                             break;
                         }
                         self.process_effects(effects, allocator)?;
-                        self.detect_on_chain_transition();
+                        self.detect_phase_transition();
                     }
                     Err(e) => {
                         result.receive_errors.push(e);
@@ -936,11 +1107,9 @@ impl SynchronousGameCradle {
         Ok(result)
     }
 
-    fn detect_on_chain_transition(&mut self) {
-        if let PeerHandler::OffChain(ph) = &mut self.peer {
-            if let Some(on_chain) = ph.take_on_chain_replacement() {
-                self.peer = PeerHandler::OnChain(on_chain);
-            }
+    fn detect_phase_transition(&mut self) {
+        if let Some(next) = self.peer.take_replacement() {
+            self.peer = next;
         }
     }
 
@@ -950,7 +1119,7 @@ impl SynchronousGameCradle {
         allocator: &mut AllocEncoder,
     ) -> Result<(), Error> {
         apply_effects(effects, allocator, &mut self.state)?;
-        self.detect_on_chain_transition();
+        self.detect_phase_transition();
         Ok(())
     }
 
@@ -970,18 +1139,24 @@ impl SynchronousGameCradle {
         // Unset this state trigger.
         self.state.channel_puzzle_hash = None;
 
-        let ch = self.peer.off_chain()?.channel_handler()?;
-        let channel_coin = ch.state_channel_coin();
-        let channel_coin_amt = if let Some((ch_parent, ph, amt)) = channel_coin.to_parts() {
-            game_assert_eq!(ph, channel_puzzle_hash, "channel coin puzzle hash mismatch");
-            game_assert_eq!(
-                ch_parent,
-                parent.to_coin_id(),
-                "channel coin parent mismatch"
-            );
-            amt
-        } else {
-            return Err(Error::StrErr("no channel coin".to_string()));
+        let channel_coin_amt = {
+            let ch = match &self.peer {
+                PeerHandler::Handshake(hs) => hs.ph().channel_handler()?,
+                PeerHandler::OffChain(ph) => ph.channel_handler()?,
+                _ => return Err(Error::StrErr("not in handshake/off-chain phase".to_string())),
+            };
+            let channel_coin = ch.state_channel_coin();
+            if let Some((ch_parent, ph, amt)) = channel_coin.to_parts() {
+                game_assert_eq!(ph, channel_puzzle_hash, "channel coin puzzle hash mismatch");
+                game_assert_eq!(
+                    ch_parent,
+                    parent.to_coin_id(),
+                    "channel coin parent mismatch"
+                );
+                amt
+            } else {
+                return Err(Error::StrErr("no channel coin".to_string()));
+            }
         };
 
         let conditions_clvm = [(
@@ -1015,7 +1190,7 @@ impl SynchronousGameCradle {
                 }],
             };
 
-            self.peer.off_chain_mut()?.channel_offer(&mut env, bundle)?
+            self.peer.channel_offer(&mut env, bundle)?
         };
         if let Some(effect) = reported_effects {
             self.process_effects(vec![effect], allocator)?;
@@ -1072,7 +1247,7 @@ impl SynchronousGameCradle {
 
             self.state.outbound_transactions.push_back(spends);
 
-            self.peer.off_chain_mut()?
+            self.peer
                 .channel_transaction_completion(&mut env, &unfunded_offer)?
         };
         if let Some(effect) = reported_effects {
@@ -1210,14 +1385,26 @@ impl GameCradle for SynchronousGameCradle {
     ) -> Result<(), Error> {
         self.state.funding_coin = Some(coin.clone());
 
-        let ph = self.peer.off_chain_mut()?;
-        if !ph.is_initiator() {
+        let is_initiator = match &self.peer {
+            PeerHandler::Handshake(hs) => hs.is_initiator(),
+            PeerHandler::OffChain(ph) => ph.is_initiator(),
+            _ => return Ok(()),
+        };
+
+        if !is_initiator {
             return Ok(());
         }
 
-        let start_effect = {
-            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-            ph.start(&mut env, coin)?
+        let start_effect = match &mut self.peer {
+            PeerHandler::Handshake(hs) => {
+                let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+                hs.start(&mut env, coin)?
+            }
+            PeerHandler::OffChain(ph) => {
+                let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+                ph.start(&mut env, coin)?
+            }
+            _ => return Ok(()),
         };
         let mut effects = Vec::new();
         effects.extend(start_effect);
@@ -1379,11 +1566,13 @@ impl GameCradle for SynchronousGameCradle {
         got_error: bool,
     ) -> Result<(), Error> {
         self.state.peer_disconnected = true;
-        let reported_effects = {
-            let mut env = ChannelHandlerEnv::new(allocator, rng)?;
-            self.peer.off_chain_mut()?.go_on_chain(&mut env, got_error)?
-        };
-        self.process_effects(reported_effects, allocator)?;
+        if let PeerHandler::OffChain(_) = &self.peer {
+            let reported_effects = {
+                let mut env = ChannelHandlerEnv::new(allocator, rng)?;
+                self.peer.off_chain_mut()?.go_on_chain(&mut env, got_error)?
+            };
+            self.process_effects(reported_effects, allocator)?;
+        }
         Ok(())
     }
 

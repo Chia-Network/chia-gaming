@@ -42,9 +42,13 @@ use crate::potato_handler::start::GameStart;
 
 pub mod effects;
 pub mod handshake;
+pub mod handler_base;
+pub mod handshake_handler;
 pub mod on_chain;
+pub mod shutdown_handler;
 pub mod start;
 pub mod types;
+pub mod unroll_watch_handler;
 
 pub type GameStartInfoPair = (Vec<Rc<GameStartInfo>>, Vec<Rc<GameStartInfo>>);
 
@@ -143,6 +147,12 @@ pub struct PotatoHandler {
 
     #[serde(skip)]
     on_chain_replacement: Option<Box<OnChainGameHandler>>,
+
+    #[serde(skip)]
+    unroll_watch_replacement: Option<Box<crate::potato_handler::unroll_watch_handler::UnrollWatchHandler>>,
+
+    #[serde(skip)]
+    shutdown_replacement: Option<Box<crate::potato_handler::shutdown_handler::ShutdownHandler>>,
 }
 
 fn format_batch_action(action: &BatchAction) -> String {
@@ -220,6 +230,8 @@ impl PotatoHandler {
             last_channel_coin_spend_info: None,
             debug_lines: Vec::new(),
             on_chain_replacement: None,
+            unroll_watch_replacement: None,
+            shutdown_replacement: None,
         }
     }
 
@@ -229,6 +241,18 @@ impl PotatoHandler {
 
     pub fn take_on_chain_replacement(&mut self) -> Option<Box<OnChainGameHandler>> {
         self.on_chain_replacement.take()
+    }
+
+    pub fn take_unroll_watch_replacement(
+        &mut self,
+    ) -> Option<Box<crate::potato_handler::unroll_watch_handler::UnrollWatchHandler>> {
+        self.unroll_watch_replacement.take()
+    }
+
+    pub fn take_shutdown_replacement(
+        &mut self,
+    ) -> Option<Box<crate::potato_handler::shutdown_handler::ShutdownHandler>> {
+        self.shutdown_replacement.take()
     }
 
     pub fn amount(&self) -> Amount {
@@ -336,6 +360,10 @@ impl PotatoHandler {
 
     pub fn handshake_finished(&self) -> bool {
         matches!(self.channel_state, ChannelState::Finished(_))
+    }
+
+    pub fn is_waiting_to_start(&self) -> bool {
+        self.waiting_to_start
     }
 
     #[cfg(test)]
@@ -717,9 +745,18 @@ impl PotatoHandler {
 
             effects.push(Effect::PeerCleanShutdownComplete(coin_spend));
 
-            self.have_potato = PotatoState::Present;
-            self.channel_state =
-                ChannelState::OnChainWaitingForUnrollSpend(coin.clone(), 0, reward_coin_for_state);
+            let sh = crate::potato_handler::shutdown_handler::ShutdownHandler::new(
+                self.channel_handler.take(),
+                coin.clone(),
+                reward_coin_for_state,
+                std::mem::take(&mut self.game_action_queue),
+                PotatoState::Present,
+                self.channel_timeout.clone(),
+                self.unroll_timeout.clone(),
+                self.last_channel_coin_spend_info.take(),
+            );
+            self.shutdown_replacement = Some(Box::new(sh));
+            self.channel_state = ChannelState::Completed;
             return Ok(effects);
         }
 
@@ -856,6 +893,7 @@ impl PotatoHandler {
         let mut effects = Vec::new();
         let mut batch_actions: Vec<BatchAction> = Vec::new();
         let mut clean_shutdown_data: Option<Box<(Aggsig, ProgramRef)>> = None;
+        let mut pending_shutdown: Option<(CoinString, Option<CoinString>)> = None;
         let mut deferred = VecDeque::new();
 
         while let Some(action) = self.game_action_queue.pop_front() {
@@ -1013,11 +1051,7 @@ impl PotatoHandler {
                         shutdown_condition_program.into(),
                     )));
 
-                    self.channel_state = ChannelState::OnChainWaitingForUnrollSpend(
-                        state_channel_coin.clone(),
-                        0,
-                        reward_coin_for_state,
-                    );
+                    pending_shutdown = Some((state_channel_coin.clone(), reward_coin_for_state));
                 }
                 GameAction::SendPotato => {
                     unreachable!("SendPotato should not be queued");
@@ -1077,6 +1111,21 @@ impl PotatoHandler {
             signatures: sigs,
             clean_shutdown: clean_shutdown_data,
         });
+
+        if let Some((coin, reward)) = pending_shutdown {
+            let sh = crate::potato_handler::shutdown_handler::ShutdownHandler::new(
+                self.channel_handler.take(),
+                coin,
+                reward,
+                std::mem::take(&mut self.game_action_queue),
+                self.have_potato.clone(),
+                self.channel_timeout.clone(),
+                self.unroll_timeout.clone(),
+                self.last_channel_coin_spend_info.take(),
+            );
+            self.shutdown_replacement = Some(Box::new(sh));
+            self.channel_state = ChannelState::Completed;
+        }
 
         Ok((true, effects))
     }
@@ -1472,15 +1521,6 @@ impl PotatoHandler {
             }
 
             ChannelState::Finished(_) => {
-                let going_on_chain = self
-                    .channel_handler
-                    .as_ref()
-                    .is_some_and(|ch| ch.initiated_on_chain());
-
-                if going_on_chain {
-                    return Ok(effects);
-                }
-
                 match msg_envelope.borrow() {
                     PeerMessage::HandshakeF { bundle } => {
                         self.channel_finished_transaction = Some(bundle.clone());
@@ -1713,7 +1753,6 @@ impl PotatoHandler {
 
         {
             let player_ch = self.channel_handler_mut()?;
-            player_ch.set_initiated_on_chain();
             if got_error {
                 player_ch.set_on_chain_for_error();
             }
@@ -1761,6 +1800,22 @@ impl PotatoHandler {
         if let ChannelState::Finished(hs) = &self.channel_state {
             effects.push(Effect::SpendTransaction(hs.spend.clone()));
         }
+
+        let channel_coin = {
+            let ch = self.channel_handler()?;
+            ch.state_channel_coin().clone()
+        };
+
+        let uw = crate::potato_handler::unroll_watch_handler::UnrollWatchHandler::new(
+            self.channel_handler.take(),
+            channel_coin,
+            std::mem::take(&mut self.game_action_queue),
+            self.have_potato.clone(),
+            self.channel_timeout.clone(),
+            self.unroll_timeout.clone(),
+        );
+        self.unroll_watch_replacement = Some(Box::new(uw));
+        self.channel_state = ChannelState::Completed;
 
         Ok(effects)
     }
@@ -1840,15 +1895,6 @@ impl PotatoHandler {
         &mut self,
         env: &mut ChannelHandlerEnv<'_, R>,
     ) -> Result<(bool, Vec<Effect>), Error> {
-        let going_on_chain = self
-            .channel_handler
-            .as_ref()
-            .is_some_and(|ch| ch.initiated_on_chain());
-
-        if going_on_chain {
-            return Ok((false, vec![]));
-        }
-
         let (has_potato, effect) = self.send_potato_request_if_needed()?;
         let mut effects: Vec<Effect> = effect.into_iter().collect();
         if has_potato {
