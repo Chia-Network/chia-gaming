@@ -1038,6 +1038,12 @@ impl ChannelHandler {
         ids
     }
 
+    pub fn has_our_outstanding_proposals(&self) -> bool {
+        self.proposed_games
+            .iter()
+            .any(|p| self.is_our_nonce_parity(&p.game_id))
+    }
+
     pub fn find_proposal(&self, game_id: &GameID) -> Option<&ProposedGame> {
         self.proposed_games.iter().find(|p| p.game_id == *game_id)
     }

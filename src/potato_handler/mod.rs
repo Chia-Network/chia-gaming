@@ -822,8 +822,15 @@ impl PotatoHandler {
                     {
                         let ch = self.channel_handler()?;
                         if ch.has_active_games() {
-                            deferred.push_back(GameAction::CleanShutdown);
-                            continue;
+                            return Err(Error::StrErr(
+                                "cannot clean shutdown while games are active".to_string(),
+                            ));
+                        }
+                        if ch.has_our_outstanding_proposals() {
+                            return Err(Error::StrErr(
+                                "cannot clean shutdown while we have outstanding proposals"
+                                    .to_string(),
+                            ));
                         }
                     }
                     {
