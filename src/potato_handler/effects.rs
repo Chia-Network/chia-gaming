@@ -98,6 +98,10 @@ pub enum GameNotification {
         their_balance_short: bool,
     },
 
+    WeMoved {
+        id: GameID,
+        coin: CoinString,
+    },
     OpponentMoved {
         id: GameID,
         state_number: usize,

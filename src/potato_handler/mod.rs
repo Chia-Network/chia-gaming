@@ -892,12 +892,6 @@ impl PotatoHandler {
                 GameAction::SendPotato => {
                     unreachable!("SendPotato should not be queued");
                 }
-                GameAction::RedoMove(..) => {
-                    return Err(Error::StrErr("redo move when not on chain".to_string()));
-                }
-                GameAction::RedoAcceptTimeout(..) => {
-                    return Err(Error::StrErr("redo accept when not on chain".to_string()));
-                }
             }
         }
 

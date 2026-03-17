@@ -716,6 +716,7 @@ mod sim_tests {
                     ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
                     ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
                     ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                    ExpectedEvent::Notification(ExpectedNotification::WeMoved),
                     ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
                 ],
                 "on_chain_2moves_p0 p1",

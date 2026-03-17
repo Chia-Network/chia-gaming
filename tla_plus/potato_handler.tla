@@ -58,8 +58,6 @@ ShutdownError == 19
 ShutdownLocalError == 119
 
 DelayedStart == 20
-RedoMove == 21
-RedoAccept == 22
 
 RequestPotato == 100
 SendPotato == 101
@@ -233,10 +231,6 @@ HavePotatoMove(p) ==
         LET p2 == SendPotatoMove(p1, OkOf(ch), game_action) IN
         LET p3 == PotatoState(OkOf(p2), PotatoAbsent) IN
         Rv(1, p3)
-    ELSE IF game_action = RedoMove THEN
-      Err(p1)
-    ELSE IF game_action = RedoAccept THEN
-      Err(p1)
     ELSE IF game_action = Accept \/ game_action = AcceptError THEN
       LET ch == ChannelHandler(p1) IN
       IF IsErr(ch) THEN

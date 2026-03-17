@@ -505,16 +505,14 @@ Games that existed off-chain but don't match any created coin are reported as
 
 ### Step 4: Redo (if needed)
 
-If the game coin landed at the pre-move state, `get_redo_action` returns a
-redo action that replays the cached action on-chain. There are two redo
-variants:
-
-- `**RedoMove*`*: The cached action was a game move. The redo replays the move
-using the cached move data and the actual on-chain coin ID. After the redo,
-the game coin advances to the latest known state.
-- `**RedoAcceptTimeout**`: The cached action was an off-chain accept_timeout.
-The redo replays the pre-computed accept transaction. After the redo, the
-game is resolved and timeout handling proceeds as below.
+If the game coin landed at the pre-move state, the redo transaction is emitted
+immediately during `finish_on_chain_transition` — before the `OnChainGameHandler`
+is created. For each game with a cached move, the code temporarily restores the
+referee to the post-move state, generates the spend transaction, and inserts a
+`PendingMoveSavedState` entry into the handler's `pending_moves` map. The
+`OnChainGameHandler` never distinguishes between redo transactions and fresh
+moves; it just tracks pending spends per game coin and reconciles them when
+on-chain confirmation arrives.
 
 ### Step 5: Timeout Resolution
 
@@ -742,7 +740,7 @@ intentional for several reasons:
 
 **Key code:** `src/potato_handler/unroll_watch_handler.rs` —
 `finish_on_chain_transition`, `src/channel_handler/mod.rs` —
-`set_state_for_coins`, `get_redo_action`
+`set_state_for_coins`
 
 ---
 
@@ -1219,7 +1217,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `ValidationInfo`                | `channel_handler/types/validation_info.rs`     | Game validation program + state                                                                              |
 | `CachedPotatoRegenerateLastHop` | `channel_handler/types/potato.rs`              | Enum for `cached_last_actions` entries: `PotatoMoveHappening`, `PotatoAcceptTimeout`, `ProposalAccepted`     |
 | `BatchAction`                   | `potato_handler/types.rs`                      | Peer-level batch action variants: `ProposeGame`, `AcceptProposal`, `CancelProposal`, `Move`, `AcceptTimeout` |
-| `GameAction`                    | `potato_handler/types.rs`                      | Actions: `Move`, `AcceptTimeout`, `RedoMove`, `SendPotato`, `QueuedProposal`, `CleanShutdown`                |
+| `GameAction`                    | `potato_handler/types.rs`                      | Actions: `Move`, `AcceptTimeout`, `SendPotato`, `QueuedProposal`, `CleanShutdown`, `Cheat`                   |
 | `SynchronousGameCradleState`    | `peer_container.rs`                            | Per-peer mutable state: queues, flags, `peer_disconnected`                                                   |
 | `OnChainGameState`              | `channel_handler/types/on_chain_game_state.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `accepted`, `pending_slash_amount`, `game_timeout`        |
 | `GameNotification`              | `potato_handler/effects.rs`                    | Notifications to the UI: `ChannelCoinSpent`, `UnrollCoinSpent`, `WeTimedOut`, etc.                           |
@@ -1348,10 +1346,10 @@ When game coins are created after an unroll, `set_state_for_coins` checks each
 coin's puzzle hash against all entries in `cached_last_actions`:
 
 1. **Coin PH matches a `PotatoMoveHappening.match_puzzle_hash`**: The game coin is at
-  the state our cached move operates on. Queue a `RedoMove` to replay it.
-   Set `our_turn = true` (we need to submit the redo transaction).
+   the state our cached move operates on. A redo is needed to replay that move
+   on-chain. Set `our_turn = true`.
 2. **Coin PH == `last_referee_puzzle_hash`**: The game coin is at the latest
-  state. No redo needed. Set `our_turn` based on `is_my_turn()`.
+   state. No redo needed. Set `our_turn` based on `is_my_turn()`.
 3. **Neither matches**: Error condition (game disappeared or unexpected state).
 
 **Why `match_puzzle_hash` is the right value.** When a player makes a move via
@@ -1365,12 +1363,13 @@ appears on-chain in both the non-stale redo case and in a stale unroll at
 that state.
 
 Multiple games may need redos simultaneously if the batch contained moves for
-different games.
+different games. Redo transactions are emitted in parallel during
+`finish_on_chain_transition`, with a `PendingMoveSavedState` entry inserted into
+the handler's `pending_moves` map for each one.
 
-The `RedoMove` action is processed by `OnChainGameHandler::do_redo_move`,
-which calls `get_transaction_for_move` using the cached move data and the
-actual on-chain coin ID. After the redo succeeds, the game coin advances to the
-latest state and normal play/timeout continues.
+**In-flight proposal acceptances** (`ProposalAccepted` entries in
+`cached_last_actions`) don't trigger a redo — if the game coin never
+materialized on-chain, the game is cancelled (`GameCancelled`).
 
 ### When Redo Happens (and When It Doesn't)
 
@@ -1378,16 +1377,6 @@ A redo is triggered when:
 
 - We sent a move that wasn't acknowledged before going on-chain
 - The unroll/preemption resolved to the state *before* that move
-
-Similarly, an **accept-timeout redo** is triggered when we sent an
-`AcceptTimeout` that wasn't acknowledged. This follows a parallel but distinct
-path: the `PotatoAcceptTimeout` entry in `cached_last_actions` produces a
-`RedoAcceptTimeout` action, which replays the timeout claim transaction against
-the actual on-chain coin rather than replaying a game move.
-
-A third case involves **in-flight proposal acceptances** (`ProposalAccepted`
-entries in `cached_last_actions`). These don't trigger a redo — if the game coin
-never materialized on-chain, the game is cancelled (`GameCancelled`).
 
 A redo is NOT needed when:
 

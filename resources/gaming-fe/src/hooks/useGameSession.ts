@@ -225,6 +225,7 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
       InsufficientBalance:         { variant: 'destructive', title: 'Insufficient Balance',         description: p.our_balance_short && p.their_balance_short ? 'Both sides have insufficient balance' : p.our_balance_short ? 'Your balance is too low for this game' : 'Opponent\'s balance is too low for this game' },
       GameError:                   { variant: 'destructive', title: 'Game Error',                   description: s('reason') ? `Game #${s('id')} — ${s('reason')}` : `Game #${s('id')}` },
       GameOnChain:                 { variant: 'default',     title: 'Game On-Chain',                description: p.coin ? `Game #${s('id')} — coin on-chain` : `Game #${s('id')}` },
+      WeMoved:                     { variant: 'default',     title: 'Move Confirmed',               description: `Game #${s('id')} — your move landed on-chain` },
     };
     const tChannel = channelToasts[type];
     const tGame = gameToasts[type];
@@ -293,6 +294,12 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
       setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
       setGameCoin({ coinHex: null, state: iStarted ? 'off-chain-their-turn' : 'off-chain-my-turn' });
       gameplayEventSubject.next({ GameProposalAccepted: { id: gpa.id as number | string } });
+    } else if ('WeMoved' in n) {
+      const hex = coinPayloadToHex(n.WeMoved?.coin);
+      setGameCoin({
+        coinHex: hex ?? null,
+        state: 'on-chain-their-turn',
+      });
     } else if ('OpponentMoved' in n) {
       gameplayEventSubject.next({ OpponentMoved: { readable: n.OpponentMoved!.readable as number[] } });
     } else if ('GameMessage' in n) {

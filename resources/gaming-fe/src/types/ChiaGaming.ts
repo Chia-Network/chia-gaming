@@ -122,7 +122,7 @@ export type WasmNotificationTag =
   | 'CleanShutdownStarted' | 'CleanShutdownComplete'
   | 'GoingOnChain' | 'GameOnChain'
   | 'GameProposed' | 'GameProposalAccepted' | 'GameProposalCancelled'
-  | 'OpponentMoved' | 'GameMessage'
+  | 'WeMoved' | 'OpponentMoved' | 'GameMessage'
   | 'OpponentPlayedIllegalMove'
   | 'WeSlashedOpponent' | 'OpponentSlashedUs' | 'OpponentSuccessfullyCheated'
   | 'WeTimedOut' | 'OpponentTimedOut'

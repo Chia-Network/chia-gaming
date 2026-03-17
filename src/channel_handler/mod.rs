@@ -35,7 +35,6 @@ use crate::common::types::{
     CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey,
     Puzzle, PuzzleHash, Sha256tree, Spend, Timeout,
 };
-use crate::potato_handler::types::GameAction;
 use crate::referee::types::{GameMoveDetails, TheirTurnCoinSpentResult};
 use crate::referee::Referee;
 
@@ -2024,39 +2023,6 @@ impl ChannelHandler {
             }
         }
         false
-    }
-
-    /// Find a cached move whose puzzle hash matches `coin`, remove it from
-    /// the cache, and return a `GameAction::RedoMove` so the move can be
-    /// replayed on-chain.  Returns `Ok(None)` if no cached move matches.
-    pub fn get_redo_action(
-        &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
-        coin: &CoinString,
-    ) -> Result<Option<GameAction>, Error> {
-        let pos = self.cached_last_actions.iter().position(|entry| {
-            if let CachedPotatoRegenerateLastHop::PotatoMoveHappening(move_data) = entry {
-                coin.to_parts()
-                    .map(|(_, ph, _)| ph == move_data.match_puzzle_hash)
-                    .unwrap_or(false)
-            } else {
-                false
-            }
-        });
-
-        if let Some(idx) = pos {
-            if let CachedPotatoRegenerateLastHop::PotatoMoveHappening(move_data) =
-                self.cached_last_actions.remove(idx)
-            {
-                return Ok(Some(GameAction::RedoMove(
-                    move_data.game_id,
-                    coin.clone(),
-                    move_data,
-                )));
-            }
-        }
-
-        Ok(None)
     }
 
     pub fn accept_or_timeout_game_on_chain(

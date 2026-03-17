@@ -6,12 +6,11 @@ use serde_json_any_key::*;
 
 use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::channel_handler::types::{
-    ChannelHandlerEnv, ChannelHandlerPrivateKeys, PotatoMoveCachedData, PotatoSignatures,
-    ReadableMove,
+    ChannelHandlerEnv, ChannelHandlerPrivateKeys, PotatoSignatures, ReadableMove,
 };
 use crate::common::types::{
     Aggsig, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, Program, ProgramRef,
-    PuzzleHash, Spend, SpendBundle, Timeout,
+    PuzzleHash, SpendBundle, Timeout,
 };
 use crate::potato_handler::effects::{Effect, ResyncInfo};
 use crate::potato_handler::handshake::{HandshakeA, HandshakeB};
@@ -279,9 +278,6 @@ pub enum PotatoState {
 #[derive(Serialize, Deserialize)]
 pub enum GameAction {
     Move(GameID, ReadableMove, Hash),
-    RedoMove(GameID, CoinString, Rc<PotatoMoveCachedData>),
-    #[serde(rename = "RedoAccept")]
-    RedoAcceptTimeout(GameID, CoinString, PuzzleHash, Box<Spend>),
     #[serde(rename = "Accept")]
     AcceptTimeout(GameID),
     CleanShutdown,
@@ -296,12 +292,6 @@ impl std::fmt::Debug for GameAction {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
             GameAction::Move(gi, rm, h) => write!(formatter, "Move({gi:?},{rm:?},{h:?})"),
-            GameAction::RedoMove(gi, cs, md) => {
-                write!(formatter, "RedoMove({gi:?},{cs:?},{md:?})")
-            }
-            GameAction::RedoAcceptTimeout(gi, cs, ph, rt) => {
-                write!(formatter, "RedoAcceptTimeout({gi:?},{cs:?},{ph:?},{rt:?})")
-            }
             GameAction::AcceptTimeout(gi) => write!(formatter, "AcceptTimeout({gi:?})"),
             GameAction::CleanShutdown => write!(formatter, "CleanShutdown"),
             GameAction::SendPotato => write!(formatter, "SendPotato"),

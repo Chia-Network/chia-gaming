@@ -830,21 +830,37 @@ pub fn run_simulation_tests() {
     eprintln!("Running {} tests with {} threads", rotated.len(), n_threads);
 
     let queue = std::sync::Arc::new(std::sync::Mutex::new(rotated));
+    let failures: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let total_start = std::time::Instant::now();
 
     std::thread::scope(|s| {
         let handles: Vec<_> = (0..n_threads)
             .map(|_| {
                 let queue = std::sync::Arc::clone(&queue);
+                let failures = std::sync::Arc::clone(&failures);
                 s.spawn(move || loop {
                     let task = queue.lock().unwrap().pop();
                     let Some((name, f)) = task else { break };
                     CURRENT_TEST_NAME.with(|cell| *cell.borrow_mut() = Some(name.to_string()));
                     eprintln!("RUNNING TEST {name} ...");
                     let start = std::time::Instant::now();
-                    f();
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f()));
                     let elapsed = start.elapsed();
-                    eprintln!("{name} ... ok ({elapsed:.2?})");
+                    match result {
+                        Ok(()) => eprintln!("{name} ... ok ({elapsed:.2?})"),
+                        Err(payload) => {
+                            let msg = if let Some(s) = payload.downcast_ref::<String>() {
+                                s.clone()
+                            } else if let Some(s) = payload.downcast_ref::<&str>() {
+                                s.to_string()
+                            } else {
+                                "(non-string panic)".to_string()
+                            };
+                            eprintln!("PANIC IN TEST: {name}\npanic payload: {msg}");
+                            failures.lock().unwrap().push((name.to_string(), msg));
+                        }
+                    }
                 })
             })
             .collect();
@@ -853,11 +869,26 @@ pub fn run_simulation_tests() {
         }
     });
 
-    eprintln!(
-        "All {} tests passed in {:.2?}",
-        all_tests.len(),
-        total_start.elapsed()
-    );
+    let failed = failures.lock().unwrap();
+    if failed.is_empty() {
+        eprintln!(
+            "All {} tests passed in {:.2?}",
+            all_tests.len(),
+            total_start.elapsed()
+        );
+    } else {
+        eprintln!("\n--- {} FAILED TEST(S) ---", failed.len());
+        for (name, msg) in failed.iter() {
+            eprintln!("\n  FAIL: {name}\n  {msg}");
+        }
+        eprintln!(
+            "\n{} passed, {} failed in {:.2?}",
+            all_tests.len() - failed.len(),
+            failed.len(),
+            total_start.elapsed()
+        );
+        panic!("{} test(s) failed", failed.len());
+    }
 }
 
 #[cfg(test)]

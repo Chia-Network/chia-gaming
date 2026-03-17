@@ -192,7 +192,7 @@ true sees the spend, takes the redundant update to the state it knows.
 true does ON CHAIN OUR MOVE next.
 
 [238, 137 ...] appears first as the puzzle hash in the move_result of true SEND_POTATO_MOVE 5.
-and it is the target given in the unroll.  RedoMove creates this puzzle hash.
+and it is the target given in the unroll.  The redo mechanism replays this puzzle hash on-chain.
 
 
 wallet extra_spends parameter.
