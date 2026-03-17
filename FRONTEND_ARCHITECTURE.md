@@ -252,6 +252,7 @@ frame shows them as overlays or toasts:
 - `InsufficientBalance`
 - `GameError`
 - `GameOnChain`
+- `WeMoved`
 - `OpponentPlayedIllegalMove`
 
 ### Gameplay events → Game UI Frame

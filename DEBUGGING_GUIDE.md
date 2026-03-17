@@ -86,31 +86,44 @@ comment out its `res.push(...)` call in the relevant `test_funs()` function.
 ## Reading Test Output
 
 The output from `./ct.sh` is designed to be read directly. A passing run ends
-with a line like `All 48 tests passed in 28.31s`. A failing run ends with the
-panic — the process exits immediately on panic, so the failure is always the
-last thing printed.
+with a line like `All 48 tests passed in 28.31s`. A failing run prints
+`PANIC IN TEST:` inline as each failure occurs, then ends with a summary:
+
+```
+--- 3 FAILED TEST(S) ---
+
+  FAIL: test_foo
+  some error message
+
+  FAIL: test_bar
+  another error message
+
+45 passed, 3 failed in 32.15s
+```
+
+All tests run to completion regardless of failures — a single panic does not
+abort the suite. This lets you see every broken test in one run.
 
 ### Pass/fail
 
-The exit code is reliable: nonzero means a test panicked. Each test prints
-`RUNNING TEST <name> ...` when it starts and `<name> ... ok (<time>)` when it
-finishes. A test that starts but doesn't print `ok` is the one that failed.
+The exit code is reliable: nonzero means at least one test panicked. Each test
+prints `RUNNING TEST <name> ...` when it starts and `<name> ... ok (<time>)`
+when it finishes. Failed tests print `PANIC IN TEST: <name>` inline instead.
 
 ### Panics
 
-The panic hook prints the test name first (via thread-local tracking), followed
-by the `panic payload:` line with the error message, then a backtrace, then
-exits immediately. Example:
+Each test body is wrapped in `catch_unwind`. When a test panics, the runner
+prints `PANIC IN TEST: <name>` and `panic payload:` with the error message
+inline, then continues running remaining tests. Example mid-run output:
 
 ```
 PANIC IN TEST: accept_finished_on_chain
 panic payload: tx include failed: move_number=10 tx_name=Some("false accept transaction") ...
-   2: std::panicking::panic_with_hook
-   ...
 ```
 
 The `PANIC IN TEST:` line identifies which test panicked (even when multiple
 tests run in parallel). The `panic payload:` line has the error details.
+All failures are collected and printed again in the summary at the end.
 
 ### Saving output
 

@@ -1512,6 +1512,7 @@ These fire during active gameplay (after a game proposal has been accepted).
 | `OpponentPlayedIllegalMove { id }`                               | GameNotification | Opponent's on-chain move detected as illegal | Emitted before submitting the slash transaction; precedes `WeSlashedOpponent` (if slash succeeds) or `OpponentSuccessfullyCheated` (if slash times out)      |
 | `GameMessage { id, readable }`                                   | GameNotification | Informational message from the game          | E.g., revealed data during commit-reveal                                                                                                                    |
 | `GameOnChain { id, coin, amount, our_turn }`                     | GameNotification | Game coin appears on-chain                   | A game has transitioned to on-chain resolution; `coin` is the game coin, `amount` is its value, `our_turn` indicates who moves next                         |
+| `WeMoved { id, coin }`                                           | GameNotification | Our pending on-chain move confirmed          | Emitted when a move we submitted (redo or fresh) is confirmed on-chain; `coin` is the new game coin. Always follows a `GameOnChain` for the same transition. |
 
 ### Proposal Notifications
 
