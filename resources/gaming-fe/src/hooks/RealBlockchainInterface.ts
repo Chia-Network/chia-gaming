@@ -52,7 +52,7 @@ function convertConditionArgs(c: { opcode: number; args: string[] }): { opcode: 
     case 64: // ASSERT_CONCURRENT_SPEND
       return { opcode: c.opcode, args: { coin_id: c.args[0] } };
     case 51: // CREATE_COIN
-      return { opcode: c.opcode, args: { puzzle_hash: c.args[0], amount: parseInt(c.args[1], 16) } };
+      return { opcode: c.opcode, args: { puzzle_hash: c.args[0], amount: c.args[1] ? parseInt(c.args[1], 16) : 0 } };
     default:
       return { opcode: c.opcode, args: c.args };
   }
