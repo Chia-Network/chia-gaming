@@ -127,7 +127,8 @@ export type WasmNotificationTag =
   | 'WeSlashedOpponent' | 'OpponentSlashedUs' | 'OpponentSuccessfullyCheated'
   | 'WeTimedOut' | 'OpponentTimedOut'
   | 'GameCancelled' | 'GameError'
-  | 'InsufficientBalance';
+  | 'InsufficientBalance'
+  | 'ActionFailed';
 
 export type WasmNotification = {
   [K in WasmNotificationTag]?: Record<string, unknown>;

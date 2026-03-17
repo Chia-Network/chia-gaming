@@ -887,10 +887,14 @@ mod gaming_wasm {
         F: FnOnce(&mut JsCradle) -> Result<(), types::Error>,
     {
         with_game(cid, move |cradle: &mut JsCradle| {
-            f(cradle)?;
-            let dr = cradle
-                .cradle
-                .drain_all(&mut cradle.allocator)?;
+            if let Err(e) = f(cradle) {
+                cradle.cradle.push_event(CradleEvent::Notification(
+                    GameNotification::ActionFailed {
+                        reason: format!("{e:?}"),
+                    },
+                ));
+            }
+            let dr = cradle.cradle.drain_all(&mut cradle.allocator)?;
             drain_result_to_js(&dr)
         })
     }

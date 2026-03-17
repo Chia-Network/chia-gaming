@@ -804,6 +804,10 @@ impl SynchronousGameCradle {
             };
     }
 
+    pub fn push_event(&mut self, event: CradleEvent) {
+        self.state.events.push_back(event);
+    }
+
     fn process_effects(
         &mut self,
         effects: Vec<Effect>,

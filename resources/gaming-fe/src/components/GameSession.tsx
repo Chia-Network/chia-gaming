@@ -12,6 +12,15 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
 import { Button } from './button';
 import { Toaster } from 'sonner';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+  DialogClose,
+} from './ui/dialog';
 function truncateHex(hex: string, head = 6, tail = 4): string {
   if (hex.length <= head + tail) return hex;
   return `${hex.slice(0, head)}…${hex.slice(-tail)}`;
@@ -312,6 +321,20 @@ const GameSession: React.FC<GameSessionProps> = ({ params }) => {
           <LogTextArea label='Debug Log' lines={session.debugLog} />
         </div>
       </div>
+
+      <Dialog open={session.actionFailedReason !== null} onOpenChange={(open) => { if (!open) session.dismissActionFailed(); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Action Failed</DialogTitle>
+            <DialogDescription>{session.actionFailedReason}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant='soft'>Dismiss</Button>
+            </DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Toaster />
     </div>

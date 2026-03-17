@@ -125,6 +125,9 @@ pub enum GameNotification {
         amount: Amount,
         our_turn: bool,
     },
+    ActionFailed {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

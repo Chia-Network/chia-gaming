@@ -491,6 +491,7 @@ fn event_shape(actual: &TestEvent) -> String {
             GameNotification::CleanShutdownComplete { .. } => "Notif(CleanShutdownComplete)".to_string(),
             GameNotification::GoingOnChain { reason } => format!("Notif(GoingOnChain(reason={reason}))"),
             GameNotification::GameOnChain { id, .. } => format!("Notif(GameOnChain(id={id:?}))"),
+            GameNotification::ActionFailed { reason } => format!("Notif(ActionFailed(reason={reason}))"),
         },
     }
 }

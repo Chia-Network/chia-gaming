@@ -80,6 +80,8 @@ export interface UseGameSessionResult {
   showBetweenHandOverlay: boolean;
   lastOutcome: CalpokerOutcome | undefined;
   shutdownInitiated: boolean;
+  actionFailedReason: string | null;
+  dismissActionFailed: () => void;
 }
 
 export function useGameSession(params: GameSessionParams, uniqueId: string): UseGameSessionResult {
@@ -100,6 +102,7 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
   const [lastOutcome, setLastOutcome] = useState<CalpokerOutcome | undefined>(undefined);
   const [gameLog, setGameLog] = useState<string[]>([]);
   const [debugLog, setDebugLog] = useState<string[]>([]);
+  const [actionFailedReason, setActionFailedReason] = useState<string | null>(null);
 
   const gameIdsRef = useRef<string[]>([]);
   const pendingProposalIdRef = useRef<string | null>(null);
@@ -115,6 +118,8 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
       setRealError((prev) => prev === undefined ? e : prev);
     }
   }, []);
+
+  const dismissActionFailed = useCallback(() => setActionFailedReason(null), []);
 
   const appendGameLog = useCallback((line: string) => {
     setGameLog(prev => [...prev, line]);
@@ -315,6 +320,9 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
         setShowBetweenHandOverlay(true);
         gameplayEventSubject.next({ _terminal: true, notification: n });
       }
+    } else if ('ActionFailed' in n) {
+      const reason = String(n.ActionFailed?.reason ?? 'Unknown error');
+      setActionFailedReason(reason);
     } else if (!('GameProposed' in n) && !('GameProposalAccepted' in n) && !('OpponentMoved' in n) && !('GameMessage' in n)) {
       console.warn('unhandled notification:', JSON.stringify(n));
     }
@@ -432,5 +440,7 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
     showBetweenHandOverlay,
     lastOutcome,
     shutdownInitiated,
+    actionFailedReason,
+    dismissActionFailed,
   };
 }
