@@ -837,15 +837,24 @@ impl OnChainGameHandler {
                     .and_then(|c| c.to_parts())
                     .map(|(_, _, amt)| amt.clone())
                     .unwrap_or_default();
+                let is_slash = !old_definition.our_turn
+                    && conditions
+                        .iter()
+                        .any(|c| matches!(c, CoinCondition::Rem(_)));
+                let label = if is_slash {
+                    "slash-on-chain"
+                } else {
+                    "timeout-on-chain"
+                };
                 if let Some(ref rc) = my_reward_coin_string {
                     effects.push(Effect::DebugLog(format!(
-                        "[timeout-on-chain] {} reward={}",
+                        "[{label}] {} reward={}",
                         format_coin(coin_id),
                         format_coin(rc),
                     )));
                 } else {
                     effects.push(Effect::DebugLog(format!(
-                        "[timeout-on-chain] {} no reward",
+                        "[{label}] {} no reward",
                         format_coin(coin_id),
                     )));
                 }
@@ -856,20 +865,15 @@ impl OnChainGameHandler {
                             our_reward: amount.clone(),
                             reward_coin: my_reward_coin_string.clone(),
                         }
+                    } else if is_slash {
+                        GameNotification::OpponentSlashedUs {
+                            id: old_definition.game_id,
+                        }
                     } else {
-                        let has_rem = conditions
-                            .iter()
-                            .any(|c| matches!(c, CoinCondition::Rem(_)));
-                        if has_rem {
-                            GameNotification::OpponentSlashedUs {
-                                id: old_definition.game_id,
-                            }
-                        } else {
-                            GameNotification::OpponentTimedOut {
-                                id: old_definition.game_id,
-                                our_reward: amount.clone(),
-                                reward_coin: my_reward_coin_string.clone(),
-                            }
+                        GameNotification::OpponentTimedOut {
+                            id: old_definition.game_id,
+                            our_reward: amount.clone(),
+                            reward_coin: my_reward_coin_string.clone(),
                         }
                     };
                     if let Some(eff) = self.try_emit_terminal(&old_definition.game_id, notif) {
