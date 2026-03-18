@@ -5,7 +5,7 @@ use crate::channel_handler::types::ReadableMove;
 use crate::common::types::{
     Aggsig, Amount, CoinSpend, CoinString, GameID, ProgramRef, PuzzleHash, SpendBundle, Timeout,
 };
-use crate::potato_handler::handshake::{HandshakeA, HandshakeB};
+use crate::potato_handler::handshake::{CoinSpendRequest, HandshakeB, HandshakeC, HandshakeD};
 use crate::potato_handler::types::{BatchAction, PeerMessage};
 
 pub fn format_coin(coin: &CoinString) -> String {
@@ -153,20 +153,20 @@ pub enum Effect {
     Notify(GameNotification),
 
     // PacketSender — one variant per peer message type
-    PeerHandshakeA(HandshakeA),
+    PeerHandshakeA(HandshakeB),
     PeerHandshakeB(HandshakeB),
-    PeerHandshakeC {
-        signatures: PotatoSignatures,
-    },
-    PeerHandshakeD {
-        signatures: PotatoSignatures,
-    },
+    PeerHandshakeC(HandshakeC),
+    PeerHandshakeD(HandshakeD),
     PeerHandshakeE {
         bundle: SpendBundle,
+        signatures: PotatoSignatures,
     },
     PeerHandshakeF {
         bundle: SpendBundle,
     },
+
+    NeedLauncherCoinId,
+    NeedCoinSpend(CoinSpendRequest),
     PeerBatch {
         actions: Vec<BatchAction>,
         signatures: PotatoSignatures,
@@ -213,17 +213,23 @@ pub fn apply_effects(
             Effect::PeerHandshakeB(msg) => {
                 system.send_message(&PeerMessage::HandshakeB(msg))?;
             }
-            Effect::PeerHandshakeC { signatures } => {
-                system.send_message(&PeerMessage::HandshakeC { signatures })?;
+            Effect::PeerHandshakeC(msg) => {
+                system.send_message(&PeerMessage::HandshakeC(msg))?;
             }
-            Effect::PeerHandshakeD { signatures } => {
-                system.send_message(&PeerMessage::HandshakeD { signatures })?;
+            Effect::PeerHandshakeD(msg) => {
+                system.send_message(&PeerMessage::HandshakeD(msg))?;
             }
-            Effect::PeerHandshakeE { bundle } => {
-                system.send_message(&PeerMessage::HandshakeE { bundle })?;
+            Effect::PeerHandshakeE { bundle, signatures } => {
+                system.send_message(&PeerMessage::HandshakeE { bundle, signatures })?;
             }
             Effect::PeerHandshakeF { bundle } => {
                 system.send_message(&PeerMessage::HandshakeF { bundle })?;
+            }
+            Effect::NeedLauncherCoinId => {
+                // Handled by the cradle/WASM layer, not by the trait system.
+            }
+            Effect::NeedCoinSpend(_) => {
+                // Handled by the cradle/WASM layer, not by the trait system.
             }
             Effect::PeerBatch {
                 actions,

@@ -5,11 +5,11 @@ import { blockchainDataEmitter } from '../hooks/BlockchainInfo';
 import { FAKE_BLOCKCHAIN_ID } from '../hooks/FakeBlockchainInterface';
 import {
   REAL_BLOCKCHAIN_ID,
-  connectRealBlockchain,
+  realBlockchainInfo,
 } from '../hooks/RealBlockchainInterface';
 import useDebug from '../hooks/useDebug';
 import { walletConnectState } from '../hooks/useWalletConnect';
-import { BLOCKCHAIN_SERVICE_URL, BLOCKCHAIN_DATA_URL } from '../settings';
+import { BLOCKCHAIN_SERVICE_URL } from '../settings';
 import { generateOrRetrieveUniqueId } from '../util';
 
 import Debug from './Debug';
@@ -120,7 +120,6 @@ const WalletConnectHeading = () => {
             selection: REAL_BLOCKCHAIN_ID,
             uniqueId,
           });
-          connectRealBlockchain(BLOCKCHAIN_DATA_URL);
           if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
           if (addressTimerRef.current) clearTimeout(addressTimerRef.current);
           requestBalance();
@@ -155,7 +154,12 @@ const WalletConnectHeading = () => {
   }, []);
 
   useEffect(() => {
-    function receivedWindowMessage(evt: MessageEvent<{ blockchain_request?: BlockchainOutboundRequest }>) {
+    function receivedWindowMessage(
+      evt: MessageEvent<{
+        blockchain_request?: BlockchainOutboundRequest;
+        watching_coins?: { coin_name: string; coin_string: string }[];
+      }>,
+    ) {
       const data = evt.data;
       if (data.blockchain_request) {
         if (evt.origin !== window.location.origin) {
@@ -164,6 +168,9 @@ const WalletConnectHeading = () => {
           );
         }
         blockchainConnector.getOutbound().next(data.blockchain_request);
+      }
+      if (data.watching_coins) {
+        realBlockchainInfo.setWatchingCoins(data.watching_coins);
       }
     }
 

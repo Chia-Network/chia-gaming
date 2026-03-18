@@ -43,8 +43,26 @@ export async function configGameObject(
   gameObject.setBlockchainAddress(address);
   let { game: cradle, puzzleHash } = wasmStateInit.createGame(calpokerHexes.proposalHex, calpokerHexes.parserHex, rngId, wasmConnection, iStarted, amount, amount, address.puzzleHash);
   gameObject.setGameCradle(cradle);
-  let coin = await wasmStateInit.createStartCoin(blockchain, uniqueId, puzzleHash, amount, wasmConnection);
-  gameObject.activateSpend(coin.coinString);
+  const supportsDirectHandshake = typeof (wasmConnection as unknown as { start_handshake?: unknown }).start_handshake === 'function';
+  if (supportsDirectHandshake) {
+    gameObject.startHandshake();
+    return gameObject;
+  }
+
+  // Backward-compatible path for WASM builds that still bootstrap via opening_coin.
+  const initialSpend = await blockchain.do_initial_spend(uniqueId, puzzleHash, amount);
+  let coin = initialSpend.coin;
+  if (typeof coin !== 'string') {
+    coin = wasmConnection.convert_coinset_to_coin_string(
+      coin.parentCoinInfo,
+      coin.puzzleHash,
+      coin.amount.toString(),
+    );
+  }
+  if (!coin) {
+    throw new Error('failed to get opening coin for handshake');
+  }
+  gameObject.activateSpend(coin);
   return gameObject;
 }
 
@@ -107,7 +125,6 @@ export function getBlobSingleton(
     blockchain,
     uniqueId,
     amount,
-    iStarted,
     peerconn,
   );
 

@@ -37,7 +37,7 @@ use rand::SeedableRng;
 #[cfg(test)]
 use rand_chacha::ChaCha8Rng;
 
-use crate::common::constants::CREATE_COIN;
+use crate::common::constants::{CREATE_COIN, SINGLETON_LAUNCHER_HASH};
 #[cfg(test)]
 use crate::common::standard_coin::puzzle_hash_for_pk;
 use crate::common::standard_coin::standard_solution_partial;
@@ -252,6 +252,67 @@ where
     Ok(true)
 }
 
+#[cfg(test)]
+fn build_dummy_wallet_bundle_for_request(
+    request: &crate::potato_handler::handshake::CoinSpendRequest,
+) -> SpendBundle {
+    let coin = CoinString::from_parts(
+        &request.coin_id.clone().unwrap_or_default(),
+        &PuzzleHash::default(),
+        &request.amount,
+    );
+    let nil = Program::from_hex("80").expect("nil program hex should parse");
+    SpendBundle {
+        name: Some("dummy wallet coin spend request".to_string()),
+        spends: vec![CoinSpend {
+            coin,
+            bundle: Spend {
+                puzzle: nil.clone().into(),
+                solution: nil.into(),
+                signature: Default::default(),
+            },
+        }],
+    }
+}
+
+#[cfg(test)]
+fn apply_effects_with_handshake_callbacks<P>(
+    allocator: &mut AllocEncoder,
+    handlers: &mut [Box<dyn PeerHandler>; 2],
+    pipes: &mut [P; 2],
+    who: usize,
+    effects: Vec<Effect>,
+) -> Result<(), Error>
+where
+    P: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + MessagePeerQueue,
+{
+    let mut passthrough = Vec::new();
+    let mut pending = VecDeque::from(effects);
+    while let Some(effect) = pending.pop_front() {
+        match effect {
+            Effect::NeedLauncherCoinId => {
+                let launcher_coin = CoinString::from_parts(
+                    &CoinID::default(),
+                    &PuzzleHash::from_bytes(SINGLETON_LAUNCHER_HASH),
+                    &Amount::default(),
+                );
+                let mut env = ChannelHandlerEnv::new(allocator)?;
+                let follow_up = handlers[who].provide_launcher_coin(&mut env, launcher_coin)?;
+                pending.extend(follow_up);
+            }
+            Effect::NeedCoinSpend(req) => {
+                let bundle = build_dummy_wallet_bundle_for_request(&req);
+                let mut env = ChannelHandlerEnv::new(allocator)?;
+                let follow_up = handlers[who].provide_coin_spend_bundle(&mut env, bundle)?;
+                pending.extend(follow_up);
+            }
+            other => passthrough.push(other),
+        }
+    }
+    apply_effects(passthrough, allocator, &mut pipes[who])?;
+    Ok(())
+}
+
 pub fn quiesce<P>(
     allocator: &mut AllocEncoder,
     amount: Amount,
@@ -321,7 +382,7 @@ where
                     let mut env = ChannelHandlerEnv::new(allocator)?;
                     handlers[who].received_message(&mut env, msg)?
                 };
-                apply_effects(effects, allocator, &mut pipes[who])?;
+                apply_effects_with_handshake_callbacks(allocator, handlers, pipes, who, effects)?;
             }
 
             {
@@ -347,7 +408,13 @@ where
                     immediate_effects.extend(effects);
                 }
                 drop(env);
-                apply_effects(immediate_effects, allocator, &mut pipes[who])?;
+                apply_effects_with_handshake_callbacks(
+                    allocator,
+                    handlers,
+                    pipes,
+                    who,
+                    immediate_effects,
+                )?;
             }
 
             {
@@ -355,7 +422,13 @@ where
                 if let Ok(channel_coin) = get_channel_coin_for_handler(&*handlers[who]) {
                     let effects = handlers[who].coin_created(&mut env, &channel_coin)?;
                     if let Some(effects) = effects {
-                        apply_effects(effects, allocator, &mut pipes[who])?;
+                        apply_effects_with_handshake_callbacks(
+                            allocator,
+                            handlers,
+                            pipes,
+                            who,
+                            effects,
+                        )?;
                     }
                 }
             }

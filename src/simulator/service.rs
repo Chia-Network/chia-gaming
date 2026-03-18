@@ -18,6 +18,10 @@ use crate::common::types::{
     CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord, Error, Hash,
     IntoErr, PrivateKey, Program, PuzzleHash, SpendBundle,
 };
+use crate::channel_handler::types::ChannelHandlerEnv;
+use crate::common::constants::{CREATE_COIN, SINGLETON_LAUNCHER_HASH};
+use crate::common::standard_coin::standard_solution_partial;
+use clvm_traits::ToClvm;
 use crate::peer_container::{FullCoinSetAdapter, WatchReport};
 use crate::simulator::Simulator;
 
@@ -234,6 +238,104 @@ impl GameRunner {
         Ok("null\n".to_string())
     }
 
+    fn select_coins(&self, who: &str, amount: u64) -> StringWithError {
+        let identity = self.lookup_identity(who).cloned();
+        if let Some(identity) = identity {
+            let mut candidates = self.simulator.get_my_coins(&identity.puzzle_hash)?;
+            candidates.retain(|c| {
+                c.to_parts()
+                    .map(|(_, _, amt)| amt.to_u64() >= amount)
+                    .unwrap_or(false)
+            });
+            if let Some(selected) = candidates
+                .into_iter()
+                .min_by_key(|c| c.to_parts().map(|(_, _, amt)| amt.to_u64()).unwrap_or(u64::MAX))
+            {
+                return Ok(format!("\"{}\"\n", hex::encode(selected.to_bytes())));
+            }
+        }
+        Ok("null\n".to_string())
+    }
+
+    fn create_offer_for_ids(&mut self, who: &str, req: &CreateOfferForIdsRequest) -> StringWithError {
+        let identity = self
+            .lookup_identity(who)
+            .cloned()
+            .ok_or_else(|| Error::StrErr(format!("unknown wallet user: {who}")))?;
+
+        let requested_amount = req
+            .offer
+            .values()
+            .filter(|v| **v < 0)
+            .map(|v| (-*v) as u64)
+            .max()
+            .ok_or_else(|| Error::StrErr("offer does not request any spend amount".to_string()))?;
+
+        let mut candidates = self.simulator.get_my_coins(&identity.puzzle_hash)?;
+        candidates.retain(|c| {
+            c.to_parts()
+                .map(|(_, _, amt)| amt.to_u64() >= requested_amount)
+                .unwrap_or(false)
+        });
+
+        let selected_coin = if let Some(first_coin_id) = req.coin_ids.first() {
+            let expected_bytes = check_for_hex(first_coin_id)?;
+            let expected_id = CoinID::new(Hash::from_slice(&expected_bytes)?);
+            candidates
+                .into_iter()
+                .find(|coin| coin.to_coin_id() == expected_id)
+                .ok_or_else(|| Error::StrErr("requested coin id not found".to_string()))?
+        } else {
+            candidates
+                .into_iter()
+                .min_by_key(|c| c.to_parts().map(|(_, _, amt)| amt.to_u64()).unwrap_or(u64::MAX))
+                .ok_or_else(|| Error::StrErr("no spendable coin for requested amount".to_string()))?
+        };
+
+        let mut create_targets: Vec<(PuzzleHash, Amount)> = Vec::new();
+        if !req.coin_ids.is_empty() {
+            create_targets.push((
+                PuzzleHash::from_bytes(SINGLETON_LAUNCHER_HASH),
+                Amount::default(),
+            ));
+        }
+
+        let env = ChannelHandlerEnv::new(&mut self.allocator)?;
+        let clvm_conditions: Vec<(u32, (PuzzleHash, (Amount, ())))> = create_targets
+            .iter()
+            .map(|(ph, amt)| (CREATE_COIN, (ph.clone(), (amt.clone(), ()))))
+            .collect();
+        let conditions_clvm = clvm_conditions.to_clvm(env.allocator).into_gen()?;
+
+        let spend = standard_solution_partial(
+            env.allocator,
+            &identity.synthetic_private_key,
+            &selected_coin.to_coin_id(),
+            conditions_clvm,
+            &identity.synthetic_public_key,
+            &env.agg_sig_me_additional_data,
+            false,
+        )?;
+
+        let (parent, puzzle_hash, amount) = selected_coin
+            .to_parts()
+            .ok_or_else(|| Error::StrErr("selected coin missing parts".to_string()))?;
+        let result = CoinsetSpendBundle {
+            aggregated_signature: format!("0x{}", hex::encode(spend.signature.bytes())),
+            coin_spends: vec![CoinsetSpendRecord {
+                coin: CoinsetCoin {
+                    parent_coin_info: format!("0x{}", hex::encode(parent.bytes())),
+                    puzzle_hash: format!("0x{}", hex::encode(puzzle_hash.bytes())),
+                    amount: amount.to_u64(),
+                },
+                puzzle_reveal: format!("0x{}", identity.puzzle.to_program().to_hex()),
+                solution: format!("0x{}", spend.solution.p().to_hex()),
+            }],
+        };
+
+        serde_json::to_string(&result).into_gen()
+    }
+
     fn spend_list_of_spends(&mut self, spends: &[CoinSpend]) -> StringWithError {
         let result = self.simulator.push_tx(&mut self.allocator, spends)?;
         let e_res = result
@@ -348,6 +450,12 @@ fn respond_cors_preflight(request: tiny_http::Request, origin: &Option<String>) 
     for h in cors_headers(origin) {
         response.add_header(h);
     }
+    if let Ok(h) = Header::from_bytes(&b"Access-Control-Allow-Methods"[..], &b"POST, GET, OPTIONS"[..]) {
+        response.add_header(h);
+    }
+    if let Ok(h) = Header::from_bytes(&b"Access-Control-Allow-Headers"[..], &b"content-type"[..]) {
+        response.add_header(h);
+    }
     let _ = request.respond(response);
 }
 
@@ -391,6 +499,13 @@ fn respond_not_found(request: tiny_http::Request) {
 #[derive(Serialize, Deserialize)]
 struct PushTxRequest {
     spend_bundle: CoinsetSpendBundle,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct CreateOfferForIdsRequest {
+    offer: BTreeMap<String, i64>,
+    #[serde(default, rename = "coinIds")]
+    coin_ids: Vec<String>,
 }
 
 fn url_path(url: &str) -> &str {
@@ -519,6 +634,34 @@ fn service_main_inner() {
                 {
                     Ok(body) => respond_ok(request, body, &origin),
                     Err(msg) => respond_err(request, msg),
+                }
+            }
+            (Method::Post, "/select_coins") => {
+                match (|| -> Result<String, Error> {
+                    let who = get_arg_string(&url, "who")?;
+                    let amount = get_arg_integer(&url, "amount")?;
+                    game_runner.select_coins(&who, amount)
+                })()
+                .report_err()
+                {
+                    Ok(body) => respond_ok(request, body, &origin),
+                    Err(msg) => respond_err(request, msg),
+                }
+            }
+            (Method::Post, "/create_offer_for_ids") => {
+                let mut body_bytes = Vec::new();
+                match std::io::Read::read_to_end(request.as_reader(), &mut body_bytes) {
+                    Ok(_) => match serde_json::from_slice::<CreateOfferForIdsRequest>(&body_bytes) {
+                        Ok(decoded) => {
+                            let who = get_arg_string(&url, "who");
+                            match who.and_then(|who| game_runner.create_offer_for_ids(&who, &decoded)).report_err() {
+                                Ok(resp) => respond_ok(request, resp, &origin),
+                                Err(msg) => respond_err(request, msg),
+                            }
+                        }
+                        Err(e) => respond_err(request, format!("{{\"error\":\"{e}\"}}")),
+                    },
+                    Err(e) => respond_err(request, format!("{{\"error\":\"read error: {e}\"}}")),
                 }
             }
             (Method::Post, "/spend") => {

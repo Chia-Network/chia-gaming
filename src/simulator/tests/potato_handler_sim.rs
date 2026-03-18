@@ -8,7 +8,7 @@ use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
-use crate::common::constants::CREATE_COIN;
+use crate::common::constants::{CREATE_COIN, SINGLETON_LAUNCHER_HASH};
 use crate::common::standard_coin::{
     sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
 };
@@ -147,6 +147,68 @@ fn handle_received_channel_puzzle_hash(
         },
     )
     .map(|effect| effect.into_iter().collect::<Vec<_>>())
+}
+
+fn build_wallet_bundle_for_request(
+    allocator: &mut AllocEncoder,
+    simulator: &Simulator,
+    identity: &ChiaIdentity,
+    request: &crate::potato_handler::handshake::CoinSpendRequest,
+) -> Result<SpendBundle, Error> {
+    let mut candidate_coins = simulator.get_my_coins(&identity.puzzle_hash)?;
+    candidate_coins.retain(|coin| {
+        coin.to_parts()
+            .map(|(_, _, amt)| amt.to_u64() >= request.amount.to_u64())
+            .unwrap_or(false)
+    });
+    let selected_coin = if let Some(expected_coin_id) = request.coin_id.as_ref() {
+        candidate_coins
+            .into_iter()
+            .find(|coin| coin.to_coin_id() == *expected_coin_id)
+            .ok_or_else(|| {
+                Error::StrErr(format!("no spendable coin for requested coin_id {expected_coin_id:?}"))
+            })?
+    } else {
+        candidate_coins
+            .into_iter()
+            .min_by_key(|coin| coin.to_parts().map(|(_, _, amt)| amt.to_u64()).unwrap_or(u64::MAX))
+            .ok_or_else(|| Error::StrErr("no spendable coin for coin spend request".to_string()))?
+    };
+    let mut create_targets: Vec<(PuzzleHash, Amount)> = Vec::new();
+    if request.coin_id.is_some() {
+        create_targets.push((
+            PuzzleHash::from_bytes(SINGLETON_LAUNCHER_HASH),
+            Amount::default(),
+        ));
+    }
+
+    let env = ChannelHandlerEnv::new(allocator)?;
+    let clvm_conditions: Vec<(u32, (PuzzleHash, (Amount, ())))> = create_targets
+        .iter()
+        .map(|(ph, amt)| (CREATE_COIN, (ph.clone(), (amt.clone(), ()))))
+        .collect();
+    let conditions_clvm = clvm_conditions.to_clvm(env.allocator).into_gen()?;
+    let spend = standard_solution_partial(
+        env.allocator,
+        &identity.synthetic_private_key,
+        &selected_coin.to_coin_id(),
+        conditions_clvm,
+        &identity.synthetic_public_key,
+        &env.agg_sig_me_additional_data,
+        false,
+    )?;
+
+    Ok(SpendBundle {
+        name: Some("wallet coin spend request".to_string()),
+        spends: vec![CoinSpend {
+            coin: selected_coin,
+            bundle: Spend {
+                puzzle: identity.puzzle.clone(),
+                solution: spend.solution.clone(),
+                signature: spend.signature.clone(),
+            },
+        }],
+    })
 }
 
 impl PacketSender for SimulatedPeer {
@@ -912,6 +974,11 @@ fn run_game_container_with_action_list_with_success_predicate(
         &coins1[0],
         Amount::new(bal),
     )?;
+    let launcher_coin = CoinString::from_parts(
+        &parent_coin_0.to_coin_id(),
+        &PuzzleHash::from_bytes(SINGLETON_LAUNCHER_HASH),
+        &Amount::default(),
+    );
 
     simulator.farm_block(&neutral_identity.puzzle_hash);
 
@@ -1000,9 +1067,16 @@ fn run_game_container_with_action_list_with_success_predicate(
     while !matches!(ending, Some(0)) {
         num_steps += 1;
 
+        let handshake_flags = [cradles[0].handshake_finished(), cradles[1].handshake_finished()];
+        let channel_created_flags = [local_uis[0].channel_created, local_uis[1].channel_created];
+        let need_launcher = [cradles[0].need_launcher_coin(), cradles[1].need_launcher_coin()];
+        let need_coin_spend = [
+            cradles[0].requested_coin_spend().is_some(),
+            cradles[1].requested_coin_spend().is_some(),
+        ];
         assert!(
             num_steps < 200,
-            "simulation stalled: num_steps={num_steps} move_number={move_number} can_move={can_move} next_action={:?} explicit_go_on_chain={has_explicit_go_on_chain}",
+            "simulation stalled: num_steps={num_steps} move_number={move_number} can_move={can_move} next_action={:?} explicit_go_on_chain={has_explicit_go_on_chain} handshake_finished={handshake_flags:?} channel_created={channel_created_flags:?} need_launcher={need_launcher:?} need_coin_spend={need_coin_spend:?}",
             moves_input.get(move_number)
         );
 
@@ -1067,7 +1141,29 @@ fn run_game_container_with_action_list_with_success_predicate(
             }
 
             {
-                let result = cradles[i].drain_all(allocator)?;
+                let mut result = cradles[i].drain_all(allocator)?;
+                if i == 0 && cradles[i].need_launcher_coin() {
+                    cradles[i].provide_launcher_coin(allocator, launcher_coin.clone())?;
+                    let follow_up = cradles[i].drain_all(allocator)?;
+                    if result.resync.is_none() {
+                        result.resync = follow_up.resync;
+                    }
+                    result.events.extend(follow_up.events);
+                }
+                if let Some(req) = cradles[i].requested_coin_spend() {
+                    let wallet_bundle = build_wallet_bundle_for_request(
+                        allocator,
+                        &simulator,
+                        &identities[i],
+                        &req,
+                    )?;
+                    cradles[i].provide_coin_spend_bundle(allocator, wallet_bundle)?;
+                    let follow_up = cradles[i].drain_all(allocator)?;
+                    if result.resync.is_none() {
+                        result.resync = follow_up.resync;
+                    }
+                    result.events.extend(follow_up.events);
+                }
 
                 // Collect coin solution requests from this drain and all
                 // subsequent drains they trigger, processing every other
@@ -1100,11 +1196,11 @@ fn run_game_container_with_action_list_with_success_predicate(
                                     nerfed_tx_backlog.push(tx.clone());
                                     continue;
                                 }
-                                let any_stale = tx
+                                let all_unspendable = tx
                                     .spends
                                     .iter()
-                                    .any(|cs| !simulator.is_coin_spendable(&cs.coin));
-                                if any_stale {
+                                    .all(|cs| !simulator.is_coin_spendable(&cs.coin));
+                                if all_unspendable {
                                     continue;
                                 }
                                 let t_tx = std::time::Instant::now();
@@ -1153,6 +1249,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 local_uis[i].notification(n)?;
                             }
                             CradleEvent::ReceiveError(e) => {
+                                eprintln!("SIM receive error p{i}: {e}");
                                 local_uis[i].notification(&GameNotification::GoingOnChain {
                                     reason: format!("error receiving peer message: {e}"),
                                 })?;

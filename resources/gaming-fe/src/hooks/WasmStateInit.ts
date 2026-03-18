@@ -3,8 +3,6 @@ import {
   WasmInitFn,
   ChiaGame,
   RngId,
-  InternalBlockchainInterface,
-  CreateStartCoinReturn,
 } from '../types/ChiaGaming';
 import { Observable, Subject } from 'rxjs';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
@@ -22,6 +20,15 @@ export const waitForReadyToInit = new Observable<boolean>((subscriber) => {
   }
   readyToInit.subscribe(subscriber);
 });
+
+export const doInternalLoadWasm = async () => {
+  const fetchUrl = '/chia_gaming_wasm_bg.wasm';
+  return fetch(fetchUrl)
+    .then((wasm) => wasm.blob())
+    .then((blob) => {
+      return blob.arrayBuffer();
+    });
+};
 
 export async function fetchHex(fetchUrl: string): Promise<string> {
   // TODO: check
@@ -83,7 +90,7 @@ export class WasmStateInit {
   }
 
   getWasmConnection(): Promise<WasmConnection> {
-    const sub = waitForReadyToInit.subscribe({
+    waitForReadyToInit.subscribe({
       next: () => {
         if (!chia_gaming_init || !cg) throw new Error('wasm init args not set');
         this.internalLoadWasm(chia_gaming_init, cg);
@@ -112,7 +119,7 @@ export class WasmStateInit {
     return Promise.all(presetFetches).then((presets) => {
       presets.forEach((nameAndContent) => {
         if (!this.wasmConnection) {
-          throw 'this.wasmConnection undefined in loadPresets';
+          throw new Error('this.wasmConnection undefined in loadPresets');
         }
         this.wasmConnection?.deposit_file(
           nameAndContent.name,
@@ -137,62 +144,12 @@ export class WasmStateInit {
     return undefined;
   }
 
+  // deserializeRng(serializedGame: any) {
+  //   return this.wasmConnection?.deserialize_rng(serializedGame);
+  // }
+
   getChiaIdentity(rngSeed: string) {
     // return this.wasmConnection?.chia_identity(rngSeed);
-  }
-
-  // need:
-  // blockchain for address, do_initial_spend
-  //
-  async createStartCoin(
-    blockchain: InternalBlockchainInterface,
-    uniqueId: string,
-    puzzleHash: string,
-    amount: bigint,
-    wc: WasmConnection,
-  ): Promise<CreateStartCoinReturn> {
-    if (!puzzleHash) {
-      throw new Error('create start coin with no puzzle hash');
-    }
-    if (!wc) {
-      throw new Error('create start coin with no wasm obj?');
-    }
-    if (amount < 1n) {
-      let msg = 'createStartCoin: negative amount:' + amount;
-      throw new Error(msg);
-    }
-
-    let address = await blockchain.getAddress();
-
-    let inital_spend = await blockchain.do_initial_spend(
-      uniqueId,
-      puzzleHash,
-      amount,
-    );
-
-    let coin = inital_spend.coin;
-    if (!coin) {
-      throw new Error('tried to create spendable but failed');
-    }
-
-    // Handle data conversion back when Coin object was received.
-    if (typeof coin !== 'string') {
-      const coinset_coin = coin;
-      const new_coin_string = wc.convert_coinset_to_coin_string(
-        coinset_coin.parentCoinInfo,
-        coinset_coin.puzzleHash,
-        coinset_coin.amount.toString(),
-      );
-      if (!new_coin_string) {
-        throw new Error(
-          `Coin could not be converted to coinstring: ${JSON.stringify(coinset_coin)}`,
-        );
-      }
-
-      coin = new_coin_string;
-
-    }
-    return {coinString: coin, blockchainInboundAddressResult: address};
   }
 
   async loadCalpoker(): Promise<{proposalHex: string, parserHex: string}> {

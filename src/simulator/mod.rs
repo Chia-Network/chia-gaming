@@ -227,6 +227,30 @@ impl Simulator {
             .collect())
     }
 
+    pub fn select_coins(
+        &self,
+        puzzle_hash: &PuzzleHash,
+        amount: &Amount,
+    ) -> Result<Option<CoinString>, Error> {
+        let coins = self.get_my_coins(puzzle_hash)?;
+        for coin in coins {
+            if let Some((_, _, coin_amount)) = coin.to_parts() {
+                if &coin_amount >= amount {
+                    return Ok(Some(coin));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn find_coin_by_id(&self, coin_id: &CoinID) -> Result<Option<CoinString>, Error> {
+        let state = self.state.borrow();
+        match state.coins.get(coin_id) {
+            Some(record) if record.spent_height.is_none() => Ok(Some(record.coin.clone())),
+            _ => Ok(None),
+        }
+    }
+
     pub fn get_puzzle_and_solution(
         &self,
         coin_id: &CoinID,
@@ -245,6 +269,15 @@ impl Simulator {
         let coin_id = coin.to_coin_id();
         match state.coins.get(&coin_id) {
             Some(r) => r.spent_height.is_none(),
+            None => false,
+        }
+    }
+
+    pub fn is_coin_spent(&self, coin: &CoinString) -> bool {
+        let state = self.state.borrow();
+        let coin_id = coin.to_coin_id();
+        match state.coins.get(&coin_id) {
+            Some(r) => r.spent_height.is_some(),
             None => false,
         }
     }
@@ -272,44 +305,48 @@ impl Simulator {
         let mut total_output = Amount::default();
         let mut total_reserve_fee = Amount::default();
 
+        // Track ephemeral coins (created and spent in the same transaction).
+        let mut ephemeral_coins: HashMap<CoinID, PuzzleHash> = HashMap::new();
+
         for (i, tx) in txs.iter().enumerate() {
             let coin_id = tx.coin.to_coin_id();
 
-            let record = match state.coins.get(&coin_id) {
-                Some(r) => r,
-                None => {
+            // Check persistent state first, then ephemeral coins from this tx.
+            let (record_ph, record_created_height) = if let Some(record) = state.coins.get(&coin_id)
+            {
+                if record.spent_height.is_some() {
                     if self.strict {
-                        panic!("Strict mode: Coin not found: {coin_id:?}",);
+                        panic!("Strict mode: Coin already spent: {coin_id:?}",);
                     }
                     return Ok(IncludeTransactionResult {
                         code: 3,
                         e: Some(5),
-                        diagnostic: format!("Coin not found: {:?}", coin_id),
+                        diagnostic: format!("Coin already spent: {:?}", coin_id),
                     });
                 }
-            };
-
-            if record.spent_height.is_some() {
+                (record.puzzle_hash.clone(), record.created_height)
+            } else if let Some(ph) = ephemeral_coins.remove(&coin_id) {
+                (ph, state.height)
+            } else {
                 if self.strict {
-                    panic!("Strict mode: Coin already spent: {coin_id:?}",);
+                    panic!("Strict mode: Coin not found: {coin_id:?}",);
                 }
                 return Ok(IncludeTransactionResult {
                     code: 3,
                     e: Some(5),
-                    diagnostic: format!("Coin already spent: {:?}", coin_id),
+                    diagnostic: format!("Coin not found: {:?}", coin_id),
                 });
-            }
+            };
 
             let (_, _, coin_amount) = tx.coin.get_coin_string_parts()?;
             total_input += coin_amount;
 
             let puzzle_program: Program = (*tx.bundle.puzzle.to_program()).clone();
             let computed_ph = puzzle_program.sha256tree(allocator);
-            if computed_ph != record.puzzle_hash {
+            if computed_ph != record_ph {
                 if self.strict {
                     panic!(
-                        "Strict mode: puzzle hash MISMATCH for coin {i}: coin_id={coin_id:?} coin_ph={:?} computed_ph={computed_ph:?}",
-                        record.puzzle_hash,
+                        "Strict mode: puzzle hash MISMATCH for coin {i}: coin_id={coin_id:?} coin_ph={record_ph:?} computed_ph={computed_ph:?}",
                     );
                 }
                 return Ok(IncludeTransactionResult {
@@ -317,7 +354,7 @@ impl Simulator {
                     e: Some(6),
                     diagnostic: format!(
                         "Puzzle hash mismatch for coin {}: expected {:?}, got {computed_ph:?}",
-                        i, record.puzzle_hash,
+                        i, record_ph,
                     ),
                 });
             }
@@ -336,16 +373,15 @@ impl Simulator {
                     if self.strict {
                         panic!(
                             "Strict mode: CLVM execution error for coin {i}: \
-                             coin_id={coin_id:?} coin_ph={:?} computed_ph={computed_ph:?}\n  \
+                             coin_id={coin_id:?} coin_ph={record_ph:?} computed_ph={computed_ph:?}\n  \
                              puzzle_len={} solution_len={}\n  err={e:?}",
-                            record.puzzle_hash,
                             puzzle_hex.len() / 2,
                             sol_hex.len() / 2,
                         );
                     }
                     eprintln!(
-                        "PUSH_TX: CLVM error for coin {i}: coin_id={:?} coin_ph={:?} computed_ph={computed_ph:?}\n  puzzle_len={} solution_len={}\n  err={e:?}",
-                        coin_id, record.puzzle_hash, puzzle_hex.len() / 2, sol_hex.len() / 2,
+                        "PUSH_TX: CLVM error for coin {i}: coin_id={coin_id:?} coin_ph={record_ph:?} computed_ph={computed_ph:?}\n  puzzle_len={} solution_len={}\n  err={e:?}",
+                        puzzle_hex.len() / 2, sol_hex.len() / 2,
                     );
                     return Ok(IncludeTransactionResult {
                         code: 3,
@@ -359,6 +395,8 @@ impl Simulator {
                 match cond {
                     CoinCondition::CreateCoin(ph, amt) => {
                         total_output += amt.clone();
+                        let child = CoinString::from_parts(&coin_id, ph, amt);
+                        ephemeral_coins.insert(child.to_coin_id(), ph.clone());
                         additions.push((coin_id.clone(), ph.clone(), amt.clone()));
                     }
                     CoinCondition::AggSigMe(pk, msg) => {
@@ -376,14 +414,14 @@ impl Simulator {
                         total_reserve_fee += amt.clone();
                     }
                     CoinCondition::AssertHeightRelative(blocks) => {
-                        let elapsed = state.height.saturating_sub(record.created_height);
+                        let elapsed = state.height.saturating_sub(record_created_height);
                         if (elapsed as u64) < *blocks {
                             if self.strict {
                                 panic!(
                                     "Strict mode: ASSERT_HEIGHT_RELATIVE violated: \
                                      coin {:?} created at height {}, current height {}, \
                                      elapsed {} but required {}",
-                                    coin_id, record.created_height, state.height, elapsed, blocks,
+                                    coin_id, record_created_height, state.height, elapsed, blocks,
                                 );
                             }
                             return Ok(IncludeTransactionResult {

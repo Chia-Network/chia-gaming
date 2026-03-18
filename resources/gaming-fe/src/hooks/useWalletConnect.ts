@@ -3,6 +3,18 @@ import { SessionTypes } from '@walletconnect/types';
 import { Subject } from 'rxjs';
 
 import { PROJECT_ID, RELAY_URL, CHAIN_ID } from '../constants/env';
+import { REQUIRED_NAMESPACES } from '../constants/wallet-connect';
+
+const SESSION_PING_TIMEOUT_MS = 10_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error('timeout')), ms)
+    ),
+  ]);
+}
 
 export interface StartConnectResult {
   approval: () => Promise<SessionTypes.Struct>;
@@ -60,10 +72,19 @@ class WalletState {
 
   async init() {
     if (this.isInitialized) {
+      console.log('[WC] init() skipped -- already initialized');
       return;
     }
 
     this.isInitialized = true;
+
+    console.log(`[WC] network: ${CHAIN_ID}`);
+    console.log('[WC] init() starting', {
+      projectId: PROJECT_ID,
+      relayUrl: RELAY_URL,
+      chainId: CHAIN_ID,
+      origin: window.location.origin,
+    });
 
     this.observable.next({ stateName: 'initializing', initializing: true });
 
@@ -90,27 +111,89 @@ class WalletState {
         },
       });
 
+      const relayer = signClient.core?.relayer as unknown as {
+        connected?: boolean;
+        transportExplicitlyClosed?: boolean;
+      };
+      console.log('[WC] Client.init() succeeded', {
+        relayConnected: relayer?.connected,
+        relayTransportClosed: relayer?.transportExplicitlyClosed,
+      });
+
       this.client = signClient;
       const sessions = signClient.session.getAll();
+      const pairings = signClient.core.pairing.getPairings();
+      console.log(`[WC] existing sessions: ${sessions.length}, pairings: ${pairings.length}`);
 
       if (sessions.length > 0) {
         const session = sessions[0];
         const accountParts = session.namespaces.chia.accounts[0].split(':');
         const address = accountParts[2];
         const detectedChain = `${accountParts[0]}:${accountParts[1]}`;
-
-        this.isConnected = true;
-        this.address = address;
-        this.chainId = detectedChain;
-        this.session = session;
-        this.observable.next({
-          stateName: 'connected',
-          initialized: true,
-          haveClient: true,
-          haveSession: true,
-          connected: true,
-          sessions: sessions.length,
+        console.log('[WC] restoring existing session', {
+          topic: session.topic,
+          address,
+          chainId: detectedChain,
+          methods: session.namespaces.chia.methods,
+          peer: session.peer?.metadata?.name,
+          expiry: session.expiry,
         });
+
+        const now = Date.now() / 1000;
+        let sessionAlive = false;
+
+        if (session.expiry && now > session.expiry) {
+          console.warn('[WC] session expired, discarding', {
+            expiry: session.expiry,
+            now: Math.floor(now),
+          });
+        } else {
+          try {
+            await withTimeout(
+              signClient.request({
+                topic: session.topic,
+                chainId: detectedChain,
+                request: {
+                  method: 'chia_getHeightInfo',
+                  params: { fingerprint: Number.parseInt(address, 10) },
+                },
+              }),
+              SESSION_PING_TIMEOUT_MS,
+            );
+            console.log('[WC] session liveness check succeeded -- wallet is reachable');
+            sessionAlive = true;
+          } catch (pingErr) {
+            console.warn('[WC] session liveness check failed/timed out, discarding stale session', pingErr);
+          }
+        }
+
+        if (sessionAlive) {
+          this.isConnected = true;
+          this.address = address;
+          this.chainId = detectedChain;
+          this.session = session;
+          this.observable.next({
+            stateName: 'connected',
+            initialized: true,
+            haveClient: true,
+            haveSession: true,
+            connected: true,
+            sessions: sessions.length,
+          });
+        } else {
+          try {
+            await withTimeout(
+              signClient.disconnect({
+                topic: session.topic,
+                reason: { code: 6000, message: 'Stale session cleaned up' },
+              }),
+              SESSION_PING_TIMEOUT_MS,
+            );
+            console.log('[WC] stale session disconnected from IndexedDB');
+          } catch (disconnectErr) {
+            console.warn('[WC] failed to disconnect stale session (may already be gone)', disconnectErr);
+          }
+        }
       }
 
       this.observable.next({
@@ -153,6 +236,11 @@ class WalletState {
   }
 
   async startConnect(): Promise<StartConnectResult> {
+    console.log('[WC] startConnect() called', {
+      hasClient: !!this.client,
+      isInitialized: this.isInitialized,
+    });
+
     if (!this.client) {
       const msg = 'startConnect() called but client is undefined -- init() may have failed';
       console.error('[WC]', msg);
@@ -166,13 +254,12 @@ class WalletState {
 
     try {
       const { uri, approval } = await this.client.connect({
-        optionalNamespaces: {
-          chia: {
-            methods: ['chia_getCurrentAddress', 'chia_getWalletBalance', 'chia_sendTransaction'],
-            chains: ['chia:mainnet', 'chia:testnet'],
-            events: [],
-          },
-        },
+        optionalNamespaces: REQUIRED_NAMESPACES,
+      });
+
+      console.log('[WC] startConnect() got URI', {
+        uriPrefix: uri?.substring(0, 50),
+        uriLength: uri?.length,
       });
 
       this.observable.next({
@@ -195,11 +282,26 @@ class WalletState {
   }
 
   async connect(approval: () => Promise<SessionTypes.Struct>) {
+    console.log('[WC] connect() waiting for wallet approval...');
     try {
       const session = await approval();
       const accountParts = session.namespaces.chia.accounts[0].split(':');
       const address = accountParts[2];
       const detectedChain = `${accountParts[0]}:${accountParts[1]}`;
+
+      console.log(`[WC] network: ${detectedChain}`);
+      console.log('[WC] connect() session approved', {
+        topic: session.topic,
+        address,
+        chainId: detectedChain,
+        methods: session.namespaces.chia.methods,
+        peer: session.peer?.metadata?.name,
+        expiry: session.expiry,
+      });
+
+      this.address = address;
+      this.chainId = detectedChain;
+      this.session = session;
 
       this.observable.next({
         stateName: 'connected',
@@ -208,10 +310,6 @@ class WalletState {
         sessions: 1,
         address,
       });
-
-      this.address = address;
-      this.chainId = detectedChain;
-      this.session = session;
     } catch (err) {
       console.error('[WC] connect() approval FAILED or rejected', err);
       this.observable.next({

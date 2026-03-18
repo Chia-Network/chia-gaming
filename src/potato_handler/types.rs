@@ -13,85 +13,9 @@ use crate::common::types::{
     PuzzleHash, SpendBundle, Timeout,
 };
 use crate::potato_handler::effects::{Effect, ResyncInfo};
-use crate::potato_handler::handshake::{HandshakeA, HandshakeB};
+use crate::potato_handler::handshake::{HandshakeB, HandshakeC, HandshakeD};
 use crate::potato_handler::start::GameStart;
 use crate::referee::types::GameMoveDetails;
-
-/// Async interface for messaging out of the game layer toward the wallet.
-///
-/// For this and its companion if instances are left in the documentation which
-/// refer to the potato handler combining spend bundles, that work has been decided
-/// to not take place in the potato handler.  The injected wallet bootstrap
-/// dependency must be stateful enough that it can cope with receiving a partly
-/// funded offer spend bundle and fully fund it if needed.
-pub trait BootstrapTowardGame {
-    /// Gives a partly signed offer to the wallet bootstrap.
-    ///
-    /// Intended use: channel_puzzle_hash delivers the desired puzzle hash and this
-    /// is the reply which delivers a transaction bundle for an already spent
-    /// transaction creating the channel coin.
-    ///
-    /// The launcher program is passed a list of conditions and returns that list
-    /// of conditions with an announcement including their shatree as an
-    /// announcement.
-    ///
-    /// The launcher coin is implicit in the returned transaction bundle in that
-    /// we can compute its coin string from this information.
-    ///
-    /// The launcher coin must be a specific program such as the singleton
-    /// launcher.
-    ///
-    /// The launcher coin targets the channel puzzle with the right amount.
-    ///
-    /// "Half funded" transaction in a spend bundle to which spends will be
-    /// added that fully fund it, condition on the given announcement named
-    /// above by the launcher coin.
-    ///
-    /// The launcher coin will be in here so the other guy can pick it out and
-    /// make the assumption that it is the launcher coin.  It is identifiable by
-    /// its puzzle hash.
-    ///
-    /// We forward this spend bundle over a potato message and the peer passes
-    /// it to the other guy's injected wallet dependency via received_channel_offer
-    /// below.
-    ///
-    /// channel offer should deliver both the launcher coin id and the partly
-    /// funded spend bundle.  Alice absolutely needs the channel coin id in some
-    /// way from here.
-    ///
-    /// Only alice sends this spend bundle in message E, but only after receiving
-    /// message D.
-    fn channel_offer(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
-        bundle: SpendBundle,
-    ) -> Result<Option<Effect>, Error>;
-
-    /// Gives the fully signed offer to the wallet bootstrap.
-    /// Causes bob to send this spend bundle down the wire to the other peer.
-    ///
-    /// When these spend bundles are combined and deduplicated, together a
-    /// fully spendble transaction will result, to which fee might need to be
-    /// added.
-    ///
-    /// Alice receives this via the `channel_transaction_completion` callback
-    /// from the wallet interface to finish this phase of execution.
-    ///
-    /// Bob receives this callback from the wallet interface with the fully funded
-    /// but not fee adjusted spend bundle on bob's side.  It is given back to alice
-    /// and must contain appropriate spends to generate the launcher coin
-    /// announcement.
-    ///
-    /// This is sent back to alice as message F.
-    ///
-    /// Both alice and bob, upon knowing the full channel coin id, use the more
-    /// general wallet interface to register for notifications of the channel coin.
-    fn channel_transaction_completion(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
-        bundle: &SpendBundle,
-    ) -> Result<Option<Effect>, Error>;
-}
 
 /// Async interface implemented by Peer to receive notifications about wallet
 /// state.
@@ -221,20 +145,13 @@ pub enum BatchAction {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum PeerMessage {
-    // Fixed in order sequence
-    HandshakeA(HandshakeA),
+    HandshakeA(HandshakeB),
     HandshakeB(HandshakeB),
-
-    HandshakeC {
-        signatures: PotatoSignatures,
-    },
-    HandshakeD {
-        signatures: PotatoSignatures,
-    },
-
-    /// Includes spend of launcher coin id.
+    HandshakeC(HandshakeC),
+    HandshakeD(HandshakeD),
     HandshakeE {
         bundle: SpendBundle,
+        signatures: PotatoSignatures,
     },
     HandshakeF {
         bundle: SpendBundle,
@@ -256,8 +173,8 @@ impl PeerMessage {
             self,
             PeerMessage::HandshakeA(_)
                 | PeerMessage::HandshakeB(_)
-                | PeerMessage::HandshakeC { .. }
-                | PeerMessage::HandshakeD { .. }
+                | PeerMessage::HandshakeC(_)
+                | PeerMessage::HandshakeD(_)
                 | PeerMessage::HandshakeE { .. }
                 | PeerMessage::HandshakeF { .. }
         )

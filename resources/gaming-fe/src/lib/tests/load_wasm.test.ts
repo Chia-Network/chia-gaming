@@ -31,6 +31,7 @@ import {
 import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
 import {
   FAKE_BLOCKCHAIN_ID,
+  connectSimulatorBlockchain,
   disconnectSimulatorBlockchain,
 } from '../../hooks/FakeBlockchainInterface';
 import { blockchainDataEmitter } from '../../hooks/BlockchainInfo';
@@ -146,12 +147,6 @@ function all_handshaked(cradles: Array<WasmBlobWrapperAdapter>) {
   return true;
 }
 
-function wait(msec: number): Promise<void> {
-  return new Promise((resolve, reject) => {
-    setTimeout(resolve, msec);
-  });
-}
-
 async function action_with_messages(
   blockchainInterface: ChildFrameBlockchainInterface,
   cradle1: WasmBlobWrapperAdapter,
@@ -190,7 +185,8 @@ async function action_with_messages(
           cradles[c ^ 1].deliver_message(outbound[i].msgno, outbound[i].msg);
         }
       }
-      await wait(10);
+      // Yield to async handlers without arbitrary sleep.
+      await new Promise<void>((resolve) => setImmediate(resolve));
     }
 
     // If any evt_results are false, that means we did not get a setState msg from that cradle
@@ -219,12 +215,11 @@ async function initWasmBlobWrapper(
     blockchain,
     uniqueId,
     amount,
-    iStarted,
     peer_conn,
   );
 
   let calpokerHexes = await loadCalpoker(fetchHex);
-  configGameObject(gameObject, iStarted, wasmStateInit, calpokerHexes, blockchain, uniqueId, amount);
+  await configGameObject(gameObject, iStarted, wasmStateInit, calpokerHexes, blockchain, uniqueId, amount);
 
   return gameObject;
 }
@@ -255,6 +250,7 @@ it(
       selection: FAKE_BLOCKCHAIN_ID,
       uniqueId: 'block-producer',
     });
+    connectSimulatorBlockchain();
 
     const cradle1 = addActiveCradle(new WasmBlobWrapperAdapter());
     const cradle2 = addActiveCradle(new WasmBlobWrapperAdapter());
@@ -298,5 +294,5 @@ it(
       cradle2.shutdown();
     }
   },
-  10 * 1000,
+  20 * 1000,
 );

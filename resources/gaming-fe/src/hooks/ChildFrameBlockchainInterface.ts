@@ -47,6 +47,29 @@ function performTransaction<T>(
   });
 }
 
+function performNullableTransaction(
+  checkReply: (reply: any) => any,
+  requestId: number,
+  request: any,
+): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const thisRequestChannel = blockchainConnector.getInbound().pipe(
+      filter((e: BlockchainInboundReply) => e.responseId === requestId),
+      take(1),
+    );
+    thisRequestChannel.subscribe({
+      next: (e: BlockchainInboundReply) => {
+        if (e.error) {
+          reject(e.error);
+          return;
+        }
+        resolve(checkReply(e));
+      },
+    });
+    blockchainConnector.requestEmitter(request);
+  });
+}
+
 export class ChildFrameBlockchainInterface {
   do_initial_spend(
     uniqueId: string,
@@ -103,6 +126,38 @@ export class ChildFrameBlockchainInterface {
     const requestId = requestNumber++;
     const request = { requestId, getPuzzleAndSolution: { coin } };
     return performTransaction((e) => e.getPuzzleAndSolution, requestId, request);
+  }
+
+  selectCoins(uniqueId: string, amount: number): Promise<string | null> {
+    let requestId = requestNumber++;
+    let request = {
+      requestId,
+      selectCoins: { uniqueId, amount },
+    };
+    return performNullableTransaction((e: any) => e.selectCoins, requestId, request);
+  }
+
+  getHeightInfo(): Promise<number> {
+    let requestId = requestNumber++;
+    let request = {
+      requestId,
+      getHeightInfo: {},
+    };
+    return performTransaction((e: any) => e.getHeightInfo, requestId, request);
+  }
+
+  createOfferForIds(
+    uniqueId: string,
+    offer: { [walletId: string]: number },
+    extraConditions?: Array<{ opcode: number; args: string[] }>,
+    coinIds?: string[],
+  ): Promise<any | null> {
+    let requestId = requestNumber++;
+    let request = {
+      requestId,
+      createOfferForIds: { uniqueId, offer, extraConditions, coinIds },
+    };
+    return performTransaction((e: any) => e.createOfferForIds, requestId, request);
   }
 
   getObservable() {

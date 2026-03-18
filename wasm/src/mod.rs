@@ -30,6 +30,7 @@ mod gaming_wasm {
         DrainResult, GameCradle, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
     };
     use chia_gaming::potato_handler::effects::{CradleEvent, GameNotification};
+    use chia_gaming::potato_handler::handshake::{CoinSpendRequest, RawCoinCondition};
     use chia_gaming::potato_handler::start::GameStart;
     use chia_gaming::potato_handler::types::{GameFactory, ToLocalUI};
 
@@ -94,6 +95,12 @@ mod gaming_wasm {
     export type DrainResult = {
         "handshake_done": boolean,
         "finished": boolean,
+        "need_launcher_coin"?: boolean,
+        "need_coin_spend"?: {
+            "amount": number,
+            "conditions": Array<{ "opcode": number, "args": Array<string> }>,
+            "coin_id"?: string,
+        },
         "events": Array<CradleEvent>,
     };
 
@@ -133,6 +140,12 @@ mod gaming_wasm {
         created_watched: Vec<String>,
         deleted_watched: Vec<String>,
         timed_out: Vec<String>,
+    }
+
+    #[derive(Serialize)]
+    struct JsWatchingCoin {
+        coin_name: String,
+        coin_string: String,
     }
 
     thread_local! {
@@ -415,6 +428,52 @@ mod gaming_wasm {
             cradle
                 .cradle
                 .opening_coin(&mut cradle.allocator, coin)
+        })
+    }
+
+    #[wasm_bindgen]
+    pub fn provide_launcher_coin(cid: i32, hex_coinstring: &str) -> Result<JsValue, JsValue> {
+        let coin = hex_to_coinstring(hex_coinstring).into_js()?;
+        with_game_drain(cid, move |cradle: &mut JsCradle| {
+            cradle
+                .cradle
+                .provide_launcher_coin(&mut cradle.allocator, coin)
+        })
+    }
+
+    fn coinset_spend_bundle_to_spend_bundle(
+        bundle: &CoinsetSpendBundle,
+    ) -> Result<SpendBundle, types::Error> {
+        let mut spends = Vec::with_capacity(bundle.coin_spends.len());
+        for s in bundle.coin_spends.iter() {
+            let mut converted = convert_coinset_org_spend_to_spend(
+                &s.coin.parent_coin_info,
+                &s.coin.puzzle_hash,
+                s.coin.amount,
+                &s.puzzle_reveal,
+                &s.solution,
+            )?;
+            converted.bundle.signature = Aggsig::default();
+            spends.push(converted);
+        }
+
+        if let Some(first) = spends.first_mut() {
+            let agg_sig = check_for_hex(&bundle.aggregated_signature).into_e()?;
+            first.bundle.signature = Aggsig::from_slice(&agg_sig)?;
+        }
+
+        Ok(SpendBundle { name: None, spends })
+    }
+
+    #[wasm_bindgen]
+    pub fn provide_coin_spend_bundle(cid: i32, bundle_json: &str) -> Result<JsValue, JsValue> {
+        let bundle = serde_json::from_str::<CoinsetSpendBundle>(bundle_json)
+            .map_err(|e| JsValue::from_str(&format!("bad spend bundle json: {e}")))?;
+        let spend_bundle = coinset_spend_bundle_to_spend_bundle(&bundle).into_js()?;
+        with_game_drain(cid, move |cradle: &mut JsCradle| {
+            cradle
+                .cradle
+                .provide_coin_spend_bundle(&mut cradle.allocator, spend_bundle)
         })
     }
 
@@ -788,10 +847,42 @@ mod gaming_wasm {
     }
 
     #[derive(Serialize)]
+    struct JsRawCoinCondition {
+        opcode: u32,
+        args: Vec<String>,
+    }
+
+    #[derive(Serialize)]
+    struct JsCoinSpendRequest {
+        amount: u64,
+        conditions: Vec<JsRawCoinCondition>,
+        coin_id: Option<String>,
+    }
+
+    #[derive(Serialize)]
     struct JsDrainResult {
         handshake_done: bool,
         finished: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        need_launcher_coin: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        need_coin_spend: Option<JsCoinSpendRequest>,
         events: Vec<serde_json::Value>,
+    }
+
+    fn raw_condition_to_js(cond: &RawCoinCondition) -> JsRawCoinCondition {
+        JsRawCoinCondition {
+            opcode: cond.opcode,
+            args: cond.args.iter().map(hex::encode).collect(),
+        }
+    }
+
+    fn coin_spend_request_to_js(req: &CoinSpendRequest) -> JsCoinSpendRequest {
+        JsCoinSpendRequest {
+            amount: req.amount.to_u64(),
+            conditions: req.conditions.iter().map(raw_condition_to_js).collect(),
+            coin_id: req.coin_id.as_ref().map(|c| hex::encode(c.bytes())),
+        }
     }
 
     fn spend_to_js(spend: &Spend) -> JsSpend {
@@ -874,10 +965,16 @@ mod gaming_wasm {
         }
     }
 
-    fn drain_result_to_js(dr: &DrainResult) -> Result<JsValue, types::Error> {
+    fn drain_result_to_js(
+        dr: &DrainResult,
+        need_launcher_coin: bool,
+        need_coin_spend: Option<CoinSpendRequest>,
+    ) -> Result<JsValue, types::Error> {
         to_js_compat(&JsDrainResult {
             handshake_done: dr.handshake_done,
             finished: dr.finished,
+            need_launcher_coin: if need_launcher_coin { Some(true) } else { None },
+            need_coin_spend: need_coin_spend.as_ref().map(coin_spend_request_to_js),
             events: dr.events.iter().map(cradle_event_to_js).collect(),
         })
     }
@@ -895,7 +992,9 @@ mod gaming_wasm {
                 ));
             }
             let dr = cradle.cradle.drain_all(&mut cradle.allocator)?;
-            drain_result_to_js(&dr)
+            let need_launcher_coin = cradle.cradle.need_launcher_coin();
+            let need_coin_spend = cradle.cradle.requested_coin_spend();
+            drain_result_to_js(&dr, need_launcher_coin, need_coin_spend)
         })
     }
 
@@ -1043,6 +1142,22 @@ mod gaming_wasm {
         let pubkey = PublicKey::from_slice(&public_key_bytes).into_js()?;
         let puzzle_hash = puzzle_hash_for_pk(&mut allocator, &pubkey).into_js()?;
         Ok(hex::encode(puzzle_hash.bytes()))
+    }
+
+    #[wasm_bindgen]
+    pub fn get_watching_coins(cid: i32) -> Result<JsValue, JsValue> {
+        with_game(cid, move |cradle: &mut JsCradle| {
+            let coins: Vec<JsWatchingCoin> = cradle
+                .cradle
+                .get_watching_coins()
+                .iter()
+                .map(|coin| JsWatchingCoin {
+                    coin_name: hex::encode(coin.to_coin_id().bytes()),
+                    coin_string: coin_string_to_hex(coin),
+                })
+                .collect();
+            serde_wasm_bindgen::to_value(&coins).into_e()
+        })
     }
 
     #[wasm_bindgen(typescript_type = "IChiaIdentityFun")]

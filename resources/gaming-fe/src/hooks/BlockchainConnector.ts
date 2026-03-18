@@ -20,6 +20,18 @@ export type BlockchainOutboundAddressRequest = boolean;
 
 export type BlockchainOutboundBalanceRequest = boolean;
 
+export interface BlockchainOutboundSelectCoinsRequest {
+  uniqueId: string;
+  amount: number;
+}
+
+export interface BlockchainOutboundCreateOfferRequest {
+  uniqueId: string;
+  offer: { [walletId: string]: number };
+  extraConditions?: Array<{ opcode: number; args: string[] }>;
+  coinIds?: string[];
+}
+
 export interface BlockchainOutboundRequest {
   requestId: number;
   initialSpend?: BlockchainOutboundInitialSpendRequest;
@@ -27,6 +39,9 @@ export interface BlockchainOutboundRequest {
   getAddress?: BlockchainOutboundAddressRequest;
   getBalance?: BlockchainOutboundBalanceRequest;
   getPuzzleAndSolution?: { coin: string };
+  selectCoins?: BlockchainOutboundSelectCoinsRequest;
+  getHeightInfo?: {};
+  createOfferForIds?: BlockchainOutboundCreateOfferRequest;
 }
 
 export interface BlockchainInboundReply {
@@ -36,9 +51,11 @@ export interface BlockchainInboundReply {
   getAddress?: BlockchainInboundAddressResult;
   getBalance?: number;
   getPuzzleAndSolution?: string[] | null;
+  selectCoins?: string | null;
+  getHeightInfo?: number;
+  createOfferForIds?: any | null;
   error?: string;
 }
-
 class BlockchainRequestConnector {
   outbound: Subject<BlockchainOutboundRequest>;
   inbound: Subject<BlockchainInboundReply>;

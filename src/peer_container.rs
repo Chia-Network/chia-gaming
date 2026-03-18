@@ -22,6 +22,7 @@ use crate::common::types::{
 use crate::potato_handler::effects::{
     apply_effects, CradleEvent, CradleEventQueue, Effect, GameNotification, ResyncInfo,
 };
+use crate::potato_handler::handshake::CoinSpendRequest;
 use crate::potato_handler::handshake_initiator::HandshakeInitiatorHandler;
 use crate::potato_handler::handshake_receiver::HandshakeReceiverHandler;
 use crate::potato_handler::start::GameStart;
@@ -105,6 +106,24 @@ pub trait PeerHandler {
         _bundle: &SpendBundle,
     ) -> Result<Option<Effect>, Error> {
         Ok(None)
+    }
+    fn provide_launcher_coin(
+        &mut self,
+        _env: &mut ChannelHandlerEnv<'_>,
+        _launcher_coin: CoinString,
+    ) -> Result<Vec<Effect>, Error> {
+        Err(Error::StrErr(
+            "provide_launcher_coin not available in this phase".to_string(),
+        ))
+    }
+    fn provide_coin_spend_bundle(
+        &mut self,
+        _env: &mut ChannelHandlerEnv<'_>,
+        _bundle: SpendBundle,
+    ) -> Result<Vec<Effect>, Error> {
+        Err(Error::StrErr(
+            "provide_coin_spend_bundle not available in this phase".to_string(),
+        ))
     }
     fn propose_game(
         &mut self,
@@ -432,6 +451,8 @@ struct SynchronousGameCradleState {
 
     pub is_failed: bool,
     pub is_on_chain: bool,
+    need_launcher_coin: bool,
+    need_coin_spend: Option<CoinSpendRequest>,
 
     #[serde(skip)]
     events: CradleEventQueue,
@@ -527,6 +548,8 @@ impl SynchronousGameCradle {
                 peer_disconnected: false,
                 is_failed: false,
                 is_on_chain: false,
+                need_launcher_coin: false,
+                need_coin_spend: None,
                 events: CradleEventQueue::default(),
             },
             peer: {
@@ -700,6 +723,46 @@ impl SynchronousGameCradle {
         self.state.peer_disconnected
     }
 
+    pub fn need_launcher_coin(&self) -> bool {
+        self.state.need_launcher_coin
+    }
+
+    pub fn requested_coin_spend(&self) -> Option<CoinSpendRequest> {
+        self.state.need_coin_spend.clone()
+    }
+
+    pub fn get_watching_coins(&self) -> Vec<CoinString> {
+        self.state.watching_coins.keys().cloned().collect()
+    }
+
+    pub fn provide_launcher_coin(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        launcher_coin: CoinString,
+    ) -> Result<(), Error> {
+        self.state.need_launcher_coin = false;
+        let effects = {
+            let mut env = ChannelHandlerEnv::new(allocator)?;
+            self.peer.provide_launcher_coin(&mut env, launcher_coin)?
+        };
+        self.process_effects(effects, allocator)?;
+        Ok(())
+    }
+
+    pub fn provide_coin_spend_bundle(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        bundle: SpendBundle,
+    ) -> Result<(), Error> {
+        self.state.need_coin_spend = None;
+        let effects = {
+            let mut env = ChannelHandlerEnv::new(allocator)?;
+            self.peer.provide_coin_spend_bundle(&mut env, bundle)?
+        };
+        self.process_effects(effects, allocator)?;
+        Ok(())
+    }
+
     /// Drain all queued state in one shot: process inbound messages, channel
     /// setup steps, and collect all outbound messages, transactions, and
     /// notifications.
@@ -813,7 +876,17 @@ impl SynchronousGameCradle {
         effects: Vec<Effect>,
         allocator: &mut AllocEncoder,
     ) -> Result<(), Error> {
-        apply_effects(effects, allocator, &mut self.state)?;
+        let mut passthrough = Vec::new();
+        for effect in effects {
+            if matches!(effect, Effect::NeedLauncherCoinId) {
+                self.state.need_launcher_coin = true;
+            } else if let Effect::NeedCoinSpend(req) = effect {
+                self.state.need_coin_spend = Some(req);
+            } else {
+                passthrough.push(effect);
+            }
+        }
+        apply_effects(passthrough, allocator, &mut self.state)?;
         self.detect_phase_transition();
         Ok(())
     }
@@ -838,11 +911,11 @@ impl SynchronousGameCradle {
             let channel_coin = ch.state_channel_coin();
             if let Some((ch_parent, ph, amt)) = channel_coin.to_parts() {
                 game_assert_eq!(ph, channel_puzzle_hash, "channel coin puzzle hash mismatch");
-                game_assert_eq!(
-                    ch_parent,
-                    parent.to_coin_id(),
-                    "channel coin parent mismatch"
-                );
+                // Launcher-based handshake sets the channel parent to launcher coin id,
+                // so the legacy direct-parent partial-spend path is not applicable.
+                if ch_parent != parent.to_coin_id() {
+                    return Ok(false);
+                }
                 amt
             } else {
                 return Err(Error::StrErr("no channel coin".to_string()));

@@ -1,4 +1,7 @@
-use crate::common::types::{Aggsig, CoinString, PublicKey, PuzzleHash, SpendBundle};
+use crate::channel_handler::types::PotatoSignatures;
+use crate::common::types::{
+    Aggsig, Amount, CoinID, CoinString, PublicKey, PuzzleHash, SpendBundle,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -10,16 +13,35 @@ pub struct HandshakeB {
     pub reward_payout_signature: Aggsig,
 }
 
+pub type HandshakeA = HandshakeB;
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct HandshakeA {
-    pub parent: CoinString,
-    pub simple: HandshakeB,
+pub struct HandshakeC {
+    pub launcher_coin: CoinString,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct HandshakeD {
+    pub signatures: PotatoSignatures,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HandshakeStepInfo {
-    pub first_player_hs_info: HandshakeA,
+    pub first_player_hs_info: HandshakeB,
     pub second_player_hs_info: HandshakeB,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoinSpendRequest {
+    pub amount: Amount,
+    pub conditions: Vec<RawCoinCondition>,
+    pub coin_id: Option<CoinID>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RawCoinCondition {
+    pub opcode: u32,
+    pub args: Vec<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
