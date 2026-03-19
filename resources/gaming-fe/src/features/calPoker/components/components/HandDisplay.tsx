@@ -88,6 +88,7 @@ function HandDisplay(props: HandDisplayProps) {
         onClick={() => handleCardClick(cardId)}
         isBeingSwapped={showSwapAnimation}
         isInBestHand={isInBestHand}
+        isFinal={gameState === GAME_STATES.FINAL}
         hasHalo={hasHalo}
         area={area}
       />

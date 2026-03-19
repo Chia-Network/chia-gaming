@@ -12,7 +12,7 @@ const GameBottomBar = ({
   doHandleMakeMove,
 }: GameBottomBarProps) => {
   return (
-    <div className='flex-shrink-0 flex rounded-lg bg-canvas-bg shadow-md border border-canvas-line p-2 items-center justify-center'>
+    <div className='flex-shrink-0 flex p-2 items-center justify-center'>
       <Button
         variant='solid'
         color='primary'

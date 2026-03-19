@@ -12,21 +12,20 @@ function Card(props: CardRenderProps) {
     isBeingSwapped = false,
     cardId,
     isInBestHand = false,
+    isFinal = false,
     hasHalo = false,
     area,
   } = props;
 
-  const cardBorder = isBeingSwapped
-    ? (hasHalo ? 'border-transparent' : 'border-canvas-border')
-    : isInBestHand
-      ? 'border-emerald-500'
-      : 'border-canvas-border';
+  const cardBorder = isBeingSwapped && hasHalo
+    ? 'border-transparent'
+    : 'border-canvas-border';
 
-  const cardBg = isBeingSwapped
-    ? (hasHalo ? 'bg-transparent' : 'bg-canvas-bg-subtle')
-    : isInBestHand
-      ? 'bg-emerald-50'
-      : 'bg-canvas-bg-subtle';
+  const cardBg = isBeingSwapped && hasHalo
+    ? 'bg-transparent'
+    : isFinal && !isInBestHand
+      ? 'bg-gray-300'
+      : 'bg-white';
 
   const cursor = isBeingSwapped
     ? 'cursor-default'
@@ -39,7 +38,7 @@ function Card(props: CardRenderProps) {
   return (
     <div className='w-full relative'>
       {hasHalo && (
-        <div className='absolute -inset-2 rounded-xl bg-amber-700 z-0' />
+        <div className='absolute -inset-2 rounded-xl bg-blue-600 z-0' />
       )}
       <div
         id={id}
