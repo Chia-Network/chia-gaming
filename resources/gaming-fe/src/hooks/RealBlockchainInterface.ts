@@ -12,6 +12,7 @@ import { WalletBalance } from '../types/WalletBalance';
 import { WalletType } from '../types/WalletType';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 import { toHexString, toUint8 } from '../util';
+import { decodeOfferToInternalSpendBundle } from '../util/offerDecode';
 
 import {
   blockchainConnector,
@@ -517,7 +518,8 @@ export function connectRealBlockchain() {
           extraConditions: (evt.createOfferForIds.extraConditions || []).map(convertConditionArgs),
           coinIds: evt.createOfferForIds.coinIds,
         } as any).then((result) => {
-          blockchainConnector.replyEmitter({ responseId: evt.requestId, createOfferForIds: result });
+          const internalBundle = decodeOfferToInternalSpendBundle(result.offer);
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, createOfferForIds: internalBundle });
         }).catch((e: any) => {
           blockchainConnector.replyEmitter({
             responseId: evt.requestId,
