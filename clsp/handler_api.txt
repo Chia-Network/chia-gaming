@@ -103,7 +103,7 @@ Their-turn return (normal move, 3-4 elements):
     handler does not need to verify each piece actually triggers a
     slash — just return everything that might work. The Rust framework
     tests each candidate by running the validator with that evidence;
-    if the validator returns SLASH (tag 2) rather than raising, the
+    if the validator returns nil (slash) rather than a valid payload, the
     slash succeeds. If none of the candidates trigger a slash, the game
     continues normally. Nil evidence is always tried automatically
     before the handler is called, so the handler never needs to
@@ -147,11 +147,12 @@ A handler returns two validators per move:
 The outgoing_validator_hash must match what the previous incoming_validator
 specified, creating a chain of validated state transitions.
 
-Validator return values: tag 0 (MAKE_MOVE) with new state, or tag 2 (SLASH)
-with no payload. These are consumed both on-chain (referee curries MAKE_MOVE
-values into the new coin, or emits a reward on SLASH) and off-chain (Rust
-parses the result as Option — Some(new_state) for MAKE_MOVE, None for
-SLASH — and uses None to initiate a slash).
+Validator return values: a non-nil payload list for valid moves
+`(next_validation_info_hash new_state max_move_size ...)`, or nil for slash.
+These are consumed both on-chain (referee verifies alignment with the committed
+next-state fields, or emits a reward on slash) and off-chain (Rust parses the
+result as Option — Some(new_state) for valid moves, None for slash — and uses
+None to initiate a slash).
 
 Move-path enforcement: the on-chain referee does NOT re-run the validator
 when a move is submitted. It trusts the submitted values and advances the

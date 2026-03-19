@@ -2,45 +2,46 @@
 (import std.assert)
 (import std.curry)
 (import std.shatree)
-(import std.prefix)
 (import std.relops)
-
 (import std.condition_codes)
-(import std.match)
 (import std.li)
-(import std.print)
-(import games.game_codes)
 
 ;
-; Adjudicates a two player turn based game
+; Adjudicates a two-player turn-based game.
 ;
-; MOVE, VALIDATION_HASH and MOVER_SHARE were all accepted optimistically from the last move
-; Both VALIDATION_HASH values are a sha256 of a validation program hash and the shatree of a state
+; MOVE, INFOHASH_B, and MOVER_SHARE are accepted optimistically from the
+; previous move.
 ;
-; The next validation program hash may be nil which means no futher moves are allowed
-; MOVER_SHARE is how much the mover will get if they fold/accept
-; MOD_HASH should be the shatree of referee itself
-; NONCE is for anti-replay prevention
+; INFOHASH_A and INFOHASH_B are commitments:
+;   sha256(validation_program_hash, shatree(state))
 ;
-; If action is timeout args is (mover_payout_ph waiter_payout_ph)
+; In slash, this puzzle runs previous_validation_program against all_args.
+; Slash succeeds if validator_result is nil (0), or if validator_result encodes
+; next values that misalign with this coin's commitments (infohash or
+; max_move_size mismatch).
 ;
-; If action is slash args is (previous_state previous_validation_program evidence mover_payout_ph)
+; MOVER_SHARE is how much the mover gets if they fold/accept timeout.
+; MOD_HASH should be the shatree of referee itself.
+; NONCE is for anti-replay prevention.
 ;
-; If action is move args is (new_move infohash_c new_mover_share new_max_move_size)
-;
-; validation programs get passed this:
+; Validation programs get passed:
 ;
 ; (mod_hash
-;     (move new_validation_hash max_move_size mover_share previous_validation_hash
-;         mover_pubkey waiter_pubkey amount timeout referee_hash
-;     )
-;     state me evidence output_conditions
+;     (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+;         MOVE MAX_MOVE_SIZE INFOHASH_B MOVER_SHARE INFOHASH_A)
+;     previous_state
+;     previous_validation_program
+;     evidence
+;     output_conditions
 ; )
 ;
+; timeout args: (mover_payout_ph waiter_payout_ph)
+; slash args: (previous_state previous_validation_program evidence mover_payout_ph)
+; move args: (new_move infohash_c new_mover_share new_max_move_size)
+
 (export (@ all_args ((@ curried-args (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
         MOVE MAX_MOVE_SIZE INFOHASH_B MOVER_SHARE INFOHASH_A)) . args))
     (if (not (r (r args)))
-        ; timeout (2 args: mover_payout_ph waiter_payout_ph)
         (assign
             (mover_payout_ph waiter_payout_ph) args
             (list
@@ -52,40 +53,41 @@
             )
         )
         (l (f (r args)))
-        ; slash (2nd arg is previous_validation_program, a list)
         (assign
-            (previous_state previous_validation_program evidence mover_payout_ph) (print "referee slash:" args)
-            previous_validation_program_hash (print "slash: previous validation program hash" (shatree previous_validation_program))
+            (previous_state previous_validation_program evidence mover_payout_ph) args
+            previous_validation_program_hash (shatree previous_validation_program)
+            validator_result (a previous_validation_program (c previous_validation_program_hash all_args))
+            payout_conditions (list
+                (list REMARK)
+                (list CREATE_COIN mover_payout_ph AMOUNT)
+                (list AGG_SIG_UNSAFE MOVER_PUBKEY (concat 0x78 mover_payout_ph))
+            )
 
             (assert
-                (print "slash: infohash a match" (= (print "slash: infohash A" INFOHASH_A) (sha256 previous_validation_program_hash (print "slash: infohash a state hash" (shatree
-                        previous_state)))))
-                ; Run validation program to prove slash is valid (must not error)
-                (print "slash data:" (a previous_validation_program
-                    (c previous_validation_program_hash
-                        all_args
+                (= INFOHASH_A (sha256 previous_validation_program_hash (shatree previous_state)))
+                (if (not validator_result)
+                    payout_conditions
+                    (assert
+                        (logior
+                            (not (= (sha256 (f validator_result) (shatree (f (r validator_result)))) INFOHASH_B))
+                            (not (= (f (r (r validator_result))) MAX_MOVE_SIZE))
+                        )
+                        payout_conditions
                     )
-                ))
-
-                (list
-                    (list REMARK)
-                    (list CREATE_COIN mover_payout_ph AMOUNT)
-                    (list AGG_SIG_UNSAFE MOVER_PUBKEY (concat 0x78 mover_payout_ph))
                 )
             )
         )
-        ; move (2nd arg is infohash_c, an atom)
         (assign
-            (new_move infohash_c new_mover_share new_max_move_size) (print "want to move" args)
-            new_puzzle_hash (curry_hashes MOD_HASH (shatree (print "move: new referee puzzle args" (list WAITER_PUBKEY MOVER_PUBKEY TIMEOUT
+            (new_move infohash_c new_mover_share new_max_move_size) args
+            new_puzzle_hash (curry_hashes MOD_HASH (shatree (list WAITER_PUBKEY MOVER_PUBKEY TIMEOUT
                     AMOUNT MOD_HASH NONCE new_move new_max_move_size infohash_c new_mover_share
-                    INFOHASH_B))))
+                    INFOHASH_B)))
             (assert
-                (print "move: infohash_b" INFOHASH_B)
-                (print "move: len less than" (<= (strlen new_move) MAX_MOVE_SIZE))
-                (print "move: mover share less" (<= new_mover_share AMOUNT))
-                (print "move: mover share positive" (>= new_mover_share 0))
-                (print "move: infohash_c nil or 32" (logior (not infohash_c) (= 32 (strlen (print "move: infohash_c" infohash_c)))))
+                INFOHASH_B
+                (<= (strlen new_move) MAX_MOVE_SIZE)
+                (<= new_mover_share AMOUNT)
+                (>= new_mover_share 0)
+                (logior (not infohash_c) (= 32 (strlen infohash_c)))
                 (li (list REMARK new_move infohash_c new_mover_share new_max_move_size)
                         (list ASSERT_BEFORE_HEIGHT_RELATIVE TIMEOUT)
                         (list CREATE_COIN new_puzzle_hash AMOUNT)

@@ -219,7 +219,7 @@
 ; move is Alice commit
 ; state is alice_commit
 (defun calpoker_bob_handler_a (amount pre_state state move validation_program_hash split)
-    (list 0 () calpoker_bob_handler_b)
+    (list 0 0 calpoker_bob_handler_b)
 )
 
 ; local_move is nil
@@ -326,7 +326,7 @@
                     (deep_compare split (/ amount 2))
                 )
                 (list (indices_to_bitfield bob_selects))
-                ()
+                0
             )
         )
     )

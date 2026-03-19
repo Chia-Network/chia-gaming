@@ -125,12 +125,11 @@
       (print "and it wasn't a zero byte which we can't slash" (+ 0 evidence))
       )
      )
-    (list SLASH)
+    0
     (assign
      slashable-move (substr MOVE (- move-len 1) move-len)
      mover-share (+ 0 (substr MOVE (print "getting mover share" move-counter-data-len) (print "mover share ends at" (- move-len 1))))
      (list
-      MAKE_MOVE
       (validator-hash (curry-args-incr curry-args))
       (list (+ COUNT 1) slashable-move mover-share)
       512

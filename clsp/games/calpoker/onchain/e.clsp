@@ -77,7 +77,7 @@
             ;; Common subexpression: (substr MOVE 16 17) == alice_card_selections
             (not (= (popcount (substr MOVE 17 18)) 5))
         )
-        (list SLASH)
+        0
 
         (assign
             alice_salted_discards (substr MOVE 0 17)
@@ -101,9 +101,9 @@
                         AMOUNT
                     )
                 )
-                (list SLASH)
+                0
 
-                (list MAKE_MOVE 0
+                (list 0
                     (li
                         bob_discards
                         alice_cards

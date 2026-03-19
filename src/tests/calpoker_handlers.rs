@@ -90,11 +90,10 @@ enum MoveCode {
 
 fn parse_validator_output(allocator: &mut AllocEncoder, result: NodePtr) -> (MoveCode, NodePtr) {
     let items = proper_list(allocator.allocator(), result, true).unwrap();
-    let code = int_from_node(allocator, items[0]);
-    match code {
-        0 => (MoveCode::MakeMove, result),
-        2 => (MoveCode::Slash, result),
-        _ => panic!("unexpected move code: {code}"),
+    if items.is_empty() {
+        (MoveCode::Slash, result)
+    } else {
+        (MoveCode::MakeMove, result)
     }
 }
 
@@ -457,7 +456,7 @@ fn run_handler_game(allocator: &mut AllocEncoder, setup: &GameSetup, moves: &[Ha
         );
 
         let validator_items = proper_list(allocator.allocator(), validator_result, true).unwrap();
-        let new_state = validator_items[2];
+        let new_state = validator_items[1];
 
         // Update mover's state and validators
         if is_alice {
@@ -521,7 +520,7 @@ fn run_handler_game(allocator: &mut AllocEncoder, setup: &GameSetup, moves: &[Ha
 
         let waiter_validator_items =
             proper_list(allocator.allocator(), waiter_validator_result, true).unwrap();
-        let waiter_new_state = waiter_validator_items[2];
+        let waiter_new_state = waiter_validator_items[1];
 
         // Run their_turn handler
         let their_turn = call_their_turn_handler(

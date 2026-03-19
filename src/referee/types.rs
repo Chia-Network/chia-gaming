@@ -14,9 +14,8 @@ use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, curry_and_treehash, sign_agg_sig_me, ChiaIdentity,
 };
 use crate::common::types::{
-    atom_from_clvm, chia_dialect, i64_from_atom, Aggsig, AllocEncoder, Amount, CoinSpend,
-    CoinString, Error, Hash, IntoErr, Node, Program, ProgramRef, PublicKey, Puzzle, PuzzleHash,
-    Sha256tree, Timeout,
+    chia_dialect, Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, Hash, IntoErr,
+    Node, Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
 use crate::utils::proper_list;
 
@@ -109,7 +108,7 @@ pub struct RMFixed {
 
 pub const REM_CONDITION_FIELDS: usize = 4;
 
-/// Validator result: `Some(new_state)` for MAKE_MOVE, `None` for SLASH.
+/// Validator result: `Some(new_state)` for a valid move payload, `None` for slash (`nil`).
 pub type StateUpdateResult = Option<Rc<Program>>;
 
 pub fn parse_validator_result(
@@ -123,17 +122,6 @@ pub fn parse_validator_result(
     };
 
     if lst.is_empty() {
-        return Err(Error::StrErr("empty list from validator".to_string()));
-    }
-
-    let selector =
-        if let Some(a) = atom_from_clvm(allocator, lst[0]).and_then(|a| i64_from_atom(&a)) {
-            a
-        } else {
-            return Err(Error::StrErr("not atom selector".to_string()));
-        };
-
-    if selector != 0 {
         return Ok(None);
     }
 
@@ -141,7 +129,7 @@ pub fn parse_validator_result(
         return Err(Error::StrErr("short list for make move".to_string()));
     }
 
-    Ok(Some(Rc::new(Program::from_nodeptr(allocator, lst[2])?)))
+    Ok(Some(Rc::new(Program::from_nodeptr(allocator, lst[1])?)))
 }
 
 /// Adjudicates a two player turn based game
