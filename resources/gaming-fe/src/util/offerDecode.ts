@@ -1,8 +1,67 @@
-import bech32_module from 'bech32-buffer';
-import * as bech32_buffer from 'bech32-buffer';
 import pako from 'pako';
 
-const bech32: any = bech32_module ? bech32_module : bech32_buffer;
+const BECH32M_CONST = 0x2bc830a3;
+const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+const CHARSET_REV: Record<string, number> = {};
+for (let i = 0; i < CHARSET.length; i++) CHARSET_REV[CHARSET[i]] = i;
+
+function bech32mPolymod(values: number[]): number {
+  const GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+  let chk = 1;
+  for (const v of values) {
+    const top = chk >> 25;
+    chk = ((chk & 0x1ffffff) << 5) ^ v;
+    for (let i = 0; i < 5; i++) {
+      if ((top >> i) & 1) chk ^= GEN[i];
+    }
+  }
+  return chk;
+}
+
+function bech32mHrpExpand(hrp: string): number[] {
+  const ret: number[] = [];
+  for (let i = 0; i < hrp.length; i++) ret.push(hrp.charCodeAt(i) >> 5);
+  ret.push(0);
+  for (let i = 0; i < hrp.length; i++) ret.push(hrp.charCodeAt(i) & 31);
+  return ret;
+}
+
+function decodeBech32m(str: string): Uint8Array {
+  const lower = str.toLowerCase();
+  const sepIdx = lower.lastIndexOf('1');
+  if (sepIdx < 1) throw new Error('bech32m: no separator');
+
+  const hrp = lower.slice(0, sepIdx);
+  const dataPart = lower.slice(sepIdx + 1);
+  if (dataPart.length < 6) throw new Error('bech32m: data too short');
+
+  const data5: number[] = [];
+  for (const ch of dataPart) {
+    const v = CHARSET_REV[ch];
+    if (v === undefined) throw new Error(`bech32m: invalid char '${ch}'`);
+    data5.push(v);
+  }
+
+  const check = bech32mPolymod([...bech32mHrpExpand(hrp), ...data5]);
+  if (check !== BECH32M_CONST) throw new Error('bech32m: invalid checksum');
+
+  const payload5 = data5.slice(0, data5.length - 6);
+
+  const outLen = Math.floor((payload5.length * 5) / 8);
+  const out = new Uint8Array(outLen);
+  let acc = 0;
+  let bits = 0;
+  let pos = 0;
+  for (const v of payload5) {
+    acc = (acc << 5) | v;
+    bits += 5;
+    while (bits >= 8) {
+      bits -= 8;
+      out[pos++] = (acc >> bits) & 0xff;
+    }
+  }
+  return out.slice(0, pos);
+}
 
 class StreamReader {
   private buf: Uint8Array;
@@ -83,8 +142,7 @@ function uint64ToClvmInt(be8: Uint8Array): number[] {
  *   [len] solution (serialized CLVM)
  */
 export function decodeOfferToInternalSpendBundle(offerBech32: string): any {
-  const decoded = bech32.decode(offerBech32);
-  const compressedBytes: Uint8Array = new Uint8Array(decoded.data);
+  const compressedBytes = decodeBech32m(offerBech32);
 
   let raw: Uint8Array;
   try {
