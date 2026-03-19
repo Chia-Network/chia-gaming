@@ -1,15 +1,5 @@
-import Game from './components/Game';
-import ParentFrame from './components/ParentFrame';
-import { getSearchParams } from './util';
+import Shell from './components/Shell';
 
-const App = () => {
-  const params = getSearchParams();
-
-  if (params.game && !params.join) {
-    return <Game params={params} />;
-  }
-
-  return <ParentFrame params={params} />;
-};
+const App = () => <Shell />;
 
 export default App;

@@ -11,6 +11,10 @@ var chia_gaming_init: WasmInitFn | undefined = undefined;
 var cg: WasmConnection | undefined = undefined;
 var logInitialized = false;
 
+window.loadWasm = (init: WasmInitFn, wasmConn: WasmConnection) => {
+  storeInitArgs(init, wasmConn);
+};
+
 export const readyToInit = new Subject<boolean>();
 export const waitForReadyToInit = new Observable<boolean>((subscriber) => {
   if (chia_gaming_init && cg) {

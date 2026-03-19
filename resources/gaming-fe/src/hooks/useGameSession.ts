@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Subject, Observable } from 'rxjs';
 import { toast } from 'sonner';
-import { storeInitArgs } from './WasmStateInit';
 import {
   GameConnectionState,
   GameSessionParams,
@@ -10,8 +9,6 @@ import {
   WasmEvent,
   WasmNotification,
   WasmNotificationTag,
-  WasmInitFn,
-  WasmConnection,
 } from '../types/ChiaGaming';
 import { ChildFrameBlockchainInterface } from './ChildFrameBlockchainInterface';
 import {
@@ -68,8 +65,6 @@ export interface UseGameSessionResult {
   activeGameId: string | null;
   gameObject: WasmBlobWrapper;
   gameplayEvent$: Observable<GameplayEvent>;
-  gameLog: string[];
-  debugLog: string[];
   appendGameLog: (line: string) => void;
   onHandOutcome: (outcome: CalpokerOutcome) => void;
   onTurnChanged: (isMyTurn: boolean) => void;
@@ -84,7 +79,12 @@ export interface UseGameSessionResult {
   dismissActionFailed: () => void;
 }
 
-export function useGameSession(params: GameSessionParams, uniqueId: string): UseGameSessionResult {
+export function useGameSession(
+  params: GameSessionParams,
+  uniqueId: string,
+  appendGameLog: (line: string) => void,
+  appendDebugLog: (line: string) => void,
+): UseGameSessionResult {
   const { iStarted, amount, perGameAmount, token, lobbyUrl } = params;
   const playerNumber = iStarted ? 1 : 2;
 
@@ -100,8 +100,6 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
   const [gameIds, setGameIds] = useState<string[]>([]);
   const [showBetweenHandOverlay, setShowBetweenHandOverlay] = useState(false);
   const [lastOutcome, setLastOutcome] = useState<CalpokerOutcome | undefined>(undefined);
-  const [gameLog, setGameLog] = useState<string[]>([]);
-  const [debugLog, setDebugLog] = useState<string[]>([]);
   const [actionFailedReason, setActionFailedReason] = useState<string | null>(null);
 
   const gameIdsRef = useRef<string[]>([]);
@@ -120,14 +118,6 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
   }, []);
 
   const dismissActionFailed = useCallback(() => setActionFailedReason(null), []);
-
-  const appendGameLog = useCallback((line: string) => {
-    setGameLog(prev => [...prev, line]);
-  }, []);
-
-  const appendDebugLog = useCallback((line: string) => {
-    setDebugLog(prev => [...prev, line]);
-  }, []);
 
   const blockchain = new ChildFrameBlockchainInterface();
 
@@ -416,10 +406,6 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
     gameObject?.goOnChain();
   }, [gameObject]);
 
-  window.loadWasm = useCallback((chia_gaming_init: WasmInitFn, cg: WasmConnection) => {
-    storeInitArgs(chia_gaming_init, cg);
-  }, []);
-
   return {
     error,
     gameConnectionState,
@@ -435,8 +421,6 @@ export function useGameSession(params: GameSessionParams, uniqueId: string): Use
     activeGameId: gameIds[0] ?? null,
     gameObject,
     gameplayEvent$: gameplayEventSubject.asObservable(),
-    gameLog,
-    debugLog,
     appendGameLog,
     onHandOutcome,
     onTurnChanged,

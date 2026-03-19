@@ -1,13 +1,10 @@
 
 import { WasmBlobWrapper } from './WasmBlobWrapper';
-import { setupBlockchainConnection } from './useBlockchainConnection';
 import { WasmStateInit, loadCalpoker } from './WasmStateInit';
 import {
   InternalBlockchainInterface,
   PeerIdentity,
 } from '../types/ChiaGaming';
-import { blockchainDataEmitter } from './BlockchainInfo';
-import { FAKE_BLOCKCHAIN_ID } from './FakeBlockchainInterface';
 import { getGameSocket } from '../services/GameSocket';
 import {
   startNewSession,
@@ -49,7 +46,6 @@ export async function configGameObject(
     return gameObject;
   }
 
-  // Backward-compatible path for WASM builds that still bootstrap via opening_coin.
   const initialSpend = await blockchain.do_initial_spend(uniqueId, puzzleHash, amount);
   let coin = initialSpend.coin;
   if (typeof coin !== 'string') {
@@ -99,17 +95,21 @@ export function getBlobSingleton(
     (_saves: string[]) => {
       const systemState = blobSingleton!.systemState();
       const newSession = async () => {
-        startNewSession();
-        let calpokerHexes = await loadCalpoker(fetchHex);
-        await configGameObject(
-          blobSingleton!,
-          iStarted,
-          wasmStateInit,
-          calpokerHexes,
-          blockchain,
-          uniqueId,
-          amount
-        );
+        try {
+          startNewSession();
+          let calpokerHexes = await loadCalpoker(fetchHex);
+          await configGameObject(
+            blobSingleton!,
+            iStarted,
+            wasmStateInit,
+            calpokerHexes,
+            blockchain,
+            uniqueId,
+            amount
+          );
+        } catch (e) {
+          console.error('[blobSingleton] newSession error:', e);
+        }
       };
 
       blobSingleton!.kickSystem(2);
@@ -128,12 +128,8 @@ export function getBlobSingleton(
     peerconn,
   );
 
-  const isInIframe = window.parent !== window;
-  if (isInIframe) {
-    setupBlockchainConnection(uniqueId);
-  } else {
-    blockchainDataEmitter.select({ selection: FAKE_BLOCKCHAIN_ID, uniqueId });
-  }
+  // Blockchain is already configured by WalletConnectHeading in the same
+  // window (via blockchainDataEmitter.select). No postMessage bridge needed.
 
   return { gameObject: blobSingleton };
 }

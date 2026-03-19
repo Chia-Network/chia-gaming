@@ -32,7 +32,11 @@ const LobbyScreen = () => {
     params,
     fragment,
     (newUrl: string) => {
-      window.location.href = newUrl;
+      if (window.parent !== window) {
+        window.parent.postMessage({ type: 'game-start', url: newUrl }, '*');
+      } else {
+        window.location.href = newUrl;
+      }
     }
   );
 

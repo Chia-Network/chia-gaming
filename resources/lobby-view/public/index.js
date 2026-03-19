@@ -25972,7 +25972,11 @@
     const fragment = getFragmentParams();
     const uniqueId = params.uniqueId || generateOrRetrieveUniqueId();
     const { players, rooms, messages, sendMessage, setLobbyAlias, generateRoom, joinRoom, lobbyGames } = useLobbySocket(window.location.origin, uniqueId, myAlias, true, params, fragment, (newUrl) => {
-      window.location.href = newUrl;
+      if (window.parent !== window) {
+        window.parent.postMessage({ type: "game-start", url: newUrl }, "*");
+      } else {
+        window.location.href = newUrl;
+      }
     });
     const [chatInput, setChatInput] = (0, import_react6.useState)("");
     const [dialogOpen, setDialogOpen] = (0, import_react6.useState)(false);

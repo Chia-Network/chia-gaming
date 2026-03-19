@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useCallback } from 'react';
 import { Observable } from 'rxjs';
 import { useGameSession, ChannelCoinState, GameCoinState, GameplayEvent } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
@@ -117,40 +117,21 @@ function CalpokerHand({
   );
 }
 
-function LogTextArea({ label, lines }: { label: string; lines: string[] }) {
-  const ref = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => {
-    if (ref.current) {
-      ref.current.scrollTop = ref.current.scrollHeight;
-    }
-  }, [lines]);
-
-  return (
-    <div className='flex flex-col gap-1'>
-      <h3 className='text-sm font-semibold text-canvas-text-contrast'>{label}</h3>
-      <textarea
-        ref={ref}
-        readOnly
-        value={lines.join('\n')}
-        className='w-full h-32 resize-none rounded-md border border-canvas-border bg-canvas-bg p-2 text-xs font-mono text-canvas-text focus:outline-none'
-      />
-    </div>
-  );
-}
-
 export interface GameSessionProps {
   params: Record<string, string | undefined>;
+  appendGameLog: (line: string) => void;
+  appendDebugLog: (line: string) => void;
 }
 
-const GameSession: React.FC<GameSessionProps> = ({ params }) => {
+const GameSession: React.FC<GameSessionProps> = ({ params, appendGameLog, appendDebugLog }) => {
   const uniqueId = generateOrRetrieveUniqueId();
   const parsed = parseGameSessionParams(params);
 
-  const session = useGameSession(parsed, uniqueId);
+  const session = useGameSession(parsed, uniqueId, appendGameLog, appendDebugLog);
 
   if (session.error) {
     return (
-      <div className='flex items-center justify-center h-screen p-4'>
+      <div className='flex items-center justify-center h-full p-4'>
         <Card className='w-full max-w-md border-destructive'>
           <CardHeader>
             <CardTitle className='text-destructive'>Error</CardTitle>
@@ -182,7 +163,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params }) => {
       : 'text-canvas-text';
 
   return (
-    <div className='flex h-screen w-full flex-col overflow-hidden bg-canvas-bg-subtle text-canvas-text pt-6'>
+    <div className='flex h-full w-full flex-col overflow-hidden bg-canvas-bg-subtle text-canvas-text pt-6'>
       {/* Session header (shrink-0) */}
       <div className='flex-shrink-0 px-4 pt-3 pb-2 sm:px-6 md:px-8'>
         {/* Row 1: title + financial summary + end session */}
@@ -230,9 +211,9 @@ const GameSession: React.FC<GameSessionProps> = ({ params }) => {
       </div>
 
       {/* Main content area (flex-1 min-h-0) */}
-      <div className='flex flex-1 min-h-0 flex-col gap-2 px-4 pb-2 sm:px-6 md:px-8 lg:flex-row'>
+      <div className='flex flex-1 min-h-0 flex-col gap-2 px-4 pb-2 sm:px-6 md:px-8'>
         {/* Game area */}
-        <div className='relative flex-1 min-h-0 flex flex-col lg:flex-[18_1_0%]'>
+        <div className='relative flex-1 min-h-0 flex flex-col'>
           {handEverStarted && (
             <CalpokerHand
               key={session.handKey}
@@ -313,12 +294,6 @@ const GameSession: React.FC<GameSessionProps> = ({ params }) => {
               <p className='text-canvas-text'>Session complete.</p>
             </div>
           )}
-        </div>
-
-        {/* Logs panel */}
-        <div className='flex flex-col gap-2 lg:flex-[7_1_0%] lg:min-h-0 lg:overflow-y-auto max-h-48 lg:max-h-none'>
-          <LogTextArea label='Game Log' lines={session.gameLog} />
-          <LogTextArea label='Debug Log' lines={session.debugLog} />
         </div>
       </div>
 

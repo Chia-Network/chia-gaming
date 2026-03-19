@@ -43,7 +43,6 @@ export const getGameSocket = (
     if (msg.iStarted == iStarted || msg.token !== token) {
       return;
     }
-
     if (!fullyConnected) {
       fullyConnected = true;
       clearInterval(beacon);
