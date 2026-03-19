@@ -19,7 +19,7 @@ use crate::common::types::{
     PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
 use crate::potato_handler::effects::{apply_effects, Effect, GameNotification};
-use crate::potato_handler::handshake::CoinSpendRequest;
+use crate::potato_handler::handshake::{decode_clvm_int_to_u64, encode_u64_as_clvm_int, CoinSpendRequest};
 use crate::potato_handler::start::GameStart;
 use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameFactory, PacketSender,
@@ -750,7 +750,16 @@ impl SynchronousGameCradle {
         for effect in effects {
             if matches!(effect, Effect::NeedLauncherCoinId) {
                 self.state.need_launcher_coin = true;
-            } else if let Effect::NeedCoinSpend(req) = effect {
+            } else if let Effect::NeedCoinSpend(mut req) = effect {
+                for cond in &mut req.conditions {
+                    if cond.opcode == crate::common::constants::ASSERT_BEFORE_HEIGHT_ABSOLUTE {
+                        if let Some(arg) = cond.args.first() {
+                            let relative = decode_clvm_int_to_u64(arg);
+                            let absolute = self.state.current_height + relative;
+                            cond.args[0] = encode_u64_as_clvm_int(absolute);
+                        }
+                    }
+                }
                 self.state.need_coin_spend = Some(req);
             } else {
                 passthrough.push(effect);

@@ -74,3 +74,31 @@ pub enum ChannelState {
     Completed,
     Failed,
 }
+
+pub fn encode_u64_as_clvm_int(val: u64) -> Vec<u8> {
+    if val == 0 {
+        return vec![];
+    }
+    let mut bytes = Vec::new();
+    let mut h = val;
+    while h > 0 {
+        bytes.push((h & 0xff) as u8);
+        h >>= 8;
+    }
+    bytes.reverse();
+    if bytes[0] & 0x80 != 0 {
+        bytes.insert(0, 0);
+    }
+    bytes
+}
+
+pub fn decode_clvm_int_to_u64(bytes: &[u8]) -> u64 {
+    if bytes.is_empty() {
+        return 0;
+    }
+    let mut result: u64 = 0;
+    for &b in bytes {
+        result = (result << 8) | (b as u64);
+    }
+    result
+}
