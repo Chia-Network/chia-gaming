@@ -2,17 +2,15 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 
 import WalletConnectHeading from './WalletConnectHeading';
 import GameSession from './GameSession';
-import GameRedirectPopup from './GameRedirectPopup';
 import { blockchainDataEmitter } from '../hooks/BlockchainInfo';
-import { BlockchainReport } from '../types/ChiaGaming';
+import { BlockchainReport, GameSessionParams, PeerConnectionResult } from '../types/ChiaGaming';
+import { TrackerConnection, MatchedParams } from '../services/TrackerConnection';
 import {
-  getGameSelection,
-  getSearchParams,
-  getParamsFromString,
   generateOrRetrieveUniqueId,
+  generateOrRetrieveSessionId,
 } from '../util';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
-import { Loader2 } from 'lucide-react';
+import { Loader2, LogOut } from 'lucide-react';
 
 type TabId = 'tracker' | 'session' | 'game-log' | 'debug-log';
 
@@ -22,6 +20,9 @@ const TAB_DEFS: { id: TabId; label: string; needsSession: boolean }[] = [
   { id: 'game-log', label: 'Game Log', needsSession: true },
   { id: 'debug-log', label: 'Debug Log', needsSession: true },
 ];
+
+const FALLBACK_AMOUNT = 100n;
+const FALLBACK_PER_GAME = 10n;
 
 function LogPanel({ lines }: { lines: string[] }) {
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -43,11 +44,11 @@ function LogPanel({ lines }: { lines: string[] }) {
 
 const Shell = () => {
   const uniqueId = generateOrRetrieveUniqueId();
-  const urlParams = getSearchParams();
-  const gameSelection = getGameSelection();
+  const sessionId = generateOrRetrieveSessionId();
 
   const [activeTab, setActiveTab] = useState<TabId>('tracker');
-  const [gameParams, setGameParams] = useState<Record<string, string | undefined> | null>(null);
+  const [gameParams, setGameParams] = useState<GameSessionParams | null>(null);
+  const [peerConn, setPeerConn] = useState<PeerConnectionResult | null>(null);
 
   const [gameLog, setGameLog] = useState<string[]>([]);
   const [debugLog, setDebugLog] = useState<string[]>([]);
@@ -56,8 +57,7 @@ const Shell = () => {
   const [iframeUrl, setIframeUrl] = useState('about:blank');
   const [iframeAllowed, setIframeAllowed] = useState('');
 
-  const [showPopup, setShowPopup] = useState(false);
-  const [pendingGameUrl, setPendingGameUrl] = useState<string | null>(null);
+  const trackerConnRef = useRef<TrackerConnection | null>(null);
 
   const appendGameLog = useCallback((line: string) => {
     setGameLog(prev => [...prev, line]);
@@ -67,7 +67,12 @@ const Shell = () => {
     setDebugLog(prev => [...prev, line]);
   }, []);
 
-  // Wait for first blockchain peak
+  const registerMessageHandler = useCallback((handler: (msgno: number, msg: string) => void) => {
+    if (trackerConnRef.current) {
+      trackerConnRef.current.registerMessageHandler(handler);
+    }
+  }, []);
+
   useEffect(() => {
     const subscription = blockchainDataEmitter.getObservable().subscribe({
       next: (_peak: BlockchainReport) => {
@@ -77,64 +82,72 @@ const Shell = () => {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Fetch tracker URL and set up iframe
+  // Fetch tracker URL, set up iframe and TrackerConnection
   useEffect(() => {
     fetch('/urls')
       .then((res) => res.json())
       .then((urls: { tracker: string }) => {
         const trackerURL = new URL(urls.tracker);
-        setIframeAllowed(trackerURL.origin);
+        const trackerOrigin = trackerURL.origin;
+        setIframeAllowed(trackerOrigin);
 
-        const baseUrl = urls.tracker;
-        const lobbyUrl = gameSelection
-          ? `${baseUrl}&uniqueId=${uniqueId}&token=${gameSelection.token}&view=game`
-          : `${baseUrl}&view=game&uniqueId=${uniqueId}`;
+        const lobbyUrl = `${trackerOrigin}/?lobby=true&session=${sessionId}&uniqueId=${uniqueId}`;
+        setIframeUrl(lobbyUrl);
 
-        if (urlParams.join) {
-          setPendingGameUrl(lobbyUrl);
-          setShowPopup(true);
-        } else {
-          setIframeUrl(lobbyUrl);
-        }
+        // Create TrackerConnection for game message relay
+        const conn = new TrackerConnection(trackerOrigin, sessionId, {
+          onMatched: (matched: MatchedParams) => {
+            let amount: bigint;
+            let perGame: bigint;
+            try { amount = BigInt(matched.amount); } catch { amount = FALLBACK_AMOUNT; }
+            try { perGame = BigInt(matched.per_game); } catch { perGame = FALLBACK_PER_GAME; }
+            setGameParams({
+              iStarted: matched.i_am_initiator,
+              amount,
+              perGameAmount: perGame,
+            });
+            setPeerConn(conn.getPeerConnection());
+            setGameLog([]);
+            setDebugLog([]);
+            setActiveTab('session');
+          },
+          onMessage: (_data: string) => {
+            // Will be replaced by registerMessageHandler once GameSession mounts
+          },
+          onClosed: () => {
+            console.log('[Shell] tracker connection closed');
+          },
+        });
+        trackerConnRef.current = conn;
       })
       .catch(e => console.error('[Shell] failed to fetch /urls:', e));
-  }, []);
 
-  // Listen for game-start postMessage from lobby iframe
-  useEffect(() => {
-    function handler(ev: MessageEvent) {
-      if (!ev.data || ev.data.type !== 'game-start' || typeof ev.data.url !== 'string') return;
-      const url = ev.data.url as string;
-      const qIdx = url.indexOf('?');
-      if (qIdx < 0) return;
-      const parsed = getParamsFromString(url.substring(qIdx + 1));
-      setGameParams(parsed);
-      setGameLog([]);
-      setDebugLog([]);
-      setActiveTab('session');
-    }
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
+    return () => {
+      trackerConnRef.current?.disconnect();
+    };
+  }, [uniqueId, sessionId]);
+
+  const handleReset = useCallback(() => {
+    localStorage.clear();
+    window.location.reload();
   }, []);
 
   useThemeSyncToIframe('tracker-iframe', [iframeUrl]);
-
-  const handleAccept = () => {
-    if (pendingGameUrl) {
-      setIframeUrl(pendingGameUrl);
-    }
-    setShowPopup(false);
-  };
-
-  const handleCancel = () => {
-    setShowPopup(false);
-    window.location.href = '/';
-  };
 
   const wcHeading = (
     <div style={{ flexShrink: 0, height: '3rem', width: '100%' }}>
       <WalletConnectHeading />
     </div>
+  );
+
+  const resetButton = (
+    <button
+      onClick={handleReset}
+      className='px-4 py-2 text-sm font-bold rounded-md bg-alert-bg text-alert-text border border-alert-border hover:bg-alert-bg-hover transition-colors inline-flex items-center gap-1.5'
+    >
+      <LogOut className='w-4 h-4' />
+      Reset
+    </button>
   );
 
   if (!havePeak) {
@@ -145,14 +158,8 @@ const Shell = () => {
         <div style={{ flex: '1 1 0%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: '0.75rem' }}>
           <Loader2 className='h-6 w-6 z-0 animate-spin text-primary mb-4' />
           Waiting for blockchain peak ...
+          <div style={{ marginTop: '1rem' }}>{resetButton}</div>
         </div>
-        <GameRedirectPopup
-          open={showPopup}
-          gameName={urlParams.game}
-          message='You have been invited to join this game.'
-          onAccept={handleAccept}
-          onCancel={handleCancel}
-        />
       </div>
     );
   }
@@ -180,6 +187,7 @@ const Shell = () => {
           </button>
         );
       })}
+      <div style={{ marginLeft: 'auto' }}>{resetButton}</div>
     </div>
   );
 
@@ -204,9 +212,11 @@ const Shell = () => {
 
         {/* Game Session tab */}
         <div style={{ position: 'absolute', inset: 0, overflow: 'auto', display: activeTab === 'session' ? 'block' : 'none' }}>
-          {gameParams ? (
+          {gameParams && peerConn ? (
             <GameSession
               params={gameParams}
+              peerConn={peerConn}
+              registerMessageHandler={registerMessageHandler}
               appendGameLog={appendGameLog}
               appendDebugLog={appendDebugLog}
             />
@@ -239,14 +249,6 @@ const Shell = () => {
           )}
         </div>
       </div>
-
-      <GameRedirectPopup
-        open={showPopup}
-        gameName={urlParams.game}
-        message='You have been invited to join this game.'
-        onAccept={handleAccept}
-        onCancel={handleCancel}
-      />
     </div>
   );
 };

@@ -21724,13 +21724,13 @@
   });
 
   // dist/js/index.js
-  var import_jsx_runtime10 = __toESM(require_jsx_runtime(), 1);
-  var import_react7 = __toESM(require_react(), 1);
+  var import_jsx_runtime4 = __toESM(require_jsx_runtime(), 1);
+  var import_react6 = __toESM(require_react(), 1);
   var import_client = __toESM(require_client(), 1);
 
   // dist/js/lobby.js
-  var import_jsx_runtime9 = __toESM(require_jsx_runtime(), 1);
-  var import_react6 = __toESM(require_react(), 1);
+  var import_jsx_runtime3 = __toESM(require_jsx_runtime(), 1);
+  var import_react5 = __toESM(require_react(), 1);
 
   // ../lobby-connection/dist/index.js
   var import_react = __toESM(require_react());
@@ -25130,235 +25130,81 @@
   });
 
   // ../lobby-connection/dist/index.js
-  function useLobbySocket(lobbyUrl, uniqueId, alias, walletConnect, params, fragment, navigate) {
+  function useLobbySocket(lobbyUrl, uniqueId, sessionId) {
     const [players, setPlayers] = (0, import_react.useState)([]);
-    const [rooms, setRooms] = (0, import_react.useState)([]);
-    const [messages, setMessages] = (0, import_react.useState)([]);
-    const [didJoin, setDidJoin] = (0, import_react.useState)(false);
+    const [pendingChallenge, setPendingChallenge] = (0, import_react.useState)(null);
+    const [challengeSent, setChallengeSent] = (0, import_react.useState)(false);
     const [lobbyGames, setLobbyGames] = (0, import_react.useState)([]);
     const socketRef = (0, import_react.useRef)(void 0);
-    const navigatingRef = (0, import_react.useRef)(false);
-    const joinRoom = (0, import_react.useCallback)(async (token) => {
-      const room = await fetch(`${lobbyUrl}/lobby/join-room`, {
-        method: "POST",
-        body: JSON.stringify({
-          token,
-          id: uniqueId,
-          alias,
-          game: "lobby",
-          parameters: {}
-        }),
-        headers: { "Content-Type": "application/json" }
-      }).then((res) => res.json());
-      return room;
-    }, [uniqueId]);
-    function tryJoinRoom() {
-      for (const room of rooms) {
-        if (!room.host)
-          continue;
-        if (params.token && room.token != params.token)
-          continue;
-        if (params.token && room.host != uniqueId && !room.joiner && !didJoin) {
-          setDidJoin(true);
-          joinRoom(params.token).catch(() => {
-          });
-          continue;
-        }
-        if ((room.host === uniqueId || room.joiner === uniqueId) && room.target && walletConnect && !navigatingRef.current) {
-          navigatingRef.current = true;
-          const iStarted = room.host === uniqueId;
-          const newUrl = `${room.target}&uniqueId=${uniqueId}&iStarted=${iStarted}`;
-          fetch("/lobby/good", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-              id: uniqueId,
-              token: room.token
-            })
-          }).catch(() => {
-          });
-          navigate(newUrl);
-          break;
-        }
-      }
-    }
-    tryJoinRoom();
     (0, import_react.useEffect)(() => {
+      if (!uniqueId)
+        return;
       const socket = lookup2(lobbyUrl);
       socketRef.current = socket;
-      socket.emit("join", { id: uniqueId, alias });
+      socket.emit("join", { id: uniqueId, session_id: sessionId });
       socket.on("lobby_update", (q) => setPlayers(q));
-      socket.on("room_update", (r2) => {
-        const updated = Array.isArray(r2) ? r2 : [r2];
-        setRooms((prev) => {
-          const map = new Map(prev.map((x) => [x.token, x]));
-          updated.forEach((x) => map.set(x.token, x));
-          return Array.from(map.values());
-        });
-        tryJoinRoom();
+      socket.on("game_update", (g) => setLobbyGames(g));
+      socket.on("challenge_received", (c) => {
+        setPendingChallenge(c);
       });
-      socket.on("game_update", (g) => {
-        setLobbyGames(g);
-      });
-      socket.on("chat_message", (chatMsg) => {
-        setMessages((m) => [...m, chatMsg]);
+      socket.on("challenge_resolved", (r2) => {
+        setChallengeSent(false);
+        if (!r2.accepted) {
+          console.log("[lobby] challenge declined");
+        }
       });
       return () => {
-        socket.emit("leave", { id: alias });
+        socket.emit("leave", { id: uniqueId });
         socket.disconnect();
       };
-    }, [uniqueId]);
-    const sendMessage = (0, import_react.useCallback)((msg) => {
-      socketRef.current?.emit("chat_message", {
-        alias,
-        content: { text: msg, sender: alias }
+    }, [uniqueId, lobbyUrl, sessionId]);
+    const sendChallenge = (0, import_react.useCallback)((targetId, game, amount, perGame) => {
+      socketRef.current?.emit("challenge", { target_id: targetId, game, amount, per_game: perGame });
+      setChallengeSent(true);
+    }, []);
+    const acceptChallenge = (0, import_react.useCallback)((challengeId) => {
+      socketRef.current?.emit("challenge_accept", { challenge_id: challengeId });
+      setPendingChallenge(null);
+    }, []);
+    const declineChallenge = (0, import_react.useCallback)((challengeId) => {
+      socketRef.current?.emit("challenge_decline", { challenge_id: challengeId });
+      setPendingChallenge(null);
+    }, []);
+    const setLobbyAlias = (0, import_react.useCallback)(async (id, newAlias) => {
+      await fetch(`${lobbyUrl}/lobby/change-alias`, {
+        method: "POST",
+        body: JSON.stringify({ id, newAlias }),
+        headers: { "Content-Type": "application/json" }
       });
-    }, [uniqueId]);
-    const generateRoom = (0, import_react.useCallback)(async (game, amount, perGame) => {
-      const data = await fetch(`${lobbyUrl}/lobby/generate-room`, {
-        method: "POST",
-        body: JSON.stringify({
-          id: uniqueId,
-          alias,
-          game,
-          parameters: { amount, perGame }
-        }),
-        headers: { "Content-Type": "application/json" }
-      }).then((res) => res.json());
-      return data;
-    }, [uniqueId]);
-    const setLobbyAlias = (0, import_react.useCallback)(async (id, alias2) => {
-      const result = await fetch(`${lobbyUrl}/lobby/change-alias`, {
-        method: "POST",
-        body: JSON.stringify({
-          id,
-          newAlias: alias2
-        }),
-        headers: { "Content-Type": "application/json" }
-      }).then((res) => res.json());
-      return result?.player;
-    }, [uniqueId]);
-    const leaveRoom = (0, import_react.useCallback)(async (_token) => {
-      console.error("implement leave room");
-    }, [uniqueId]);
+    }, [lobbyUrl]);
     return {
       players,
-      rooms,
-      messages,
-      sendMessage,
-      generateRoom,
-      joinRoom,
-      leaveRoom,
+      pendingChallenge,
+      challengeSent,
+      sendChallenge,
+      acceptChallenge,
+      declineChallenge,
       setLobbyAlias,
       uniqueId,
-      fragment,
       lobbyGames
     };
   }
 
-  // node_modules/uuid/dist/stringify.js
-  var byteToHex = [];
-  for (let i = 0; i < 256; ++i) {
-    byteToHex.push((i + 256).toString(16).slice(1));
-  }
-  function unsafeStringify(arr, offset = 0) {
-    return (byteToHex[arr[offset + 0]] + byteToHex[arr[offset + 1]] + byteToHex[arr[offset + 2]] + byteToHex[arr[offset + 3]] + "-" + byteToHex[arr[offset + 4]] + byteToHex[arr[offset + 5]] + "-" + byteToHex[arr[offset + 6]] + byteToHex[arr[offset + 7]] + "-" + byteToHex[arr[offset + 8]] + byteToHex[arr[offset + 9]] + "-" + byteToHex[arr[offset + 10]] + byteToHex[arr[offset + 11]] + byteToHex[arr[offset + 12]] + byteToHex[arr[offset + 13]] + byteToHex[arr[offset + 14]] + byteToHex[arr[offset + 15]]).toLowerCase();
-  }
-
-  // node_modules/uuid/dist/rng.js
-  var getRandomValues;
-  var rnds8 = new Uint8Array(16);
-  function rng() {
-    if (!getRandomValues) {
-      if (typeof crypto === "undefined" || !crypto.getRandomValues) {
-        throw new Error("crypto.getRandomValues() not supported. See https://github.com/uuidjs/uuid#getrandomvalues-not-supported");
-      }
-      getRandomValues = crypto.getRandomValues.bind(crypto);
-    }
-    return getRandomValues(rnds8);
-  }
-
-  // node_modules/uuid/dist/native.js
-  var randomUUID = typeof crypto !== "undefined" && crypto.randomUUID && crypto.randomUUID.bind(crypto);
-  var native_default = { randomUUID };
-
-  // node_modules/uuid/dist/v4.js
-  function _v4(options, buf, offset) {
-    options = options || {};
-    const rnds = options.random ?? options.rng?.() ?? rng();
-    if (rnds.length < 16) {
-      throw new Error("Random bytes length must be >= 16");
-    }
-    rnds[6] = rnds[6] & 15 | 64;
-    rnds[8] = rnds[8] & 63 | 128;
-    if (buf) {
-      offset = offset || 0;
-      if (offset < 0 || offset + 16 > buf.length) {
-        throw new RangeError(`UUID byte range ${offset}:${offset + 15} is out of buffer bounds`);
-      }
-      for (let i = 0; i < 16; ++i) {
-        buf[offset + i] = rnds[i];
-      }
-      return buf;
-    }
-    return unsafeStringify(rnds);
-  }
-  function v4(options, buf, offset) {
-    if (native_default.randomUUID && !buf && !options) {
-      return native_default.randomUUID();
-    }
-    return _v4(options, buf, offset);
-  }
-  var v4_default = v4;
-
   // dist/js/util.js
   function getParamsFromString(paramString) {
     const fragmentParts = paramString.split("&");
-    const params = Object.fromEntries(fragmentParts.map((part) => {
-      const partEqIdx = part.indexOf("=");
-      if (partEqIdx > 0) {
-        return [part.substring(0, partEqIdx), part.substring(partEqIdx + 1)];
-      }
+    return Object.fromEntries(fragmentParts.map((part) => {
+      const eqIdx = part.indexOf("=");
+      if (eqIdx > 0)
+        return [part.substring(0, eqIdx), part.substring(eqIdx + 1)];
       return [part, "true"];
     }));
-    return params;
-  }
-  function getFragmentParams() {
-    const fragment = window.location.hash;
-    return getParamsFromString(fragment);
   }
   function getSearchParams() {
-    if (window.location.search === "") {
+    if (window.location.search === "")
       return {};
-    }
-    const search = window.location.search.substring(1);
-    return getParamsFromString(search);
+    return getParamsFromString(window.location.search.substring(1));
   }
-  function generateOrRetrieveUniqueId() {
-    let id = localStorage.getItem("uniqueId");
-    if (id)
-      return id;
-    id = v4_default();
-    localStorage.setItem("uniqueId", id);
-    return id;
-  }
-  function updateAlias(alias) {
-    localStorage.setItem("alias", alias);
-  }
-  function generateOrRetrieveAlias() {
-    let previousName = localStorage.getItem("alias");
-    if (previousName) {
-      return previousName;
-    }
-    previousName = `newUser${v4_default()}`;
-    updateAlias(previousName);
-    return previousName;
-  }
-
-  // dist/js/features/lobbyComponents/ConnectedPlayers.js
-  var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
 
   // node_modules/lucide-react/dist/esm/createLucideIcon.js
   var import_react3 = __toESM(require_react());
@@ -25449,15 +25295,8 @@
     return Component;
   };
 
-  // node_modules/lucide-react/dist/esm/icons/copy.js
-  var __iconNode = [
-    ["rect", { width: "14", height: "14", x: "8", y: "8", rx: "2", ry: "2", key: "17jyea" }],
-    ["path", { d: "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2", key: "zix9uf" }]
-  ];
-  var Copy = createLucideIcon("copy", __iconNode);
-
   // node_modules/lucide-react/dist/esm/icons/cross.js
-  var __iconNode2 = [
+  var __iconNode = [
     [
       "path",
       {
@@ -25466,10 +25305,10 @@
       }
     ]
   ];
-  var Cross = createLucideIcon("cross", __iconNode2);
+  var Cross = createLucideIcon("cross", __iconNode);
 
   // node_modules/lucide-react/dist/esm/icons/crown.js
-  var __iconNode3 = [
+  var __iconNode2 = [
     [
       "path",
       {
@@ -25479,20 +25318,10 @@
     ],
     ["path", { d: "M5 21h14", key: "11awu3" }]
   ];
-  var Crown = createLucideIcon("crown", __iconNode3);
-
-  // node_modules/lucide-react/dist/esm/icons/gamepad.js
-  var __iconNode4 = [
-    ["line", { x1: "6", x2: "10", y1: "12", y2: "12", key: "161bw2" }],
-    ["line", { x1: "8", x2: "8", y1: "10", y2: "14", key: "1i6ji0" }],
-    ["line", { x1: "15", x2: "15.01", y1: "13", y2: "13", key: "dqpgro" }],
-    ["line", { x1: "18", x2: "18.01", y1: "11", y2: "11", key: "meh2c" }],
-    ["rect", { width: "20", height: "12", x: "2", y: "6", rx: "2", key: "9lu3g6" }]
-  ];
-  var Gamepad = createLucideIcon("gamepad", __iconNode4);
+  var Crown = createLucideIcon("crown", __iconNode2);
 
   // node_modules/lucide-react/dist/esm/icons/square-pen.js
-  var __iconNode5 = [
+  var __iconNode3 = [
     ["path", { d: "M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7", key: "1m0v6g" }],
     [
       "path",
@@ -25502,48 +25331,30 @@
       }
     ]
   ];
-  var SquarePen = createLucideIcon("square-pen", __iconNode5);
+  var SquarePen = createLucideIcon("square-pen", __iconNode3);
+
+  // node_modules/lucide-react/dist/esm/icons/swords.js
+  var __iconNode4 = [
+    ["polyline", { points: "14.5 17.5 3 6 3 3 6 3 17.5 14.5", key: "1hfsw2" }],
+    ["line", { x1: "13", x2: "19", y1: "19", y2: "13", key: "1vrmhu" }],
+    ["line", { x1: "16", x2: "20", y1: "16", y2: "20", key: "1bron3" }],
+    ["line", { x1: "19", x2: "21", y1: "21", y2: "19", key: "13pww6" }],
+    ["polyline", { points: "14.5 6.5 18 3 21 3 21 6 17.5 9.5", key: "hbey2j" }],
+    ["line", { x1: "5", x2: "9", y1: "14", y2: "18", key: "1hf58s" }],
+    ["line", { x1: "7", x2: "4", y1: "17", y2: "20", key: "pidxm4" }],
+    ["line", { x1: "3", x2: "5", y1: "19", y2: "21", key: "1pehsh" }]
+  ];
+  var Swords = createLucideIcon("swords", __iconNode4);
 
   // node_modules/lucide-react/dist/esm/icons/user.js
-  var __iconNode6 = [
+  var __iconNode5 = [
     ["path", { d: "M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2", key: "975kel" }],
     ["circle", { cx: "12", cy: "7", r: "4", key: "17ys0d" }]
   ];
-  var User = createLucideIcon("user", __iconNode6);
-
-  // dist/js/features/lobbyComponents/ConnectedPlayers.js
-  function ConnectedPlayers({ splitPct, editingAlias, myAlias, setMyAlias, commitEdit, setEditingAlias, players, uniqueId }) {
-    return (0, import_jsx_runtime.jsx)("div", { className: "\n        flex flex-col shrink-0\n        bg-canvas-bg border-none shadow-none\n        rounded-tr-2xl\n      ", style: { flexBasis: `${splitPct}%` }, children: (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-col h-full min-h-0 p-4", children: [(0, import_jsx_runtime.jsx)("div", { className: "flex flex-row justify-between items-center mb-3", children: (0, import_jsx_runtime.jsx)("h6", { className: "text-lg font-semibold text-canvas-text-contrast", children: "Connected Players" }) }), (0, import_jsx_runtime.jsx)("div", { className: "border-b border-canvas-line mb-2" }), (0, import_jsx_runtime.jsxs)("div", { className: "flex-1 overflow-y-auto pr-1", children: [editingAlias ? (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-col sm:flex-row gap-2 mb-3", children: [(0, import_jsx_runtime.jsx)("input", { "aria-label": "alias-input", className: "w-full px-3 py-2 rounded bg-canvas-bg text-canvas-text border border-canvas-border outline-none ", placeholder: "Enter new alias", value: myAlias, onChange: (e) => setMyAlias(e.target.value), onKeyDown: (e) => e.key === "Enter" && commitEdit(e), onBlur: commitEdit }), (0, import_jsx_runtime.jsx)("button", { onClick: commitEdit, "aria-label": "save-alias", className: "px-4 py-2 rounded bg-secondary text-white font-medium", children: "Save" }), (0, import_jsx_runtime.jsx)("button", { onClick: () => setEditingAlias(false), className: "w-8 h-8 flex items-center justify-center text-red-500", children: (0, import_jsx_runtime.jsx)(Cross, { className: "w-5 h-5" }) })] }) : (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-row items-center gap-2 mb-2", children: [(0, import_jsx_runtime.jsxs)("p", { className: "text-canvas-text", children: ["Alias:\xA0", (0, import_jsx_runtime.jsx)("strong", { className: "text-canvas-text-contrast font-bold", children: myAlias })] }), (0, import_jsx_runtime.jsx)("button", { "aria-label": "edit-alias", onClick: () => setEditingAlias(true), className: "text-canvas-solid w-6 h-6 flex items-center justify-center", children: (0, import_jsx_runtime.jsx)(SquarePen, { className: "w-4 h-4" }) })] }), players.length === 0 ? (0, import_jsx_runtime.jsxs)("div", { className: "text-center py-6 text-canvas-text", children: [(0, import_jsx_runtime.jsx)(User, { className: "mx-auto mb-1", style: {
-      fontSize: 48,
-      color: "var(--color-canvas-solid)"
-    } }), (0, import_jsx_runtime.jsx)("h6", { className: "text-lg font-medium text-canvas-text-contrast", children: "No Other Players Connected" }), (0, import_jsx_runtime.jsx)("p", { className: "text-sm text-canvas-text", children: "Waiting for others to join\u2026" })] }) : (0, import_jsx_runtime.jsx)("div", { children: players.map((player, index) => (0, import_jsx_runtime.jsxs)("p", { className: "text-sm text-canvas-text mb-1", children: [index + 1, ":\xA0", player.id === uniqueId ? (0, import_jsx_runtime.jsxs)("span", { className: "inline-flex items-center gap-1", children: [player.alias, " (You)", (0, import_jsx_runtime.jsx)(Crown, { className: "w-5 h-5 ", style: { color: "var(-warning-solid)" } })] }) : player.alias] }, player.id)) })] })] }) });
-  }
-
-  // dist/js/features/lobbyComponents/CardDivider.js
-  var import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
-  function CardDivider({ rightColumnRef }) {
-    return (0, import_jsx_runtime2.jsx)("div", { onMouseDown: (e) => {
-      const el = rightColumnRef.current;
-      if (el && typeof el._startDrag === "function")
-        el._startDrag(e.clientY);
-    }, onTouchStart: (e) => {
-      const el = rightColumnRef.current;
-      if (el && typeof el._startDrag === "function")
-        el._startDrag(e.touches[0].clientY);
-    }, className: "hidden md:block h-1 cursor-s-resize bg-transparent" });
-  }
-
-  // dist/js/features/lobbyComponents/Chat.js
-  var import_jsx_runtime3 = __toESM(require_jsx_runtime(), 1);
-  function Chat({ splitPct, messagesRef, messages, chatInput, setChatInput, handleSend }) {
-    return (0, import_jsx_runtime3.jsx)("div", { className: "flex flex-col bg-canvas-bg shadow-none border-none rounded-br-xl", style: { flexBasis: `${100 - splitPct}%` }, children: (0, import_jsx_runtime3.jsxs)("div", { className: "flex flex-col h-full min-h-0 p-0", children: [(0, import_jsx_runtime3.jsx)("div", { className: "\n            flex flex-row items-center justify-between\n            px-2 py-1.5 border-b border-canvas-line\n          ", children: (0, import_jsx_runtime3.jsx)("h6", { className: "text-base font-semibold text-canvas-text-contrast", children: "Lobby Chat" }) }), (0, import_jsx_runtime3.jsx)("div", { className: "border-b border-canvas-line" }), (0, import_jsx_runtime3.jsx)("div", { ref: messagesRef, className: "flex-1 overflow-y-auto p-2", children: messages.length === 0 ? (0, import_jsx_runtime3.jsx)("p", { className: "text-center text-canvas-text", children: "No messages yet." }) : messages.map((m, i) => (0, import_jsx_runtime3.jsxs)("p", { className: "text-sm mb-1 text-canvas-text", children: [(0, import_jsx_runtime3.jsxs)("strong", { children: [m.alias, ":"] }), " ", m.content.text] }, i)) }), (0, import_jsx_runtime3.jsx)("div", { className: "border-t border-canvas-line" }), (0, import_jsx_runtime3.jsx)("div", { className: "\n            p-2 sticky bottom-0 z-20\n            bg-canvas-bg border-t border-canvas-line\n          ", children: (0, import_jsx_runtime3.jsx)("input", { "aria-label": "lobby-chat-input", className: "\n              w-full px-3 py-2 rounded bg-canvas-bg\n              text-canvas-text border border-canvas-border\n              outline-none\n            ", placeholder: "Type your message...", value: chatInput, onChange: (e) => setChatInput(e.target.value), onKeyDown: (e) => e.key === "Enter" && handleSend() }) }), (0, import_jsx_runtime3.jsx)("div", { className: "border-t border-canvas-line" })] }) });
-  }
-
-  // dist/js/features/lobbyComponents/ActiveRooms.js
-  var import_jsx_runtime6 = __toESM(require_jsx_runtime(), 1);
+  var User = createLucideIcon("user", __iconNode5);
 
   // dist/js/button.js
-  var import_jsx_runtime5 = __toESM(require_jsx_runtime(), 1);
+  var import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
 
   // node_modules/@radix-ui/react-slot/dist/index.mjs
   var React2 = __toESM(require_react(), 1);
@@ -25583,7 +25394,7 @@
   }
 
   // node_modules/@radix-ui/react-slot/dist/index.mjs
-  var import_jsx_runtime4 = __toESM(require_jsx_runtime(), 1);
+  var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
   var REACT_LAZY_TYPE = Symbol.for("react.lazy");
   var use = React2[" use ".trim().toString()];
   function isPromiseLike(value2) {
@@ -25612,9 +25423,9 @@
             return child;
           }
         });
-        return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(SlotClone, { ...slotProps, ref: forwardedRef, children: React2.isValidElement(newElement) ? React2.cloneElement(newElement, void 0, newChildren) : null });
+        return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SlotClone, { ...slotProps, ref: forwardedRef, children: React2.isValidElement(newElement) ? React2.cloneElement(newElement, void 0, newChildren) : null });
       }
-      return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(SlotClone, { ...slotProps, ref: forwardedRef, children });
+      return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SlotClone, { ...slotProps, ref: forwardedRef, children });
     });
     Slot2.displayName = `${ownerName}.Slot`;
     return Slot2;
@@ -25742,7 +25553,7 @@
   // dist/js/button.js
   var React3 = __toESM(require_react(), 1);
   var import_react4 = __toESM(require_react(), 1);
-  var Spinner = () => (0, import_jsx_runtime5.jsxs)("svg", { className: "h-4 w-4 animate-spin", xmlns: "http://www.w3.org/2000/svg", fill: "none", viewBox: "0 0 24 24", children: [(0, import_jsx_runtime5.jsx)("circle", { className: "opacity-25", cx: "12", cy: "12", r: "10", stroke: "currentColor", strokeWidth: "4" }), (0, import_jsx_runtime5.jsx)("path", { className: "opacity-75", fill: "currentColor", d: "M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" })] });
+  var Spinner = () => (0, import_jsx_runtime2.jsxs)("svg", { className: "h-4 w-4 animate-spin", xmlns: "http://www.w3.org/2000/svg", fill: "none", viewBox: "0 0 24 24", children: [(0, import_jsx_runtime2.jsx)("circle", { className: "opacity-25", cx: "12", cy: "12", r: "10", stroke: "currentColor", strokeWidth: "4" }), (0, import_jsx_runtime2.jsx)("path", { className: "opacity-75", fill: "currentColor", d: "M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" })] });
   var buttonVariants = cva("items-center justify-center rounded-lg font-bold transition-all duration-300 ease-out disabled:opacity-50 hover:cursor-pointer disabled:cursor-not-allowed leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 select-none hover:shadow-[0_1px_3px_0_rgb(0,0,0,0.1),0_1px_2px_-1px_rgb(0,0,0,0.1)]", {
     variants: {
       color: {
@@ -25924,7 +25735,7 @@
     const Comp = asChild ? Slot : "button";
     const icon = iconOnly ? leadingIcon : null;
     const isDisabled = isLoading || disabled;
-    return (0, import_jsx_runtime5.jsxs)(Comp, { ref, type: "button", className: buttonVariants({
+    return (0, import_jsx_runtime2.jsxs)(Comp, { ref, type: "button", className: buttonVariants({
       color,
       variant,
       size,
@@ -25932,198 +25743,81 @@
       isLoading,
       fullWidth,
       className
-    }), disabled: isDisabled, ...props, children: [isLoading && iconOnly && (0, import_jsx_runtime5.jsx)(Spinner, {}), isLoading && !iconOnly && (0, import_jsx_runtime5.jsxs)(import_jsx_runtime5.Fragment, { children: [(0, import_jsx_runtime5.jsx)("span", { className: "mr-2", children: (0, import_jsx_runtime5.jsx)(Spinner, {}) }), loadingText || children] }), !isLoading && iconOnly && icon, !isLoading && !iconOnly && (0, import_jsx_runtime5.jsxs)(import_jsx_runtime5.Fragment, { children: [leadingIcon && (0, import_jsx_runtime5.jsx)("span", { className: "mr-2", children: leadingIcon }), children, trailingIcon && (0, import_jsx_runtime5.jsx)("span", { className: "ml-2", children: trailingIcon })] })] });
+    }), disabled: isDisabled, ...props, children: [isLoading && iconOnly && (0, import_jsx_runtime2.jsx)(Spinner, {}), isLoading && !iconOnly && (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [(0, import_jsx_runtime2.jsx)("span", { className: "mr-2", children: (0, import_jsx_runtime2.jsx)(Spinner, {}) }), loadingText || children] }), !isLoading && iconOnly && icon, !isLoading && !iconOnly && (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [leadingIcon && (0, import_jsx_runtime2.jsx)("span", { className: "mr-2", children: leadingIcon }), children, trailingIcon && (0, import_jsx_runtime2.jsx)("span", { className: "ml-2", children: trailingIcon })] })] });
   });
   Button.displayName = "Button";
   var ButtonMemoized = (0, import_react4.memo)(Button);
 
-  // dist/js/features/lobbyComponents/ActiveRooms.js
-  function ActiveRooms({ rooms, openDialog, joinRoom, getPlayerAlias }) {
-    return (0, import_jsx_runtime6.jsx)("div", { className: "flex w-full lg:w-2/3 pr-0 h-full", children: (0, import_jsx_runtime6.jsx)("div", { className: "bg-canvas-bg w-full rounded-l-xl h-full shadow-none border-none", children: (0, import_jsx_runtime6.jsxs)("div", { className: "h-full pb-24 flex flex-col", children: [(0, import_jsx_runtime6.jsxs)("div", { className: "flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1 p-4", children: [(0, import_jsx_runtime6.jsx)("h6", { className: "text-lg font-semibold text-canvas-text-contrast", children: "Active Rooms" }), (0, import_jsx_runtime6.jsx)(ButtonMemoized, { variant: "solid", color: "secondary", onClick: openDialog, "aria-label": "generate-room", children: "Start Session" })] }), (0, import_jsx_runtime6.jsx)("div", { className: "border-b border-canvas-line mb-3" }), (0, import_jsx_runtime6.jsx)("div", { className: "overflow-y-auto h-full pr-2 pb-24", children: rooms.length === 0 ? (0, import_jsx_runtime6.jsxs)("div", { className: "text-center py-24 text-canvas-text", children: [(0, import_jsx_runtime6.jsx)(Gamepad, { className: "mx-auto mb-1", style: {
-      fontSize: 48,
-      color: "var(--color-canvas-solid)"
-    } }), (0, import_jsx_runtime6.jsx)("h6", { className: "text-lg font-medium text-canvas-text-contrast", children: "No Active Rooms" }), (0, import_jsx_runtime6.jsx)("p", { className: "text-sm text-canvas-text", children: "Choose 'Start Session' to play." })] }) : rooms.map((r2) => (0, import_jsx_runtime6.jsxs)("div", { className: "p-2 mb-1.5 rounded border border-canvas-line bg-canvas-bg flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1", children: [(0, import_jsx_runtime6.jsxs)("div", { children: [(0, import_jsx_runtime6.jsx)("h6", { className: "text-sm font-semibold text-canvas-text-contrast", children: r2.token || "Unknown Game" }), (0, import_jsx_runtime6.jsxs)("p", { className: "text-sm text-canvas-text", children: ["Host: ", getPlayerAlias(r2.host)] }), (0, import_jsx_runtime6.jsxs)("p", { className: "text-sm text-canvas-text", children: ["Game: ", r2.game] })] }), (0, import_jsx_runtime6.jsx)(ButtonMemoized, { variant: "solid", color: "secondary", onClick: () => joinRoom(r2.token), children: "Join" })] }, r2.token)) })] }) }) });
-  }
-
-  // dist/js/features/lobbyComponents/CreateRoomDialog.js
-  var import_jsx_runtime7 = __toESM(require_jsx_runtime(), 1);
-  var import_react5 = __toESM(require_react(), 1);
-  var CreateRoomDialog = ({ dialogOpen, closeDialog, gameChoice, setGameChoice, lobbyGames, wagerInput, setWagerInput, perHandInput, setPerHandInput, wagerValidationError, handleCreate }) => {
-    if (!dialogOpen)
-      return null;
-    const [isFocused, setIsFocused] = (0, import_react5.useState)(false);
-    return (0, import_jsx_runtime7.jsx)("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-canvas-bg-subtle/75", onClick: closeDialog, children: (0, import_jsx_runtime7.jsxs)("div", { className: "bg-canvas-bg-subtle text-canvas-text shadow-2xl rounded-lg w-full max-w-lg p-6", onClick: (e) => e.stopPropagation(), children: [(0, import_jsx_runtime7.jsx)("h2", { className: "text-xl font-bold mb-4", children: "Create a Room" }), (0, import_jsx_runtime7.jsxs)("div", { className: "mb-4", children: [(0, import_jsx_runtime7.jsx)("label", { className: "block mb-1 font-medium", children: "Game" }), (0, import_jsx_runtime7.jsx)("div", { className: dialogOpen ? "block" : "hidden", children: (0, import_jsx_runtime7.jsx)("select", { value: gameChoice, "aria-label": "game-id", onChange: (e) => setGameChoice(e.target.value), className: "w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded", children: lobbyGames.map((g) => (0, import_jsx_runtime7.jsx)("option", { value: g.game, "data-testid": `choose-${g.game}`, children: g.game }, g.game)) }) })] }), wagerValidationError && (0, import_jsx_runtime7.jsx)("div", { className: "mb-1 text-secondary-solid", children: wagerValidationError }), (0, import_jsx_runtime7.jsxs)("div", { className: "mb-4", children: [(0, import_jsx_runtime7.jsx)("label", { className: "block mb-1 font-medium", children: "Wager (mojo)" }), (0, import_jsx_runtime7.jsx)("input", { type: "number", "aria-label": "game-wager", value: wagerInput, onChange: (e) => setWagerInput(e.target.value), onFocus: () => setIsFocused(true), onBlur: () => setIsFocused(false), placeholder: isFocused ? "" : "Buy-in (minimum 100 mojos)", className: "w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded" })] }), wagerValidationError && (0, import_jsx_runtime7.jsx)("p", { style: { color: "#FF6F00", marginBottom: 1 }, children: "    " + wagerValidationError }), (0, import_jsx_runtime7.jsxs)("div", { className: "mb-4", children: [(0, import_jsx_runtime7.jsx)("label", { className: "block mb-1 font-medium", children: "Each hand (mojo)" }), (0, import_jsx_runtime7.jsx)("input", { type: "number", "aria-label": "per-hand", value: perHandInput, onChange: (e) => setPerHandInput(e.target.value), placeholder: "Enter per hand", className: "w-full p-2 bg-canvas-bg text-canvas-text border border-canvas-line rounded" })] }), (0, import_jsx_runtime7.jsxs)("div", { className: "flex justify-end gap-2 mt-4", children: [(0, import_jsx_runtime7.jsx)(ButtonMemoized, { variant: "outline", color: "secondary", onClick: closeDialog, children: "Cancel" }), (0, import_jsx_runtime7.jsx)(ButtonMemoized, { variant: "solid", color: "secondary", onClick: handleCreate, className: "px-4 py-2 bg-secondary-solid text-canvas-bg rounded hover:bg-secondary-solid/90", children: "Create" })] })] }) });
-  };
-  var CreateRoomDialog_default = CreateRoomDialog;
-
-  // dist/js/features/lobbyComponents/ShareRoomDialog.js
-  var import_jsx_runtime8 = __toESM(require_jsx_runtime(), 1);
-  var ShareRoomDialog = ({ urlDialogOpen, handleCancelShare, shortenedUrl, handleCopyAndClose }) => {
-    if (!urlDialogOpen)
-      return null;
-    return (0, import_jsx_runtime8.jsx)("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-black/40", onClick: handleCancelShare, children: (0, import_jsx_runtime8.jsxs)("div", { className: "bg-canvas-bg text-canvas-text rounded-lg w-full max-w-xs p-4", onClick: (e) => e.stopPropagation(), children: [(0, import_jsx_runtime8.jsxs)("div", { className: "flex justify-between items-center mb-4 pr-1", children: [(0, import_jsx_runtime8.jsx)("h2", { className: "text-lg font-semibold", children: "Room Created \u{1F389}" }), (0, import_jsx_runtime8.jsx)("button", { onClick: handleCancelShare, className: "p-1 text-canvas-text hover:text-canvas-text-contrast rounded", children: "\u2715" })] }), (0, import_jsx_runtime8.jsx)("p", { className: "mb-2", children: "Share this room URL:" }), (0, import_jsx_runtime8.jsxs)("div", { className: "flex items-center justify-between bg-canvas-bg-subtle rounded p-2 text-secondary-solid ", children: [(0, import_jsx_runtime8.jsx)("span", { className: "flex-1 mr-1 overflow-hidden text-ellipsis whitespace-nowrap text-canvas-text", children: shortenedUrl }), (0, import_jsx_runtime8.jsx)("button", { onClick: handleCopyAndClose, "aria-label": "ContentCopyIcon", "aria-labelledby": "ContentCopyIcon", className: "p-1 text-secondary-solid hover:text-secondary-solid-hover rounded", children: (0, import_jsx_runtime8.jsx)(Copy, { className: "w-4 h-4 font-secondary-bg-active" }) })] })] }) });
-  };
-  var ShareRoomDialog_default = ShareRoomDialog;
-
   // dist/js/lobby.js
   var LobbyScreen = () => {
-    const [myAlias, setMyAlias] = (0, import_react6.useState)(generateOrRetrieveAlias());
     const params = getSearchParams();
-    const fragment = getFragmentParams();
-    const uniqueId = params.uniqueId || generateOrRetrieveUniqueId();
-    const { players, rooms, messages, sendMessage, setLobbyAlias, generateRoom, joinRoom, lobbyGames } = useLobbySocket(window.location.origin, uniqueId, myAlias, true, params, fragment, (newUrl) => {
-      if (window.parent !== window) {
-        window.parent.postMessage({ type: "game-start", url: newUrl }, "*");
-      } else {
-        window.location.href = newUrl;
-      }
-    });
-    const [chatInput, setChatInput] = (0, import_react6.useState)("");
-    const [dialogOpen, setDialogOpen] = (0, import_react6.useState)(false);
-    const [gameChoice, setGameChoice] = (0, import_react6.useState)(lobbyGames[0]?.game || "");
-    const [wagerInput, setWagerInputPrimitive] = (0, import_react6.useState)("100");
-    const [wagerValidationError, setWagerValidationError] = (0, import_react6.useState)("");
-    const [perHandInput, setPerHandInput] = (0, import_react6.useState)("10");
-    const [editingAlias, setEditingAlias] = (0, import_react6.useState)(false);
-    const [gotoUrl, setGotoUrl] = (0, import_react6.useState)("");
-    const [urlDialogOpen, setUrlDialogOpen] = (0, import_react6.useState)(false);
-    const [secureUrl, setSecureUrl] = (0, import_react6.useState)("");
-    const [splitPct, setSplitPct] = (0, import_react6.useState)(50);
-    const rightColumnRef = (0, import_react6.useRef)(null);
-    const messagesRef = (0, import_react6.useRef)(null);
-    const setWagerInput = (0, import_react6.useCallback)((newWagerInput) => {
-      setWagerInputPrimitive(newWagerInput);
-      try {
-        const newWagerInputInteger = parseInt(newWagerInput);
-        setWagerValidationError("");
-        const newPerHand = Math.max(1, Math.floor(newWagerInputInteger / 10));
-        setPerHandInput(newPerHand.toString());
-      } catch (e) {
-        setWagerValidationError(`${e.toString()}`);
-      }
-    }, []);
-    const handleSend = () => {
-      if (chatInput.trim()) {
-        sendMessage(chatInput);
-        setChatInput("");
-      }
-    };
-    const validateCreateSessionIsOK = () => {
-      if (parseInt(wagerInput) < 100) {
-        setWagerValidationError("Please buy-in with 100 mojos or more.");
-        return false;
-      }
-      return true;
-    };
-    (0, import_react6.useEffect)(() => {
-      if (messagesRef.current) {
-        const el = messagesRef.current;
-        el.scrollTop = el.scrollHeight;
-      }
-    }, [messages]);
-    (0, import_react6.useEffect)(() => {
-      let dragging = false;
-      const onMove = (clientY) => {
-        if (!rightColumnRef.current)
-          return;
-        const rect = rightColumnRef.current.getBoundingClientRect();
-        const rel = (clientY - rect.top) / rect.height;
-        const pct = Math.max(25, Math.min(75, Math.round(rel * 100)));
-        setSplitPct(pct);
-      };
-      const mouseMove = (e) => {
-        if (!dragging)
-          return;
-        onMove(e.clientY);
-      };
-      const touchMove = (e) => {
-        if (!dragging)
-          return;
-        onMove(e.touches[0].clientY);
-      };
-      const mouseUp = () => {
-        dragging = false;
-        document.body.style.userSelect = "";
-        window.removeEventListener("mousemove", mouseMove);
-        window.removeEventListener("touchmove", touchMove);
-        window.removeEventListener("mouseup", mouseUp);
-        window.removeEventListener("touchend", mouseUp);
-      };
-      const startDrag = (startY) => {
-        dragging = true;
-        document.body.style.userSelect = "none";
-        onMove(startY);
-        window.addEventListener("mousemove", mouseMove);
-        window.addEventListener("touchmove", touchMove, {
-          passive: false
-        });
-        window.addEventListener("mouseup", mouseUp);
-        window.addEventListener("touchend", mouseUp);
-      };
-      if (rightColumnRef.current) {
-        rightColumnRef.current._startDrag = startDrag;
-      }
-      return () => {
-        window.removeEventListener("mousemove", mouseMove);
-        window.removeEventListener("touchmove", touchMove);
-        window.removeEventListener("mouseup", mouseUp);
-        window.removeEventListener("touchend", mouseUp);
-      };
-    }, []);
-    const openDialog = () => setDialogOpen(true);
-    const closeDialog = () => setDialogOpen(false);
-    const handleCreate = async () => {
-      if (!gameChoice || !wagerInput)
+    const uniqueId = params.uniqueId || "";
+    const sessionId = params.session || "";
+    const [myAlias, setMyAlias] = (0, import_react5.useState)("");
+    const [aliasConfirmed, setAliasConfirmed] = (0, import_react5.useState)(false);
+    const [aliasLoading, setAliasLoading] = (0, import_react5.useState)(true);
+    const [editingAlias, setEditingAlias] = (0, import_react5.useState)(false);
+    (0, import_react5.useEffect)(() => {
+      if (!uniqueId)
         return;
-      if (!validateCreateSessionIsOK())
+      fetch(`${window.location.origin}/lobby/alias?id=${encodeURIComponent(uniqueId)}`).then((r2) => r2.json()).then(({ alias }) => {
+        if (alias) {
+          setMyAlias(alias);
+          setAliasConfirmed(true);
+        }
+        setAliasLoading(false);
+      }).catch(() => setAliasLoading(false));
+    }, [uniqueId]);
+    const { players, pendingChallenge, challengeSent, sendChallenge, acceptChallenge, declineChallenge, setLobbyAlias } = useLobbySocket(window.location.origin, aliasConfirmed ? uniqueId : "", sessionId);
+    function confirmAlias() {
+      const trimmed = myAlias.trim();
+      if (!trimmed)
         return;
-      const { secureUrl: secureUrl2 } = await generateRoom(gameChoice, wagerInput, perHandInput);
-      setSecureUrl(secureUrl2);
-      setUrlDialogOpen(true);
-    };
-    const handleCopyAndClose = async () => {
-      try {
-        await navigator.clipboard.writeText(secureUrl);
-      } catch (err) {
-        console.error("Failed to copy:", err);
-      }
-      setGotoUrl(secureUrl);
-      setUrlDialogOpen(false);
-      closeDialog();
-    };
-    const handleCancelShare = () => {
-      setUrlDialogOpen(false);
-      closeDialog();
-    };
-    (0, import_react6.useEffect)(() => {
-      if (fragment.token)
-        joinRoom(fragment.token).catch(() => {
-        });
-    }, [fragment, joinRoom]);
+      fetch(`${window.location.origin}/lobby/set-alias`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: uniqueId, alias: trimmed })
+      }).then(() => {
+        setMyAlias(trimmed);
+        setAliasConfirmed(true);
+      });
+    }
     function commitEdit(e) {
       const value2 = e.target.value;
       setEditingAlias(false);
-      updateAlias(value2);
+      setMyAlias(value2);
       setLobbyAlias(uniqueId, value2);
     }
-    function getPlayerAlias(id) {
-      const player = players.find((p) => p.id === id);
-      return player ? player.alias : `Unknown Player (${id})`;
+    const [challengeTarget, setChallengeTarget] = (0, import_react5.useState)(null);
+    const [challengeGame, setChallengeGame] = (0, import_react5.useState)("calpoker");
+    const [challengeAmount, setChallengeAmount] = (0, import_react5.useState)("100");
+    const [challengePerGame, setChallengePerGame] = (0, import_react5.useState)("10");
+    function openChallengeDialog(targetId, targetAlias) {
+      setChallengeTarget({ id: targetId, alias: targetAlias });
     }
-    (0, import_react6.useEffect)(() => {
-      if (lobbyGames.length > 0 && !gameChoice) {
-        setGameChoice(lobbyGames[0].game);
-      }
-    }, [lobbyGames, gameChoice]);
-    const shortenedUrl = secureUrl?.length > 40 ? `${secureUrl.slice(0, 40)}...` : secureUrl;
-    return (0, import_jsx_runtime9.jsxs)("div", { className: "p-4 sm:p-6 md:p-8 pb-0 min-h-screen bg-canvas-bg-subtle relative", children: [(0, import_jsx_runtime9.jsxs)("div", { className: "flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-3", children: [(0, import_jsx_runtime9.jsx)("div", { children: (0, import_jsx_runtime9.jsx)("h2", { className: "text-xl font-bold text-canvas-text-contrast", children: "Game Lobby" }) }), (0, import_jsx_runtime9.jsx)(ButtonMemoized, { variant: "surface", color: "secondary", fullWidth: false, children: "Change WalletConnect Connection" })] }), (0, import_jsx_runtime9.jsx)("div", { className: "absolute opacity-0", "aria-label": "partner-target-url", children: gotoUrl }), (0, import_jsx_runtime9.jsxs)("div", { className: "flex flex-col md:flex-row border-none md:border md:border-canvas-border rounded-3xl gap-3 md:gap-0 h-auto md:h-[calc(100vh-150px)]", children: [(0, import_jsx_runtime9.jsx)(ActiveRooms, { rooms, openDialog, joinRoom, getPlayerAlias }), (0, import_jsx_runtime9.jsxs)("div", { ref: rightColumnRef, className: "flex flex-col w-full lg:w-1/3 min-w-0 h-full md:border-l border-canvas-border rounded-tr-2xl", children: [(0, import_jsx_runtime9.jsx)(ConnectedPlayers, { splitPct, editingAlias, myAlias, setMyAlias, commitEdit, setEditingAlias, players, uniqueId }), (0, import_jsx_runtime9.jsx)(CardDivider, { rightColumnRef }), (0, import_jsx_runtime9.jsx)(Chat, { splitPct, messagesRef, messages, chatInput, setChatInput, handleSend })] })] }), (0, import_jsx_runtime9.jsx)(CreateRoomDialog_default, { dialogOpen, closeDialog: () => setDialogOpen(false), gameChoice, setGameChoice, lobbyGames, wagerInput, setWagerInput, perHandInput, setPerHandInput, wagerValidationError, handleCreate }), (0, import_jsx_runtime9.jsx)(ShareRoomDialog_default, { urlDialogOpen, handleCancelShare, shortenedUrl, handleCopyAndClose })] });
+    function submitChallenge() {
+      if (!challengeTarget)
+        return;
+      sendChallenge(challengeTarget.id, challengeGame, challengeAmount, challengePerGame);
+      setChallengeTarget(null);
+    }
+    if (aliasLoading) {
+      return (0, import_jsx_runtime3.jsx)("div", { className: "p-4 sm:p-6 min-h-screen bg-canvas-bg-subtle flex items-center justify-center", children: (0, import_jsx_runtime3.jsx)("p", { className: "text-canvas-text", children: "Loading..." }) });
+    }
+    if (!aliasConfirmed) {
+      return (0, import_jsx_runtime3.jsx)("div", { className: "p-4 sm:p-6 min-h-screen bg-canvas-bg-subtle flex flex-col items-center justify-center", children: (0, import_jsx_runtime3.jsxs)("div", { className: "w-full max-w-sm space-y-4", children: [(0, import_jsx_runtime3.jsx)("h2", { className: "text-xl font-bold text-canvas-text-contrast text-center", children: "Choose a Display Name" }), (0, import_jsx_runtime3.jsx)("p", { className: "text-sm text-canvas-text text-center", children: "Pick a name other players will see in the lobby." }), (0, import_jsx_runtime3.jsx)("input", { autoFocus: true, className: "w-full px-3 py-2 rounded bg-canvas-bg text-canvas-text border border-canvas-border outline-none text-center text-lg", placeholder: "Your name", value: myAlias, onChange: (e) => setMyAlias(e.target.value), onKeyDown: (e) => e.key === "Enter" && confirmAlias() }), (0, import_jsx_runtime3.jsx)(ButtonMemoized, { variant: "solid", color: "primary", size: "default", onClick: confirmAlias, fullWidth: true, children: "Join Lobby" })] }) });
+    }
+    return (0, import_jsx_runtime3.jsxs)("div", { className: "p-4 sm:p-6 min-h-screen bg-canvas-bg-subtle", children: [(0, import_jsx_runtime3.jsx)("div", { className: "mb-4", children: (0, import_jsx_runtime3.jsx)("h2", { className: "text-xl font-bold text-canvas-text-contrast", children: "Game Lobby" }) }), (0, import_jsx_runtime3.jsx)("div", { className: "mb-4", children: editingAlias ? (0, import_jsx_runtime3.jsxs)("div", { className: "flex flex-row gap-2 items-center", children: [(0, import_jsx_runtime3.jsx)("input", { "aria-label": "alias-input", className: "px-3 py-2 rounded bg-canvas-bg text-canvas-text border border-canvas-border outline-none", placeholder: "Enter new alias", value: myAlias, onChange: (e) => setMyAlias(e.target.value), onKeyDown: (e) => e.key === "Enter" && commitEdit(e), onBlur: commitEdit }), (0, import_jsx_runtime3.jsx)("button", { onClick: commitEdit, "aria-label": "save-alias", className: "px-4 py-2 rounded bg-secondary text-white font-medium", children: "Save" }), (0, import_jsx_runtime3.jsx)("button", { onClick: () => setEditingAlias(false), className: "w-8 h-8 flex items-center justify-center text-red-500", children: (0, import_jsx_runtime3.jsx)(Cross, { className: "w-5 h-5" }) })] }) : (0, import_jsx_runtime3.jsxs)("div", { className: "flex flex-row items-center gap-2", children: [(0, import_jsx_runtime3.jsxs)("p", { className: "text-canvas-text", children: ["Your name:\xA0", (0, import_jsx_runtime3.jsx)("strong", { className: "text-canvas-text-contrast font-bold", children: myAlias })] }), (0, import_jsx_runtime3.jsx)("button", { "aria-label": "edit-alias", onClick: () => setEditingAlias(true), className: "text-canvas-solid w-6 h-6 flex items-center justify-center", children: (0, import_jsx_runtime3.jsx)(SquarePen, { className: "w-4 h-4" }) })] }) }), (0, import_jsx_runtime3.jsx)("div", { className: "border-b border-canvas-line mb-4" }), pendingChallenge && (0, import_jsx_runtime3.jsx)(IncomingChallengeDialog, { challenge: pendingChallenge, onAccept: () => acceptChallenge(pendingChallenge.challenge_id), onDecline: () => declineChallenge(pendingChallenge.challenge_id) }), challengeTarget && (0, import_jsx_runtime3.jsxs)("div", { className: "mb-4 p-4 rounded-lg bg-canvas-bg border border-canvas-border space-y-3", children: [(0, import_jsx_runtime3.jsxs)("p", { className: "text-canvas-text-contrast font-medium", children: ["Challenge ", (0, import_jsx_runtime3.jsx)("strong", { children: challengeTarget.alias })] }), (0, import_jsx_runtime3.jsxs)("div", { className: "space-y-2", children: [(0, import_jsx_runtime3.jsxs)("label", { className: "block text-sm text-canvas-text", children: ["Game", (0, import_jsx_runtime3.jsx)("select", { value: challengeGame, onChange: (e) => setChallengeGame(e.target.value), className: "mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none", children: (0, import_jsx_runtime3.jsx)("option", { value: "calpoker", children: "California Poker" }) })] }), (0, import_jsx_runtime3.jsxs)("label", { className: "block text-sm text-canvas-text", children: ["Total buy-in (mojos)", (0, import_jsx_runtime3.jsx)("input", { type: "number", min: "1", value: challengeAmount, onChange: (e) => setChallengeAmount(e.target.value), className: "mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none" })] }), (0, import_jsx_runtime3.jsxs)("label", { className: "block text-sm text-canvas-text", children: ["Per-hand amount (mojos)", (0, import_jsx_runtime3.jsx)("input", { type: "number", min: "1", value: challengePerGame, onChange: (e) => setChallengePerGame(e.target.value), className: "mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none" })] })] }), (0, import_jsx_runtime3.jsxs)("div", { className: "flex gap-2", children: [(0, import_jsx_runtime3.jsx)(ButtonMemoized, { variant: "solid", color: "primary", size: "sm", onClick: submitChallenge, children: "Send Challenge" }), (0, import_jsx_runtime3.jsx)(ButtonMemoized, { variant: "outline", color: "neutral", size: "sm", onClick: () => setChallengeTarget(null), children: "Cancel" })] })] }), challengeSent && (0, import_jsx_runtime3.jsx)("div", { className: "mb-4 p-3 rounded-lg bg-primary-bg border border-primary-border text-primary-text text-sm", children: "Waiting for opponent to respond to your challenge..." }), (0, import_jsx_runtime3.jsx)("h3", { className: "text-lg font-semibold text-canvas-text-contrast mb-3", children: "Connected Players" }), players.length === 0 ? (0, import_jsx_runtime3.jsxs)("div", { className: "text-center py-8 text-canvas-text", children: [(0, import_jsx_runtime3.jsx)(User, { className: "mx-auto mb-2", style: { fontSize: 48, color: "var(--color-canvas-solid)" } }), (0, import_jsx_runtime3.jsx)("h6", { className: "text-lg font-medium text-canvas-text-contrast", children: "No Other Players Connected" }), (0, import_jsx_runtime3.jsx)("p", { className: "text-sm text-canvas-text", children: "Waiting for others to join..." })] }) : (0, import_jsx_runtime3.jsx)("div", { className: "space-y-2", children: players.map((player) => (0, import_jsx_runtime3.jsxs)("div", { className: "flex items-center justify-between p-3 rounded-lg bg-canvas-bg border border-canvas-border", children: [(0, import_jsx_runtime3.jsx)("div", { className: "flex items-center gap-2", children: player.id === uniqueId ? (0, import_jsx_runtime3.jsxs)("span", { className: "inline-flex items-center gap-1 text-canvas-text-contrast font-medium", children: [(0, import_jsx_runtime3.jsx)(Crown, { className: "w-4 h-4", style: { color: "var(--color-warning-solid)" } }), player.alias, " (You)"] }) : (0, import_jsx_runtime3.jsx)("span", { className: "text-canvas-text", children: player.alias }) }), player.id !== uniqueId && (0, import_jsx_runtime3.jsx)(ButtonMemoized, { variant: "solid", color: "primary", size: "sm", disabled: challengeSent || !!challengeTarget, onClick: () => openChallengeDialog(player.id, player.alias), leadingIcon: (0, import_jsx_runtime3.jsx)(Swords, { className: "w-4 h-4" }), children: "Challenge" })] }, player.id)) })] });
   };
+  function IncomingChallengeDialog({ challenge, onAccept, onDecline }) {
+    return (0, import_jsx_runtime3.jsxs)("div", { className: "mb-4 p-4 rounded-lg bg-secondary-bg border border-secondary-border", children: [(0, import_jsx_runtime3.jsxs)("p", { className: "text-canvas-text-contrast font-medium mb-2", children: [(0, import_jsx_runtime3.jsx)("strong", { children: challenge.from_alias }), " challenges you to", " ", (0, import_jsx_runtime3.jsx)("strong", { children: challenge.game })] }), (0, import_jsx_runtime3.jsxs)("p", { className: "text-sm text-canvas-text mb-3", children: ["Buy-in: ", challenge.amount, " mojos \xB7 Per hand: ", challenge.per_game, " mojos"] }), (0, import_jsx_runtime3.jsxs)("div", { className: "flex gap-2", children: [(0, import_jsx_runtime3.jsx)(ButtonMemoized, { variant: "solid", color: "primary", size: "sm", onClick: onAccept, children: "Accept" }), (0, import_jsx_runtime3.jsx)(ButtonMemoized, { variant: "outline", color: "neutral", size: "sm", onClick: onDecline, children: "Decline" })] })] });
+  }
   var lobby_default = LobbyScreen;
 
   // dist/js/index.js
   var container = document.getElementById("root");
   var root = (0, import_client.createRoot)(container);
-  root.render((0, import_jsx_runtime10.jsx)(import_react7.default.StrictMode, { children: (0, import_jsx_runtime10.jsx)(lobby_default, {}) }));
+  root.render((0, import_jsx_runtime4.jsx)(import_react6.default.StrictMode, { children: (0, import_jsx_runtime4.jsx)(lobby_default, {}) }));
 })();
 /*! Bundled license information:
 
@@ -26186,11 +25880,10 @@ lucide-react/dist/esm/shared/src/utils.js:
 lucide-react/dist/esm/defaultAttributes.js:
 lucide-react/dist/esm/Icon.js:
 lucide-react/dist/esm/createLucideIcon.js:
-lucide-react/dist/esm/icons/copy.js:
 lucide-react/dist/esm/icons/cross.js:
 lucide-react/dist/esm/icons/crown.js:
-lucide-react/dist/esm/icons/gamepad.js:
 lucide-react/dist/esm/icons/square-pen.js:
+lucide-react/dist/esm/icons/swords.js:
 lucide-react/dist/esm/icons/user.js:
 lucide-react/dist/esm/lucide-react.js:
   (**

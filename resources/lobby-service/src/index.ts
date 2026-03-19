@@ -1,15 +1,12 @@
-import crypto from 'crypto';
 import { createServer } from 'http';
-import { readFile } from 'node:fs/promises';
 
 import cors from 'cors';
 import express from 'express';
 import helmet from 'helmet';
 import minimist from 'minimist';
-import { Server as SocketIOServer } from 'socket.io';
+import { Server as SocketIOServer, Socket } from 'socket.io';
 
 import { Lobby } from './lobbyState';
-import { GenerateRoomResult, Room } from './types/lobby';
 
 const lobby = new Lobby();
 const app = express();
@@ -18,15 +15,12 @@ const io = new SocketIOServer(httpServer, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
 });
 
-// Parse args
 function parseArgs() {
   const args = minimist(process.argv.slice(2));
-
   if (!args.self) {
     console.warn('usage: lobby --self [own-url] --dir [serve-directory]');
     process.exit(1);
   }
-
   return args;
 }
 
@@ -43,14 +37,13 @@ app.use(
           'https://explorer-api.walletconnect.com',
           'wss://relay.walletconnect.com',
           'https://verify.walletconnect.org',
-          'https://verify.walletconnect.org',
           'https://api.coinset.org',
           'wss://api.coinset.org',
           'http://localhost:5800',
           'wss://relay.walletconnect.org',
-          args.tracker,
+          args.self,
         ],
-        frameSrc: ["'self'", 'https://verify.walletconnect.org', args.tracker],
+        frameSrc: ["'self'", 'https://verify.walletconnect.org', args.self],
         frameAncestors: ["'self'", '*'],
       },
     },
@@ -69,38 +62,91 @@ if (args.dir) {
   app.use(express.static(args.dir));
 }
 
-const TOKEN_TTL = 10 * 60 * 1000;
+// Socket tracking maps
+// lobby iframe sockets: player_id -> Socket
+const lobbySocketsByPlayer = new Map<string, Socket>();
+// session_id -> player_id (set when lobby iframe joins with session_id)
+const sessionToPlayer = new Map<string, string>();
+// game (TrackerConnection) sockets: player_id -> Socket
+const gameSocketsByPlayer = new Map<string, Socket>();
+// reverse: socket.id -> player_id (for cleanup on disconnect)
+const lobbySocketToPlayer = new Map<string, string>();
+const gameSocketToPlayer = new Map<string, string>();
+// identify sockets that arrived before the lobby iframe's join event
+const pendingIdentifies = new Map<string, Socket>();
+// persistent alias storage: player_id -> alias (survives join/leave cycles)
+const knownAliases = new Map<string, string>();
 
-function joinLobby(id: string, alias: string, parameters: any): any {
-  if (!id || !alias) {
-    return { error: 'Missing id or alias for joining lobby.' };
+function completeGameSocketRegistration(playerId: string, sock: Socket) {
+  const oldSocket = gameSocketsByPlayer.get(playerId);
+  if (oldSocket && oldSocket.id !== sock.id) {
+    oldSocket.disconnect(true);
+    gameSocketToPlayer.delete(oldSocket.id);
   }
-  const lastActive = new Date().getTime();
+  gameSocketsByPlayer.set(playerId, sock);
+  gameSocketToPlayer.set(sock.id, playerId);
+
+  const pairing = lobby.getPairingForPlayer(playerId);
+  if (pairing) {
+    sock.emit('matched', {
+      token: pairing.token,
+      game_type: pairing.game_type,
+      amount: pairing.amount,
+      per_game: pairing.per_game,
+      i_am_initiator: pairing.playerA_id === playerId,
+    });
+  }
+}
+
+function joinLobby(id: string, alias: string, session_id: string): string | null {
+  if (!id || !alias) return 'Missing id or alias for joining lobby.';
+  const lastActive = Date.now();
   lobby.addPlayer({
     id,
     alias,
+    session_id,
     joinedAt: lastActive,
     lastActive,
     status: 'waiting',
-    parameters,
+    parameters: {},
   });
-  io.emit('lobby_update', lobby.getPlayers());
   return null;
 }
 
-function leaveLobby(id: string): any {
+function leaveLobby(id: string): boolean {
   if (lobby.removePlayer(id)) {
     io.emit('lobby_update', lobby.getPlayers());
-    return { lobbyQueue: lobby.getPlayers() };
+    return true;
   }
-
-  return undefined;
+  return false;
 }
+
+// HTTP endpoints (keep minimal set for game registration + status)
+app.get('/lobby/alias', (req, res) => {
+  const id = req.query.id as string;
+  if (!id) return res.status(400).json({ error: 'Missing id.' });
+  const alias = knownAliases.get(id) ?? null;
+  res.json({ alias });
+});
+
+app.post('/lobby/set-alias', (req, res) => {
+  const { id, alias } = req.body;
+  if (!id || !alias)
+    return res.status(400).json({ error: 'Missing id or alias.' });
+  knownAliases.set(id, alias);
+  const player = lobby.players[id];
+  if (player) {
+    player.alias = alias;
+    io.emit('lobby_update', lobby.getPlayers());
+  }
+  res.json({ ok: true });
+});
 
 app.post('/lobby/change-alias', (req, res) => {
   const { id, newAlias } = req.body;
   if (!id || !newAlias)
     return res.status(400).json({ error: 'Missing id or new_alias.' });
+  knownAliases.set(id, newAlias);
   const player = lobby.players[id];
   if (player) {
     player.alias = newAlias;
@@ -109,144 +155,248 @@ app.post('/lobby/change-alias', (req, res) => {
   }
   res.json({});
 });
-app.post('/lobby/generate-room', (req, res) => {
-  const { id, game, parameters } = req.body;
-  if (!id || !game)
-    return res.status(400).json({ error: 'Missing id or game.' });
-  const token = crypto.randomBytes(16).toString('hex');
-  const now = Date.now();
-  const newRoom: Room = {
-    token,
-    host: id,
-    game,
-    status: 'waiting',
-    createdAt: now,
-    expiresAt: now + TOKEN_TTL,
-    minPlayers: 2,
-    maxPlayers: 2,
-    chat: [],
-    parameters,
-  };
-  lobby.rooms[token] = newRoom;
-  const secureUrl = `${lobby.games[game].target}&join=${token}`;
-  const result: GenerateRoomResult = { secureUrl, token };
-  io.emit('room_update', newRoom);
-  res.json(result);
-});
+
 app.post('/lobby/game', (req, res) => {
   const { game, target } = req.body;
-  const time = new Date().getTime();
+  const time = Date.now();
   lobby.addGame(time, game, target);
   io.emit('game_update', lobby.getGames());
-  res.json({"ok":true});
+  res.json({ ok: true });
 });
-app.post('/lobby/join-room', (req, res) => {
-  const { token, id } = req.body;
-  const room = lobby.rooms[token];
-  if (!room) {
-    return res.status(404).json({ error: 'Invalid room token.' });
-  }
-  if (room.joiner && room.joiner != id) {
-    return res.status(400).json({ error: 'Room is already full.' });
-  }
-  room.joiner = id;
-  let fullTargetUrl = `${lobby.games[room.game].target}&token=${token}`;
-  Object.keys(room.parameters).forEach((p) => {
-    fullTargetUrl = `${fullTargetUrl}&${p}=${room.parameters[p]}`;
-  });
-  room.target = fullTargetUrl;
 
-  io.emit('room_update', room);
-  res.json(room);
-});
-app.post('/lobby/good', (req, res) => {
-  const { token, id } = req.body;
-  const room = lobby.rooms[token];
-  if (!room) {
-    return res.status(404).json({ error: 'Invalid room token.' });
-  }
-  if (room.joiner != id && room.host != id) {
-    return res.status(400).json({ error: 'Not room owner.' });
-  }
-  lobby.removeRoom(token);
-  io.emit('room_update', lobby.getRooms());
-  res.json({ rooms: lobby.getRooms() });
-});
 app.post('/lobby/join', (req, res) => {
-  const { id, alias, parameters } = req.body;
-  const result = joinLobby(id, alias, parameters);
-  if (result) {
-    return res.status(400).json(result);
-  }
+  const { id, alias, session_id } = req.body;
+  const resolvedAlias = alias || knownAliases.get(id) || id;
+  if (alias) knownAliases.set(id, alias);
+  const err = joinLobby(id, resolvedAlias, session_id || '');
+  if (err) return res.status(400).json({ error: err });
+  io.emit('lobby_update', lobby.getPlayers());
   res.json({ lobbyQueue: lobby.getPlayers() });
 });
+
 app.post('/lobby/leave', (req, res) => {
   const { id } = req.body;
-  const result = leaveLobby(id);
-  if (result) {
-    return res.json(result);
-  }
+  if (leaveLobby(id)) return res.json({ lobbyQueue: lobby.getPlayers() });
   res.status(404).json({ error: 'Player not found in lobby.' });
 });
 
 app.get('/lobby/tracking', (_req, res) => {
   res.json({ tracking: lobby.getTracking() });
 });
+
 app.get('/lobby/status', (_req, res) => {
   res.json({ lobbyQueue: lobby.getPlayers() });
 });
 
 io.on('connection', (socket) => {
   socket.emit('lobby_update', lobby.getPlayers());
-  socket.emit('room_update', Object.values(lobby.rooms));
   io.emit('game_update', lobby.getGames());
 
-  // Lobby socket messages.
-  socket.on('join', ({ id, alias }) => {
-    if (!lobby.players[id]) {
-      joinLobby(id, alias, {});
-    }
-    // We should send the lobby update so we can observe the person we gave a url to.
-    io.emit('lobby_update', lobby.getPlayers());
-  });
+  // --- Lobby iframe socket events ---
 
-  socket.on('log', msg => {
-    const time = new Date().getTime();
-    console.log(time, 'log', msg);
+  socket.on('join', ({ id, alias, session_id }) => {
+    if (!id) return;
+
+    lobbySocketsByPlayer.set(id, socket);
+    lobbySocketToPlayer.set(socket.id, id);
+    if (session_id) {
+      sessionToPlayer.set(session_id, id);
+    }
+
+    const resolvedAlias = alias || knownAliases.get(id) || id;
+
+    if (!lobby.players[id]) {
+      joinLobby(id, resolvedAlias, session_id || '');
+    } else {
+      lobby.players[id].alias = resolvedAlias;
+      if (session_id) {
+        lobby.players[id].session_id = session_id;
+      }
+    }
+    lobby.players[id].lastActive = Date.now();
+    io.emit('lobby_update', lobby.getPlayers());
+
+    if (session_id) {
+      const pendingSock = pendingIdentifies.get(session_id);
+      if (pendingSock && pendingSock.connected) {
+        pendingIdentifies.delete(session_id);
+        completeGameSocketRegistration(id, pendingSock);
+      }
+    }
   });
 
   socket.on('leave', ({ id }) => {
     leaveLobby(id);
   });
 
-  socket.on('chat_message', ({ alias, content }) => {
-    io.emit('chat_message', { alias, content });
+  // --- Challenge protocol ---
+
+  socket.on('challenge', ({ target_id, game, amount, per_game }) => {
+    const fromId = lobbySocketToPlayer.get(socket.id);
+    if (!fromId) return;
+
+    const fromPlayer = lobby.players[fromId];
+    if (!fromPlayer) return;
+
+    const challenge = lobby.createChallenge(
+      fromId, target_id, game || 'calpoker',
+      amount || '100', per_game || '10',
+    );
+
+    const targetSocket = lobbySocketsByPlayer.get(target_id);
+    if (targetSocket) {
+      targetSocket.emit('challenge_received', {
+        challenge_id: challenge.id,
+        from_id: fromId,
+        from_alias: fromPlayer.alias,
+        game: challenge.game,
+        amount: challenge.amount,
+        per_game: challenge.per_game,
+      });
+    }
   });
 
-  // Game socket messages.
-  socket.on('game_message', ({ party, token, msgno, msg }) => {
-    io.emit('game_message', { party, token, msgno, msg });
+  socket.on('challenge_accept', ({ challenge_id }) => {
+    const challenge = lobby.getChallenge(challenge_id);
+    if (!challenge) return;
+
+    const accepterId = lobbySocketToPlayer.get(socket.id);
+    if (!accepterId || accepterId !== challenge.target_id) return;
+
+    lobby.removeChallenge(challenge_id);
+
+    const pairing = lobby.createPairing(
+      challenge.from_id, challenge.target_id,
+      challenge.game, challenge.amount, challenge.per_game,
+    );
+
+    // Notify challenger's lobby socket
+    const challengerLobbySocket = lobbySocketsByPlayer.get(challenge.from_id);
+    if (challengerLobbySocket) {
+      challengerLobbySocket.emit('challenge_resolved', {
+        challenge_id,
+        accepted: true,
+      });
+    }
+
+    const matchedBase = {
+      token: pairing.token,
+      game_type: challenge.game,
+      amount: challenge.amount,
+      per_game: challenge.per_game,
+    };
+
+    const challengerGameSocket = gameSocketsByPlayer.get(challenge.from_id);
+    const accepterGameSocket = gameSocketsByPlayer.get(challenge.target_id);
+
+    if (challengerGameSocket) {
+      challengerGameSocket.emit('matched', { ...matchedBase, i_am_initiator: true });
+    }
+    if (accepterGameSocket) {
+      accepterGameSocket.emit('matched', { ...matchedBase, i_am_initiator: false });
+    }
   });
 
-  socket.on('saves', ({ iStarted, saves, token }) => {
-    io.emit('saves', { iStarted, saves, token });
+  socket.on('challenge_decline', ({ challenge_id }) => {
+    const challenge = lobby.getChallenge(challenge_id);
+    if (!challenge) return;
+
+    lobby.removeChallenge(challenge_id);
+
+    const challengerSocket = lobbySocketsByPlayer.get(challenge.from_id);
+    if (challengerSocket) {
+      challengerSocket.emit('challenge_resolved', {
+        challenge_id,
+        accepted: false,
+      });
+    }
   });
 
-  socket.on('peer', ({ iStarted, beaconId, token }) => {
-    io.emit('peer', { iStarted, beaconId, token });
+  // --- TrackerConnection (game socket) events ---
+
+  socket.on('identify', ({ session_id }) => {
+    if (!session_id) return;
+
+    const playerId = sessionToPlayer.get(session_id);
+    if (!playerId) {
+      pendingIdentifies.set(session_id, socket);
+      return;
+    }
+
+    completeGameSocketRegistration(playerId, socket);
+  });
+
+  socket.on('message', ({ data }) => {
+    const senderId = gameSocketToPlayer.get(socket.id);
+    if (!senderId) return;
+
+    const peerId = lobby.getPairedPlayerId(senderId);
+    if (!peerId) return;
+
+    const peerSocket = gameSocketsByPlayer.get(peerId);
+    if (peerSocket) {
+      peerSocket.emit('message', { data });
+    }
+  });
+
+  socket.on('close', () => {
+    const senderId = gameSocketToPlayer.get(socket.id);
+    if (!senderId) return;
+
+    const peerId = lobby.getPairedPlayerId(senderId);
+    if (peerId) {
+      const peerSocket = gameSocketsByPlayer.get(peerId);
+      if (peerSocket) {
+        peerSocket.emit('closed', {});
+      }
+    }
+
+    // Tear down pairing
+    const pairing = lobby.getPairingForPlayer(senderId);
+    if (pairing) {
+      lobby.removePairing(pairing.token);
+    }
+  });
+
+  // --- Cleanup on disconnect ---
+
+  socket.on('disconnect', () => {
+    const lobbyPlayerId = lobbySocketToPlayer.get(socket.id);
+    if (lobbyPlayerId) {
+      lobbySocketToPlayer.delete(socket.id);
+      const current = lobbySocketsByPlayer.get(lobbyPlayerId);
+      if (current && current.id === socket.id) {
+        lobbySocketsByPlayer.delete(lobbyPlayerId);
+        leaveLobby(lobbyPlayerId);
+      }
+    }
+
+    const gamePlayerId = gameSocketToPlayer.get(socket.id);
+    if (gamePlayerId) {
+      gameSocketToPlayer.delete(socket.id);
+      const current = gameSocketsByPlayer.get(gamePlayerId);
+      if (current && current.id === socket.id) {
+        gameSocketsByPlayer.delete(gamePlayerId);
+      }
+    }
+
+    for (const [sid, sock] of pendingIdentifies) {
+      if (sock.id === socket.id) {
+        pendingIdentifies.delete(sid);
+        break;
+      }
+    }
   });
 });
 
 setInterval(() => {
-  const time = new Date().getTime();
+  const time = Date.now();
   lobby.sweep(time);
   io.emit('lobby_update', lobby.getPlayers());
 }, 15000);
 
 const port = process.env.PORT || 5801;
-httpServer.listen({
-  host: '0.0.0.0',
-  port: port
-}, () => {
-  console.log(`Server running on port ${port}`);
-});
+httpServer.listen(
+  { host: '0.0.0.0', port },
+  () => { console.log(`Server running on port ${port}`); },
+);

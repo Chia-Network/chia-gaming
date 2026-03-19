@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { Observable } from 'rxjs';
 import { useGameSession, ChannelCoinState, GameCoinState, GameplayEvent } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
-import { generateOrRetrieveUniqueId, parseGameSessionParams, formatMojos, formatAmount } from '../util';
+import { generateOrRetrieveUniqueId, formatMojos, formatAmount } from '../util';
 import { CalpokerOutcome } from '../types/ChiaGaming';
 import { WasmBlobWrapper } from '../hooks/WasmBlobWrapper';
 import Calpoker from '../features/calPoker';
@@ -118,16 +118,17 @@ function CalpokerHand({
 }
 
 export interface GameSessionProps {
-  params: Record<string, string | undefined>;
+  params: import('../types/ChiaGaming').GameSessionParams;
+  peerConn: import('../types/ChiaGaming').PeerConnectionResult;
+  registerMessageHandler: (handler: (msgno: number, msg: string) => void) => void;
   appendGameLog: (line: string) => void;
   appendDebugLog: (line: string) => void;
 }
 
-const GameSession: React.FC<GameSessionProps> = ({ params, appendGameLog, appendDebugLog }) => {
+const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, appendDebugLog }) => {
   const uniqueId = generateOrRetrieveUniqueId();
-  const parsed = parseGameSessionParams(params);
 
-  const session = useGameSession(parsed, uniqueId, appendGameLog, appendDebugLog);
+  const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, appendDebugLog);
 
   if (session.error) {
     return (

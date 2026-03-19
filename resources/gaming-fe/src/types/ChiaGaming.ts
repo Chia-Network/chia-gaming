@@ -109,8 +109,6 @@ export interface GameSessionParams {
   iStarted: boolean;
   amount: bigint;          // mojos, total channel buy-in
   perGameAmount: bigint;   // mojos per hand
-  token: string;
-  lobbyUrl: string;
 }
 
 export interface PeerIdentity {

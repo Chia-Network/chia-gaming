@@ -6,6 +6,7 @@ import {
   GameSessionParams,
   CalpokerOutcome,
   BlockchainReport,
+  PeerConnectionResult,
   WasmEvent,
   WasmNotification,
   WasmNotificationTag,
@@ -82,10 +83,12 @@ export interface UseGameSessionResult {
 export function useGameSession(
   params: GameSessionParams,
   uniqueId: string,
+  peerConn: PeerConnectionResult,
+  registerMessageHandler: (handler: (msgno: number, msg: string) => void) => void,
   appendGameLog: (line: string) => void,
   appendDebugLog: (line: string) => void,
 ): UseGameSessionResult {
-  const { iStarted, amount, perGameAmount, token, lobbyUrl } = params;
+  const { iStarted, amount, perGameAmount } = params;
   const playerNumber = iStarted ? 1 : 2;
 
   const [gameConnectionState, setGameConnectionState] =
@@ -123,8 +126,8 @@ export function useGameSession(
 
   const { gameObject } = getBlobSingleton(
     blockchain,
-    { token, iStarted },
-    lobbyUrl,
+    peerConn,
+    registerMessageHandler,
     uniqueId,
     amount,
     iStarted,

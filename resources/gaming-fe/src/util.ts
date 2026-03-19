@@ -1,5 +1,4 @@
-import { v4 as uuidv4 } from 'uuid';
-import { GameSessionParams, Spend, CoinSpend, SpendBundle } from './types/ChiaGaming';
+import { Spend, CoinSpend, SpendBundle } from './types/ChiaGaming';
 
 export function toUint8(s: string) {
   if (s.length % 2 != 0) {
@@ -57,41 +56,34 @@ export function updateAlias(alias: string) {
   localStorage.setItem('alias', alias);
 }
 
+function randomHex(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 export function generateOrRetrieveAlias(): string {
   let previousName = localStorage.getItem('alias');
-  if (previousName) {
-    return previousName;
-  }
-
-  previousName = `newUser${uuidv4()}`;
+  if (previousName) return previousName;
+  previousName = `Player_${randomHex().substring(0, 8)}`;
   updateAlias(previousName);
   return previousName;
 }
 
 export function generateOrRetrieveUniqueId(): string {
-  let existingId = localStorage.getItem('uniqueId');
-  if (existingId) {
-    return existingId;
-  }
-  existingId = uuidv4();
-  localStorage.setItem('uniqueId', existingId);
+  let existingId = localStorage.getItem('playerId');
+  if (existingId) return existingId;
+  existingId = randomHex();
+  localStorage.setItem('playerId', existingId);
   return existingId;
 }
 
-interface GameSelection {
-  game: string;
-  token: string;
-}
-// Return true if game= and token= are present in the url.
-export function getGameSelection(): GameSelection | undefined {
-  const search = getSearchParams();
-  if (search.game && search.join) {
-    return {
-      game: search.game,
-      token: search.join,
-    };
-  }
-  return undefined;
+export function generateOrRetrieveSessionId(): string {
+  let id = localStorage.getItem('sessionId');
+  if (id) return id;
+  id = randomHex();
+  localStorage.setItem('sessionId', id);
+  return id;
 }
 
 function clvm_enlist(clvms: string[]): string {
@@ -180,31 +172,4 @@ export function formatMojos(mojos: bigint): string {
     return `${sign}${whole.toLocaleString()}.${fracStr} XCH`;
   }
   return `${mojos.toLocaleString()} mojos`;
-}
-
-export function parseGameSessionParams(raw: Record<string, string | undefined>): GameSessionParams {
-  const iStarted = raw.iStarted !== 'false';
-  const amountStr = raw.amount;
-  if (!amountStr) throw new Error('Missing required URL param: amount');
-  let amount: bigint;
-  try {
-    amount = BigInt(amountStr);
-  } catch {
-    throw new Error(`Invalid amount: ${amountStr}`);
-  }
-  if (amount <= 0n) throw new Error(`Invalid amount: ${amountStr}`);
-  let perGameAmount = amount / 10n;
-  if (raw.perGame) {
-    try {
-      perGameAmount = BigInt(raw.perGame);
-    } catch {
-      throw new Error(`Invalid perGame: ${raw.perGame}`);
-    }
-    if (perGameAmount <= 0n) throw new Error(`Invalid perGame: ${raw.perGame}`);
-  }
-  const token = raw.token;
-  if (!token) throw new Error('Missing required URL param: token');
-  const lobbyUrl = raw.lobbyUrl;
-  if (!lobbyUrl) throw new Error('Missing required URL param: lobbyUrl');
-  return { iStarted, amount, perGameAmount, token, lobbyUrl };
 }

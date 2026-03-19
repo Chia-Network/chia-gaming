@@ -20,7 +20,7 @@ import { Wrench, Sun, Cross } from 'lucide-react';
 
 import { WalletConnectOutboundState } from '../hooks/useWalletConnect';
 import { BlockchainReport } from '../types/ChiaGaming';
-import { BlockchainInboundReply, BlockchainOutboundRequest } from '../hooks/BlockchainConnector';
+import { BlockchainInboundReply } from '../hooks/BlockchainConnector';
 
 const WalletConnectHeading = () => {
   const { wcInfo, setWcInfo } = useDebug();
@@ -154,29 +154,6 @@ const WalletConnectHeading = () => {
   }, []);
 
   useEffect(() => {
-    function receivedWindowMessage(
-      evt: MessageEvent<{
-        blockchain_request?: BlockchainOutboundRequest;
-        watching_coins?: { coin_name: string; coin_string: string }[];
-      }>,
-    ) {
-      const data = evt.data;
-      if (data.blockchain_request) {
-        if (evt.origin !== window.location.origin) {
-          throw new Error(
-            `wrong origin for parent event: ${JSON.stringify(evt.data)}`,
-          );
-        }
-        blockchainConnector.getOutbound().next(data.blockchain_request);
-      }
-      if (data.watching_coins) {
-        realBlockchainInfo.setWatchingCoins(data.watching_coins);
-      }
-    }
-
-    window.addEventListener('message', receivedWindowMessage);
-
-    // Ensure that replies go to the child frame.
     const bcSubscription = blockchainConnector.getInbound().subscribe({
       next: (evt: BlockchainInboundReply) => {
         if (evt.getBalance) {
@@ -189,20 +166,11 @@ const WalletConnectHeading = () => {
           if (addressTimerRef.current) clearTimeout(addressTimerRef.current);
           addressTimerRef.current = setTimeout(requestRecvAddress, 15000);
         }
-        const subframe = document.getElementById('subframe') as HTMLIFrameElement | null;
-        if (subframe?.contentWindow) {
-          subframe.contentWindow.postMessage(
-            {
-              blockchain_reply: evt,
-            },
-            '*',
-          );
-        }
       },
     });
 
     const biSubscription = blockchainDataEmitter.getObservable().subscribe({
-      next: (evt: BlockchainReport) => {
+      next: (_evt: BlockchainReport) => {
         if (!haveBlock) {
           setHaveBlock(true);
           if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
@@ -210,22 +178,12 @@ const WalletConnectHeading = () => {
           requestBalance();
           requestRecvAddress();
         }
-        const subframe = document.getElementById('subframe') as HTMLIFrameElement | null;
-        if (subframe?.contentWindow) {
-          subframe.contentWindow.postMessage(
-            {
-              blockchain_info: evt,
-            },
-            '*',
-          );
-        }
       },
     });
 
     return function () {
       if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
       if (addressTimerRef.current) clearTimeout(addressTimerRef.current);
-      window.removeEventListener('message', receivedWindowMessage);
       bcSubscription.unsubscribe();
       biSubscription.unsubscribe();
     };

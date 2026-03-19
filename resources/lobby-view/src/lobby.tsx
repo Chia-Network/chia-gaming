@@ -1,289 +1,316 @@
-
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { useLobbySocket } from 'chia-gaming-lobby-connection';
-import { getSearchParams, getFragmentParams, generateOrRetrieveAlias, generateOrRetrieveUniqueId, updateAlias } from './util';
-import ConnectedPlayers from './features/lobbyComponents/ConnectedPlayers';
-import CardDivider from './features/lobbyComponents/CardDivider';
-import Chat from './features/lobbyComponents/Chat';
-import ActiveRooms from './features/lobbyComponents/ActiveRooms';
-import CreateRoomDialog from './features/lobbyComponents/CreateRoomDialog';
-import ShareRoomDialog from './features/lobbyComponents/ShareRoomDialog';
+import { useState, useEffect } from 'react';
+import { useLobbySocket, ChallengeReceived } from 'chia-gaming-lobby-connection';
+import { getSearchParams } from './util';
+import { Edit, Cross, User, Crown, Swords } from 'lucide-react';
 import { Button } from './button';
 
 const LobbyScreen = () => {
-  const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());
   const params = getSearchParams();
-  const fragment = getFragmentParams();
-  const uniqueId = params.uniqueId || generateOrRetrieveUniqueId();
+  const uniqueId = params.uniqueId || '';
+  const sessionId = params.session || '';
+
+  const [myAlias, setMyAlias] = useState('');
+  const [aliasConfirmed, setAliasConfirmed] = useState(false);
+  const [aliasLoading, setAliasLoading] = useState(true);
+  const [editingAlias, setEditingAlias] = useState(false);
+
+  useEffect(() => {
+    if (!uniqueId) return;
+    fetch(`${window.location.origin}/lobby/alias?id=${encodeURIComponent(uniqueId)}`)
+      .then((r) => r.json())
+      .then(({ alias }) => {
+        if (alias) {
+          setMyAlias(alias);
+          setAliasConfirmed(true);
+        }
+        setAliasLoading(false);
+      })
+      .catch(() => setAliasLoading(false));
+  }, [uniqueId]);
+
   const {
     players,
-    rooms,
-    messages,
-    sendMessage,
+    pendingChallenge,
+    challengeSent,
+    sendChallenge,
+    acceptChallenge,
+    declineChallenge,
     setLobbyAlias,
-    generateRoom,
-    joinRoom,
-    lobbyGames,
   } = useLobbySocket(
     window.location.origin,
-    uniqueId,
-    myAlias,
-    true,
-    params,
-    fragment,
-    (newUrl: string) => {
-      if (window.parent !== window) {
-        window.parent.postMessage({ type: 'game-start', url: newUrl }, '*');
-      } else {
-        window.location.href = newUrl;
-      }
-    }
+    aliasConfirmed ? uniqueId : '',
+    sessionId,
   );
 
-  const [chatInput, setChatInput] = useState('');
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [gameChoice, setGameChoice] = useState(lobbyGames[0]?.game || '');
-  const [wagerInput, setWagerInputPrimitive] = useState('100');
-  const [wagerValidationError, setWagerValidationError] = useState('');
-  const [perHandInput, setPerHandInput] = useState('10');
-  const [editingAlias, setEditingAlias] = useState(false);
-  const [gotoUrl, setGotoUrl] = useState('');
-  const [urlDialogOpen, setUrlDialogOpen] = useState(false);
-  const [secureUrl, setSecureUrl] = useState('');
-  // UI state for split handle
-  const [splitPct, setSplitPct] = useState(50); // percentage for top (Connected Players)
-  const rightColumnRef = useRef<HTMLDivElement | null>(null);
-  const messagesRef = useRef<HTMLDivElement | null>(null);
-  // Calculate per-hand amount
-  const setWagerInput = useCallback((newWagerInput: string) => {
-    setWagerInputPrimitive(newWagerInput);
-    try {
-      const newWagerInputInteger = parseInt(newWagerInput);
-      setWagerValidationError('');
-      const newPerHand = Math.max(1, Math.floor(newWagerInputInteger / 10));
-      setPerHandInput(newPerHand.toString());
-    } catch (e: any) {
-      setWagerValidationError(`${e.toString()}`);
-    }
-  }, []);
-
-  const handleSend = () => {
-    if (chatInput.trim()) {
-      sendMessage(chatInput);
-      setChatInput('');
-    }
-  };
-
-  const validateCreateSessionIsOK = () => {
-    if (parseInt(wagerInput) < 100) {
-      setWagerValidationError('Please buy-in with 100 mojos or more.');
-      return false;
-    }
-    return true;
+  function confirmAlias() {
+    const trimmed = myAlias.trim();
+    if (!trimmed) return;
+    fetch(`${window.location.origin}/lobby/set-alias`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: uniqueId, alias: trimmed }),
+    }).then(() => {
+      setMyAlias(trimmed);
+      setAliasConfirmed(true);
+    });
   }
-
-  // Auto-scroll chat messages to bottom when new messages arrive
-  useEffect(() => {
-    if (messagesRef.current) {
-      const el = messagesRef.current;
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [messages]);
-
-  // Drag handle logic for resizing the two right-column panels
-  useEffect(() => {
-    let dragging = false;
-
-    const onMove = (clientY: number) => {
-      if (!rightColumnRef.current) return;
-      const rect = rightColumnRef.current.getBoundingClientRect();
-      const rel = (clientY - rect.top) / rect.height;
-      // clamp between 25% and 75% so neither panel gets too small
-      const pct = Math.max(25, Math.min(75, Math.round(rel * 100)));
-      setSplitPct(pct);
-    };
-
-    const mouseMove = (e: MouseEvent) => {
-      if (!dragging) return;
-      onMove(e.clientY);
-    };
-
-    const touchMove = (e: TouchEvent) => {
-      if (!dragging) return;
-      onMove(e.touches[0].clientY);
-    };
-
-    const mouseUp = () => {
-      dragging = false;
-      document.body.style.userSelect = '';
-      window.removeEventListener('mousemove', mouseMove);
-      window.removeEventListener('touchmove', touchMove);
-      window.removeEventListener('mouseup', mouseUp);
-      window.removeEventListener('touchend', mouseUp);
-    };
-
-    const startDrag = (startY: number) => {
-      dragging = true;
-      document.body.style.userSelect = 'none';
-      onMove(startY);
-      window.addEventListener('mousemove', mouseMove);
-      window.addEventListener('touchmove', touchMove, {
-        passive: false,
-      } as any);
-      window.addEventListener('mouseup', mouseUp);
-      window.addEventListener('touchend', mouseUp);
-    };
-
-    // expose startDrag via dataset on ref element for the handle to call
-    if (rightColumnRef.current) {
-      (rightColumnRef.current as any)._startDrag = startDrag;
-    }
-
-    return () => {
-      window.removeEventListener('mousemove', mouseMove);
-      window.removeEventListener('touchmove', touchMove as any);
-      window.removeEventListener('mouseup', mouseUp);
-      window.removeEventListener('touchend', mouseUp);
-    };
-  }, []);
-
-  const openDialog = () => setDialogOpen(true);
-  const closeDialog = () => setDialogOpen(false);
-
-  const handleCreate = async () => {
-    if (!gameChoice || !wagerInput) return;
-    if (!validateCreateSessionIsOK()) return;
-    const { secureUrl } = await generateRoom(
-      gameChoice,
-      wagerInput,
-      perHandInput,
-    );
-    setSecureUrl(secureUrl);
-    setUrlDialogOpen(true);
-  };
-
-  const handleCopyAndClose = async () => {
-    try {
-      await navigator.clipboard.writeText(secureUrl);
-    } catch (err) {
-      console.error('Failed to copy:', err);
-    }
-    setGotoUrl(secureUrl);
-    setUrlDialogOpen(false);
-    closeDialog();
-  };
-
-  const handleCancelShare = () => {
-    setUrlDialogOpen(false);
-    closeDialog();
-  };
-
-  useEffect(() => {
-    if (fragment.token) joinRoom(fragment.token).catch(() => {});
-  }, [fragment, joinRoom]);
 
   function commitEdit(e: any) {
     const value = e.target.value;
     setEditingAlias(false);
-    updateAlias(value);
+    setMyAlias(value);
     setLobbyAlias(uniqueId, value);
   }
 
-  function getPlayerAlias(id: string): string {
-    const player = players.find((p) => p.id === id);
-    return player ? player.alias : `Unknown Player (${id})`;
+  const [challengeTarget, setChallengeTarget] = useState<{ id: string; alias: string } | null>(null);
+  const [challengeGame, setChallengeGame] = useState('calpoker');
+  const [challengeAmount, setChallengeAmount] = useState('100');
+  const [challengePerGame, setChallengePerGame] = useState('10');
+
+  function openChallengeDialog(targetId: string, targetAlias: string) {
+    setChallengeTarget({ id: targetId, alias: targetAlias });
   }
 
-  useEffect(() => {
-    if (lobbyGames.length > 0 && !gameChoice) {
-      setGameChoice(lobbyGames[0].game);
-    }
-  }, [lobbyGames, gameChoice]);
+  function submitChallenge() {
+    if (!challengeTarget) return;
+    sendChallenge(challengeTarget.id, challengeGame, challengeAmount, challengePerGame);
+    setChallengeTarget(null);
+  }
 
-  const shortenedUrl =
-    secureUrl?.length > 40 ? `${secureUrl.slice(0, 40)}...` : secureUrl;
+  if (aliasLoading) {
+    return (
+      <div className="p-4 sm:p-6 min-h-screen bg-canvas-bg-subtle flex items-center justify-center">
+        <p className="text-canvas-text">Loading...</p>
+      </div>
+    );
+  }
+
+  if (!aliasConfirmed) {
+    return (
+      <div className="p-4 sm:p-6 min-h-screen bg-canvas-bg-subtle flex flex-col items-center justify-center">
+        <div className="w-full max-w-sm space-y-4">
+          <h2 className="text-xl font-bold text-canvas-text-contrast text-center">
+            Choose a Display Name
+          </h2>
+          <p className="text-sm text-canvas-text text-center">
+            Pick a name other players will see in the lobby.
+          </p>
+          <input
+            autoFocus
+            className="w-full px-3 py-2 rounded bg-canvas-bg text-canvas-text border border-canvas-border outline-none text-center text-lg"
+            placeholder="Your name"
+            value={myAlias}
+            onChange={(e) => setMyAlias(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && confirmAlias()}
+          />
+          <Button
+            variant="solid"
+            color="primary"
+            size="default"
+            onClick={confirmAlias}
+            fullWidth
+          >
+            Join Lobby
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="p-4 sm:p-6 md:p-8 pb-0 min-h-screen bg-canvas-bg-subtle relative">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-3">
-        <div>
-          <h2 className="text-xl font-bold text-canvas-text-contrast">Game Lobby</h2>
-        </div>
-        <Button variant='surface' color={'secondary'} fullWidth={false}>
-          Change WalletConnect Connection
-        </Button>
+    <div className="p-4 sm:p-6 min-h-screen bg-canvas-bg-subtle">
+      <div className="mb-4">
+        <h2 className="text-xl font-bold text-canvas-text-contrast">Game Lobby</h2>
       </div>
 
-      {/* Hidden automation URL */}
-      <div className="absolute opacity-0" aria-label="partner-target-url">
-        {gotoUrl}
+      <div className="mb-4">
+        {editingAlias ? (
+          <div className="flex flex-row gap-2 items-center">
+            <input
+              aria-label="alias-input"
+              className="px-3 py-2 rounded bg-canvas-bg text-canvas-text border border-canvas-border outline-none"
+              placeholder="Enter new alias"
+              value={myAlias}
+              onChange={(e) => setMyAlias(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && commitEdit(e)}
+              onBlur={commitEdit}
+            />
+            <button
+              onClick={commitEdit}
+              aria-label="save-alias"
+              className="px-4 py-2 rounded bg-secondary text-white font-medium"
+            >
+              Save
+            </button>
+            <button
+              onClick={() => setEditingAlias(false)}
+              className="w-8 h-8 flex items-center justify-center text-red-500"
+            >
+              <Cross className="w-5 h-5" />
+            </button>
+          </div>
+        ) : (
+          <div className="flex flex-row items-center gap-2">
+            <p className="text-canvas-text">
+              Your name:&nbsp;
+              <strong className="text-canvas-text-contrast font-bold">{myAlias}</strong>
+            </p>
+            <button
+              aria-label="edit-alias"
+              onClick={() => setEditingAlias(true)}
+              className="text-canvas-solid w-6 h-6 flex items-center justify-center"
+            >
+              <Edit className="w-4 h-4" />
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Main Content */}
-      <div className="flex flex-col md:flex-row border-none md:border md:border-canvas-border rounded-3xl gap-3 md:gap-0 h-auto md:h-[calc(100vh-150px)]">
-        {/* Active Rooms */}
-        <ActiveRooms
-          rooms={rooms}
-          openDialog={openDialog}
-          joinRoom={joinRoom}
-          getPlayerAlias={getPlayerAlias}
+      <div className="border-b border-canvas-line mb-4" />
+
+      {pendingChallenge && (
+        <IncomingChallengeDialog
+          challenge={pendingChallenge}
+          onAccept={() => acceptChallenge(pendingChallenge.challenge_id)}
+          onDecline={() => declineChallenge(pendingChallenge.challenge_id)}
         />
+      )}
 
-        {/* Connected Players and Chat */}
-        <div
-          ref={rightColumnRef}
-          className="flex flex-col w-full lg:w-1/3 min-w-0 h-full md:border-l border-canvas-border rounded-tr-2xl"
-        >
-          <ConnectedPlayers
-            splitPct={splitPct}
-            editingAlias={editingAlias}
-            myAlias={myAlias}
-            setMyAlias={setMyAlias}
-            commitEdit={commitEdit}
-            setEditingAlias={setEditingAlias}
-            players={players}
-            uniqueId={uniqueId}
-          />
-
-          <CardDivider rightColumnRef={rightColumnRef} />
-
-          <Chat
-            splitPct={splitPct}
-            messagesRef={messagesRef}
-            messages={messages}
-            chatInput={chatInput}
-            setChatInput={setChatInput}
-            handleSend={handleSend}
-          />
+      {challengeTarget && (
+        <div className="mb-4 p-4 rounded-lg bg-canvas-bg border border-canvas-border space-y-3">
+          <p className="text-canvas-text-contrast font-medium">
+            Challenge <strong>{challengeTarget.alias}</strong>
+          </p>
+          <div className="space-y-2">
+            <label className="block text-sm text-canvas-text">
+              Game
+              <select
+                value={challengeGame}
+                onChange={(e) => setChallengeGame(e.target.value)}
+                className="mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
+              >
+                <option value="calpoker">California Poker</option>
+              </select>
+            </label>
+            <label className="block text-sm text-canvas-text">
+              Total buy-in (mojos)
+              <input
+                type="number"
+                min="1"
+                value={challengeAmount}
+                onChange={(e) => setChallengeAmount(e.target.value)}
+                className="mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
+              />
+            </label>
+            <label className="block text-sm text-canvas-text">
+              Per-hand amount (mojos)
+              <input
+                type="number"
+                min="1"
+                value={challengePerGame}
+                onChange={(e) => setChallengePerGame(e.target.value)}
+                className="mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
+              />
+            </label>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="solid" color="primary" size="sm" onClick={submitChallenge}>
+              Send Challenge
+            </Button>
+            <Button variant="outline" color="neutral" size="sm" onClick={() => setChallengeTarget(null)}>
+              Cancel
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Create Room Dialog */}
-      <CreateRoomDialog
-        dialogOpen={dialogOpen}
-        closeDialog={() => setDialogOpen(false)}
-        gameChoice={gameChoice}
-        setGameChoice={setGameChoice}
-        lobbyGames={lobbyGames}
-        wagerInput={wagerInput}
-        setWagerInput={setWagerInput}
-        perHandInput={perHandInput}
-        setPerHandInput={setPerHandInput}
-        wagerValidationError={wagerValidationError}
-        handleCreate={handleCreate}
-      />
+      {challengeSent && (
+        <div className="mb-4 p-3 rounded-lg bg-primary-bg border border-primary-border text-primary-text text-sm">
+          Waiting for opponent to respond to your challenge...
+        </div>
+      )}
 
-      {/* Share Room Dialog */}
-      <ShareRoomDialog
-        urlDialogOpen={urlDialogOpen}
-        handleCancelShare={handleCancelShare}
-        shortenedUrl={shortenedUrl}
-        handleCopyAndClose={handleCopyAndClose}
-      />
+      <h3 className="text-lg font-semibold text-canvas-text-contrast mb-3">
+        Connected Players
+      </h3>
+
+      {players.length === 0 ? (
+        <div className="text-center py-8 text-canvas-text">
+          <User
+            className="mx-auto mb-2"
+            style={{ fontSize: 48, color: 'var(--color-canvas-solid)' }}
+          />
+          <h6 className="text-lg font-medium text-canvas-text-contrast">
+            No Other Players Connected
+          </h6>
+          <p className="text-sm text-canvas-text">Waiting for others to join...</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {players.map((player) => (
+            <div
+              key={player.id}
+              className="flex items-center justify-between p-3 rounded-lg bg-canvas-bg border border-canvas-border"
+            >
+              <div className="flex items-center gap-2">
+                {player.id === uniqueId ? (
+                  <span className="inline-flex items-center gap-1 text-canvas-text-contrast font-medium">
+                    <Crown className="w-4 h-4" style={{ color: 'var(--color-warning-solid)' }} />
+                    {player.alias} (You)
+                  </span>
+                ) : (
+                  <span className="text-canvas-text">{player.alias}</span>
+                )}
+              </div>
+
+              {player.id !== uniqueId && (
+                <Button
+                  variant="solid"
+                  color="primary"
+                  size="sm"
+                  disabled={challengeSent || !!challengeTarget}
+                  onClick={() => openChallengeDialog(player.id, player.alias)}
+                  leadingIcon={<Swords className="w-4 h-4" />}
+                >
+                  Challenge
+                </Button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
-
   );
 };
+
+function IncomingChallengeDialog({
+  challenge,
+  onAccept,
+  onDecline,
+}: {
+  challenge: ChallengeReceived;
+  onAccept: () => void;
+  onDecline: () => void;
+}) {
+  return (
+    <div className="mb-4 p-4 rounded-lg bg-secondary-bg border border-secondary-border">
+      <p className="text-canvas-text-contrast font-medium mb-2">
+        <strong>{challenge.from_alias}</strong> challenges you to{' '}
+        <strong>{challenge.game}</strong>
+      </p>
+      <p className="text-sm text-canvas-text mb-3">
+        Buy-in: {challenge.amount} mojos &middot; Per hand: {challenge.per_game} mojos
+      </p>
+      <div className="flex gap-2">
+        <Button variant="solid" color="primary" size="sm" onClick={onAccept}>
+          Accept
+        </Button>
+        <Button variant="outline" color="neutral" size="sm" onClick={onDecline}>
+          Decline
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 export default LobbyScreen;

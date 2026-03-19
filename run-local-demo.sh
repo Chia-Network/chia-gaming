@@ -12,10 +12,9 @@ WC_DIR="$SCRIPT_DIR/resources/wc-stub"
 CLSP_DIR="$SCRIPT_DIR/clsp"
 
 GAME_PORT=${GAME_PORT:-3002}
-LOBBY_PORT=${LOBBY_PORT:-3003}
+TRACKER_PORT=${TRACKER_PORT:-3003}
 WC_PORT=${WC_PORT:-3004}
 SIM_PORT=${SIM_PORT:-5800}
-LOBBY_SERVICE_PORT=${LOBBY_SERVICE_PORT:-5801}
 
 SKIP_BUILD=0
 PIDS=()
@@ -28,8 +27,9 @@ for arg in "$@"; do
 done
 
 # Kill anything still listening on our ports from a previous run.
-for p in $GAME_PORT $LOBBY_PORT $WC_PORT $SIM_PORT $LOBBY_SERVICE_PORT; do
-    pids=$(lsof -ti:"$p" 2>/dev/null || true)
+# Use -sTCP:LISTEN to avoid killing browsers that have connections to these ports.
+for p in $GAME_PORT $TRACKER_PORT $WC_PORT $SIM_PORT; do
+    pids=$(lsof -ti:"$p" -sTCP:LISTEN 2>/dev/null || true)
     [ -n "$pids" ] && kill $pids 2>/dev/null || true
 done
 sleep 0.5
@@ -40,7 +40,7 @@ cleanup() {
     for pid in "${PIDS[@]}"; do
         kill "$pid" 2>/dev/null || true
     done
-    kill $(lsof -i -n -P | grep LISTEN | grep :3004 | awk '{print $2}')
+    kill $(lsof -i -n -P | grep LISTEN | grep :$WC_PORT | awk '{print $2}') 2>/dev/null || true
     echo "All services stopped."
 }
 trap cleanup EXIT
@@ -58,8 +58,6 @@ fi
 
 # ── Incremental build helpers ─────────────────────────────────────────
 
-# Returns 0 (needs build) if any file under the watched dirs is newer
-# than the stamp file, or if the stamp doesn't exist yet.
 needs_build() {
     local stamp="$1"; shift
     [ ! -f "$stamp" ] && return 0
@@ -131,8 +129,33 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     fi
 fi
 
-# Generate the urls file with the actual lobby port
-echo "{\"tracker\": \"http://localhost:$LOBBY_PORT/?lobby=true\"}" > "$FE_DIR/dist/urls"
+# ── Assemble staging directories ────────────────────────────────────
+
+echo "=== Assembling player app staging directory ==="
+GAME_SERVE="$FE_DIR/serve"
+rm -rf "$GAME_SERVE"
+mkdir -p "$GAME_SERVE"
+cp "$FE_DIR/public/index.html" "$GAME_SERVE/index.html"
+cp "$FE_DIR/dist/js/index-rollup.js" "$GAME_SERVE/index.js"
+cp "$FE_DIR/dist/css/index.css" "$GAME_SERVE/index.css"
+cp "$FE_DIR/dist/chia_gaming_wasm.js" "$GAME_SERVE/chia_gaming_wasm.js"
+cp "$FE_DIR/dist/chia_gaming_wasm_bg.wasm" "$GAME_SERVE/chia_gaming_wasm_bg.wasm"
+# Static urls config for the player app
+echo "{\"tracker\": \"http://localhost:$TRACKER_PORT\"}" > "$GAME_SERVE/urls"
+# Symlink chialisp hex files
+ln -sf "$CLSP_DIR" "$GAME_SERVE/clsp"
+# Copy images if they exist
+if [ -d "$FE_DIR/public/images" ]; then
+    cp -r "$FE_DIR/public/images" "$GAME_SERVE/images"
+fi
+
+echo "=== Assembling lobby-view staging directory ==="
+LOBBY_SERVE="$LOBBY_VIEW_DIR/serve"
+rm -rf "$LOBBY_SERVE"
+mkdir -p "$LOBBY_SERVE"
+cp "$LOBBY_VIEW_DIR/public/index.html" "$LOBBY_SERVE/index.html"
+cp "$LOBBY_VIEW_DIR/public/index.js" "$LOBBY_SERVE/index.js"
+cp "$LOBBY_VIEW_DIR/dist/css/index.css" "$LOBBY_SERVE/index.css"
 
 # ── Start services ──────────────────────────────────────────────────
 
@@ -155,38 +178,39 @@ if ! curl -s -X POST "http://localhost:$SIM_PORT/get_peak" >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "=== Starting static file server (ports $GAME_PORT, $LOBBY_PORT) ==="
-node "$SCRIPT_DIR/resources/local-server.js" "$SCRIPT_DIR" "$GAME_PORT" "$LOBBY_PORT" &
+echo "=== Starting player app static server (port $GAME_PORT) ==="
+node "$SCRIPT_DIR/resources/static-server.js" "$GAME_SERVE" "$GAME_PORT" &
 PIDS+=($!)
 
 echo "=== Starting wc-stub (port $WC_PORT) ==="
 (cd "$WC_DIR" && PORT=$WC_PORT node --disable-warning=DEP0169 ./dist/index.js) &
 PIDS+=($!)
 
-echo "=== Starting lobby-service (port $LOBBY_SERVICE_PORT) ==="
-(cd "$LOBBY_SERVICE_DIR" && PORT=$LOBBY_SERVICE_PORT node ./dist/index-rollup.cjs --self "http://localhost:$LOBBY_PORT") &
+echo "=== Starting tracker (lobby-service + lobby-view on port $TRACKER_PORT) ==="
+(cd "$LOBBY_SERVICE_DIR" && PORT=$TRACKER_PORT node ./dist/index-rollup.cjs --self "http://localhost:$TRACKER_PORT" --dir "$LOBBY_SERVE") &
 PIDS+=($!)
 
-echo "=== Waiting for static file server ==="
+echo "=== Waiting for services ==="
 for i in $(seq 1 10); do
-    if curl -s "http://localhost:$LOBBY_PORT/" >/dev/null 2>&1; then
-        echo "Static file server ready"
+    if curl -s "http://localhost:$GAME_PORT/" >/dev/null 2>&1 && \
+       curl -s "http://localhost:$TRACKER_PORT/" >/dev/null 2>&1; then
+        echo "All servers ready"
         break
     fi
     sleep 1
 done
 
 echo "=== Starting beacon ==="
-"$SCRIPT_DIR/resources/nginx/beacon.sh" "http://localhost:$GAME_PORT" "http://localhost:$LOBBY_PORT" &
+"$SCRIPT_DIR/resources/nginx/beacon.sh" "http://localhost:$GAME_PORT" "http://localhost:$TRACKER_PORT" &
 PIDS+=($!)
 
 echo ""
 echo "════════════════════════════════════════════════════════"
 echo "  All services running:"
-echo "    Game frontend:  http://localhost:$GAME_PORT"
-echo "    Lobby view:     http://localhost:$LOBBY_PORT"
-echo "    WC stub:        http://localhost:$WC_PORT"
-echo "    Simulator:      http://localhost:$SIM_PORT"
+echo "    Player app (static): http://localhost:$GAME_PORT"
+echo "    Tracker:             http://localhost:$TRACKER_PORT"
+echo "    WC stub:             http://localhost:$WC_PORT"
+echo "    Simulator:           http://localhost:$SIM_PORT"
 echo ""
 echo "  Press any key (or Ctrl-C) to stop all services."
 echo "════════════════════════════════════════════════════════"

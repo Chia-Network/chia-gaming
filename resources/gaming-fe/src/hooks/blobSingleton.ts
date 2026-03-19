@@ -3,9 +3,8 @@ import { WasmBlobWrapper } from './WasmBlobWrapper';
 import { WasmStateInit, loadCalpoker } from './WasmStateInit';
 import {
   InternalBlockchainInterface,
-  PeerIdentity,
+  PeerConnectionResult,
 } from '../types/ChiaGaming';
-import { getGameSocket } from '../services/GameSocket';
 import {
   startNewSession,
 } from './save';
@@ -43,6 +42,7 @@ export async function configGameObject(
   const supportsDirectHandshake = typeof (wasmConnection as unknown as { start_handshake?: unknown }).start_handshake === 'function';
   if (supportsDirectHandshake) {
     gameObject.startHandshake();
+    gameObject.kickSystem(4);
     return gameObject;
   }
 
@@ -64,8 +64,8 @@ export async function configGameObject(
 
 export function getBlobSingleton(
   blockchain: InternalBlockchainInterface,
-  peerIdentity: PeerIdentity,
-  lobbyUrl: string,
+  peerConn: PeerConnectionResult,
+  registerMessageHandler: (handler: (msgno: number, msg: string) => void) => void,
   uniqueId: string,
   amount: bigint,
   iStarted: boolean,
@@ -83,53 +83,39 @@ export function getBlobSingleton(
       });
   };
 
-  const deliverMessage = (msgno: number, msg: string) => {
-    blobSingleton?.deliverMessage(msgno, msg);
-  };
-
   const wasmStateInit = new WasmStateInit(doInternalLoadWasm, fetchHex);
-  const peerconn = getGameSocket(
-    peerIdentity,
-    lobbyUrl,
-    deliverMessage,
-    (_saves: string[]) => {
-      const systemState = blobSingleton!.systemState();
-      const newSession = async () => {
-        try {
-          startNewSession();
-          let calpokerHexes = await loadCalpoker(fetchHex);
-          await configGameObject(
-            blobSingleton!,
-            iStarted,
-            wasmStateInit,
-            calpokerHexes,
-            blockchain,
-            uniqueId,
-            amount
-          );
-        } catch (e) {
-          console.error('[blobSingleton] newSession error:', e);
-        }
-      };
-
-      blobSingleton!.kickSystem(2);
-      if ((systemState & 2) == 0) {
-        newSession();
-        return;
-      }
-    },
-    () => []
-  );
 
   blobSingleton = new WasmBlobWrapper(
     blockchain,
     uniqueId,
     amount,
-    peerconn,
+    peerConn,
   );
 
-  // Blockchain is already configured by WalletConnectHeading in the same
-  // window (via blockchainDataEmitter.select). No postMessage bridge needed.
+  registerMessageHandler((msgno: number, msg: string) => {
+    blobSingleton?.deliverMessage(msgno, msg);
+  });
+
+  // Already matched -- start the session immediately
+  blobSingleton.kickSystem(2);
+  const newSession = async () => {
+    try {
+      startNewSession();
+      const calpokerHexes = await loadCalpoker(fetchHex);
+      await configGameObject(
+        blobSingleton!,
+        iStarted,
+        wasmStateInit,
+        calpokerHexes,
+        blockchain,
+        uniqueId,
+        amount,
+      );
+    } catch (e) {
+      console.error('[blobSingleton] newSession error:', e);
+    }
+  };
+  newSession();
 
   return { gameObject: blobSingleton };
 }

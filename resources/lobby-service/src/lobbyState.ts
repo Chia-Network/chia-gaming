@@ -1,55 +1,41 @@
-import { v4 as uuidv4 } from 'uuid';
+import crypto from 'crypto';
 
 import {
   Player,
-  Room,
   GameDefinition,
-  MatchmakingPreferences,
+  Challenge,
+  Pairing,
 } from './types/lobby';
 
-const ROOM_TTL = 10 * 60 * 1000;
+const PLAYER_TTL = 10 * 60 * 1000;
 const GAME_TTL = 10 * 60 * 1000;
 
+function randomHex(): string {
+  return crypto.randomBytes(16).toString('hex');
+}
+
 function listOfObject<T>(object: Record<string, T>): T[] {
-  const result: T[] = [];
-  Object.keys(object).forEach((k) => {
-    result.push(object[k]);
-  });
-  return result;
+  return Object.keys(object).map((k) => object[k]);
 }
 
 export class Lobby {
   players: Record<string, Player> = {};
-  rooms: Record<string, Room> = {};
   games: Record<string, GameDefinition> = {};
+  challenges: Map<string, Challenge> = new Map();
+  pairings: Map<string, Pairing> = new Map();
+  // Reverse lookup: player_id -> token for the pairing they're in
+  playerToPairing: Map<string, string> = new Map();
 
   sweep(time: number) {
-    const playersInRooms: Record<string, boolean> = {};
     Object.keys(this.games).forEach((k) => {
-      const game = this.games[k];
-      if (time > game.expiration) {
+      if (time > this.games[k].expiration) {
         delete this.games[k];
-      }
-    });
-
-    Object.keys(this.rooms).forEach((k) => {
-      const room: Room = this.rooms[k];
-      if (time > room.expiresAt) {
-        delete this.rooms[k];
-        return;
-      }
-
-      if (room.host) {
-        playersInRooms[room.host] = true;
-      }
-      if (room.joiner) {
-        playersInRooms[room.joiner] = true;
       }
     });
 
     Object.keys(this.players).forEach((k) => {
       const player = this.players[k];
-      if (!playersInRooms[player.id] && time > player.lastActive + ROOM_TTL) {
+      if (time > player.lastActive + PLAYER_TTL) {
         delete this.players[k];
       }
     });
@@ -66,69 +52,82 @@ export class Lobby {
   }
 
   addGame(time: number, game: string, target: string) {
-    if (this.games[game]) {
-      return;
-    }
-
+    if (this.games[game]) return;
     this.games[game] = {
       expiration: time + GAME_TTL,
-      game: game,
-      target: target,
+      game,
+      target,
     };
-  }
-
-  createRoom(host: string, preferences: MatchmakingPreferences) {
-    const room: Room = {
-      token: uuidv4(),
-      minPlayers: 0,
-      game: preferences.game,
-      parameters: preferences.parameters,
-      host,
-      createdAt: Date.now(),
-      expiresAt: Date.now() + ROOM_TTL,
-      status: 'waiting',
-      maxPlayers: 2,
-      chat: [],
-    };
-    this.rooms[room.token] = room;
-    return room;
-  }
-
-  joinRoom(roomId: string, _player: Player) {
-    const room = this.rooms[roomId];
-    if (!room || room.status !== 'waiting') {
-      return null;
-    }
-
-    return room;
-  }
-
-  leaveRoom(roomId: string, _playerId: string) {
-    const room = this.rooms[roomId];
-    if (!room) return false;
-
-    return true;
-  }
-
-  removeRoom(roomId: string) {
-    delete this.rooms[roomId];
   }
 
   getPlayers(): Player[] {
     return listOfObject(this.players);
   }
 
-  getRooms(): Room[] {
-    return listOfObject(this.rooms);
-  }
-
-  // Get this list of game origins we're currently tracking so the web page
-  // can decide whether a balance from one of these is allowed.
   getTracking(): string[] {
     return listOfObject(this.games).map((g) => g.target);
   }
 
   getGames(): GameDefinition[] {
     return listOfObject(this.games);
+  }
+
+  createChallenge(fromId: string, targetId: string, game: string, amount: string, perGame: string): Challenge {
+    const challenge: Challenge = {
+      id: randomHex(),
+      from_id: fromId,
+      target_id: targetId,
+      game,
+      amount,
+      per_game: perGame,
+    };
+    this.challenges.set(challenge.id, challenge);
+    return challenge;
+  }
+
+  getChallenge(challengeId: string): Challenge | undefined {
+    return this.challenges.get(challengeId);
+  }
+
+  removeChallenge(challengeId: string) {
+    this.challenges.delete(challengeId);
+  }
+
+  createPairing(playerAId: string, playerBId: string, gameType: string, amount: string, perGame: string): Pairing {
+    const token = randomHex();
+    const pairing: Pairing = {
+      playerA_id: playerAId,
+      playerB_id: playerBId,
+      token,
+      game_type: gameType,
+      amount,
+      per_game: perGame,
+    };
+    this.pairings.set(token, pairing);
+    this.playerToPairing.set(playerAId, token);
+    this.playerToPairing.set(playerBId, token);
+    return pairing;
+  }
+
+  getPairingForPlayer(playerId: string): Pairing | undefined {
+    const token = this.playerToPairing.get(playerId);
+    if (!token) return undefined;
+    return this.pairings.get(token);
+  }
+
+  getPairedPlayerId(playerId: string): string | undefined {
+    const pairing = this.getPairingForPlayer(playerId);
+    if (!pairing) return undefined;
+    if (pairing.playerA_id === playerId) return pairing.playerB_id;
+    return pairing.playerA_id;
+  }
+
+  removePairing(token: string) {
+    const pairing = this.pairings.get(token);
+    if (pairing) {
+      this.playerToPairing.delete(pairing.playerA_id);
+      this.playerToPairing.delete(pairing.playerB_id);
+      this.pairings.delete(token);
+    }
   }
 }

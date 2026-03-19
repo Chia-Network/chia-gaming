@@ -27,7 +27,6 @@
     "helmet": "^8.1.0",
     "minimist": "^1.2.8",
     "socket.io": "^4.8.1",
-    "typescript": "^5.9.3",
-    "uuid": "^13.0.0"
+    "typescript": "^5.9.3"
   }
 }

@@ -10,6 +10,7 @@ export type FragmentData = Record<string, string>;
 export interface Player {
   id: string;
   alias: string;
+  session_id: string;
   walletAddress?: string;
   joinedAt: number;
   lastActive: number;
@@ -23,56 +24,20 @@ export interface GameDefinition {
   expiration: number;
 }
 
-export interface ChatMessage {
-  sender?: string;
-  text: string;
-  timestamp?: number;
-}
-
-export interface ChatEnvelope {
-  alias: string;
-  content: ChatMessage;
-}
-
-export interface GenerateRoomResult {
-  secureUrl: string;
-  token: string;
-}
-
-export interface Room {
-  token: string;
-  host: string;
-  target?: string;
-  joiner?: string;
-  game: GameType;
-  minPlayers: number;
-  maxPlayers: number;
-  status: 'waiting' | 'in_progress' | 'completed';
-  createdAt: number;
-  startedAt?: number;
-  endedAt?: number;
-  expiresAt: number;
-  parameters: any;
-  chat: ChatMessage[];
-}
-
-export interface MatchmakingPreferences {
+export interface Challenge {
   id: string;
-  alias: string;
-  game: GameType;
-  minPlayers: number;
-  maxPlayers: number;
-  parameters: any;
+  from_id: string;
+  target_id: string;
+  game: string;
+  amount: string;
+  per_game: string;
 }
 
-export interface GameSession {
-  id: string;
-  roomId: string;
-  gameType: GameType;
-  host: string;
-  joiner: string;
-  startedAt: number;
-  status: 'active' | 'in_progress' | 'completed';
-  winner?: string;
-  parameters: string[];
+export interface Pairing {
+  playerA_id: string;
+  playerB_id: string;
+  token: string;
+  game_type: string;
+  amount: string;
+  per_game: string;
 }

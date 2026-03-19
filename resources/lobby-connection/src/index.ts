@@ -1,27 +1,5 @@
-import React from 'react';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import io, { Socket } from 'socket.io-client';
-
-export type GameState = 'idle' | 'searching' | 'playing';
-
-export type FragmentData = Record<string, string>;
-
-interface SendMessageInput {
-  party: boolean;
-  token: string;
-  msg: string;
-}
-
-export interface UseGameSocketReturn {
-  sendMessage: (input: string) => void;
-  gameState: GameState;
-  wagerAmount: string;
-  setWagerAmount: (value: string) => void;
-  playerCoins: number;
-  setPlayerCoins: React.Dispatch<React.SetStateAction<number>>;
-  isPlayerTurn: boolean;
-  playerNumber: number;
-}
 
 export const GameTypes = {
   CALIFORNIA_POKER: 'california_poker',
@@ -30,332 +8,130 @@ export const GameTypes = {
 };
 export type GameType = 'california_poker' | 'krunk' | 'exotic_poker';
 
-export interface Room {
-  token: string;
-  host: string;
-  target?: string;
-  joiner?: string;
-  game: GameType;
-  minPlayers: number;
-  maxPlayers: number;
-  status: 'waiting' | 'in_progress' | 'completed';
-  createdAt: number;
-  startedAt?: number;
-  endedAt?: number;
-  expiresAt: number;
-  parameters: any;
-  chat: ChatMessage[];
-}
-
-export interface GenerateRoomResult {
-  secureUrl: string;
-  token: string;
-}
-
 export interface GameDefinition {
   game: string;
   target: string;
   expiration: number;
 }
 
-export interface ChatMessage {
-  sender?: string;
-  text: string;
-  timestamp?: number;
-}
-
-export interface ChatEnvelope {
-  alias: string;
-  content: ChatMessage;
-}
-
-const useGameSocket = (
-  lobbyUrl: string,
-  deliverMessage: (m: string) => void,
-  setSocketEnabled: (saves: string[]) => void,
-  saves: string[],
-  searchParams: any
-): UseGameSocketReturn => {
-  const token = searchParams.token;
-  const iStarted = searchParams.iStarted !== 'false';
-  const socketRef = useRef<Socket | null>(null);
-
-  const [gameState, setGameState] = useState<GameState>('idle');
-  const [wagerAmount, setWagerAmount] = useState<string>('');
-  const [playerCoins, setPlayerCoins] = useState<number>(100);
-  const [isPlayerTurn] = useState<boolean>(false);
-  const [playerNumber] = useState<number>(0);
-
-  const eff = () => {
-    let fullyConnected = false;
-    if (!socketRef.current) {
-      const socketResult: any = io(lobbyUrl);
-      socketRef.current = socketResult;
-    }
-    const socket = socketRef.current;
-
-    const handleWaiting = () => {
-      setGameState('searching');
-    };
-
-    socket?.on('waiting', handleWaiting);
-
-    // Try to get through a 'peer' message until we succeed.
-    const beacon = setInterval(() => {
-      socketRef.current?.emit('peer', { iStarted, saves });
-    }, 500);
-
-    // When we receive a message from our peer, we know we're connected.
-    socket?.on('peer', (msg: any) => {
-      if (msg.iStarted != iStarted && !fullyConnected) {
-        // If they haven't seen our message yet, we know we're connected so
-        // we can send a ping to them now.
-        fullyConnected = true;
-        socketRef.current?.emit('peer', { iStarted, saves });
-        clearInterval(beacon);
-        setSocketEnabled(saves);
-      }
-    });
-
-    socket?.on('game_message', (input: SendMessageInput) => {
-      console.log('raw message', input);
-      if (input.token !== token || input.party === iStarted) {
-        return;
-      }
-
-      console.log('got remote message', input.msg);
-      deliverMessage(input.msg);
-    });
-
-    return () => {
-      socket?.off('game_message', handleWaiting);
-    };
-  };
-
-  eff();
-
-  const sendMessage = (msg: string) => {
-    socketRef.current?.emit('game_message', {
-      party: iStarted,
-      token,
-      msg,
-    });
-  };
-
-  return {
-    sendMessage,
-    gameState,
-    wagerAmount,
-    setWagerAmount,
-    playerCoins,
-    setPlayerCoins,
-    isPlayerTurn,
-    playerNumber,
-  };
-};
-
 export interface Player {
   id: string;
   alias: string;
+  session_id: string;
   game: string;
   walletAddress?: string;
   parameters: any;
 }
 
+export interface ChallengeReceived {
+  challenge_id: string;
+  from_id: string;
+  from_alias: string;
+  game: string;
+  amount: string;
+  per_game: string;
+}
+
+export interface ChallengeResolved {
+  challenge_id: string;
+  accepted: boolean;
+}
+
 export interface UseLobbySocketReturn {
-    players: Player[];
-    rooms: Room[];
-    messages: ChatEnvelope[];
-    sendMessage: (message: string) => void;
-    generateRoom: (game: string, amount: string, perGame: string) => Promise<GenerateRoomResult>;
-    joinRoom: (token: string) => Promise<Room>;
-    leaveRoom: (token: string) => void;
-    setLobbyAlias: (id: string, alias: string) => void;
-    uniqueId: string;
-    fragment: any;
-    lobbyGames: GameDefinition[];
-};
+  players: Player[];
+  pendingChallenge: ChallengeReceived | null;
+  challengeSent: boolean;
+  sendChallenge: (targetId: string, game: string, amount: string, perGame: string) => void;
+  acceptChallenge: (challengeId: string) => void;
+  declineChallenge: (challengeId: string) => void;
+  setLobbyAlias: (id: string, alias: string) => void;
+  uniqueId: string;
+  lobbyGames: GameDefinition[];
+}
 
 export function useLobbySocket(
   lobbyUrl: string,
   uniqueId: string,
-  alias: string,
-  walletConnect: boolean,
-  params: any,
-  fragment: any,
-  navigate: (url: string) => void,
+  sessionId: string,
 ): UseLobbySocketReturn {
   const [players, setPlayers] = useState<Player[]>([]);
-  const [rooms, setRooms] = useState<Room[]>([]);
-  const [messages, setMessages] = useState<ChatEnvelope[]>([]);
-  const [didJoin, setDidJoin] = useState(false);
+  const [pendingChallenge, setPendingChallenge] = useState<ChallengeReceived | null>(null);
+  const [challengeSent, setChallengeSent] = useState(false);
   const [lobbyGames, setLobbyGames] = useState<GameDefinition[]>([]);
   const socketRef = useRef<Socket>(undefined);
-  const navigatingRef = useRef(false);
-
-  const joinRoom = useCallback(
-    async (token: string) => {
-      const room = await fetch(
-        `${lobbyUrl}/lobby/join-room`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            token,
-            id: uniqueId,
-            alias,
-            game: 'lobby',
-            parameters: {},
-          }),
-          headers: { "Content-Type": "application/json" }
-        }
-      ).then(res => res.json());
-
-      return room as Room;
-    },
-    [uniqueId],
-  );
-
-  function tryJoinRoom() {
-    for (const room of rooms) {
-      if (!room.host) continue;
-      if (params.token && room.token != params.token) continue;
-
-      if (params.token && room.host != uniqueId && !room.joiner && !didJoin) {
-        setDidJoin(true);
-        joinRoom(params.token).catch(() => {});
-        continue;
-      }
-
-      if (
-        (room.host === uniqueId || room.joiner === uniqueId) &&
-        room.target &&
-        walletConnect &&
-        !navigatingRef.current
-      ) {
-        navigatingRef.current = true;
-        const iStarted = room.host === uniqueId;
-        const newUrl =
-          `${room.target}&uniqueId=${uniqueId}&iStarted=${iStarted}` as string;
-        fetch('/lobby/good', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            id: uniqueId,
-            token: room.token,
-          }),
-        }).catch(() => {});
-        navigate(newUrl);
-        break;
-      }
-    }
-  }
-
-  tryJoinRoom();
 
   useEffect(() => {
+    if (!uniqueId) return;
+
     const socket = io(lobbyUrl);
     socketRef.current = socket;
 
-    socket.emit('join', { id: uniqueId, alias: alias });
+    socket.emit('join', { id: uniqueId, session_id: sessionId });
 
     socket.on('lobby_update', (q: Player[]) => setPlayers(q));
-    socket.on('room_update', (r: Room | Room[]) => {
-      const updated = Array.isArray(r) ? r : [r];
-      // Determine whether we've been connected with someone based on the .host and .joined
-      // members of the rooms.
-      setRooms((prev: Room[]) => {
-        const map = new Map(prev.map((x: Room) => [x.token, x]));
-        updated.forEach((x: Room) => map.set(x.token, x));
-        return Array.from(map.values());
-      });
+    socket.on('game_update', (g: GameDefinition[]) => setLobbyGames(g));
 
-      tryJoinRoom();
+    socket.on('challenge_received', (c: ChallengeReceived) => {
+      setPendingChallenge(c);
     });
-    socket.on('game_update', (g: GameDefinition[]) => {
-      setLobbyGames(g);
-    });
-    socket.on('chat_message', (chatMsg: ChatEnvelope) => {
-      setMessages((m: ChatEnvelope[]) => [...m, chatMsg]);
+
+    socket.on('challenge_resolved', (r: ChallengeResolved) => {
+      setChallengeSent(false);
+      if (!r.accepted) {
+        console.log('[lobby] challenge declined');
+      }
     });
 
     return () => {
-      socket.emit('leave', { id: alias });
+      socket.emit('leave', { id: uniqueId });
       socket.disconnect();
     };
-  }, [uniqueId]);
+  }, [uniqueId, lobbyUrl, sessionId]);
 
-  const sendMessage = useCallback(
-    (msg: string) => {
-      socketRef.current?.emit('chat_message', {
-        alias,
-        content: { text: msg, sender: alias },
-      });
+  const sendChallenge = useCallback(
+    (targetId: string, game: string, amount: string, perGame: string) => {
+      socketRef.current?.emit('challenge', { target_id: targetId, game, amount, per_game: perGame });
+      setChallengeSent(true);
     },
-    [uniqueId],
+    [],
   );
 
-  const generateRoom = useCallback(
-    async (
-      game: string,
-      amount: string,
-      perGame: string,
-    ): Promise<GenerateRoomResult> => {
-      const data = await fetch(
-        `${lobbyUrl}/lobby/generate-room`, {
-          method: "POST",
-          body: JSON.stringify({
-            id: uniqueId,
-            alias,
-            game,
-            parameters: { amount, perGame },
-          }),
-          headers: { "Content-Type": "application/json" }
-        }
-      ).then(res => res.json());
-      return data;
+  const acceptChallenge = useCallback(
+    (challengeId: string) => {
+      socketRef.current?.emit('challenge_accept', { challenge_id: challengeId });
+      setPendingChallenge(null);
     },
-    [uniqueId],
+    [],
+  );
+
+  const declineChallenge = useCallback(
+    (challengeId: string) => {
+      socketRef.current?.emit('challenge_decline', { challenge_id: challengeId });
+      setPendingChallenge(null);
+    },
+    [],
   );
 
   const setLobbyAlias = useCallback(
-    async (id: string, alias: string) => {
-      const result = await fetch(
-        `${lobbyUrl}/lobby/change-alias`, {
-          method: "POST",
-          body: JSON.stringify({
-            id,
-            newAlias: alias,
-          }),
-          headers: { "Content-Type": "application/json" }
-        }
-      ).then(res => res.json());
-      return result?.player;
+    async (id: string, newAlias: string) => {
+      await fetch(`${lobbyUrl}/lobby/change-alias`, {
+        method: 'POST',
+        body: JSON.stringify({ id, newAlias }),
+        headers: { 'Content-Type': 'application/json' },
+      });
     },
-    [uniqueId],
-  );
-
-  const leaveRoom = useCallback(
-    async (_token: string) => {
-      console.error('implement leave room');
-    },
-    [uniqueId],
+    [lobbyUrl],
   );
 
   return {
     players,
-    rooms,
-    messages,
-    sendMessage,
-    generateRoom,
-    joinRoom,
-    leaveRoom,
+    pendingChallenge,
+    challengeSent,
+    sendChallenge,
+    acceptChallenge,
+    declineChallenge,
     setLobbyAlias,
     uniqueId,
-    fragment,
     lobbyGames,
   };
 }
-
-export default useGameSocket;
