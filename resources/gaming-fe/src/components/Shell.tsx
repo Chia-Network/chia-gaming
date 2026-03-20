@@ -14,11 +14,11 @@ import { LogOut } from 'lucide-react';
 
 type TabId = 'tracker' | 'session' | 'game-log' | 'debug-log';
 
-const TAB_DEFS: { id: TabId; label: string; needsSession: boolean }[] = [
-  { id: 'tracker', label: 'Tracker', needsSession: false },
-  { id: 'session', label: 'Game Session', needsSession: true },
-  { id: 'game-log', label: 'Game Log', needsSession: true },
-  { id: 'debug-log', label: 'Debug Log', needsSession: false },
+const TAB_DEFS: { id: TabId; label: string }[] = [
+  { id: 'tracker', label: 'Tracker' },
+  { id: 'session', label: 'Game Session' },
+  { id: 'game-log', label: 'Game Log' },
+  { id: 'debug-log', label: 'Debug Log' },
 ];
 
 const FALLBACK_AMOUNT = 100n;
@@ -140,37 +140,33 @@ const Shell = () => {
   const resetButton = (
     <button
       onClick={handleReset}
-      className='px-4 py-2 text-sm font-bold rounded-md bg-alert-bg text-alert-text border border-alert-border hover:bg-alert-bg-hover transition-colors inline-flex items-center gap-1.5'
+      className='px-2.5 py-1 text-xs font-bold rounded-md bg-alert-bg text-alert-text border border-alert-border hover:bg-alert-bg-hover transition-colors inline-flex items-center gap-1'
     >
-      <LogOut className='w-4 h-4' />
+      <LogOut className='w-3.5 h-3.5' />
       Reset
     </button>
   );
 
   const tabBar = (
-    <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.25rem', padding: '0.25rem 1rem', borderBottom: '1px solid var(--color-canvas-border)', background: 'var(--color-canvas-bg-subtle)' }}>
+    <div style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-end', gap: '0.25rem', padding: '0.5rem 1rem 0', borderBottom: '1px solid var(--color-canvas-border)', background: 'var(--color-canvas-bg-subtle)' }}>
       {TAB_DEFS.map((tab) => {
-        const disabled = tab.needsSession && !gameParams;
         const active = activeTab === tab.id;
         return (
           <button
             key={tab.id}
-            disabled={disabled}
             onClick={() => setActiveTab(tab.id)}
             className={
               'px-3 py-1.5 text-sm font-medium rounded-t-md transition-colors ' +
               (active
                 ? 'bg-canvas-bg text-canvas-text-contrast border border-b-0 border-canvas-border -mb-px'
-                : disabled
-                  ? 'text-canvas-text/30 cursor-not-allowed'
-                  : 'text-canvas-text hover:text-canvas-text-contrast hover:bg-canvas-bg-hover')
+                : 'text-canvas-text hover:text-canvas-text-contrast hover:bg-canvas-bg-hover')
             }
           >
             {tab.label}
           </button>
         );
       })}
-      <div style={{ marginLeft: 'auto' }}>{resetButton}</div>
+      <div style={{ marginLeft: 'auto', paddingBottom: '0.25rem' }}>{resetButton}</div>
     </div>
   );
 
@@ -216,13 +212,7 @@ const Shell = () => {
 
         {/* Game Log tab */}
         <div style={{ position: 'absolute', inset: 0, padding: '1rem', display: activeTab === 'game-log' ? 'block' : 'none' }}>
-          {gameLog.length > 0 ? (
-            <LogPanel lines={gameLog} />
-          ) : (
-            <div className='w-full h-full flex items-center justify-center text-canvas-text/50'>
-              No game log entries yet
-            </div>
-          )}
+          <LogPanel lines={gameLog} />
         </div>
 
         {/* Debug Log tab */}
