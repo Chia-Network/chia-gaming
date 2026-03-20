@@ -18,7 +18,8 @@ export interface TrackerConnectionCallbacks {
 export class TrackerConnection {
   private socket: Socket;
   private callbacks: TrackerConnectionCallbacks;
-  private _sendMessage: ((msgno: number, input: string) => void) | null = null;
+  private messageBuffer: string[] = [];
+  private handlerRegistered = false;
 
   constructor(trackerUrl: string, sessionId: string, callbacks: TrackerConnectionCallbacks) {
     this.callbacks = callbacks;
@@ -33,6 +34,10 @@ export class TrackerConnection {
     });
 
     this.socket.on('message', ({ data }: { data: string }) => {
+      if (!this.handlerRegistered) {
+        this.messageBuffer.push(data);
+        return;
+      }
       this.callbacks.onMessage(data);
     });
 
@@ -71,6 +76,12 @@ export class TrackerConnection {
         console.error('[TrackerConnection] failed to parse message:', data);
       }
     };
+    this.handlerRegistered = true;
+    const buffered = this.messageBuffer;
+    this.messageBuffer = [];
+    for (const data of buffered) {
+      this.callbacks.onMessage(data);
+    }
   }
 
   disconnect() {

@@ -36,9 +36,8 @@ export const makeDescription = (desc: OutcomeHandType) => {
       return `${name}, ${main} high${kickers.length ? ', ' + kickers.join(', ') + ' kickers' : ''}`;
 
     case 'four of a kind':
-      // e.g., "Four of a kind, Aces over Fours"
       return kickers.length
-        ? `${name}, ${main}s over ${kickers[0]}s`
+        ? `${name}, ${main}s, ${kickers[0]} kicker`
         : `${name}, ${main}s`;
 
     case 'full house':

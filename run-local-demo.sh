@@ -131,31 +131,32 @@ fi
 
 # ── Assemble staging directories ────────────────────────────────────
 
-echo "=== Assembling player app staging directory ==="
+echo "=== Assembling player app staging directory (symlinks) ==="
 GAME_SERVE="$FE_DIR/serve"
 rm -rf "$GAME_SERVE"
 mkdir -p "$GAME_SERVE"
-cp "$FE_DIR/public/index.html" "$GAME_SERVE/index.html"
-cp "$FE_DIR/dist/js/index-rollup.js" "$GAME_SERVE/index.js"
-cp "$FE_DIR/dist/css/index.css" "$GAME_SERVE/index.css"
-cp "$FE_DIR/dist/chia_gaming_wasm.js" "$GAME_SERVE/chia_gaming_wasm.js"
-cp "$FE_DIR/dist/chia_gaming_wasm_bg.wasm" "$GAME_SERVE/chia_gaming_wasm_bg.wasm"
+ln -sf "$FE_DIR/public/index.html" "$GAME_SERVE/index.html"
+ln -sf "$FE_DIR/dist/js/index-rollup.js" "$GAME_SERVE/index.js"
+ln -sf "$FE_DIR/dist/css/index.css" "$GAME_SERVE/index.css"
+ln -sf "$FE_DIR/dist/chia_gaming_wasm.js" "$GAME_SERVE/chia_gaming_wasm.js"
+ln -sf "$FE_DIR/dist/chia_gaming_wasm_bg.wasm" "$GAME_SERVE/chia_gaming_wasm_bg.wasm"
+echo '{"version":3,"sources":[],"mappings":""}' > "$GAME_SERVE/chia_gaming_wasm_bg.wasm.map"
 # Static urls config for the player app
 echo "{\"tracker\": \"http://localhost:$TRACKER_PORT\"}" > "$GAME_SERVE/urls"
 # Symlink chialisp hex files
 ln -sf "$CLSP_DIR" "$GAME_SERVE/clsp"
-# Copy images if they exist
+# Symlink images if they exist
 if [ -d "$FE_DIR/public/images" ]; then
-    cp -r "$FE_DIR/public/images" "$GAME_SERVE/images"
+    ln -sf "$FE_DIR/public/images" "$GAME_SERVE/images"
 fi
 
-echo "=== Assembling lobby-view staging directory ==="
+echo "=== Assembling lobby-view staging directory (symlinks) ==="
 LOBBY_SERVE="$LOBBY_VIEW_DIR/serve"
 rm -rf "$LOBBY_SERVE"
 mkdir -p "$LOBBY_SERVE"
-cp "$LOBBY_VIEW_DIR/public/index.html" "$LOBBY_SERVE/index.html"
-cp "$LOBBY_VIEW_DIR/public/index.js" "$LOBBY_SERVE/index.js"
-cp "$LOBBY_VIEW_DIR/dist/css/index.css" "$LOBBY_SERVE/index.css"
+ln -sf "$LOBBY_VIEW_DIR/public/index.html" "$LOBBY_SERVE/index.html"
+ln -sf "$LOBBY_VIEW_DIR/public/index.js" "$LOBBY_SERVE/index.js"
+ln -sf "$LOBBY_VIEW_DIR/dist/css/index.css" "$LOBBY_SERVE/index.css"
 
 # ── Start services ──────────────────────────────────────────────────
 

@@ -149,9 +149,8 @@ const WalletConnectHeading = () => {
     }
   }, [initializing, initialized]);
 
-  useEffect(() => {
-    initWalletConnect();
-  }, []);
+  // WC is only initialized on demand (when user clicks Connect Wallet),
+  // not automatically -- avoids hitting the mainnet relay in local/sim mode.
 
   useEffect(() => {
     const bcSubscription = blockchainConnector.getInbound().subscribe({

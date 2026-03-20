@@ -61,6 +61,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     4: '♣',
   };
 
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const [playerCards, setPlayerCards] = useState<CardValueSuit[]>([]);
   const [opponentCards, setOpponentCards] = useState<CardValueSuit[]>([]);
   const [rememberedOutcome, setRememberedOutcome] = useState<
@@ -456,12 +457,12 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     }
   }, [moveNumber, showSwapAnimation, gameState]);
   return (
-    <div className='flex flex-col w-full h-full min-h-0 text-canvas-text'>
+    <div ref={wrapperRef} className='flex flex-col w-full text-canvas-text'>
       {gameState !== GAME_STATES.INITIAL ? (
-        <div className='flex flex-1 min-h-0 flex-col gap-2'>
-          {/* Hands region: the two cards split available space equally */}
-          <div className='flex flex-1 min-h-0 flex-col gap-2'>
-            <Card className='flex flex-col py-0 flex-1 min-h-0 w-full border border-canvas-line shadow-md'>
+        <div className='flex flex-col gap-2'>
+          {/* Hands region */}
+          <div className='flex flex-col gap-2'>
+            <Card className='flex flex-col py-0 w-full border border-canvas-line shadow-md'>
               <CardHeader className='flex-shrink-0 p-0 w-full flex-row flex justify-center items-center'>
                 <CardTitle className='w-full pl-4 py-1 text-base flex-col sm:flex-row flex items-start gap-2'>
                   <span className='text-base font-semibold text-alert-text'>
@@ -486,7 +487,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                   )}
                 </CardTitle>
               </CardHeader>
-              <CardContent className='flex-1 min-h-0 flex items-center justify-center p-2'>
+              <CardContent className='flex items-center justify-center p-2'>
                 <HandDisplay
                   title=''
                   cards={
@@ -506,7 +507,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
               </CardContent>
             </Card>
 
-            <Card className='flex flex-col py-0 flex-1 min-h-0 w-full border border-canvas-line shadow-md'>
+            <Card className='flex flex-col py-0 w-full border border-canvas-line shadow-md'>
               <CardHeader className='flex-shrink-0 p-0 w-full flex-row flex justify-center items-center'>
                 <CardTitle className='w-full pl-4 py-1 text-base flex-col sm:flex-row flex items-start gap-2'>
                   <span className='font-semibold text-success-text'>
@@ -531,7 +532,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                   )}
                 </CardTitle>
               </CardHeader>
-              <CardContent className='flex-1 min-h-0 flex items-center justify-center p-2'>
+              <CardContent className='flex items-center justify-center p-2'>
                 <HandDisplay
                   title=''
                   cards={

@@ -38,12 +38,12 @@ function Card(props: CardRenderProps) {
   return (
     <div className='w-full relative'>
       {hasHalo && (
-        <div className='absolute -inset-2 rounded-xl bg-blue-600 z-0' />
+        <div className='absolute -inset-1.5 rounded-xl bg-blue-600 z-0' />
       )}
       <div
         id={id}
         data-card-id={cardId}
-        className={`relative z-10 w-full aspect-[5/7] border-2 rounded-lg flex flex-col items-center justify-center font-bold
+        className={`card-face relative z-10 w-full aspect-[5/7] border rounded-lg flex flex-col items-center justify-center font-bold
            ${cardBorder} ${cardBg} ${cursor}`}
         style={{ color: colorClass }}
         onClick={onClick}

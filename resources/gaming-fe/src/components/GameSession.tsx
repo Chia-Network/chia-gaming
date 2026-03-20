@@ -164,7 +164,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
       : 'text-canvas-text';
 
   return (
-    <div className='flex h-full w-full flex-col overflow-hidden bg-canvas-bg-subtle text-canvas-text pt-6'>
+    <div className='w-full flex flex-col bg-canvas-bg-subtle text-canvas-text pt-6'>
       {/* Session header (shrink-0) */}
       <div className='flex-shrink-0 px-4 pt-3 pb-2 sm:px-6 md:px-8'>
         {/* Row 1: title + financial summary + end session */}
@@ -211,10 +211,10 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
         <Separator className='mt-2' />
       </div>
 
-      {/* Main content area (flex-1 min-h-0) */}
-      <div className='flex flex-1 min-h-0 flex-col gap-2 px-4 pb-2 sm:px-6 md:px-8'>
+      {/* Main content area */}
+      <div className='flex flex-col gap-2 px-4 pb-2 sm:px-6 md:px-8'>
         {/* Game area */}
-        <div className='relative flex-1 min-h-0 flex flex-col'>
+          <div className='relative'>
           {handEverStarted && (
             <CalpokerHand
               key={session.handKey}
@@ -284,14 +284,14 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
 
           {/* Waiting for first hand */}
           {!handEverStarted && !session.sessionEnded && (
-            <div className='flex flex-1 items-center justify-center'>
+            <div className='flex items-center justify-center py-20'>
               <p className='text-canvas-text'>Waiting for game to start…</p>
             </div>
           )}
 
           {/* Session ended, no active hand */}
           {session.sessionEnded && !handEverStarted && (
-            <div className='flex flex-1 items-center justify-center'>
+            <div className='flex items-center justify-center py-20'>
               <p className='text-canvas-text'>Session complete.</p>
             </div>
           )}

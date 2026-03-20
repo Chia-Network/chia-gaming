@@ -352,6 +352,23 @@ html, body {
   }
 }
 
+.card-face {
+  container-type: inline-size;
+}
+
+.hand-reorder-group {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  justify-content: center !important;
+  gap: 0.5rem !important;
+  width: 100% !important;
+}
+
+.hand-reorder-group > * {
+  width: var(--card-w) !important;
+  flex-shrink: 0 !important;
+}
+
 .animate-move {
   animation: moveCard 2s ease-in-out forwards;
 }

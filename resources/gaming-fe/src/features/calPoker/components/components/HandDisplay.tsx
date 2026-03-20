@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { Reorder } from 'framer-motion';
 import { HandDisplayProps } from '../../../../types/californiaPoker';
 import { CardValueSuit } from '../../../../types/californiaPoker/CardValueSuit';
@@ -6,6 +6,32 @@ import { GAME_STATES } from '../constants/constants';
 import Card from './Card';
 
 const NOOP = () => {};
+
+function columnsForWidth(px: number, currentCols: number): number {
+  const margin = 20;
+  const breakpoints = [
+    { cols: 8, min: 580 },
+    { cols: 4, min: 290 },
+    { cols: 3, min: 220 },
+    { cols: 2, min: 140 },
+    { cols: 1, min: 0 },
+  ];
+
+  let target = 1;
+  for (const bp of breakpoints) {
+    if (px >= bp.min) { target = bp.cols; break; }
+  }
+  if (target === currentCols) return currentCols;
+
+  if (target > currentCols) {
+    const bp = breakpoints.find(b => b.cols === target);
+    if (bp && px < bp.min + margin) return currentCols;
+  } else {
+    const bp = breakpoints.find(b => b.cols === currentCols);
+    if (bp && px > bp.min - margin) return currentCols;
+  }
+  return target;
+}
 
 function HandDisplay(props: HandDisplayProps) {
   const {
@@ -26,8 +52,30 @@ function HandDisplay(props: HandDisplayProps) {
   } = props;
   const [winnerIndicatorOffset, setWinnerIndicatorOffset] = useState(0);
   const [draggingCardId, setDraggingCardId] = useState<number | null>(null);
+  const [anyDragging, setAnyDragging] = useState(false);
+  const [cols, setCols] = useState(8);
+  const colsRef = useRef(8);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const isDraggingRef = useRef(false);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const w = entry.contentRect.width;
+      const next = columnsForWidth(w, colsRef.current);
+      if (next !== colsRef.current) {
+        colsRef.current = next;
+        setCols(next);
+      }
+    });
+    ro.observe(el);
+    const w = el.clientWidth;
+    const initial = columnsForWidth(w, colsRef.current);
+    colsRef.current = initial;
+    setCols(initial);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     const updateWinnerPosition = () => {
@@ -95,8 +143,11 @@ function HandDisplay(props: HandDisplayProps) {
     );
   };
 
-  const gridClass = 'grid grid-cols-4 md:grid-cols-8 gap-2 w-full';
   const dragEnabled = !!onReorder;
+  const gapPx = 8;
+  const gapAdjust = cols > 1 ? `${(cols - 1) * gapPx / cols}px` : '0px';
+  const itemWidth = `calc(${100 / cols}% - ${gapAdjust})`;
+  const groupStyle = { '--card-w': itemWidth } as React.CSSProperties;
 
   return (
     <div
@@ -121,12 +172,12 @@ function HandDisplay(props: HandDisplayProps) {
           </div>
         )}
 
-        <div className='w-full'>
-          <Reorder.Group
+        <Reorder.Group
             axis='x'
             values={cards}
             onReorder={onReorder ?? NOOP}
-            className={gridClass}
+            className='hand-reorder-group'
+            style={groupStyle}
             as='div'
           >
             {cards.map((card, idx) => {
@@ -137,20 +188,24 @@ function HandDisplay(props: HandDisplayProps) {
                   value={card}
                   as='div'
                   className={`relative flex items-center justify-center ${isDragging ? 'z-50' : 'z-0'}`}
-                  layout={dragEnabled || undefined}
+                  initial={false}
+                  layout={anyDragging || undefined}
+                  transition={{ layout: { duration: 0 } }}
                   dragListener={dragEnabled}
                   onDragStart={() => {
                     isDraggingRef.current = true;
+                    setAnyDragging(true);
                     setDraggingCardId(card.cardId ?? idx);
                   }}
                   onDragEnd={() => {
                     setDraggingCardId(null);
+                    setAnyDragging(false);
                     setTimeout(() => { isDraggingRef.current = false; }, 0);
                   }}
                 >
                   <div
-                    className='w-full'
                     style={{
+                      width: '100%',
                       transform: isDragging ? 'scale(1.05)' : 'scale(1)',
                       transition: isDragging ? 'none' : 'transform 0.2s ease',
                     }}
@@ -161,7 +216,6 @@ function HandDisplay(props: HandDisplayProps) {
               );
             })}
           </Reorder.Group>
-        </div>
       </div>
     </div>
   );

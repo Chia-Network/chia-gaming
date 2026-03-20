@@ -22,7 +22,7 @@ function MovingCard(props: MovingCardProps) {
 
   return (
     <div
-      className={`border-2 border-canvas-border rounded-lg bg-white shadow-lg flex flex-col items-center justify-center font-bold fixed pointer-events-none ${showAnimation ? 'animate-move' : ''}`}
+      className={`card-face border border-canvas-border rounded-lg bg-white shadow-lg flex flex-col items-center justify-center font-bold fixed pointer-events-none ${showAnimation ? 'animate-move' : ''}`}
       style={styleVars}
     >
       <CardContent card={card} />

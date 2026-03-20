@@ -56,8 +56,13 @@ const server = http.createServer((req, res) => {
       res.writeHead(404);
       return res.end('Not found');
     }
-    const ct = MIME[path.extname(filePath)] || 'application/octet-stream';
-    res.writeHead(200, { 'Content-Type': ct });
+    const ext = path.extname(filePath);
+    const ct = MIME[ext] || 'application/octet-stream';
+    const headers = { 'Content-Type': ct, 'Cache-Control': 'no-store' };
+    if (ext === '.wasm') {
+      headers['SourceMap'] = path.basename(filePath) + '.map';
+    }
+    res.writeHead(200, headers);
     res.end(data);
   });
 });
