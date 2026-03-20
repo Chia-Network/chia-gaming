@@ -6,10 +6,15 @@ import { GameSessionParams, PeerConnectionResult } from '../types/ChiaGaming';
 import { TrackerConnection, MatchedParams, ConnectionStatus } from '../services/TrackerConnection';
 import { subscribeDebugLog } from '../services/debugLog';
 import {
-  generateOrRetrieveUniqueId,
-  generateOrRetrieveSessionId,
-} from '../util';
-import { loadSession, clearSession, startNewSession, SessionSave } from '../hooks/save';
+  getPlayerId,
+  getSessionId,
+  setBlockchainType as persistBlockchainType,
+  getBlockchainType,
+  loadSession,
+  clearSession,
+  startNewSession,
+  SessionSave,
+} from '../hooks/save';
 import { blobSingleton } from '../hooks/blobSingleton';
 import { blockchainDataEmitter } from '../hooks/BlockchainInfo';
 import { FAKE_BLOCKCHAIN_ID } from '../hooks/FakeBlockchainInterface';
@@ -49,8 +54,8 @@ function LogPanel({ lines }: { lines: string[] }) {
 }
 
 const Shell = () => {
-  const uniqueId = generateOrRetrieveUniqueId();
-  const sessionId = generateOrRetrieveSessionId();
+  const uniqueId = getPlayerId();
+  const sessionId = getSessionId();
 
   const [activeTab, setActiveTab] = useState<TabId>('tracker');
   const [gameParams, setGameParams] = useState<GameSessionParams | null>(null);
@@ -244,7 +249,8 @@ const Shell = () => {
 
   const handleReset = useCallback(() => {
     activePairingTokenRef.current = null;
-    localStorage.clear();
+    clearSession();
+    startNewSession();
     window.location.reload();
   }, []);
 
@@ -253,14 +259,13 @@ const Shell = () => {
   const [resuming, setResuming] = useState(false);
 
   const handleResume = useCallback(() => {
-    if (!pendingRestore) return;
-    const save = pendingRestore;
-    const bcType = save.blockchainType ?? 'simulator';
+    const bcType = getBlockchainType() ?? 'simulator';
     setResuming(true);
 
     const onRegistered = () => {
       setPendingRestore(null);
       setResuming(false);
+      blockchainTypeRef.current = bcType;
       setWalletConnected(true);
       blockchainDataEmitter.select({ selection: FAKE_BLOCKCHAIN_ID, uniqueId });
     };
@@ -281,12 +286,12 @@ const Shell = () => {
         .then(onRegistered)
         .catch(onFailed);
     }
-  }, [pendingRestore, uniqueId]);
+  }, [uniqueId]);
 
-  const handleResetSave = useCallback(() => {
+  const handleStartFresh = useCallback(() => {
     clearSession();
     startNewSession();
-    setPendingRestore(null);
+    window.location.reload();
   }, []);
 
   const wcHeading = (
@@ -296,7 +301,7 @@ const Shell = () => {
         ? { flexShrink: 0 }
         : { flex: '1 1 0%', display: 'flex', flexDirection: 'column' as const }),
     }}>
-      {pendingRestore && !walletConnected ? (
+      {(pendingRestore || getBlockchainType()) && !walletConnected ? (
         <div style={{
           flex: '1 1 0%',
           display: 'flex',
@@ -320,7 +325,9 @@ const Shell = () => {
           }}>
             <p className='text-canvas-text-contrast font-semibold text-lg'>Saved session found</p>
             <p className='text-canvas-text text-sm text-center'>
-              You have an in-progress game session. Resume where you left off, or start fresh?
+              {pendingRestore
+                ? 'You have an in-progress game session. Resume where you left off, or start fresh?'
+                : 'You have a previous session. Resume where you left off, or start fresh?'}
             </p>
             <button
               onClick={handleResume}
@@ -330,7 +337,7 @@ const Shell = () => {
               {resuming ? 'Resuming…' : 'Resume Session'}
             </button>
             <button
-              onClick={handleResetSave}
+              onClick={handleStartFresh}
               disabled={resuming}
               className='w-full px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-50'
             >
@@ -342,22 +349,13 @@ const Shell = () => {
         <WalletConnectHeading
           onConnected={(bcType) => {
             blockchainTypeRef.current = bcType;
+            persistBlockchainType(bcType);
             setWalletConnected(true);
           }}
           initialExpanded={!walletConnected}
         />
       )}
     </div>
-  );
-
-  const resetButton = (
-    <button
-      onClick={handleReset}
-      className='px-2.5 py-1 text-xs font-bold rounded-md bg-alert-bg text-alert-text border border-alert-border hover:bg-alert-bg-hover transition-colors inline-flex items-center gap-1'
-    >
-      <LogOut className='w-3.5 h-3.5' />
-      Reset
-    </button>
   );
 
   const tabBar = (
@@ -379,7 +377,15 @@ const Shell = () => {
           </button>
         );
       })}
-      <div style={{ marginLeft: 'auto', paddingBottom: '0.25rem' }}>{resetButton}</div>
+      <div style={{ marginLeft: 'auto', paddingBottom: '0.25rem' }}>
+        <button
+          onClick={handleReset}
+          className='px-2.5 py-1 text-xs font-bold rounded-md bg-alert-bg text-alert-text border border-alert-border hover:bg-alert-bg-hover transition-colors inline-flex items-center gap-1'
+        >
+          <LogOut className='w-3.5 h-3.5' />
+          Reset
+        </button>
+      </div>
     </div>
   );
 
@@ -387,11 +393,6 @@ const Shell = () => {
     <div style={{ display: 'flex', flexDirection: 'column', position: 'relative', width: '100vw', height: '100vh' }}
          className='bg-canvas-bg-subtle text-canvas-text'>
       {wcHeading}
-      {!walletConnected && (
-        <div style={{ position: 'absolute', top: '4rem', right: '1rem', zIndex: 10 }}>
-          {resetButton}
-        </div>
-      )}
       {walletConnected && (<>
       {tabBar}
       <div style={{ position: 'relative', flex: '1 1 0%', minHeight: 0, zIndex: 0 }}

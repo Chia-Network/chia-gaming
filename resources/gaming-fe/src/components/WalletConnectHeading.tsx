@@ -10,7 +10,7 @@ import {
 import useDebug from '../hooks/useDebug';
 import { walletConnectState } from '../hooks/useWalletConnect';
 import { BLOCKCHAIN_SERVICE_URL } from '../settings';
-import { generateOrRetrieveUniqueId } from '../util';
+import { getPlayerId } from '../hooks/save';
 
 import Debug from './Debug';
 import { WalletConnectDialog, doConnectWallet } from './WalletConnect';
@@ -52,7 +52,7 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
   const balanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const addressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const uniqueId = generateOrRetrieveUniqueId();
+  const uniqueId = getPlayerId();
 
   // Theme state: keep dark/light in sync with document root and localStorage
   const [isDark, setIsDark] = useState<boolean>(() => {

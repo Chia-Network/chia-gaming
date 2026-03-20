@@ -122,7 +122,7 @@ export function getBlobSingleton(
   blobSingleton.iStarted = iStarted;
   blobSingleton.pairingToken = pairingToken ?? '';
   blobSingleton.perGameAmount = perGameAmount ?? 0n;
-  blobSingleton.blockchainType = sessionSave?.blockchainType ?? blockchainType ?? 'simulator';
+  blobSingleton.blockchainType = blockchainType ?? 'simulator';
   blobSingleton.setPeerPingAndClose(
     () => peerConn.sendPing(),
     () => peerConn.close(),

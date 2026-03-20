@@ -56,7 +56,7 @@ export function updateAlias(alias: string) {
   localStorage.setItem('alias', alias);
 }
 
-function randomHex(): string {
+export function randomHex(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
@@ -70,21 +70,6 @@ export function generateOrRetrieveAlias(): string {
   return previousName;
 }
 
-export function generateOrRetrieveUniqueId(): string {
-  let existingId = localStorage.getItem('playerId');
-  if (existingId) return existingId;
-  existingId = randomHex();
-  localStorage.setItem('playerId', existingId);
-  return existingId;
-}
-
-export function generateOrRetrieveSessionId(): string {
-  let id = localStorage.getItem('sessionId');
-  if (id) return id;
-  id = randomHex();
-  localStorage.setItem('sessionId', id);
-  return id;
-}
 
 function clvm_enlist(clvms: string[]): string {
   const result = [];

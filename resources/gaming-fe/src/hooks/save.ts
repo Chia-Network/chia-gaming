@@ -1,3 +1,5 @@
+import { randomHex } from '../util';
+
 export interface SavedGame {
   id: string;
   searchParams: Record<string, string>;
@@ -23,40 +25,111 @@ export interface SessionSave {
   iStarted: boolean;
   amount: string;
   perGameAmount: string;
-  uniqueId: string;
   pendingTransactions: string[];
   unackedMessages: Array<{ msgno: number; msg: string }>;
   gameLog: string[];
   debugLog: string[];
-  blockchainType?: BlockchainType;
   activeGameId?: string | null;
   handState?: CalpokerHandState | null;
 }
 
-const SESSION_SAVE_KEY = 'sessionSave';
+export interface PersistedState {
+  playerId: string;
+  sessionId?: string;
+  blockchainType?: BlockchainType;
+  gameSave?: SessionSave;
+}
+
+const PERSISTED_KEY = 'persistedState';
+
+function migrateOldKeys(): PersistedState | null {
+  const oldPlayerId = localStorage.getItem('playerId');
+  const oldSessionId = localStorage.getItem('sessionId');
+  const oldSaveRaw = localStorage.getItem('sessionSave');
+  if (!oldPlayerId && !oldSessionId && !oldSaveRaw) return null;
+
+  let oldSave: (SessionSave & { uniqueId?: string; blockchainType?: BlockchainType }) | null = null;
+  if (oldSaveRaw) {
+    try { oldSave = JSON.parse(oldSaveRaw); } catch { /* ignore */ }
+  }
+
+  const state: PersistedState = {
+    playerId: oldPlayerId ?? oldSave?.uniqueId ?? randomHex(),
+  };
+  if (oldSessionId) state.sessionId = oldSessionId;
+  if (oldSave) {
+    state.blockchainType = oldSave.blockchainType;
+    const { uniqueId: _u, blockchainType: _b, ...rest } = oldSave;
+    state.gameSave = rest;
+  }
+
+  localStorage.removeItem('playerId');
+  localStorage.removeItem('sessionId');
+  localStorage.removeItem('sessionSave');
+  localStorage.setItem(PERSISTED_KEY, JSON.stringify(state));
+  return state;
+}
+
+export function loadPersistedState(): PersistedState {
+  try {
+    const raw = localStorage.getItem(PERSISTED_KEY);
+    if (raw) return JSON.parse(raw) as PersistedState;
+  } catch (e) {
+    console.error('[save] failed to load persisted state:', e);
+  }
+  const migrated = migrateOldKeys();
+  if (migrated) return migrated;
+  return { playerId: randomHex() };
+}
+
+function savePersistedState(state: PersistedState): void {
+  try {
+    localStorage.setItem(PERSISTED_KEY, JSON.stringify(state));
+  } catch (e) {
+    console.error('[save] failed to persist state:', e);
+  }
+}
+
+export function getPlayerId(): string {
+  const state = loadPersistedState();
+  if (!localStorage.getItem(PERSISTED_KEY)) {
+    savePersistedState(state);
+  }
+  return state.playerId;
+}
+
+export function getSessionId(): string {
+  const state = loadPersistedState();
+  if (state.sessionId) return state.sessionId;
+  state.sessionId = randomHex();
+  savePersistedState(state);
+  return state.sessionId;
+}
+
+export function setBlockchainType(bcType: BlockchainType): void {
+  const state = loadPersistedState();
+  state.blockchainType = bcType;
+  savePersistedState(state);
+}
+
+export function getBlockchainType(): BlockchainType | undefined {
+  return loadPersistedState().blockchainType;
+}
 
 export function saveSession(save: SessionSave): void {
-  try {
-    localStorage.setItem(SESSION_SAVE_KEY, JSON.stringify(save));
-  } catch (e) {
-    console.error('[save] failed to persist session:', e);
-  }
+  const state = loadPersistedState();
+  state.gameSave = save;
+  savePersistedState(state);
 }
 
 export function loadSession(): SessionSave | null {
-  try {
-    const data = localStorage.getItem(SESSION_SAVE_KEY);
-    if (data) {
-      return JSON.parse(data) as SessionSave;
-    }
-  } catch (e) {
-    console.error('[save] failed to load session:', e);
-  }
-  return null;
+  return loadPersistedState().gameSave ?? null;
 }
 
 export function clearSession(): void {
-  localStorage.removeItem(SESSION_SAVE_KEY);
+  const state = loadPersistedState();
+  const cleared: PersistedState = { playerId: state.playerId };
+  savePersistedState(cleared);
 }
 
 export function getSaveList(): string[] {

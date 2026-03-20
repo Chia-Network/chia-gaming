@@ -6,6 +6,11 @@ import {
   saveGame,
   loadSave,
   getSaveList,
+  getPlayerId,
+  getSessionId,
+  setBlockchainType,
+  getBlockchainType,
+  loadPersistedState,
   SessionSave,
 } from '../../hooks/save';
 
@@ -30,7 +35,6 @@ const sampleSession: SessionSave = {
   iStarted: true,
   amount: '100',
   perGameAmount: '10',
-  uniqueId: 'alice',
   pendingTransactions: ['tx1'],
   unackedMessages: [{ msgno: 4, msg: 'hello' }],
   gameLog: ['log1'],
@@ -64,12 +68,94 @@ describe('session persistence', () => {
 
   it('saveSession swallows quota-exceeded errors', () => {
     const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    (global as any).localStorage = {
-      ...makeStorage(),
-      setItem: () => { throw new DOMException('quota exceeded'); },
+    const storage = makeStorage();
+    const origSetItem = storage.setItem.bind(storage);
+    let firstCall = true;
+    storage.setItem = (key: string, value: string) => {
+      if (!firstCall) throw new DOMException('quota exceeded');
+      firstCall = false;
+      origSetItem(key, value);
     };
+    (global as any).localStorage = storage;
+    getPlayerId();
     expect(() => saveSession(sampleSession)).not.toThrow();
     spy.mockRestore();
+  });
+});
+
+describe('unified persisted state', () => {
+  it('getPlayerId generates and persists a player ID', () => {
+    const id = getPlayerId();
+    expect(id).toBeTruthy();
+    expect(getPlayerId()).toBe(id);
+  });
+
+  it('getSessionId generates and persists a session ID', () => {
+    const id = getSessionId();
+    expect(id).toBeTruthy();
+    expect(getSessionId()).toBe(id);
+  });
+
+  it('clearSession preserves playerId but clears session-scoped fields', () => {
+    const playerId = getPlayerId();
+    getSessionId();
+    setBlockchainType('simulator');
+    saveSession(sampleSession);
+
+    clearSession();
+
+    expect(getPlayerId()).toBe(playerId);
+    expect(loadPersistedState().sessionId).toBeUndefined();
+    expect(getBlockchainType()).toBeUndefined();
+    expect(loadSession()).toBeNull();
+  });
+
+  it('setBlockchainType / getBlockchainType round-trip', () => {
+    expect(getBlockchainType()).toBeUndefined();
+    setBlockchainType('walletconnect');
+    expect(getBlockchainType()).toBe('walletconnect');
+  });
+
+  it('saveSession stores gameSave inside the unified state', () => {
+    saveSession(sampleSession);
+    const state = loadPersistedState();
+    expect(state.gameSave).toEqual(sampleSession);
+  });
+});
+
+describe('migration from old keys', () => {
+  it('migrates playerId, sessionId, and sessionSave from old keys', () => {
+    const oldSave = { ...sampleSession, uniqueId: 'old-player', blockchainType: 'simulator' as const };
+    localStorage.setItem('playerId', 'old-player');
+    localStorage.setItem('sessionId', 'old-session');
+    localStorage.setItem('sessionSave', JSON.stringify(oldSave));
+
+    const state = loadPersistedState();
+    expect(state.playerId).toBe('old-player');
+    expect(state.sessionId).toBe('old-session');
+    expect(state.blockchainType).toBe('simulator');
+    expect(state.gameSave).toBeDefined();
+    expect((state.gameSave as any).uniqueId).toBeUndefined();
+    expect((state.gameSave as any).blockchainType).toBeUndefined();
+
+    expect(localStorage.getItem('playerId')).toBeNull();
+    expect(localStorage.getItem('sessionId')).toBeNull();
+    expect(localStorage.getItem('sessionSave')).toBeNull();
+  });
+
+  it('migrates playerId alone when no session exists', () => {
+    localStorage.setItem('playerId', 'solo-player');
+    const state = loadPersistedState();
+    expect(state.playerId).toBe('solo-player');
+    expect(state.gameSave).toBeUndefined();
+    expect(localStorage.getItem('playerId')).toBeNull();
+  });
+
+  it('does not migrate when new key already exists', () => {
+    localStorage.setItem('persistedState', JSON.stringify({ playerId: 'new-player' }));
+    localStorage.setItem('playerId', 'should-be-ignored');
+    const state = loadPersistedState();
+    expect(state.playerId).toBe('new-player');
   });
 });
 

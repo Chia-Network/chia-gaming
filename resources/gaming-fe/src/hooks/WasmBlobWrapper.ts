@@ -561,12 +561,10 @@ export class WasmBlobWrapper {
         iStarted: this.iStarted,
         amount: this.amount.toString(),
         perGameAmount: this.perGameAmount.toString(),
-        uniqueId: this.uniqueId,
         pendingTransactions: [...this.pendingTransactions],
         unackedMessages: [...this.unackedMessages],
         gameLog: [...this.gameLog],
         debugLog: [...this.debugLogHistory],
-        blockchainType: this.blockchainType,
         activeGameId: this.activeGameId,
         handState: this.handState,
       };

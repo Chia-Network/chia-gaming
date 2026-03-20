@@ -3,7 +3,8 @@ import { Observable } from 'rxjs';
 import { useGameSession, ChannelCoinState, GameCoinState, GameplayEvent } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
 import { CalpokerHandState } from '../hooks/save';
-import { generateOrRetrieveUniqueId, formatMojos, formatAmount } from '../util';
+import { formatMojos, formatAmount } from '../util';
+import { getPlayerId } from '../hooks/save';
 import { CalpokerOutcome } from '../types/ChiaGaming';
 import { WasmBlobWrapper } from '../hooks/WasmBlobWrapper';
 import Calpoker from '../features/calPoker';
@@ -131,7 +132,7 @@ export interface GameSessionProps {
 }
 
 const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, blockchainType }) => {
-  const uniqueId = generateOrRetrieveUniqueId();
+  const uniqueId = getPlayerId();
 
   const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, sessionSave, blockchainType);
 
