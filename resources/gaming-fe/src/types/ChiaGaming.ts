@@ -1,4 +1,4 @@
-import { Subject, Subscription } from 'rxjs';
+import { Subject, ReplaySubject, Subscription } from 'rxjs';
 import { Program } from 'clvm-lib';
 
 export interface Amount {
@@ -324,12 +324,6 @@ export class ChiaGame {
     return this.wasm.opening_coin(this.cradle, coin_string);
   }
 
-  start_handshake(): WasmResult | undefined {
-    const maybeStart = (this.wasm as unknown as { start_handshake?: (cid: number) => WasmResult | undefined }).start_handshake;
-    if (typeof maybeStart !== 'function') return undefined;
-    return maybeStart(this.cradle);
-  }
-
   provide_launcher_coin(hex_launcher_coin: string): WasmResult | undefined {
     const maybeProvide = (
       this.wasm as unknown as { provide_launcher_coin?: (cid: number, coin: string) => WasmResult | undefined }
@@ -532,6 +526,7 @@ function compare_card(a: number, b: number): number {
 export interface PeerConnectionResult {
   sendMessage: (msgno: number, input: string) => void;
   hostLog: (msg: string) => void;
+  close: () => void;
 }
 
 export class CalpokerOutcome {
@@ -690,7 +685,7 @@ export class ToggleEmitter<T> {
     this.upstream = [];
     this.selection = -1;
     this.subscriptions = [];
-    this.downstream = new Subject<T>();
+    this.downstream = new ReplaySubject<T>(1);
     this.upstreamSelection = new Subject<SelectionMessage>();
   }
 }

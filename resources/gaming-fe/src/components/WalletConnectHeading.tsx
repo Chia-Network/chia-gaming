@@ -21,8 +21,9 @@ import { Wrench, Sun, Cross } from 'lucide-react';
 import { WalletConnectOutboundState } from '../hooks/useWalletConnect';
 import { BlockchainReport } from '../types/ChiaGaming';
 import { BlockchainInboundReply } from '../hooks/BlockchainConnector';
+import { debugLog } from '../services/debugLog';
 
-const WalletConnectHeading = () => {
+const WalletConnectHeading = ({ onConnected }: { onConnected?: () => void }) => {
   const { wcInfo, setWcInfo } = useDebug();
   const [_alreadyConnected, setAlreadyConnected] = useState(false);
   const [_walletConnectError, setWalletConnectError] = useState<
@@ -114,8 +115,10 @@ const WalletConnectHeading = () => {
     const subscription = walletConnectState.getObservable().subscribe({
       next: (evt: WalletConnectOutboundState) => {
         if (evt.stateName === 'connected') {
+          debugLog('WalletConnect connected');
           toggleExpanded();
           setAlreadyConnected(true);
+          onConnected?.();
           blockchainDataEmitter.select({
             selection: REAL_BLOCKCHAIN_ID,
             uniqueId,
@@ -142,15 +145,12 @@ const WalletConnectHeading = () => {
     setExpanded(!expanded);
   }, [expanded]);
 
-  const initWalletConnect = useCallback(() => {
+  const initWalletConnect = useCallback(async () => {
     if (!initializing) {
-      walletConnectState.init();
       setInitializing(true);
+      await walletConnectState.init();
     }
-  }, [initializing, initialized]);
-
-  // WC is only initialized on demand (when user clicks Connect Wallet),
-  // not automatically -- avoids hitting the mainnet relay in local/sim mode.
+  }, [initializing]);
 
   useEffect(() => {
     const bcSubscription = blockchainConnector.getInbound().subscribe({
@@ -169,9 +169,10 @@ const WalletConnectHeading = () => {
     });
 
     const biSubscription = blockchainDataEmitter.getObservable().subscribe({
-      next: (_evt: BlockchainReport) => {
+      next: (evt: BlockchainReport) => {
         if (!haveBlock) {
           setHaveBlock(true);
+          debugLog(`Blockchain peak received: height ${evt.peak}`);
           if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
           if (addressTimerRef.current) clearTimeout(addressTimerRef.current);
           requestBalance();
@@ -188,7 +189,7 @@ const WalletConnectHeading = () => {
     };
   }, [haveBlock]);
 
-  const useHeight = expanded ? '3em' : '50em';
+  // (height managed by parent Shell layout)
   const handleConnectSimulator = useCallback(() => {
     const baseUrl = BLOCKCHAIN_SERVICE_URL;
 
@@ -199,8 +200,10 @@ const WalletConnectHeading = () => {
         return res.json();
       })
       .then((res) => {
+        debugLog('Simulator wallet registered');
         setFakeAddress(res);
         toggleExpanded();
+        onConnected?.();
         blockchainDataEmitter.select({
           selection: FAKE_BLOCKCHAIN_ID,
           uniqueId,
@@ -213,8 +216,8 @@ const WalletConnectHeading = () => {
       .catch((e) => console.error('register failed:', e));
   }, []);
 
-  const onDoWalletConnect = useCallback(() => {
-    initWalletConnect();
+  const onDoWalletConnect = useCallback(async () => {
+    await initWalletConnect();
     doConnectWallet(
       setShowQRModal,
       setConnectionUri,
@@ -238,7 +241,7 @@ const WalletConnectHeading = () => {
       : 'disconnected';
 
   const ifSession = (
-    <div className='flex flex-col justify-center items-center w-full h-full mt-12 sm:mt-16 md:mt-20 px-1.5 sm:px-2 md:px-4 py-3 sm:py-4 md:py-6 gap-2 sm:gap-3'>
+    <div className='flex flex-col justify-center items-center w-full px-1.5 sm:px-2 md:px-4 py-3 sm:py-4 md:py-6 gap-2 sm:gap-3'>
       {/* Simulator Button */}
       <div className='w-[90%] sm:w-3/4 md:w-1/2 flex justify-center items-center'>
         <Button
@@ -281,33 +284,30 @@ const WalletConnectHeading = () => {
       style={{
         display: 'flex',
         flexDirection: 'column',
+        flex: '1 1 0%',
+        justifyContent: 'center',
+        alignItems: 'center',
         width: '100%',
-        minHeight: 'auto',
-        position: 'relative',
         padding: '1em',
-        marginTop: 'clamp(46px, 20vw, 86px)',
-        gap: '1em',
       }}
     >
       {ifSession}
     </div>
-  ) : (
-    <div style={{ display: 'none' }} />
-  );
+  ) : null;
 
   const balanceDisplay =
     balance !== undefined ? <div>- Balance {balance}</div> : <div />;
 
   return (
     <div
-      className='flex flex-col w-screen'
-      style={{ height: useHeight, backgroundColor: 'var(--color-canvas-bg)' }}
+      className='flex flex-col w-full'
+      style={{ backgroundColor: 'var(--color-canvas-bg)', ...(expanded ? { flex: '1 1 0%' } : {}) }}
     >
       <div className='flex flex-row h-auto'>
         {/* Header */}
         {/* Fixed Header */}
         <div
-          className='fixed top-0 left-0 w-full flex gap-1 shadow-md z-1200'
+          className='w-full flex gap-1 shadow-md'
           style={{
             flexDirection: window.innerWidth < 640 ? 'column' : 'row',
             alignItems: window.innerWidth < 640 ? 'stretch' : 'center',
@@ -325,7 +325,7 @@ const WalletConnectHeading = () => {
                   ? '0.5rem'
                   : '0.75rem',
             paddingTop: window.innerWidth < 640 ? '0.25rem' : 0,
-            minHeight: window.innerWidth < 640 ? 'auto' : '4.5em',
+            minHeight: window.innerWidth < 640 ? 'auto' : '3.5em',
             backgroundColor: 'var(--color-canvas-bg)',
             color: 'var(--color-primary-text)',
           }}

@@ -1,4 +1,3 @@
-
 import { WasmBlobWrapper } from './WasmBlobWrapper';
 import { WasmStateInit, loadCalpoker } from './WasmStateInit';
 import {
@@ -8,6 +7,7 @@ import {
 import {
   startNewSession,
 } from './save';
+import { debugLog } from '../services/debugLog';
 
 export var blobSingleton: WasmBlobWrapper | null = null;
 export var initStarted = false;
@@ -39,13 +39,6 @@ export async function configGameObject(
   gameObject.setBlockchainAddress(address);
   let { game: cradle, puzzleHash } = wasmStateInit.createGame(calpokerHexes.proposalHex, calpokerHexes.parserHex, rngId, wasmConnection, iStarted, amount, amount, address.puzzleHash);
   gameObject.setGameCradle(cradle);
-  const supportsDirectHandshake = typeof (wasmConnection as unknown as { start_handshake?: unknown }).start_handshake === 'function';
-  if (supportsDirectHandshake) {
-    gameObject.startHandshake();
-    gameObject.kickSystem(4);
-    return gameObject;
-  }
-
   const initialSpend = await blockchain.do_initial_spend(uniqueId, puzzleHash, amount);
   let coin = initialSpend.coin;
   if (typeof coin !== 'string') {
@@ -58,7 +51,9 @@ export async function configGameObject(
   if (!coin) {
     throw new Error('failed to get opening coin for handshake');
   }
+  debugLog('[wasm] activateSpend');
   gameObject.activateSpend(coin);
+  debugLog('[wasm] game object configured (handshake)');
   return gameObject;
 }
 

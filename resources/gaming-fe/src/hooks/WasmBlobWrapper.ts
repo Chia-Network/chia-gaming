@@ -18,6 +18,7 @@ import {
 import {
   spend_bundle_to_clvm,
 } from '../util';
+import { debugLog } from '../services/debugLog';
 
 function clvmToBytes(value: Program | null): Uint8Array {
   if (value === null || value === undefined) return new Uint8Array([0x80]);
@@ -55,6 +56,8 @@ export class WasmBlobWrapper {
   rxjsEmitter: NextObserver<WasmEvent> | undefined;
   private eventQueue: CradleEvent[] = [];
   private draining = false;
+  private firstBlockLogged = false;
+  private pendingBlockNotification: { peak: number; report: WatchReport } | null = null;
   launcherProvided: boolean;
 
   constructor(
@@ -106,10 +109,16 @@ export class WasmBlobWrapper {
 
   spillStoredMessages() {
     if (this.qualifyingEvents != 15 || !this.cradle || this.reloading) {
+      if (this.storedMessages.length > 0) {
+        debugLog(`[wasm] spillStoredMessages SKIPPED (${this.storedMessages.length} msgs, qe=${this.qualifyingEvents} cradle=${!!this.cradle} reloading=${this.reloading})`);
+      }
       return;
     }
     const storedMessages = this.storedMessages;
     this.storedMessages = [];
+    if (storedMessages.length > 0) {
+      debugLog(`[wasm] spillStoredMessages DELIVERING ${storedMessages.length} msgs`);
+    }
     storedMessages.forEach((m) => {
       try {
         const result = this.cradle?.deliver_message(m);
@@ -123,20 +132,19 @@ export class WasmBlobWrapper {
 
   setGameCradle(cradle: ChiaGame) {
     this.cradle = cradle;
-    this.spillStoredMessages();
   }
 
   activateSpend(coin: string) {
     if (!this.wc) { throw new Error("this.wc is falsey") }
     const result = this.cradle?.opening_coin(coin);
     this.processResult(result);
-    this.sendWatchingCoins();
-  }
-
-  startHandshake() {
-    if (!this.wc) { throw new Error("this.wc is falsey") }
-    const result = this.cradle?.start_handshake();
-    this.processResult(result);
+    if (this.pendingBlockNotification) {
+      debugLog(`[wasm] replaying pending block height=${this.pendingBlockNotification.peak}`);
+      const { peak, report } = this.pendingBlockNotification;
+      this.pendingBlockNotification = null;
+      this.deliverBlockData(peak, report);
+    }
+    this.spillStoredMessages();
     this.sendWatchingCoins();
   }
 
@@ -302,14 +310,20 @@ export class WasmBlobWrapper {
 
   deliverMessage(msgno: number, msg: string) {
     if (!this.wc || !this.cradle || this.qualifyingEvents != 15 || this.reloading) {
+      debugLog(`[wasm] deliverMessage msgno=${msgno} BUFFERED (wc=${!!this.wc} cradle=${!!this.cradle} qe=${this.qualifyingEvents} reloading=${this.reloading})`);
       this.storedMessages.push(msg);
       return;
     }
     if (this.remoteNumber >= msgno) {
+      debugLog(`[wasm] deliverMessage msgno=${msgno} DUPLICATE (remoteNumber=${this.remoteNumber})`);
       return;
     }
     this.remoteNumber = msgno;
+    debugLog(`[wasm] deliverMessage msgno=${msgno} DELIVERING`);
     const result = this.cradle.deliver_message(msg);
+    const eventCount = result?.events?.length ?? 0;
+    const hasOutbound = result?.events?.some((e: any) => 'OutboundMessage' in e) ?? false;
+    debugLog(`[wasm] deliverMessage msgno=${msgno} result: events=${eventCount} hasOutbound=${hasOutbound}`);
     this.processResult(result);
   }
 
@@ -335,7 +349,19 @@ export class WasmBlobWrapper {
         }
       }
     }
+    if (!this.firstBlockLogged) {
+      this.firstBlockLogged = true;
+      debugLog(`[wasm] first block notification height=${peak} cradle=${this.cradle ? 'yes' : 'no'}`);
+    }
     this.kickSystem(4);
+    if (!this.cradle) {
+      this.pendingBlockNotification = { peak, report: block_report };
+      return;
+    }
+    this.deliverBlockData(peak, block_report);
+  }
+
+  private deliverBlockData(peak: number, block_report: WatchReport) {
     try {
       const result = this.cradle?.block_data(peak, block_report);
       this.processResult(result);

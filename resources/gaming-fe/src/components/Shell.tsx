@@ -2,15 +2,15 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 
 import WalletConnectHeading from './WalletConnectHeading';
 import GameSession from './GameSession';
-import { blockchainDataEmitter } from '../hooks/BlockchainInfo';
-import { BlockchainReport, GameSessionParams, PeerConnectionResult } from '../types/ChiaGaming';
+import { GameSessionParams, PeerConnectionResult } from '../types/ChiaGaming';
 import { TrackerConnection, MatchedParams } from '../services/TrackerConnection';
+import { subscribeDebugLog } from '../services/debugLog';
 import {
   generateOrRetrieveUniqueId,
   generateOrRetrieveSessionId,
 } from '../util';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
-import { Loader2, LogOut } from 'lucide-react';
+import { LogOut } from 'lucide-react';
 
 type TabId = 'tracker' | 'session' | 'game-log' | 'debug-log';
 
@@ -18,7 +18,7 @@ const TAB_DEFS: { id: TabId; label: string; needsSession: boolean }[] = [
   { id: 'tracker', label: 'Tracker', needsSession: false },
   { id: 'session', label: 'Game Session', needsSession: true },
   { id: 'game-log', label: 'Game Log', needsSession: true },
-  { id: 'debug-log', label: 'Debug Log', needsSession: true },
+  { id: 'debug-log', label: 'Debug Log', needsSession: false },
 ];
 
 const FALLBACK_AMOUNT = 100n;
@@ -50,10 +50,10 @@ const Shell = () => {
   const [gameParams, setGameParams] = useState<GameSessionParams | null>(null);
   const [peerConn, setPeerConn] = useState<PeerConnectionResult | null>(null);
 
+  const [walletConnected, setWalletConnected] = useState(false);
   const [gameLog, setGameLog] = useState<string[]>([]);
   const [debugLog, setDebugLog] = useState<string[]>([]);
 
-  const [havePeak, setHavePeak] = useState(false);
   const [iframeUrl, setIframeUrl] = useState('about:blank');
   const [iframeAllowed, setIframeAllowed] = useState('');
 
@@ -63,10 +63,6 @@ const Shell = () => {
     setGameLog(prev => [...prev, line]);
   }, []);
 
-  const appendDebugLog = useCallback((line: string) => {
-    setDebugLog(prev => [...prev, line]);
-  }, []);
-
   const registerMessageHandler = useCallback((handler: (msgno: number, msg: string) => void) => {
     if (trackerConnRef.current) {
       trackerConnRef.current.registerMessageHandler(handler);
@@ -74,12 +70,9 @@ const Shell = () => {
   }, []);
 
   useEffect(() => {
-    const subscription = blockchainDataEmitter.getObservable().subscribe({
-      next: (_peak: BlockchainReport) => {
-        setHavePeak(true);
-      },
+    return subscribeDebugLog((line) => {
+      setDebugLog(prev => [...prev, line]);
     });
-    return () => subscription.unsubscribe();
   }, []);
 
   // Fetch tracker URL, set up iframe and TrackerConnection
@@ -108,7 +101,6 @@ const Shell = () => {
             });
             setPeerConn(conn.getPeerConnection());
             setGameLog([]);
-            setDebugLog([]);
             setActiveTab('session');
           },
           onMessage: (_data: string) => {
@@ -135,8 +127,13 @@ const Shell = () => {
   useThemeSyncToIframe('tracker-iframe', [iframeUrl]);
 
   const wcHeading = (
-    <div style={{ flexShrink: 0, height: '3rem', width: '100%' }}>
-      <WalletConnectHeading />
+    <div style={{
+      width: '100%',
+      ...(walletConnected
+        ? { flexShrink: 0 }
+        : { flex: '1 1 0%', display: 'flex', flexDirection: 'column' as const }),
+    }}>
+      <WalletConnectHeading onConnected={() => setWalletConnected(true)} />
     </div>
   );
 
@@ -149,20 +146,6 @@ const Shell = () => {
       Reset
     </button>
   );
-
-  if (!havePeak) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', position: 'relative', width: '100vw', height: '100vh' }}
-           className='bg-canvas-bg-subtle text-canvas-text'>
-        {wcHeading}
-        <div style={{ flex: '1 1 0%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: '0.75rem' }}>
-          <Loader2 className='h-6 w-6 z-0 animate-spin text-primary mb-4' />
-          Waiting for blockchain peak ...
-          <div style={{ marginTop: '1rem' }}>{resetButton}</div>
-        </div>
-      </div>
-    );
-  }
 
   const tabBar = (
     <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.25rem', padding: '0.25rem 1rem', borderBottom: '1px solid var(--color-canvas-border)', background: 'var(--color-canvas-bg-subtle)' }}>
@@ -195,7 +178,12 @@ const Shell = () => {
     <div style={{ display: 'flex', flexDirection: 'column', position: 'relative', width: '100vw', height: '100vh' }}
          className='bg-canvas-bg-subtle text-canvas-text'>
       {wcHeading}
-      <div style={{ height: '2rem', flexShrink: 0 }} />
+      {!walletConnected && (
+        <div style={{ position: 'absolute', top: '4rem', right: '1rem', zIndex: 10 }}>
+          {resetButton}
+        </div>
+      )}
+      {walletConnected && (<>
       {tabBar}
       <div style={{ position: 'relative', flex: '1 1 0%', minHeight: 0, zIndex: 0 }}
            className='bg-canvas-bg-subtle'>
@@ -218,7 +206,6 @@ const Shell = () => {
               peerConn={peerConn}
               registerMessageHandler={registerMessageHandler}
               appendGameLog={appendGameLog}
-              appendDebugLog={appendDebugLog}
             />
           ) : (
             <div className='w-full h-full flex items-center justify-center text-canvas-text/50'>
@@ -249,6 +236,7 @@ const Shell = () => {
           )}
         </div>
       </div>
+      </>)}
     </div>
   );
 };

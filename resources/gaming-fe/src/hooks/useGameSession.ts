@@ -19,6 +19,7 @@ import {
 } from './blobSingleton';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
 import { toHexString } from '../util';
+import { debugLog } from '../services/debugLog';
 
 export type GameplayEvent =
   | { GameProposalAccepted: { id: number | string } }
@@ -86,7 +87,6 @@ export function useGameSession(
   peerConn: PeerConnectionResult,
   registerMessageHandler: (handler: (msgno: number, msg: string) => void) => void,
   appendGameLog: (line: string) => void,
-  appendDebugLog: (line: string) => void,
 ): UseGameSessionResult {
   const { iStarted, amount, perGameAmount } = params;
   const playerNumber = iStarted ? 1 : 2;
@@ -105,6 +105,7 @@ export function useGameSession(
   const [lastOutcome, setLastOutcome] = useState<CalpokerOutcome | undefined>(undefined);
   const [actionFailedReason, setActionFailedReason] = useState<string | null>(null);
 
+  const shutdownInitiatedRef = useRef(false);
   const gameIdsRef = useRef<string[]>([]);
   const pendingProposalIdRef = useRef<string | null>(null);
   const wantsNewGameRef = useRef<boolean>(false);
@@ -307,8 +308,10 @@ export function useGameSession(
         proposeNewGame();
       }
     } else if ('CleanShutdownStarted' in n) {
+      shutdownInitiatedRef.current = true;
       setShutdownInitiated(true);
     } else if ('GoingOnChain' in n) {
+      shutdownInitiatedRef.current = true;
       setShutdownInitiated(true);
       setGameConnectionState({ stateIdentifier: 'running', stateDetail: ['On-chain dispute in progress'] });
     } else if (isTerminal(n)) {
@@ -346,7 +349,7 @@ export function useGameSession(
           case 'address':
             break;
           case 'debug_log':
-            appendDebugLog(evt.message);
+            debugLog(evt.message);
             break;
           default: {
             const _exhaustive: never = evt;
@@ -364,7 +367,7 @@ export function useGameSession(
     return () => {
       subscription.unsubscribe();
     };
-  }, [gameObject, handleNotification, setError, appendDebugLog]);
+  }, [gameObject, handleNotification, setError]);
 
   // Subscribe to blockchain block data
   useEffect(() => {
@@ -400,14 +403,20 @@ export function useGameSession(
   }, [iStarted, proposeNewGame]);
 
   const stopPlaying = useCallback(() => {
+    shutdownInitiatedRef.current = true;
     setShutdownInitiated(true);
     gameObject?.cleanShutdown();
   }, [gameObject]);
 
   const goOnChain = useCallback(() => {
+    if (!shutdownInitiatedRef.current) {
+      debugLog('[game] going on chain');
+    }
+    shutdownInitiatedRef.current = true;
     setShutdownInitiated(true);
     gameObject?.goOnChain();
-  }, [gameObject]);
+    peerConn.close();
+  }, [gameObject, peerConn]);
 
   return {
     error,

@@ -4,6 +4,7 @@ import { Subject } from 'rxjs';
 
 import { PROJECT_ID, RELAY_URL, CHAIN_ID } from '../constants/env';
 import { REQUIRED_NAMESPACES } from '../constants/wallet-connect';
+import { debugLog } from '../services/debugLog';
 
 const SESSION_PING_TIMEOUT_MS = 10_000;
 
@@ -87,6 +88,7 @@ class WalletState {
     });
 
     this.observable.next({ stateName: 'initializing', initializing: true });
+    debugLog('WalletConnect initializing...');
 
     const originalConsoleError = console.error;
     console.error = (...args: unknown[]) => {
@@ -196,6 +198,7 @@ class WalletState {
         }
       }
 
+      debugLog('WalletConnect initialized');
       this.observable.next({
         stateName: 'initialized',
         initialized: true,
@@ -203,6 +206,7 @@ class WalletState {
       });
     } catch (err) {
       console.error('[WC] Client.init() FAILED', err);
+      debugLog(`WalletConnect init failed: ${err}`);
       this.isInitialized = false;
       this.observable.next({
         stateName: 'initialized',

@@ -122,13 +122,12 @@ export interface GameSessionProps {
   peerConn: import('../types/ChiaGaming').PeerConnectionResult;
   registerMessageHandler: (handler: (msgno: number, msg: string) => void) => void;
   appendGameLog: (line: string) => void;
-  appendDebugLog: (line: string) => void;
 }
 
-const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, appendDebugLog }) => {
+const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog }) => {
   const uniqueId = generateOrRetrieveUniqueId();
 
-  const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, appendDebugLog);
+  const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog);
 
   if (session.error) {
     return (

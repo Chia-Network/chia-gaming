@@ -1,5 +1,6 @@
 import io, { Socket } from 'socket.io-client';
 import { PeerConnectionResult } from '../types/ChiaGaming';
+import { debugLog } from './debugLog';
 
 export interface MatchedParams {
   token: string;
@@ -20,6 +21,7 @@ export class TrackerConnection {
   private callbacks: TrackerConnectionCallbacks;
   private messageBuffer: string[] = [];
   private handlerRegistered = false;
+  private closed = false;
 
   constructor(trackerUrl: string, sessionId: string, callbacks: TrackerConnectionCallbacks) {
     this.callbacks = callbacks;
@@ -30,10 +32,18 @@ export class TrackerConnection {
     });
 
     this.socket.on('matched', (params: MatchedParams) => {
+      debugLog(`[tracker] matched initiator=${params.i_am_initiator} amount=${params.amount}`);
       this.callbacks.onMatched(params);
     });
 
     this.socket.on('message', ({ data }: { data: string }) => {
+      if (this.closed) return;
+      try {
+        const parsed = JSON.parse(data);
+        debugLog(`[tracker] recv msgno=${parsed.msgno} len=${data.length}`);
+      } catch {
+        debugLog(`[tracker] recv len=${data.length}`);
+      }
       if (!this.handlerRegistered) {
         this.messageBuffer.push(data);
         return;
@@ -48,6 +58,7 @@ export class TrackerConnection {
 
   sendMessage(msgno: number, input: string) {
     const payload = JSON.stringify({ msgno, msg: input });
+    debugLog(`[tracker] send msgno=${msgno} len=${payload.length}`);
     this.socket.emit('message', { data: payload });
   }
 
@@ -56,6 +67,9 @@ export class TrackerConnection {
   }
 
   close() {
+    if (this.closed) return;
+    this.closed = true;
+    debugLog('[tracker] closing connection');
     this.socket.emit('close', {});
     this.socket.disconnect();
   }
@@ -64,6 +78,7 @@ export class TrackerConnection {
     return {
       sendMessage: (msgno: number, input: string) => this.sendMessage(msgno, input),
       hostLog: (msg: string) => this.hostLog(msg),
+      close: () => this.close(),
     };
   }
 

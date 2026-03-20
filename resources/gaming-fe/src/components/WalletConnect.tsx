@@ -1,4 +1,4 @@
-import { Info, Loader2 } from 'lucide-react';
+import { Info } from 'lucide-react';
 import {
   StartConnectResult,
   walletConnectState,
@@ -31,17 +31,9 @@ export const WalletConnectDialog: React.FC<ShowWalletConnectState> = ({
     <div className='px-2 sm:px-3 max-w-full sm:max-w-[400px] md:max-w-[480px] lg:max-w-full mx-auto'>
       <QRCodeModal open={showQRModal} uri={connectionUri} onClose={dismiss} />
 
-      {!initialized ? (
-        <div className='flex flex-col items-center gap-2 sm:gap-3'>
-          <h5 className='text-[1.2rem] sm:text-[1.5rem] font-semibold'>
-            Initializing WalletConnect...
-          </h5>
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <p className='mt-2 text-base'>
-            Please wait while we set up the connection.
-          </p>
-        </div>
-      ) : !haveClient ? (
+      {haveSession ? (
+        <div />
+      ) : initialized && !haveClient ? (
         <div className='flex flex-col gap-2 sm:gap-3'>
           <h5 className='text-[1.2rem] sm:text-[1.5rem] font-semibold text-(--color-alert-text)'>
             WalletConnect Failed to Initialize
@@ -55,22 +47,11 @@ export const WalletConnectDialog: React.FC<ShowWalletConnectState> = ({
             and VITE_CHAIN_ID.
           </p>
         </div>
-      ) : !haveSession ? (
+      ) : (
         <div className='flex flex-col gap-2 sm:gap-3'>
           <div className='flex md:flex-row flex-col justify-between gap-2 mt-4'>
             <Button onClick={onConnect} variant={'solid'} color={'secondary'} fullWidth>
               Link Wallet
-            </Button>
-
-            <Button
-              variant={'destructive'}
-              fullWidth
-              onClick={() => {
-                localStorage.clear();
-                window.location.href = '';
-              }}
-            >
-              Reset Storage
             </Button>
           </div>
 
@@ -100,23 +81,9 @@ export const WalletConnectDialog: React.FC<ShowWalletConnectState> = ({
                 right to link it to this site. Then click the button below to
                 begin.
               </p>
-              {!haveSession && haveClient && (
-                <p className='mt-1 text-[0.9rem]'>
-                  Ready to connect. Click "Link Wallet" to start.
-                </p>
-              )}
             </div>
           </div>
-
-          {haveClient && (
-            <p className='mt-1 text-[0.85rem] text-(--color-canvas-text)'>
-              Client Status: {haveClient ? 'Ready' : 'Not Ready'} | Sessions:{' '}
-              {sessions} | Connected: {haveSession ? 'Yes' : 'No'}
-            </p>
-          )}
         </div>
-      ) : (
-        <div />
       )}
     </div>
   );
