@@ -86,6 +86,7 @@ export interface WasmConnection {
   start_handshake: (cid: number) => any;
   provide_launcher_coin: (cid: number, hex_launcher_coin: string) => any;
   provide_coin_spend_bundle: (cid: number, bundle_json: string) => any;
+  provide_offer_bech32: (cid: number, offer_bech32: string) => any;
   get_channel_puzzle_hash: (cid: number) => string | null;
   new_block: (
     cid: number,
@@ -236,6 +237,10 @@ export class ChiaGame {
 
   provide_coin_spend_bundle(bundle_json: string): any {
     return this.wasm.provide_coin_spend_bundle(this.cradle, bundle_json);
+  }
+
+  provide_offer_bech32(offer_bech32: string): any {
+    return this.wasm.provide_offer_bech32(this.cradle, offer_bech32);
   }
 
   get_channel_puzzle_hash(): string | null {

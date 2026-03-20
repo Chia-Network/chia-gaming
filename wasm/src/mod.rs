@@ -24,8 +24,11 @@ mod gaming_wasm {
         chia_dialect, convert_coinset_org_spend_to_spend, map_m, Aggsig, AllocEncoder, Amount,
         CoinCondition, CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle,
         CoinsetSpendRecord, GameID, GameType, Hash, IntoErr, PrivateKey, Program, PublicKey,
-        PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
+        Puzzle, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
     };
+
+    use flate2::Decompress;
+    use flate2::FlushDecompress;
     use chia_gaming::peer_container::{
         DrainResult, GameCradle, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
     };
@@ -430,6 +433,280 @@ mod gaming_wasm {
     pub fn provide_coin_spend_bundle(cid: i32, bundle_json: &str) -> Result<JsValue, JsValue> {
         let bundle: types::SpendBundle = serde_json::from_str(bundle_json)
             .map_err(|e| JsValue::from_str(&format!("bad spend bundle JSON: {e}")))?;
+        with_game_drain(cid, move |cradle: &mut JsCradle| {
+            cradle.cradle.provide_coin_spend_bundle(
+                &mut cradle.allocator,
+                &mut cradle.rng.0,
+                bundle,
+            )
+        })
+    }
+
+    // Deprecated puzzles not in chia-puzzles crate (kept for zlib dictionary compat)
+    const LEGACY_CAT_MOD_HEX: &str = "ff02ffff01ff02ff5effff04ff02ffff04ffff04ff05ffff04ffff0bff2cff0580ffff04ff0bff80808080ffff04ffff02ff17ff2f80ffff04ff5fffff04ffff02ff2effff04ff02ffff04ff17ff80808080ffff04ffff0bff82027fff82057fff820b7f80ffff04ff81bfffff04ff82017fffff04ff8202ffffff04ff8205ffffff04ff820bffff80808080808080808080808080ffff04ffff01ffffffff81ca3dff46ff0233ffff3c04ff01ff0181cbffffff02ff02ffff03ff05ffff01ff02ff32ffff04ff02ffff04ff0dffff04ffff0bff22ffff0bff2cff3480ffff0bff22ffff0bff22ffff0bff2cff5c80ff0980ffff0bff22ff0bffff0bff2cff8080808080ff8080808080ffff010b80ff0180ffff02ffff03ff0bffff01ff02ffff03ffff09ffff02ff2effff04ff02ffff04ff13ff80808080ff820b9f80ffff01ff02ff26ffff04ff02ffff04ffff02ff13ffff04ff5fffff04ff17ffff04ff2fffff04ff81bfffff04ff82017fffff04ff1bff8080808080808080ffff04ff82017fff8080808080ffff01ff088080ff0180ffff01ff02ffff03ff17ffff01ff02ffff03ffff20ff81bf80ffff0182017fffff01ff088080ff0180ffff01ff088080ff018080ff0180ffff04ffff04ff05ff2780ffff04ffff10ff0bff5780ff778080ff02ffff03ff05ffff01ff02ffff03ffff09ffff02ffff03ffff09ff11ff7880ffff0159ff8080ff0180ffff01818f80ffff01ff02ff7affff04ff02ffff04ff0dffff04ff0bffff04ffff04ff81b9ff82017980ff808080808080ffff01ff02ff5affff04ff02ffff04ffff02ffff03ffff09ff11ff7880ffff01ff04ff78ffff04ffff02ff36ffff04ff02ffff04ff13ffff04ff29ffff04ffff0bff2cff5b80ffff04ff2bff80808080808080ff398080ffff01ff02ffff03ffff09ff11ff2480ffff01ff04ff24ffff04ffff0bff20ff2980ff398080ffff010980ff018080ff0180ffff04ffff02ffff03ffff09ff11ff7880ffff0159ff8080ff0180ffff04ffff02ff7affff04ff02ffff04ff0dffff04ff0bffff04ff17ff808080808080ff80808080808080ff0180ffff01ff04ff80ffff04ff80ff17808080ff0180ffffff02ffff03ff05ffff01ff04ff09ffff02ff26ffff04ff02ffff04ff0dffff04ff0bff808080808080ffff010b80ff0180ff0bff22ffff0bff2cff5880ffff0bff22ffff0bff22ffff0bff2cff5c80ff0580ffff0bff22ffff02ff32ffff04ff02ffff04ff07ffff04ffff0bff2cff2c80ff8080808080ffff0bff2cff8080808080ffff02ffff03ffff07ff0580ffff01ff0bffff0102ffff02ff2effff04ff02ffff04ff09ff80808080ffff02ff2effff04ff02ffff04ff0dff8080808080ffff01ff0bff2cff058080ff0180ffff04ffff04ff28ffff04ff5fff808080ffff02ff7effff04ff02ffff04ffff04ffff04ff2fff0580ffff04ff5fff82017f8080ffff04ffff02ff7affff04ff02ffff04ff0bffff04ff05ffff01ff808080808080ffff04ff17ffff04ff81bfffff04ff82017fffff04ffff0bff8204ffffff02ff36ffff04ff02ffff04ff09ffff04ff820affffff04ffff0bff2cff2d80ffff04ff15ff80808080808080ff8216ff80ffff04ff8205ffffff04ff820bffff808080808080808080808080ff02ff2affff04ff02ffff04ff5fffff04ff3bffff04ffff02ffff03ff17ffff01ff09ff2dffff0bff27ffff02ff36ffff04ff02ffff04ff29ffff04ff57ffff04ffff0bff2cff81b980ffff04ff59ff80808080808080ff81b78080ff8080ff0180ffff04ff17ffff04ff05ffff04ff8202ffffff04ffff04ffff04ff24ffff04ffff0bff7cff2fff82017f80ff808080ffff04ffff04ff30ffff04ffff0bff81bfffff0bff7cff15ffff10ff82017fffff11ff8202dfff2b80ff8202ff808080ff808080ff138080ff80808080808080808080ff018080";
+
+    const OFFER_MOD_OLD_HEX: &str = "ff02ffff01ff02ff0affff04ff02ffff04ff03ff80808080ffff04ffff01ffff333effff02ffff03ff05ffff01ff04ffff04ff0cffff04ffff02ff1effff04ff02ffff04ff09ff80808080ff808080ffff02ff16ffff04ff02ffff04ff19ffff04ffff02ff0affff04ff02ffff04ff0dff80808080ff808080808080ff8080ff0180ffff02ffff03ff05ffff01ff04ffff04ff08ff0980ffff02ff16ffff04ff02ffff04ff0dffff04ff0bff808080808080ffff010b80ff0180ff02ffff03ffff07ff0580ffff01ff0bffff0102ffff02ff1effff04ff02ffff04ff09ff80808080ffff02ff1effff04ff02ffff04ff0dff8080808080ffff01ff0bffff0101ff058080ff0180ff018080";
+
+    const LATEST_OFFER_VERSION: u16 = 6;
+
+    fn zdict_for_version(version: u16) -> Result<Vec<u8>, String> {
+        let legacy_cat = hex::decode(LEGACY_CAT_MOD_HEX)
+            .map_err(|e| format!("bad LEGACY_CAT_MOD hex: {e}"))?;
+        let offer_old = hex::decode(OFFER_MOD_OLD_HEX)
+            .map_err(|e| format!("bad OFFER_MOD_OLD hex: {e}"))?;
+
+        // ZDICT entries indexed by version-1.
+        // Mirrors chia-blockchain/chia/wallet/util/puzzle_compression.py
+        let dicts: [&[u8]; 6] = [
+            // v1: standard puzzle + legacy CAT
+            &[
+                chia_puzzles::P2_DELEGATED_PUZZLE_OR_HIDDEN_PUZZLE.as_slice(),
+                legacy_cat.as_slice(),
+            ].concat(),
+            // v2: old offer/settlement mod
+            &offer_old,
+            // v3: singleton + NFT puzzles
+            &[
+                chia_puzzles::SINGLETON_TOP_LAYER_V1_1.as_slice(),
+                chia_puzzles::NFT_STATE_LAYER.as_slice(),
+                chia_puzzles::NFT_OWNERSHIP_LAYER.as_slice(),
+                chia_puzzles::NFT_METADATA_UPDATER_DEFAULT.as_slice(),
+                chia_puzzles::NFT_OWNERSHIP_TRANSFER_PROGRAM_ONE_WAY_CLAIM_WITH_ROYALTIES.as_slice(),
+            ].concat(),
+            // v4: current CAT puzzle
+            chia_puzzles::CAT_PUZZLE.as_slice(),
+            // v5: current settlement payment
+            chia_puzzles::SETTLEMENT_PAYMENT.as_slice(),
+            // v6: empty (compatibility break)
+            &[],
+        ];
+
+        let mut result = Vec::new();
+        let end = (version as usize).min(dicts.len());
+        for dict in &dicts[..end] {
+            result.extend_from_slice(dict);
+        }
+        Ok(result)
+    }
+
+    fn decompress_offer_with_zdict(data: &[u8], zdict: &[u8]) -> Result<Vec<u8>, String> {
+        let mut d = Decompress::new(true);
+        let mut output = vec![0u8; 6 * 1024 * 1024];
+        let result = d.decompress(data, &mut output, FlushDecompress::Finish);
+        match result {
+            Ok(_status) => {
+                let total = d.total_out() as usize;
+                output.truncate(total);
+                Ok(output)
+            }
+            Err(e) => {
+                if e.needs_dictionary().is_none() {
+                    return Err(format!("zlib decompression error: {e}"));
+                }
+                d.set_dictionary(zdict)
+                    .map_err(|e| format!("set_dictionary: {e}"))?;
+                let consumed = d.total_in() as usize;
+                let produced = d.total_out() as usize;
+                d.decompress(
+                    &data[consumed..],
+                    &mut output[produced..],
+                    FlushDecompress::Finish,
+                )
+                .map_err(|e| format!("decompression after set_dictionary: {e}"))?;
+                let total = d.total_out() as usize;
+                output.truncate(total);
+                Ok(output)
+            }
+        }
+    }
+
+    fn u64_to_clvm_amount(amount: u64) -> Vec<u8> {
+        if amount == 0 {
+            return Vec::new();
+        }
+        let be = amount.to_be_bytes();
+        let start = be.iter().position(|&b| b != 0).unwrap_or(be.len());
+        let trimmed = &be[start..];
+        if trimmed[0] & 0x80 != 0 {
+            let mut result = vec![0u8];
+            result.extend_from_slice(trimmed);
+            result
+        } else {
+            trimmed.to_vec()
+        }
+    }
+
+    /// Parse one complete CLVM tree from `data` starting at `*pos`,
+    /// advancing `*pos` past the tree and returning the consumed slice.
+    ///
+    /// Uses an iterative depth counter rather than recursion so deeply
+    /// nested trees cannot blow the stack.
+    fn read_clvm_tree<'a>(data: &'a [u8], pos: &mut usize) -> Result<&'a [u8], String> {
+        let start = *pos;
+        let mut depth: usize = 1; // one tree to consume
+
+        while depth > 0 {
+            if *pos >= data.len() {
+                return Err(format!(
+                    "unexpected end of CLVM data at offset {} (buf len {})",
+                    *pos, data.len()
+                ));
+            }
+            let b = data[*pos];
+            *pos += 1;
+            depth -= 1;
+
+            if b == 0xff {
+                // Cons pair: left and right sub-trees still to parse
+                depth += 2;
+            } else if b <= 0x7f || b == 0x80 {
+                // Single-byte atom or nil -- already consumed
+            } else if b <= 0xbf {
+                let size = (b & 0x3f) as usize;
+                *pos += size;
+            } else if b <= 0xdf {
+                if *pos >= data.len() {
+                    return Err("truncated 2-byte CLVM size".into());
+                }
+                let size = (((b & 0x1f) as usize) << 8) | (data[*pos] as usize);
+                *pos += 1 + size;
+            } else if b <= 0xef {
+                if *pos + 1 >= data.len() {
+                    return Err("truncated 3-byte CLVM size".into());
+                }
+                let size = (((b & 0x0f) as usize) << 16)
+                    | ((data[*pos] as usize) << 8)
+                    | (data[*pos + 1] as usize);
+                *pos += 2 + size;
+            } else if b <= 0xf7 {
+                if *pos + 2 >= data.len() {
+                    return Err("truncated 4-byte CLVM size".into());
+                }
+                let size = (((b & 0x07) as usize) << 24)
+                    | ((data[*pos] as usize) << 16)
+                    | ((data[*pos + 1] as usize) << 8)
+                    | (data[*pos + 2] as usize);
+                *pos += 3 + size;
+            } else if b <= 0xfb {
+                if *pos + 3 >= data.len() {
+                    return Err("truncated 5-byte CLVM size".into());
+                }
+                let size = (((b & 0x03) as usize) << 32)
+                    | ((data[*pos] as usize) << 24)
+                    | ((data[*pos + 1] as usize) << 16)
+                    | ((data[*pos + 2] as usize) << 8)
+                    | (data[*pos + 3] as usize);
+                *pos += 4 + size;
+            } else {
+                return Err(format!("invalid CLVM leading byte 0x{:02x}", b));
+            }
+
+            if *pos > data.len() {
+                return Err(format!(
+                    "CLVM atom extends past end of buffer at offset {} (buf len {})",
+                    *pos, data.len()
+                ));
+            }
+        }
+
+        Ok(&data[start..*pos])
+    }
+
+    fn decode_offer_to_spend_bundle(offer_bech32: &str) -> Result<SpendBundle, String> {
+        // bech32m decode
+        let (_hrp, raw_bytes) = bech32::decode(offer_bech32)
+            .map_err(|e| format!("bech32m decode error: {e}"))?;
+
+        if raw_bytes.len() < 3 {
+            return Err(format!("offer data too short ({} bytes)", raw_bytes.len()));
+        }
+
+        // 2-byte version prefix (big-endian)
+        let version = u16::from_be_bytes([raw_bytes[0], raw_bytes[1]]);
+        if version > LATEST_OFFER_VERSION {
+            return Err(format!(
+                "offer compression version {version} unsupported (max {LATEST_OFFER_VERSION})"
+            ));
+        }
+
+        let zdict = zdict_for_version(version)?;
+        let decompressed = decompress_offer_with_zdict(&raw_bytes[2..], &zdict)?;
+
+        // Parse streamable SpendBundle
+        let data = &decompressed;
+        let mut pos: usize = 0;
+
+        macro_rules! read_bytes {
+            ($n:expr) => {{
+                let n = $n;
+                if pos + n > data.len() {
+                    return Err(format!(
+                        "read {} bytes at offset {} but buffer is {} bytes",
+                        n, pos, data.len()
+                    ));
+                }
+                let slice = &data[pos..pos + n];
+                pos += n;
+                slice
+            }};
+        }
+        macro_rules! read_u32 {
+            () => {{
+                let b = read_bytes!(4);
+                u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+            }};
+        }
+
+        let num_spends = read_u32!() as usize;
+        let mut spends = Vec::with_capacity(num_spends);
+
+        for _ in 0..num_spends {
+            let parent_coin_info = read_bytes!(32);
+            let puzzle_hash = read_bytes!(32);
+            let amount_be = read_bytes!(8);
+            let amount = u64::from_be_bytes([
+                amount_be[0], amount_be[1], amount_be[2], amount_be[3],
+                amount_be[4], amount_be[5], amount_be[6], amount_be[7],
+            ]);
+
+            let puzzle_bytes = read_clvm_tree(data, &mut pos)
+                .map_err(|e| format!("puzzle_reveal CoinSpend: {e}"))?;
+            let solution_bytes = read_clvm_tree(data, &mut pos)
+                .map_err(|e| format!("solution CoinSpend: {e}"))?;
+
+            // Build CoinString: parent ++ puzzle_hash ++ clvm_amount
+            let clvm_amount = u64_to_clvm_amount(amount);
+            let mut coin_bytes = Vec::with_capacity(64 + clvm_amount.len());
+            coin_bytes.extend_from_slice(parent_coin_info);
+            coin_bytes.extend_from_slice(puzzle_hash);
+            coin_bytes.extend_from_slice(&clvm_amount);
+
+            spends.push(CoinSpend {
+                coin: CoinString::from_bytes(&coin_bytes),
+                bundle: Spend {
+                    puzzle: Puzzle::from_bytes(puzzle_bytes),
+                    solution: Program::from_bytes(solution_bytes).into(),
+                    signature: Aggsig::default(), // placeholder, set after reading agg sig
+                },
+            });
+        }
+
+        let agg_sig_bytes = read_bytes!(96);
+        let _ = pos; // consumed after final read
+        let agg_sig = Aggsig::from_slice(agg_sig_bytes)
+            .map_err(|e| format!("bad aggregated signature: {e:?}"))?;
+
+        for spend in &mut spends {
+            spend.bundle.signature = agg_sig.clone();
+        }
+
+        Ok(SpendBundle { name: None, spends })
+    }
+
+    #[wasm_bindgen]
+    pub fn provide_offer_bech32(cid: i32, offer_bech32: &str) -> Result<JsValue, JsValue> {
+        let bundle = decode_offer_to_spend_bundle(offer_bech32)
+            .map_err(|e| JsValue::from_str(&format!("offer decode error: {e}")))?;
         with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle.cradle.provide_coin_spend_bundle(
                 &mut cradle.allocator,
