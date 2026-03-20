@@ -63,26 +63,68 @@ export function useLobbySocket(
   useEffect(() => {
     if (!uniqueId) return;
 
-    const socket = io(lobbyUrl);
+    const socket = io(lobbyUrl, {
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 30000,
+      randomizationFactor: 0.5,
+    });
     socketRef.current = socket;
 
-    socket.emit('join', { id: uniqueId, session_id: sessionId });
+    let joined = false;
+    let lastTrackerHeardFrom = Date.now();
 
-    socket.on('lobby_update', (q: Player[]) => setPlayers(q));
-    socket.on('game_update', (g: GameDefinition[]) => setLobbyGames(g));
+    socket.on('connect', () => {
+      lastTrackerHeardFrom = Date.now();
+      if (joined) {
+        socket.emit('join', { id: uniqueId, session_id: sessionId });
+      }
+    });
+
+    socket.emit('join', { id: uniqueId, session_id: sessionId });
+    joined = true;
+
+    socket.on('tracker_ping', () => {
+      lastTrackerHeardFrom = Date.now();
+      socket.emit('tracker_pong');
+    });
+
+    socket.on('tracker_pong', () => {
+      lastTrackerHeardFrom = Date.now();
+    });
+
+    socket.on('lobby_update', (q: Player[]) => {
+      lastTrackerHeardFrom = Date.now();
+      setPlayers(q);
+    });
+    socket.on('game_update', (g: GameDefinition[]) => {
+      lastTrackerHeardFrom = Date.now();
+      setLobbyGames(g);
+    });
 
     socket.on('challenge_received', (c: ChallengeReceived) => {
+      lastTrackerHeardFrom = Date.now();
       setPendingChallenge(c);
     });
 
     socket.on('challenge_resolved', (r: ChallengeResolved) => {
+      lastTrackerHeardFrom = Date.now();
       setChallengeSent(false);
       if (!r.accepted) {
         console.log('[lobby] challenge declined');
       }
     });
 
+    const pingTimer = setInterval(() => {
+      socket.emit('tracker_ping');
+      if (Date.now() - lastTrackerHeardFrom > 60_000) {
+        console.warn('[lobby] tracker liveness timeout, disconnecting');
+        socket.disconnect();
+      }
+    }, 15_000);
+
     return () => {
+      clearInterval(pingTimer);
       socket.emit('leave', { id: uniqueId });
       socket.disconnect();
     };

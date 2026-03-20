@@ -64,6 +64,26 @@ function preset_file(name: string) {
 
 interface SimpleMessage { msgno: number; msg: string };
 
+function makeStorage(): Storage {
+  const store = new Map<string, string>();
+  return {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => { store.set(key, value); },
+    removeItem: (key: string) => { store.delete(key); },
+    clear: () => { store.clear(); },
+    get length() { return store.size; },
+    key: (i: number) => [...store.keys()][i] ?? null,
+  };
+}
+
+beforeAll(() => {
+  (global as any).localStorage = makeStorage();
+});
+
+afterAll(() => {
+  delete (global as any).localStorage;
+});
+
 const activeSubscriptions: Subscription[] = [];
 const activeCradles: WasmBlobWrapperAdapter[] = [];
 
@@ -255,11 +275,14 @@ it(
     const cradle1 = addActiveCradle(new WasmBlobWrapperAdapter());
     const cradle2 = addActiveCradle(new WasmBlobWrapperAdapter());
     try {
-      let peer_conn1 = {
+      let peer_conn1: PeerConnectionResult = {
         sendMessage: (msgno: number, message: string) => {
           cradle1.add_outbound_message(msgno, message);
         },
-        hostLog: (msg: string) => process.stderr.write(msg + '\n')
+        sendAck: (_ackMsgno: number) => {},
+        sendPing: () => {},
+        hostLog: (msg: string) => process.stderr.write(msg + '\n'),
+        close: () => {},
       };
       let wasm_init1 = new WasmStateInit(doInternalLoadWasm, fetchHex);
       storeInitArgs(() => {}, WholeWasmObject);
@@ -272,11 +295,14 @@ it(
       );
       cradle1.set_blob(wasm_blob1);
 
-      let peer_conn2 = {
+      let peer_conn2: PeerConnectionResult = {
         sendMessage: (msgno: number, message: string) => {
           cradle2.add_outbound_message(msgno, message);
         },
-        hostLog: (msg: string) => process.stderr.write(msg + '\n')
+        sendAck: (_ackMsgno: number) => {},
+        sendPing: () => {},
+        hostLog: (msg: string) => process.stderr.write(msg + '\n'),
+        close: () => {},
       };
       let wasm_init2 = new WasmStateInit(doInternalLoadWasm, fetchHex);
       let wasm_blob2 = await initWasmBlobWrapper(

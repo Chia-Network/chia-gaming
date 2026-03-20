@@ -939,7 +939,6 @@ fn run_game_container_with_action_list_with_success_predicate(
     let mut move_number = 0;
     let gid_diag_on = gid_diag_enabled();
     let test_name = crate::simulator::current_test_name().unwrap_or_else(|| "unknown".to_string());
-    // debug!("DEBUG: KEYS {:?}", private_keys);
     // Coinset adapter for each side.
     let game_type_map = poker_collection(allocator);
 

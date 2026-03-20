@@ -1310,7 +1310,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `src/simulator/tests/potato_handler_sim.rs` | Integration tests including notification suite           |
 | `src/test_support/peer/potato_handler.rs`   | Test peer helper                                         |
 | `src/test_support/game.rs`                  | `GameAction` enum and simulation loop driver             |
-| `run-js-tests.sh`                           | Local JS/WASM integration test runner                    |
+| `tools/local-wasm-tests.sh`                 | Local JS/WASM integration test runner                    |
 
 
 ---
@@ -1588,6 +1588,12 @@ timeout.
 ---
 
 ## UX Notifications
+
+For the frontend component hierarchy, notification routing, tracker relay
+protocol, session persistence, peer message reliability, and reconnect
+reconciliation, see `FRONTEND_ARCHITECTURE.md`. The frontend supports full page
+reload — game state is continuously saved to localStorage and restored on reload
+with a fresh RNG seed.
 
 The UI layer receives events via the `ToLocalUI` trait callbacks and
 `GameNotification` variants (delivered through `game_notification`).

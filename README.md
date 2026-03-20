@@ -14,6 +14,8 @@ commit-reveal randomness.
   potato protocol, and Calpoker work.
 - **[DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)** — How to build, run tests, read
   output, and debug failures.
+- **[FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md)** — Player app and
+  tracker: React components, WASM bridge, socket.io relay protocol.
 ## Quick Start
 
 ```bash
@@ -30,7 +32,7 @@ cargo test
 cargo test --features sim-tests -- sim_tests --nocapture
 
 # Run JS/WASM integration tests (builds WASM, starts simulator, runs Jest)
-./run-js-tests.sh
+./tools/local-wasm-tests.sh
 
 # Run everything
 ./run-all-tests.sh

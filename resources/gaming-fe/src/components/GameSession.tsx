@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { Observable } from 'rxjs';
 import { useGameSession, ChannelCoinState, GameCoinState, GameplayEvent } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
+import { CalpokerHandState } from '../hooks/save';
 import { generateOrRetrieveUniqueId, formatMojos, formatAmount } from '../util';
 import { CalpokerOutcome } from '../types/ChiaGaming';
 import { WasmBlobWrapper } from '../hooks/WasmBlobWrapper';
@@ -62,6 +63,7 @@ interface CalpokerHandProps {
   appendGameLog: (line: string) => void;
   perGameAmount: bigint;
   onDisplayComplete: () => void;
+  initialHandState?: CalpokerHandState;
 }
 
 function CalpokerHand({
@@ -75,6 +77,7 @@ function CalpokerHand({
   appendGameLog,
   perGameAmount,
   onDisplayComplete,
+  initialHandState,
 }: CalpokerHandProps) {
   const {
     playerHand,
@@ -92,6 +95,7 @@ function CalpokerHand({
     gameplayEvent$,
     onOutcome,
     onTurnChanged,
+    initialHandState,
   );
 
   const handleGameLog = useCallback((lines: string[]) => {
@@ -120,14 +124,16 @@ function CalpokerHand({
 export interface GameSessionProps {
   params: import('../types/ChiaGaming').GameSessionParams;
   peerConn: import('../types/ChiaGaming').PeerConnectionResult;
-  registerMessageHandler: (handler: (msgno: number, msg: string) => void) => void;
+  registerMessageHandler: (handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, pingHandler: () => void) => void;
   appendGameLog: (line: string) => void;
+  sessionSave?: import('../hooks/save').SessionSave;
+  blockchainType?: import('../hooks/save').BlockchainType;
 }
 
-const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog }) => {
+const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, blockchainType }) => {
   const uniqueId = generateOrRetrieveUniqueId();
 
-  const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog);
+  const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, sessionSave, blockchainType);
 
   if (session.error) {
     return (
@@ -227,6 +233,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
               appendGameLog={session.appendGameLog}
               perGameAmount={session.perGameAmount}
               onDisplayComplete={session.onDisplayComplete}
+              initialHandState={session.handKey === 1 && sessionSave?.handState ? sessionSave.handState : undefined}
             />
           )}
 

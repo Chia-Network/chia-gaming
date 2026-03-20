@@ -23,14 +23,14 @@ import { BlockchainReport } from '../types/ChiaGaming';
 import { BlockchainInboundReply } from '../hooks/BlockchainConnector';
 import { debugLog } from '../services/debugLog';
 
-const WalletConnectHeading = ({ onConnected }: { onConnected?: () => void }) => {
+const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConnected?: (blockchainType: 'simulator' | 'walletconnect') => void; initialExpanded?: boolean }) => {
   const { wcInfo, setWcInfo } = useDebug();
   const [_alreadyConnected, setAlreadyConnected] = useState(false);
   const [_walletConnectError, setWalletConnectError] = useState<
     string | undefined
   >();
   const [fakeAddress, setFakeAddress] = useState<string | undefined>();
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(initialExpanded);
   const [showQRModal, setShowQRModal] = useState(false);
   const [connectionUri, setConnectionUri] = useState<string | undefined>();
   const [debugOpen, setDebugOpen] = useState(false);
@@ -118,7 +118,7 @@ const WalletConnectHeading = ({ onConnected }: { onConnected?: () => void }) => 
           debugLog('WalletConnect connected');
           toggleExpanded();
           setAlreadyConnected(true);
-          onConnected?.();
+          onConnected?.('walletconnect');
           blockchainDataEmitter.select({
             selection: REAL_BLOCKCHAIN_ID,
             uniqueId,
@@ -203,7 +203,7 @@ const WalletConnectHeading = ({ onConnected }: { onConnected?: () => void }) => 
         debugLog('Simulator wallet registered');
         setFakeAddress(res);
         toggleExpanded();
-        onConnected?.();
+        onConnected?.('simulator');
         blockchainDataEmitter.select({
           selection: FAKE_BLOCKCHAIN_ID,
           uniqueId,

@@ -18,6 +18,7 @@ import {
   setInitStarted,
 } from './blobSingleton';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
+import { SessionSave, BlockchainType, clearSession } from './save';
 import { toHexString } from '../util';
 import { debugLog } from '../services/debugLog';
 
@@ -85,31 +86,41 @@ export function useGameSession(
   params: GameSessionParams,
   uniqueId: string,
   peerConn: PeerConnectionResult,
-  registerMessageHandler: (handler: (msgno: number, msg: string) => void) => void,
+  registerMessageHandler: (handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, pingHandler: () => void) => void,
   appendGameLog: (line: string) => void,
+  sessionSave?: SessionSave,
+  blockchainType?: BlockchainType,
 ): UseGameSessionResult {
   const { iStarted, amount, perGameAmount } = params;
   const playerNumber = iStarted ? 1 : 2;
 
   const [gameConnectionState, setGameConnectionState] =
-    useState<GameConnectionState>({ stateIdentifier: 'starting', stateDetail: ['before handshake'] });
+    useState<GameConnectionState>(() =>
+      sessionSave?.channelReady
+        ? { stateIdentifier: 'running' as const, stateDetail: [] }
+        : { stateIdentifier: 'starting' as const, stateDetail: ['before handshake'] }
+    );
   const [error, setRealError] = useState<string | undefined>(undefined);
   const [myRunningBalance, setMyRunningBalance] = useState(0n);
   const [sessionEnded, setSessionEnded] = useState(false);
   const [shutdownInitiated, setShutdownInitiated] = useState(false);
-  const [channelCoin, setChannelCoin] = useState<CoinLifecycle<ChannelCoinState>>({ coinHex: null, state: 'not-created' });
+  const [channelCoin, setChannelCoin] = useState<CoinLifecycle<ChannelCoinState>>(() =>
+    sessionSave?.channelReady ? { coinHex: null, state: 'channel' } : { coinHex: null, state: 'not-created' }
+  );
   const [gameCoin, setGameCoin] = useState<CoinLifecycle<GameCoinState>>({ coinHex: null, state: 'off-chain-my-turn' });
-  const [handKey, setHandKey] = useState(0);
-  const [gameIds, setGameIds] = useState<string[]>([]);
+  const [handKey, setHandKey] = useState(() => sessionSave?.activeGameId ? 1 : 0);
+  const [gameIds, setGameIds] = useState<string[]>(() =>
+    sessionSave?.activeGameId ? [sessionSave.activeGameId] : []
+  );
   const [showBetweenHandOverlay, setShowBetweenHandOverlay] = useState(false);
   const [lastOutcome, setLastOutcome] = useState<CalpokerOutcome | undefined>(undefined);
   const [actionFailedReason, setActionFailedReason] = useState<string | null>(null);
 
   const shutdownInitiatedRef = useRef(false);
-  const gameIdsRef = useRef<string[]>([]);
+  const gameIdsRef = useRef<string[]>(sessionSave?.activeGameId ? [sessionSave.activeGameId] : []);
   const pendingProposalIdRef = useRef<string | null>(null);
   const wantsNewGameRef = useRef<boolean>(false);
-  const firstGameAcceptedRef = useRef<boolean>(false);
+  const firstGameAcceptedRef = useRef<boolean>(!!sessionSave?.channelReady);
   const awaitingDisplayCompleteRef = useRef<boolean>(false);
   const gameplayEventSubject = useRef(new Subject<GameplayEvent>()).current;
 
@@ -132,6 +143,10 @@ export function useGameSession(
     uniqueId,
     amount,
     iStarted,
+    sessionSave,
+    params.pairingToken,
+    perGameAmount,
+    blockchainType,
   );
 
   const gameObjectRef = useRef<WasmBlobWrapper>(gameObject);
@@ -405,6 +420,7 @@ export function useGameSession(
   const stopPlaying = useCallback(() => {
     shutdownInitiatedRef.current = true;
     setShutdownInitiated(true);
+    clearSession();
     gameObject?.cleanShutdown();
   }, [gameObject]);
 

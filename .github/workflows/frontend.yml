@@ -93,7 +93,7 @@ jobs:
       - name: Build simulator
         run: cargo build --features sim-tests,sim-server --bin chia-gaming-sim
 
-      # ── WASM/Jest tests (mirrors run-js-tests.sh) ──────────────────
+      # ── WASM/Jest tests (mirrors tools/local-wasm-tests.sh) ────────
 
       - name: Run WASM/Jest tests
         run: |

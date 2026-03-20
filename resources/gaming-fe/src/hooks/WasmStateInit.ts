@@ -11,9 +11,11 @@ var chia_gaming_init: WasmInitFn | undefined = undefined;
 var cg: WasmConnection | undefined = undefined;
 var logInitialized = false;
 
-window.loadWasm = (init: WasmInitFn, wasmConn: WasmConnection) => {
-  storeInitArgs(init, wasmConn);
-};
+if (typeof window !== 'undefined') {
+  window.loadWasm = (init: WasmInitFn, wasmConn: WasmConnection) => {
+    storeInitArgs(init, wasmConn);
+  };
+}
 
 export const readyToInit = new Subject<boolean>();
 export const waitForReadyToInit = new Observable<boolean>((subscriber) => {
@@ -199,7 +201,7 @@ export class WasmStateInit {
 
   deserializeGame(
     wasm: WasmConnection,
-    serializedGame: unknown,
+    serializedGame: string,
   ): ChiaGame {
     const entropy = new Uint8Array(32);
     crypto.getRandomValues(entropy);

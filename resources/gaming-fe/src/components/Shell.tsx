@@ -3,13 +3,19 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import WalletConnectHeading from './WalletConnectHeading';
 import GameSession from './GameSession';
 import { GameSessionParams, PeerConnectionResult } from '../types/ChiaGaming';
-import { TrackerConnection, MatchedParams } from '../services/TrackerConnection';
+import { TrackerConnection, MatchedParams, ConnectionStatus } from '../services/TrackerConnection';
 import { subscribeDebugLog } from '../services/debugLog';
 import {
   generateOrRetrieveUniqueId,
   generateOrRetrieveSessionId,
 } from '../util';
+import { loadSession, clearSession, startNewSession, SessionSave } from '../hooks/save';
+import { blobSingleton } from '../hooks/blobSingleton';
+import { blockchainDataEmitter } from '../hooks/BlockchainInfo';
+import { FAKE_BLOCKCHAIN_ID } from '../hooks/FakeBlockchainInterface';
+import { BLOCKCHAIN_SERVICE_URL } from '../settings';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
+import { debugLog } from '../services/debugLog';
 import { LogOut } from 'lucide-react';
 
 type TabId = 'tracker' | 'session' | 'game-log' | 'debug-log';
@@ -51,35 +57,43 @@ const Shell = () => {
   const [peerConn, setPeerConn] = useState<PeerConnectionResult | null>(null);
 
   const [walletConnected, setWalletConnected] = useState(false);
+  const [pendingRestore, setPendingRestore] = useState<SessionSave | null>(() => loadSession());
   const [gameLog, setGameLog] = useState<string[]>([]);
-  const [debugLog, setDebugLog] = useState<string[]>([]);
+  const [debugLogLines, setDebugLogLines] = useState<string[]>([]);
 
   const [iframeUrl, setIframeUrl] = useState('about:blank');
   const [iframeAllowed, setIframeAllowed] = useState('');
 
   const trackerConnRef = useRef<TrackerConnection | null>(null);
+  const sessionSaveRef = useRef<SessionSave | null>(null);
+  const activePairingTokenRef = useRef<string | null>(null);
+  const blockchainTypeRef = useRef<import('../hooks/save').BlockchainType>('simulator');
 
   const appendGameLog = useCallback((line: string) => {
     setGameLog(prev => [...prev, line]);
   }, []);
 
-  const registerMessageHandler = useCallback((handler: (msgno: number, msg: string) => void) => {
+  const registerMessageHandler = useCallback((handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, pingHandler: () => void) => {
     if (trackerConnRef.current) {
-      trackerConnRef.current.registerMessageHandler(handler);
+      trackerConnRef.current.registerMessageHandler(handler, ackHandler, pingHandler);
     }
   }, []);
 
   useEffect(() => {
     return subscribeDebugLog((line) => {
-      setDebugLog(prev => [...prev, line]);
+      setDebugLogLines(prev => [...prev, line]);
     });
   }, []);
 
   // Fetch tracker URL, set up iframe and TrackerConnection
   useEffect(() => {
+    let cancelled = false;
+
     fetch('/urls')
       .then((res) => res.json())
       .then((urls: { tracker: string }) => {
+        if (cancelled) return;
+
         const trackerURL = new URL(urls.tracker);
         const trackerOrigin = trackerURL.origin;
         setIframeAllowed(trackerOrigin);
@@ -87,44 +101,193 @@ const Shell = () => {
         const lobbyUrl = `${trackerOrigin}/?lobby=true&session=${sessionId}&uniqueId=${uniqueId}`;
         setIframeUrl(lobbyUrl);
 
-        // Create TrackerConnection for game message relay
+        const startSession = (
+          conn: TrackerConnection,
+          iStarted: boolean,
+          amount: bigint,
+          perGame: bigint,
+          token: string,
+          save: SessionSave | null,
+        ) => {
+          activePairingTokenRef.current = token;
+          sessionSaveRef.current = save;
+          setGameParams({
+            iStarted,
+            amount,
+            perGameAmount: perGame,
+            restoring: save !== null,
+            pairingToken: token,
+          });
+          setPeerConn(conn.getPeerConnection());
+          if (save) {
+            setGameLog(save.gameLog);
+            setDebugLogLines(save.debugLog);
+          } else {
+            setGameLog([]);
+          }
+          setActiveTab('session');
+        };
+
         const conn = new TrackerConnection(trackerOrigin, sessionId, {
           onMatched: (matched: MatchedParams) => {
             let amount: bigint;
             let perGame: bigint;
             try { amount = BigInt(matched.amount); } catch { amount = FALLBACK_AMOUNT; }
             try { perGame = BigInt(matched.per_game); } catch { perGame = FALLBACK_PER_GAME; }
-            setGameParams({
-              iStarted: matched.i_am_initiator,
-              amount,
-              perGameAmount: perGame,
-            });
-            setPeerConn(conn.getPeerConnection());
-            setGameLog([]);
-            setActiveTab('session');
+            startSession(conn, matched.i_am_initiator, amount, perGame, matched.token, null);
+          },
+          onConnectionStatus: (status: ConnectionStatus) => {
+            // Mid-session reconnect: we already have an active session
+            if (activePairingTokenRef.current !== null) {
+              if (status.has_pairing && status.token === activePairingTokenRef.current) {
+                console.log('[Shell] mid-session reconnect: token matches, resending un-acked');
+                blobSingleton?.resendUnacked();
+              } else {
+                console.warn('[Shell] mid-session reconnect: pairing lost or mismatched, going on-chain');
+                blobSingleton?.goOnChain();
+                conn.close();
+              }
+              return;
+            }
+
+            // Initial page-load reconciliation
+            const save = loadSession();
+
+            if (status.has_pairing && status.token) {
+              if (save && save.pairingToken === status.token) {
+                let amount: bigint;
+                let perGame: bigint;
+                try { amount = BigInt(save.amount); } catch { amount = FALLBACK_AMOUNT; }
+                try { perGame = BigInt(save.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
+                startSession(conn, status.i_am_initiator!, amount, perGame, status.token, save);
+              } else if (!save) {
+                console.warn('[Shell] connection_status: unrecognized pairing, requesting close');
+                conn.close();
+                clearSession();
+              } else {
+                console.warn('[Shell] connection_status: token mismatch (tracker=%s, save=%s), closing unknown pairing', status.token, save.pairingToken);
+                conn.close();
+                let amount: bigint;
+                let perGame: bigint;
+                try { amount = BigInt(save.amount); } catch { amount = FALLBACK_AMOUNT; }
+                try { perGame = BigInt(save.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
+                sessionSaveRef.current = save;
+                setGameParams({
+                  iStarted: save.iStarted,
+                  amount,
+                  perGameAmount: perGame,
+                  restoring: true,
+                  pairingToken: save.pairingToken,
+                });
+                setPeerConn(conn.getPeerConnection());
+                setGameLog(save.gameLog);
+                setDebugLogLines(save.debugLog);
+                setActiveTab('session');
+              }
+            } else {
+              if (save) {
+                console.warn('[Shell] connection_status: no pairing but have save, going on-chain');
+                let amount: bigint;
+                let perGame: bigint;
+                try { amount = BigInt(save.amount); } catch { amount = FALLBACK_AMOUNT; }
+                try { perGame = BigInt(save.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
+                sessionSaveRef.current = save;
+                setGameParams({
+                  iStarted: save.iStarted,
+                  amount,
+                  perGameAmount: perGame,
+                  restoring: true,
+                  pairingToken: save.pairingToken,
+                });
+                setPeerConn(conn.getPeerConnection());
+                setGameLog(save.gameLog);
+                setDebugLogLines(save.debugLog);
+                setActiveTab('session');
+              }
+              // else: no pairing, no save -> idle, wait for fresh match
+            }
+          },
+          onPeerReconnected: () => {
+            blobSingleton?.resendUnacked();
           },
           onMessage: (_data: string) => {
             // Will be replaced by registerMessageHandler once GameSession mounts
           },
+          onAck: (_ack: number) => {
+            // Will be replaced by registerMessageHandler once GameSession mounts
+          },
+          onPing: () => {
+            // Peer pings are handled by registerMessageHandler
+          },
           onClosed: () => {
             console.log('[Shell] tracker connection closed');
+          },
+          onTrackerDisconnected: () => {
+            console.log('[Shell] tracker disconnected');
+          },
+          onTrackerReconnected: () => {
+            console.log('[Shell] tracker reconnected');
           },
         });
         trackerConnRef.current = conn;
       })
-      .catch(e => console.error('[Shell] failed to fetch /urls:', e));
+      .catch(e => {
+        if (!cancelled) console.error('[Shell] failed to fetch /urls:', e);
+      });
 
     return () => {
+      cancelled = true;
       trackerConnRef.current?.disconnect();
+      trackerConnRef.current = null;
     };
   }, [uniqueId, sessionId]);
 
   const handleReset = useCallback(() => {
+    activePairingTokenRef.current = null;
     localStorage.clear();
     window.location.reload();
   }, []);
 
   useThemeSyncToIframe('tracker-iframe', [iframeUrl]);
+
+  const [resuming, setResuming] = useState(false);
+
+  const handleResume = useCallback(() => {
+    if (!pendingRestore) return;
+    const save = pendingRestore;
+    const bcType = save.blockchainType ?? 'simulator';
+    setResuming(true);
+
+    const onRegistered = () => {
+      setPendingRestore(null);
+      setResuming(false);
+      setWalletConnected(true);
+      blockchainDataEmitter.select({ selection: FAKE_BLOCKCHAIN_ID, uniqueId });
+    };
+    const onFailed = (e: unknown) => {
+      console.error('[Shell] wallet register failed on resume:', e);
+      setResuming(false);
+    };
+
+    if (bcType === 'simulator') {
+      fetch(`${BLOCKCHAIN_SERVICE_URL}/register?name=${uniqueId}`, { method: 'POST' })
+        .then(res => res.json())
+        .then(() => { debugLog('Simulator wallet registered (resume)'); onRegistered(); })
+        .catch(onFailed);
+    } else {
+      debugLog('WalletConnect resume not yet implemented, falling back to simulator');
+      fetch(`${BLOCKCHAIN_SERVICE_URL}/register?name=${uniqueId}`, { method: 'POST' })
+        .then(res => res.json())
+        .then(onRegistered)
+        .catch(onFailed);
+    }
+  }, [pendingRestore, uniqueId]);
+
+  const handleResetSave = useCallback(() => {
+    clearSession();
+    startNewSession();
+    setPendingRestore(null);
+  }, []);
 
   const wcHeading = (
     <div style={{
@@ -133,7 +296,57 @@ const Shell = () => {
         ? { flexShrink: 0 }
         : { flex: '1 1 0%', display: 'flex', flexDirection: 'column' as const }),
     }}>
-      <WalletConnectHeading onConnected={() => setWalletConnected(true)} />
+      {pendingRestore && !walletConnected ? (
+        <div style={{
+          flex: '1 1 0%',
+          display: 'flex',
+          flexDirection: 'column' as const,
+          justifyContent: 'center',
+          alignItems: 'center',
+          width: '100%',
+          padding: '1em',
+        }}>
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '0.75rem',
+            padding: '1.5rem',
+            borderRadius: '0.5rem',
+            border: '1px solid var(--color-canvas-border)',
+            background: 'var(--color-canvas-bg)',
+            maxWidth: '24rem',
+            width: '90%',
+          }}>
+            <p className='text-canvas-text-contrast font-semibold text-lg'>Saved session found</p>
+            <p className='text-canvas-text text-sm text-center'>
+              You have an in-progress game session. Resume where you left off, or start fresh?
+            </p>
+            <button
+              onClick={handleResume}
+              disabled={resuming}
+              className='w-full px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors disabled:opacity-50'
+            >
+              {resuming ? 'Resuming…' : 'Resume Session'}
+            </button>
+            <button
+              onClick={handleResetSave}
+              disabled={resuming}
+              className='w-full px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-50'
+            >
+              Start Fresh
+            </button>
+          </div>
+        </div>
+      ) : (
+        <WalletConnectHeading
+          onConnected={(bcType) => {
+            blockchainTypeRef.current = bcType;
+            setWalletConnected(true);
+          }}
+          initialExpanded={!walletConnected}
+        />
+      )}
     </div>
   );
 
@@ -202,6 +415,8 @@ const Shell = () => {
               peerConn={peerConn}
               registerMessageHandler={registerMessageHandler}
               appendGameLog={appendGameLog}
+              sessionSave={sessionSaveRef.current ?? undefined}
+              blockchainType={blockchainTypeRef.current}
             />
           ) : (
             <div className='w-full h-full flex items-center justify-center text-canvas-text/50'>
@@ -217,8 +432,8 @@ const Shell = () => {
 
         {/* Debug Log tab */}
         <div style={{ position: 'absolute', inset: 0, padding: '1rem', display: activeTab === 'debug-log' ? 'block' : 'none' }}>
-          {debugLog.length > 0 ? (
-            <LogPanel lines={debugLog} />
+          {debugLogLines.length > 0 ? (
+            <LogPanel lines={debugLogLines} />
           ) : (
             <div className='w-full h-full flex items-center justify-center text-canvas-text/50'>
               No debug log entries yet

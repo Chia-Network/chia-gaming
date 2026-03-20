@@ -5,6 +5,7 @@ import {
   CalpokerOutcome,
 } from '../types/ChiaGaming';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
+import { CalpokerHandState } from './save';
 import { GameplayEvent } from './useGameSession';
 
 function parseCards(readableBytes: number[], iStarted: boolean): { playerHand: number[], opponentHand: number[] } {
@@ -45,23 +46,25 @@ export function useCalpokerHand(
   gameplayEvent$: Observable<GameplayEvent>,
   onOutcome: (outcome: CalpokerOutcome) => void,
   onTurnChanged: (isMyTurn: boolean) => void,
+  initialHandState?: CalpokerHandState,
 ): UseCalpokerHandResult {
-  const [playerHand, setPlayerHand] = useState<number[]>([]);
-  const [opponentHand, setOpponentHand] = useState<number[]>([]);
+  const [playerHand, setPlayerHand] = useState<number[]>(initialHandState?.playerHand ?? []);
+  const [opponentHand, setOpponentHand] = useState<number[]>(initialHandState?.opponentHand ?? []);
   const [cardSelections, setOurCardSelections] = useState<number[]>([]);
-  const [moveNumber, setMoveNumber] = useState<number>(0);
-  const [isPlayerTurn, setMyTurn] = useState<boolean>(!iStarted);
+  const [moveNumber, setMoveNumber] = useState<number>(initialHandState?.moveNumber ?? 0);
+  const [isPlayerTurn, setMyTurn] = useState<boolean>(initialHandState?.isPlayerTurn ?? !iStarted);
   const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(undefined);
 
-  const playerHandRef = useRef<number[]>([]);
-  const opponentHandRef = useRef<number[]>([]);
+  const playerHandRef = useRef<number[]>(initialHandState?.playerHand ?? []);
+  const opponentHandRef = useRef<number[]>(initialHandState?.opponentHand ?? []);
   const cardSelectionsRef = useRef<number[]>([]);
-  const moveNumberRef = useRef<number>(0);
+  const moveNumberRef = useRef<number>(initialHandState?.moveNumber ?? 0);
   const gameObjectRef = useRef(gameObject);
   const gameIdRef = useRef(gameId);
   const handFinishedRef = useRef(false);
   const pendingPlayRef = useRef(false);
-  const isPlayerTurnRef = useRef(!iStarted);
+  const isPlayerTurnRef = useRef(initialHandState?.isPlayerTurn ?? !iStarted);
+  const restoredRef = useRef(!!initialHandState);
 
   playerHandRef.current = playerHand;
   opponentHandRef.current = opponentHand;
@@ -93,6 +96,7 @@ export function useCalpokerHand(
             }
           } else if (currentMove >= 2) {
             handFinishedRef.current = true;
+            gameObjectRef.current?.setHandState(null);
             const myDiscardsBitfield = selectedCardsToBitfield(
               cardSelectionsRef.current,
               playerHandRef.current,
@@ -128,6 +132,7 @@ export function useCalpokerHand(
           }
         } else if ('_terminal' in evt) {
           handFinishedRef.current = true;
+          gameObjectRef.current?.setHandState(null);
         }
       },
     });
@@ -184,6 +189,7 @@ export function useCalpokerHand(
 
   // Autofire moves 0 and 2; auto-submit queued move 1
   useEffect(() => {
+    if (restoredRef.current) { restoredRef.current = false; return; }
     if (!isPlayerTurn) return;
     const m = moveNumberRef.current;
     if (m === 0 || m === 2) {
@@ -192,6 +198,12 @@ export function useCalpokerHand(
       submitMove1();
     }
   }, [isPlayerTurn, moveNumber, handleMakeMove, submitMove1]);
+
+  useEffect(() => {
+    if (playerHand.length > 0) {
+      gameObject.setHandState({ playerHand, opponentHand, moveNumber, isPlayerTurn });
+    }
+  }, [playerHand, opponentHand, moveNumber, isPlayerTurn, gameObject]);
 
   const handleCheat = useCallback(() => {
     const go = gameObjectRef.current;

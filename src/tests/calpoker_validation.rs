@@ -437,11 +437,11 @@ fn run_step_and_check(
     let vh = last.next_validator_hash.as_ref()?;
 
     let info = lib.by_hash.get(vh).unwrap_or_else(|| {
-        eprintln!("HASH MISMATCH: looking for {}", hex::encode(vh));
-        for (k, v) in &lib.by_hash {
-            eprintln!("  library has {} => {}", hex::encode(k), v.name);
-        }
-        panic!("validator hash not found in library");
+        panic!(
+            "validator hash {} not found in library (have: {})",
+            hex::encode(vh),
+            lib.by_hash.keys().map(|k| hex::encode(k)).collect::<Vec<_>>().join(", "),
+        );
     });
     assert_eq!(
         info.name, spec.validator_name,

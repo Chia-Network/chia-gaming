@@ -109,6 +109,8 @@ export interface GameSessionParams {
   iStarted: boolean;
   amount: bigint;          // mojos, total channel buy-in
   perGameAmount: bigint;   // mojos per hand
+  restoring?: boolean;
+  pairingToken?: string;
 }
 
 export interface PeerIdentity {
@@ -157,7 +159,7 @@ export interface WasmConnection {
   init: (print: (msg: string) => void) => void;
   create_rng: (seed: string) => number;
   create_game_cradle: (config: GameCradleCreateConfig) => { id: number; puzzle_hash: string };
-  create_serialized_game: (serialized: unknown, new_seed: string) => number;
+  create_serialized_game: (serialized: string, new_seed: string) => number;
   deposit_file: (name: string, data: string) => void;
 
   // Blockchain
@@ -218,7 +220,7 @@ export interface WasmConnection {
   cradle_their_share: (cid: number) => number;
   get_identity: (cid: number) => IChiaIdentity;
   get_game_state_id: (cid: number) => string | undefined;
-  serialize_cradle: (cid: number) => unknown;
+  serialize_cradle: (cid: number) => string;
 
   // Misc
   sha256bytes: (hex: string) => string;
@@ -280,7 +282,7 @@ export class ChiaGame {
     return this.wasm.get_game_state_id(this.cradle);
   }
 
-  serialize(): unknown {
+  serialize(): string {
     return this.wasm.serialize_cradle(this.cradle);
   }
 
@@ -525,6 +527,8 @@ function compare_card(a: number, b: number): number {
 
 export interface PeerConnectionResult {
   sendMessage: (msgno: number, input: string) => void;
+  sendAck: (ackMsgno: number) => void;
+  sendPing: () => void;
   hostLog: (msg: string) => void;
   close: () => void;
 }

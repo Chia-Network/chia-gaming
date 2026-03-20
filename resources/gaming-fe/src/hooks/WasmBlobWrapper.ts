@@ -19,6 +19,7 @@ import {
   spend_bundle_to_clvm,
 } from '../util';
 import { debugLog } from '../services/debugLog';
+import { saveSession, clearSession, SessionSave, CalpokerHandState, BlockchainType } from './save';
 
 function clvmToBytes(value: Program | null): Uint8Array {
   if (value === null || value === undefined) return new Uint8Array([0x80]);
@@ -37,16 +38,28 @@ function combine_reports(old_report: WatchReport, new_report: WatchReport) {
   }
 }
 
+const SAVE_DEBOUNCE_MS = 500;
+const PING_INTERVAL_MS = 15_000;
+const PEER_TIMEOUT_MS = 60_000;
+
 export class WasmBlobWrapper {
   amount: bigint;
+  perGameAmount: bigint;
   wc: WasmConnection | undefined;
   sendMessage: (msgno: number, msg: string) => void;
+  sendAck: (ackMsgno: number) => void;
+  private peerSendPing: (() => void) | null = null;
+  private peerClose: (() => void) | null = null;
+  private lastPeerMessageTime: number = Date.now();
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
   messageNumber: number;
   remoteNumber: number;
   cradle: ChiaGame | undefined;
   uniqueId: string;
+  pairingToken: string;
   channelReady: boolean;
-  storedMessages: string[];
+  iStarted: boolean;
+  storedMessages: Array<{ msgno: number; msg: string }>;
   cleanShutdownCalled: boolean;
   finished: boolean;
   reloading: boolean;
@@ -60,18 +73,33 @@ export class WasmBlobWrapper {
   private pendingBlockNotification: { peak: number; report: WatchReport } | null = null;
   launcherProvided: boolean;
 
+  unackedMessages: Array<{ msgno: number; msg: string }> = [];
+  pendingTransactions: string[] = [];
+  gameLog: string[] = [];
+  debugLogHistory: string[] = [];
+  private reorderQueue: Map<number, string> = new Map();
+  private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private restoredSession = false;
+  blockchainType: BlockchainType = 'simulator';
+  activeGameId: string | null = null;
+  handState: CalpokerHandState | null = null;
+
   constructor(
     blockchain: InternalBlockchainInterface,
     uniqueId: string,
     amount: bigint,
     peer_conn: PeerConnectionResult,
   ) {
-    const { sendMessage } = peer_conn;
+    const { sendMessage, sendAck } = peer_conn;
     this.uniqueId = uniqueId;
+    this.pairingToken = '';
     this.messageNumber = 1;
     this.remoteNumber = 0;
     this.sendMessage = sendMessage;
+    this.sendAck = sendAck;
     this.amount = amount;
+    this.perGameAmount = 0n;
+    this.iStarted = false;
     this.channelReady = false;
     this.storedMessages = [];
     this.cleanShutdownCalled = false;
@@ -90,11 +118,53 @@ export class WasmBlobWrapper {
 
   setReloading() { this.reloading = true; }
 
+  setPeerPingAndClose(sendPing: () => void, close: () => void) {
+    this.peerSendPing = sendPing;
+    this.peerClose = close;
+  }
+
   cleanup() {
     this.finished = true;
     this.cleanShutdownCalled = true;
     this.storedMessages = [];
     this.rxjsMessageSingleton.complete();
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    this.stopPingTimer();
+  }
+
+  notePeerActivity() {
+    this.lastPeerMessageTime = Date.now();
+  }
+
+  receivePing() {
+    this.notePeerActivity();
+  }
+
+  startPingTimer() {
+    this.stopPingTimer();
+    this.lastPeerMessageTime = Date.now();
+    this.pingTimer = setInterval(() => {
+      this.peerSendPing?.();
+      if (
+        Date.now() - this.lastPeerMessageTime > PEER_TIMEOUT_MS &&
+        this.channelReady && !this.finished && !this.cleanShutdownCalled
+      ) {
+        debugLog('[wasm] peer liveness timeout, going on-chain');
+        this.goOnChain();
+        this.peerClose?.();
+        this.stopPingTimer();
+      }
+    }, PING_INTERVAL_MS);
+  }
+
+  private stopPingTimer() {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
   }
 
   systemState(): number { return this.qualifyingEvents; }
@@ -109,29 +179,32 @@ export class WasmBlobWrapper {
 
   spillStoredMessages() {
     if (this.qualifyingEvents != 15 || !this.cradle || this.reloading) {
-      if (this.storedMessages.length > 0) {
-        debugLog(`[wasm] spillStoredMessages SKIPPED (${this.storedMessages.length} msgs, qe=${this.qualifyingEvents} cradle=${!!this.cradle} reloading=${this.reloading})`);
-      }
       return;
     }
     const storedMessages = this.storedMessages;
     this.storedMessages = [];
-    if (storedMessages.length > 0) {
-      debugLog(`[wasm] spillStoredMessages DELIVERING ${storedMessages.length} msgs`);
+    for (const { msgno, msg } of storedMessages) {
+      this.deliverMessage(msgno, msg);
     }
-    storedMessages.forEach((m) => {
-      try {
-        const result = this.cradle?.deliver_message(m);
-        this.processResult(result);
-      } catch (e) {
-        console.error('[wasm] deliver_message failed:', e,
-          'msg length:', m.length, 'is_odd:', m.length % 2 !== 0, 'msg:', m);
+
+    if (this.restoredSession) {
+      this.restoredSession = false;
+      this.resendUnacked();
+      this.resubmitPendingTransactions();
+      if (this.channelReady) {
+        this.startPingTimer();
       }
-    });
+    }
   }
 
   setGameCradle(cradle: ChiaGame) {
     this.cradle = cradle;
+    if (this.pendingBlockNotification) {
+      const { peak, report } = this.pendingBlockNotification;
+      this.pendingBlockNotification = null;
+      this.deliverBlockData(peak, report);
+    }
+    this.spillStoredMessages();
   }
 
   activateSpend(coin: string) {
@@ -139,7 +212,6 @@ export class WasmBlobWrapper {
     const result = this.cradle?.opening_coin(coin);
     this.processResult(result);
     if (this.pendingBlockNotification) {
-      debugLog(`[wasm] replaying pending block height=${this.pendingBlockNotification.peak}`);
       const { peak, report } = this.pendingBlockNotification;
       this.pendingBlockNotification = null;
       this.deliverBlockData(peak, report);
@@ -236,10 +308,38 @@ export class WasmBlobWrapper {
 
   private submitTransaction(tx: SpendBundle) {
     const blob = spend_bundle_to_clvm(tx);
+    this.pendingTransactions.push(blob);
+    this.scheduleSave();
     const cvt = (blob: string) => {
       return this.wc?.convert_spend_to_coinset_org(blob);
     };
-    this.blockchain.spend(cvt, blob).catch(e => console.error('[wasm] submitTransaction failed:', e));
+    this.blockchain.spend(cvt, blob).then(() => {
+      const idx = this.pendingTransactions.indexOf(blob);
+      if (idx !== -1) {
+        this.pendingTransactions.splice(idx, 1);
+        this.scheduleSave();
+      }
+    }).catch(e => {
+      console.error('[wasm] submitTransaction failed:', e);
+    });
+  }
+
+  private resubmitPendingTransactions() {
+    if (this.pendingTransactions.length === 0) return;
+    debugLog(`[wasm] resubmitting ${this.pendingTransactions.length} pending transactions`);
+    const blobs = [...this.pendingTransactions];
+    for (const blob of blobs) {
+      const cvt = (b: string) => this.wc?.convert_spend_to_coinset_org(b);
+      this.blockchain.spend(cvt, blob).then(() => {
+        const idx = this.pendingTransactions.indexOf(blob);
+        if (idx !== -1) {
+          this.pendingTransactions.splice(idx, 1);
+          this.scheduleSave();
+        }
+      }).catch(e => {
+        console.error('[wasm] resubmitPendingTransactions failed:', e);
+      });
+    }
   }
 
   processResult(result: WasmResult | undefined): void {
@@ -247,6 +347,7 @@ export class WasmBlobWrapper {
 
     if (result.finished && !this.finished) {
       this.finished = true;
+      clearSession();
       this.rxjsEmitter?.next({ type: 'finished' });
     }
 
@@ -269,11 +370,15 @@ export class WasmBlobWrapper {
     if (result.need_coin_spend) {
       this.handleNeedCoinSpend(result.need_coin_spend);
     }
+
+    this.scheduleSave();
   }
 
   private dispatchEvent(event: CradleEvent): void {
     if ('OutboundMessage' in event) {
-      this.sendMessage(this.messageNumber++, event.OutboundMessage);
+      const msgno = this.messageNumber++;
+      this.unackedMessages.push({ msgno, msg: event.OutboundMessage });
+      this.sendMessage(msgno, event.OutboundMessage);
     } else if ('OutboundTransaction' in event) {
       this.submitTransaction(event.OutboundTransaction);
     } else if ('Notification' in event) {
@@ -281,13 +386,28 @@ export class WasmBlobWrapper {
       const tag = typeof n === 'object' && n !== null ? Object.keys(n)[0] : String(n);
       if (tag === 'ChannelCreated' && !this.channelReady) {
         this.channelReady = true;
+        this.startPingTimer();
       }
+      if (tag === 'GameProposalAccepted' && n.GameProposalAccepted) {
+        this.activeGameId = String(n.GameProposalAccepted.id);
+      }
+      const TERMINAL_TAGS = [
+        'WeTimedOut', 'OpponentTimedOut', 'WeSlashedOpponent',
+        'OpponentSlashedUs', 'OpponentSuccessfullyCheated',
+        'GameCancelled', 'GameError',
+      ];
+      if (TERMINAL_TAGS.includes(tag)) {
+        this.activeGameId = null;
+        this.handState = null;
+      }
+      this.gameLog.push(JSON.stringify(n));
       this.rxjsEmitter?.next({ type: 'notification', data: n });
     } else if ('ReceiveError' in event) {
       this.rxjsEmitter?.next({ type: 'error', error: event.ReceiveError });
     } else if ('CoinSolutionRequest' in event) {
       this.fulfillPuzzleSolutionRequest(event.CoinSolutionRequest);
     } else if ('DebugLog' in event) {
+      this.debugLogHistory.push(event.DebugLog);
       this.rxjsEmitter?.next({ type: 'debug_log', message: event.DebugLog });
     }
   }
@@ -309,22 +429,54 @@ export class WasmBlobWrapper {
   // --- Inbound events ---
 
   deliverMessage(msgno: number, msg: string) {
+    this.notePeerActivity();
     if (!this.wc || !this.cradle || this.qualifyingEvents != 15 || this.reloading) {
-      debugLog(`[wasm] deliverMessage msgno=${msgno} BUFFERED (wc=${!!this.wc} cradle=${!!this.cradle} qe=${this.qualifyingEvents} reloading=${this.reloading})`);
-      this.storedMessages.push(msg);
+      this.storedMessages.push({ msgno, msg });
       return;
     }
-    if (this.remoteNumber >= msgno) {
-      debugLog(`[wasm] deliverMessage msgno=${msgno} DUPLICATE (remoteNumber=${this.remoteNumber})`);
+    if (msgno <= this.remoteNumber) {
+      this.sendAck(msgno);
       return;
     }
+    if (msgno > this.remoteNumber + 1) {
+      this.reorderQueue.set(msgno, msg);
+      return;
+    }
+
+    this.deliverSingleMessage(msgno, msg);
+    this.flushReorderQueue();
+  }
+
+  private deliverSingleMessage(msgno: number, msg: string) {
     this.remoteNumber = msgno;
-    debugLog(`[wasm] deliverMessage msgno=${msgno} DELIVERING`);
-    const result = this.cradle.deliver_message(msg);
-    const eventCount = result?.events?.length ?? 0;
-    const hasOutbound = result?.events?.some((e: any) => 'OutboundMessage' in e) ?? false;
-    debugLog(`[wasm] deliverMessage msgno=${msgno} result: events=${eventCount} hasOutbound=${hasOutbound}`);
+    const result = this.cradle!.deliver_message(msg);
     this.processResult(result);
+    this.sendAck(msgno);
+  }
+
+  private flushReorderQueue() {
+    while (this.reorderQueue.has(this.remoteNumber + 1)) {
+      const nextMsgno = this.remoteNumber + 1;
+      const msg = this.reorderQueue.get(nextMsgno)!;
+      this.reorderQueue.delete(nextMsgno);
+      this.deliverSingleMessage(nextMsgno, msg);
+    }
+  }
+
+  receiveAck(ackMsgno: number) {
+    this.notePeerActivity();
+    const before = this.unackedMessages.length;
+    this.unackedMessages = this.unackedMessages.filter(m => m.msgno > ackMsgno);
+    if (this.unackedMessages.length !== before) {
+      this.scheduleSave();
+    }
+  }
+
+  resendUnacked() {
+    if (this.unackedMessages.length === 0) return;
+    for (const { msgno, msg } of this.unackedMessages) {
+      this.sendMessage(msgno, msg);
+    }
   }
 
   blockNotification(peak: number, blocks: CoinsetOrgBlockSpend[], reportOrUndefined: WatchReport | undefined) {
@@ -383,6 +535,54 @@ export class WasmBlobWrapper {
     } catch (e) {
       console.warn('[wasm] sendWatchingCoins failed:', e);
     }
+  }
+
+  // --- Persistence ---
+
+  private scheduleSave() {
+    if (this.finished || !this.cradle) return;
+    if (this.saveTimer) return;
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = null;
+      this.persistSession();
+    }, SAVE_DEBOUNCE_MS);
+  }
+
+  private persistSession() {
+    if (this.finished || !this.cradle) return;
+    try {
+      const serializedCradle = this.cradle.serialize();
+      const save: SessionSave = {
+        serializedCradle,
+        pairingToken: this.pairingToken,
+        messageNumber: this.messageNumber,
+        remoteNumber: this.remoteNumber,
+        channelReady: this.channelReady,
+        iStarted: this.iStarted,
+        amount: this.amount.toString(),
+        perGameAmount: this.perGameAmount.toString(),
+        uniqueId: this.uniqueId,
+        pendingTransactions: [...this.pendingTransactions],
+        unackedMessages: [...this.unackedMessages],
+        gameLog: [...this.gameLog],
+        debugLog: [...this.debugLogHistory],
+        blockchainType: this.blockchainType,
+        activeGameId: this.activeGameId,
+        handState: this.handState,
+      };
+      saveSession(save);
+    } catch (e) {
+      console.error('[wasm] persistSession failed:', e);
+    }
+  }
+
+  setHandState(state: CalpokerHandState | null) {
+    this.handState = state;
+    this.scheduleSave();
+  }
+
+  markRestored() {
+    this.restoredSession = true;
   }
 
   // --- Game actions (called by higher layer) ---

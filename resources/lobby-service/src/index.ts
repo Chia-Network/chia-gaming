@@ -76,25 +76,43 @@ const gameSocketToPlayer = new Map<string, string>();
 const pendingIdentifies = new Map<string, Socket>();
 // persistent alias storage: player_id -> alias (survives join/leave cycles)
 const knownAliases = new Map<string, string>();
+// application-level liveness: socket.id -> last activity timestamp
+const lastHeardFrom = new Map<string, number>();
+
+const TRACKER_PING_TIMEOUT_MS = 60_000;
+
+function noteActivity(socketId: string) {
+  lastHeardFrom.set(socketId, Date.now());
+}
 
 function completeGameSocketRegistration(playerId: string, sock: Socket) {
   const oldSocket = gameSocketsByPlayer.get(playerId);
   if (oldSocket && oldSocket.id !== sock.id) {
-    oldSocket.disconnect(true);
     gameSocketToPlayer.delete(oldSocket.id);
+    oldSocket.disconnect(true);
   }
   gameSocketsByPlayer.set(playerId, sock);
   gameSocketToPlayer.set(sock.id, playerId);
 
   const pairing = lobby.getPairingForPlayer(playerId);
   if (pairing) {
-    sock.emit('matched', {
+    const peerId = pairing.playerA_id === playerId ? pairing.playerB_id : pairing.playerA_id;
+    const peerConnected = gameSocketsByPlayer.has(peerId);
+    sock.emit('connection_status', {
+      has_pairing: true,
       token: pairing.token,
       game_type: pairing.game_type,
       amount: pairing.amount,
       per_game: pairing.per_game,
       i_am_initiator: pairing.playerA_id === playerId,
+      peer_connected: peerConnected,
     });
+    if (peerConnected) {
+      const peerSocket = gameSocketsByPlayer.get(peerId);
+      peerSocket?.emit('peer_reconnected', {});
+    }
+  } else {
+    sock.emit('connection_status', { has_pairing: false });
   }
 }
 
@@ -189,12 +207,24 @@ app.get('/lobby/status', (_req, res) => {
 });
 
 io.on('connection', (socket) => {
+  noteActivity(socket.id);
+
   socket.emit('lobby_update', lobby.getPlayers());
   io.emit('game_update', lobby.getGames());
+
+  socket.on('tracker_ping', () => {
+    noteActivity(socket.id);
+    socket.emit('tracker_pong');
+  });
+
+  socket.on('tracker_pong', () => {
+    noteActivity(socket.id);
+  });
 
   // --- Lobby iframe socket events ---
 
   socket.on('join', ({ id, alias, session_id }) => {
+    noteActivity(socket.id);
     if (!id) return;
 
     lobbySocketsByPlayer.set(id, socket);
@@ -226,12 +256,14 @@ io.on('connection', (socket) => {
   });
 
   socket.on('leave', ({ id }) => {
+    noteActivity(socket.id);
     leaveLobby(id);
   });
 
   // --- Challenge protocol ---
 
   socket.on('challenge', ({ target_id, game, amount, per_game }) => {
+    noteActivity(socket.id);
     const fromId = lobbySocketToPlayer.get(socket.id);
     if (!fromId) return;
 
@@ -257,6 +289,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('challenge_accept', ({ challenge_id }) => {
+    noteActivity(socket.id);
     const challenge = lobby.getChallenge(challenge_id);
     if (!challenge) return;
 
@@ -298,6 +331,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('challenge_decline', ({ challenge_id }) => {
+    noteActivity(socket.id);
     const challenge = lobby.getChallenge(challenge_id);
     if (!challenge) return;
 
@@ -315,7 +349,13 @@ io.on('connection', (socket) => {
   // --- TrackerConnection (game socket) events ---
 
   socket.on('identify', ({ session_id }) => {
+    noteActivity(socket.id);
     if (!session_id) return;
+
+    const oldPending = pendingIdentifies.get(session_id);
+    if (oldPending && oldPending.id !== socket.id && oldPending.connected) {
+      oldPending.disconnect(true);
+    }
 
     const playerId = sessionToPlayer.get(session_id);
     if (!playerId) {
@@ -327,6 +367,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('message', ({ data }) => {
+    noteActivity(socket.id);
     const senderId = gameSocketToPlayer.get(socket.id);
     if (!senderId) return;
 
@@ -340,6 +381,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('close', () => {
+    noteActivity(socket.id);
     const senderId = gameSocketToPlayer.get(socket.id);
     if (!senderId) return;
 
@@ -351,7 +393,8 @@ io.on('connection', (socket) => {
       }
     }
 
-    // Tear down pairing
+    socket.emit('closed', {});
+
     const pairing = lobby.getPairingForPlayer(senderId);
     if (pairing) {
       lobby.removePairing(pairing.token);
@@ -361,6 +404,8 @@ io.on('connection', (socket) => {
   // --- Cleanup on disconnect ---
 
   socket.on('disconnect', () => {
+    lastHeardFrom.delete(socket.id);
+
     const lobbyPlayerId = lobbySocketToPlayer.get(socket.id);
     if (lobbyPlayerId) {
       lobbySocketToPlayer.delete(socket.id);
@@ -393,6 +438,20 @@ setInterval(() => {
   const time = Date.now();
   lobby.sweep(time);
   io.emit('lobby_update', lobby.getPlayers());
+
+  for (const [socketId, ts] of lastHeardFrom) {
+    const sock = io.sockets.sockets.get(socketId);
+    if (!sock) {
+      lastHeardFrom.delete(socketId);
+      continue;
+    }
+    if (time - ts > TRACKER_PING_TIMEOUT_MS) {
+      console.log(`[tracker] ping timeout for socket ${socketId}, disconnecting`);
+      sock.disconnect(true);
+    } else {
+      sock.emit('tracker_ping');
+    }
+  }
 }, 15000);
 
 const port = process.env.PORT || 5801;

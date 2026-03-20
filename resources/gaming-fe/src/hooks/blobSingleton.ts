@@ -6,6 +6,8 @@ import {
 } from '../types/ChiaGaming';
 import {
   startNewSession,
+  SessionSave,
+  BlockchainType,
 } from './save';
 import { debugLog } from '../services/debugLog';
 
@@ -57,13 +59,44 @@ export async function configGameObject(
   return gameObject;
 }
 
+async function restoreSession(
+  gameObject: WasmBlobWrapper,
+  save: SessionSave,
+  wasmStateInit: WasmStateInit,
+): Promise<void> {
+  const wasmConnection = await wasmStateInit.getWasmConnection();
+  gameObject.loadWasm(wasmConnection);
+
+  const cradle = wasmStateInit.deserializeGame(wasmConnection, save.serializedCradle);
+  gameObject.setGameCradle(cradle);
+
+  gameObject.messageNumber = save.messageNumber;
+  gameObject.remoteNumber = save.remoteNumber;
+  gameObject.channelReady = save.channelReady;
+  gameObject.iStarted = save.iStarted;
+  gameObject.pairingToken = save.pairingToken;
+  gameObject.unackedMessages = [...save.unackedMessages];
+  gameObject.pendingTransactions = [...save.pendingTransactions];
+  gameObject.gameLog = [...save.gameLog];
+  gameObject.debugLogHistory = [...save.debugLog];
+  gameObject.activeGameId = save.activeGameId ?? null;
+  gameObject.handState = save.handState ?? null;
+  gameObject.markRestored();
+
+  debugLog('[restore] session restored');
+}
+
 export function getBlobSingleton(
   blockchain: InternalBlockchainInterface,
   peerConn: PeerConnectionResult,
-  registerMessageHandler: (handler: (msgno: number, msg: string) => void) => void,
+  registerMessageHandler: (handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, pingHandler: () => void) => void,
   uniqueId: string,
   amount: bigint,
   iStarted: boolean,
+  sessionSave?: SessionSave,
+  pairingToken?: string,
+  perGameAmount?: bigint,
+  blockchainType?: BlockchainType,
 ): { gameObject: WasmBlobWrapper } {
   if (blobSingleton) {
     return { gameObject: blobSingleton };
@@ -86,31 +119,58 @@ export function getBlobSingleton(
     amount,
     peerConn,
   );
+  blobSingleton.iStarted = iStarted;
+  blobSingleton.pairingToken = pairingToken ?? '';
+  blobSingleton.perGameAmount = perGameAmount ?? 0n;
+  blobSingleton.blockchainType = sessionSave?.blockchainType ?? blockchainType ?? 'simulator';
+  blobSingleton.setPeerPingAndClose(
+    () => peerConn.sendPing(),
+    () => peerConn.close(),
+  );
 
-  registerMessageHandler((msgno: number, msg: string) => {
-    blobSingleton?.deliverMessage(msgno, msg);
-  });
+  registerMessageHandler(
+    (msgno: number, msg: string) => {
+      blobSingleton?.deliverMessage(msgno, msg);
+    },
+    (ack: number) => {
+      blobSingleton?.receiveAck(ack);
+    },
+    () => {
+      blobSingleton?.receivePing();
+    },
+  );
 
-  // Already matched -- start the session immediately
   blobSingleton.kickSystem(2);
-  const newSession = async () => {
-    try {
-      startNewSession();
-      const calpokerHexes = await loadCalpoker(fetchHex);
-      await configGameObject(
-        blobSingleton!,
-        iStarted,
-        wasmStateInit,
-        calpokerHexes,
-        blockchain,
-        uniqueId,
-        amount,
-      );
-    } catch (e) {
-      console.error('[blobSingleton] newSession error:', e);
-    }
-  };
-  newSession();
+
+  if (sessionSave) {
+    const doRestore = async () => {
+      try {
+        await restoreSession(blobSingleton!, sessionSave, wasmStateInit);
+      } catch (e) {
+        console.error('[blobSingleton] restoreSession error:', e);
+      }
+    };
+    doRestore();
+  } else {
+    const newSession = async () => {
+      try {
+        startNewSession();
+        const calpokerHexes = await loadCalpoker(fetchHex);
+        await configGameObject(
+          blobSingleton!,
+          iStarted,
+          wasmStateInit,
+          calpokerHexes,
+          blockchain,
+          uniqueId,
+          amount,
+        );
+      } catch (e) {
+        console.error('[blobSingleton] newSession error:', e);
+      }
+    };
+    newSession();
+  }
 
   return { gameObject: blobSingleton };
 }

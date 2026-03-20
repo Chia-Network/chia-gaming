@@ -161,8 +161,17 @@ mod gaming_wasm {
 
     }
 
+    #[cfg(target_family = "wasm")]
+    unsafe extern "C" {
+        fn __wasm_call_ctors();
+    }
+
     #[wasm_bindgen]
     pub fn init() {
+        #[cfg(target_family = "wasm")]
+        unsafe {
+            __wasm_call_ctors();
+        }
     }
 
     #[wasm_bindgen]
@@ -378,8 +387,10 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn create_serialized_game(json: JsValue, new_seed: &str) -> Result<i32, JsValue> {
-        let mut cradle = serde_wasm_bindgen::from_value::<JsCradle>(json.clone()).into_js()?;
+    pub fn create_serialized_game(json: &str, new_seed: &str) -> Result<i32, JsValue> {
+        let mut cradle: JsCradle = serde_json::from_str(json)
+            .map_err(|e| types::Error::StrErr(e.to_string()))
+            .into_js()?;
         let hashed = Sha256Input::Bytes(new_seed.as_bytes()).hash();
         cradle.rng = ChaCha8SerializationWrapper(ChaCha8Rng::from_seed(*hashed.bytes()));
         let new_id = get_next_id();
@@ -404,9 +415,10 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn serialize_cradle(cid: i32) -> Result<JsValue, JsValue> {
+    pub fn serialize_cradle(cid: i32) -> Result<String, JsValue> {
         with_game(cid, move |cradle: &mut JsCradle| {
-            serde_wasm_bindgen::to_value(&cradle).map_err(|e| types::Error::StrErr(e.to_string()))
+            serde_json::to_string(&cradle)
+                .map_err(|e| types::Error::StrErr(e.to_string()))
         })
     }
 
