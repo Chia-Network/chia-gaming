@@ -1,6 +1,4 @@
-export type FragmentData = Record<string, string>;
-
-export function getParamsFromString(paramString: string): any {
+function getParamsFromString(paramString: string): any {
   const fragmentParts = paramString.split('&');
   return Object.fromEntries(
     fragmentParts.map((part) => {
@@ -9,10 +7,6 @@ export function getParamsFromString(paramString: string): any {
       return [part, 'true'];
     }),
   );
-}
-
-export function getFragmentParams(): FragmentData {
-  return getParamsFromString(window.location.hash);
 }
 
 export function getSearchParams(): any {

@@ -110,8 +110,13 @@ fn run_referee_slash_case(
     let amount = AMOUNT.to_clvm(allocator).expect("amount");
     let mod_hash = hash_to_node(allocator, &referee_hash);
     let nonce = 1i64.to_clvm(allocator).expect("nonce");
-    let move_node = allocator.allocator().new_atom(move_bytes).expect("move atom");
-    let max_move_size = committed_max_move_size.to_clvm(allocator).expect("max_move_size");
+    let move_node = allocator
+        .allocator()
+        .new_atom(move_bytes)
+        .expect("move atom");
+    let max_move_size = committed_max_move_size
+        .to_clvm(allocator)
+        .expect("max_move_size");
     let infohash_b = hash_to_node(allocator, committed_infohash_b);
     let mover_share = 0i64.to_clvm(allocator).expect("mover_share");
     let infohash_a_node = hash_to_node(allocator, &infohash_a);
@@ -184,7 +189,9 @@ fn run_referee_move_case(
         .allocator()
         .new_atom(&[0x44; 32])
         .expect("current move atom");
-    let max_move_size = current_max_move_size.to_clvm(allocator).expect("max_move_size");
+    let max_move_size = current_max_move_size
+        .to_clvm(allocator)
+        .expect("max_move_size");
     let infohash_b = hash_to_node(allocator, &[0x55; 32]);
     let mover_share = 0i64.to_clvm(allocator).expect("mover_share");
     let infohash_a = hash_to_node(allocator, &[0x66; 32]);
@@ -440,7 +447,11 @@ fn run_step_and_check(
         panic!(
             "validator hash {} not found in library (have: {})",
             hex::encode(vh),
-            lib.by_hash.keys().map(|k| hex::encode(k)).collect::<Vec<_>>().join(", "),
+            lib.by_hash
+                .keys()
+                .map(|k| hex::encode(k))
+                .collect::<Vec<_>>()
+                .join(", "),
         );
     });
     assert_eq!(
@@ -1204,7 +1215,10 @@ fn test_calpoker_e_bad_evidence_exception() {
     );
 }
 
-fn expected_infohash_b_for_valid_a_move(allocator: &mut AllocEncoder, move_bytes: &[u8]) -> [u8; 32] {
+fn expected_infohash_b_for_valid_a_move(
+    allocator: &mut AllocEncoder,
+    move_bytes: &[u8],
+) -> [u8; 32] {
     let b_validator = read_hex_puzzle(allocator, "clsp/games/calpoker/onchain/b.hex")
         .expect("failed to load b validator");
     let b_hash: [u8; 32] = *b_validator.sha256tree(allocator).hash().bytes();

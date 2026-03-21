@@ -1198,8 +1198,11 @@ impl OnChainGameHandler {
             GameAction::Move(game_id, readable_move, hash) => match get_current_coin(&game_id) {
                 Ok(current_coin) => {
                     if self.pending_moves.contains_key(&current_coin) {
-                        self.game_action_queue
-                            .push_back(GameAction::Move(game_id, readable_move, hash));
+                        self.game_action_queue.push_back(GameAction::Move(
+                            game_id,
+                            readable_move,
+                            hash,
+                        ));
                         return Ok(Vec::new());
                     }
                     Ok(self

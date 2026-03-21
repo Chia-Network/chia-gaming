@@ -157,7 +157,9 @@ impl ToLocalUI for Pipe {
             GameNotification::GameMessage { id, readable } => {
                 self.opponent_messages.push((id.clone(), readable.clone()));
             }
-            GameNotification::ChannelStatus { state, advisory, .. } => {
+            GameNotification::ChannelStatus {
+                state, advisory, ..
+            } => {
                 use crate::potato_handler::effects::ChannelState;
                 if matches!(
                     state,
@@ -165,8 +167,11 @@ impl ToLocalUI for Pipe {
                         | ChannelState::ResolvedUnrolled
                         | ChannelState::ResolvedStale
                 ) {
-                    self.went_on_chain =
-                        Some(advisory.clone().unwrap_or_else(|| "going on-chain".to_string()));
+                    self.went_on_chain = Some(
+                        advisory
+                            .clone()
+                            .unwrap_or_else(|| "going on-chain".to_string()),
+                    );
                 }
             }
             _ => {}
@@ -432,11 +437,7 @@ where
                     let effects = handlers[who].coin_created(&mut env, &channel_coin)?;
                     if let Some(effects) = effects {
                         apply_effects_with_handshake_callbacks(
-                            allocator,
-                            handlers,
-                            pipes,
-                            who,
-                            effects,
+                            allocator, handlers, pipes, who, effects,
                         )?;
                     }
                 }

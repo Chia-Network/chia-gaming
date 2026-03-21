@@ -139,7 +139,7 @@ function leaveLobby(id: string): boolean {
   return false;
 }
 
-// HTTP endpoints (keep minimal set for game registration + status)
+// HTTP endpoints
 app.get('/lobby/alias', (req, res) => {
   const id = req.query.id as string;
   if (!id) return res.status(400).json({ error: 'Missing id.' });
@@ -180,30 +180,6 @@ app.post('/lobby/game', (req, res) => {
   lobby.addGame(time, game, target);
   io.emit('game_update', lobby.getGames());
   res.json({ ok: true });
-});
-
-app.post('/lobby/join', (req, res) => {
-  const { id, alias, session_id } = req.body;
-  const resolvedAlias = alias || knownAliases.get(id) || id;
-  if (alias) knownAliases.set(id, alias);
-  const err = joinLobby(id, resolvedAlias, session_id || '');
-  if (err) return res.status(400).json({ error: err });
-  io.emit('lobby_update', lobby.getPlayers());
-  res.json({ lobbyQueue: lobby.getPlayers() });
-});
-
-app.post('/lobby/leave', (req, res) => {
-  const { id } = req.body;
-  if (leaveLobby(id)) return res.json({ lobbyQueue: lobby.getPlayers() });
-  res.status(404).json({ error: 'Player not found in lobby.' });
-});
-
-app.get('/lobby/tracking', (_req, res) => {
-  res.json({ tracking: lobby.getTracking() });
-});
-
-app.get('/lobby/status', (_req, res) => {
-  res.json({ lobbyQueue: lobby.getPlayers() });
 });
 
 io.on('connection', (socket) => {

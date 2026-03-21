@@ -211,8 +211,8 @@ impl HandshakeReceiverHandler {
         total_amount: &Amount,
     ) -> Result<Hash, Error> {
         let allocator_for_hash = &mut crate::common::types::AllocEncoder::new();
-        let solution_tree_hash =
-            (channel_puzzle_hash.clone(), (total_amount.clone(), ())).sha256tree(allocator_for_hash);
+        let solution_tree_hash = (channel_puzzle_hash.clone(), (total_amount.clone(), ()))
+            .sha256tree(allocator_for_hash);
         Ok(Sha256Input::Array(vec![
             Sha256Input::Bytes(launcher_coin_id.bytes()),
             Sha256Input::Bytes(solution_tree_hash.bytes()),
@@ -229,8 +229,11 @@ impl HandshakeReceiverHandler {
         let (_, channel_puzzle_hash, total_amount) = channel_coin.get_coin_string_parts()?;
         let launcher_coin = self.get_launcher_coin()?;
         let launcher_coin_id = launcher_coin.to_coin_id();
-        let ann_hash =
-            self.compute_coin_announcement_hash(&launcher_coin_id, &channel_puzzle_hash, &total_amount)?;
+        let ann_hash = self.compute_coin_announcement_hash(
+            &launcher_coin_id,
+            &channel_puzzle_hash,
+            &total_amount,
+        )?;
         let per_player = Amount::new(total_amount.to_u64() / 2);
         let mut conditions = vec![RawCoinCondition {
             opcode: crate::common::constants::ASSERT_COIN_ANNOUNCEMENT,

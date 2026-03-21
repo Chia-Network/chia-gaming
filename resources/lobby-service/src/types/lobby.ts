@@ -1,12 +1,3 @@
-export const GameTypes = {
-  CALIFORNIA_POKER: 'california_poker',
-  KRUNK: 'krunk',
-  EXOTIC_POKER: 'exotic_poker',
-};
-export type GameType = 'california_poker' | 'krunk' | 'exotic_poker';
-
-export type FragmentData = Record<string, string>;
-
 export interface Player {
   id: string;
   alias: string;

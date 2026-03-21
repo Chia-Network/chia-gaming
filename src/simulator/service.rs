@@ -12,18 +12,18 @@ use serde_json;
 use serde_json::{Map, Value};
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 
+use crate::channel_handler::types::ChannelHandlerEnv;
+use crate::common::constants::{CREATE_COIN, SINGLETON_LAUNCHER_HASH};
+use crate::common::standard_coin::standard_solution_partial;
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
     check_for_hex, convert_coinset_org_spend_to_spend, map_m, Aggsig, AllocEncoder, Amount, CoinID,
     CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord, Error, Hash,
     IntoErr, PrivateKey, Program, PuzzleHash, SpendBundle,
 };
-use crate::channel_handler::types::ChannelHandlerEnv;
-use crate::common::constants::{CREATE_COIN, SINGLETON_LAUNCHER_HASH};
-use crate::common::standard_coin::standard_solution_partial;
-use clvm_traits::ToClvm;
 use crate::peer_container::{FullCoinSetAdapter, WatchReport};
 use crate::simulator::Simulator;
+use clvm_traits::ToClvm;
 
 trait HttpError<V> {
     fn report_err(self) -> Result<V, String>;
@@ -247,17 +247,22 @@ impl GameRunner {
                     .map(|(_, _, amt)| amt.to_u64() >= amount)
                     .unwrap_or(false)
             });
-            if let Some(selected) = candidates
-                .into_iter()
-                .min_by_key(|c| c.to_parts().map(|(_, _, amt)| amt.to_u64()).unwrap_or(u64::MAX))
-            {
+            if let Some(selected) = candidates.into_iter().min_by_key(|c| {
+                c.to_parts()
+                    .map(|(_, _, amt)| amt.to_u64())
+                    .unwrap_or(u64::MAX)
+            }) {
                 return Ok(format!("\"{}\"\n", hex::encode(selected.to_bytes())));
             }
         }
         Ok("null\n".to_string())
     }
 
-    fn create_offer_for_ids(&mut self, who: &str, req: &CreateOfferForIdsRequest) -> StringWithError {
+    fn create_offer_for_ids(
+        &mut self,
+        who: &str,
+        req: &CreateOfferForIdsRequest,
+    ) -> StringWithError {
         let identity = self
             .lookup_identity(who)
             .cloned()
@@ -288,8 +293,14 @@ impl GameRunner {
         } else {
             candidates
                 .into_iter()
-                .min_by_key(|c| c.to_parts().map(|(_, _, amt)| amt.to_u64()).unwrap_or(u64::MAX))
-                .ok_or_else(|| Error::StrErr("no spendable coin for requested amount".to_string()))?
+                .min_by_key(|c| {
+                    c.to_parts()
+                        .map(|(_, _, amt)| amt.to_u64())
+                        .unwrap_or(u64::MAX)
+                })
+                .ok_or_else(|| {
+                    Error::StrErr("no spendable coin for requested amount".to_string())
+                })?
         };
 
         let mut create_targets: Vec<(PuzzleHash, Amount)> = Vec::new();
@@ -450,7 +461,10 @@ fn respond_cors_preflight(request: tiny_http::Request, origin: &Option<String>) 
     for h in cors_headers(origin) {
         response.add_header(h);
     }
-    if let Ok(h) = Header::from_bytes(&b"Access-Control-Allow-Methods"[..], &b"POST, GET, OPTIONS"[..]) {
+    if let Ok(h) = Header::from_bytes(
+        &b"Access-Control-Allow-Methods"[..],
+        &b"POST, GET, OPTIONS"[..],
+    ) {
         response.add_header(h);
     }
     if let Ok(h) = Header::from_bytes(&b"Access-Control-Allow-Headers"[..], &b"content-type"[..]) {
@@ -651,16 +665,23 @@ fn service_main_inner() {
             (Method::Post, "/create_offer_for_ids") => {
                 let mut body_bytes = Vec::new();
                 match std::io::Read::read_to_end(request.as_reader(), &mut body_bytes) {
-                    Ok(_) => match serde_json::from_slice::<CreateOfferForIdsRequest>(&body_bytes) {
-                        Ok(decoded) => {
-                            let who = get_arg_string(&url, "who");
-                            match who.and_then(|who| game_runner.create_offer_for_ids(&who, &decoded)).report_err() {
-                                Ok(resp) => respond_ok(request, resp, &origin),
-                                Err(msg) => respond_err(request, msg),
+                    Ok(_) => {
+                        match serde_json::from_slice::<CreateOfferForIdsRequest>(&body_bytes) {
+                            Ok(decoded) => {
+                                let who = get_arg_string(&url, "who");
+                                match who
+                                    .and_then(|who| {
+                                        game_runner.create_offer_for_ids(&who, &decoded)
+                                    })
+                                    .report_err()
+                                {
+                                    Ok(resp) => respond_ok(request, resp, &origin),
+                                    Err(msg) => respond_err(request, msg),
+                                }
                             }
+                            Err(e) => respond_err(request, format!("{{\"error\":\"{e}\"}}")),
                         }
-                        Err(e) => respond_err(request, format!("{{\"error\":\"{e}\"}}")),
-                    },
+                    }
                     Err(e) => respond_err(request, format!("{{\"error\":\"read error: {e}\"}}")),
                 }
             }

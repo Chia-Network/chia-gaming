@@ -14,8 +14,8 @@ use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, curry_and_treehash, sign_agg_sig_me, ChiaIdentity,
 };
 use crate::common::types::{
-    chia_dialect, Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, Hash, IntoErr,
-    Node, Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256tree, Timeout,
+    chia_dialect, Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, Hash, IntoErr, Node,
+    Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
 use crate::utils::proper_list;
 

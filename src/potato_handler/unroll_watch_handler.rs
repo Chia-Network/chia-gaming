@@ -535,7 +535,6 @@ impl UnrollWatchHandler {
             }
         }
 
-
         effects.extend(self.handle_unroll_from_channel_conditions(
             env,
             conditions_nodeptr,
@@ -788,12 +787,14 @@ impl UnrollWatchHandler {
                     None => continue,
                 };
 
-                let saved_referee = cached_move.saved_post_move_referee.clone().ok_or_else(|| {
-                    Error::StrErr("redo: no saved post-move referee".to_string())
-                })?;
-                let saved_ph = cached_move.saved_post_move_last_ph.clone().ok_or_else(|| {
-                    Error::StrErr("redo: no saved post-move last_ph".to_string())
-                })?;
+                let saved_referee = cached_move
+                    .saved_post_move_referee
+                    .clone()
+                    .ok_or_else(|| Error::StrErr("redo: no saved post-move referee".to_string()))?;
+                let saved_ph = cached_move
+                    .saved_post_move_last_ph
+                    .clone()
+                    .ok_or_else(|| Error::StrErr("redo: no saved post-move last_ph".to_string()))?;
 
                 let (pre_referee, pre_last_ph) = player_ch.save_game_state(&game_id)?;
                 player_ch.restore_game_state(&game_id, saved_referee, saved_ph)?;

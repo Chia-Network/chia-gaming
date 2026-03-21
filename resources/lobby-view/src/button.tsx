@@ -1,11 +1,8 @@
-//v3
-
 import { Slot } from '@radix-ui/react-slot';
 import { cva, type VariantProps } from 'class-variance-authority';
 import * as React from 'react';
 import { memo } from 'react';
 
-// Spinner component with smooth appearance animation
 const Spinner = () => (
   <svg
     className='h-4 w-4 animate-spin'
@@ -36,17 +33,10 @@ const buttonVariants = cva(
       color: {
         primary: '',
         neutral: '',
-        secondary: '',
-        outline: '',
-        ghost: '',
-        link: '',
       },
       variant: {
         solid: '',
-        soft: '',
-        surface: '',
         outline: '',
-        ghost: '',
         destructive:
           'bg-alert-solid text-alert-on-alert hover:bg-alert-solid-hover',
       },
@@ -69,7 +59,6 @@ const buttonVariants = cva(
       },
     },
     compoundVariants: [
-      // Primary variants
       {
         color: 'primary',
         variant: 'solid',
@@ -78,35 +67,10 @@ const buttonVariants = cva(
       },
       {
         color: 'primary',
-        variant: 'soft',
-        class:
-          'bg-primary-bg-hover text-primary-text-contrast hover:bg-primary-bg-active active:bg-primary-line',
-      },
-      {
-        color: 'primary',
-        variant: 'surface',
-        class:
-          'border border-primary-border bg-primary-bg-subtle text-primary-text-contrast hover:bg-primary-bg hover:border-primary-border-hover active:bg-primary-bg-hover',
-      },
-      {
-        color: 'primary',
         variant: 'outline',
         class:
           'border border-primary-border text-primary-text-contrast hover:border-primary-border-hover',
       },
-      {
-        color: 'primary',
-        variant: 'ghost',
-        class:
-          'bg-transparent text-primary-text hover:bg-primary-bg-hover active:bg-primary-bg-active',
-      },
-      {
-        color: 'primary',
-        variant: 'destructive',
-        class: 'bg-alert-solid text-alert-on-alert hover:bg-alert-solid-hover',
-      },
-
-      // Neutral variants
       {
         color: 'neutral',
         variant: 'solid',
@@ -115,83 +79,9 @@ const buttonVariants = cva(
       },
       {
         color: 'neutral',
-        variant: 'soft',
-        class:
-          'bg-canvas-bg-hover text-canvas-text hover:bg-canvas-bg-active active:bg-canvas-line',
-      },
-      {
-        color: 'neutral',
-        variant: 'surface',
-        class:
-          'border border-canvas-border bg-canvas-bg text-canvas-text hover:bg-canvas-bg-hover hover:border-canvas-border-hover active:bg-canvas-bg-active',
-      },
-      {
-        color: 'neutral',
         variant: 'outline',
         class:
           'border border-canvas-border text-canvas-text hover:border-canvas-border-hover',
-      },
-      {
-        color: 'neutral',
-        variant: 'ghost',
-        class:
-          'bg-transparent text-canvas-text hover:bg-canvas-bg-hover active:bg-canvas-bg-active',
-      },
-      {
-        color: 'neutral',
-        variant: 'destructive',
-        class: 'bg-alert-solid text-alert-on-alert hover:bg-alert-solid-hover',
-      },
-
-      // Secondary variants
-      {
-        color: 'secondary',
-        variant: 'solid',
-        class:
-          'bg-secondary-solid text-secondary-on-secondary hover:bg-secondary-solid-hover active:bg-secondary-solid-hover/90',
-      },
-      {
-        color: 'secondary',
-        variant: 'soft',
-        class:
-          'bg-secondary-bg-hover text-secondary-text hover:bg-secondary-bg-active active:bg-secondary-line',
-      },
-      {
-        color: 'secondary',
-        variant: 'surface',
-        class:
-          'border border-secondary-border bg-secondary-bg-subtle text-secondary-text hover:bg-secondary-bg hover:border-secondary-border-hover active:bg-secondary-bg-hover',
-      },
-      {
-        color: 'secondary',
-        variant: 'outline',
-        class:
-          'border border-secondary-border text-secondary-text hover:border-secondary-border-hover',
-      },
-      {
-        color: 'secondary',
-        variant: 'ghost',
-        class:
-          'bg-transparent text-secondary-text hover:bg-secondary-bg-hover active:bg-secondary-bg-active',
-      },
-      {
-        color: 'secondary',
-        variant: 'destructive',
-        class: 'bg-alert-solid text-alert-on-alert hover:bg-alert-solid-hover',
-      },
-
-      // Link variants
-      {
-        color: 'link',
-        variant: 'solid',
-        class:
-          'text-primary-solid hover:text-primary-solid-hover bg-transparent',
-      },
-      {
-        color: 'link',
-        variant: 'ghost',
-        class:
-          'text-primary-solid hover:text-primary-solid-hover bg-transparent',
       },
 
       // Icon buttons
@@ -220,8 +110,6 @@ const buttonVariants = cva(
       // Focus ring
       { color: 'primary', class: 'focus-visible:ring-primary-solid' },
       { color: 'neutral', class: 'focus-visible:ring-canvas-solid' },
-      { color: 'secondary', class: 'focus-visible:ring-secondary-solid' },
-      { color: 'link', class: 'focus-visible:ring-primary-solid' },
     ],
     defaultVariants: {
       color: 'primary',
@@ -240,9 +128,9 @@ export interface ButtonProps
   asChild?: boolean;
   leadingIcon?: React.ReactElement;
   trailingIcon?: React.ReactElement;
-  iconOnly?: boolean; // set for icon buttons
-  isLoading?: boolean; // new loading state prop
-  loadingText?: string; // optional loading text
+  iconOnly?: boolean;
+  isLoading?: boolean;
+  loadingText?: string;
   fullWidth?: boolean;
 }
 
@@ -267,11 +155,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     ref,
   ) => {
     const Comp = asChild ? Slot : 'button';
-
-    // If iconOnly is true, we only render the leadingIcon
     const icon = iconOnly ? leadingIcon : null;
-
-    // Determine if button should be disabled (when loading or explicitly disabled)
     const isDisabled = isLoading || disabled;
 
     return (
@@ -290,10 +174,8 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         disabled={isDisabled}
         {...props}
       >
-        {/* Loading State */}
         {isLoading && iconOnly && <Spinner />}
 
-        {/* Loading State with Text */}
         {isLoading && !iconOnly && (
           <>
             <span className='mr-2'>
@@ -303,10 +185,8 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
           </>
         )}
 
-        {/* Normal Icon Only */}
         {!isLoading && iconOnly && icon}
 
-        {/* Normal Button with Text */}
         {!isLoading && !iconOnly && (
           <>
             {leadingIcon && <span className='mr-2'>{leadingIcon}</span>}
@@ -319,8 +199,6 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   },
 );
 Button.displayName = 'Button';
-
-// export default Button;
 
 const ButtonMemoized = memo(Button);
 export { buttonVariants };

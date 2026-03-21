@@ -243,7 +243,10 @@ impl HandshakeInitiatorHandler {
         Some(self.channel_timeout.to_u64() + 100)
     }
 
-    fn build_launcher_coin_spend(&self, env: &mut ChannelHandlerEnv<'_>) -> Result<CoinSpend, Error> {
+    fn build_launcher_coin_spend(
+        &self,
+        env: &mut ChannelHandlerEnv<'_>,
+    ) -> Result<CoinSpend, Error> {
         let ch = self.channel_handler()?;
         let channel_coin = ch.state_channel_coin();
         let (_, channel_puzzle_hash, total_amount) = channel_coin.get_coin_string_parts()?;
@@ -276,8 +279,8 @@ impl HandshakeInitiatorHandler {
         total_amount: &Amount,
     ) -> Result<Hash, Error> {
         let allocator_for_hash = &mut crate::common::types::AllocEncoder::new();
-        let solution_tree_hash =
-            (channel_puzzle_hash.clone(), (total_amount.clone(), ())).sha256tree(allocator_for_hash);
+        let solution_tree_hash = (channel_puzzle_hash.clone(), (total_amount.clone(), ()))
+            .sha256tree(allocator_for_hash);
         Ok(Sha256Input::Array(vec![
             Sha256Input::Bytes(launcher_coin_id.bytes()),
             Sha256Input::Bytes(solution_tree_hash.bytes()),
@@ -296,8 +299,11 @@ impl HandshakeInitiatorHandler {
         let launcher_coin_id = launcher_coin.to_coin_id();
         let (launcher_parent, _, _) = launcher_coin.get_coin_string_parts()?;
 
-        let ann_hash =
-            self.compute_coin_announcement_hash(&launcher_coin_id, &channel_puzzle_hash, &total_amount)?;
+        let ann_hash = self.compute_coin_announcement_hash(
+            &launcher_coin_id,
+            &channel_puzzle_hash,
+            &total_amount,
+        )?;
         let per_player = Amount::new(total_amount.to_u64() / 2);
 
         let launcher_ph_bytes = crate::common::constants::SINGLETON_LAUNCHER_HASH.to_vec();

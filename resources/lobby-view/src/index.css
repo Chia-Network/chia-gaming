@@ -1,6 +1,7 @@
 /* Generated with https://designrift.dev */
 @import "tailwindcss";
-
+@import "tw-animate-css";
+@custom-variant dark (&:is(.dark *));
 /* LIGHT THEME */
 :root {
 

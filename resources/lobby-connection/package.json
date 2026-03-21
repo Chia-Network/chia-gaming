@@ -20,23 +20,16 @@
     "lint:report": "npm run lint:errors-only || echo 'Linting found issues but not blocking commit. Run npm run lint:fix to auto-fix many issues.'"
   },
   "dependencies": {
-    "@types/express": "^5.0.5",
-    "@types/minimist": "^1.2.5",
-    "@types/node": "^24.9.2",
-    "cors": "^2.8.5",
-    "crypto": "^1.0.1",
-    "esbuild": "^0.25.11",
-    "express": "^5.1.0",
-    "helmet": "^8.1.0",
-    "minimist": "^1.2.8",
-    "socket.io-client": "^4.8.1",
-    "typescript": "^5.9.3"
+    "socket.io-client": "^4.8.1"
   },
   "peerDependencies": {
     "@types/react": "19.2.0",
     "react": "19.2.0"
   },
   "devDependencies": {
-    "@types/react": "19.2.0"
+    "@types/node": "^24.9.2",
+    "@types/react": "19.2.0",
+    "esbuild": "^0.25.11",
+    "typescript": "^5.9.3"
   }
 }

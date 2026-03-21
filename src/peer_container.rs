@@ -20,8 +20,8 @@ use crate::common::types::{
     PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
 use crate::potato_handler::effects::{
-    apply_effects, ChannelStatusSnapshot, CradleEvent, CradleEventQueue, Effect, GameNotification,
-    ResyncInfo, ChannelState,
+    apply_effects, ChannelState, ChannelStatusSnapshot, CradleEvent, CradleEventQueue, Effect,
+    GameNotification, ResyncInfo,
 };
 use crate::potato_handler::handshake::CoinSpendRequest;
 use crate::potato_handler::handshake_initiator::HandshakeInitiatorHandler;
@@ -916,9 +916,9 @@ impl SynchronousGameCradle {
                     }
                     _ => {}
                 }
-                self.state
-                    .events
-                    .push_back(CradleEvent::Notification(Self::make_channel_status_notification(snap)));
+                self.state.events.push_back(CradleEvent::Notification(
+                    Self::make_channel_status_notification(snap),
+                ));
             }
             self.last_channel_status = snapshot;
         }

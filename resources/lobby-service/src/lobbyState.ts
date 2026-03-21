@@ -1,4 +1,4 @@
-import crypto from 'crypto';
+import crypto from 'node:crypto';
 
 import {
   Player,
@@ -62,10 +62,6 @@ export class Lobby {
 
   getPlayers(): Player[] {
     return listOfObject(this.players);
-  }
-
-  getTracking(): string[] {
-    return listOfObject(this.games).map((g) => g.target);
   }
 
   getGames(): GameDefinition[] {
