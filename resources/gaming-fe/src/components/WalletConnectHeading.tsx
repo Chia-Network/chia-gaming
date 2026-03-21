@@ -16,7 +16,6 @@ import Debug from './Debug';
 import { WalletConnectDialog, doConnectWallet } from './WalletConnect';
 import WalletBadge from './WalletBadge';
 
-import { Wrench, Sun, Cross } from 'lucide-react';
 
 import { WalletConnectOutboundState } from '../hooks/useWalletConnect';
 import { BlockchainReport } from '../types/ChiaGaming';
@@ -430,8 +429,10 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
                 className={`p-1 border border-(--color-canvas-border) rounded ${
                   isDark ? 'text-warning-solid' : 'text-canvas-text'
                 } hover:bg-canvas-bg-hover`}
+                aria-label='toggle theme'
+                title='Toggle theme'
               >
-                <Sun size={16} />
+                <span className='text-sm leading-none'>{isDark ? '☀' : '☾'}</span>
               </button>
             </div>
           </div>
@@ -443,7 +444,7 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
       {/* Debug IconButton */}
       <button
         onClick={() => setDebugOpen(true)}
-        className='fixed bottom-6 right-6 flex items-center justify-center p-1.5 rounded-full border border-canvas-border shadow-md'
+        className='fixed bottom-6 right-6 flex items-center justify-center px-2 py-1.5 rounded-full border border-canvas-border shadow-md'
         style={{
           backgroundColor: 'var(--color-canvas-bg)',
           color: 'var(--color-canvas-text)',
@@ -463,8 +464,10 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
           e.currentTarget.style.transform = 'translateY(0)';
           e.currentTarget.style.boxShadow = '0px 4px 12px rgba(0,0,0,0.2)';
         }}
+        aria-label='open debug'
+        title='Open debug'
       >
-        <Wrench size={'20px'} />
+        <span className='text-xs font-semibold'>Debug</span>
       </button>
 
       {/* Debug Modal */}
@@ -476,8 +479,10 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
               <button
                 onClick={() => setDebugOpen(false)}
                 className='text-canvas-text hover:text-secondary-solid'
+                aria-label='close debug'
+                title='Close'
               >
-                <Cross />
+                <span aria-hidden='true' className='text-lg leading-none'>&times;</span>
               </button>
             </div>
             <div

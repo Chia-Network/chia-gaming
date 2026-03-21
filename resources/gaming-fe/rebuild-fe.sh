@@ -29,6 +29,7 @@ link_if_missing() {
 link_if_missing index.js      "$FE_DIR/dist/js/index-rollup.js"
 link_if_missing index.css     "$FE_DIR/dist/css/index.css"
 link_if_missing index.html    "$FE_DIR/public/index.html"
+[ -f "$FE_DIR/public/favicon.svg" ] && link_if_missing favicon.svg "$FE_DIR/public/favicon.svg"
 link_if_missing chia_gaming_wasm.js       "$FE_DIR/dist/chia_gaming_wasm.js"
 link_if_missing chia_gaming_wasm_bg.wasm  "$FE_DIR/dist/chia_gaming_wasm_bg.wasm"
 link_if_missing clsp          "$CLSP_DIR"

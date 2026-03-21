@@ -53,6 +53,58 @@ export interface AppState {
 
 const APP_STATE_KEY = 'appState';
 const CURRENT_VERSION = 2;
+const LEGACY_STORAGE_KEYS = ['persistedState', 'playerId', 'sessionId', 'sessionSave', 'alias', 'theme', 'saveNames'];
+
+function isWalletConnectStorageKey(key: string): boolean {
+  const lower = key.toLowerCase();
+  return lower.startsWith('wc@') || lower.includes('walletconnect');
+}
+
+function clearLegacySaveEntries(): void {
+  const saveNamesRaw = localStorage.getItem('saveNames');
+  if (!saveNamesRaw) return;
+  for (const name of saveNamesRaw.split(',').filter(Boolean)) {
+    localStorage.removeItem(`save-${name}`);
+  }
+}
+
+function deleteIndexedDb(name: string): Promise<void> {
+  return new Promise((resolve) => {
+    try {
+      const request = indexedDB.deleteDatabase(name);
+      request.onsuccess = () => resolve();
+      request.onerror = () => resolve();
+      request.onblocked = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+}
+
+async function clearWalletConnectIndexedDb(): Promise<void> {
+  if (typeof indexedDB === 'undefined') return;
+  const dynamicDatabaseLookup = indexedDB as IDBFactory & { databases?: () => Promise<Array<{ name?: string }>> };
+
+  if (typeof dynamicDatabaseLookup.databases === 'function') {
+    try {
+      const databases = await dynamicDatabaseLookup.databases();
+      const toDelete = databases
+        .map((db) => db.name)
+        .filter((name): name is string => typeof name === 'string' && isWalletConnectStorageKey(name));
+      await Promise.all(toDelete.map((name) => deleteIndexedDb(name)));
+      return;
+    } catch {
+      // Fall through to known database names.
+    }
+  }
+
+  const knownDbNames = [
+    'WALLET_CONNECT_V2_INDEXED_DB',
+    'walletconnect',
+    'walletconnect-v2',
+  ];
+  await Promise.all(knownDbNames.map((name) => deleteIndexedDb(name)));
+}
 
 /**
  * Migrate from v1 (persistedState + scattered keys) to v2 (appState).
@@ -210,6 +262,34 @@ export function clearSession(): void {
     theme: state.theme,
   };
   saveAppState(cleared);
+}
+
+export async function hardReset(): Promise<void> {
+  try {
+    clearLegacySaveEntries();
+    localStorage.removeItem(APP_STATE_KEY);
+    for (const key of LEGACY_STORAGE_KEYS) {
+      localStorage.removeItem(key);
+    }
+
+    for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+      const key = localStorage.key(i);
+      if (key && isWalletConnectStorageKey(key)) {
+        localStorage.removeItem(key);
+      }
+    }
+
+    for (let i = sessionStorage.length - 1; i >= 0; i -= 1) {
+      const key = sessionStorage.key(i);
+      if (key && isWalletConnectStorageKey(key)) {
+        sessionStorage.removeItem(key);
+      }
+    }
+  } catch (e) {
+    console.error('[save] failed to clear browser storage during hard reset:', e);
+  }
+
+  await clearWalletConnectIndexedDb();
 }
 
 // --- Alias ---

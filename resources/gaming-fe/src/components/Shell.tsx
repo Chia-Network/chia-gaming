@@ -12,7 +12,7 @@ import {
   getBlockchainType,
   loadSession,
   clearSession,
-  startNewSession,
+  hardReset,
   SessionSave,
 } from '../hooks/save';
 import { blobSingleton } from '../hooks/blobSingleton';
@@ -21,7 +21,6 @@ import { FAKE_BLOCKCHAIN_ID } from '../hooks/FakeBlockchainInterface';
 import { BLOCKCHAIN_SERVICE_URL } from '../settings';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import { debugLog } from '../services/debugLog';
-import { LogOut } from 'lucide-react';
 
 type TabId = 'tracker' | 'session' | 'game-log' | 'debug-log';
 
@@ -247,10 +246,9 @@ const Shell = () => {
     };
   }, [uniqueId, sessionId]);
 
-  const handleReset = useCallback(() => {
+  const handleReset = useCallback(async () => {
     activePairingTokenRef.current = null;
-    clearSession();
-    startNewSession();
+    await hardReset();
     window.location.reload();
   }, []);
 
@@ -288,9 +286,8 @@ const Shell = () => {
     }
   }, [uniqueId]);
 
-  const handleStartFresh = useCallback(() => {
-    clearSession();
-    startNewSession();
+  const handleStartFresh = useCallback(async () => {
+    await hardReset();
     window.location.reload();
   }, []);
 
@@ -382,7 +379,6 @@ const Shell = () => {
           onClick={handleReset}
           className='px-2.5 py-1 text-xs font-bold rounded-md bg-alert-bg text-alert-text border border-alert-border hover:bg-alert-bg-hover transition-colors inline-flex items-center gap-1'
         >
-          <LogOut className='w-3.5 h-3.5' />
           Reset
         </button>
       </div>

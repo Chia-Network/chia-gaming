@@ -53,12 +53,18 @@ export function useLobbySocket(
   lobbyUrl: string,
   uniqueId: string,
   sessionId: string,
+  alias?: string,
 ): UseLobbySocketReturn {
   const [players, setPlayers] = useState<Player[]>([]);
   const [pendingChallenge, setPendingChallenge] = useState<ChallengeReceived | null>(null);
   const [challengeSent, setChallengeSent] = useState(false);
   const [lobbyGames, setLobbyGames] = useState<GameDefinition[]>([]);
   const socketRef = useRef<Socket>(undefined);
+  const aliasRef = useRef(alias);
+
+  useEffect(() => {
+    aliasRef.current = alias;
+  }, [alias]);
 
   useEffect(() => {
     if (!uniqueId) return;
@@ -73,15 +79,20 @@ export function useLobbySocket(
 
     let joined = false;
     let lastTrackerHeardFrom = Date.now();
+    const joinPayload = () => ({
+      id: uniqueId,
+      session_id: sessionId,
+      ...(aliasRef.current?.trim() ? { alias: aliasRef.current.trim() } : {}),
+    });
 
     socket.on('connect', () => {
       lastTrackerHeardFrom = Date.now();
       if (joined) {
-        socket.emit('join', { id: uniqueId, session_id: sessionId });
+        socket.emit('join', joinPayload());
       }
     });
 
-    socket.emit('join', { id: uniqueId, session_id: sessionId });
+    socket.emit('join', joinPayload());
     joined = true;
 
     socket.on('tracker_ping', () => {

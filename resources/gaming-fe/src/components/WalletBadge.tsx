@@ -1,5 +1,3 @@
-
-import { Copy } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 
 interface WalletBadgeProps {
@@ -57,8 +55,10 @@ const WalletBadge = ({ sessionConnected, fakeAddress }: WalletBadgeProps) => {
                 <button
                   onClick={() => navigator.clipboard.writeText(fakeAddress)}
                   className="ml-1 text-[#856404] p-1 rounded hover:bg-[#8564041a] transition-colors"
+                  aria-label='copy address'
+                  title='Copy address'
                 >
-                  <Copy className="w-4 h-4" />
+                  <span className='text-[0.65rem] font-semibold'>Copy</span>
                 </button>
               </TooltipTrigger>
               <TooltipContent side="top" align="center" className="bg-[#856404] text-white text-xs px-2 py-1 rounded shadow-md select-none">

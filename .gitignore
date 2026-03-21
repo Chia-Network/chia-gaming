@@ -26,6 +26,8 @@ node_modules/
 .pnp.cjs
 .pnp.loader.mjs
 .yarnrc.yml
+resources/**/public/index.js
+resources/**/serve/
 # Virtual environments
 .venv/
 venv/
@@ -35,7 +37,13 @@ target/
 # macos
 .DS_Store
 
+# IDE / editor
+.vscode/
+.cursor-acp-plan-*
+
 # Misc.
 *.diff
 *.bak
 *.tmp
+*.log
+*.vsix

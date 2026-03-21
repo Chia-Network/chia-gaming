@@ -40,6 +40,7 @@ const LobbyScreen = () => {
     window.location.origin,
     aliasConfirmed ? uniqueId : '',
     sessionId,
+    aliasConfirmed ? myAlias : undefined,
   );
 
   function confirmAlias() {

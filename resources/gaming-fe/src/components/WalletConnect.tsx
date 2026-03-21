@@ -1,4 +1,3 @@
-import { Info } from 'lucide-react';
 import {
   StartConnectResult,
   walletConnectState,
@@ -56,10 +55,8 @@ export const WalletConnectDialog: React.FC<ShowWalletConnectState> = ({
           </div>
 
           <div className='bg-(--color-info-bg-subtle) z-10 rounded-lg p-4 flex gap-2 mt-3 text-(--color-info-text-contrast)'>
-            <div className='p-1 bg-(--color-info-bg)  rounded-full shrink-0 flex items-center justify-center h-fit'>
-              <Info
-                style={{ color: 'var(--color-info-solid)', fontSize: '1.25rem' }}
-              />
+            <div className='px-2 py-0.5 rounded-full shrink-0 h-fit bg-(--color-info-bg) text-(--color-info-solid) text-xs font-semibold'>
+              INFO
             </div>
             <div>
               <p className='mt-2 text-[0.95rem]'>

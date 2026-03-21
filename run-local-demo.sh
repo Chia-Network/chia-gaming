@@ -136,6 +136,9 @@ GAME_SERVE="$FE_DIR/serve"
 rm -rf "$GAME_SERVE"
 mkdir -p "$GAME_SERVE"
 ln -sf "$FE_DIR/public/index.html" "$GAME_SERVE/index.html"
+if [ -f "$FE_DIR/public/favicon.svg" ]; then
+    ln -sf "$FE_DIR/public/favicon.svg" "$GAME_SERVE/favicon.svg"
+fi
 ln -sf "$FE_DIR/dist/js/index-rollup.js" "$GAME_SERVE/index.js"
 ln -sf "$FE_DIR/dist/css/index.css" "$GAME_SERVE/index.css"
 ln -sf "$FE_DIR/dist/chia_gaming_wasm.js" "$GAME_SERVE/chia_gaming_wasm.js"

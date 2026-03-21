@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react';
 import { Dialog, DialogClose, DialogContent, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
 import { Button } from './button';
-import { CheckCircle, Copy, QrCode, Smartphone, X } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 interface QRCodeModalProps {
@@ -80,7 +79,6 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
               "
         >
           <div className="flex items-center gap-2">
-            <QrCode className="text-primary-text" />
             <DialogTitle className="text-lg font-semibold text-canvas-text-contrast">
               Connect to Chia Wallet
             </DialogTitle>
@@ -88,7 +86,7 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
 
           <DialogClose asChild>
             <button className="p-1 rounded hover:bg-canvas-bg-hover transition">
-              <X className="w-5 h-5 text-canvas-text" />
+              <span className='w-5 h-5 inline-flex items-center justify-center text-canvas-text text-lg' aria-hidden='true'>&times;</span>
             </button>
           </DialogClose>
         </DialogHeader>
@@ -106,7 +104,6 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
 
             {isMobile && (
               <Alert className="text-left mb-4 bg-info-bg border-info-border">
-                <Smartphone className="w-4 h-4 text-info-text" />
                 <AlertTitle>Mobile</AlertTitle>
                 <AlertDescription>
                   On mobile, you can also copy the connection URI below
@@ -180,7 +177,6 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
           {/* COPY SUCCESS */}
           {copied && (
             <Alert className="mb-2 bg-success-bg border-success-border">
-              <CheckCircle className="w-4 h-4 text-success-text" />
               <AlertDescription>URI copied to clipboard!</AlertDescription>
             </Alert>
           )}
@@ -195,7 +191,6 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
             disabled={!uri}
             className="min-w-[120px] border-primary-border text-primary-text"
           >
-            <Copy className="w-4 h-4 mr-1" />
             Copy URI
           </Button>
 
