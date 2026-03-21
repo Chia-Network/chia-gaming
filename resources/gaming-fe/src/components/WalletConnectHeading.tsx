@@ -10,7 +10,7 @@ import {
 import useDebug from '../hooks/useDebug';
 import { walletConnectState } from '../hooks/useWalletConnect';
 import { BLOCKCHAIN_SERVICE_URL } from '../settings';
-import { getPlayerId } from '../hooks/save';
+import { getPlayerId, getTheme, setTheme as saveTheme } from '../hooks/save';
 
 import Debug from './Debug';
 import { WalletConnectDialog, doConnectWallet } from './WalletConnect';
@@ -56,27 +56,19 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
 
   // Theme state: keep dark/light in sync with document root and localStorage
   const [isDark, setIsDark] = useState<boolean>(() => {
-    try {
-      const stored = localStorage.getItem('theme');
-      if (stored === 'dark') return true;
-      if (stored === 'light') return false;
-    } catch (e) {
-      // ignore
-    }
+    const stored = getTheme();
+    if (stored === 'dark') return true;
+    if (stored === 'light') return false;
     return document.documentElement.classList.contains('dark');
   });
 
   useEffect(() => {
     if (isDark) {
       document.documentElement.classList.add('dark');
-      try {
-        localStorage.setItem('theme', 'dark');
-      } catch (e) {}
+      saveTheme('dark');
     } else {
       document.documentElement.classList.remove('dark');
-      try {
-        localStorage.setItem('theme', 'light');
-      } catch (e) {}
+      saveTheme('light');
     }
   }, [isDark]);
 

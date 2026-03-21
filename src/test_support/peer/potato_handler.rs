@@ -157,8 +157,17 @@ impl ToLocalUI for Pipe {
             GameNotification::GameMessage { id, readable } => {
                 self.opponent_messages.push((id.clone(), readable.clone()));
             }
-            GameNotification::GoingOnChain { reason } => {
-                self.went_on_chain = Some(reason.clone());
+            GameNotification::ChannelStatus { state, advisory, .. } => {
+                use crate::potato_handler::effects::ChannelState;
+                if matches!(
+                    state,
+                    ChannelState::Unrolling
+                        | ChannelState::ResolvedUnrolled
+                        | ChannelState::ResolvedStale
+                ) {
+                    self.went_on_chain =
+                        Some(advisory.clone().unwrap_or_else(|| "going on-chain".to_string()));
+                }
             }
             _ => {}
         }

@@ -22,6 +22,29 @@ pub struct ResyncInfo {
     pub is_my_turn: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ChannelState {
+    Handshaking,
+    TransactionSubmitted,
+    Active,
+    ShuttingDown,
+    Unrolling,
+    ResolvedClean,
+    ResolvedUnrolled,
+    ResolvedStale,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelStatusSnapshot {
+    pub state: ChannelState,
+    pub advisory: Option<String>,
+    pub coin: Option<CoinString>,
+    pub our_balance: Option<Amount>,
+    pub their_balance: Option<Amount>,
+    pub game_allocated: Option<Amount>,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum GameNotification {
     GameCancelled {
@@ -54,30 +77,10 @@ pub enum GameNotification {
         reward_coin: Option<CoinString>,
     },
 
-    /// Our preemption lost the race and the opponent's stale unroll resolved.
-    /// Per-game outcomes follow as separate notifications.
-    StaleChannelUnroll {
-        our_reward: Amount,
-        reward_coin: Option<CoinString>,
-    },
-
-    /// The channel or unroll coin is in an unrecoverable state.
-    /// Everything is lost.
-    ChannelError {
-        reason: String,
-    },
     /// A single game coin is in an unrecoverable state.
     GameError {
         id: GameID,
         reason: String,
-    },
-
-    ChannelCoinSpent {
-        unroll_coin: CoinString,
-    },
-    UnrollCoinSpent {
-        reward_coin: Option<CoinString>,
-        reward_amount: Amount,
     },
 
     GameProposed {
@@ -112,17 +115,6 @@ pub enum GameNotification {
         id: GameID,
         readable: ReadableMove,
     },
-    ChannelCreated {
-        channel_coin: CoinString,
-    },
-    CleanShutdownStarted {},
-    CleanShutdownComplete {
-        reward_coin: Option<CoinString>,
-        reward_amount: Amount,
-    },
-    GoingOnChain {
-        reason: String,
-    },
     GameOnChain {
         id: GameID,
         coin: CoinString,
@@ -131,6 +123,14 @@ pub enum GameNotification {
     },
     ActionFailed {
         reason: String,
+    },
+    ChannelStatus {
+        state: ChannelState,
+        advisory: Option<String>,
+        coin: Option<CoinString>,
+        our_balance: Option<Amount>,
+        their_balance: Option<Amount>,
+        game_allocated: Option<Amount>,
     },
 }
 

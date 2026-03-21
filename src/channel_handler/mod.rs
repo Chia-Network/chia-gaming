@@ -1116,6 +1116,10 @@ impl ChannelHandler {
         self.their_out_of_game_balance.clone()
     }
 
+    pub fn total_game_allocated(&self) -> Amount {
+        self.my_allocated_balance.clone() + self.their_allocated_balance.clone()
+    }
+
     pub fn is_game_proposed(&self, game_id: &GameID) -> bool {
         self.proposed_games.iter().any(|p| p.game_id == *game_id)
     }

@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Subject, Observable } from 'rxjs';
-import { toast } from 'sonner';
 import {
   GameConnectionState,
   GameSessionParams,
@@ -9,7 +8,8 @@ import {
   PeerConnectionResult,
   WasmEvent,
   WasmNotification,
-  WasmNotificationTag,
+  ChannelState,
+  ChannelStatusPayload,
 } from '../types/ChiaGaming';
 import { ChildFrameBlockchainInterface } from './ChildFrameBlockchainInterface';
 import {
@@ -38,19 +38,48 @@ function coinPayloadToHex(coin: unknown): string | undefined {
 const TERMINAL_TYPES = [
   'WeTimedOut', 'OpponentTimedOut', 'WeSlashedOpponent',
   'OpponentSlashedUs', 'OpponentSuccessfullyCheated',
-  'GameCancelled', 'GameError', 'ChannelError',
+  'GameCancelled', 'GameError',
 ];
 
 function isTerminal(n: WasmNotification): boolean {
   return TERMINAL_TYPES.some(t => t in n);
 }
 
-export type ChannelCoinState = 'not-created' | 'channel' | 'unrolling' | 'reward' | 'closed';
 export type GameCoinState = 'off-chain-my-turn' | 'off-chain-their-turn' | 'on-chain-my-turn' | 'on-chain-their-turn' | 'reward' | 'ended';
 
 export interface CoinLifecycle<S> {
   coinHex: string | null;
   state: S;
+}
+
+export interface ChannelStatusInfo {
+  state: ChannelState;
+  advisory: string | null;
+  coinHex: string | null;
+  ourBalance: string | null;
+  theirBalance: string | null;
+  gameAllocated: string | null;
+}
+
+const INITIAL_CHANNEL_STATUS: ChannelStatusInfo = {
+  state: 'Handshaking',
+  advisory: null,
+  coinHex: null,
+  ourBalance: null,
+  theirBalance: null,
+  gameAllocated: null,
+};
+
+const ATTENTION_STATES: ChannelState[] = [
+  'Failed', 'ResolvedStale', 'ResolvedClean', 'ResolvedUnrolled',
+];
+
+function parseAmount(v: unknown): string | null {
+  if (v == null) return null;
+  if (typeof v === 'object' && v !== null && 'Amount' in (v as Record<string, unknown>)) {
+    return String((v as Record<string, unknown>).Amount);
+  }
+  return String(v);
 }
 
 export interface UseGameSessionResult {
@@ -62,7 +91,7 @@ export interface UseGameSessionResult {
   iStarted: boolean;
   playerNumber: number;
   sessionEnded: boolean;
-  channelCoin: CoinLifecycle<ChannelCoinState>;
+  channelStatus: ChannelStatusInfo;
   gameCoin: CoinLifecycle<GameCoinState>;
   handKey: number;
   activeGameId: string | null;
@@ -80,6 +109,8 @@ export interface UseGameSessionResult {
   shutdownInitiated: boolean;
   actionFailedReason: string | null;
   dismissActionFailed: () => void;
+  channelAttention: ChannelStatusInfo | null;
+  dismissChannelAttention: () => void;
 }
 
 export function useGameSession(
@@ -104,9 +135,10 @@ export function useGameSession(
   const [myRunningBalance, setMyRunningBalance] = useState(0n);
   const [sessionEnded, setSessionEnded] = useState(false);
   const [shutdownInitiated, setShutdownInitiated] = useState(false);
-  const [channelCoin, setChannelCoin] = useState<CoinLifecycle<ChannelCoinState>>(() =>
-    sessionSave?.channelReady ? { coinHex: null, state: 'channel' } : { coinHex: null, state: 'not-created' }
+  const [channelStatus, setChannelStatus] = useState<ChannelStatusInfo>(() =>
+    sessionSave?.channelReady ? { ...INITIAL_CHANNEL_STATUS, state: 'Active' } : INITIAL_CHANNEL_STATUS
   );
+  const [channelAttention, setChannelAttention] = useState<ChannelStatusInfo | null>(null);
   const [gameCoin, setGameCoin] = useState<CoinLifecycle<GameCoinState>>({ coinHex: null, state: 'off-chain-my-turn' });
   const [handKey, setHandKey] = useState(() => sessionSave?.activeGameId ? 1 : 0);
   const [gameIds, setGameIds] = useState<string[]>(() =>
@@ -199,72 +231,51 @@ export function useGameSession(
     setShowBetweenHandOverlay(true);
   }, []);
 
+  const dismissChannelAttention = useCallback(() => {
+    setChannelAttention(null);
+  }, []);
+
   const handleNotification = useCallback((n: WasmNotification) => {
     const go = gameObjectRef.current;
     if (typeof n !== 'object' || n === null) return;
 
-    const type = Object.keys(n)[0] as WasmNotificationTag;
-    const p = n[type] ?? {};
-    const s = (key: string): string | undefined => {
-      const v = p[key];
-      return v != null ? String(v) : undefined;
-    };
-    const CHANNEL_TOAST_ID = 'channel-notification';
-    const GAME_TOAST_ID = 'game-notification';
-
-    type ToastCfg = { title: string; description?: string; variant?: 'default' | 'destructive'; toastId: string };
-    const channelToasts: Record<string, Omit<ToastCfg, 'toastId'>> = {
-      GoingOnChain:                { variant: 'default',     title: 'Going On-Chain',              description: s('reason') ?? 'Dispute detected — submitting to blockchain' },
-      ChannelCoinSpent:            { variant: 'default',     title: 'Channel Coin Spent',           description: 'The state channel coin was spent on-chain' },
-      UnrollCoinSpent:             { variant: 'default',     title: 'Unroll Coin Spent',            description: p.reward_coin ? 'Unroll resolved — reward coin received' : 'The unroll coin was spent on-chain' },
-      StaleChannelUnroll:          { variant: 'destructive', title: 'Stale Channel Unrolled',       description: p.our_reward !== undefined ? `You received ${p.our_reward} mojos` : 'Opponent\'s stale unroll resolved on-chain' },
-      ChannelError:                { variant: 'destructive', title: 'Channel Error',                description: s('reason') },
-      CleanShutdownStarted:        { variant: 'default',     title: 'Session Ending',               description: 'Opponent initiated a clean shutdown' },
-      CleanShutdownComplete:       { variant: 'default',     title: 'Session Ended',                description: 'Channel closed — funds returned on-chain' },
-    };
-    const gameToasts: Record<string, Omit<ToastCfg, 'toastId'>> = {
-      OpponentPlayedIllegalMove:   { variant: 'default',     title: 'Illegal Move Detected',       description: `Game #${s('id')} — slashing opponent on-chain…` },
-      WeSlashedOpponent:           { variant: 'default',     title: 'Opponent Slashed!',            description: `Game #${s('id')} — successfully claimed all game funds` },
-      OpponentSlashedUs:           { variant: 'destructive', title: 'You Were Slashed',             description: `Game #${s('id')} — your illegal move was proven on-chain` },
-      OpponentSuccessfullyCheated: { variant: 'destructive', title: 'Opponent Got Away',            description: p.our_reward !== undefined ? `Game #${s('id')} — slash window expired, you received ${p.our_reward} mojos` : `Game #${s('id')} — slash window expired` },
-      WeTimedOut:                  { variant: 'destructive', title: 'You Timed Out',                description: p.our_reward !== undefined ? `Game #${s('id')} — you received ${p.our_reward} mojos` : `Game #${s('id')}` },
-      OpponentTimedOut:            { variant: 'default',     title: 'Opponent Timed Out',           description: p.our_reward !== undefined ? `Game #${s('id')} — you received ${p.our_reward} mojos` : `Game #${s('id')}` },
-      GameCancelled:               { variant: 'default',     title: 'Game Cancelled',               description: `Game #${s('id')} was cancelled` },
-      GameProposalCancelled:       { variant: 'destructive', title: 'Game Proposal Cancelled',      description: s('reason') ? `Game #${s('id')} — ${s('reason')}` : `Game #${s('id')}` },
-      InsufficientBalance:         { variant: 'destructive', title: 'Insufficient Balance',         description: p.our_balance_short && p.their_balance_short ? 'Both sides have insufficient balance' : p.our_balance_short ? 'Your balance is too low for this game' : 'Opponent\'s balance is too low for this game' },
-      GameError:                   { variant: 'destructive', title: 'Game Error',                   description: s('reason') ? `Game #${s('id')} — ${s('reason')}` : `Game #${s('id')}` },
-      GameOnChain:                 { variant: 'default',     title: 'Game On-Chain',                description: p.coin ? `Game #${s('id')} — coin on-chain` : `Game #${s('id')}` },
-      WeMoved:                     { variant: 'default',     title: 'Move Confirmed',               description: `Game #${s('id')} — your move landed on-chain` },
-    };
-    const tChannel = channelToasts[type];
-    const tGame = gameToasts[type];
-    const t = tChannel ?? tGame;
-    if (t) {
-      const activeGameId = gameIdsRef.current[0];
-      const notificationGameId = p.id != null ? String(p.id) : null;
-      if (tGame && notificationGameId != null && activeGameId != null && notificationGameId !== activeGameId) {
-        toast.error(`Unexpected game notification for #${notificationGameId}`, { id: CHANNEL_TOAST_ID });
-      } else {
-        const toastId = tChannel ? CHANNEL_TOAST_ID : GAME_TOAST_ID;
-        const opts = { ...(t.description ? { description: t.description } : {}), id: toastId };
-        if (t.variant === 'destructive') {
-          toast.error(t.title, opts);
-        } else {
-          toast(t.title, opts);
+    // ChannelStatus: persistent display, no toast
+    if ('ChannelStatus' in n) {
+      const cs = n.ChannelStatus as ChannelStatusPayload | undefined;
+      if (!cs) return;
+      const info: ChannelStatusInfo = {
+        state: cs.state,
+        advisory: cs.advisory ?? null,
+        coinHex: coinPayloadToHex(cs.coin) ?? null,
+        ourBalance: parseAmount(cs.our_balance),
+        theirBalance: parseAmount(cs.their_balance),
+        gameAllocated: parseAmount(cs.game_allocated),
+      };
+      setChannelStatus(info);
+      if (ATTENTION_STATES.includes(cs.state)) {
+        setChannelAttention(info);
+      }
+      if (cs.state === 'Active' && gameConnectionState.stateIdentifier !== 'running') {
+        setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
+        if (iStarted && !firstGameAcceptedRef.current) {
+          proposeNewGame();
         }
       }
-    }
-
-    // Channel coin lifecycle
-    if ('ChannelCreated' in n) {
-      const hex = coinPayloadToHex(n.ChannelCreated?.channel_coin);
-      setChannelCoin({ coinHex: hex ?? null, state: 'channel' });
-    } else if ('ChannelCoinSpent' in n) {
-      const hex = coinPayloadToHex(n.ChannelCoinSpent?.unroll_coin);
-      setChannelCoin({ coinHex: hex ?? null, state: 'unrolling' });
-    } else if ('UnrollCoinSpent' in n) {
-      const hex = coinPayloadToHex(n.UnrollCoinSpent?.reward_coin);
-      setChannelCoin({ coinHex: hex ?? null, state: 'reward' });
+      if (cs.state === 'ShuttingDown') {
+        shutdownInitiatedRef.current = true;
+        setShutdownInitiated(true);
+      }
+      if (cs.state === 'Unrolling') {
+        shutdownInitiatedRef.current = true;
+        setShutdownInitiated(true);
+      }
+      if (cs.state === 'ResolvedClean' || cs.state === 'ResolvedUnrolled' || cs.state === 'ResolvedStale') {
+        setSessionEnded(true);
+      }
+      if (cs.state === 'Failed') {
+        setSessionEnded(true);
+      }
+      return;
     }
 
     // Game coin lifecycle
@@ -313,22 +324,6 @@ export function useGameSession(
       gameplayEventSubject.next({ OpponentMoved: { readable: n.OpponentMoved!.readable as number[] } });
     } else if ('GameMessage' in n) {
       gameplayEventSubject.next({ GameMessage: { readable: n.GameMessage!.readable as number[] } });
-    } else if ('CleanShutdownComplete' in n) {
-      setSessionEnded(true);
-      setChannelCoin(prev => ({ coinHex: prev.coinHex, state: 'closed' }));
-      setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
-    } else if ('ChannelCreated' in n) {
-      setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
-      if (iStarted) {
-        proposeNewGame();
-      }
-    } else if ('CleanShutdownStarted' in n) {
-      shutdownInitiatedRef.current = true;
-      setShutdownInitiated(true);
-    } else if ('GoingOnChain' in n) {
-      shutdownInitiatedRef.current = true;
-      setShutdownInitiated(true);
-      setGameConnectionState({ stateIdentifier: 'running', stateDetail: ['On-chain dispute in progress'] });
     } else if (isTerminal(n)) {
       const hadActiveGame = gameIdsRef.current.length > 0;
       if (hadActiveGame) {
@@ -341,10 +336,8 @@ export function useGameSession(
     } else if ('ActionFailed' in n) {
       const reason = String(n.ActionFailed?.reason ?? 'Unknown error');
       setActionFailedReason(reason);
-    } else if (!('GameProposed' in n) && !('GameProposalAccepted' in n) && !('OpponentMoved' in n) && !('GameMessage' in n)) {
-      console.warn('unhandled notification:', JSON.stringify(n));
     }
-  }, [iStarted, proposeNewGame, gameplayEventSubject]);
+  }, [iStarted, proposeNewGame, gameplayEventSubject, gameConnectionState.stateIdentifier]);
 
   // Subscribe to WASM events
   useEffect(() => {
@@ -359,7 +352,6 @@ export function useGameSession(
             break;
           case 'finished':
             setSessionEnded(true);
-            setChannelCoin(prev => ({ coinHex: prev.coinHex, state: 'closed' }));
             break;
           case 'address':
             break;
@@ -443,7 +435,7 @@ export function useGameSession(
     iStarted,
     playerNumber,
     sessionEnded,
-    channelCoin,
+    channelStatus,
     gameCoin,
     handKey,
     activeGameId: gameIds[0] ?? null,
@@ -461,5 +453,7 @@ export function useGameSession(
     shutdownInitiated,
     actionFailedReason,
     dismissActionFailed,
+    channelAttention,
+    dismissChannelAttention,
   };
 }

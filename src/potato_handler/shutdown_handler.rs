@@ -11,7 +11,9 @@ use crate::common::types::{
     PuzzleHash, SpendBundle, Timeout,
 };
 use crate::peer_container::PeerHandler;
-use crate::potato_handler::effects::{format_coin, Effect, GameNotification, ResyncInfo};
+use crate::potato_handler::effects::{
+    format_coin, ChannelState, ChannelStatusSnapshot, Effect, GameNotification, ResyncInfo,
+};
 use crate::potato_handler::handler_base::{build_channel_to_unroll_bundle, ChannelHandlerBase};
 use crate::potato_handler::types::{GameAction, PotatoState, SpendWalletReceiver};
 use crate::potato_handler::unroll_watch_handler::UnrollWatchHandler;
@@ -31,6 +33,8 @@ pub struct ShutdownHandler {
 
     channel_coin: CoinString,
     reward_coin: Option<CoinString>,
+
+    advisory: Option<String>,
 
     #[serde(skip)]
     last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
@@ -67,6 +71,7 @@ impl ShutdownHandler {
             ),
             channel_coin,
             reward_coin,
+            advisory: None,
             last_channel_coin_spend_info,
             unroll_watch_replacement: None,
         }
@@ -226,7 +231,7 @@ impl ShutdownHandler {
                     let reason = format!("clean shutdown condition check failed: {e:?}");
                     let mut effects = vec![Effect::DebugLog(format!("[channel-error] {reason}"))];
                     effects.extend(self.base.emit_failure_cleanup());
-                    effects.push(Effect::Notify(GameNotification::ChannelError { reason }));
+                    self.advisory = Some(reason);
                     self.state = ShutdownState::Failed;
                     return Ok((effects, None));
                 }
@@ -324,15 +329,6 @@ impl ShutdownHandler {
                     }));
                 }
             }
-            let reward_amount = self
-                .reward_coin
-                .as_ref()
-                .and_then(|r| r.amount())
-                .unwrap_or_default();
-            effects.push(Effect::Notify(GameNotification::CleanShutdownComplete {
-                reward_coin: self.reward_coin.clone(),
-                reward_amount,
-            }));
             return Ok(effects);
         }
 
@@ -351,10 +347,6 @@ impl ShutdownHandler {
             .ok_or_else(|| {
                 Error::StrErr("channel conditions didn't include a coin creation".to_string())
             })?;
-
-        effects.push(Effect::Notify(GameNotification::ChannelCoinSpent {
-            unroll_coin: unroll_coin.clone(),
-        }));
 
         use crate::potato_handler::handler_base::{classify_unroll, UnrollOutcome};
 
@@ -396,7 +388,6 @@ impl ShutdownHandler {
                     self.base.unroll_timeout.clone(),
                 );
                 self.unroll_watch_replacement = Some(Box::new(uw));
-                self.state = ShutdownState::Completed;
                 effects.push(Effect::RegisterCoin {
                     coin: unroll_coin,
                     timeout: self.base.unroll_timeout.clone(),
@@ -416,7 +407,6 @@ impl ShutdownHandler {
                 );
                 uw.set_waiting_for_timeout();
                 self.unroll_watch_replacement = Some(Box::new(uw));
-                self.state = ShutdownState::Completed;
                 effects.push(Effect::RegisterCoin {
                     coin: unroll_coin,
                     timeout: self.base.unroll_timeout.clone(),
@@ -426,7 +416,7 @@ impl ShutdownHandler {
             UnrollOutcome::Unrecoverable(reason) => {
                 effects.push(Effect::DebugLog(format!("[unroll-error] {reason}")));
                 effects.extend(self.base.emit_failure_cleanup());
-                effects.push(Effect::Notify(GameNotification::ChannelError { reason }));
+                self.advisory = Some(reason);
                 self.state = ShutdownState::Failed;
             }
         }
@@ -548,6 +538,34 @@ impl PeerHandler for ShutdownHandler {
         _got_error: bool,
     ) -> Result<Vec<Effect>, Error> {
         ShutdownHandler::go_on_chain(self, env)
+    }
+    fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
+        let state = match self.state {
+            ShutdownState::WatchingChannelCoin | ShutdownState::WaitingForConditions => {
+                ChannelState::ShuttingDown
+            }
+            ShutdownState::Completed => ChannelState::ResolvedClean,
+            ShutdownState::Failed => ChannelState::Failed,
+        };
+        let coin = Some(self.channel_coin.clone());
+        let (our_balance, their_balance, game_allocated) =
+            if let Some(ch) = self.base.channel_handler.as_ref() {
+                (
+                    Some(ch.my_out_of_game_balance()),
+                    Some(ch.their_out_of_game_balance()),
+                    Some(ch.total_game_allocated()),
+                )
+            } else {
+                (None, None, None)
+            };
+        Some(ChannelStatusSnapshot {
+            state,
+            advisory: self.advisory.clone(),
+            coin,
+            our_balance,
+            their_balance,
+            game_allocated,
+        })
     }
     fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
         self.base.channel_handler()

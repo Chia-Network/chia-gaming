@@ -769,7 +769,7 @@ pub fn run_simulation_tests() {
     use std::backtrace::Backtrace;
     std::panic::set_hook(Box::new(|panic_info| {
         let test_name = CURRENT_TEST_NAME.with(|cell| cell.borrow().clone());
-        if let Some(name) = test_name {
+        if let Some(name) = &test_name {
             eprintln!("PANIC IN TEST: {name}");
         }
         if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
@@ -781,7 +781,9 @@ pub fn run_simulation_tests() {
         }
         let trace = Backtrace::force_capture();
         eprintln!("{trace}");
-        std::process::exit(1);
+        if test_name.is_none() {
+            std::process::exit(1);
+        }
     }));
     let ref_lists: Vec<Vec<(&str, &(dyn Fn() + Send + Sync))>> = vec![
         divmod_tests(),

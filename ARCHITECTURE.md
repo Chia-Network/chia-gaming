@@ -595,9 +595,9 @@ signature). This info is updated by `update_channel_coin_after_receive` on
 every potato exchange, so it always reflects the latest co-signed state.
 The spend creates the unroll coin on-chain.
 
-When the channel coin spend is detected (by either player), `ChannelCoinSpent`
-is emitted as a notification and the state number of the unroll is extracted
-from the on-chain conditions.
+When the channel coin spend is detected (by either player), a `ChannelStatus`
+notification with state `Unrolling` is emitted and the state number of the
+unroll is extracted from the on-chain conditions.
 
 ### Step 2: Preempt or Wait
 
@@ -606,7 +606,9 @@ state to decide whether to preempt or wait for the timeout path (see
 [Preemption](#preemption)). Both outcomes produce the same result: the unroll
 coin is spent, creating game coins and reward coins.
 
-When the unroll coin spend is detected, `UnrollCoinSpent` is emitted.
+When the unroll coin spend is detected, a `ChannelStatus` notification with
+state `ResolvedUnrolled` (or `ResolvedStale` if the unroll was stale) is
+emitted.
 
 ### Step 3: Forward-Align State
 
@@ -660,8 +662,8 @@ resolved; the opponent is expected to claim their reward.
 
 ### Step 6: Clean Shutdown
 
-After all games resolve, `CleanShutdownComplete` is emitted and the channel can
-be closed.
+After all games resolve, a `ChannelStatus` with state `ResolvedClean` is
+emitted and the channel can be closed.
 
 **Key code:**
 
@@ -720,7 +722,7 @@ inspects the actual spend conditions:
 
 1. **Clean shutdown landed:** The conditions contain a `CreateCoin` matching
   the expected reward coin (puzzle hash and amount). The handler transitions
-   to `Completed` and emits `CleanShutdownComplete`.
+   to `Completed` and emits `ChannelStatus` with state `ResolvedClean`.
 2. **An unroll landed instead:** The conditions do not match (or, when the
   player's expected reward is zero, they contain a `Rem` — which clean
    shutdown conditions never include). The `ShutdownHandler` falls through
@@ -804,9 +806,9 @@ Current and redo states use the normal on-chain flow described above (Steps
 3–5).  When the state is **stale**, `finish_on_chain_transition` takes a
 different path:
 
-- An `StaleChannelUnroll` notification is emitted, reporting the actual
-amount in our reward coin (found by scanning the unroll output conditions
-for our reward puzzle hash).
+- A `ChannelStatus` notification with state `ResolvedStale` is emitted,
+reporting the actual amount in our reward coin (found by scanning the unroll
+output conditions for our reward puzzle hash).
 - Each on-chain game coin is matched against live games and pending accepts
 by puzzle hash **and** amount:
   - If `coin_ph == live_game.last_referee_puzzle_hash` and amounts match →
@@ -855,7 +857,7 @@ intentional for several reasons:
 
 | Notification                                     | When                                                                                     |
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| `StaleChannelUnroll { our_reward, reward_coin }` | Always emitted when `is_stale` is true                                                   |
+| `ChannelStatus { state: ResolvedStale, ... }`    | Always emitted when `is_stale` is true; balances reflect the actual unroll outcome       |
 | `GameError { id, reason }`                       | Per-game: coin present but unrecognizable, or established live game missing from outputs |
 | `GameCancelled { id }`                           | Per-game: pending accept (in-flight) absent from outputs — the accept was rolled back    |
 
@@ -1339,7 +1341,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `GameAction`                    | `potato_handler/types.rs`                      | Actions: `Move`, `AcceptTimeout`, `SendPotato`, `QueuedProposal`, `CleanShutdown`, `Cheat`                   |
 | `SynchronousGameCradleState`    | `peer_container.rs`                            | Per-peer mutable state: queues, flags, `peer_disconnected`                                                   |
 | `OnChainGameState`              | `channel_handler/types/on_chain_game_state.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `accepted`, `pending_slash_amount`, `game_timeout`        |
-| `GameNotification`              | `potato_handler/effects.rs`                    | Notifications to the UI: `ChannelCoinSpent`, `UnrollCoinSpent`, `WeTimedOut`, etc.                           |
+| `GameNotification`              | `potato_handler/effects.rs`                    | Notifications to the UI: `ChannelStatus`, `GameOnChain`, `WeTimedOut`, etc.                                  |
 | `Effect`                        | `potato_handler/effects.rs`                    | All side effects returned by handler methods (notifications, transactions, coin registrations)               |
 | `PeerHandler`                   | `peer_container.rs`                            | Trait implemented by all handlers — uniform interface for messages, coin events, game actions                |
 | `HandshakeInitiatorHandler`     | `potato_handler/handshake_initiator.rs`        | Initiator handshake state machine (A → C → E → coin_created)                                                |
@@ -1633,28 +1635,27 @@ reentrancy bugs during handshake and normal gameplay.
 
 ### Channel Lifecycle Notifications
 
-These track the state of the channel itself, from creation through shutdown or
-failure.
+All channel lifecycle events are delivered as a single `ChannelStatus`
+notification containing the current `ChannelState`, balance information, and
+an optional `advisory` string for context (e.g. error reason). The
+`ChannelState` values are:
 
-| Event                                                                  | Delivery         | When                                 | Meaning                                                                                                                                                                        |
-| ---------------------------------------------------------------------- | ---------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ChannelCreated { channel_coin }`                                      | GameNotification | Channel coin confirmed on-chain      | The channel coin has been created on-chain and the channel is ready to use                                                                                                     |
-| `GoingOnChain { reason }`                                              | GameNotification | Error detected in peer message       | We are automatically going on-chain due to an error; `reason` describes what went wrong (e.g., invalid peer message, opponent requested clean shutdown while games are active) |
-| `CleanShutdownStarted`                                                 | GameNotification | Clean shutdown sequence begun        | Clean shutdown has been initiated (advisory protocol, not yet on-chain)                                                                                                        |
-| `CleanShutdownComplete { reward_coin, reward_amount }`                 | GameNotification | Channel fully closed                 | Channel closed; `reward_coin` is `Some(CoinString)` if nonzero, `reward_amount` is the total returned                                                                         |
-| `ChannelCoinSpent { unroll_coin }`                                     | GameNotification | Channel coin spend detected on-chain | The channel is being unrolled (by either player); `unroll_coin` is the resulting unroll coin                                                                                   |
-| `UnrollCoinSpent { reward_coin, reward_amount }`                       | GameNotification | Unroll coin spend detected on-chain  | Game coins and reward coins are now live; `reward_coin` is `Some(CoinString)` for our change/reward coin from the unroll, `None` if our balance is zero                        |
-| `StaleChannelUnroll { our_reward, reward_coin }`                       | GameNotification | Opponent's stale unroll resolved     | Emitted when `on_chain_state < last_received_state`; `our_reward` is the amount in our change coin, `reward_coin` is the coin if nonzero. Per-game outcomes follow separately. |
-| `ChannelError { reason }`                                              | GameNotification | Channel or unroll coin unrecoverable | Everything is lost                                                                                                                                                             |
+| `ChannelState`    | When                                           | Meaning                                                                                                                                       |
+| ----------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Handshaking`     | Handshake in progress                          | Channel negotiation messages are being exchanged                                                                                              |
+| `TransactionSubmitted` | Funding transaction ready but not on-chain | The channel coin's creation transaction has been built and submitted                                                                          |
+| `Active`          | Channel operational                            | Channel is live and games can be played. Emitted repeatedly as balances change (potato firings). Includes `our_balance`, `their_balance`, `game_allocated`, and `coin` fields. |
+| `ShuttingDown`    | Clean shutdown initiated                       | Cooperative channel closure has been initiated (advisory protocol, not yet on-chain)                                                          |
+| `Unrolling`       | Unroll detected on-chain                       | The channel coin has been spent to an unroll coin (by either player). `advisory` describes the reason if known.                                |
+| `ResolvedClean`   | Clean shutdown completed                       | Channel closed cooperatively; balances reflect the final split                                                                                |
+| `ResolvedUnrolled`| Unroll completed (non-stale)                   | The unroll was at the latest state; per-game outcomes (`GameOnChain`, `WeTimedOut`, etc.) follow separately                                   |
+| `ResolvedStale`   | Stale unroll completed                         | The opponent tried to unroll with an older state; per-game outcomes follow separately                                                         |
+| `Failed`          | Unrecoverable error                            | The channel or unroll coin is in an unrecoverable state; `advisory` has the reason                                                            |
 
-All of these are `GameNotification` variants delivered through
-`game_notification`. `GoingOnChain` and `CleanShutdownStarted` are notable
-for not corresponding directly to transactions on chain — they are
-locally-initiated signals about protocol state transitions.
-
-`ChannelCoinSpent` and `UnrollCoinSpent` fire regardless of who initiated the
-unroll. A player who called `go_on_chain` will see `ChannelCoinSpent` when
-their own transaction is mined, exactly as if the opponent had initiated it.
+Each `ChannelStatus` notification is emitted when the `PeerHandler` is
+replaced (handler transition) or when the current handler's snapshot changes
+(e.g. balance update during `Active`). The frontend uses this single
+notification type for its persistent channel state display.
 
 ### Gameplay Notifications
 
@@ -1705,11 +1706,11 @@ unexpected values as a `GameError`, never an `assert!` or `unwrap()`.
 
 ### Key Invariants
 
-The system enforces four notification lifecycle invariants. All four hold even
-through `ChannelError` — when the channel enters `Failed` state, cleanup
+The system enforces six notification lifecycle invariants. All six hold even
+through `Failed` — when the channel enters `Failed` state, cleanup
 notifications (`GameProposalCancelled` for pending proposals, `GameError` for
-live games) are emitted before `ChannelError`, ensuring every open item is
-explicitly resolved.
+live games) are emitted before the terminal `ChannelStatus`, ensuring every
+open item is explicitly resolved.
 
 1. `**propose_game` invariant.** Every `propose_game` call yields exactly one
   `GameProposalAccepted` or `GameProposalCancelled` for the proposer. The
@@ -1734,6 +1735,17 @@ explicitly resolved.
    **not** in this list — once a proposal is accepted, it cannot be cancelled;
    any disappearance is a `GameError`. Enforced by the simulation loop's
    post-test assertion.
+5. **`GameOnChain` invariant.** Every `GameOnChain` notification references a
+   game that has a preceding `GameProposalAccepted` in the same player's
+   notification stream. A cancelled or never-accepted game must never produce
+   `GameOnChain`. Enforced by the simulation loop's post-test assertion.
+6. **Channel state monotonicity.** `ChannelState` ordinals must never
+   decrease: `Handshaking(0) < TransactionSubmitted(1) < Active(2) <
+   ShuttingDown(3) < Unrolling(4) <
+   ResolvedClean/ResolvedUnrolled/ResolvedStale/Failed(5)`. `Active` may
+   repeat at the same ordinal (balance changes from potato firings), and
+   terminal states (ordinal 5) may repeat (e.g. advisory changes).
+   Enforced by the simulation loop's post-test assertion.
 
 ### Additional Design Rules
 
@@ -1794,8 +1806,8 @@ back (otherwise `drain_cached_accept_timeouts` would have removed it), so
 duplicates: if the potato had returned, the entry would already be gone.
 
 On clean shutdown, any remaining `PotatoAcceptTimeout` entries in `cached_last_actions`
-are drained, emitting `WeTimedOut` before the `CleanShutdownComplete`
-notification.
+are drained, emitting `WeTimedOut` before the terminal `ChannelStatus`
+(`ResolvedClean`) notification.
 
 ### On-Chain AcceptTimeout
 

@@ -108,6 +108,7 @@ mod sim_tests {
     use crate::common::types::Error;
     use crate::common::types::Hash;
     use crate::common::types::{atom_from_clvm, i64_from_atom};
+    use crate::potato_handler::effects::ChannelState;
     use crate::simulator::tests::potato_handler_sim::{
         assert_event_sequence, game_accepted, game_proposed, parse_card_lists_from_readable,
         run_calpoker_container_with_action_list,
@@ -474,6 +475,8 @@ mod sim_tests {
                         mover_share: Amount::new(0),
                     },
                     ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ShuttingDown)),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedClean)),
                 ],
                 "endgame p0",
             );
@@ -493,6 +496,8 @@ mod sim_tests {
                         mover_share: Amount::new(200),
                     },
                     ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ShuttingDown)),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedClean)),
                 ],
                 "endgame p1",
             );
@@ -568,9 +573,9 @@ mod sim_tests {
                 &outcome.local_uis[0].events,
                 &[
                     game_accepted(),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
                     ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
                     ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
                 ],
                 "on_chain_1move_p1 p0",
@@ -583,9 +588,9 @@ mod sim_tests {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
                     ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
                     ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
                 ],
                 "on_chain_1move_p1 p1",
@@ -612,9 +617,9 @@ mod sim_tests {
                     &outcome.local_uis[0].events,
                     &[
                         game_accepted(),
-                        ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                        ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                        ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
                         ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
                         ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
                     ],
                     "on_chain_1move_p0_lost p0",
@@ -627,9 +632,9 @@ mod sim_tests {
                         ExpectedEvent::OpponentMoved {
                             mover_share: Amount::new(0),
                         },
-                        ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                        ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                        ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
                         ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
                         ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
                     ],
                     "on_chain_1move_p0_lost p1",
@@ -653,9 +658,9 @@ mod sim_tests {
                 &outcome.local_uis[0].events,
                 &[
                     game_accepted(),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
                     ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
                     ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
                 ],
                 "on_chain_1move_p0 p0",
@@ -668,9 +673,9 @@ mod sim_tests {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
                     ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
                     ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
                 ],
                 "on_chain_1move_p0 p1",
@@ -693,9 +698,9 @@ mod sim_tests {
                 &outcome.local_uis[0].events,
                 &[
                     game_accepted(),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
                     ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
                     ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
@@ -712,9 +717,9 @@ mod sim_tests {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
                     ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
                     ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
                     ExpectedEvent::Notification(ExpectedNotification::WeMoved),
                     ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
@@ -742,9 +747,9 @@ mod sim_tests {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
                     ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
                     ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
                 ],
                 "on_chain_2moves_p1 p0",
@@ -757,9 +762,9 @@ mod sim_tests {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
                     ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
                     ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
                 ],
                 "on_chain_2moves_p1 p1",
@@ -790,6 +795,8 @@ mod sim_tests {
                         mover_share: Amount::new(0),
                     },
                     ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ShuttingDown)),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedClean)),
                 ],
                 "end_game_reward p0",
             );
@@ -809,6 +816,8 @@ mod sim_tests {
                         mover_share: Amount::new(200),
                     },
                     ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ShuttingDown)),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedClean)),
                 ],
                 "end_game_reward p1",
             );

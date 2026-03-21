@@ -19,7 +19,9 @@ use crate::common::types::{
     Aggsig, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr,
     Program, ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout,
 };
-use crate::potato_handler::effects::{format_coin, Effect, GameNotification, ResyncInfo};
+use crate::potato_handler::effects::{
+    format_coin, ChannelState, ChannelStatusSnapshot, Effect, GameNotification, ResyncInfo,
+};
 use crate::shutdown::get_conditions_with_channel_handler;
 
 use crate::peer_container::PeerHandler;
@@ -617,8 +619,6 @@ impl PotatoHandler {
                 timeout: timeout.clone(),
                 name: Some("reward"),
             });
-            effects.push(Effect::Notify(GameNotification::CleanShutdownStarted {}));
-
             let puzzle = puzzle_for_synthetic_public_key(
                 env.allocator,
                 &env.standard_puzzle,
@@ -1082,9 +1082,9 @@ impl PotatoHandler {
                 effects.extend(incoming_effects);
             }
             Err(e) => {
-                effects.push(Effect::Notify(GameNotification::GoingOnChain {
-                    reason: format!("error processing peer message: {e:?}"),
-                }));
+                effects.push(Effect::DebugLog(format!(
+                    "[going-on-chain] error processing peer message: {e:?}"
+                )));
                 effects.extend(self.go_on_chain(env, true)?);
                 return Ok(effects);
             }
@@ -1526,6 +1526,17 @@ impl PeerHandler for PotatoHandler {
         got_error: bool,
     ) -> Result<Vec<Effect>, Error> {
         PotatoHandler::go_on_chain(self, env, got_error)
+    }
+    fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
+        let ch = self.channel_handler.as_ref()?;
+        Some(ChannelStatusSnapshot {
+            state: ChannelState::Active,
+            advisory: None,
+            coin: Some(ch.state_channel_coin().clone()),
+            our_balance: Some(ch.my_out_of_game_balance()),
+            their_balance: Some(ch.their_out_of_game_balance()),
+            game_allocated: Some(ch.total_game_allocated()),
+        })
     }
     fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
         PotatoHandler::channel_handler(self)

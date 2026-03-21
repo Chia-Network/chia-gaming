@@ -17,7 +17,9 @@ use crate::common::types::{
     Program, PuzzleHash, Sha256Input, Sha256tree, SpendBundle, Timeout,
 };
 use crate::peer_container::PeerHandler;
-use crate::potato_handler::effects::{format_coin, Effect, GameNotification, ResyncInfo};
+use crate::potato_handler::effects::{
+    format_coin, ChannelState, ChannelStatusSnapshot, Effect, ResyncInfo,
+};
 use crate::potato_handler::handshake::{
     CoinSpendRequest, HandshakeB, HandshakeD, HandshakeStepInfo, HandshakeStepWithSpend,
     RawCoinCondition,
@@ -529,10 +531,6 @@ impl SpendWalletReceiver for HandshakeReceiverHandler {
                 ch.have_potato(),
             )));
         }
-        effects.push(Effect::Notify(GameNotification::ChannelCreated {
-            channel_coin,
-        }));
-
         self.try_transition_to_potato();
         Ok(Some(effects))
     }
@@ -709,6 +707,48 @@ impl PeerHandler for HandshakeReceiverHandler {
 
         self.channel_transaction_completion(env, &bundle)
             .map(|effect| effect.into_iter().collect::<Vec<_>>())
+    }
+    fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
+        let state = match &self.state {
+            ReceiverState::WaitingForA | ReceiverState::SentB(_) => ChannelState::Handshaking,
+            ReceiverState::SentD(_) | ReceiverState::WaitingForCompletion(_, _) => {
+                if self.channel_handler.is_some() {
+                    ChannelState::TransactionSubmitted
+                } else {
+                    ChannelState::Handshaking
+                }
+            }
+            ReceiverState::Finished(_) => {
+                if self.channel_handler.is_some() {
+                    ChannelState::TransactionSubmitted
+                } else {
+                    ChannelState::Handshaking
+                }
+            }
+            ReceiverState::Done => return None,
+        };
+        let coin = self
+            .channel_handler
+            .as_ref()
+            .map(|ch| ch.state_channel_coin().clone());
+        let (our_balance, their_balance, game_allocated) =
+            if let Some(ch) = self.channel_handler.as_ref() {
+                (
+                    Some(ch.my_out_of_game_balance()),
+                    Some(ch.their_out_of_game_balance()),
+                    Some(ch.total_game_allocated()),
+                )
+            } else {
+                (None, None, None)
+            };
+        Some(ChannelStatusSnapshot {
+            state,
+            advisory: None,
+            coin,
+            our_balance,
+            their_balance,
+            game_allocated,
+        })
     }
     fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
         HandshakeReceiverHandler::channel_handler(self)

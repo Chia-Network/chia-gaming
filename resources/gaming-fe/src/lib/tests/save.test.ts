@@ -10,7 +10,11 @@ import {
   getSessionId,
   setBlockchainType,
   getBlockchainType,
-  loadPersistedState,
+  loadAppState,
+  getAlias,
+  setAlias,
+  getTheme,
+  setTheme,
   SessionSave,
 } from '../../hooks/save';
 
@@ -83,7 +87,7 @@ describe('session persistence', () => {
   });
 });
 
-describe('unified persisted state', () => {
+describe('unified app state', () => {
   it('getPlayerId generates and persists a player ID', () => {
     const id = getPlayerId();
     expect(id).toBeTruthy();
@@ -96,18 +100,20 @@ describe('unified persisted state', () => {
     expect(getSessionId()).toBe(id);
   });
 
-  it('clearSession preserves playerId but clears session-scoped fields', () => {
+  it('clearSession preserves playerId and alias but clears session-scoped fields', () => {
     const playerId = getPlayerId();
     getSessionId();
     setBlockchainType('simulator');
+    setAlias('MyName');
     saveSession(sampleSession);
 
     clearSession();
 
     expect(getPlayerId()).toBe(playerId);
-    expect(loadPersistedState().sessionId).toBeUndefined();
+    expect(loadAppState().sessionId).toBeUndefined();
     expect(getBlockchainType()).toBeUndefined();
     expect(loadSession()).toBeNull();
+    expect(loadAppState().alias).toBe('MyName');
   });
 
   it('setBlockchainType / getBlockchainType round-trip', () => {
@@ -118,8 +124,38 @@ describe('unified persisted state', () => {
 
   it('saveSession stores gameSave inside the unified state', () => {
     saveSession(sampleSession);
-    const state = loadPersistedState();
+    const state = loadAppState();
     expect(state.gameSave).toEqual(sampleSession);
+  });
+
+  it('version field is set on fresh state', () => {
+    const state = loadAppState();
+    expect(state.version).toBe(2);
+  });
+});
+
+describe('alias and theme', () => {
+  it('getAlias generates a default and persists it', () => {
+    const alias = getAlias();
+    expect(alias).toMatch(/^Player_/);
+    expect(getAlias()).toBe(alias);
+    expect(loadAppState().alias).toBe(alias);
+  });
+
+  it('setAlias stores and retrieves', () => {
+    setAlias('CustomName');
+    expect(getAlias()).toBe('CustomName');
+  });
+
+  it('getTheme returns undefined initially', () => {
+    expect(getTheme()).toBeUndefined();
+  });
+
+  it('setTheme / getTheme round-trip', () => {
+    setTheme('dark');
+    expect(getTheme()).toBe('dark');
+    setTheme('light');
+    expect(getTheme()).toBe('light');
   });
 });
 
@@ -130,7 +166,7 @@ describe('migration from old keys', () => {
     localStorage.setItem('sessionId', 'old-session');
     localStorage.setItem('sessionSave', JSON.stringify(oldSave));
 
-    const state = loadPersistedState();
+    const state = loadAppState();
     expect(state.playerId).toBe('old-player');
     expect(state.sessionId).toBe('old-session');
     expect(state.blockchainType).toBe('simulator');
@@ -145,17 +181,51 @@ describe('migration from old keys', () => {
 
   it('migrates playerId alone when no session exists', () => {
     localStorage.setItem('playerId', 'solo-player');
-    const state = loadPersistedState();
+    const state = loadAppState();
     expect(state.playerId).toBe('solo-player');
     expect(state.gameSave).toBeUndefined();
     expect(localStorage.getItem('playerId')).toBeNull();
   });
 
-  it('does not migrate when new key already exists', () => {
-    localStorage.setItem('persistedState', JSON.stringify({ playerId: 'new-player' }));
+  it('migrates from v1 persistedState key', () => {
+    localStorage.setItem('persistedState', JSON.stringify({ playerId: 'v1-player', sessionId: 'v1-sess' }));
+    const state = loadAppState();
+    expect(state.playerId).toBe('v1-player');
+    expect(state.sessionId).toBe('v1-sess');
+    expect(state.version).toBe(2);
+    expect(localStorage.getItem('persistedState')).toBeNull();
+  });
+
+  it('does not re-migrate when appState already exists', () => {
+    const appState = { version: 2, playerId: 'new-player' };
+    localStorage.setItem('appState', JSON.stringify(appState));
     localStorage.setItem('playerId', 'should-be-ignored');
-    const state = loadPersistedState();
+    const state = loadAppState();
     expect(state.playerId).toBe('new-player');
+  });
+
+  it('migrates alias and theme from old keys', () => {
+    localStorage.setItem('playerId', 'test-player');
+    localStorage.setItem('alias', 'OldAlias');
+    localStorage.setItem('theme', 'dark');
+    const state = loadAppState();
+    expect(state.alias).toBe('OldAlias');
+    expect(state.theme).toBe('dark');
+    expect(localStorage.getItem('alias')).toBeNull();
+    expect(localStorage.getItem('theme')).toBeNull();
+  });
+
+  it('migrates saved games from saveNames/save-{id}', () => {
+    localStorage.setItem('playerId', 'test-player');
+    localStorage.setItem('saveNames', 'g1,g2');
+    localStorage.setItem('save-g1', JSON.stringify({ id: 'g1', searchParams: {}, url: '' }));
+    localStorage.setItem('save-g2', JSON.stringify({ id: 'g2', searchParams: {}, url: '' }));
+    const state = loadAppState();
+    expect(state.savedGames).toHaveLength(2);
+    expect(state.savedGames![0].id).toBe('g1');
+    expect(state.savedGames![1].id).toBe('g2');
+    expect(localStorage.getItem('saveNames')).toBeNull();
+    expect(localStorage.getItem('save-g1')).toBeNull();
   });
 });
 

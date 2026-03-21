@@ -20,7 +20,8 @@ use crate::common::types::{
     PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
 use crate::potato_handler::effects::{
-    apply_effects, CradleEvent, CradleEventQueue, Effect, GameNotification, ResyncInfo,
+    apply_effects, ChannelStatusSnapshot, CradleEvent, CradleEventQueue, Effect, GameNotification,
+    ResyncInfo, ChannelState,
 };
 use crate::potato_handler::handshake::CoinSpendRequest;
 use crate::potato_handler::handshake_initiator::HandshakeInitiatorHandler;
@@ -174,6 +175,10 @@ pub trait PeerHandler {
         Err(Error::StrErr(
             "no channel handler in this phase".to_string(),
         ))
+    }
+
+    fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
+        None
     }
 
     fn as_any(&self) -> &dyn std::any::Any;
@@ -509,6 +514,8 @@ pub struct SynchronousGameCradle {
     state: SynchronousGameCradleState,
     peer: Box<dyn PeerHandler>,
     amount: Amount,
+    #[serde(skip)]
+    last_channel_status: Option<ChannelStatusSnapshot>,
     #[cfg(test)]
     #[serde(skip)]
     saved_unroll_snapshot: Option<ChannelCoinSpendInfo>,
@@ -570,6 +577,7 @@ impl SynchronousGameCradle {
                 }
             },
             amount: config.my_contribution + config.their_contribution,
+            last_channel_status: None,
             #[cfg(test)]
             saved_unroll_snapshot: None,
         }
@@ -594,23 +602,6 @@ impl BootstrapTowardWallet for SynchronousGameCradleState {
 
 impl ToLocalUI for SynchronousGameCradleState {
     fn notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
-        // Set state flags that other code checks.
-        match notification {
-            GameNotification::CleanShutdownStarted { .. } => {
-                self.clean_shutdown_received = true;
-            }
-            GameNotification::CleanShutdownComplete {
-                reward_coin,
-                reward_amount: _,
-            } => {
-                self.clean_shutdown = reward_coin.clone();
-                self.finished = true;
-            }
-            GameNotification::GoingOnChain { .. } => {
-                self.peer_disconnected = true;
-            }
-            _ => {}
-        }
         self.events
             .push_back(CradleEvent::Notification(notification.clone()));
         Ok(())
@@ -865,6 +856,72 @@ impl SynchronousGameCradle {
             } else {
                 false
             };
+
+        self.emit_channel_status_if_changed();
+    }
+
+    fn should_emit_status(
+        old: &Option<ChannelStatusSnapshot>,
+        new: &Option<ChannelStatusSnapshot>,
+    ) -> bool {
+        if new == old {
+            return false;
+        }
+        let new_state = new.as_ref().map(|s| &s.state);
+        let old_state = old.as_ref().map(|s| &s.state);
+        if new_state != old_state {
+            return true;
+        }
+        // In Active state, re-emit on balance changes (potato firings).
+        // In other states, suppress same-state re-emissions (e.g. coin
+        // changes within Unrolling).
+        new_state == Some(&ChannelState::Active)
+    }
+
+    fn make_channel_status_notification(snap: &ChannelStatusSnapshot) -> GameNotification {
+        GameNotification::ChannelStatus {
+            state: snap.state.clone(),
+            advisory: snap.advisory.clone(),
+            coin: snap.coin.clone(),
+            our_balance: snap.our_balance.clone(),
+            their_balance: snap.their_balance.clone(),
+            game_allocated: snap.game_allocated.clone(),
+        }
+    }
+
+    fn emit_channel_status_if_changed(&mut self) {
+        let snapshot = self.peer.channel_status_snapshot();
+        if Self::should_emit_status(&self.last_channel_status, &snapshot) {
+            if let Some(ref snap) = snapshot {
+                match snap.state {
+                    ChannelState::ShuttingDown => {
+                        self.state.clean_shutdown_received = true;
+                    }
+                    ChannelState::ResolvedClean => {
+                        self.state.clean_shutdown = snap.coin.clone();
+                        self.state.finished = true;
+                    }
+                    ChannelState::ResolvedUnrolled | ChannelState::ResolvedStale => {
+                        if self.state.is_on_chain {
+                            self.state.peer_disconnected = true;
+                        } else {
+                            self.state.finished = true;
+                        }
+                    }
+                    ChannelState::Failed => {
+                        self.state.finished = true;
+                    }
+                    ChannelState::Unrolling => {
+                        self.state.peer_disconnected = true;
+                    }
+                    _ => {}
+                }
+                self.state
+                    .events
+                    .push_back(CradleEvent::Notification(Self::make_channel_status_notification(snap)));
+            }
+            self.last_channel_status = snapshot;
+        }
     }
 
     pub fn push_event(&mut self, event: CradleEvent) {

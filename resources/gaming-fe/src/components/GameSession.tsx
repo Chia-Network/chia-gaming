@@ -1,11 +1,11 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { Observable } from 'rxjs';
-import { useGameSession, ChannelCoinState, GameCoinState, GameplayEvent } from '../hooks/useGameSession';
+import { useGameSession, ChannelStatusInfo, GameCoinState, GameplayEvent } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
 import { CalpokerHandState } from '../hooks/save';
 import { formatMojos, formatAmount } from '../util';
 import { getPlayerId } from '../hooks/save';
-import { CalpokerOutcome } from '../types/ChiaGaming';
+import { CalpokerOutcome, ChannelState } from '../types/ChiaGaming';
 import { WasmBlobWrapper } from '../hooks/WasmBlobWrapper';
 import Calpoker from '../features/calPoker';
 import WaitingScreen from './WaitingScreen';
@@ -13,7 +13,6 @@ import { motion } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
 import { Button } from './button';
-import { Toaster } from 'sonner';
 import {
   Dialog,
   DialogContent,
@@ -23,17 +22,21 @@ import {
   DialogFooter,
   DialogClose,
 } from './ui/dialog';
-function truncateHex(hex: string, head = 6, tail = 4): string {
-  if (hex.length <= head + tail) return hex;
+function truncateHex(hex: string, head = 8, tail = 6): string {
+  if (hex.length <= head + tail + 1) return hex;
   return `${hex.slice(0, head)}…${hex.slice(-tail)}`;
 }
 
-const CHANNEL_STATE_LABELS: Record<ChannelCoinState, string> = {
-  'not-created': 'Not yet created',
-  'channel': 'Channel',
-  'unrolling': 'Unrolling',
-  'reward': 'Reward',
-  'closed': 'Closed',
+const CHANNEL_STATE_LABELS: Record<ChannelState, string> = {
+  Handshaking: 'Handshaking',
+  TransactionSubmitted: 'Tx submitted',
+  Active: 'Active',
+  ShuttingDown: 'Shutting down',
+  Unrolling: 'Unrolling',
+  ResolvedClean: 'Resolved (clean)',
+  ResolvedUnrolled: 'Resolved (unrolled)',
+  ResolvedStale: 'Resolved (stale)',
+  Failed: 'Failed',
 };
 
 const GAME_STATE_LABELS: Record<GameCoinState, string> = {
@@ -45,11 +48,88 @@ const GAME_STATE_LABELS: Record<GameCoinState, string> = {
   'ended': 'Ended',
 };
 
-function CoinStatus({ label, coinHex, stateLabel }: { label: string; coinHex: string | null; stateLabel: string }) {
+function ExpandableCoinId({ hex }: { hex: string }) {
+  const [expanded, setExpanded] = useState(false);
   return (
-    <span>
-      {label}: {coinHex ? `0x${truncateHex(coinHex)}` : '—'} · {stateLabel}
-    </span>
+    <button
+      type="button"
+      onClick={() => setExpanded(e => !e)}
+      className="font-mono text-[11px] hover:text-canvas-text-contrast transition-colors"
+      title={expanded ? 'Click to collapse' : 'Click to expand full coin ID'}
+    >
+      0x{expanded ? hex : truncateHex(hex)}
+    </button>
+  );
+}
+
+function ChannelStatusDisplay({ status }: { status: ChannelStatusInfo }) {
+  const stateLabel = CHANNEL_STATE_LABELS[status.state] ?? status.state;
+  const isResolved = status.state.startsWith('Resolved') || status.state === 'Failed';
+  const stateColor = status.state === 'Failed' ? 'text-alert-text'
+    : status.state === 'Active' ? 'text-success-text'
+    : isResolved ? 'text-canvas-text/80'
+    : 'text-canvas-text';
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+        <span className="text-xs text-canvas-text/60">Channel:</span>
+        <span className={`text-xs font-medium ${stateColor}`}>{stateLabel}</span>
+        {status.coinHex && (
+          <>
+            <span className="text-xs text-canvas-text/40">·</span>
+            <ExpandableCoinId hex={status.coinHex} />
+          </>
+        )}
+      </div>
+      {!isResolved && (status.ourBalance != null || status.theirBalance != null) && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-canvas-text/60">
+          {status.ourBalance != null && <span>Ours: {status.ourBalance}</span>}
+          {status.theirBalance != null && <span>Theirs: {status.theirBalance}</span>}
+          {status.gameAllocated != null && status.gameAllocated !== '0' && (
+            <span>In game: {status.gameAllocated}</span>
+          )}
+        </div>
+      )}
+      {status.advisory && (
+        <p className="text-xs text-alert-text/80 italic">{status.advisory}</p>
+      )}
+    </div>
+  );
+}
+
+function ChannelAttentionDialog({
+  info,
+  onDismiss,
+}: {
+  info: ChannelStatusInfo;
+  onDismiss: () => void;
+}) {
+  const label = CHANNEL_STATE_LABELS[info.state] ?? info.state;
+  const isBad = info.state === 'Failed' || info.state === 'ResolvedStale';
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onDismiss(); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className={isBad ? 'text-alert-text' : undefined}>
+            Channel: {label}
+          </DialogTitle>
+          {info.advisory && (
+            <DialogDescription>{info.advisory}</DialogDescription>
+          )}
+        </DialogHeader>
+        {info.coinHex && (
+          <p className="text-xs font-mono text-canvas-text/60 break-all">
+            Coin: 0x{info.coinHex}
+          </p>
+        )}
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button variant="soft">Dismiss</Button>
+          </DialogClose>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -200,18 +280,19 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
           </div>
         </div>
 
-        {/* Row 2: diagnostic coin info (subtle) */}
-        <div className='flex flex-wrap gap-x-4 gap-y-0.5 mt-1 text-xs text-canvas-text/60'>
-          <CoinStatus
-            label='Channel'
-            coinHex={session.channelCoin.coinHex}
-            stateLabel={CHANNEL_STATE_LABELS[session.channelCoin.state]}
-          />
-          <CoinStatus
-            label='Game'
-            coinHex={session.gameCoin.coinHex}
-            stateLabel={GAME_STATE_LABELS[session.gameCoin.state]}
-          />
+        {/* Row 2: channel & game status */}
+        <div className='flex flex-wrap gap-x-6 gap-y-1 mt-1'>
+          <ChannelStatusDisplay status={session.channelStatus} />
+          <div className="flex items-center gap-x-2 text-xs text-canvas-text/60">
+            <span>Game:</span>
+            <span>{GAME_STATE_LABELS[session.gameCoin.state]}</span>
+            {session.gameCoin.coinHex && (
+              <>
+                <span className="text-canvas-text/40">·</span>
+                <ExpandableCoinId hex={session.gameCoin.coinHex} />
+              </>
+            )}
+          </div>
         </div>
 
         <Separator className='mt-2' />
@@ -319,7 +400,12 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
         </DialogContent>
       </Dialog>
 
-      <Toaster />
+      {session.channelAttention && (
+        <ChannelAttentionDialog
+          info={session.channelAttention}
+          onDismiss={session.dismissChannelAttention}
+        />
+      )}
     </div>
   );
 };

@@ -20,6 +20,7 @@ import {
 } from '../util';
 import { debugLog } from '../services/debugLog';
 import { saveSession, clearSession, SessionSave, CalpokerHandState, BlockchainType } from './save';
+import type { ChannelStatusPayload } from '../types/ChiaGaming';
 
 function clvmToBytes(value: Program | null): Uint8Array {
   if (value === null || value === undefined) return new Uint8Array([0x80]);
@@ -83,6 +84,7 @@ export class WasmBlobWrapper {
   blockchainType: BlockchainType = 'simulator';
   activeGameId: string | null = null;
   handState: CalpokerHandState | null = null;
+  lastChannelStatus: ChannelStatusPayload | null = null;
 
   constructor(
     blockchain: InternalBlockchainInterface,
@@ -384,9 +386,15 @@ export class WasmBlobWrapper {
     } else if ('Notification' in event) {
       const n = event.Notification;
       const tag = typeof n === 'object' && n !== null ? Object.keys(n)[0] : String(n);
-      if (tag === 'ChannelCreated' && !this.channelReady) {
-        this.channelReady = true;
-        this.startPingTimer();
+      if (tag === 'ChannelStatus') {
+        const cs = (n as Record<string, Record<string, unknown>>).ChannelStatus;
+        if (cs) {
+          this.lastChannelStatus = cs as unknown as ChannelStatusPayload;
+          if (!this.channelReady && cs.state === 'Active') {
+            this.channelReady = true;
+            this.startPingTimer();
+          }
+        }
       }
       if (tag === 'GameProposalAccepted' && n.GameProposalAccepted) {
         this.activeGameId = String(n.GameProposalAccepted.id);
@@ -567,6 +575,7 @@ export class WasmBlobWrapper {
         debugLog: [...this.debugLogHistory],
         activeGameId: this.activeGameId,
         handState: this.handState,
+        channelStatus: this.lastChannelStatus,
       };
       saveSession(save);
     } catch (e) {

@@ -119,10 +119,8 @@ export interface PeerIdentity {
 }
 
 export type WasmNotificationTag =
-  | 'ChannelCreated' | 'ChannelCoinSpent' | 'UnrollCoinSpent'
-  | 'StaleChannelUnroll' | 'ChannelError'
-  | 'CleanShutdownStarted' | 'CleanShutdownComplete'
-  | 'GoingOnChain' | 'GameOnChain'
+  | 'ChannelStatus'
+  | 'GameOnChain'
   | 'GameProposed' | 'GameProposalAccepted' | 'GameProposalCancelled'
   | 'WeMoved' | 'OpponentMoved' | 'GameMessage'
   | 'OpponentPlayedIllegalMove'
@@ -131,6 +129,22 @@ export type WasmNotificationTag =
   | 'GameCancelled' | 'GameError'
   | 'InsufficientBalance'
   | 'ActionFailed';
+
+export type ChannelState =
+  | 'Handshaking' | 'TransactionSubmitted'
+  | 'Active' | 'ShuttingDown'
+  | 'Unrolling'
+  | 'ResolvedClean' | 'ResolvedUnrolled' | 'ResolvedStale'
+  | 'Failed';
+
+export interface ChannelStatusPayload {
+  state: ChannelState;
+  advisory: string | null;
+  coin: unknown;
+  our_balance: unknown;
+  their_balance: unknown;
+  game_allocated: unknown;
+}
 
 export type WasmNotification = {
   [K in WasmNotificationTag]?: Record<string, unknown>;

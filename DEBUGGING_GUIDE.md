@@ -364,8 +364,9 @@ whether the trigger condition for the next action can ever be satisfied.
 
 - **Don't use `cargo test` directly.** Use `./ct.sh`. The script handles
   feature flags, output capture, and test ordering.
-- **Don't use `head` to read test output.** Early output is build noise. Just
-  read the end.
+- **Don't filter test output.** Don't use `head`, `tail`, `grep`, or any
+  truncation. Read the complete output — early output is build noise, but the
+  middle contains per-test diagnostics you'll need when something fails.
 - **Don't run tests in the background.** Run `./ct.sh` and `./cb.sh` in the
   foreground and wait for them to finish. Background execution with sleep-based
   polling wastes time and makes output harder to capture.
@@ -373,3 +374,11 @@ whether the trigger condition for the next action can ever be satisfied.
   high `block_until_ms` (120000 ms / 2 minutes). Never background these
   commands. The full test suite completes in ~30 seconds; builds are faster.
   Both scripts print overall elapsed time at completion.
+- **Diagnose before rebuilding.** If you change code and the test output
+  doesn't change, don't assume a stale build — add a temporary `eprintln!`
+  or `dbg!` at the change site to verify your code is actually being reached
+  before tearing apart the build cache.
+- **Don't use `sleep` to wait for processes.** When waiting for a command to
+  finish, set `block_until_ms` to a value higher than the expected runtime.
+  The tool returns as soon as the process exits or the timeout elapses,
+  whichever comes first. Using `sleep` wastes time and blocks interruption.

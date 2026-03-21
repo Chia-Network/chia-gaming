@@ -14,7 +14,9 @@ use crate::common::types::{
     PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
 };
 use crate::peer_container::PeerHandler;
-use crate::potato_handler::effects::{format_coin, Effect, GameNotification, ResyncInfo};
+use crate::potato_handler::effects::{
+    format_coin, ChannelState, ChannelStatusSnapshot, Effect, GameNotification, ResyncInfo,
+};
 use crate::potato_handler::types::{GameAction, PotatoState};
 use crate::referee::types::{GameMoveDetails, SlashOutcome, TheirTurnCoinSpentResult};
 use crate::referee::Referee;
@@ -57,6 +59,7 @@ pub struct OnChainGameHandler {
     unroll_advance_timeout: Timeout,
     is_initial_potato: bool,
     state_number: usize,
+    was_stale: bool,
 }
 
 impl std::fmt::Debug for OnChainGameHandler {
@@ -83,6 +86,7 @@ pub struct OnChainGameHandlerArgs {
     pub unroll_advance_timeout: Timeout,
     pub is_initial_potato: bool,
     pub state_number: usize,
+    pub was_stale: bool,
 }
 
 impl OnChainGameHandler {
@@ -105,6 +109,7 @@ impl OnChainGameHandler {
             unroll_advance_timeout: args.unroll_advance_timeout,
             is_initial_potato: args.is_initial_potato,
             state_number: args.state_number,
+            was_stale: args.was_stale,
         }
     }
 
@@ -1451,6 +1456,21 @@ impl PeerHandler for OnChainGameHandler {
 
     fn take_replacement(&mut self) -> Option<Box<dyn PeerHandler>> {
         None
+    }
+
+    fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
+        Some(ChannelStatusSnapshot {
+            state: if self.was_stale {
+                ChannelState::ResolvedStale
+            } else {
+                ChannelState::ResolvedUnrolled
+            },
+            advisory: None,
+            coin: None,
+            our_balance: Some(self.my_out_of_game_balance.clone()),
+            their_balance: Some(self.their_out_of_game_balance.clone()),
+            game_allocated: None,
+        })
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

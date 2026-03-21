@@ -191,8 +191,14 @@ async function action_with_messages(
   cradles.forEach((cradle, index) => {
     subscriptions.push(addActiveSubscription(cradle.getObservable().subscribe({
       next: (evt: WasmEvent) => {
-        if (evt.type === 'notification' && evt.data && 'ChannelCreated' in evt.data) {
-          evt_results[index] = true;
+        if (evt.type === 'notification' && evt.data) {
+          const tag = typeof evt.data === 'object' ? Object.keys(evt.data)[0] : null;
+          if (tag === 'ChannelStatus') {
+            const cs = (evt.data as Record<string, Record<string, unknown>>).ChannelStatus;
+            if (cs?.state === 'Active') {
+              evt_results[index] = true;
+            }
+          }
         }
       },
     })));

@@ -11,7 +11,9 @@ use crate::common::types::{
     IntoErr, Program, PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::peer_container::PeerHandler;
-use crate::potato_handler::effects::{format_coin, Effect, GameNotification, ResyncInfo};
+use crate::potato_handler::effects::{
+    format_coin, ChannelState, ChannelStatusSnapshot, Effect, GameNotification, ResyncInfo,
+};
 use crate::potato_handler::handler_base::{classify_unroll, ChannelHandlerBase, UnrollOutcome};
 use crate::potato_handler::on_chain::{
     OnChainGameHandler, OnChainGameHandlerArgs, PendingMoveKind, PendingMoveSavedState,
@@ -48,6 +50,9 @@ pub struct UnrollWatchHandler {
     state: UnrollState,
     base: ChannelHandlerBase,
 
+    advisory: Option<String>,
+    was_stale: bool,
+
     #[serde(skip)]
     replacement: Option<Box<OnChainGameHandler>>,
 }
@@ -76,6 +81,8 @@ impl UnrollWatchHandler {
                 channel_timeout,
                 unroll_timeout,
             ),
+            advisory: None,
+            was_stale: false,
             replacement: None,
         }
     }
@@ -101,6 +108,8 @@ impl UnrollWatchHandler {
                 channel_timeout,
                 unroll_timeout,
             ),
+            advisory: None,
+            was_stale: false,
             replacement: None,
         }
     }
@@ -131,6 +140,8 @@ impl UnrollWatchHandler {
                 channel_timeout,
                 unroll_timeout,
             ),
+            advisory: None,
+            was_stale: false,
             replacement: None,
         }
     }
@@ -344,7 +355,7 @@ impl UnrollWatchHandler {
                     let reason = format!("timeout unroll failed for state {on_chain_state}: {e:?}");
                     effects.push(Effect::DebugLog(format!("[unroll-error] {reason}")));
                     effects.extend(self.base.emit_failure_cleanup());
-                    effects.push(Effect::Notify(GameNotification::ChannelError { reason }));
+                    self.advisory = Some(reason);
                     self.state = UnrollState::Failed;
                 }
             }
@@ -382,7 +393,7 @@ impl UnrollWatchHandler {
                         let reason = format!("channel coin spent to non-unroll: {e:?}");
                         effects.push(Effect::DebugLog(format!("[channel-error] {reason}")));
                         effects.extend(self.base.emit_failure_cleanup());
-                        effects.push(Effect::Notify(GameNotification::ChannelError { reason }));
+                        self.advisory = Some(reason);
                         self.state = UnrollState::Failed;
                     }
                 }
@@ -404,7 +415,7 @@ impl UnrollWatchHandler {
                         let reason = format!("unroll coin spent with unexpected state: {e:?}");
                         effects.push(Effect::DebugLog(format!("[unroll-error] {reason}")));
                         effects.extend(self.base.emit_failure_cleanup());
-                        effects.push(Effect::Notify(GameNotification::ChannelError { reason }));
+                        self.advisory = Some(reason);
                         self.state = UnrollState::Failed;
                     }
                 }
@@ -421,7 +432,7 @@ impl UnrollWatchHandler {
                         let reason = format!("unroll coin spent with unexpected state: {e:?}");
                         effects.push(Effect::DebugLog(format!("[unroll-error] {reason}")));
                         effects.extend(self.base.emit_failure_cleanup());
-                        effects.push(Effect::Notify(GameNotification::ChannelError { reason }));
+                        self.advisory = Some(reason);
                         self.state = UnrollState::Failed;
                     }
                 }
@@ -524,9 +535,6 @@ impl UnrollWatchHandler {
             }
         }
 
-        effects.push(Effect::Notify(GameNotification::ChannelCoinSpent {
-            unroll_coin: unroll_coin.clone(),
-        }));
 
         effects.extend(self.handle_unroll_from_channel_conditions(
             env,
@@ -597,7 +605,7 @@ impl UnrollWatchHandler {
             UnrollOutcome::Unrecoverable(reason) => {
                 effects.push(Effect::DebugLog(format!("[unroll-error] {reason}",)));
                 effects.extend(self.base.emit_failure_cleanup());
-                effects.push(Effect::Notify(GameNotification::ChannelError { reason }));
+                self.advisory = Some(reason);
                 self.state = UnrollState::Failed;
             }
         }
@@ -640,7 +648,7 @@ impl UnrollWatchHandler {
                 }
                 None
             });
-            let reward_amount = conditions
+            let _reward_amount = conditions
                 .iter()
                 .find_map(|c| {
                     if let CoinCondition::CreateCoin(ph, amt) = c {
@@ -651,11 +659,6 @@ impl UnrollWatchHandler {
                     None
                 })
                 .unwrap_or_default();
-            effects.push(Effect::Notify(GameNotification::UnrollCoinSpent {
-                reward_coin: reward_coin.clone(),
-                reward_amount: reward_amount.clone(),
-            }));
-
             let is_stale = player_ch
                 .timeout_state_number()
                 .is_some_and(|t| on_chain_state + 1 < t);
@@ -676,10 +679,7 @@ impl UnrollWatchHandler {
                 .collect();
 
             if is_stale {
-                effects.push(Effect::Notify(GameNotification::StaleChannelUnroll {
-                    our_reward: reward_amount,
-                    reward_coin: reward_coin.clone(),
-                }));
+                self.was_stale = true;
             }
 
             let game_map_inner = player_ch.set_state_for_coins(env, unroll_coin, &created_coins)?;
@@ -719,14 +719,6 @@ impl UnrollWatchHandler {
 
         if game_map.is_empty() {
             self.state = UnrollState::Completed;
-            let reward_amount = on_chain_reward_coin
-                .as_ref()
-                .and_then(|r| r.amount())
-                .unwrap_or_default();
-            effects.push(Effect::Notify(GameNotification::CleanShutdownComplete {
-                reward_coin: on_chain_reward_coin,
-                reward_amount,
-            }));
             return Ok(effects);
         }
 
@@ -764,14 +756,6 @@ impl UnrollWatchHandler {
 
         if game_map.is_empty() {
             self.state = UnrollState::Completed;
-            let reward_amount = on_chain_reward_coin
-                .as_ref()
-                .and_then(|r| r.amount())
-                .unwrap_or_default();
-            effects.push(Effect::Notify(GameNotification::CleanShutdownComplete {
-                reward_coin: on_chain_reward_coin,
-                reward_amount,
-            }));
             return Ok(effects);
         }
 
@@ -875,10 +859,10 @@ impl UnrollWatchHandler {
             unroll_advance_timeout: player_ch.unroll_advance_timeout().clone(),
             is_initial_potato: player_ch.is_initial_potato(),
             state_number: player_ch.state_number(),
+            was_stale: self.was_stale,
         });
         effects.extend(on_chain.next_action(env)?);
         self.replacement = Some(Box::new(on_chain));
-        self.state = UnrollState::Completed;
 
         Ok(effects)
     }
@@ -990,6 +974,45 @@ impl PeerHandler for UnrollWatchHandler {
     }
     fn take_replacement(&mut self) -> Option<Box<dyn PeerHandler>> {
         UnrollWatchHandler::take_replacement(self).map(|oc| oc as Box<dyn PeerHandler>)
+    }
+    fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
+        let (state, coin) = match &self.state {
+            UnrollState::WaitingForChannelSpend { channel_coin }
+            | UnrollState::WaitingForChannelConditions { channel_coin } => {
+                (ChannelState::Unrolling, Some(channel_coin.clone()))
+            }
+            UnrollState::WaitingForUnrollTimeoutOrSpend { unroll_coin, .. }
+            | UnrollState::WaitingForUnrollSpend { unroll_coin, .. }
+            | UnrollState::WaitingForUnrollConditions { unroll_coin, .. } => {
+                (ChannelState::Unrolling, Some(unroll_coin.clone()))
+            }
+            UnrollState::Completed => {
+                if self.was_stale {
+                    (ChannelState::ResolvedStale, None)
+                } else {
+                    (ChannelState::ResolvedUnrolled, None)
+                }
+            }
+            UnrollState::Failed => (ChannelState::Failed, None),
+        };
+        let (our_balance, their_balance, game_allocated) =
+            if let Some(ch) = self.base.channel_handler.as_ref() {
+                (
+                    Some(ch.my_out_of_game_balance()),
+                    Some(ch.their_out_of_game_balance()),
+                    Some(ch.total_game_allocated()),
+                )
+            } else {
+                (None, None, None)
+            };
+        Some(ChannelStatusSnapshot {
+            state,
+            advisory: self.advisory.clone(),
+            coin,
+            our_balance,
+            their_balance,
+            game_allocated,
+        })
     }
     fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
         self.base.channel_handler()

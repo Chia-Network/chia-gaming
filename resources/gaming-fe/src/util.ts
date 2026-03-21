@@ -52,23 +52,13 @@ export function getSearchParams(): Record<string, string> {
   return getParamsFromString(search);
 }
 
-export function updateAlias(alias: string) {
-  localStorage.setItem('alias', alias);
-}
-
 export function randomHex(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-export function generateOrRetrieveAlias(): string {
-  let previousName = localStorage.getItem('alias');
-  if (previousName) return previousName;
-  previousName = `Player_${randomHex().substring(0, 8)}`;
-  updateAlias(previousName);
-  return previousName;
-}
+export { setAlias as updateAlias, getAlias as generateOrRetrieveAlias } from './hooks/save';
 
 
 function clvm_enlist(clvms: string[]): string {
