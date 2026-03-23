@@ -5,7 +5,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use clvmr::allocator::NodePtr;
 
 use chia_bls;
-use chia_bls::signature::verify;
+use chia_bls::verify;
 use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 
 use crate::common::types::{Error, IntoErr, PublicKey};

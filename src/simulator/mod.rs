@@ -6,7 +6,7 @@ pub mod tests;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use chia_bls::signature::aggregate_verify;
+use chia_bls::aggregate_verify;
 use clvm_traits::{ClvmEncoder, ToClvm};
 use log::debug;
 

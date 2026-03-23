@@ -27,6 +27,8 @@ mod gaming_wasm {
         Puzzle, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
     };
 
+    use chia_protocol::SpendBundle as ProtocolSpendBundle;
+    use chia_traits::Streamable;
     use flate2::Decompress;
     use flate2::FlushDecompress;
     use chia_gaming::peer_container::{
@@ -520,98 +522,6 @@ mod gaming_wasm {
         }
     }
 
-    fn u64_to_clvm_amount(amount: u64) -> Vec<u8> {
-        if amount == 0 {
-            return Vec::new();
-        }
-        let be = amount.to_be_bytes();
-        let start = be.iter().position(|&b| b != 0).unwrap_or(be.len());
-        let trimmed = &be[start..];
-        if trimmed[0] & 0x80 != 0 {
-            let mut result = vec![0u8];
-            result.extend_from_slice(trimmed);
-            result
-        } else {
-            trimmed.to_vec()
-        }
-    }
-
-    /// Parse one complete CLVM tree from `data` starting at `*pos`,
-    /// advancing `*pos` past the tree and returning the consumed slice.
-    ///
-    /// Uses an iterative depth counter rather than recursion so deeply
-    /// nested trees cannot blow the stack.
-    fn read_clvm_tree<'a>(data: &'a [u8], pos: &mut usize) -> Result<&'a [u8], String> {
-        let start = *pos;
-        let mut depth: usize = 1; // one tree to consume
-
-        while depth > 0 {
-            if *pos >= data.len() {
-                return Err(format!(
-                    "unexpected end of CLVM data at offset {} (buf len {})",
-                    *pos, data.len()
-                ));
-            }
-            let b = data[*pos];
-            *pos += 1;
-            depth -= 1;
-
-            if b == 0xff {
-                // Cons pair: left and right sub-trees still to parse
-                depth += 2;
-            } else if b <= 0x7f || b == 0x80 {
-                // Single-byte atom or nil -- already consumed
-            } else if b <= 0xbf {
-                let size = (b & 0x3f) as usize;
-                *pos += size;
-            } else if b <= 0xdf {
-                if *pos >= data.len() {
-                    return Err("truncated 2-byte CLVM size".into());
-                }
-                let size = (((b & 0x1f) as usize) << 8) | (data[*pos] as usize);
-                *pos += 1 + size;
-            } else if b <= 0xef {
-                if *pos + 1 >= data.len() {
-                    return Err("truncated 3-byte CLVM size".into());
-                }
-                let size = (((b & 0x0f) as usize) << 16)
-                    | ((data[*pos] as usize) << 8)
-                    | (data[*pos + 1] as usize);
-                *pos += 2 + size;
-            } else if b <= 0xf7 {
-                if *pos + 2 >= data.len() {
-                    return Err("truncated 4-byte CLVM size".into());
-                }
-                let size = (((b & 0x07) as usize) << 24)
-                    | ((data[*pos] as usize) << 16)
-                    | ((data[*pos + 1] as usize) << 8)
-                    | (data[*pos + 2] as usize);
-                *pos += 3 + size;
-            } else if b <= 0xfb {
-                if *pos + 3 >= data.len() {
-                    return Err("truncated 5-byte CLVM size".into());
-                }
-                let size = (((b & 0x03) as usize) << 32)
-                    | ((data[*pos] as usize) << 24)
-                    | ((data[*pos + 1] as usize) << 16)
-                    | ((data[*pos + 2] as usize) << 8)
-                    | (data[*pos + 3] as usize);
-                *pos += 4 + size;
-            } else {
-                return Err(format!("invalid CLVM leading byte 0x{:02x}", b));
-            }
-
-            if *pos > data.len() {
-                return Err(format!(
-                    "CLVM atom extends past end of buffer at offset {} (buf len {})",
-                    *pos, data.len()
-                ));
-            }
-        }
-
-        Ok(&data[start..*pos])
-    }
-
     fn decode_offer_to_spend_bundle(offer_bech32: &str) -> Result<SpendBundle, String> {
         // bech32m decode
         let (_hrp, raw_bytes) = bech32::decode(offer_bech32)
@@ -632,73 +542,27 @@ mod gaming_wasm {
         let zdict = zdict_for_version(version)?;
         let decompressed = decompress_offer_with_zdict(&raw_bytes[2..], &zdict)?;
 
-        // Parse streamable SpendBundle
-        let data = &decompressed;
-        let mut pos: usize = 0;
+        let proto_bundle = ProtocolSpendBundle::from_bytes(&decompressed)
+            .map_err(|e| format!("streamable parse: {e}"))?;
 
-        macro_rules! read_bytes {
-            ($n:expr) => {{
-                let n = $n;
-                if pos + n > data.len() {
-                    return Err(format!(
-                        "read {} bytes at offset {} but buffer is {} bytes",
-                        n, pos, data.len()
-                    ));
-                }
-                let slice = &data[pos..pos + n];
-                pos += n;
-                slice
-            }};
-        }
-        macro_rules! read_u32 {
-            () => {{
-                let b = read_bytes!(4);
-                u32::from_be_bytes([b[0], b[1], b[2], b[3]])
-            }};
-        }
-
-        let num_spends = read_u32!() as usize;
-        let mut spends = Vec::with_capacity(num_spends);
-
-        for _ in 0..num_spends {
-            let parent_coin_info = read_bytes!(32);
-            let puzzle_hash = read_bytes!(32);
-            let amount_be = read_bytes!(8);
-            let amount = u64::from_be_bytes([
-                amount_be[0], amount_be[1], amount_be[2], amount_be[3],
-                amount_be[4], amount_be[5], amount_be[6], amount_be[7],
-            ]);
-
-            let puzzle_bytes = read_clvm_tree(data, &mut pos)
-                .map_err(|e| format!("puzzle_reveal CoinSpend: {e}"))?;
-            let solution_bytes = read_clvm_tree(data, &mut pos)
-                .map_err(|e| format!("solution CoinSpend: {e}"))?;
-
-            // Build CoinString: parent ++ puzzle_hash ++ clvm_amount
-            let clvm_amount = u64_to_clvm_amount(amount);
-            let mut coin_bytes = Vec::with_capacity(64 + clvm_amount.len());
-            coin_bytes.extend_from_slice(parent_coin_info);
-            coin_bytes.extend_from_slice(puzzle_hash);
-            coin_bytes.extend_from_slice(&clvm_amount);
-
-            spends.push(CoinSpend {
-                coin: CoinString::from_bytes(&coin_bytes),
+        let agg_sig = Aggsig::from_bls(proto_bundle.aggregated_signature);
+        let spends = proto_bundle.coin_spends.into_iter().map(|cs| {
+            let coin_string = CoinString::from_parts(
+                &CoinID::new(Hash::from_slice(cs.coin.parent_coin_info.as_ref())
+                    .expect("parent_coin_info is 32 bytes")),
+                &PuzzleHash::from_hash(Hash::from_slice(cs.coin.puzzle_hash.as_ref())
+                    .expect("puzzle_hash is 32 bytes")),
+                &Amount::new(cs.coin.amount),
+            );
+            CoinSpend {
+                coin: coin_string,
                 bundle: Spend {
-                    puzzle: Puzzle::from_bytes(puzzle_bytes),
-                    solution: Program::from_bytes(solution_bytes).into(),
-                    signature: Aggsig::default(), // placeholder, set after reading agg sig
+                    puzzle: Puzzle::from_bytes(cs.puzzle_reveal.as_ref()),
+                    solution: Program::from_bytes(cs.solution.as_ref()).into(),
+                    signature: agg_sig.clone(),
                 },
-            });
-        }
-
-        let agg_sig_bytes = read_bytes!(96);
-        let _ = pos; // consumed after final read
-        let agg_sig = Aggsig::from_slice(agg_sig_bytes)
-            .map_err(|e| format!("bad aggregated signature: {e:?}"))?;
-
-        for spend in &mut spends {
-            spend.bundle.signature = agg_sig.clone();
-        }
+            }
+        }).collect();
 
         Ok(SpendBundle { name: None, spends })
     }
