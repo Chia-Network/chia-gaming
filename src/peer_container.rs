@@ -19,7 +19,9 @@ use crate::common::types::{
     PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
 use crate::potato_handler::effects::{apply_effects, Effect, GameNotification};
-use crate::potato_handler::handshake::{decode_clvm_int_to_u64, encode_u64_as_clvm_int, CoinSpendRequest};
+use crate::potato_handler::handshake::{
+    decode_clvm_int_to_u64, encode_u64_as_clvm_int, CoinSpendRequest,
+};
 use crate::potato_handler::start::GameStart;
 use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameFactory, PacketSender,
