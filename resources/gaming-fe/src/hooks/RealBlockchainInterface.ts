@@ -23,6 +23,10 @@ const bech32: any = (bech32_module ? bech32_module : bech32_buffer);
 const PUSH_TX_RETRY_DELAY = 30000;
 const POLL_INTERVAL = 5000;
 
+function isRetryablePushTxError(errStr: string): boolean {
+  return errStr.includes('UNKNOWN_UNSPENT') || errStr.includes('NO_TRANSACTIONS_WHILE_SYNCING');
+}
+
 function encodeClvmInt(n: number): Uint8Array {
   if (n === 0) return new Uint8Array(0);
   const bytes: number[] = [];
@@ -153,12 +157,12 @@ export class RealBlockchainInterface {
       return result as any;
     } catch (e: any) {
       const errStr = typeof e === 'string' ? e : JSON.stringify(e);
-      if (errStr.indexOf('UNKNOWN_UNSPENT') !== -1) {
-        console.warn('[wc-blockchain] pushTx UNKNOWN_UNSPENT, retry in 60s');
+      if (isRetryablePushTxError(errStr)) {
+        console.warn(`[wc-blockchain] pushTx retryable error, retry in ${PUSH_TX_RETRY_DELAY / 1000}s:`, errStr);
         return new Promise((resolve, reject) => {
           setTimeout(() => {
             this.spend(spend).then(resolve).catch(reject);
-          }, 60000);
+          }, PUSH_TX_RETRY_DELAY);
         });
       }
       console.error('[wc-blockchain] pushTx error', e);
@@ -427,7 +431,7 @@ export function connectRealBlockchain() {
             return;
           } catch (e: any) {
             const errStr = typeof e === 'string' ? e : JSON.stringify(e);
-            if (errStr.indexOf('UNKNOWN_UNSPENT') === -1) {
+            if (!isRetryablePushTxError(errStr)) {
               console.error(`[wc-blockchain] pushTx error`, e);
               blockchainConnector.replyEmitter({
                 responseId: evt.requestId,
@@ -435,7 +439,7 @@ export function connectRealBlockchain() {
               });
               return;
             }
-            console.warn(`[wc-blockchain] pushTx UNKNOWN_UNSPENT, retry in ${PUSH_TX_RETRY_DELAY / 1000}s`);
+            console.warn(`[wc-blockchain] pushTx retryable error, retry in ${PUSH_TX_RETRY_DELAY / 1000}s:`, errStr);
             await new Promise((resolve) => {
               setTimeout(resolve, PUSH_TX_RETRY_DELAY);
             });
