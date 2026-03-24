@@ -42,6 +42,7 @@ export enum ChiaMethod {
   RegisterRemoteCoins = 'chia_registerRemoteCoins',
   GetCoinRecordsByNames = 'chia_getCoinRecordsByNames',
   PushTx = 'chia_pushTx',
+  WalletPushTx = 'chia_walletPushTx',
 }
 
 export const REQUIRED_NAMESPACES: ProposalTypes.RequiredNamespaces = {

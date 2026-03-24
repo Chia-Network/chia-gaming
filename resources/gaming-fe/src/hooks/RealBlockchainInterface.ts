@@ -27,6 +27,10 @@ const bech32: Bech32Module = (bech32_module ? bech32_module : bech32_buffer) as 
 const PUSH_TX_RETRY_DELAY = 30000;
 const POLL_INTERVAL = 5000;
 
+function isRetryablePushTxError(errStr: string): boolean {
+  return errStr.includes('UNKNOWN_UNSPENT') || errStr.includes('NO_TRANSACTIONS_WHILE_SYNCING');
+}
+
 function encodeClvmInt(n: number): Uint8Array {
   if (n === 0) return new Uint8Array(0);
   const bytes: number[] = [];
@@ -156,22 +160,22 @@ export class RealBlockchainInterface {
   }
 
   async spend(spend: unknown): Promise<string> {
-    console.log('[wc-blockchain] >>> pushTx');
+    console.log('[wc-blockchain] >>> walletPushTx');
     try {
-      const result = await rpc.pushTx({ spendBundle: spend as object });
-      console.log('[wc-blockchain] <<< pushTx', result.status);
+      const result = await rpc.walletPushTx({ spendBundle: spend as object });
+      console.log('[wc-blockchain] <<< walletPushTx', result.status);
       return result as unknown as string;
     } catch (e: unknown) {
-      const errStr = typeof e === 'string' ? e : JSON.stringify(e);
-      if (errStr.indexOf('UNKNOWN_UNSPENT') !== -1) {
-        console.warn('[wc-blockchain] pushTx UNKNOWN_UNSPENT, retry in 60s');
+      const errStr = typeof e === 'string' ? e : ((e as any)?.message || JSON.stringify(e));
+      if (isRetryablePushTxError(errStr)) {
+        console.warn(`[wc-blockchain] walletPushTx retryable error, retry in ${PUSH_TX_RETRY_DELAY / 1000}s:`, errStr);
         return new Promise((resolve, reject) => {
           setTimeout(() => {
             this.spend(spend).then(resolve).catch(reject);
-          }, 60000);
+          }, PUSH_TX_RETRY_DELAY);
         });
       }
-      console.error('[wc-blockchain] pushTx error', e);
+      console.error('[wc-blockchain] walletPushTx error', e);
       throw e;
     }
   }
@@ -424,27 +428,27 @@ export function connectRealBlockchain() {
       } else if (transaction) {
         while (true) {
           try {
-            console.log(`[wc-blockchain] >>> pushTx (transaction req #${evt.requestId})`);
-            const result = await rpc.pushTx({
+            console.log(`[wc-blockchain] >>> walletPushTx (transaction req #${evt.requestId})`);
+            const result = await rpc.walletPushTx({
               spendBundle: transaction.spendObject as object,
             });
-            console.log(`[wc-blockchain] <<< pushTx (transaction req #${evt.requestId})`, result.status);
+            console.log(`[wc-blockchain] <<< walletPushTx (transaction req #${evt.requestId})`, result.status);
             blockchainConnector.replyEmitter({
               responseId: evt.requestId,
               transaction: result as any,
             });
             return;
           } catch (e: any) {
-            const errStr = typeof e === 'string' ? e : JSON.stringify(e);
-            if (errStr.indexOf('UNKNOWN_UNSPENT') === -1) {
-              console.error(`[wc-blockchain] pushTx error`, e);
+            const errStr = typeof e === 'string' ? e : (e?.message || JSON.stringify(e));
+            if (!isRetryablePushTxError(errStr)) {
+              console.error(`[wc-blockchain] walletPushTx error`, e);
               blockchainConnector.replyEmitter({
                 responseId: evt.requestId,
                 transaction: { error: errStr } as any,
               });
               return;
             }
-            console.warn(`[wc-blockchain] pushTx UNKNOWN_UNSPENT, retry in ${PUSH_TX_RETRY_DELAY / 1000}s`);
+            console.warn(`[wc-blockchain] walletPushTx retryable error, retry in ${PUSH_TX_RETRY_DELAY / 1000}s:`, errStr);
             await new Promise((resolve) => {
               setTimeout(resolve, PUSH_TX_RETRY_DELAY);
             });

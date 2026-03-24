@@ -176,6 +176,13 @@ export class WasmBlobWrapper {
     return this.rxjsMessageSingleton;
   }
 
+  getWatchingCoins(): { coin_string: string; coin_name: string }[] {
+    if (!this.wc || !this.cradle) return [];
+    try {
+      return this.wc.get_watching_coins(this.cradle.cradle) || [];
+    } catch { return []; }
+  }
+
   spillStoredMessages() {
     if (this.qualifyingEvents != 15 || !this.cradle || this.reloading) {
       return;
@@ -385,6 +392,7 @@ export class WasmBlobWrapper {
       this.handleNeedCoinSpend(result.need_coin_spend);
     }
 
+    this.sendWatchingCoins();
     this.scheduleSave();
   }
 
