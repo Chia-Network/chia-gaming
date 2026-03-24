@@ -98,7 +98,7 @@ function ChannelStatusDisplay({ status }: { status: ChannelStatusInfo }) {
   );
 }
 
-function ChannelAttentionDialog({
+function ChannelAttentionOverlay({
   info,
   onDismiss,
 }: {
@@ -108,28 +108,34 @@ function ChannelAttentionDialog({
   const label = CHANNEL_STATE_LABELS[info.state] ?? info.state;
   const isBad = info.state === 'Failed' || info.state === 'ResolvedStale';
   return (
-    <Dialog open onOpenChange={(open) => { if (!open) onDismiss(); }}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle className={isBad ? 'text-alert-text' : undefined}>
+    <motion.div
+      drag
+      dragMomentum={false}
+      initial={false}
+      className='fixed z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing'
+    >
+      <Card className='w-full max-w-md shadow-xl bg-canvas-bg border border-canvas-line'>
+        <CardHeader className='text-center pb-2'>
+          <CardTitle className={`text-xl ${isBad ? 'text-alert-text' : ''}`}>
             Channel: {label}
-          </DialogTitle>
+          </CardTitle>
           {info.advisory && (
-            <DialogDescription>{info.advisory}</DialogDescription>
+            <p className='text-sm text-canvas-text/70 mt-1'>{info.advisory}</p>
           )}
-        </DialogHeader>
-        {info.coinHex && (
-          <p className="text-xs font-mono text-canvas-text/60 break-all">
-            Coin: 0x{info.coinHex}
-          </p>
-        )}
-        <DialogFooter>
-          <DialogClose asChild>
-            <Button variant="soft">Dismiss</Button>
-          </DialogClose>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </CardHeader>
+        <Separator />
+        <CardContent className='pt-4 flex flex-col gap-2'>
+          {info.coinHex && (
+            <p className="text-xs font-mono text-canvas-text/60 break-all">
+              Coin: 0x{info.coinHex}
+            </p>
+          )}
+          <Button variant="soft" onClick={onDismiss} className='w-full'>
+            Dismiss
+          </Button>
+        </CardContent>
+      </Card>
+    </motion.div>
   );
 }
 
@@ -390,7 +396,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
       </Dialog>
 
       {session.channelAttention && (
-        <ChannelAttentionDialog
+        <ChannelAttentionOverlay
           info={session.channelAttention}
           onDismiss={session.dismissChannelAttention}
         />

@@ -251,6 +251,7 @@ export function useGameSession(
       };
       setChannelStatus(info);
       if (ATTENTION_STATES.includes(cs.state)) {
+        setShowBetweenHandOverlay(false);
         setChannelAttention(info);
       }
       if (cs.state === 'Active' && gameConnectionState.stateIdentifier !== 'running') {

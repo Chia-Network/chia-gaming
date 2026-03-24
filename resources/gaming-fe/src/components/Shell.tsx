@@ -62,6 +62,7 @@ const Shell = () => {
 
   const [walletConnected, setWalletConnected] = useState(false);
   const [pendingRestore, setPendingRestore] = useState<SessionSave | null>(() => loadSession());
+  const [restoreDecided, setRestoreDecided] = useState<boolean>(() => !loadSession() && !getBlockchainType());
   const [gameLog, setGameLog] = useState<string[]>([]);
   const [debugLogLines, setDebugLogLines] = useState<string[]>([]);
 
@@ -89,8 +90,12 @@ const Shell = () => {
     });
   }, []);
 
-  // Fetch tracker URL, set up iframe and TrackerConnection
+  // Fetch tracker URL, set up iframe and TrackerConnection.
+  // Deferred until the user resolves both the "resume or start fresh" prompt
+  // and the wallet/simulator selection.
   useEffect(() => {
+    if (!restoreDecided || !walletConnected) return;
+
     let cancelled = false;
 
     fetch('/urls')
@@ -244,7 +249,7 @@ const Shell = () => {
       trackerConnRef.current?.disconnect();
       trackerConnRef.current = null;
     };
-  }, [uniqueId, sessionId]);
+  }, [uniqueId, sessionId, restoreDecided, walletConnected]);
 
   const handleReset = useCallback(async () => {
     activePairingTokenRef.current = null;
@@ -263,6 +268,7 @@ const Shell = () => {
     const onRegistered = () => {
       setPendingRestore(null);
       setResuming(false);
+      setRestoreDecided(true);
       blockchainTypeRef.current = bcType;
       setWalletConnected(true);
       blockchainDataEmitter.select({ selection: FAKE_BLOCKCHAIN_ID, uniqueId });

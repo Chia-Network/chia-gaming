@@ -190,11 +190,11 @@ node "$SCRIPT_DIR/resources/static-server.js" "$GAME_SERVE" "$GAME_PORT" &
 PIDS+=($!)
 
 echo "=== Starting wc-stub (port $WC_PORT) ==="
-(cd "$WC_DIR" && PORT=$WC_PORT node --disable-warning=DEP0169 ./dist/index.js) &
+(cd "$WC_DIR" && PORT=$WC_PORT exec node --disable-warning=DEP0169 ./dist/index.js) &
 PIDS+=($!)
 
 echo "=== Starting tracker (lobby-service + lobby-view on port $TRACKER_PORT) ==="
-(cd "$LOBBY_SERVICE_DIR" && PORT=$TRACKER_PORT node ./dist/index-rollup.cjs --self "http://localhost:$TRACKER_PORT" --dir "$LOBBY_SERVE") &
+(cd "$LOBBY_SERVICE_DIR" && PORT=$TRACKER_PORT exec node ./dist/index-rollup.cjs --self "http://localhost:$TRACKER_PORT" --dir "$LOBBY_SERVE") &
 PIDS+=($!)
 
 echo "=== Waiting for services ==="
