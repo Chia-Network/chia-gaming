@@ -684,40 +684,41 @@ impl LocalTestUIReceiver {
         );
     }
 
-    pub fn has_terminal_notification(&self) -> bool {
-        let has_game_terminal = self.notifications.iter().any(|n| {
-            matches!(
-                n,
-                GameNotification::WeTimedOut { .. }
-                    | GameNotification::OpponentTimedOut { .. }
-                    | GameNotification::WeSlashedOpponent { .. }
-                    | GameNotification::OpponentSlashedUs { .. }
-                    | GameNotification::OpponentSuccessfullyCheated { .. }
-                    | GameNotification::GameCancelled { .. }
-                    | GameNotification::GameError { .. }
-                    | GameNotification::ChannelStatus {
-                        state: ChannelState::Failed,
-                        ..
-                    }
-            )
-        });
-        if has_game_terminal {
-            return true;
-        }
-        let has_unroll = self.notifications.iter().any(|n| {
-            matches!(
-                n,
-                GameNotification::ChannelStatus {
-                    state: ChannelState::Unrolling,
-                    ..
-                }
-            )
-        });
-        let had_games = self
+    /// True when every accepted game has exactly one terminal game notification (same notion as
+    /// post-run invariants). Vacuously true if there are no `GameProposalAccepted` games.
+    pub fn all_accepted_games_have_terminal_notification(&self) -> bool {
+        let accepted_ids: HashSet<GameID> = self
             .notifications
             .iter()
-            .any(|n| matches!(n, GameNotification::GameProposalAccepted { .. }));
-        has_unroll && !had_games
+            .filter_map(|n| {
+                if let GameNotification::GameProposalAccepted { id } = n {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for id in accepted_ids {
+            let terminal_count = self
+                .notifications
+                .iter()
+                .filter(|n| match n {
+                    GameNotification::InsufficientBalance { id: nid, .. } => nid == &id,
+                    GameNotification::GameCancelled { id: nid } => nid == &id,
+                    GameNotification::WeTimedOut { id: nid, .. } => nid == &id,
+                    GameNotification::OpponentTimedOut { id: nid, .. } => nid == &id,
+                    GameNotification::WeSlashedOpponent { id: nid, .. } => nid == &id,
+                    GameNotification::OpponentSlashedUs { id: nid } => nid == &id,
+                    GameNotification::OpponentSuccessfullyCheated { id: nid, .. } => nid == &id,
+                    GameNotification::GameError { id: nid, .. } => nid == &id,
+                    _ => false,
+                })
+                .count();
+            if terminal_count != 1 {
+                return false;
+            }
+        }
+        true
     }
 }
 
@@ -1307,9 +1308,9 @@ fn run_game_container_with_action_list_with_success_predicate(
         }
         step_start = std::time::Instant::now();
 
-        let all_actions_processed = move_number >= moves_input.len();
         let should_end = cradles.iter().enumerate().all(|(i, c)| {
-            c.finished() || (all_actions_processed && local_uis[i].has_terminal_notification())
+            c.channel_status_terminal()
+                && local_uis[i].all_accepted_games_have_terminal_notification()
         }) && ending.is_none();
         if should_end {
             ending = Some(10);
@@ -1403,8 +1404,8 @@ fn run_game_container_with_action_list_with_success_predicate(
                     }
                     GameAction::GoOnChain(who) => {
                         assert!(
-                            !local_uis[*who].has_terminal_notification(),
-                            "GameAction::GoOnChain({who}) but game is already finished: move_number={move_number} notifications={:?}",
+                            !cradles[*who].channel_status_terminal(),
+                            "GameAction::GoOnChain({who}) but channel is already terminal: move_number={move_number} notifications={:?}",
                             local_uis[*who].notifications
                         );
                         if cradles[*who].is_on_chain() {

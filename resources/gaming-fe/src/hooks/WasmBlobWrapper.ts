@@ -19,7 +19,7 @@ import {
   spend_bundle_to_clvm,
 } from '../util';
 import { debugLog } from '../services/debugLog';
-import { saveSession, clearSession, SessionSave, CalpokerHandState, BlockchainType } from './save';
+import { saveSession, SessionSave, CalpokerHandState, BlockchainType } from './save';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
 import { normalizeSpendBundle } from '../util/offerDecode';
 
@@ -63,7 +63,6 @@ export class WasmBlobWrapper {
   iStarted: boolean;
   storedMessages: Array<{ msgno: number; msg: string }>;
   cleanShutdownCalled: boolean;
-  finished: boolean;
   reloading: boolean;
   qualifyingEvents: number;
   blockchain: InternalBlockchainInterface;
@@ -106,7 +105,6 @@ export class WasmBlobWrapper {
     this.channelReady = false;
     this.storedMessages = [];
     this.cleanShutdownCalled = false;
-    this.finished = false;
     this.reloading = false;
     this.qualifyingEvents = 0;
     this.blockchain = blockchain;
@@ -127,7 +125,6 @@ export class WasmBlobWrapper {
   }
 
   cleanup() {
-    this.finished = true;
     this.cleanShutdownCalled = true;
     this.storedMessages = [];
     this.rxjsMessageSingleton.complete();
@@ -153,7 +150,7 @@ export class WasmBlobWrapper {
       this.peerSendPing?.();
       if (
         Date.now() - this.lastPeerMessageTime > PEER_TIMEOUT_MS &&
-        this.channelReady && !this.finished && !this.cleanShutdownCalled
+        this.channelReady && !this.cleanShutdownCalled
       ) {
         debugLog('[wasm] peer liveness timeout, going on-chain');
         this.goOnChain();
@@ -351,13 +348,7 @@ export class WasmBlobWrapper {
   }
 
   processResult(result: WasmResult | undefined): void {
-    if (!result || this.finished) return;
-
-    if (result.finished && !this.finished) {
-      this.finished = true;
-      clearSession();
-      this.rxjsEmitter?.next({ type: 'finished' });
-    }
+    if (!result) return;
 
     for (const event of result.events || []) {
       this.eventQueue.push(event);
@@ -554,7 +545,7 @@ export class WasmBlobWrapper {
   // --- Persistence ---
 
   private scheduleSave() {
-    if (this.finished || !this.cradle) return;
+    if (this.cleanShutdownCalled || !this.cradle) return;
     if (this.saveTimer) return;
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
@@ -563,7 +554,7 @@ export class WasmBlobWrapper {
   }
 
   private persistSession() {
-    if (this.finished || !this.cradle) return;
+    if (this.cleanShutdownCalled || !this.cradle) return;
     try {
       const serializedCradle = this.cradle.serialize();
       const save: SessionSave = {

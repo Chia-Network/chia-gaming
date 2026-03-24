@@ -324,7 +324,6 @@ impl MessagePeerQueue for SimulatedPeer<SimulatedWalletSpend> {
 #[derive(Default)]
 pub struct DrainResult {
     pub handshake_done: bool,
-    pub finished: bool,
     pub events: CradleEventQueue,
     pub resync: Option<(usize, bool)>,
 }
@@ -451,7 +450,6 @@ struct SynchronousGameCradleState {
     inbound_messages: VecDeque<Vec<u8>>,
     resync: Option<(usize, bool)>,
     clean_shutdown_received: bool,
-    finished: bool,
     clean_shutdown: Option<CoinString>,
     identity: ChiaIdentity,
     peer_disconnected: bool,
@@ -553,7 +551,6 @@ impl SynchronousGameCradle {
                 clean_shutdown: None,
                 resync: None,
                 clean_shutdown_received: false,
-                finished: false,
                 peer_disconnected: false,
                 is_failed: false,
                 is_on_chain: false,
@@ -708,12 +705,21 @@ impl SynchronousGameCradle {
             .map(|ch| ch.get_their_current_share())
     }
 
-    pub fn finished(&self) -> bool {
-        self.state.finished
-    }
-
     pub fn is_peer_disconnected(&self) -> bool {
         self.state.peer_disconnected
+    }
+
+    /// True when the last emitted [`ChannelStatus`] is a terminal channel state (sim `should_end`).
+    pub fn channel_status_terminal(&self) -> bool {
+        matches!(
+            self.last_channel_status.as_ref().map(|s| &s.state),
+            Some(
+                ChannelState::ResolvedClean
+                    | ChannelState::ResolvedUnrolled
+                    | ChannelState::ResolvedStale
+                    | ChannelState::Failed,
+            )
+        )
     }
 
     pub fn need_launcher_coin(&self) -> bool {
@@ -762,7 +768,6 @@ impl SynchronousGameCradle {
     pub fn drain_all(&mut self, allocator: &mut AllocEncoder) -> Result<DrainResult, Error> {
         let mut result = DrainResult {
             handshake_done: self.peer.handshake_finished(),
-            finished: self.finished(),
             ..Default::default()
         };
 
@@ -829,7 +834,6 @@ impl SynchronousGameCradle {
         }
 
         result.handshake_done = self.peer.handshake_finished();
-        result.finished = self.finished();
         result.resync = self.state.resync.take();
         result.events = std::mem::take(&mut self.state.events);
 
@@ -901,17 +905,11 @@ impl SynchronousGameCradle {
                     }
                     ChannelState::ResolvedClean => {
                         self.state.clean_shutdown = snap.coin.clone();
-                        self.state.finished = true;
                     }
                     ChannelState::ResolvedUnrolled | ChannelState::ResolvedStale => {
                         if self.state.is_on_chain {
                             self.state.peer_disconnected = true;
-                        } else {
-                            self.state.finished = true;
                         }
-                    }
-                    ChannelState::Failed => {
-                        self.state.finished = true;
                     }
                     ChannelState::Unrolling => {
                         self.state.peer_disconnected = true;

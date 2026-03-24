@@ -90,7 +90,6 @@ export interface UseGameSessionResult {
   myRunningBalance: bigint;
   iStarted: boolean;
   playerNumber: number;
-  sessionEnded: boolean;
   channelStatus: ChannelStatusInfo;
   gameCoin: CoinLifecycle<GameCoinState>;
   handKey: number;
@@ -133,7 +132,6 @@ export function useGameSession(
     );
   const [error, setRealError] = useState<string | undefined>(undefined);
   const [myRunningBalance, setMyRunningBalance] = useState(0n);
-  const [sessionEnded, setSessionEnded] = useState(false);
   const [shutdownInitiated, setShutdownInitiated] = useState(false);
   const [channelStatus, setChannelStatus] = useState<ChannelStatusInfo>(() =>
     sessionSave?.channelReady ? { ...INITIAL_CHANNEL_STATUS, state: 'Active' } : INITIAL_CHANNEL_STATUS
@@ -269,12 +267,6 @@ export function useGameSession(
         shutdownInitiatedRef.current = true;
         setShutdownInitiated(true);
       }
-      if (cs.state === 'ResolvedClean' || cs.state === 'ResolvedUnrolled' || cs.state === 'ResolvedStale') {
-        setSessionEnded(true);
-      }
-      if (cs.state === 'Failed') {
-        setSessionEnded(true);
-      }
       return;
     }
 
@@ -349,9 +341,6 @@ export function useGameSession(
             break;
           case 'error':
             setError(evt.error);
-            break;
-          case 'finished':
-            setSessionEnded(true);
             break;
           case 'address':
             break;
@@ -434,7 +423,6 @@ export function useGameSession(
     myRunningBalance,
     iStarted,
     playerNumber,
-    sessionEnded,
     channelStatus,
     gameCoin,
     handKey,

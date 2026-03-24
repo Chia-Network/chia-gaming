@@ -273,7 +273,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
               variant='destructive'
               onClick={session.goOnChain}
               size='sm'
-              disabled={session.sessionEnded || session.shutdownInitiated}
+              disabled={session.shutdownInitiated || session.channelStatus.state !== 'Active'}
             >
               Go On-Chain
             </Button>
@@ -320,7 +320,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
           )}
 
           {/* Between-hand overlay (draggable, no backdrop) */}
-          {(session.showBetweenHandOverlay || session.sessionEnded) && (
+          {session.showBetweenHandOverlay && (
             <motion.div
               drag
               dragMomentum={false}
@@ -330,22 +330,18 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
               <Card className='w-full max-w-md shadow-xl bg-canvas-bg border border-canvas-line'>
                 <CardHeader className='text-center pb-2'>
                   <CardTitle className='text-xl'>
-                    {session.sessionEnded
-                      ? 'Session Ended'
-                      : session.lastOutcome
-                        ? session.lastOutcome.my_win_outcome === 'win'
-                          ? 'You Won!'
-                          : session.lastOutcome.my_win_outcome === 'lose'
-                            ? 'You Lost'
-                            : 'Tie Game'
-                        : 'Hand Finished'}
+                    {session.lastOutcome
+                      ? session.lastOutcome.my_win_outcome === 'win'
+                        ? 'You Won!'
+                        : session.lastOutcome.my_win_outcome === 'lose'
+                          ? 'You Lost'
+                          : 'Tie Game'
+                      : 'Hand Finished'}
                   </CardTitle>
                 </CardHeader>
                 <Separator />
                 <CardContent className='pt-4 flex flex-col gap-2'>
-                  {session.sessionEnded ? (
-                    <p className='text-sm text-center text-canvas-text'>Channel closed — funds returned on-chain</p>
-                  ) : session.shutdownInitiated ? (
+                  {session.shutdownInitiated ? (
                     <p className='text-sm text-center text-canvas-text'>Session ending…</p>
                   ) : (
                     <>
@@ -371,16 +367,9 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
           )}
 
           {/* Waiting for first hand */}
-          {!handEverStarted && !session.sessionEnded && (
+          {!handEverStarted && (
             <div className='flex items-center justify-center py-20'>
               <p className='text-canvas-text'>Waiting for game to start…</p>
-            </div>
-          )}
-
-          {/* Session ended, no active hand */}
-          {session.sessionEnded && !handEverStarted && (
-            <div className='flex items-center justify-center py-20'>
-              <p className='text-canvas-text'>Session complete.</p>
             </div>
           )}
         </div>

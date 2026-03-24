@@ -29,7 +29,6 @@ export type CradleEvent =
   | { ReceiveError: string };
 
 export interface WasmResult {
-  finished?: boolean;
   events?: CradleEvent[];
   ids?: string[];
   need_launcher_coin?: boolean;
@@ -153,7 +152,6 @@ export type WasmNotification = {
 export type WasmEvent =
   | { type: 'notification'; data: WasmNotification }
   | { type: 'error'; error: string }
-  | { type: 'finished' }
   | { type: 'address'; data: BlockchainInboundAddressResult }
   | { type: 'debug_log'; message: string };
 

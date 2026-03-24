@@ -99,7 +99,6 @@ mod gaming_wasm {
 
     export type DrainResult = {
         "handshake_done": boolean,
-        "finished": boolean,
         "need_launcher_coin"?: boolean,
         "need_coin_spend"?: {
             "amount": number,
@@ -775,14 +774,12 @@ mod gaming_wasm {
             struct ProposeGameResult {
                 ids: Vec<String>,
                 handshake_done: bool,
-                finished: bool,
                 events: Vec<serde_json::Value>,
             }
 
             to_js_compat(&ProposeGameResult {
                 ids: ids.iter().map(game_id_to_string).collect(),
                 handshake_done: dr.handshake_done,
-                finished: dr.finished,
                 events: dr.events.iter().map(cradle_event_to_js).collect(),
             })
         })
@@ -1022,7 +1019,6 @@ mod gaming_wasm {
     #[derive(Serialize)]
     struct JsDrainResult {
         handshake_done: bool,
-        finished: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         need_launcher_coin: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1132,7 +1128,6 @@ mod gaming_wasm {
     ) -> Result<JsValue, types::Error> {
         to_js_compat(&JsDrainResult {
             handshake_done: dr.handshake_done,
-            finished: dr.finished,
             need_launcher_coin: if need_launcher_coin { Some(true) } else { None },
             need_coin_spend: need_coin_spend.as_ref().map(coin_spend_request_to_js),
             events: dr.events.iter().map(cradle_event_to_js).collect(),
