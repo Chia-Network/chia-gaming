@@ -385,13 +385,6 @@ export class WasmBlobWrapper {
     }
     this.draining = false;
 
-    if (result.need_launcher_coin) {
-      this.handleNeedLauncherCoin();
-    }
-    if (result.need_coin_spend) {
-      this.handleNeedCoinSpend(result.need_coin_spend);
-    }
-
     this.sendWatchingCoins();
     this.scheduleSave();
   }
@@ -437,6 +430,10 @@ export class WasmBlobWrapper {
     } else if ('DebugLog' in event) {
       this.debugLogHistory.push(event.DebugLog);
       this.rxjsEmitter?.next({ type: 'debug_log', message: event.DebugLog });
+    } else if ('NeedLauncherCoin' in event) {
+      this.handleNeedLauncherCoin();
+    } else if ('NeedCoinSpend' in event) {
+      this.handleNeedCoinSpend(event.NeedCoinSpend);
     }
   }
 

@@ -745,11 +745,18 @@ impl PeerHandler for HandshakeInitiatorHandler {
             InitiatorState::WaitingForLauncher(_) | InitiatorState::SentC(_) => {
                 ChannelState::Handshaking
             }
-            InitiatorState::WaitingForOffer(_, _) | InitiatorState::Finished(_) => {
+            InitiatorState::WaitingForOffer(_, _) => {
                 if self.channel_handler.is_some() {
-                    ChannelState::TransactionSubmitted
+                    ChannelState::TransactionPending
                 } else {
-                    ChannelState::Handshaking
+                    ChannelState::OfferSent
+                }
+            }
+            InitiatorState::Finished(_) => {
+                if self.channel_handler.is_some() {
+                    ChannelState::TransactionPending
+                } else {
+                    ChannelState::OfferSent
                 }
             }
             InitiatorState::Done => return None,

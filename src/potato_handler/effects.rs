@@ -25,7 +25,8 @@ pub struct ResyncInfo {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ChannelState {
     Handshaking,
-    TransactionSubmitted,
+    OfferSent,
+    TransactionPending,
     Active,
     ShuttingDown,
     Unrolling,
@@ -142,6 +143,8 @@ pub enum CradleEvent {
     DebugLog(String),
     CoinSolutionRequest(CoinString),
     ReceiveError(String),
+    NeedCoinSpend(CoinSpendRequest),
+    NeedLauncherCoin,
 }
 
 /// Collect CradleEvents in insertion order.

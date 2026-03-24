@@ -95,16 +95,15 @@ mod gaming_wasm {
         | { Notification: any }
         | { DebugLog: string }
         | { CoinSolutionRequest: string }
-        | { ReceiveError: string };
-
-    export type DrainResult = {
-        "handshake_done": boolean,
-        "need_launcher_coin"?: boolean,
-        "need_coin_spend"?: {
+        | { ReceiveError: string }
+        | { NeedCoinSpend: {
             "amount": number,
             "conditions": Array<{ "opcode": number, "args": Array<string> }>,
             "coin_id"?: string,
-        },
+          } }
+        | { NeedLauncherCoin: boolean };
+
+    export type DrainResult = {
         "events": Array<CradleEvent>,
     };
 
@@ -773,13 +772,11 @@ mod gaming_wasm {
             #[derive(Serialize)]
             struct ProposeGameResult {
                 ids: Vec<String>,
-                handshake_done: bool,
                 events: Vec<serde_json::Value>,
             }
 
             to_js_compat(&ProposeGameResult {
                 ids: ids.iter().map(game_id_to_string).collect(),
-                handshake_done: dr.handshake_done,
                 events: dr.events.iter().map(cradle_event_to_js).collect(),
             })
         })
@@ -1018,11 +1015,6 @@ mod gaming_wasm {
 
     #[derive(Serialize)]
     struct JsDrainResult {
-        handshake_done: bool,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        need_launcher_coin: Option<bool>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        need_coin_spend: Option<JsCoinSpendRequest>,
         events: Vec<serde_json::Value>,
     }
 
@@ -1118,18 +1110,17 @@ mod gaming_wasm {
             CradleEvent::ReceiveError(msg) => {
                 serde_json::json!({ "ReceiveError": msg })
             }
+            CradleEvent::NeedCoinSpend(req) => {
+                serde_json::json!({ "NeedCoinSpend": coin_spend_request_to_js(req) })
+            }
+            CradleEvent::NeedLauncherCoin => {
+                serde_json::json!({ "NeedLauncherCoin": true })
+            }
         }
     }
 
-    fn drain_result_to_js(
-        dr: &DrainResult,
-        need_launcher_coin: bool,
-        need_coin_spend: Option<CoinSpendRequest>,
-    ) -> Result<JsValue, types::Error> {
+    fn drain_result_to_js(dr: &DrainResult) -> Result<JsValue, types::Error> {
         to_js_compat(&JsDrainResult {
-            handshake_done: dr.handshake_done,
-            need_launcher_coin: if need_launcher_coin { Some(true) } else { None },
-            need_coin_spend: need_coin_spend.as_ref().map(coin_spend_request_to_js),
             events: dr.events.iter().map(cradle_event_to_js).collect(),
         })
     }
@@ -1147,9 +1138,7 @@ mod gaming_wasm {
                 ));
             }
             let dr = cradle.cradle.drain_all(&mut cradle.allocator)?;
-            let need_launcher_coin = cradle.cradle.need_launcher_coin();
-            let need_coin_spend = cradle.cradle.requested_coin_spend();
-            drain_result_to_js(&dr, need_launcher_coin, need_coin_spend)
+            drain_result_to_js(&dr)
         })
     }
 

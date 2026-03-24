@@ -1606,24 +1606,37 @@ cleanup and game-over transitions.
 
 ### WASM Event FIFO and Reentrancy Safety
 
-The JS/WASM bridge (`WasmBlobWrapper`) treats every returned `CradleEvent` as
-items in a single FIFO queue, not as an immediate recursive call chain.
+Every communication from the WASM cradle to the JS frontend is a `CradleEvent`
+delivered through a single FIFO queue. There are no side-channel flags or polled
+getters — wallet requests (`NeedCoinSpend`, `NeedLauncherCoin`), outbound
+messages, transactions, notifications, and puzzle/solution requests all flow
+through the same event stream.
 
 Flow:
 
 1. `processResult()` appends `result.events` to `eventQueue`.
 2. If a drain is already in progress (`draining == true`), it returns
-   immediately.
+   immediately — the new events will be picked up by the active loop.
 3. Otherwise it sets `draining = true` and processes events in order with
-   `shift()` until the queue is empty.
-4. It then clears `draining` and only after that handles follow-up wallet
-   callbacks (`need_launcher_coin`, `need_coin_spend`).
+   `shift()` until the queue is empty, then clears `draining`.
+
+Each event is dispatched exactly once by `dispatchEvent()`. Event types and
+their handlers:
+
+- `OutboundMessage` — send to peer via tracker
+- `OutboundTransaction` — submit spend bundle to blockchain
+- `Notification` — surface game/channel state to the UI
+- `ReceiveError` — peer message decode failure
+- `CoinSolutionRequest` — fetch puzzle/solution from blockchain
+- `DebugLog` — diagnostic output
+- `NeedLauncherCoin` — request the wallet to provide the launcher coin
+- `NeedCoinSpend` — request the wallet to create and sign a spend bundle
 
 Why this exists:
 
-- Some event handlers can trigger additional WASM calls that eventually produce
-  more `CradleEvent`s (for example puzzle/solution fulfillment or handshake
-  wallet callbacks).
+- Some event handlers trigger additional WASM calls that produce more
+  `CradleEvent`s (for example puzzle/solution fulfillment calls
+  `report_puzzle_and_solution`, which returns a new drain result).
 - Without a single FIFO and the `draining` guard, those nested results could
   re-enter dispatch while the current event list is mid-iteration, leading to
   out-of-order effects, dropped work, or duplicated processing.
@@ -1640,11 +1653,12 @@ notification containing the current `ChannelState`, balance information, and
 an optional `advisory` string for context (e.g. error reason). The
 `ChannelState` values are:
 
-| `ChannelState`    | When                                           | Meaning                                                                                                                                       |
-| ----------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Handshaking`     | Handshake in progress                          | Channel negotiation messages are being exchanged                                                                                              |
-| `TransactionSubmitted` | Funding transaction ready but not on-chain | The channel coin's creation transaction has been built and submitted                                                                          |
-| `Active`          | Channel operational                            | Channel is live and games can be played. Emitted repeatedly as balances change (potato firings). Includes `our_balance`, `their_balance`, `game_allocated`, and `coin` fields. |
+| `ChannelState`        | When                                           | Meaning                                                                                                                                       |
+| --------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Handshaking`         | Handshake in progress                          | Channel negotiation messages are being exchanged (steps A–D)                                                                                  |
+| `OfferSent`           | Our half of the spend sent to peer             | We have sent our offer/spend to the other side; they could create the channel coin                                                            |
+| `TransactionPending`  | Full spend bundle assembled                    | We have the complete channel-creation transaction in hand, waiting for on-chain confirmation                                                  |
+| `Active`              | Channel operational                            | Channel is live and games can be played. Emitted repeatedly as balances change (potato firings). Includes `our_balance`, `their_balance`, `game_allocated`, and `coin` fields. |
 | `ShuttingDown`    | Clean shutdown initiated                       | Cooperative channel closure has been initiated (advisory protocol, not yet on-chain)                                                          |
 | `Unrolling`       | Unroll detected on-chain                       | The channel coin has been spent to an unroll coin (by either player). `advisory` describes the reason if known.                                |
 | `ResolvedClean`   | Clean shutdown completed                       | Channel closed cooperatively; balances reflect the final split                                                                                |
@@ -1740,11 +1754,11 @@ open item is explicitly resolved.
    notification stream. A cancelled or never-accepted game must never produce
    `GameOnChain`. Enforced by the simulation loop's post-test assertion.
 6. **Channel state monotonicity.** `ChannelState` ordinals must never
-   decrease: `Handshaking(0) < TransactionSubmitted(1) < Active(2) <
-   ShuttingDown(3) < Unrolling(4) <
-   ResolvedClean/ResolvedUnrolled/ResolvedStale/Failed(5)`. `Active` may
+   decrease: `Handshaking(0) < OfferSent(1) < TransactionPending(2) <
+   Active(3) < ShuttingDown(4) < Unrolling(5) <
+   ResolvedClean/ResolvedUnrolled/ResolvedStale/Failed(6)`. `Active` may
    repeat at the same ordinal (balance changes from potato firings), and
-   terminal states (ordinal 5) may repeat (e.g. advisory changes).
+   terminal states (ordinal 6) may repeat (e.g. advisory changes).
    Enforced by the simulation loop's post-test assertion.
 
 ### Additional Design Rules

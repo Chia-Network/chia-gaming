@@ -25,6 +25,7 @@ use crate::peer_container::{
 use crate::potato_handler::effects::{
     apply_effects, ChannelState, CradleEvent, Effect, GameNotification,
 };
+use crate::potato_handler::handshake::CoinSpendRequest;
 use crate::potato_handler::start::GameStart;
 use crate::potato_handler::types::{
     BatchAction, BootstrapTowardWallet, PacketSender, PeerMessage, ToLocalUI, WalletSpendInterface,
@@ -1075,17 +1076,9 @@ fn run_game_container_with_action_list_with_success_predicate(
             cradles[1].handshake_finished(),
         ];
         let channel_created_flags = [local_uis[0].channel_created, local_uis[1].channel_created];
-        let need_launcher = [
-            cradles[0].need_launcher_coin(),
-            cradles[1].need_launcher_coin(),
-        ];
-        let need_coin_spend = [
-            cradles[0].requested_coin_spend().is_some(),
-            cradles[1].requested_coin_spend().is_some(),
-        ];
         assert!(
             num_steps < 200,
-            "simulation stalled: num_steps={num_steps} move_number={move_number} can_move={can_move} next_action={:?} explicit_go_on_chain={has_explicit_go_on_chain} handshake_finished={handshake_flags:?} channel_created={channel_created_flags:?} need_launcher={need_launcher:?} need_coin_spend={need_coin_spend:?}",
+            "simulation stalled: num_steps={num_steps} move_number={move_number} can_move={can_move} next_action={:?} explicit_go_on_chain={has_explicit_go_on_chain} handshake_finished={handshake_flags:?} channel_created={channel_created_flags:?}",
             moves_input.get(move_number)
         );
 
@@ -1150,33 +1143,11 @@ fn run_game_container_with_action_list_with_success_predicate(
             }
 
             {
-                let mut result = cradles[i].drain_all(allocator)?;
-                if i == 0 && cradles[i].need_launcher_coin() {
-                    cradles[i].provide_launcher_coin(allocator, launcher_coin.clone())?;
-                    let follow_up = cradles[i].drain_all(allocator)?;
-                    if result.resync.is_none() {
-                        result.resync = follow_up.resync;
-                    }
-                    result.events.extend(follow_up.events);
-                }
-                if let Some(req) = cradles[i].requested_coin_spend() {
-                    let wallet_bundle = build_wallet_bundle_for_request(
-                        allocator,
-                        &simulator,
-                        &identities[i],
-                        &req,
-                    )?;
-                    cradles[i].provide_coin_spend_bundle(allocator, wallet_bundle)?;
-                    let follow_up = cradles[i].drain_all(allocator)?;
-                    if result.resync.is_none() {
-                        result.resync = follow_up.resync;
-                    }
-                    result.events.extend(follow_up.events);
-                }
+                let result = cradles[i].drain_all(allocator)?;
 
-                // Collect coin solution requests from this drain and all
-                // subsequent drains they trigger, processing every other
-                // event inline in FIFO order.
+                // Collect coin solution requests, launcher/coin-spend
+                // requests from this drain and all subsequent drains they
+                // trigger, processing every other event inline in FIFO order.
                 let mut pending_events = result.events;
                 if matches!(result.resync, Some((_, true))) {
                     can_move = true;
@@ -1198,8 +1169,16 @@ fn run_game_container_with_action_list_with_success_predicate(
 
                 loop {
                     let mut coin_requests = Vec::new();
+                    let mut need_launcher = false;
+                    let mut coin_spend_req: Option<CoinSpendRequest> = None;
                     for event in pending_events.iter() {
                         match event {
+                            CradleEvent::NeedLauncherCoin => {
+                                need_launcher = true;
+                            }
+                            CradleEvent::NeedCoinSpend(req) => {
+                                coin_spend_req = Some(req.clone());
+                            }
                             CradleEvent::OutboundTransaction(tx) => {
                                 if nerf_transactions_for & (1 << i) != 0 {
                                     nerfed_tx_backlog.push(tx.clone());
@@ -1277,9 +1256,25 @@ fn run_game_container_with_action_list_with_success_predicate(
                         }
                     }
 
-                    if coin_requests.is_empty() {
+                    let has_followup = need_launcher || coin_spend_req.is_some() || !coin_requests.is_empty();
+                    if !has_followup {
                         break;
                     }
+
+                    if i == 0 && need_launcher {
+                        cradles[i].provide_launcher_coin(allocator, launcher_coin.clone())?;
+                    }
+
+                    if let Some(req) = coin_spend_req {
+                        let wallet_bundle = build_wallet_bundle_for_request(
+                            allocator,
+                            &simulator,
+                            &identities[i],
+                            &req,
+                        )?;
+                        cradles[i].provide_coin_spend_bundle(allocator, wallet_bundle)?;
+                    }
+
                     for coin in coin_requests.iter() {
                         let ps_res = simulator
                             .get_puzzle_and_solution(&coin.to_coin_id())
@@ -1740,14 +1735,15 @@ fn run_game_container_with_action_list_with_success_predicate(
     fn channel_state_ordinal(s: &ChannelState) -> u8 {
         match s {
             ChannelState::Handshaking => 0,
-            ChannelState::TransactionSubmitted => 1,
-            ChannelState::Active => 2,
-            ChannelState::ShuttingDown => 3,
-            ChannelState::Unrolling => 4,
+            ChannelState::OfferSent => 1,
+            ChannelState::TransactionPending => 2,
+            ChannelState::Active => 3,
+            ChannelState::ShuttingDown => 4,
+            ChannelState::Unrolling => 5,
             ChannelState::ResolvedClean
             | ChannelState::ResolvedUnrolled
             | ChannelState::ResolvedStale
-            | ChannelState::Failed => 5,
+            | ChannelState::Failed => 6,
         }
     }
     for (i, lui) in local_uis.iter().enumerate() {

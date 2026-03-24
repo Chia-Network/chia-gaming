@@ -26,13 +26,13 @@ export type CradleEvent =
   | { Notification: WasmNotification }
   | { DebugLog: string }
   | { CoinSolutionRequest: string }
-  | { ReceiveError: string };
+  | { ReceiveError: string }
+  | { NeedCoinSpend: unknown }
+  | { NeedLauncherCoin: boolean };
 
 export interface WasmResult {
   events?: CradleEvent[];
   ids?: string[];
-  need_launcher_coin?: boolean;
-  need_coin_spend?: unknown;
 }
 
 export type WasmInitFn = (opts: { module: ArrayBuffer }) => void;
@@ -130,7 +130,7 @@ export type WasmNotificationTag =
   | 'ActionFailed';
 
 export type ChannelState =
-  | 'Handshaking' | 'TransactionSubmitted'
+  | 'Handshaking' | 'OfferSent' | 'TransactionPending'
   | 'Active' | 'ShuttingDown'
   | 'Unrolling'
   | 'ResolvedClean' | 'ResolvedUnrolled' | 'ResolvedStale'

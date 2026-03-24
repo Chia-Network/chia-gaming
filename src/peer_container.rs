@@ -23,9 +23,7 @@ use crate::potato_handler::effects::{
     apply_effects, ChannelState, ChannelStatusSnapshot, CradleEvent, CradleEventQueue, Effect,
     GameNotification, ResyncInfo,
 };
-use crate::potato_handler::handshake::{
-    decode_clvm_int_to_u64, encode_u64_as_clvm_int, CoinSpendRequest,
-};
+use crate::potato_handler::handshake::{decode_clvm_int_to_u64, encode_u64_as_clvm_int};
 use crate::potato_handler::handshake_initiator::HandshakeInitiatorHandler;
 use crate::potato_handler::handshake_receiver::HandshakeReceiverHandler;
 use crate::potato_handler::start::GameStart;
@@ -323,7 +321,6 @@ impl MessagePeerQueue for SimulatedPeer<SimulatedWalletSpend> {
 
 #[derive(Default)]
 pub struct DrainResult {
-    pub handshake_done: bool,
     pub events: CradleEventQueue,
     pub resync: Option<(usize, bool)>,
 }
@@ -456,8 +453,6 @@ struct SynchronousGameCradleState {
 
     pub is_failed: bool,
     pub is_on_chain: bool,
-    need_launcher_coin: bool,
-    need_coin_spend: Option<CoinSpendRequest>,
 
     #[serde(skip)]
     events: CradleEventQueue,
@@ -554,8 +549,6 @@ impl SynchronousGameCradle {
                 peer_disconnected: false,
                 is_failed: false,
                 is_on_chain: false,
-                need_launcher_coin: false,
-                need_coin_spend: None,
                 events: CradleEventQueue::default(),
             },
             peer: {
@@ -722,13 +715,6 @@ impl SynchronousGameCradle {
         )
     }
 
-    pub fn need_launcher_coin(&self) -> bool {
-        self.state.need_launcher_coin
-    }
-
-    pub fn requested_coin_spend(&self) -> Option<CoinSpendRequest> {
-        self.state.need_coin_spend.clone()
-    }
 
     pub fn get_watching_coins(&self) -> Vec<CoinString> {
         self.state.watching_coins.keys().cloned().collect()
@@ -739,7 +725,6 @@ impl SynchronousGameCradle {
         allocator: &mut AllocEncoder,
         launcher_coin: CoinString,
     ) -> Result<(), Error> {
-        self.state.need_launcher_coin = false;
         let effects = {
             let mut env = ChannelHandlerEnv::new(allocator)?;
             self.peer.provide_launcher_coin(&mut env, launcher_coin)?
@@ -753,7 +738,6 @@ impl SynchronousGameCradle {
         allocator: &mut AllocEncoder,
         bundle: SpendBundle,
     ) -> Result<(), Error> {
-        self.state.need_coin_spend = None;
         let effects = {
             let mut env = ChannelHandlerEnv::new(allocator)?;
             self.peer.provide_coin_spend_bundle(&mut env, bundle)?
@@ -766,10 +750,7 @@ impl SynchronousGameCradle {
     /// setup steps, and collect all outbound messages, transactions, and
     /// notifications.
     pub fn drain_all(&mut self, allocator: &mut AllocEncoder) -> Result<DrainResult, Error> {
-        let mut result = DrainResult {
-            handshake_done: self.peer.handshake_finished(),
-            ..Default::default()
-        };
+        let mut result = DrainResult::default();
 
         while let Some(msg) = self.state.inbound_messages.pop_front() {
             let recv_result = {
@@ -833,7 +814,6 @@ impl SynchronousGameCradle {
             self.process_effects(effects, allocator)?;
         }
 
-        result.handshake_done = self.peer.handshake_finished();
         result.resync = self.state.resync.take();
         result.events = std::mem::take(&mut self.state.events);
 
@@ -936,7 +916,7 @@ impl SynchronousGameCradle {
         let mut passthrough = Vec::new();
         for effect in effects {
             if matches!(effect, Effect::NeedLauncherCoinId) {
-                self.state.need_launcher_coin = true;
+                self.state.events.push_back(CradleEvent::NeedLauncherCoin);
             } else if let Effect::NeedCoinSpend(mut req) = effect {
                 for cond in &mut req.conditions {
                     if cond.opcode == crate::common::constants::ASSERT_BEFORE_HEIGHT_ABSOLUTE {
@@ -947,7 +927,7 @@ impl SynchronousGameCradle {
                         }
                     }
                 }
-                self.state.need_coin_spend = Some(req);
+                self.state.events.push_back(CradleEvent::NeedCoinSpend(req));
             } else {
                 passthrough.push(effect);
             }

@@ -714,16 +714,10 @@ impl PeerHandler for HandshakeReceiverHandler {
     fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
         let state = match &self.state {
             ReceiverState::WaitingForA | ReceiverState::SentB(_) => ChannelState::Handshaking,
-            ReceiverState::SentD(_) | ReceiverState::WaitingForCompletion(_, _) => {
+            ReceiverState::SentD(_) => ChannelState::Handshaking,
+            ReceiverState::WaitingForCompletion(_, _) | ReceiverState::Finished(_) => {
                 if self.channel_handler.is_some() {
-                    ChannelState::TransactionSubmitted
-                } else {
-                    ChannelState::Handshaking
-                }
-            }
-            ReceiverState::Finished(_) => {
-                if self.channel_handler.is_some() {
-                    ChannelState::TransactionSubmitted
+                    ChannelState::TransactionPending
                 } else {
                     ChannelState::Handshaking
                 }
