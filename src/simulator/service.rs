@@ -353,7 +353,15 @@ impl GameRunner {
             .e
             .map(|e| format!("{e}"))
             .unwrap_or_else(|| "null".to_string());
-        Ok(format!("[{},{e_res}]\n", result.code))
+        if result.code != 1 && !result.diagnostic.is_empty() {
+            Ok(format!(
+                "[{},{e_res},{}]\n",
+                result.code,
+                serde_json::to_string(&result.diagnostic).unwrap_or_default()
+            ))
+        } else {
+            Ok(format!("[{},{e_res}]\n", result.code))
+        }
     }
 
     fn spend(&mut self, blob: &str) -> StringWithError {

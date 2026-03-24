@@ -480,7 +480,7 @@ export class ExternalBlockchainInterface {
     }).then((f) => f.json());
   }
 
-  spend(spend_data_clvm_hex: string): Promise<(number | null)[]> {
+  spend(spend_data_clvm_hex: string): Promise<(number | string | null)[]> {
     return fetch(`${this.baseUrl}/spend?blob=${spend_data_clvm_hex}`, {
       body: '',
       method: 'POST',

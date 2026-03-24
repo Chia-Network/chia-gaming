@@ -2274,6 +2274,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             ],
             "off_chain_complete p1",
         );
+        assert!(outcome.local_uis[0].clean_shutdown_complete, "p0 should reach ResolvedClean");
+        assert!(outcome.local_uis[1].clean_shutdown_complete, "p1 should reach ResolvedClean");
     }));
 
     res.push((
@@ -2871,6 +2873,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             ],
             "debug_alice p1",
         );
+        assert!(outcome.local_uis[0].clean_shutdown_complete, "p0 should reach ResolvedClean");
+        assert!(outcome.local_uis[1].clean_shutdown_complete, "p1 should reach ResolvedClean");
     }));
 
     res.push(("test_debug_game_normal_with_mover_share_bob", &|| {
@@ -2953,6 +2957,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             ],
             "debug_bob p1",
         );
+        assert!(outcome.local_uis[0].clean_shutdown_complete, "p0 should reach ResolvedClean");
+        assert!(outcome.local_uis[1].clean_shutdown_complete, "p1 should reach ResolvedClean");
     }));
 
     res.push(("test_debug_game_out_of_money", &|| {
@@ -3087,6 +3093,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             ],
             "shutdown_nerf_alice p1",
         );
+        assert!(outcome.local_uis[0].clean_shutdown_complete, "p0 should reach ResolvedClean");
+        assert!(outcome.local_uis[1].clean_shutdown_complete, "p1 should reach ResolvedClean");
     }));
 
     res.push(("test_calpoker_shutdown_nerf_bob", &|| {
@@ -3151,6 +3159,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             ],
             "shutdown_nerf_bob p1",
         );
+        assert!(outcome.local_uis[0].clean_shutdown_complete, "p0 should reach ResolvedClean");
+        assert!(outcome.local_uis[1].clean_shutdown_complete, "p1 should reach ResolvedClean");
     }));
 
     res.push(("test_clean_shutdown_opponent_unrolls", &|| {

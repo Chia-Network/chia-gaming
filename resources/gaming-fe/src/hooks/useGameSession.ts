@@ -18,7 +18,7 @@ import {
   setInitStarted,
 } from './blobSingleton';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
-import { SessionSave, BlockchainType, clearSession } from './save';
+import { SessionSave, BlockchainType } from './save';
 import { toHexString } from '../util';
 import { debugLog } from '../services/debugLog';
 
@@ -401,7 +401,6 @@ export function useGameSession(
   const stopPlaying = useCallback(() => {
     shutdownInitiatedRef.current = true;
     setShutdownInitiated(true);
-    clearSession();
     gameObject?.cleanShutdown();
   }, [gameObject]);
 
@@ -412,8 +411,7 @@ export function useGameSession(
     shutdownInitiatedRef.current = true;
     setShutdownInitiated(true);
     gameObject?.goOnChain();
-    peerConn.close();
-  }, [gameObject, peerConn]);
+  }, [gameObject]);
 
   return {
     error,

@@ -154,7 +154,6 @@ export class WasmBlobWrapper {
       ) {
         debugLog('[wasm] peer liveness timeout, going on-chain');
         this.goOnChain();
-        this.peerClose?.();
         this.stopPingTimer();
       }
     }, PING_INTERVAL_MS);
@@ -318,7 +317,10 @@ export class WasmBlobWrapper {
     const cvt = (blob: string) => {
       return this.wc?.convert_spend_to_coinset_org(blob);
     };
-    this.blockchain.spend(cvt, blob).then(() => {
+    this.blockchain.spend(cvt, blob).then((result) => {
+      if (result) {
+        debugLog(`[wasm] submitTransaction: ${result}`);
+      }
       const idx = this.pendingTransactions.indexOf(blob);
       if (idx !== -1) {
         this.pendingTransactions.splice(idx, 1);
@@ -326,6 +328,11 @@ export class WasmBlobWrapper {
       }
     }).catch(e => {
       console.error('[wasm] submitTransaction failed:', e);
+      const idx = this.pendingTransactions.indexOf(blob);
+      if (idx !== -1) {
+        this.pendingTransactions.splice(idx, 1);
+        this.scheduleSave();
+      }
     });
   }
 
@@ -335,7 +342,10 @@ export class WasmBlobWrapper {
     const blobs = [...this.pendingTransactions];
     for (const blob of blobs) {
       const cvt = (b: string) => this.wc?.convert_spend_to_coinset_org(b);
-      this.blockchain.spend(cvt, blob).then(() => {
+      this.blockchain.spend(cvt, blob).then((result) => {
+        if (result) {
+          debugLog(`[wasm] resubmitTransaction: ${result}`);
+        }
         const idx = this.pendingTransactions.indexOf(blob);
         if (idx !== -1) {
           this.pendingTransactions.splice(idx, 1);
@@ -343,6 +353,11 @@ export class WasmBlobWrapper {
         }
       }).catch(e => {
         console.error('[wasm] resubmitPendingTransactions failed:', e);
+        const idx = this.pendingTransactions.indexOf(blob);
+        if (idx !== -1) {
+          this.pendingTransactions.splice(idx, 1);
+          this.scheduleSave();
+        }
       });
     }
   }

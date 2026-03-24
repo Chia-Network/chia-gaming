@@ -39,6 +39,9 @@ import {
   ConnectionStatus,
 } from '../../services/TrackerConnection';
 
+let trackerDisconnectCount = 0;
+let expectedTrackerDisconnects = 0;
+
 function makeCallbacks(): TrackerConnectionCallbacks {
   return {
     onMatched: jest.fn(),
@@ -48,16 +51,19 @@ function makeCallbacks(): TrackerConnectionCallbacks {
     onAck: jest.fn(),
     onPing: jest.fn(),
     onClosed: jest.fn(),
-    onTrackerDisconnected: jest.fn(),
+    onTrackerDisconnected: jest.fn(() => { trackerDisconnectCount++; }),
     onTrackerReconnected: jest.fn(),
   };
 }
 
 beforeEach(() => {
   jest.useFakeTimers();
+  trackerDisconnectCount = 0;
+  expectedTrackerDisconnects = 0;
 });
 
 afterEach(() => {
+  expect(trackerDisconnectCount).toBe(expectedTrackerDisconnects);
   jest.clearAllTimers();
   jest.useRealTimers();
 });
@@ -106,6 +112,7 @@ describe('event routing', () => {
   });
 
   it('routes disconnect to onTrackerDisconnected', () => {
+    expectedTrackerDisconnects = 1;
     const cb = makeCallbacks();
     new TrackerConnection('http://t', 's1', cb);
     mockSocket._fire('disconnect');
@@ -207,6 +214,7 @@ describe('close-pending suppresses messages', () => {
 
 describe('ping timer lifecycle', () => {
   it('emits tracker_ping every 15s after connect, stops on disconnect', () => {
+    expectedTrackerDisconnects = 1;
     const cb = makeCallbacks();
     new TrackerConnection('http://t', 's1', cb);
 
@@ -279,5 +287,19 @@ describe('outbound message format', () => {
     expect(mockSocket.emit).toHaveBeenCalledWith('message', {
       data: '{"ping":true}',
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// forceDisconnect does not emit close
+// ---------------------------------------------------------------------------
+
+describe('forceDisconnect lifecycle', () => {
+  it('forceDisconnect does not emit close event', () => {
+    const cb = makeCallbacks();
+    const conn = new TrackerConnection('http://t', 's1', cb);
+    conn.forceDisconnect();
+    expect(mockSocket.emit).not.toHaveBeenCalledWith('close', expect.anything());
+    expect(mockSocket.disconnect).toHaveBeenCalled();
   });
 });

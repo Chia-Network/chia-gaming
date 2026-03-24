@@ -41,6 +41,9 @@ cleanup() {
         kill "$pid" 2>/dev/null || true
     done
     kill $(lsof -i -n -P | grep LISTEN | grep :$WC_PORT | awk '{print $2}') 2>/dev/null || true
+    for pid in "${PIDS[@]}"; do
+        wait "$pid" 2>/dev/null || true
+    done
     echo "All services stopped."
 }
 trap cleanup EXIT

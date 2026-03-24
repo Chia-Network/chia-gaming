@@ -60,10 +60,15 @@ export class TrackerConnection {
       this.socket.emit('identify', { session_id: sessionId });
     });
 
-    this.socket.on('disconnect', () => {
+    this.socket.on('disconnect', (reason: string, description?: unknown) => {
       this.stopTrackerPingTimer();
-      debugLog('[tracker] disconnected from tracker');
+      const desc = description ? ` detail=${JSON.stringify(description)}` : '';
+      debugLog(`[tracker] disconnected from tracker reason=${reason}${desc}`);
       this.callbacks.onTrackerDisconnected();
+    });
+
+    this.socket.on('connect_error', (err: Error) => {
+      debugLog(`[tracker] connect_error: ${err.message}`);
     });
 
     this.socket.io.on('reconnect', () => {
@@ -104,7 +109,6 @@ export class TrackerConnection {
       try {
         const parsed = JSON.parse(data);
         if (parsed.ping) {
-          debugLog('[tracker] recv peer ping');
           this.callbacks.onPing();
           return;
         }

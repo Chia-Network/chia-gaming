@@ -239,14 +239,13 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       }
 
       if (status_array[0] != 1) {
-        if (status_array.length != 2) {
-          throw new Error(`spend status ${status_array[0]} with no detail`);
-        }
-        // Could make additional choices on status_array[1]
-        throw new Error(`spend error status ${status_array}`);
+        const detail = status_array[1] ?? '?';
+        const diagnostic = status_array[2] ?? '';
+        const msg = `spend rejected: status=[${status_array[0]},${detail}]${diagnostic ? ' ' + diagnostic : ''}`;
+        console.warn('[blockchain]', msg);
+        return msg;
       }
 
-      // What to return?
       return '';
     });
   }

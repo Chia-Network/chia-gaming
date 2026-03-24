@@ -88,6 +88,7 @@ function noteActivity(socketId: string) {
 function completeGameSocketRegistration(playerId: string, sock: Socket) {
   const oldSocket = gameSocketsByPlayer.get(playerId);
   if (oldSocket && oldSocket.id !== sock.id) {
+    console.log(`[tracker] replacing game socket for player=${playerId}: old=${oldSocket.id} new=${sock.id}`);
     gameSocketToPlayer.delete(oldSocket.id);
     oldSocket.disconnect(true);
   }
@@ -98,6 +99,7 @@ function completeGameSocketRegistration(playerId: string, sock: Socket) {
   if (pairing) {
     const peerId = pairing.playerA_id === playerId ? pairing.playerB_id : pairing.playerA_id;
     const peerConnected = gameSocketsByPlayer.has(peerId);
+    console.log(`[tracker] game socket registered player=${playerId} socket=${sock.id} pairing=${pairing.token} peer_connected=${peerConnected}`);
     sock.emit('connection_status', {
       has_pairing: true,
       token: pairing.token,
@@ -112,6 +114,7 @@ function completeGameSocketRegistration(playerId: string, sock: Socket) {
       peerSocket?.emit('peer_reconnected', {});
     }
   } else {
+    console.log(`[tracker] game socket registered player=${playerId} socket=${sock.id} (no pairing)`);
     sock.emit('connection_status', { has_pairing: false });
   }
 }
@@ -184,6 +187,7 @@ app.post('/lobby/game', (req, res) => {
 
 io.on('connection', (socket) => {
   noteActivity(socket.id);
+  console.log(`[tracker] socket connected: ${socket.id}`);
 
   socket.emit('lobby_update', lobby.getPlayers());
   io.emit('game_update', lobby.getGames());
@@ -202,6 +206,7 @@ io.on('connection', (socket) => {
   socket.on('join', ({ id, alias, session_id }) => {
     noteActivity(socket.id);
     if (!id) return;
+    console.log(`[tracker] join: socket=${socket.id} player=${id} session=${session_id ?? 'none'}`);
 
     lobbySocketsByPlayer.set(id, socket);
     lobbySocketToPlayer.set(socket.id, id);
@@ -225,6 +230,7 @@ io.on('connection', (socket) => {
     if (session_id) {
       const pendingSock = pendingIdentifies.get(session_id);
       if (pendingSock && pendingSock.connected) {
+        console.log(`[tracker] join: resolving pending identify for session=${session_id} player=${id} socket=${pendingSock.id}`);
         pendingIdentifies.delete(session_id);
         completeGameSocketRegistration(id, pendingSock);
       }
@@ -326,19 +332,23 @@ io.on('connection', (socket) => {
 
   socket.on('identify', ({ session_id }) => {
     noteActivity(socket.id);
+    console.log(`[tracker] identify: socket=${socket.id} session_id=${session_id}`);
     if (!session_id) return;
 
     const oldPending = pendingIdentifies.get(session_id);
     if (oldPending && oldPending.id !== socket.id && oldPending.connected) {
+      console.log(`[tracker] disconnecting stale pending identify: old=${oldPending.id} new=${socket.id} session=${session_id}`);
       oldPending.disconnect(true);
     }
 
     const playerId = sessionToPlayer.get(session_id);
     if (!playerId) {
+      console.log(`[tracker] identify: no player yet for session=${session_id}, queuing as pending`);
       pendingIdentifies.set(session_id, socket);
       return;
     }
 
+    console.log(`[tracker] identify: resolved session=${session_id} -> player=${playerId}`);
     completeGameSocketRegistration(playerId, socket);
   });
 
@@ -359,6 +369,7 @@ io.on('connection', (socket) => {
   socket.on('close', () => {
     noteActivity(socket.id);
     const senderId = gameSocketToPlayer.get(socket.id);
+    console.log(`[tracker] close event: socket=${socket.id} player=${senderId ?? 'none'}`);
     if (!senderId) return;
 
     const peerId = lobby.getPairedPlayerId(senderId);
@@ -379,10 +390,15 @@ io.on('connection', (socket) => {
 
   // --- Cleanup on disconnect ---
 
-  socket.on('disconnect', () => {
-    lastHeardFrom.delete(socket.id);
-
+  socket.on('disconnect', (reason: string) => {
     const lobbyPlayerId = lobbySocketToPlayer.get(socket.id);
+    const gamePlayerId = gameSocketToPlayer.get(socket.id);
+    let isPending = false;
+    for (const [sid, sock] of pendingIdentifies) {
+      if (sock.id === socket.id) { isPending = true; break; }
+    }
+    console.log(`[tracker] socket disconnected: ${socket.id} reason=${reason} lobbyPlayer=${lobbyPlayerId ?? 'none'} gamePlayer=${gamePlayerId ?? 'none'} pending=${isPending}`);
+    lastHeardFrom.delete(socket.id);
     if (lobbyPlayerId) {
       lobbySocketToPlayer.delete(socket.id);
       const current = lobbySocketsByPlayer.get(lobbyPlayerId);
@@ -392,7 +408,6 @@ io.on('connection', (socket) => {
       }
     }
 
-    const gamePlayerId = gameSocketToPlayer.get(socket.id);
     if (gamePlayerId) {
       gameSocketToPlayer.delete(socket.id);
       const current = gameSocketsByPlayer.get(gamePlayerId);
