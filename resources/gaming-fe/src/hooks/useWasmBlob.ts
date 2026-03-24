@@ -105,6 +105,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
   const moveNumberRef = useRef<number>(0);
   const gameIdsRef = useRef<string[]>([]);
   const gameOutcomeRef = useRef<CalpokerOutcome | undefined>(undefined);
+  const pendingChannelCoinsRef = useRef<string[]>([]);
 
   playerHandRef.current = playerHand;
   opponentHandRef.current = opponentHand;
@@ -330,9 +331,17 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     } else if ('CleanShutdownComplete' in n) {
       setGameConnectionState({ stateIdentifier: 'clean_shutdown', stateDetail: [] });
     } else if ('ChannelCreated' in n) {
-      setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
-      if (iStarted) {
-        proposeNewGame();
+      const coins = go?.getWatchingCoins() || [];
+      const coinStrings = coins.map((c: { coin_string: string }) => c.coin_string);
+      if (coinStrings.length > 0) {
+        pendingChannelCoinsRef.current = coinStrings;
+        setGameConnectionState({ stateIdentifier: 'starting', stateDetail: ['Waiting for blockchain confirmation...'] });
+        console.log('[calpoker] ChannelCreated, waiting for on-chain confirmation of', coinStrings.length, 'coin(s)');
+      } else {
+        setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
+        if (iStarted) {
+          proposeNewGame();
+        }
       }
     } else if ('CleanShutdownStarted' in n) {
       // Peer initiated clean shutdown
@@ -400,13 +409,27 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     const subscription = blockchain.getObservable().subscribe({
       next: (e: BlockchainReport) => {
         gameObject?.blockNotification(e.peak, e.block, e.report);
+
+        const pending = pendingChannelCoinsRef.current;
+        const created = e.report?.created_watched;
+        if (pending.length > 0 && Array.isArray(created) && created.length > 0) {
+          const confirmed = pending.some((cs: string) => created.includes(cs));
+          if (confirmed) {
+            console.log('[calpoker] channel coin confirmed on-chain');
+            pendingChannelCoinsRef.current = [];
+            setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
+            if (iStarted) {
+              proposeNewGame();
+            }
+          }
+        }
       },
     });
 
     return () => {
       subscription.unsubscribe();
     };
-  }, [gameObject]);
+  }, [gameObject, iStarted, proposeNewGame]);
 
   const handleMakeMove = useCallback(() => {
     const go = gameObjectRef.current;

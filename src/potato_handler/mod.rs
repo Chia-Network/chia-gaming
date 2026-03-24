@@ -1572,6 +1572,7 @@ impl PotatoHandler {
                     name: Some("channel"),
                 });
 
+                effects.push(Effect::SpendTransaction(bundle.clone()));
                 effects.push(Effect::ReceivedChannelOffer(bundle.clone()));
                 effects.push(Effect::Notify(GameNotification::ChannelCreated {}));
 

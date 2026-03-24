@@ -238,6 +238,7 @@ interface _JsonRpc {
     data: GetCoinRecordsByNamesRequest,
   ) => Promise<GetCoinRecordsByNamesResponse>;
   pushTx: (data: PushTxRequest) => Promise<PushTxResponse>;
+  walletPushTx: (data: PushTxRequest) => Promise<PushTxResponse>;
 }
 
 async function request<T>(method: ChiaMethod, data: any): Promise<T> {
@@ -493,6 +494,10 @@ async function pushTx(data: PushTxRequest) {
   return await request<PushTxResponse>(ChiaMethod.PushTx, data);
 }
 
+async function walletPushTx(data: PushTxRequest) {
+  return await request<PushTxResponse>(ChiaMethod.WalletPushTx, data);
+}
+
 export const rpc = {
   // Wallet
   logIn,
@@ -546,4 +551,5 @@ export const rpc = {
   registerRemoteCoins,
   getCoinRecordsByNames,
   pushTx,
+  walletPushTx,
 };

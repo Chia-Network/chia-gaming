@@ -150,22 +150,22 @@ export class RealBlockchainInterface {
   }
 
   async spend(spend: any): Promise<string> {
-    console.log('[wc-blockchain] >>> pushTx');
+    console.log('[wc-blockchain] >>> walletPushTx');
     try {
-      const result = await rpc.pushTx({ spendBundle: spend });
-      console.log('[wc-blockchain] <<< pushTx', result.status);
+      const result = await rpc.walletPushTx({ spendBundle: spend });
+      console.log('[wc-blockchain] <<< walletPushTx', result.status);
       return result as any;
     } catch (e: any) {
-      const errStr = typeof e === 'string' ? e : JSON.stringify(e);
+      const errStr = typeof e === 'string' ? e : (e?.message || JSON.stringify(e));
       if (isRetryablePushTxError(errStr)) {
-        console.warn(`[wc-blockchain] pushTx retryable error, retry in ${PUSH_TX_RETRY_DELAY / 1000}s:`, errStr);
+        console.warn(`[wc-blockchain] walletPushTx retryable error, retry in ${PUSH_TX_RETRY_DELAY / 1000}s:`, errStr);
         return new Promise((resolve, reject) => {
           setTimeout(() => {
             this.spend(spend).then(resolve).catch(reject);
           }, PUSH_TX_RETRY_DELAY);
         });
       }
-      console.error('[wc-blockchain] pushTx error', e);
+      console.error('[wc-blockchain] walletPushTx error', e);
       throw e;
     }
   }
@@ -419,27 +419,27 @@ export function connectRealBlockchain() {
       } else if (transaction) {
         while (true) {
           try {
-            console.log(`[wc-blockchain] >>> pushTx (transaction req #${evt.requestId})`);
-            const result = await rpc.pushTx({
+            console.log(`[wc-blockchain] >>> walletPushTx (transaction req #${evt.requestId})`);
+            const result = await rpc.walletPushTx({
               spendBundle: transaction.spendObject,
             });
-            console.log(`[wc-blockchain] <<< pushTx (transaction req #${evt.requestId})`, result.status);
+            console.log(`[wc-blockchain] <<< walletPushTx (transaction req #${evt.requestId})`, result.status);
             blockchainConnector.replyEmitter({
               responseId: evt.requestId,
               transaction: result as any,
             });
             return;
           } catch (e: any) {
-            const errStr = typeof e === 'string' ? e : JSON.stringify(e);
+            const errStr = typeof e === 'string' ? e : (e?.message || JSON.stringify(e));
             if (!isRetryablePushTxError(errStr)) {
-              console.error(`[wc-blockchain] pushTx error`, e);
+              console.error(`[wc-blockchain] walletPushTx error`, e);
               blockchainConnector.replyEmitter({
                 responseId: evt.requestId,
                 transaction: { error: errStr } as any,
               });
               return;
             }
-            console.warn(`[wc-blockchain] pushTx retryable error, retry in ${PUSH_TX_RETRY_DELAY / 1000}s:`, errStr);
+            console.warn(`[wc-blockchain] walletPushTx retryable error, retry in ${PUSH_TX_RETRY_DELAY / 1000}s:`, errStr);
             await new Promise((resolve) => {
               setTimeout(resolve, PUSH_TX_RETRY_DELAY);
             });
