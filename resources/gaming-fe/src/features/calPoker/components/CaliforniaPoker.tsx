@@ -184,6 +184,10 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     const usedPlayerCards = new Set<number>();
     const usedAiCards = new Set<number>();
 
+    const wrapperRect = wrapperRef.current?.getBoundingClientRect();
+    const offsetX = wrapperRect?.left ?? 0;
+    const offsetY = wrapperRect?.top ?? 0;
+
     // Prefixes for DOM selectors (myPrefix = viewer's hand in DOM)
     const myPrefix = 'player';
     const oppPrefix = 'ai';
@@ -224,10 +228,10 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         movingCardData.push({
           id: `${myPrefix}-to-${oppPrefix}-${swapCardId}`,
           card,
-          startX: myRect.left,
-          startY: myRect.top,
-          endX: oppRect.left,
-          endY: oppRect.top,
+          startX: myRect.left - offsetX,
+          startY: myRect.top - offsetY,
+          endX: oppRect.left - offsetX,
+          endY: oppRect.top - offsetY,
           width: myRect.width,
           height: myRect.height,
           direction: 'playerToAi',
@@ -262,10 +266,10 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         movingCardData.push({
           id: `${oppPrefix}-to-${myPrefix}-${swapCardId}`,
           card,
-          startX: oppRect.left,
-          startY: oppRect.top,
-          endX: myRect.left,
-          endY: myRect.top,
+          startX: oppRect.left - offsetX,
+          startY: oppRect.top - offsetY,
+          endX: myRect.left - offsetX,
+          endY: myRect.top - offsetY,
           width: oppRect.width,
           height: oppRect.height,
           direction: 'aiToPlayer',
@@ -295,10 +299,10 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         movingCardData.push({
           id: `${myPrefix}-to-${myPrefix}-${card.cardId}`,
           card,
-          startX: myRect.left,
-          startY: myRect.top,
-          endX: myRect.left,
-          endY: myRect.top,
+          startX: myRect.left - offsetX,
+          startY: myRect.top - offsetY,
+          endX: myRect.left - offsetX,
+          endY: myRect.top - offsetY,
           width: myRect.width,
           height: myRect.height,
           direction: 'self',
@@ -457,7 +461,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     }
   }, [moveNumber, showSwapAnimation, gameState]);
   return (
-    <div ref={wrapperRef} className='flex flex-col w-full text-canvas-text'>
+    <div ref={wrapperRef} className='relative flex flex-col w-full text-canvas-text'>
       {gameState !== GAME_STATES.INITIAL ? (
         <div className='flex flex-col gap-2'>
           {/* Hands region */}
