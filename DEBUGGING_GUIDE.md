@@ -382,3 +382,19 @@ whether the trigger condition for the next action can ever be satisfied.
   finish, set `block_until_ms` to a value higher than the expected runtime.
   The tool returns as soon as the process exits or the timeout elapses,
   whichever comes first. Using `sleep` wastes time and blocks interruption.
+- **On macOS/Linux, use `kill -0` instead of `sleep` for waiting.**
+  `sleep N` always waits the full N seconds even if the process finished
+  immediately. This alternative checks once per second whether the process
+  is still running and exits as soon as it isn't:
+
+  ```bash
+  # kill -0 sends no signal — it only checks whether the PID exists
+  for i in $(seq 60); do kill -0 <pid> 2>/dev/null || break; sleep 1; done
+  ```
+
+  This is strictly better than `sleep 60`: identical worst case (60s if
+  the process truly takes that long), but returns within 1 second of
+  process exit instead of wasting the remaining time. Use a higher count
+  when the expected runtime is longer.
+
+  `kill -0` is POSIX and works on macOS and Linux, not Windows.

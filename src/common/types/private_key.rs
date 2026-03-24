@@ -5,7 +5,7 @@ use rand::distributions::Standard;
 use rand::prelude::*;
 
 use chia_bls;
-use chia_bls::signature::sign;
+use chia_bls::sign;
 
 use crate::common::types::{Aggsig, Error, Hash, IntoErr};
 

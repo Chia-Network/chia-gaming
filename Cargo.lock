@@ -228,23 +228,6 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "chia-bls"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7d1c65f5ebda36fbef06b96e82b2ad766f4c3eee03baeb8042a8ef789f96179"
-dependencies = [
- "anyhow",
- "blst",
- "chia-traits 0.9.0",
- "hex",
- "hkdf",
- "lru",
- "sha2 0.10.9",
- "thiserror",
- "tiny-bip39",
-]
-
-[[package]]
-name = "chia-bls"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "53dea95bd7dac1e69c59ef6839ecf30ff3fe29170c16c4aa00093be21e0d789e"
@@ -268,6 +251,22 @@ dependencies = [
  "blst",
  "chia-sha2 0.28.2",
  "chia-traits 0.28.2",
+ "hex",
+ "hkdf",
+ "linked-hash-map",
+ "sha2 0.10.9",
+ "thiserror",
+]
+
+[[package]]
+name = "chia-bls"
+version = "0.35.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edce4dd326365d0cde59f6d72d6823802274a2ed18c086581a068dd811208f51"
+dependencies = [
+ "blst",
+ "chia-sha2 0.35.2",
+ "chia-traits 0.35.2",
  "hex",
  "hkdf",
  "linked-hash-map",
@@ -339,17 +338,6 @@ dependencies = [
 
 [[package]]
 name = "chia-traits"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49a7ff37ff605251213041377ae9d9aa2a9b00e45362b4ec88013dccf57b97cd"
-dependencies = [
- "chia_streamable_macro 0.8.0",
- "sha2 0.10.9",
- "thiserror",
-]
-
-[[package]]
-name = "chia-traits"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e57bbde886b38a9a5df185e751d90e295d14e99659bf43df7fa701d52d4da1ea"
@@ -372,6 +360,17 @@ dependencies = [
 
 [[package]]
 name = "chia-traits"
+version = "0.35.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b77bf2d521ecfc5d7f8f8440e0aa50fa4614399a3ce8b190ffa0e1eb6c096e8"
+dependencies = [
+ "chia-sha2 0.35.2",
+ "chia_streamable_macro 0.35.2",
+ "thiserror",
+]
+
+[[package]]
+name = "chia-traits"
 version = "0.36.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f4922b447b2d8418213948af1a448c3ca7b84e149b51b2c87a2e00e80bb19b0"
@@ -388,7 +387,7 @@ dependencies = [
  "bls12_381",
  "blst",
  "bson",
- "chia-bls 0.9.0",
+ "chia-bls 0.35.2",
  "chia-puzzles",
  "chialisp",
  "clvm-traits",
@@ -417,18 +416,6 @@ dependencies = [
 
 [[package]]
 name = "chia_streamable_macro"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1e2025e62defea0c0bb0912e15091e632cdad892986563e179ce9ad3d2c7d0b"
-dependencies = [
- "proc-macro-crate",
- "proc-macro2",
- "quote",
- "syn 2.0.106",
-]
-
-[[package]]
-name = "chia_streamable_macro"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00e78b5981952d2383b08344fdc6e6f843e72cc9d502d46d1d2824c485b34694"
@@ -444,6 +431,18 @@ name = "chia_streamable_macro"
 version = "0.28.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc6b807a9c04440d3f30b5534b84b462b996b34eee7fe0b7f8737ae6dfc6b9d4"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
+]
+
+[[package]]
+name = "chia_streamable_macro"
+version = "0.35.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4aa42247b4cdb551d923da4789afdfce487eab13df0ff0e05422f12281ae749a"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -1282,15 +1281,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pbkdf2"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83a0692ec44e4cf1ef28ca317f14f8f07da2d95ec3fa01f86e4467b725e60917"
-dependencies = [
- "digest 0.10.7",
-]
-
-[[package]]
 name = "pem-rfc7468"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1474,12 +1464,6 @@ dependencies = [
  "hmac",
  "subtle",
 ]
-
-[[package]]
-name = "rustc-hash"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
 
 [[package]]
 name = "rustix"
@@ -1798,25 +1782,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tiny-bip39"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62cc94d358b5a1e84a5cb9109f559aa3c4d634d2b1b4de3d0fa4adc7c78e2861"
-dependencies = [
- "anyhow",
- "hmac",
- "once_cell",
- "pbkdf2",
- "rand",
- "rustc-hash",
- "sha2 0.10.9",
- "thiserror",
- "unicode-normalization",
- "wasm-bindgen",
- "zeroize",
-]
-
-[[package]]
 name = "tiny_http"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1827,21 +1792,6 @@ dependencies = [
  "httpdate",
  "log",
 ]
-
-[[package]]
-name = "tinyvec"
-version = "1.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87cc5ceb3875bb20c2890005a4e226a4651264a5c75edb2421b52861a0a0cb50"
-dependencies = [
- "tinyvec_macros",
-]
-
-[[package]]
-name = "tinyvec_macros"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "toml"
@@ -1929,15 +1879,6 @@ name = "unicode-ident"
 version = "1.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3354b9ac3fae1ff6755cb6db53683adb661634f67557942dea4facebec0fee4b"
-
-[[package]]
-name = "unicode-normalization"
-version = "0.1.23"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a56d1686db2308d901306f92a263857ef59ea39678a5458e7cb17f01415101f5"
-dependencies = [
- "tinyvec",
-]
 
 [[package]]
 name = "unicode-segmentation"

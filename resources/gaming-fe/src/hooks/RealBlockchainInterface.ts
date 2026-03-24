@@ -526,7 +526,7 @@ export function connectRealBlockchain() {
           extraConditions: (evt.createOfferForIds.extraConditions || []).map(convertConditionArgs),
           coinIds: evt.createOfferForIds.coinIds,
         } as any).then((result) => {
-          blockchainConnector.replyEmitter({ responseId: evt.requestId, createOfferForIds: result });
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, createOfferForIds: result.offer });
         }).catch((e: any) => {
           blockchainConnector.replyEmitter({
             responseId: evt.requestId,

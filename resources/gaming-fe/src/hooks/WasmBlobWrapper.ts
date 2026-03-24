@@ -21,6 +21,7 @@ import {
 import { debugLog } from '../services/debugLog';
 import { saveSession, clearSession, SessionSave, CalpokerHandState, BlockchainType } from './save';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
+import { normalizeSpendBundle } from '../util/offerDecode';
 
 function clvmToBytes(value: Program | null): Uint8Array {
   if (value === null || value === undefined) return new Uint8Array([0x80]);
@@ -281,8 +282,13 @@ export class WasmBlobWrapper {
         return;
       }
 
-      const bundleJson = typeof bundle === 'string' ? bundle : JSON.stringify(bundle);
-      const result = this.cradle?.provide_coin_spend_bundle(bundleJson);
+      let result;
+      if (typeof bundle === 'string' && bundle.startsWith('offer')) {
+        result = this.cradle?.provide_offer_bech32(bundle);
+      } else {
+        const bundleJson = typeof bundle === 'string' ? bundle : JSON.stringify(bundle);
+        result = this.cradle?.provide_coin_spend_bundle(bundleJson);
+      }
       this.processResult(result);
     } catch (e) {
       console.error('[wasm] handleNeedCoinSpend error:', e);

@@ -23,7 +23,9 @@ use crate::potato_handler::effects::{
     apply_effects, ChannelState, ChannelStatusSnapshot, CradleEvent, CradleEventQueue, Effect,
     GameNotification, ResyncInfo,
 };
-use crate::potato_handler::handshake::CoinSpendRequest;
+use crate::potato_handler::handshake::{
+    decode_clvm_int_to_u64, encode_u64_as_clvm_int, CoinSpendRequest,
+};
 use crate::potato_handler::handshake_initiator::HandshakeInitiatorHandler;
 use crate::potato_handler::handshake_receiver::HandshakeReceiverHandler;
 use crate::potato_handler::start::GameStart;
@@ -937,7 +939,16 @@ impl SynchronousGameCradle {
         for effect in effects {
             if matches!(effect, Effect::NeedLauncherCoinId) {
                 self.state.need_launcher_coin = true;
-            } else if let Effect::NeedCoinSpend(req) = effect {
+            } else if let Effect::NeedCoinSpend(mut req) = effect {
+                for cond in &mut req.conditions {
+                    if cond.opcode == crate::common::constants::ASSERT_BEFORE_HEIGHT_ABSOLUTE {
+                        if let Some(arg) = cond.args.first() {
+                            let relative = decode_clvm_int_to_u64(arg);
+                            let absolute = self.state.current_height + relative;
+                            cond.args[0] = encode_u64_as_clvm_int(absolute);
+                        }
+                    }
+                }
                 self.state.need_coin_spend = Some(req);
             } else {
                 passthrough.push(effect);
@@ -1110,6 +1121,10 @@ impl SynchronousGameCradle {
         let fake_move = f(&msg_envelope)?;
 
         self.state.send_message(&fake_move)
+    }
+
+    pub fn channel_puzzle_hash(&self) -> Option<PuzzleHash> {
+        self.state.channel_puzzle_hash.clone()
     }
 
     fn filter_coin_report(&mut self, block: u64, watch_report: &WatchReport) -> WatchReport {
