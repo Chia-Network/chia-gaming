@@ -980,7 +980,7 @@ impl PeerHandler for UnrollWatchHandler {
         let (state, coin) = match &self.state {
             UnrollState::WaitingForChannelSpend { channel_coin }
             | UnrollState::WaitingForChannelConditions { channel_coin } => {
-                (ChannelState::Unrolling, Some(channel_coin.clone()))
+                (ChannelState::GoingOnChain, Some(channel_coin.clone()))
             }
             UnrollState::WaitingForUnrollTimeoutOrSpend { unroll_coin, .. }
             | UnrollState::WaitingForUnrollSpend { unroll_coin, .. }

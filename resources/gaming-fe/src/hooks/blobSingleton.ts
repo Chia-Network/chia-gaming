@@ -82,6 +82,8 @@ async function restoreSession(
   gameObject.activeGameId = save.activeGameId ?? null;
   gameObject.handState = save.handState ?? null;
   gameObject.lastChannelStatus = save.channelStatus ?? null;
+  gameObject.myAlias = save.myAlias;
+  gameObject.opponentAlias = save.opponentAlias;
   gameObject.markRestored();
 
   debugLog('[restore] session restored');

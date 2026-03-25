@@ -29,6 +29,8 @@ pub enum ChannelState {
     TransactionPending,
     Active,
     ShuttingDown,
+    ShutdownTransactionPending,
+    GoingOnChain,
     Unrolling,
     ResolvedClean,
     ResolvedUnrolled,

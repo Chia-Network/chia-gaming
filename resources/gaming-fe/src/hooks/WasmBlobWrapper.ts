@@ -70,7 +70,6 @@ export class WasmBlobWrapper {
   rxjsEmitter: NextObserver<WasmEvent> | undefined;
   private eventQueue: CradleEvent[] = [];
   private draining = false;
-  private firstBlockLogged = false;
   private pendingBlockNotification: { peak: number; report: WatchReport } | null = null;
   launcherProvided: boolean;
 
@@ -85,6 +84,8 @@ export class WasmBlobWrapper {
   activeGameId: string | null = null;
   handState: CalpokerHandState | null = null;
   lastChannelStatus: ChannelStatusPayload | null = null;
+  myAlias: string | undefined = undefined;
+  opponentAlias: string | undefined = undefined;
 
   constructor(
     blockchain: InternalBlockchainInterface,
@@ -526,10 +527,7 @@ export class WasmBlobWrapper {
         }
       }
     }
-    if (!this.firstBlockLogged) {
-      this.firstBlockLogged = true;
-      debugLog(`[wasm] first block notification height=${peak} cradle=${this.cradle ? 'yes' : 'no'}`);
-    }
+    debugLog(`[wasm] block height=${peak} cradle=${this.cradle ? 'yes' : 'no'} created=${block_report.created_watched.length} deleted=${block_report.deleted_watched.length} timed_out=${block_report.timed_out.length}`);
     if (!this.cradle) {
       this.pendingBlockNotification = { peak, report: block_report };
       return;
@@ -592,6 +590,8 @@ export class WasmBlobWrapper {
         activeGameId: this.activeGameId,
         handState: this.handState,
         channelStatus: this.lastChannelStatus,
+        myAlias: this.myAlias,
+        opponentAlias: this.opponentAlias,
       };
       saveSession(save);
     } catch (e) {

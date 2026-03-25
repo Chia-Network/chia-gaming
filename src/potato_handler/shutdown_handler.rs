@@ -542,7 +542,7 @@ impl PeerHandler for ShutdownHandler {
     fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
         let state = match self.state {
             ShutdownState::WatchingChannelCoin | ShutdownState::WaitingForConditions => {
-                ChannelState::ShuttingDown
+                ChannelState::ShutdownTransactionPending
             }
             ShutdownState::Completed => ChannelState::ResolvedClean,
             ShutdownState::Failed => ChannelState::Failed,

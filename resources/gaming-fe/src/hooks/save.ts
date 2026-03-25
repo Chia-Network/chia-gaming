@@ -38,6 +38,8 @@ export interface SessionSave {
   activeGameId?: string | null;
   handState?: CalpokerHandState | null;
   channelStatus?: ChannelStatusPayload | null;
+  myAlias?: string;
+  opponentAlias?: string;
 }
 
 export interface AppState {

@@ -50,6 +50,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   myWinOutcome,
   onDisplayComplete,
   onGameLog,
+  myName,
+  opponentName,
 }) => {
   const [gameState, setGameState] = useState(GAME_STATES.INITIAL);
   // const [playerCards, setPlayerHand] = useState<CardValueSuit[]>([]);
@@ -470,7 +472,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
               <CardHeader className='flex-shrink-0 p-0 w-full flex-row flex justify-center items-center'>
                 <CardTitle className='w-full pl-4 py-1 text-base flex-col sm:flex-row flex items-start gap-2'>
                   <span className='text-base font-semibold text-alert-text'>
-                    Opponent Hand
+                    {opponentName ? `${opponentName}'s Hand` : 'Opponent Hand'}
                   </span>
                   {opponentDisplayText && (
                     <span className='text-canvas-text'>
@@ -515,7 +517,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
               <CardHeader className='flex-shrink-0 p-0 w-full flex-row flex justify-center items-center'>
                 <CardTitle className='w-full pl-4 py-1 text-base flex-col sm:flex-row flex items-start gap-2'>
                   <span className='font-semibold text-success-text'>
-                    Your Hand
+                    {myName ? `${myName}'s Hand` : 'Your Hand'}
                   </span>
                   {playerDisplayText && (
                     <span className='text-canvas-text'>

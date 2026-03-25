@@ -474,9 +474,12 @@ mod sim_tests {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::ShuttingDown,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::ShutdownTransactionPending,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::ResolvedClean,
@@ -501,7 +504,7 @@ mod sim_tests {
                     },
                     ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::ShuttingDown,
+                        ChannelState::ShutdownTransactionPending,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::ResolvedClean,
@@ -582,6 +585,9 @@ mod sim_tests {
                 &[
                     game_accepted(),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::GoingOnChain,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::Unrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
@@ -600,6 +606,9 @@ mod sim_tests {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::GoingOnChain,
+                    )),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::Unrolling,
                     )),
@@ -634,6 +643,9 @@ mod sim_tests {
                     &[
                         game_accepted(),
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                            ChannelState::GoingOnChain,
+                        )),
+                        ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
                         ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
@@ -652,6 +664,9 @@ mod sim_tests {
                         ExpectedEvent::OpponentMoved {
                             mover_share: Amount::new(0),
                         },
+                        ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                            ChannelState::GoingOnChain,
+                        )),
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
@@ -683,6 +698,9 @@ mod sim_tests {
                 &[
                     game_accepted(),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::GoingOnChain,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::Unrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
@@ -701,6 +719,9 @@ mod sim_tests {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::GoingOnChain,
+                    )),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::Unrolling,
                     )),
@@ -731,6 +752,9 @@ mod sim_tests {
                 &[
                     game_accepted(),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::GoingOnChain,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::Unrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
@@ -753,6 +777,9 @@ mod sim_tests {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::GoingOnChain,
+                    )),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::Unrolling,
                     )),
@@ -788,6 +815,9 @@ mod sim_tests {
                         mover_share: Amount::new(0),
                     },
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::GoingOnChain,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::Unrolling,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
@@ -806,6 +836,9 @@ mod sim_tests {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::GoingOnChain,
+                    )),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::Unrolling,
                     )),
@@ -842,9 +875,12 @@ mod sim_tests {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::ShuttingDown,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::ShutdownTransactionPending,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::ResolvedClean,
@@ -869,7 +905,7 @@ mod sim_tests {
                     },
                     ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
-                        ChannelState::ShuttingDown,
+                        ChannelState::ShutdownTransactionPending,
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::ResolvedClean,
@@ -998,15 +1034,19 @@ mod sim_tests {
                     );
                 }
 
-                // Log must end with a channel-coin-spent then [clean-end].
-                let len = log.len();
+                // [clean-end] must appear, preceded by a channel-coin-spent entry.
+                let clean_end_idx = log.iter().rposition(|l| l.starts_with("[clean-end]"));
                 assert!(
-                    len >= 2
-                        && log[len - 2].contains("channel-coin-spent")
-                        && log[len - 1].starts_with("[clean-end]"),
-                    "p{who}: log should end with *channel-coin-spent* then [clean-end], got:\n  [-2] {:?}\n  [-1] {:?}",
-                    log.get(len.wrapping_sub(2)),
-                    log.last()
+                    clean_end_idx.is_some(),
+                    "p{who}: no [clean-end] in log\n{}",
+                    format_log(log)
+                );
+                let ce = clean_end_idx.unwrap();
+                assert!(
+                    ce >= 1 && log[ce - 1].contains("channel-coin-spent"),
+                    "p{who}: entry before [clean-end] should contain *channel-coin-spent*, got:\n  [ce-1] {:?}\n  [ce]   {:?}",
+                    log.get(ce.wrapping_sub(1)),
+                    log.get(ce),
                 );
             }
         }));

@@ -12,4 +12,6 @@ export interface CaliforniapokerProps {
   myWinOutcome: 'win' | 'lose' | 'tie' | undefined;
   onDisplayComplete: () => void;
   onGameLog: (lines: string[]) => void;
+  myName?: string;
+  opponentName?: string;
 }

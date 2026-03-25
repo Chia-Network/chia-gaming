@@ -1,5 +1,5 @@
 import io, { Socket } from 'socket.io-client';
-import { PeerConnectionResult } from '../types/ChiaGaming';
+import { PeerConnectionResult, ChatMessage } from '../types/ChiaGaming';
 import { debugLog } from './debugLog';
 
 export interface MatchedParams {
@@ -8,6 +8,8 @@ export interface MatchedParams {
   amount: string;
   per_game: string;
   i_am_initiator: boolean;
+  my_alias?: string;
+  peer_alias?: string;
 }
 
 export interface ConnectionStatus {
@@ -18,6 +20,8 @@ export interface ConnectionStatus {
   per_game?: string;
   i_am_initiator?: boolean;
   peer_connected?: boolean;
+  my_alias?: string;
+  peer_alias?: string;
 }
 
 export interface TrackerConnectionCallbacks {
@@ -30,6 +34,7 @@ export interface TrackerConnectionCallbacks {
   onClosed: () => void;
   onTrackerDisconnected: () => void;
   onTrackerReconnected: () => void;
+  onChat: (msg: ChatMessage) => void;
 }
 
 const TRACKER_PING_INTERVAL_MS = 15_000;
@@ -133,6 +138,11 @@ export class TrackerConnection {
       this.closePending = false;
       this.callbacks.onClosed();
     });
+
+    this.socket.on('chat', ({ text, from_alias, timestamp }: { text: string; from_alias: string; timestamp: number }) => {
+      this.noteTrackerActivity();
+      this.callbacks.onChat({ text, fromAlias: from_alias, timestamp, isMine: false });
+    });
   }
 
   private noteTrackerActivity() {
@@ -175,6 +185,10 @@ export class TrackerConnection {
 
   hostLog(msg: string) {
     this.socket.emit('log', msg);
+  }
+
+  sendChat(text: string) {
+    this.socket.emit('chat', { text });
   }
 
   close() {

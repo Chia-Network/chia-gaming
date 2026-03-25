@@ -1,6 +1,6 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Observable } from 'rxjs';
-import { useGameSession, ChannelStatusInfo, GameCoinState, GameplayEvent } from '../hooks/useGameSession';
+import { useGameSession, ChannelStatusInfo, GameTurnState, GameplayEvent, isWindingDown } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
 import { CalpokerHandState } from '../hooks/save';
 import { formatMojos, formatAmount } from '../util';
@@ -8,7 +8,7 @@ import { getPlayerId } from '../hooks/save';
 import { CalpokerOutcome, ChannelState } from '../types/ChiaGaming';
 import { WasmBlobWrapper } from '../hooks/WasmBlobWrapper';
 import Calpoker from '../features/calPoker';
-import WaitingScreen from './WaitingScreen';
+
 import { motion } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
@@ -33,6 +33,8 @@ const CHANNEL_STATE_LABELS: Record<ChannelState, string> = {
   TransactionPending: 'Tx pending',
   Active: 'Active',
   ShuttingDown: 'Shutting down',
+  ShutdownTransactionPending: 'Shutdown tx pending',
+  GoingOnChain: 'Going on-chain',
   Unrolling: 'Unrolling',
   ResolvedClean: 'Resolved (clean)',
   ResolvedUnrolled: 'Resolved (unrolled)',
@@ -40,12 +42,9 @@ const CHANNEL_STATE_LABELS: Record<ChannelState, string> = {
   Failed: 'Failed',
 };
 
-const GAME_STATE_LABELS: Record<GameCoinState, string> = {
-  'off-chain-my-turn': 'Off-chain · Your turn',
-  'off-chain-their-turn': 'Off-chain · Their turn',
-  'on-chain-my-turn': 'On-chain · Your turn',
-  'on-chain-their-turn': 'On-chain · Their turn',
-  'reward': 'Reward',
+const GAME_TURN_LABELS: Record<GameTurnState, string> = {
+  'my-turn': 'Your turn',
+  'their-turn': 'Their turn',
   'ended': 'Ended',
 };
 
@@ -74,17 +73,17 @@ function ChannelStatusDisplay({ status }: { status: ChannelStatusInfo }) {
   return (
     <div className="flex flex-col gap-0.5">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
-        <span className="text-xs text-canvas-text/60">Channel:</span>
-        <span className={`text-xs font-medium ${stateColor}`}>{stateLabel}</span>
+        <span className="text-sm text-canvas-text">Channel:</span>
+        <span className={`text-sm font-medium ${stateColor}`}>{stateLabel}</span>
         {status.coinHex && (
           <>
-            <span className="text-xs text-canvas-text/40">·</span>
+            <span className="text-sm text-canvas-text">·</span>
             <ExpandableCoinId hex={status.coinHex} />
           </>
         )}
       </div>
       {!isResolved && (status.ourBalance != null || status.theirBalance != null) && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-canvas-text/60">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm text-canvas-text">
           {status.ourBalance != null && <span>Ours: {status.ourBalance}</span>}
           {status.theirBalance != null && <span>Theirs: {status.theirBalance}</span>}
           {status.gameAllocated != null && status.gameAllocated !== '0' && (
@@ -93,7 +92,7 @@ function ChannelStatusDisplay({ status }: { status: ChannelStatusInfo }) {
         </div>
       )}
       {status.advisory && (
-        <p className="text-xs text-alert-text/80 italic">{status.advisory}</p>
+        <p className="text-sm text-alert-text italic">{status.advisory}</p>
       )}
     </div>
   );
@@ -152,6 +151,8 @@ interface CalpokerHandProps {
   perGameAmount: bigint;
   onDisplayComplete: () => void;
   initialHandState?: CalpokerHandState;
+  myName?: string;
+  opponentName?: string;
 }
 
 function CalpokerHand({
@@ -166,6 +167,8 @@ function CalpokerHand({
   perGameAmount,
   onDisplayComplete,
   initialHandState,
+  myName,
+  opponentName,
 }: CalpokerHandProps) {
   const {
     playerHand,
@@ -205,6 +208,8 @@ function CalpokerHand({
       handleCheat={handleCheat}
       onDisplayComplete={onDisplayComplete}
       onGameLog={handleGameLog}
+      myName={myName}
+      opponentName={opponentName}
     />
   );
 }
@@ -216,12 +221,23 @@ export interface GameSessionProps {
   appendGameLog: (line: string) => void;
   sessionSave?: import('../hooks/save').SessionSave;
   blockchainType?: import('../hooks/save').BlockchainType;
+  onSessionActivity?: () => void;
 }
 
-const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, blockchainType }) => {
+const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, blockchainType, onSessionActivity }) => {
   const uniqueId = getPlayerId();
 
   const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, sessionSave, blockchainType);
+
+  useEffect(() => {
+    if (!onSessionActivity) return;
+    const sub = session.gameplayEvent$.subscribe((evt) => {
+      if ('OpponentMoved' in evt || 'GameProposalAccepted' in evt) {
+        onSessionActivity();
+      }
+    });
+    return () => sub.unsubscribe();
+  }, [session.gameplayEvent$, onSessionActivity]);
 
   if (session.error) {
     return (
@@ -238,23 +254,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
     );
   }
 
-  if (session.gameConnectionState.stateIdentifier === 'starting') {
-    return (
-      <WaitingScreen
-        stateName={session.gameConnectionState.stateIdentifier}
-        messages={session.gameConnectionState.stateDetail}
-      />
-    );
-  }
-
   const handEverStarted = session.handKey > 0;
-
-  const balanceSign = session.myRunningBalance >= 0n ? '+' : '';
-  const balanceColor = session.myRunningBalance > 0n
-    ? 'text-success-text'
-    : session.myRunningBalance < 0n
-      ? 'text-alert-text'
-      : 'text-canvas-text';
 
   return (
     <div className='w-full flex flex-col bg-canvas-bg-subtle text-canvas-text pt-6'>
@@ -267,11 +267,8 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
               California Poker
             </h1>
             <div className='flex flex-wrap items-center gap-x-4 gap-y-0.5 text-sm text-canvas-text'>
-              <span>Channel: {formatMojos(session.amount)}</span>
+              <span>Channel: {formatMojos(session.amount * 2n)}</span>
               <span>Per hand: {formatMojos(session.perGameAmount)}</span>
-              <span className={balanceColor}>
-                Balance: {balanceSign}{formatMojos(session.myRunningBalance < 0n ? -session.myRunningBalance : session.myRunningBalance)}
-              </span>
             </div>
           </div>
           <div className='flex items-center gap-2 mt-2 sm:mt-0'>
@@ -280,26 +277,28 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
               variant='destructive'
               onClick={session.goOnChain}
               size='sm'
-              disabled={session.shutdownInitiated || session.channelStatus.state !== 'Active'}
+              disabled={session.goOnChainPressed || isWindingDown(session.channelStatus.state)}
             >
               Go On-Chain
             </Button>
           </div>
         </div>
 
-        {/* Row 2: channel & game status */}
-        <div className='flex flex-wrap gap-x-6 gap-y-1 mt-1'>
-          <ChannelStatusDisplay status={session.channelStatus} />
-          <div className="flex items-center gap-x-2 text-xs text-canvas-text/60">
-            <span>Game:</span>
-            <span>{GAME_STATE_LABELS[session.gameCoin.state]}</span>
-            {session.gameCoin.coinHex && (
-              <>
-                <span className="text-canvas-text/40">·</span>
-                <ExpandableCoinId hex={session.gameCoin.coinHex} />
-              </>
-            )}
-          </div>
+        {/* Row 2: channel status */}
+        <ChannelStatusDisplay status={session.channelStatus} />
+
+        {/* Row 3: game status */}
+        <div className="flex items-center gap-x-2 text-sm text-canvas-text mt-0.5">
+          <span>Game:</span>
+          <span>{GAME_TURN_LABELS[session.gameCoin.turnState]}</span>
+          {session.gameCoin.coinHex && (
+            <>
+              <span className="text-canvas-text">·</span>
+              <span className="text-canvas-text font-medium">On-chain</span>
+              <span className="text-canvas-text">·</span>
+              <ExpandableCoinId hex={session.gameCoin.coinHex} />
+            </>
+          )}
         </div>
 
         <Separator className='mt-2' />
@@ -323,6 +322,8 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
               perGameAmount={session.perGameAmount}
               onDisplayComplete={session.onDisplayComplete}
               initialHandState={session.handKey === 1 && sessionSave?.handState ? sessionSave.handState : undefined}
+              myName={params.myAlias}
+              opponentName={params.opponentAlias}
             />
           )}
 
@@ -348,7 +349,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
                 </CardHeader>
                 <Separator />
                 <CardContent className='pt-4 flex flex-col gap-2'>
-                  {session.shutdownInitiated ? (
+                  {session.channelStatus.state !== 'Active' ? (
                     <p className='text-sm text-center text-canvas-text'>Session ending…</p>
                   ) : (
                     <>

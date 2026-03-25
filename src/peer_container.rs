@@ -838,7 +838,8 @@ impl SynchronousGameCradle {
         if Self::should_emit_status(&self.last_channel_status, &snapshot) {
             if let Some(ref snap) = snapshot {
                 match snap.state {
-                    ChannelState::ShuttingDown => {
+                    ChannelState::ShuttingDown
+                    | ChannelState::ShutdownTransactionPending => {
                         self.state.clean_shutdown_received = true;
                     }
                     ChannelState::ResolvedClean => {
@@ -849,7 +850,7 @@ impl SynchronousGameCradle {
                             self.state.peer_disconnected = true;
                         }
                     }
-                    ChannelState::Unrolling => {
+                    ChannelState::GoingOnChain | ChannelState::Unrolling => {
                         self.state.peer_disconnected = true;
                     }
                     _ => {}

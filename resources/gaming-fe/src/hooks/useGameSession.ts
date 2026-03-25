@@ -45,11 +45,11 @@ function isTerminal(n: WasmNotification): boolean {
   return TERMINAL_TYPES.some(t => t in n);
 }
 
-export type GameCoinState = 'off-chain-my-turn' | 'off-chain-their-turn' | 'on-chain-my-turn' | 'on-chain-their-turn' | 'reward' | 'ended';
+export type GameTurnState = 'my-turn' | 'their-turn' | 'ended';
 
-export interface CoinLifecycle<S> {
+export interface GameCoinInfo {
   coinHex: string | null;
-  state: S;
+  turnState: GameTurnState;
 }
 
 export interface ChannelStatusInfo {
@@ -74,6 +74,15 @@ const ATTENTION_STATES: ChannelState[] = [
   'Failed', 'ResolvedStale', 'ResolvedClean', 'ResolvedUnrolled',
 ];
 
+const WINDING_DOWN_STATES: ReadonlySet<ChannelState> = new Set<ChannelState>([
+  'ShutdownTransactionPending', 'GoingOnChain', 'Unrolling',
+  'ResolvedClean', 'ResolvedUnrolled', 'ResolvedStale', 'Failed',
+]);
+
+export function isWindingDown(state: ChannelState): boolean {
+  return WINDING_DOWN_STATES.has(state);
+}
+
 function parseAmount(v: unknown): string | null {
   if (v == null) return null;
   if (typeof v === 'object' && v !== null && 'Amount' in (v as Record<string, unknown>)) {
@@ -91,7 +100,7 @@ export interface UseGameSessionResult {
   iStarted: boolean;
   playerNumber: number;
   channelStatus: ChannelStatusInfo;
-  gameCoin: CoinLifecycle<GameCoinState>;
+  gameCoin: GameCoinInfo;
   handKey: number;
   activeGameId: string | null;
   gameObject: WasmBlobWrapper;
@@ -105,7 +114,7 @@ export interface UseGameSessionResult {
   goOnChain: () => void;
   showBetweenHandOverlay: boolean;
   lastOutcome: CalpokerOutcome | undefined;
-  shutdownInitiated: boolean;
+  goOnChainPressed: boolean;
   actionFailedReason: string | null;
   dismissActionFailed: () => void;
   channelAttention: ChannelStatusInfo | null;
@@ -132,12 +141,12 @@ export function useGameSession(
     );
   const [error, setRealError] = useState<string | undefined>(undefined);
   const [myRunningBalance, setMyRunningBalance] = useState(0n);
-  const [shutdownInitiated, setShutdownInitiated] = useState(false);
+  const [goOnChainPressed, setGoOnChainPressed] = useState(false);
   const [channelStatus, setChannelStatus] = useState<ChannelStatusInfo>(() =>
     sessionSave?.channelReady ? { ...INITIAL_CHANNEL_STATUS, state: 'Active' } : INITIAL_CHANNEL_STATUS
   );
   const [channelAttention, setChannelAttention] = useState<ChannelStatusInfo | null>(null);
-  const [gameCoin, setGameCoin] = useState<CoinLifecycle<GameCoinState>>({ coinHex: null, state: 'off-chain-my-turn' });
+  const [gameCoin, setGameCoin] = useState<GameCoinInfo>({ coinHex: null, turnState: 'my-turn' });
   const [handKey, setHandKey] = useState(() => sessionSave?.activeGameId ? 1 : 0);
   const [gameIds, setGameIds] = useState<string[]>(() =>
     sessionSave?.activeGameId ? [sessionSave.activeGameId] : []
@@ -146,7 +155,6 @@ export function useGameSession(
   const [lastOutcome, setLastOutcome] = useState<CalpokerOutcome | undefined>(undefined);
   const [actionFailedReason, setActionFailedReason] = useState<string | null>(null);
 
-  const shutdownInitiatedRef = useRef(false);
   const gameIdsRef = useRef<string[]>(sessionSave?.activeGameId ? [sessionSave.activeGameId] : []);
   const pendingProposalIdRef = useRef<string | null>(null);
   const wantsNewGameRef = useRef<boolean>(false);
@@ -179,6 +187,9 @@ export function useGameSession(
     blockchainType,
   );
 
+  if (params.myAlias) gameObject.myAlias = params.myAlias;
+  if (params.opponentAlias) gameObject.opponentAlias = params.opponentAlias;
+
   const gameObjectRef = useRef<WasmBlobWrapper>(gameObject);
   gameObjectRef.current = gameObject;
 
@@ -188,7 +199,7 @@ export function useGameSession(
     try {
       go.proposeGame({
         game_type: '63616c706f6b6572',
-        timeout: 100,
+        timeout: 5,
         amount: perGameAmount,
         my_contribution: perGameAmount / 2n,
         my_turn: !iStarted,
@@ -203,7 +214,7 @@ export function useGameSession(
     setLastOutcome(outcome);
     setGameIds(prev => prev.slice(1));
     gameIdsRef.current = gameIdsRef.current.slice(1);
-    setGameCoin({ coinHex: null, state: 'off-chain-my-turn' });
+    setGameCoin({ coinHex: null, turnState: 'my-turn' });
     const delta = outcome.my_win_outcome === 'win' ? perGameAmount / 2n
                 : outcome.my_win_outcome === 'lose' ? -(perGameAmount / 2n)
                 : 0n;
@@ -212,12 +223,10 @@ export function useGameSession(
   }, [perGameAmount]);
 
   const onTurnChanged = useCallback((isMyTurn: boolean) => {
-    setGameCoin(prev => {
-      if (prev.state === 'on-chain-my-turn' || prev.state === 'on-chain-their-turn') {
-        return { coinHex: prev.coinHex, state: isMyTurn ? 'on-chain-my-turn' : 'on-chain-their-turn' };
-      }
-      return { coinHex: null, state: isMyTurn ? 'off-chain-my-turn' : 'off-chain-their-turn' };
-    });
+    setGameCoin(prev => ({
+      coinHex: prev.coinHex,
+      turnState: isMyTurn ? 'my-turn' : 'their-turn',
+    }));
   }, []);
 
   const onDisplayComplete = useCallback(() => {
@@ -260,14 +269,6 @@ export function useGameSession(
           proposeNewGame();
         }
       }
-      if (cs.state === 'ShuttingDown') {
-        shutdownInitiatedRef.current = true;
-        setShutdownInitiated(true);
-      }
-      if (cs.state === 'Unrolling') {
-        shutdownInitiatedRef.current = true;
-        setShutdownInitiated(true);
-      }
       return;
     }
 
@@ -277,7 +278,7 @@ export function useGameSession(
       const ourTurn = n.GameOnChain?.our_turn;
       setGameCoin({
         coinHex: hex ?? null,
-        state: ourTurn === true ? 'on-chain-my-turn' : ourTurn === false ? 'on-chain-their-turn' : 'on-chain-my-turn',
+        turnState: ourTurn === false ? 'their-turn' : 'my-turn',
       });
     }
 
@@ -305,13 +306,13 @@ export function useGameSession(
       setShowBetweenHandOverlay(false);
       setHandKey(prev => prev + 1);
       setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
-      setGameCoin({ coinHex: null, state: iStarted ? 'off-chain-their-turn' : 'off-chain-my-turn' });
+      setGameCoin({ coinHex: null, turnState: iStarted ? 'their-turn' : 'my-turn' });
       gameplayEventSubject.next({ GameProposalAccepted: { id: gpa.id as number | string } });
     } else if ('WeMoved' in n) {
       const hex = coinPayloadToHex(n.WeMoved?.coin);
       setGameCoin({
         coinHex: hex ?? null,
-        state: 'on-chain-their-turn',
+        turnState: 'their-turn',
       });
     } else if ('OpponentMoved' in n) {
       gameplayEventSubject.next({ OpponentMoved: { readable: n.OpponentMoved!.readable as number[] } });
@@ -322,7 +323,7 @@ export function useGameSession(
       if (hadActiveGame) {
         setGameIds(prev => prev.slice(1));
         gameIdsRef.current = gameIdsRef.current.slice(1);
-        setGameCoin({ coinHex: null, state: 'ended' });
+        setGameCoin({ coinHex: null, turnState: 'ended' });
         setShowBetweenHandOverlay(true);
         gameplayEventSubject.next({ _terminal: true, notification: n });
       }
@@ -370,9 +371,7 @@ export function useGameSession(
   useEffect(() => {
     const subscription = blockchain.getObservable().subscribe({
       next: (e: BlockchainReport) => {
-        if (e.block) {
-          gameObject?.blockNotification(e.peak, e.block, e.report);
-        }
+        gameObject?.blockNotification(e.peak, e.block ?? [], e.report);
       },
     });
 
@@ -400,17 +399,12 @@ export function useGameSession(
   }, [iStarted, proposeNewGame]);
 
   const stopPlaying = useCallback(() => {
-    shutdownInitiatedRef.current = true;
-    setShutdownInitiated(true);
     gameObject?.cleanShutdown();
   }, [gameObject]);
 
   const goOnChain = useCallback(() => {
-    if (!shutdownInitiatedRef.current) {
-      debugLog('[game] going on chain');
-    }
-    shutdownInitiatedRef.current = true;
-    setShutdownInitiated(true);
+    debugLog('[game] going on chain');
+    setGoOnChainPressed(true);
     gameObject?.goOnChain();
   }, [gameObject]);
 
@@ -437,7 +431,7 @@ export function useGameSession(
     goOnChain,
     showBetweenHandOverlay,
     lastOutcome,
-    shutdownInitiated,
+    goOnChainPressed,
     actionFailedReason,
     dismissActionFailed,
     channelAttention,

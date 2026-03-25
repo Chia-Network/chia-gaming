@@ -100,6 +100,8 @@ function completeGameSocketRegistration(playerId: string, sock: Socket) {
     const peerId = pairing.playerA_id === playerId ? pairing.playerB_id : pairing.playerA_id;
     const peerConnected = gameSocketsByPlayer.has(peerId);
     console.log(`[tracker] game socket registered player=${playerId} socket=${sock.id} pairing=${pairing.token} peer_connected=${peerConnected}`);
+    const myAlias = lobby.players[playerId]?.alias ?? playerId;
+    const peerAlias = lobby.players[peerId]?.alias ?? peerId;
     sock.emit('connection_status', {
       has_pairing: true,
       token: pairing.token,
@@ -108,6 +110,8 @@ function completeGameSocketRegistration(playerId: string, sock: Socket) {
       per_game: pairing.per_game,
       i_am_initiator: pairing.playerA_id === playerId,
       peer_connected: peerConnected,
+      my_alias: myAlias,
+      peer_alias: peerAlias,
     });
     if (peerConnected) {
       const peerSocket = gameSocketsByPlayer.get(peerId);
@@ -294,6 +298,9 @@ io.on('connection', (socket) => {
       });
     }
 
+    const challengerAlias = lobby.players[challenge.from_id]?.alias ?? challenge.from_id;
+    const accepterAlias = lobby.players[challenge.target_id]?.alias ?? challenge.target_id;
+
     const matchedBase = {
       token: pairing.token,
       game_type: challenge.game,
@@ -305,10 +312,10 @@ io.on('connection', (socket) => {
     const accepterGameSocket = gameSocketsByPlayer.get(challenge.target_id);
 
     if (challengerGameSocket) {
-      challengerGameSocket.emit('matched', { ...matchedBase, i_am_initiator: true });
+      challengerGameSocket.emit('matched', { ...matchedBase, i_am_initiator: true, my_alias: challengerAlias, peer_alias: accepterAlias });
     }
     if (accepterGameSocket) {
-      accepterGameSocket.emit('matched', { ...matchedBase, i_am_initiator: false });
+      accepterGameSocket.emit('matched', { ...matchedBase, i_am_initiator: false, my_alias: accepterAlias, peer_alias: challengerAlias });
     }
   });
 
@@ -363,6 +370,21 @@ io.on('connection', (socket) => {
     const peerSocket = gameSocketsByPlayer.get(peerId);
     if (peerSocket) {
       peerSocket.emit('message', { data });
+    }
+  });
+
+  socket.on('chat', ({ text }: { text: string }) => {
+    noteActivity(socket.id);
+    const senderId = gameSocketToPlayer.get(socket.id);
+    if (!senderId) return;
+
+    const peerId = lobby.getPairedPlayerId(senderId);
+    if (!peerId) return;
+
+    const fromAlias = lobby.players[senderId]?.alias ?? senderId;
+    const peerSocket = gameSocketsByPlayer.get(peerId);
+    if (peerSocket) {
+      peerSocket.emit('chat', { text, from_alias: fromAlias, timestamp: Date.now() });
     }
   });
 

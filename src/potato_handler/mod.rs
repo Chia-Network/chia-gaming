@@ -455,7 +455,7 @@ impl PotatoHandler {
     fn process_received_batch(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
-        timeout: &Timeout,
+        _timeout: &Timeout,
         actions: &[BatchAction],
         signatures: &PotatoSignatures,
         clean_shutdown: &Option<Box<(Aggsig, ProgramRef)>>,
@@ -614,11 +614,6 @@ impl PotatoHandler {
                 }
             }
 
-            effects.push(Effect::RegisterCoin {
-                coin: my_reward,
-                timeout: timeout.clone(),
-                name: Some("reward"),
-            });
             let puzzle = puzzle_for_synthetic_public_key(
                 env.allocator,
                 &env.standard_puzzle,
@@ -844,7 +839,6 @@ impl PotatoHandler {
                         }
                     }
 
-                    let timeout = self.channel_timeout.clone();
                     let real_conditions = {
                         let ch = self.channel_handler_mut()?;
                         get_conditions_with_channel_handler(env, ch)?
@@ -873,12 +867,6 @@ impl PotatoHandler {
                     } else {
                         None
                     };
-
-                    effects.push(Effect::RegisterCoin {
-                        coin: my_reward,
-                        timeout,
-                        name: Some("reward"),
-                    });
 
                     let shutdown_condition_program =
                         Rc::new(Program::from_nodeptr(env.allocator, real_conditions)?);
@@ -1529,8 +1517,17 @@ impl PeerHandler for PotatoHandler {
     }
     fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
         let ch = self.channel_handler.as_ref()?;
+        let shutting_down = self.shutdown_replacement.is_some()
+            || self
+                .game_action_queue
+                .iter()
+                .any(|a| matches!(a, GameAction::CleanShutdown));
         Some(ChannelStatusSnapshot {
-            state: ChannelState::Active,
+            state: if shutting_down {
+                ChannelState::ShuttingDown
+            } else {
+                ChannelState::Active
+            },
             advisory: None,
             coin: Some(ch.state_channel_coin().clone()),
             our_balance: Some(ch.my_out_of_game_balance()),

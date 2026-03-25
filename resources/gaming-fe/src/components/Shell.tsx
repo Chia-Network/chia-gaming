@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 
 import WalletConnectHeading from './WalletConnectHeading';
 import GameSession from './GameSession';
-import { GameSessionParams, PeerConnectionResult } from '../types/ChiaGaming';
+import { GameSessionParams, PeerConnectionResult, ChatMessage } from '../types/ChiaGaming';
 import { TrackerConnection, MatchedParams, ConnectionStatus } from '../services/TrackerConnection';
 import { subscribeDebugLog } from '../services/debugLog';
 import {
@@ -20,12 +20,14 @@ import { blockchainDataEmitter } from '../hooks/BlockchainInfo';
 import { FAKE_BLOCKCHAIN_ID, fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import { debugLog } from '../services/debugLog';
+import ChatPanel from './ChatPanel';
 
-type TabId = 'tracker' | 'session' | 'game-log' | 'debug-log';
+type TabId = 'tracker' | 'session' | 'chat' | 'game-log' | 'debug-log';
 
 const TAB_DEFS: { id: TabId; label: string }[] = [
   { id: 'tracker', label: 'Tracker' },
   { id: 'session', label: 'Game Session' },
+  { id: 'chat', label: 'Chat' },
   { id: 'game-log', label: 'Game Log' },
   { id: 'debug-log', label: 'Debug Log' },
 ];
@@ -65,10 +67,15 @@ const Shell = () => {
   const [gameLog, setGameLog] = useState<string[]>([]);
   const [debugLogLines, setDebugLogLines] = useState<string[]>([]);
 
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [unreadChat, setUnreadChat] = useState(false);
+  const [unreadSession, setUnreadSession] = useState(false);
   const [iframeUrl, setIframeUrl] = useState('about:blank');
   const [iframeAllowed, setIframeAllowed] = useState('');
 
   const trackerConnRef = useRef<TrackerConnection | null>(null);
+  const activeTabRef = useRef<TabId>(activeTab);
+  activeTabRef.current = activeTab;
   const sessionSaveRef = useRef<SessionSave | null>(null);
   const activePairingTokenRef = useRef<string | null>(null);
   const blockchainTypeRef = useRef<import('../hooks/save').BlockchainType>('simulator');
@@ -116,15 +123,21 @@ const Shell = () => {
           perGame: bigint,
           token: string,
           save: SessionSave | null,
+          myAlias?: string,
+          opponentAlias?: string,
         ) => {
           activePairingTokenRef.current = token;
           sessionSaveRef.current = save;
+          const resolvedMyAlias = myAlias ?? save?.myAlias;
+          const resolvedOpponentAlias = opponentAlias ?? save?.opponentAlias;
           setGameParams({
             iStarted,
             amount,
             perGameAmount: perGame,
             restoring: save !== null,
             pairingToken: token,
+            myAlias: resolvedMyAlias,
+            opponentAlias: resolvedOpponentAlias,
           });
           setPeerConn(conn.getPeerConnection());
           if (save) {
@@ -142,7 +155,7 @@ const Shell = () => {
             let perGame: bigint;
             try { amount = BigInt(matched.amount); } catch { amount = FALLBACK_AMOUNT; }
             try { perGame = BigInt(matched.per_game); } catch { perGame = FALLBACK_PER_GAME; }
-            startSession(conn, matched.i_am_initiator, amount, perGame, matched.token, null);
+            startSession(conn, matched.i_am_initiator, amount, perGame, matched.token, null, matched.my_alias, matched.peer_alias);
           },
           onConnectionStatus: (status: ConnectionStatus) => {
             // Mid-session reconnect: we already have an active session
@@ -167,7 +180,7 @@ const Shell = () => {
                 let perGame: bigint;
                 try { amount = BigInt(save.amount); } catch { amount = FALLBACK_AMOUNT; }
                 try { perGame = BigInt(save.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
-                startSession(conn, status.i_am_initiator!, amount, perGame, status.token, save);
+                startSession(conn, status.i_am_initiator!, amount, perGame, status.token, save, status.my_alias, status.peer_alias);
               } else if (!save) {
                 console.warn('[Shell] connection_status: unrecognized pairing, requesting close');
                 conn.close();
@@ -186,6 +199,8 @@ const Shell = () => {
                   perGameAmount: perGame,
                   restoring: true,
                   pairingToken: save.pairingToken,
+                  myAlias: save.myAlias,
+                  opponentAlias: save.opponentAlias,
                 });
                 setPeerConn(conn.getPeerConnection());
                 setGameLog(save.gameLog);
@@ -206,6 +221,8 @@ const Shell = () => {
                   perGameAmount: perGame,
                   restoring: true,
                   pairingToken: save.pairingToken,
+                  myAlias: save.myAlias,
+                  opponentAlias: save.opponentAlias,
                 });
                 setPeerConn(conn.getPeerConnection());
                 setGameLog(save.gameLog);
@@ -236,6 +253,12 @@ const Shell = () => {
           onTrackerReconnected: () => {
             console.log('[Shell] tracker reconnected');
           },
+          onChat: (msg: ChatMessage) => {
+            setChatMessages(prev => [...prev, msg]);
+            if (activeTabRef.current !== 'chat') {
+              setUnreadChat(true);
+            }
+          },
         });
         trackerConnRef.current = conn;
       })
@@ -249,6 +272,24 @@ const Shell = () => {
       trackerConnRef.current = null;
     };
   }, [uniqueId, sessionId, restoreDecided, walletConnected]);
+
+  const sendChat = useCallback((text: string) => {
+    const myAlias = gameParams?.myAlias ?? 'You';
+    trackerConnRef.current?.sendChat(text);
+    setChatMessages(prev => [...prev, { text, fromAlias: myAlias, timestamp: Date.now(), isMine: true }]);
+  }, [gameParams?.myAlias]);
+
+  const onSessionActivity = useCallback(() => {
+    if (activeTabRef.current !== 'session') {
+      setUnreadSession(true);
+    }
+  }, []);
+
+  const handleTabChange = useCallback((tabId: TabId) => {
+    setActiveTab(tabId);
+    if (tabId === 'chat') setUnreadChat(false);
+    if (tabId === 'session') setUnreadSession(false);
+  }, []);
 
   const handleReset = useCallback(async () => {
     activePairingTokenRef.current = null;
@@ -362,18 +403,25 @@ const Shell = () => {
     <div style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-end', gap: '0.25rem', padding: '0.5rem 1rem 0', borderBottom: '1px solid var(--color-canvas-border)', background: 'var(--color-canvas-bg-subtle)' }}>
       {TAB_DEFS.map((tab) => {
         const active = activeTab === tab.id;
+        const showDot = !active && (
+          (tab.id === 'chat' && unreadChat) ||
+          (tab.id === 'session' && unreadSession)
+        );
         return (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => handleTabChange(tab.id)}
             className={
-              'px-3 py-1.5 text-sm font-medium rounded-t-md transition-colors ' +
+              'relative px-3 py-1.5 text-sm font-medium rounded-t-md transition-colors ' +
               (active
                 ? 'bg-canvas-bg text-canvas-text-contrast border border-b-0 border-canvas-border -mb-px'
                 : 'text-canvas-text hover:text-canvas-text-contrast hover:bg-canvas-bg-hover')
             }
           >
             {tab.label}
+            {showDot && (
+              <span className='absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-alert-text' />
+            )}
           </button>
         );
       })}
@@ -407,8 +455,8 @@ const Shell = () => {
           />
         </div>
 
-        {/* Game Session tab */}
-        <div style={{ position: 'absolute', inset: 0, overflow: 'auto', display: activeTab === 'session' ? 'block' : 'none' }}>
+        {/* Game Session tab — use visibility instead of display to keep layout computed and avoid flicker on tab switch */}
+        <div style={{ position: 'absolute', inset: 0, overflow: 'auto', visibility: activeTab === 'session' ? 'visible' : 'hidden' }}>
           {gameParams && peerConn ? (
             <GameSession
               params={gameParams}
@@ -417,12 +465,22 @@ const Shell = () => {
               appendGameLog={appendGameLog}
               sessionSave={sessionSaveRef.current ?? undefined}
               blockchainType={blockchainTypeRef.current}
+              onSessionActivity={onSessionActivity}
             />
           ) : (
             <div className='w-full h-full flex items-center justify-center text-canvas-text/50'>
               No active game session
             </div>
           )}
+        </div>
+
+        {/* Chat tab */}
+        <div style={{ position: 'absolute', inset: 0, display: activeTab === 'chat' ? 'flex' : 'none', flexDirection: 'column' }}>
+          <ChatPanel
+            messages={chatMessages}
+            onSend={sendChat}
+            myAlias={gameParams?.myAlias ?? 'You'}
+          />
         </div>
 
         {/* Game Log tab */}

@@ -53,6 +53,7 @@ function makeCallbacks(): TrackerConnectionCallbacks {
     onClosed: jest.fn(),
     onTrackerDisconnected: jest.fn(() => { trackerDisconnectCount++; }),
     onTrackerReconnected: jest.fn(),
+    onChat: jest.fn(),
   };
 }
 

@@ -163,7 +163,8 @@ impl ToLocalUI for Pipe {
                 use crate::potato_handler::effects::ChannelState;
                 if matches!(
                     state,
-                    ChannelState::Unrolling
+                    ChannelState::GoingOnChain
+                        | ChannelState::Unrolling
                         | ChannelState::ResolvedUnrolled
                         | ChannelState::ResolvedStale
                 ) {

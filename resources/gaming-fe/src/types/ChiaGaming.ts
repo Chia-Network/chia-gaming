@@ -110,6 +110,15 @@ export interface GameSessionParams {
   perGameAmount: bigint;   // mojos per hand
   restoring?: boolean;
   pairingToken?: string;
+  myAlias?: string;
+  opponentAlias?: string;
+}
+
+export interface ChatMessage {
+  text: string;
+  fromAlias: string;
+  timestamp: number;
+  isMine: boolean;
 }
 
 export interface PeerIdentity {
@@ -131,8 +140,8 @@ export type WasmNotificationTag =
 
 export type ChannelState =
   | 'Handshaking' | 'OfferSent' | 'TransactionPending'
-  | 'Active' | 'ShuttingDown'
-  | 'Unrolling'
+  | 'Active' | 'ShuttingDown' | 'ShutdownTransactionPending'
+  | 'GoingOnChain' | 'Unrolling'
   | 'ResolvedClean' | 'ResolvedUnrolled' | 'ResolvedStale'
   | 'Failed';
 
