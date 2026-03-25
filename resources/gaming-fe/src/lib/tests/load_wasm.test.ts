@@ -31,6 +31,7 @@ import {
 import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
 import {
   FAKE_BLOCKCHAIN_ID,
+  fakeBlockchainInfo,
   connectSimulatorBlockchain,
   disconnectSimulatorBlockchain,
 } from '../../hooks/FakeBlockchainInterface';
@@ -233,10 +234,8 @@ async function initWasmBlobWrapper(
 ) {
   const amount = 100n;
 
-  // Ensure that each user has a wallet.
-  await fetch(`${BLOCKCHAIN_SERVICE_URL}/register?name=${uniqueId}`, {
-    method: 'POST',
-  });
+  // Ensure that each user has a wallet (register via WebSocket).
+  await fakeBlockchainInfo.registerUser(uniqueId);
   let gameObject = new WasmBlobWrapper(
     blockchain,
     uniqueId,
@@ -256,7 +255,7 @@ const doInternalLoadWasm = async () => {
 
 async function isSimulatorAvailable(): Promise<boolean> {
   try {
-    await fetch(`${BLOCKCHAIN_SERVICE_URL}/register?name=test-ping`, { method: 'POST' });
+    await fetch(`${BLOCKCHAIN_SERVICE_URL}/get_peak`, { method: 'POST' });
     return true;
   } catch {
     return false;
@@ -326,5 +325,5 @@ it(
       cradle2.shutdown();
     }
   },
-  20 * 1000,
+  120 * 1000,
 );

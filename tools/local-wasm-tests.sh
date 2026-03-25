@@ -69,6 +69,7 @@ fi
 
 # Kill any stale simulator on our port before starting a fresh one
 lsof -ti:5800 -sTCP:LISTEN | xargs kill 2>/dev/null || true
+lsof -ti:5801 -sTCP:LISTEN | xargs kill 2>/dev/null || true
 sleep 0.5
 
 echo "=== Starting simulator ==="

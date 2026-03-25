@@ -414,7 +414,6 @@ export interface BlockchainConnection {
   // Blockchain
   get_peak: () => Promise<number>;
   get_block_data: (block: number) => Promise<WatchReport | null>;
-  wait_block: () => Promise<number>;
   get_puzzle_and_solution: (coin: string) => Promise<string[] | null>;
   spend: (clvm_hex_spend_blob: string) => Promise<(number | null)[]>;
   create_spendable: (
@@ -461,13 +460,6 @@ export class ExternalBlockchainInterface {
 
   getBlockData(block: number): Promise<WatchReport | null> {
     return fetch(`${this.baseUrl}/get_block_data?block=${block}`, {
-      body: '',
-      method: 'POST',
-    }).then((f) => f.json());
-  }
-
-  waitBlock(): Promise<number> {
-    return fetch(`${this.baseUrl}/wait_block`, {
       body: '',
       method: 'POST',
     }).then((f) => f.json());

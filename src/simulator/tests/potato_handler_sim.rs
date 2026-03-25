@@ -1143,10 +1143,10 @@ fn run_game_container_with_action_list_with_success_predicate(
             }
 
             {
-                let result = cradles[i].drain_all(allocator)?;
+                let result = cradles[i].flush_and_collect(allocator)?;
 
                 // Collect coin solution requests, launcher/coin-spend
-                // requests from this drain and all subsequent drains they
+                // requests from this flush and all subsequent flushes they
                 // trigger, processing every other event inline in FIFO order.
                 let mut pending_events = result.events;
                 if matches!(result.resync, Some((_, true))) {
@@ -1287,7 +1287,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                             )?;
                         }
                     }
-                    let follow_up = cradles[i].drain_all(allocator)?;
+                    let follow_up = cradles[i].flush_and_collect(allocator)?;
                     pending_events = follow_up.events;
                 }
             }
@@ -3027,7 +3027,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         for _i in 0..100 {
             for c in 0..2 {
-                let result = outcome.cradles[c].drain_all(&mut allocator).unwrap();
+                let result = outcome.cradles[c].flush_and_collect(&mut allocator).unwrap();
                 for event in result.events.iter() {
                     match event {
                         CradleEvent::OutboundMessage(msg) => {

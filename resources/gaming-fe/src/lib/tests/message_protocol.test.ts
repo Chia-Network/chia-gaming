@@ -75,8 +75,8 @@ interface TestHarness {
 }
 
 /**
- * Returns a WasmBlobWrapper at qualifyingEvents=15 (system ready).
- * Setup: loadWasm → setGameCradle → kickSystem(2) → blockNotification → qe=15.
+ * Returns a WasmBlobWrapper at qualifyingEvents=7 (system ready).
+ * Setup: loadWasm → setGameCradle → kickSystem(2) → qe=7.
  */
 function createReadyBlob(
   onDeliver?: (msg: string) => WasmResult | undefined,
@@ -104,7 +104,7 @@ function createReadyBlob(
   return { blob, cradle, sentMessages, sentAcks };
 }
 
-/** Returns a WasmBlobWrapper at qe=3 — messages will be buffered. */
+/** Returns a WasmBlobWrapper at qe=1 — messages will be buffered until kickSystem(2). */
 function createUnreadyBlob(
   onDeliver?: (msg: string) => WasmResult | undefined,
 ): TestHarness {
@@ -120,7 +120,6 @@ function createUnreadyBlob(
 
   blob.loadWasm(mockWasmConnection);
   blob.setGameCradle(cradle);
-  blob.kickSystem(2);
 
   return { blob, cradle, sentMessages, sentAcks };
 }
@@ -188,7 +187,7 @@ describe('out-of-order delivery with reorder queue', () => {
 });
 
 describe('buffering before system ready, then spill', () => {
-  it('buffers messages and delivers when system reaches qe=15', () => {
+  it('buffers messages and delivers when system reaches qe=7', () => {
     const { blob, cradle, sentAcks } = createUnreadyBlob();
     activeBlob = blob;
 
@@ -196,7 +195,7 @@ describe('buffering before system ready, then spill', () => {
     blob.deliverMessage(2, 'b');
     expect(cradle.deliver_message).not.toHaveBeenCalled();
 
-    blob.blockNotification(1, [], emptyReport);
+    blob.kickSystem(2);
 
     expect(cradle.deliver_message).toHaveBeenCalledTimes(2);
     expect(blob.remoteNumber).toBe(2);
@@ -215,7 +214,7 @@ describe('buffering before system ready, then spill', () => {
     blob.deliverMessage(1, 'a');
     expect(delivered).toEqual([]);
 
-    blob.blockNotification(1, [], emptyReport);
+    blob.kickSystem(2);
 
     expect(delivered).toEqual(['a', 'b']);
     expect(blob.remoteNumber).toBe(2);

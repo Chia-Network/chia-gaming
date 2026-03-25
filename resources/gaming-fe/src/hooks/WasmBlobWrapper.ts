@@ -184,7 +184,7 @@ export class WasmBlobWrapper {
   }
 
   spillStoredMessages() {
-    if (this.qualifyingEvents != 15 || !this.cradle || this.reloading) {
+    if (this.qualifyingEvents != 7 || !this.cradle || this.reloading) {
       return;
     }
     const storedMessages = this.storedMessages;
@@ -304,8 +304,8 @@ export class WasmBlobWrapper {
 
   kickSystem(flags: number) {
     this.qualifyingEvents |= flags;
-    if (this.qualifyingEvents == 7) {
-      this.qualifyingEvents |= 8;
+    if (this.qualifyingEvents == 3) {
+      this.qualifyingEvents |= 4;
       this.spillStoredMessages();
     }
   }
@@ -455,7 +455,7 @@ export class WasmBlobWrapper {
 
   deliverMessage(msgno: number, msg: string) {
     this.notePeerActivity();
-    if (!this.wc || !this.cradle || this.qualifyingEvents != 15 || this.reloading) {
+    if (!this.wc || !this.cradle || this.qualifyingEvents != 7 || this.reloading) {
       this.storedMessages.push({ msgno, msg });
       return;
     }
@@ -530,7 +530,6 @@ export class WasmBlobWrapper {
       this.firstBlockLogged = true;
       debugLog(`[wasm] first block notification height=${peak} cradle=${this.cradle ? 'yes' : 'no'}`);
     }
-    this.kickSystem(4);
     if (!this.cradle) {
       this.pendingBlockNotification = { peak, report: block_report };
       return;

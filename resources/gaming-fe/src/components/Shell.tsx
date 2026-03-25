@@ -17,8 +17,7 @@ import {
 } from '../hooks/save';
 import { blobSingleton } from '../hooks/blobSingleton';
 import { blockchainDataEmitter } from '../hooks/BlockchainInfo';
-import { FAKE_BLOCKCHAIN_ID } from '../hooks/FakeBlockchainInterface';
-import { BLOCKCHAIN_SERVICE_URL } from '../settings';
+import { FAKE_BLOCKCHAIN_ID, fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import { debugLog } from '../services/debugLog';
 
@@ -279,14 +278,12 @@ const Shell = () => {
     };
 
     if (bcType === 'simulator') {
-      fetch(`${BLOCKCHAIN_SERVICE_URL}/register?name=${uniqueId}`, { method: 'POST' })
-        .then(res => res.json())
+      fakeBlockchainInfo.registerUser(uniqueId)
         .then(() => { debugLog('Simulator wallet registered (resume)'); onRegistered(); })
         .catch(onFailed);
     } else {
       debugLog('WalletConnect resume not yet implemented, falling back to simulator');
-      fetch(`${BLOCKCHAIN_SERVICE_URL}/register?name=${uniqueId}`, { method: 'POST' })
-        .then(res => res.json())
+      fakeBlockchainInfo.registerUser(uniqueId)
         .then(onRegistered)
         .catch(onFailed);
     }

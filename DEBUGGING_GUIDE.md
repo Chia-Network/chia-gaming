@@ -244,13 +244,15 @@ specifies when the action is ready to fire:
 Each iteration of the sim loop:
 
 1. **Farm a block** and build a `WatchReport` from the new coin set.
-2. **Drain/deliver** for each player (in order 0, then 1):
-   - Call `drain_all` to process inbound messages and collect outbound.
+2. **Flush and dispatch** for each player (in order 0, then 1):
+   - Call `flush_and_collect` to process inbound messages, settle channel
+     setup, retry pending messages, flush potato-gated actions, and collect
+     all outbound events.
    - Deliver outbound messages to the other player's inbound queue.
    - Dispatch notifications to `LocalTestUIReceiver`.
 3. **Process the next action** from the script if a trigger condition is met.
 
-Because draining happens in fixed order (player 0 first), a message sent by
+Because flushing happens in fixed order (player 0 first), a message sent by
 player 1 takes one extra iteration to reach player 0 compared to the reverse
 direction. This asymmetry is natural and expected — the event-driven triggers
 automatically wait for the right notifications before firing.

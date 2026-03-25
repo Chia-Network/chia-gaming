@@ -391,7 +391,7 @@ pub trait GameCradle {
         report: &WatchReport,
     ) -> Result<(), Error>;
 
-    /// Deliver a message from the peer.
+    /// Queue a message from the peer for processing by `flush_and_collect`.
     fn deliver_message(&mut self, inbound_message: &[u8]) -> Result<(), Error>;
 
     /// Cheat in a game: enable cheating on the referee (substituting fake
@@ -539,7 +539,6 @@ impl SynchronousGameCradle {
                 current_height: 0,
                 watching_coins: HashMap::default(),
                 identity: config.identity.clone(),
-                inbound_messages: VecDeque::default(),
                 channel_puzzle_hash: None,
                 funding_coin: None,
                 unfunded_offer: None,
@@ -550,6 +549,7 @@ impl SynchronousGameCradle {
                 is_failed: false,
                 is_on_chain: false,
                 events: CradleEventQueue::default(),
+                inbound_messages: VecDeque::default(),
             },
             peer: {
                 let phi = PotatoHandlerInit {
@@ -746,12 +746,11 @@ impl SynchronousGameCradle {
         Ok(())
     }
 
-    /// Drain all queued state in one shot: process inbound messages, channel
-    /// setup steps, and collect all outbound messages, transactions, and
-    /// notifications.
-    pub fn drain_all(&mut self, allocator: &mut AllocEncoder) -> Result<DrainResult, Error> {
-        let mut result = DrainResult::default();
-
+    /// Settle deferred channel-setup work and retry any re-queued messages,
+    /// flush potato-gated pending actions, and collect all accumulated events.
+    /// Call this after any operation that may have changed state (delivering a
+    /// message, processing a block, making a move, etc.).
+    pub fn flush_and_collect(&mut self, allocator: &mut AllocEncoder) -> Result<DrainResult, Error> {
         while let Some(msg) = self.state.inbound_messages.pop_front() {
             let recv_result = {
                 let mut env = ChannelHandlerEnv::new(allocator)?;
@@ -767,57 +766,16 @@ impl SynchronousGameCradle {
             }
         }
 
-        // Channel setup steps (handshake or off-chain only).
-        if self.peer.channel_handler().is_ok() {
-            if let Some(ph) = self.state.channel_puzzle_hash.take() {
-                if !self.create_partial_spend_for_channel_coin(allocator, ph.clone())? {
-                    self.state.channel_puzzle_hash = Some(ph);
-                }
-            }
-            if let (false, Some(uo)) = (self.state.is_initiator, self.state.unfunded_offer.take()) {
-                if !self.respond_to_unfunded_offer(allocator, uo.clone())? {
-                    self.state.unfunded_offer = Some(uo);
-                }
-            }
-        }
+        let effects = {
+            let mut env = ChannelHandlerEnv::new(allocator)?;
+            self.peer.flush_pending_actions(&mut env)?
+        };
+        self.process_effects(effects, allocator)?;
 
-        // Process queued actions / re-queued messages.
-        if self.peer.handshake_finished() {
-            while self.peer.has_pending_incoming() {
-                let recv_result = {
-                    let mut env = ChannelHandlerEnv::new(allocator)?;
-                    self.peer.process_incoming_message(&mut env)
-                };
-                match recv_result {
-                    Ok(effects) => {
-                        if effects.is_empty() {
-                            break;
-                        }
-                        self.process_effects(effects, allocator)?;
-                        self.detect_phase_transition();
-                    }
-                    Err(e) => {
-                        self.state
-                            .events
-                            .push_back(CradleEvent::ReceiveError(format!("{e:?}")));
-                    }
-                }
-            }
-        }
-
-        // Flush any queued game actions if we have the potato.
-        {
-            let effects = {
-                let mut env = ChannelHandlerEnv::new(allocator)?;
-                self.peer.flush_pending_actions(&mut env)?
-            };
-            self.process_effects(effects, allocator)?;
-        }
-
-        result.resync = self.state.resync.take();
-        result.events = std::mem::take(&mut self.state.events);
-
-        Ok(result)
+        Ok(DrainResult {
+            events: std::mem::take(&mut self.state.events),
+            resync: self.state.resync.take(),
+        })
     }
 
     fn detect_phase_transition(&mut self) {
@@ -934,6 +892,43 @@ impl SynchronousGameCradle {
         }
         apply_effects(passthrough, allocator, &mut self.state)?;
         self.detect_phase_transition();
+
+        if self.peer.channel_handler().is_ok() {
+            if let Some(ph) = self.state.channel_puzzle_hash.take() {
+                if !self.create_partial_spend_for_channel_coin(allocator, ph.clone())? {
+                    self.state.channel_puzzle_hash = Some(ph);
+                }
+            }
+            if let (false, Some(uo)) = (self.state.is_initiator, self.state.unfunded_offer.take()) {
+                if !self.respond_to_unfunded_offer(allocator, uo.clone())? {
+                    self.state.unfunded_offer = Some(uo);
+                }
+            }
+        }
+
+        if self.peer.handshake_finished() {
+            while self.peer.has_pending_incoming() {
+                let recv_result = {
+                    let mut env = ChannelHandlerEnv::new(allocator)?;
+                    self.peer.process_incoming_message(&mut env)
+                };
+                match recv_result {
+                    Ok(inner_effects) => {
+                        if inner_effects.is_empty() {
+                            break;
+                        }
+                        self.process_effects(inner_effects, allocator)?;
+                        self.detect_phase_transition();
+                    }
+                    Err(e) => {
+                        self.state
+                            .events
+                            .push_back(CradleEvent::ReceiveError(format!("{e:?}")));
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -1337,7 +1332,7 @@ impl GameCradle for SynchronousGameCradle {
         Ok(())
     }
 
-    /// Deliver a message from the peer.
+    /// Queue a message from the peer for processing by `flush_and_collect`.
     fn deliver_message(&mut self, inbound_message: &[u8]) -> Result<(), Error> {
         if self.state.peer_disconnected {
             return Ok(());

@@ -5,9 +5,8 @@ import bech32_module from 'bech32-buffer';
 import * as bech32_buffer from 'bech32-buffer';
 import { toUint8 } from '../util';
 
-import { BLOCKCHAIN_SERVICE_URL } from '../settings';
+import { BLOCKCHAIN_WS_URL } from '../settings';
 import {
-  ExternalBlockchainInterface,
   InternalBlockchainInterface,
   BlockchainInboundAddressResult,
   BlockchainReport,
@@ -24,279 +23,211 @@ import { blockchainDataEmitter } from './BlockchainInfo';
 type Bech32Module = { encode: (prefix: string, data: Uint8Array, encoding?: 'bech32' | 'bech32m') => string };
 const bech32: Bech32Module = (bech32_module ? bech32_module : bech32_buffer);
 
-type FakeBlockchainEvent =
-  | { setNewPeak: number }
-  | { deliverBlock: { block_number: number; block_data: WatchReport } };
-
-function requestBlockData(forWho: FakeBlockchainInterface, block_number: number): Promise<void> {
-  if (forWho.deleted) {
-    return Promise.resolve();
-  }
-  return fetch(`${forWho.baseUrl}/get_block_data?block=${block_number}`, {
-    method: 'POST',
-  })
-    .then((res) => res.json())
-    .then((res: { created?: string[]; deleted?: string[]; timed_out?: string[] } | null) => {
-      if (forWho.deleted) {
-        return;
-      }
-      if (res === null) {
-        return new Promise<void>((resolve) => {
-          const handle = setTimeout(() => {
-            forWho.timeoutHandles.delete(handle);
-            if (forWho.deleted) {
-              resolve(undefined);
-              return;
-            }
-            requestBlockData(forWho, block_number).then(resolve);
-          }, 100);
-          forWho.timeoutHandles.add(handle);
-        });
-      }
-      const converted_res: WatchReport = {
-        created_watched: Array.isArray(res.created) ? res.created : [],
-        deleted_watched: Array.isArray(res.deleted) ? res.deleted : [],
-        timed_out: Array.isArray(res.timed_out) ? res.timed_out : [],
-      };
-      forWho.deliverBlock(block_number, converted_res);
-    });
+function getWebSocketClass(): any {
+  if (typeof globalThis.WebSocket !== 'undefined') return globalThis.WebSocket;
+  try { return require('ws'); } catch { throw new Error('No WebSocket implementation available'); }
 }
 
 export class FakeBlockchainInterface implements InternalBlockchainInterface {
-  baseUrl: string;
   addressData: BlockchainInboundAddressResult;
   deleted: boolean;
-  at_block: number;
-  max_block: number;
-  handlingEvent: boolean;
-  incomingEvents: FakeBlockchainEvent[];
   blockEmitter: (b: BlockchainReport) => void;
   observable: Subject<BlockchainReport>;
-  upstream: ExternalBlockchainInterface;
-  timeoutHandles: Set<ReturnType<typeof setTimeout>>;
 
-  constructor(baseUrl: string) {
-    this.baseUrl = baseUrl;
+  private ws: any | null = null;
+  private wsUrl: string;
+  private nextId = 0;
+  private pending = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
+  private token = '';
+  private connectPromise: Promise<void> | null = null;
+
+  constructor(wsUrl: string) {
+    this.wsUrl = wsUrl;
     this.addressData = { address: '', puzzleHash: '' };
     this.deleted = false;
-    this.max_block = 0;
-    this.at_block = 0;
-    this.handlingEvent = false;
-    this.incomingEvents = [];
-    this.upstream = new ExternalBlockchainInterface(baseUrl);
     this.observable = new Subject();
     this.blockEmitter = (b) => this.observable.next(b);
-    this.timeoutHandles = new Set();
+  }
+
+  private ensureConnected(): Promise<void> {
+    if (this.ws && this.ws.readyState === 1) {
+      return Promise.resolve();
+    }
+    if (this.connectPromise) {
+      return this.connectPromise;
+    }
+    this.connectPromise = new Promise<void>((resolve, reject) => {
+      const WS = getWebSocketClass();
+      const ws = new WS(this.wsUrl);
+      ws.onopen = () => {
+        this.ws = ws;
+        this.connectPromise = null;
+        resolve();
+      };
+      ws.onerror = (e: any) => {
+        this.connectPromise = null;
+        reject(e);
+      };
+      ws.onclose = () => {
+        this.ws = null;
+        this.connectPromise = null;
+        for (const [, p] of this.pending) {
+          p.reject(new Error('WebSocket closed'));
+        }
+        this.pending.clear();
+      };
+      ws.onmessage = (evt: any) => {
+        const raw = typeof evt === 'string' ? evt : evt.data;
+        let data: any;
+        try { data = JSON.parse(raw); } catch { return; }
+
+        if (data.event === 'block') {
+          const report: WatchReport = data.report ?? {
+            created_watched: [],
+            deleted_watched: [],
+            timed_out: [],
+          };
+          // The server sends arrays named created/deleted/timed_out;
+          // normalize to the WatchReport field names used internally.
+          const normalized: WatchReport = {
+            created_watched: report.created_watched ?? (data.report?.created ?? []),
+            deleted_watched: report.deleted_watched ?? (data.report?.deleted ?? []),
+            timed_out: report.timed_out ?? (data.report?.timed_out ?? []),
+          };
+          if (!this.deleted) {
+            this.blockEmitter({
+              peak: data.peak,
+              block: [],
+              report: normalized,
+            });
+          }
+          return;
+        }
+
+        if (data.id !== undefined) {
+          const p = this.pending.get(data.id);
+          if (p) {
+            this.pending.delete(data.id);
+            if (data.error) {
+              p.reject(new Error(data.error));
+            } else {
+              p.resolve(data.result);
+            }
+          }
+        }
+      };
+    });
+    return this.connectPromise;
+  }
+
+  private async sendRequest(method: string, params?: any): Promise<any> {
+    await this.ensureConnected();
+    const id = this.nextId++;
+    const msg = JSON.stringify({ id, method, params: params ?? {} });
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      this.ws!.send(msg);
+    });
+  }
+
+  private async getOrRequestToken(uniqueId: string): Promise<string> {
+    if (this.token) return this.token;
+    const result = await this.sendRequest('register', { name: uniqueId });
+    this.token = result;
+    return this.token;
   }
 
   async getAddress() {
     return this.addressData;
   }
 
-  startMonitoring(uniqueId: string) {
+  async startMonitoring(uniqueId: string) {
     this.deleted = false;
-    return this.upstream.getOrRequestToken(uniqueId).then((puzzleHash) => {
-      if (this.deleted) {
-        return;
-      }
-      const address = bech32.encode('xch', toUint8(puzzleHash), 'bech32m');
-      this.addressData = { address, puzzleHash };
-
-      fetch(`${this.baseUrl}/get_peak`, { method: 'POST' })
-        .then((res) => res.json())
-        .then((peak) => {
-          if (this.deleted) {
-            return;
-          }
-          this.setNewPeak(peak);
-        })
-        .catch(e => console.error('[FakeBlockchain] failed to fetch peak:', e));
-    });
+    const puzzleHash = await this.getOrRequestToken(uniqueId);
+    if (this.deleted) return;
+    const address = bech32.encode('xch', toUint8(puzzleHash), 'bech32m');
+    this.addressData = { address, puzzleHash };
   }
 
   getObservable() {
     return this.observable;
   }
 
-  do_initial_spend(uniqueId: string, target: string, amt: bigint) {
-    return this.upstream.getOrRequestToken(uniqueId).then((fromPuzzleHash) => {
-      return this.upstream.createSpendable(target, amt).then((coin) => {
-        if (!coin) {
-          throw new Error('no coin returned.');
-        }
-
-        // Returns the coin string
-        return { coin, fromPuzzleHash };
-      });
+  async do_initial_spend(uniqueId: string, target: string, amt: bigint) {
+    const fromPuzzleHash = await this.getOrRequestToken(uniqueId);
+    const coin = await this.sendRequest('create_spendable', {
+      who: this.token,
+      target,
+      amount: Number(amt),
     });
+    if (!coin) throw new Error('no coin returned.');
+    return { coin, fromPuzzleHash };
   }
 
-  async kickEvent() {
-    while (!this.deleted && this.incomingEvents.length) {
-      this.handlingEvent = true;
-      try {
-        const event = this.incomingEvents.shift();
-        if (!event) continue;
-        await this.handleEvent(event);
-      } catch (_) {
-        // event processing failure; next event will be tried
-      } finally {
-        this.handlingEvent = false;
-      }
+  async spend(_convert: (blob: string) => unknown, spendBlob: string): Promise<string> {
+    const status_array = await this.sendRequest('spend', { blob: spendBlob });
+    if (!Array.isArray(status_array) || status_array.length < 1) {
+      throw new Error('status result array was empty');
     }
-  }
-
-  async pushEvent(evt: FakeBlockchainEvent) {
-    if (this.deleted) {
-      return;
+    if (status_array[0] != 1) {
+      const detail = status_array[1] ?? '?';
+      const diagnostic = status_array[2] ?? '';
+      const msg = `spend rejected: status=[${status_array[0]},${detail}]${diagnostic ? ' ' + diagnostic : ''}`;
+      console.warn('[blockchain]', msg);
+      return msg;
     }
-    this.incomingEvents.push(evt);
-    if (!this.handlingEvent) {
-      await this.kickEvent();
-    }
+    return '';
   }
 
-  async handleEvent(event: FakeBlockchainEvent) {
-    if (this.deleted) {
-      return;
-    }
-    if ('setNewPeak' in event) {
-      this.internalSetNewPeak(event.setNewPeak);
-    } else if ('deliverBlock' in event) {
-      this.internalDeliverBlock(
-        event.deliverBlock.block_number,
-        event.deliverBlock.block_data,
-      );
-    }
+  async getBalance(): Promise<number> {
+    return this.sendRequest('get_balance', { user: this.token });
   }
 
-  async internalNextBlock() {
-    if (this.deleted) {
-      return;
-    }
-    if (this.at_block > this.max_block) {
-      return fetch(`${this.baseUrl}/wait_block`, {
-        method: 'POST',
-      })
-        .then((res) => res.json())
-        .then((res) => {
-          if (this.deleted) {
-            return;
-          }
-          this.setNewPeak(res);
-        });
-    } else {
-      return requestBlockData(this, this.at_block);
-    }
+  async getPuzzleAndSolution(coin: string): Promise<string[] | null> {
+    return this.sendRequest('get_puzzle_and_solution', { coin });
   }
 
-  async internalSetNewPeak(peak: number) {
-    if (this.deleted) {
-      return;
-    }
-    if (this.max_block === 0) {
-      this.max_block = peak;
-      this.at_block = peak;
-    } else if (peak > this.max_block) {
-      this.max_block = peak;
-    }
-
-    return this.internalNextBlock();
+  async selectCoins(uniqueId: string, amount: number): Promise<string | null> {
+    await this.getOrRequestToken(uniqueId);
+    return this.sendRequest('select_coins', { who: uniqueId, amount });
   }
 
-  setNewPeak(peak: number) {
-    if (this.deleted) {
-      return;
-    }
-    this.pushEvent({ setNewPeak: peak });
+  async getHeightInfo(): Promise<number> {
+    return this.sendRequest('get_peak');
   }
 
-  deliverBlock(block_number: number, block_data: WatchReport) {
-    if (this.deleted) {
-      return;
-    }
-    this.pushEvent({ deliverBlock: { block_number, block_data } });
-  }
-
-  internalDeliverBlock(block_number: number, block_data: WatchReport) {
-    if (this.deleted) {
-      return;
-    }
-    this.at_block += 1;
-    this.blockEmitter({
-      peak: block_number,
-      block: [],
-      report: block_data,
-    });
-
-    return this.internalNextBlock();
-  }
-
-  spend(_convert: (blob: string) => unknown, spendBlob: string): Promise<string> {
-    return this.upstream.spend(spendBlob).then((status_array) => {
-      if (status_array.length < 1) {
-        throw new Error('status result array was empty');
-      }
-
-      if (status_array[0] != 1) {
-        const detail = status_array[1] ?? '?';
-        const diagnostic = status_array[2] ?? '';
-        const msg = `spend rejected: status=[${status_array[0]},${detail}]${diagnostic ? ' ' + diagnostic : ''}`;
-        console.warn('[blockchain]', msg);
-        return msg;
-      }
-
-      return '';
-    });
-  }
-
-  getBalance(): Promise<number> {
-    return this.upstream.getBalance();
-  }
-
-  getPuzzleAndSolution(coin: string): Promise<string[] | null> {
-    return this.upstream.getPuzzleAndSolution(coin);
-  }
-
-  selectCoins(uniqueId: string, amount: number): Promise<string | null> {
-    return this.upstream.getOrRequestToken(uniqueId).then(() => {
-      return this.upstream.selectCoins(amount);
-    });
-  }
-
-  getHeightInfo(): Promise<number> {
-    return this.upstream.getPeak();
-  }
-
-  createOfferForIds(
+  async createOfferForIds(
     uniqueId: string,
     offer: { [walletId: string]: number },
     extraConditions?: Array<{ opcode: number; args: string[] }>,
     coinIds?: string[],
   ): Promise<any | null> {
-    const params: any = { offer };
+    const params: any = { who: uniqueId, offer };
     if (extraConditions) params.extraConditions = extraConditions;
     if (coinIds) params.coinIds = coinIds;
-    return fetch(
-      `${this.baseUrl}/create_offer_for_ids?who=${uniqueId}`,
-      {
-        body: JSON.stringify(params),
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      },
-    ).then((f) => f.json());
+    return this.sendRequest('create_offer_for_ids', params);
+  }
+
+  async registerUser(name: string): Promise<string> {
+    return this.sendRequest('register', { name });
   }
 
   close() {
     this.deleted = true;
-    this.incomingEvents = [];
-    this.timeoutHandles.forEach((handle) => clearTimeout(handle));
-    this.timeoutHandles.clear();
+    if (this.ws) {
+      try { this.ws.close(); } catch { /* ignore */ }
+      this.ws = null;
+    }
+    this.connectPromise = null;
+    for (const [, p] of this.pending) {
+      p.reject(new Error('closed'));
+    }
+    this.pending.clear();
   }
 }
 
 export const fakeBlockchainInfo = new FakeBlockchainInterface(
-  BLOCKCHAIN_SERVICE_URL,
+  BLOCKCHAIN_WS_URL,
 );
 export const FAKE_BLOCKCHAIN_ID = blockchainDataEmitter.addUpstream(
   fakeBlockchainInfo.getObservable(),
@@ -360,7 +291,7 @@ export function connectSimulatorBlockchain() {
           blockchainConnector.replyEmitter({ responseId: evt.requestId, getBalance: balance });
         });
       } else if (evt.getPuzzleAndSolution) {
-        fakeBlockchainInfo.upstream
+        fakeBlockchainInfo
           .getPuzzleAndSolution(evt.getPuzzleAndSolution.coin)
           .then((result) => {
             blockchainConnector.replyEmitter({

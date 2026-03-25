@@ -2,15 +2,18 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::stdin;
 use std::mem::swap;
-use std::time::Duration;
+use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
 use serde::{Deserialize, Serialize};
-use serde_json;
-use serde_json::{Map, Value};
-use tiny_http::{Header, Method, Response, Server, StatusCode};
+use serde_json::{self, Value};
+use tiny_http::{Header, Response, Server, StatusCode};
+use tungstenite::{Message, WebSocket};
 
 use crate::channel_handler::types::ChannelHandlerEnv;
 use crate::common::constants::{CREATE_COIN, SINGLETON_LAUNCHER_HASH};
@@ -25,24 +28,45 @@ use crate::peer_container::{FullCoinSetAdapter, WatchReport};
 use crate::simulator::Simulator;
 use clvm_traits::ToClvm;
 
-trait HttpError<V> {
-    fn report_err(self) -> Result<V, String>;
+// ---------------------------------------------------------------------------
+// WebSocket protocol types
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct WsRequest {
+    id: u64,
+    method: String,
+    #[serde(default)]
+    params: Value,
 }
 
-impl<V> HttpError<V> for Result<V, Error> {
-    fn report_err(self) -> Result<V, String> {
-        match self {
-            Ok(x) => Ok(x),
-            Err(e) => {
-                let mut error = Map::default();
-                error.insert("error".to_string(), Value::String(format!("{e:?}")));
-                let as_string = serde_json::to_string(&Value::Object(error))
-                    .map_err(|_| "\"bad json conversion\"".to_string())?;
-                Err(as_string)
-            }
-        }
-    }
+#[derive(Serialize)]
+struct WsResponse {
+    id: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
+
+#[derive(Serialize)]
+struct WsBlockEvent {
+    event: &'static str,
+    peak: u64,
+    report: WsBlockReport,
+}
+
+#[derive(Serialize)]
+struct WsBlockReport {
+    created: Vec<String>,
+    deleted: Vec<String>,
+    timed_out: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
+// GameRunner (unchanged business logic)
+// ---------------------------------------------------------------------------
+
 
 fn hex_to_bytes(hexstr: &str) -> Result<Vec<u8>, Error> {
     hex::decode(hexstr).map_err(|_e| Error::StrErr("not hex".to_string()))
@@ -119,11 +143,10 @@ impl GameRunner {
         Ok(new_height)
     }
 
-    fn wait_block(&mut self) -> StringWithError {
+    fn farm_and_chase(&mut self) -> Result<u64, Error> {
         self.simulator
             .farm_block(&self.neutral_identity.puzzle_hash);
-        let new_height = self.chase_block()?;
-        Ok(format!("{}\n", new_height))
+        self.chase_block()
     }
 
     fn get_block_data(&self, block: u64) -> StringWithError {
@@ -228,7 +251,7 @@ impl GameRunner {
                             coin_amt.clone(),
                         )?;
                         let parent_coin_bytes = parent_coin_0.to_bytes();
-                        self.wait_block()?;
+                        self.farm_and_chase()?;
                         return Ok(format!("\"{}\"\n", hex::encode(parent_coin_bytes)));
                     }
                 }
@@ -425,76 +448,207 @@ impl GameRunner {
     }
 }
 
-fn get_arg_string(url: &str, name: &str) -> Result<String, Error> {
-    let want_string = format!("{name}=");
-    if let Some(found_eq) = url.find(&want_string) {
-        let arg: String = url
-            .chars()
-            .skip(found_eq + want_string.len())
-            .take_while(|c| *c != '&')
-            .collect();
-        return Ok(arg);
-    }
+// ---------------------------------------------------------------------------
+// Request / response helper types
+// ---------------------------------------------------------------------------
 
-    Err(Error::StrErr("no argument".to_string()))
+#[derive(Serialize, Deserialize)]
+struct PushTxRequest {
+    spend_bundle: CoinsetSpendBundle,
 }
 
-fn get_arg_integer(url: &str, name: &str) -> Result<u64, Error> {
-    let arg = get_arg_string(url, name)?;
-    arg.parse::<u64>()
-        .map_err(|_e| Error::StrErr(format!("{name} is not an integer")))
+#[derive(Serialize, Deserialize, Default)]
+struct CreateOfferForIdsRequest {
+    offer: BTreeMap<String, i64>,
+    #[serde(default, rename = "coinIds")]
+    coin_ids: Vec<String>,
 }
 
-fn get_origin(request: &tiny_http::Request) -> Option<String> {
-    for header in request.headers() {
-        if header.field.as_str() == "Origin" || header.field.as_str() == "origin" {
-            return Some(header.value.as_str().to_string());
+// ---------------------------------------------------------------------------
+// WebSocket message dispatch
+// ---------------------------------------------------------------------------
+
+fn build_block_report(game_runner: &GameRunner, height: u64) -> WsBlockReport {
+    if let Some(report) = game_runner.sim_record.get(&height) {
+        WsBlockReport {
+            created: report
+                .created_watched
+                .iter()
+                .map(|c| hex::encode(c.to_bytes()))
+                .collect(),
+            deleted: report
+                .deleted_watched
+                .iter()
+                .map(|c| hex::encode(c.to_bytes()))
+                .collect(),
+            timed_out: report
+                .timed_out
+                .iter()
+                .map(|c| hex::encode(c.to_bytes()))
+                .collect(),
+        }
+    } else {
+        WsBlockReport {
+            created: vec![],
+            deleted: vec![],
+            timed_out: vec![],
         }
     }
-    None
 }
 
-fn cors_headers(origin: &Option<String>) -> Vec<Header> {
-    let mut headers = Vec::new();
-    if let Some(ref o) = origin {
-        if let Ok(h) = Header::from_bytes(&b"Access-Control-Allow-Origin"[..], o.as_bytes()) {
-            headers.push(h);
+fn make_block_event_json(game_runner: &GameRunner, height: u64) -> String {
+    let evt = WsBlockEvent {
+        event: "block",
+        peak: height,
+        report: build_block_report(game_runner, height),
+    };
+    serde_json::to_string(&evt).unwrap_or_default()
+}
+
+/// Parse a GameRunner method result (which is a JSON-encoded string body)
+/// into a serde_json::Value so it can be embedded directly in the response.
+fn parse_result_body(body: &str) -> Value {
+    serde_json::from_str(body.trim()).unwrap_or(Value::String(body.trim().to_string()))
+}
+
+struct DispatchResult {
+    response: String,
+    extra_messages: Vec<String>,
+}
+
+fn get_str_param<'a>(params: &'a Value, name: &str) -> Result<&'a str, Error> {
+    params[name]
+        .as_str()
+        .ok_or_else(|| Error::StrErr(format!("missing param: {name}")))
+}
+
+fn get_u64_param(params: &Value, name: &str) -> Result<u64, Error> {
+    params[name]
+        .as_u64()
+        .ok_or_else(|| Error::StrErr(format!("missing param: {name}")))
+}
+
+fn dispatch_ws_request(game_runner: &mut GameRunner, text: &str) -> DispatchResult {
+    let req: WsRequest = match serde_json::from_str(text) {
+        Ok(r) => r,
+        Err(e) => {
+            let resp = WsResponse {
+                id: 0,
+                result: None,
+                error: Some(format!("invalid request JSON: {e}")),
+            };
+            return DispatchResult {
+                response: serde_json::to_string(&resp).unwrap_or_default(),
+                extra_messages: vec![],
+            };
+        }
+    };
+
+    let mut extra_messages: Vec<String> = Vec::new();
+
+    let height_before = game_runner.simulator.get_current_height() as u64;
+
+    let result: Result<String, Error> = match req.method.as_str() {
+        "register" => {
+            let name = get_str_param(&req.params, "name");
+            name.and_then(|n| game_runner.register(n))
+        }
+        "get_peak" => {
+            let h = game_runner.simulator.get_current_height();
+            Ok(format!("{h}\n"))
+        }
+        "get_block_data" => {
+            let block = get_u64_param(&req.params, "block");
+            block.and_then(|b| game_runner.get_block_data(b))
+        }
+        "get_balance" => {
+            let user = get_str_param(&req.params, "user");
+            user.and_then(|u| game_runner.get_balance(u))
+        }
+        "get_puzzle_and_solution" => {
+            let coin = get_str_param(&req.params, "coin");
+            coin.and_then(|c| game_runner.get_puzzle_and_solution(c))
+        }
+        "create_spendable" => {
+            let who = get_str_param(&req.params, "who").map(|s| s.to_string());
+            let target = get_str_param(&req.params, "target").map(|s| s.to_string());
+            let amount = get_u64_param(&req.params, "amount");
+            match (who, target, amount) {
+                (Ok(w), Ok(t), Ok(a)) => game_runner.create_spendable(&w, &t, a),
+                (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => Err(e),
+            }
+        }
+        "select_coins" => {
+            let who = get_str_param(&req.params, "who").map(|s| s.to_string());
+            let amount = get_u64_param(&req.params, "amount");
+            match (who, amount) {
+                (Ok(w), Ok(a)) => game_runner.select_coins(&w, a),
+                (Err(e), _) | (_, Err(e)) => Err(e),
+            }
+        }
+        "create_offer_for_ids" => {
+            let who = get_str_param(&req.params, "who").map(|s| s.to_string());
+            let offer_req: Result<CreateOfferForIdsRequest, Error> =
+                serde_json::from_value(req.params.clone())
+                    .map_err(|e| Error::StrErr(format!("bad offer params: {e}")));
+            match (who, offer_req) {
+                (Ok(w), Ok(r)) => game_runner.create_offer_for_ids(&w, &r),
+                (Err(e), _) | (_, Err(e)) => Err(e),
+            }
+        }
+        "spend" => {
+            let blob = get_str_param(&req.params, "blob");
+            blob.and_then(|b| game_runner.spend(b))
+        }
+        "push_tx" => {
+            let push_req: Result<PushTxRequest, Error> =
+                serde_json::from_value(req.params.clone())
+                    .map_err(|e| Error::StrErr(format!("bad push_tx params: {e}")));
+            push_req.and_then(|r| game_runner.push_tx(&r.spend_bundle))
+        }
+        "block_spends" => {
+            let height = get_u64_param(&req.params, "height");
+            height.and_then(|h| game_runner.block_spends(h))
+        }
+        "reset" => game_runner.reset_sim(),
+        "exit" => {
+            std::process::exit(0);
+        }
+        other => Err(Error::StrErr(format!("unknown method: {other}"))),
+    };
+
+    let height_after = game_runner.simulator.get_current_height() as u64;
+    if height_after > height_before {
+        for h in (height_before + 1)..=height_after {
+            extra_messages.push(make_block_event_json(game_runner, h));
         }
     }
-    headers
+
+    let resp = match result {
+        Ok(body) => WsResponse {
+            id: req.id,
+            result: Some(parse_result_body(&body)),
+            error: None,
+        },
+        Err(e) => WsResponse {
+            id: req.id,
+            result: None,
+            error: Some(format!("{e:?}")),
+        },
+    };
+
+    DispatchResult {
+        response: serde_json::to_string(&resp).unwrap_or_default(),
+        extra_messages,
+    }
 }
 
-fn respond_cors_preflight(request: tiny_http::Request, origin: &Option<String>) {
-    let mut response = Response::from_data(Vec::new());
-    for h in cors_headers(origin) {
-        response.add_header(h);
-    }
-    if let Ok(h) = Header::from_bytes(
-        &b"Access-Control-Allow-Methods"[..],
-        &b"POST, GET, OPTIONS"[..],
-    ) {
-        response.add_header(h);
-    }
-    if let Ok(h) = Header::from_bytes(&b"Access-Control-Allow-Headers"[..], &b"content-type"[..]) {
-        response.add_header(h);
-    }
-    let _ = request.respond(response);
-}
+// ---------------------------------------------------------------------------
+// tiny_http health/static server (background thread)
+// ---------------------------------------------------------------------------
 
-fn respond_ok(request: tiny_http::Request, body: String, origin: &Option<String>) {
-    let data = body.into_bytes();
-    let mut response = Response::from_data(data).with_header(
-        Header::from_bytes(&b"Content-Type"[..], &b"application/octet-stream"[..]).unwrap(),
-    );
-    for h in cors_headers(origin) {
-        response.add_header(h);
-    }
-    let _ = request.respond(response);
-}
-
-fn respond_err(request: tiny_http::Request, msg: String) {
-    let response = Response::from_data(msg.into_bytes()).with_status_code(StatusCode(500));
-    let _ = request.respond(response);
+fn url_path(url: &str) -> &str {
+    url.split('?').next().unwrap_or(url)
 }
 
 fn respond_file(request: tiny_http::Request, path: &str, content_type: &str) {
@@ -518,33 +672,66 @@ fn respond_not_found(request: tiny_http::Request) {
     let _ = request.respond(response);
 }
 
-#[derive(Serialize, Deserialize)]
-struct PushTxRequest {
-    spend_bundle: CoinsetSpendBundle,
+fn run_health_server(height: Arc<AtomicUsize>) {
+    let server = match Server::http("0.0.0.0:5800") {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("failed to bind health server on port 5800: {e}");
+            return;
+        }
+    };
+
+    for request in server.incoming_requests() {
+        let url = request.url().to_string();
+        let path = url_path(&url);
+
+        // CORS preflight
+        if request.method() == &tiny_http::Method::Options {
+            let _ = request.respond(Response::from_data(Vec::new()));
+            continue;
+        }
+
+        match path {
+            "/get_peak" => {
+                let h = height.load(Ordering::Relaxed);
+                let _ = request.respond(Response::from_data(format!("{h}\n").into_bytes()));
+            }
+            "/" => respond_file(request, "resources/web/index.html", "text/html"),
+            "/index.css" => respond_file(request, "resources/web/index.css", "text/css"),
+            "/index.js" => respond_file(request, "resources/web/index.js", "text/javascript"),
+            "/player.html" => respond_file(request, "resources/web/player.html", "text/html"),
+            "/player.js" => respond_file(request, "resources/web/player.js", "text/javascript"),
+            _ => respond_not_found(request),
+        }
+    }
 }
 
-#[derive(Serialize, Deserialize, Default)]
-struct CreateOfferForIdsRequest {
-    offer: BTreeMap<String, i64>,
-    #[serde(default, rename = "coinIds")]
-    coin_ids: Vec<String>,
-}
+// ---------------------------------------------------------------------------
+// Main event loop
+// ---------------------------------------------------------------------------
 
-fn url_path(url: &str) -> &str {
-    url.split('?').next().unwrap_or(url)
+const BLOCK_INTERVAL_SECS: u64 = 10;
+
+fn ws_send(ws: &mut WebSocket<TcpStream>, text: String) -> Result<(), tungstenite::Error> {
+    ws.send(Message::Text(text))
 }
 
 fn service_main_inner() {
-    let server = Server::http("0.0.0.0:5800").expect("failed to bind port 5800");
-
     let simulator = Simulator::default();
     let coinset_adapter = FullCoinSetAdapter::default();
     let mut game_runner = GameRunner::new(simulator, coinset_adapter)
         .map_err(|e| format!("{e}"))
         .unwrap();
 
-    println!("port 5800.  press return to exit gracefully...");
+    let height = Arc::new(AtomicUsize::new(
+        game_runner.simulator.get_current_height(),
+    ));
 
+    // Background: tiny_http health + static files on port 5800
+    let health_height = height.clone();
+    std::thread::spawn(move || run_health_server(health_height));
+
+    // Background: stdin exit
     std::thread::spawn(|| {
         let mut buffer = String::default();
         if !matches!(stdin().read_line(&mut buffer), Ok(0)) {
@@ -553,187 +740,117 @@ fn service_main_inner() {
         }
     });
 
-    println!("doing actual service");
+    // WebSocket API on port 5801
+    let ws_listener = TcpListener::bind("0.0.0.0:5801").expect("failed to bind port 5801");
+    ws_listener
+        .set_nonblocking(true)
+        .expect("set_nonblocking failed");
+
+    println!("Simulator: health on :5800, WebSocket API on :5801");
+
+    let mut clients: Vec<WebSocket<TcpStream>> = Vec::new();
+    let mut last_block_time = Instant::now();
+    let block_interval = Duration::from_secs(BLOCK_INTERVAL_SECS);
+
     loop {
-        let mut request = match server.recv() {
-            Ok(rq) => rq,
-            Err(e) => {
-                eprintln!("recv error: {e}");
-                continue;
-            }
-        };
-
-        let url = request.url().to_string();
-        let path = url_path(&url);
-        let method = request.method().clone();
-        let origin = get_origin(&request);
-
-        if method == Method::Options {
-            respond_cors_preflight(request, &origin);
-            continue;
-        }
-
-        match (method, path) {
-            (Method::Get, "/") => {
-                respond_file(request, "resources/web/index.html", "text/html");
-            }
-            (Method::Get, "/index.css") => {
-                respond_file(request, "resources/web/index.css", "text/css");
-            }
-            (Method::Get, "/index.js") => {
-                respond_file(request, "resources/web/index.js", "text/javascript");
-            }
-            (Method::Get, "/player.html") => {
-                respond_file(request, "resources/web/player.html", "text/html");
-            }
-            (Method::Get, "/player.js") => {
-                respond_file(request, "resources/web/player.js", "text/javascript");
-            }
-            (Method::Post, "/exit") => {
-                let _ = request.respond(Response::from_data(Vec::new()));
-                std::process::exit(0);
-            }
-            (Method::Post, "/reset") => match game_runner.reset_sim().report_err() {
-                Ok(body) => respond_ok(request, body, &origin),
-                Err(msg) => respond_err(request, msg),
-            },
-            (Method::Post, "/register") => {
-                match get_arg_string(&url, "name")
-                    .and_then(|name| game_runner.register(&name))
-                    .report_err()
-                {
-                    Ok(body) => respond_ok(request, body, &origin),
-                    Err(msg) => respond_err(request, msg),
-                }
-            }
-            (Method::Post, "/get_peak") => {
-                let result = game_runner.simulator.get_current_height();
-                respond_ok(request, format!("{result}\n"), &origin);
-            }
-            (Method::Post, "/get_block_data") => {
-                match get_arg_integer(&url, "block")
-                    .and_then(|n| game_runner.get_block_data(n))
-                    .report_err()
-                {
-                    Ok(body) => respond_ok(request, body, &origin),
-                    Err(msg) => respond_err(request, msg),
-                }
-            }
-            (Method::Post, "/get_balance") => {
-                match get_arg_string(&url, "user")
-                    .and_then(|user| game_runner.get_balance(&user))
-                    .report_err()
-                {
-                    Ok(body) => respond_ok(request, body, &origin),
-                    Err(msg) => respond_err(request, msg),
-                }
-            }
-            (Method::Post, "/wait_block") => {
-                let result = game_runner.wait_block();
-                std::thread::sleep(Duration::from_millis(1000));
-                match result.report_err() {
-                    Ok(body) => respond_ok(request, body, &origin),
-                    Err(msg) => respond_err(request, msg),
-                }
-            }
-            (Method::Post, "/get_puzzle_and_solution") => {
-                match get_arg_string(&url, "coin")
-                    .and_then(|coin| game_runner.get_puzzle_and_solution(&coin))
-                    .report_err()
-                {
-                    Ok(body) => respond_ok(request, body, &origin),
-                    Err(msg) => respond_err(request, msg),
-                }
-            }
-            (Method::Post, "/create_spendable") => {
-                match (|| -> Result<String, Error> {
-                    let who = get_arg_string(&url, "who")?;
-                    let target = get_arg_string(&url, "target")?;
-                    let amount = get_arg_integer(&url, "amount")?;
-                    game_runner.create_spendable(&who, &target, amount)
-                })()
-                .report_err()
-                {
-                    Ok(body) => respond_ok(request, body, &origin),
-                    Err(msg) => respond_err(request, msg),
-                }
-            }
-            (Method::Post, "/select_coins") => {
-                match (|| -> Result<String, Error> {
-                    let who = get_arg_string(&url, "who")?;
-                    let amount = get_arg_integer(&url, "amount")?;
-                    game_runner.select_coins(&who, amount)
-                })()
-                .report_err()
-                {
-                    Ok(body) => respond_ok(request, body, &origin),
-                    Err(msg) => respond_err(request, msg),
-                }
-            }
-            (Method::Post, "/create_offer_for_ids") => {
-                let mut body_bytes = Vec::new();
-                match std::io::Read::read_to_end(request.as_reader(), &mut body_bytes) {
-                    Ok(_) => {
-                        match serde_json::from_slice::<CreateOfferForIdsRequest>(&body_bytes) {
-                            Ok(decoded) => {
-                                let who = get_arg_string(&url, "who");
-                                match who
-                                    .and_then(|who| {
-                                        game_runner.create_offer_for_ids(&who, &decoded)
-                                    })
-                                    .report_err()
-                                {
-                                    Ok(resp) => respond_ok(request, resp, &origin),
-                                    Err(msg) => respond_err(request, msg),
-                                }
-                            }
-                            Err(e) => respond_err(request, format!("{{\"error\":\"{e}\"}}")),
+        // 1. Accept new WebSocket connections (non-blocking)
+        match ws_listener.accept() {
+            Ok((stream, addr)) => {
+                eprintln!("new TCP connection from {addr}");
+                // Accepted socket is blocking by default — handshake completes fast
+                match tungstenite::accept(stream) {
+                    Ok(ws) => {
+                        if let Err(e) = ws.get_ref().set_nonblocking(true) {
+                            eprintln!("failed to set ws non-blocking: {e}");
+                        } else {
+                            clients.push(ws);
+                            eprintln!("WebSocket client connected ({} total)", clients.len());
                         }
                     }
-                    Err(e) => respond_err(request, format!("{{\"error\":\"read error: {e}\"}}")),
+                    Err(e) => eprintln!("WebSocket handshake error: {e}"),
                 }
             }
-            (Method::Post, "/spend") => {
-                match get_arg_string(&url, "blob")
-                    .and_then(|blob| game_runner.spend(&blob))
-                    .report_err()
-                {
-                    Ok(body) => respond_ok(request, body, &origin),
-                    Err(msg) => respond_err(request, msg),
-                }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                // No pending connection
             }
-            (Method::Post, "/block_spends") => {
-                match get_arg_integer(&url, "header_hash")
-                    .and_then(|h| game_runner.block_spends(h))
-                    .report_err()
-                {
-                    Ok(body) => respond_ok(request, body, &origin),
-                    Err(msg) => respond_err(request, msg),
-                }
-            }
-            (Method::Post, "/push_tx") => {
-                let mut body_bytes = Vec::new();
-                match std::io::Read::read_to_end(request.as_reader(), &mut body_bytes) {
-                    Ok(_) => match serde_json::from_slice::<PushTxRequest>(&body_bytes) {
-                        Ok(decoded) => {
-                            match game_runner.push_tx(&decoded.spend_bundle).report_err() {
-                                Ok(resp) => respond_ok(request, resp, &origin),
-                                Err(msg) => respond_err(request, msg),
+            Err(e) => eprintln!("accept error: {e}"),
+        }
+
+        // 2. Read incoming WebSocket messages from all clients
+        let mut to_remove: Vec<usize> = Vec::new();
+        for (i, ws) in clients.iter_mut().enumerate() {
+            loop {
+                match ws.read() {
+                    Ok(Message::Text(text)) => {
+                        let dr = dispatch_ws_request(&mut game_runner, &text);
+                        height.store(
+                            game_runner.simulator.get_current_height(),
+                            Ordering::Relaxed,
+                        );
+                        if ws_send(ws, dr.response).is_err() {
+                            to_remove.push(i);
+                            break;
+                        }
+                        for msg in dr.extra_messages {
+                            if ws_send(ws, msg).is_err() {
+                                to_remove.push(i);
+                                break;
                             }
                         }
-                        Err(e) => {
-                            respond_err(request, format!("{{\"error\":\"{e}\"}}"));
-                        }
-                    },
-                    Err(e) => {
-                        respond_err(request, format!("{{\"error\":\"read error: {e}\"}}"));
                     }
+                    Ok(Message::Ping(data)) => {
+                        let _ = ws.send(Message::Pong(data));
+                    }
+                    Ok(Message::Close(_)) => {
+                        let _ = ws.close(None);
+                        to_remove.push(i);
+                        break;
+                    }
+                    Err(tungstenite::Error::Io(ref e))
+                        if e.kind() == std::io::ErrorKind::WouldBlock =>
+                    {
+                        break; // No more messages right now
+                    }
+                    Err(_) => {
+                        to_remove.push(i);
+                        break;
+                    }
+                    _ => {} // Binary, Pong — ignore
                 }
             }
-            _ => {
-                respond_not_found(request);
-            }
         }
+
+        // Remove disconnected clients (reverse order to preserve indices)
+        to_remove.sort_unstable();
+        to_remove.dedup();
+        for i in to_remove.into_iter().rev() {
+            clients.remove(i);
+            eprintln!("WebSocket client disconnected ({} remaining)", clients.len());
+        }
+
+        // 3. Block timer: farm a block and push event to all clients
+        if last_block_time.elapsed() >= block_interval {
+            match game_runner.farm_and_chase() {
+                Ok(new_height) => {
+                    height.store(new_height as usize, Ordering::Relaxed);
+                    let evt_json = make_block_event_json(&game_runner, new_height);
+                    let mut dead: Vec<usize> = Vec::new();
+                    for (i, ws) in clients.iter_mut().enumerate() {
+                        if ws_send(ws, evt_json.clone()).is_err() {
+                            dead.push(i);
+                        }
+                    }
+                    for i in dead.into_iter().rev() {
+                        clients.remove(i);
+                    }
+                }
+                Err(e) => eprintln!("farm_and_chase error: {e:?}"),
+            }
+            last_block_time = Instant::now();
+        }
+
+        // 4. Avoid busy-spin
+        std::thread::sleep(Duration::from_millis(1));
     }
 }
 

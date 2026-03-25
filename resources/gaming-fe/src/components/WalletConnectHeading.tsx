@@ -2,14 +2,13 @@ import { useCallback, useState, useEffect, useRef } from 'react';
 import { Button } from './button';
 import { blockchainConnector } from '../hooks/BlockchainConnector';
 import { blockchainDataEmitter } from '../hooks/BlockchainInfo';
-import { FAKE_BLOCKCHAIN_ID } from '../hooks/FakeBlockchainInterface';
+import { FAKE_BLOCKCHAIN_ID, fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
 import {
   REAL_BLOCKCHAIN_ID,
   realBlockchainInfo,
 } from '../hooks/RealBlockchainInterface';
 import useDebug from '../hooks/useDebug';
 import { walletConnectState } from '../hooks/useWalletConnect';
-import { BLOCKCHAIN_SERVICE_URL } from '../settings';
 import { getPlayerId, getTheme, setTheme as saveTheme } from '../hooks/save';
 
 import Debug from './Debug';
@@ -182,14 +181,7 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
 
   // (height managed by parent Shell layout)
   const handleConnectSimulator = useCallback(() => {
-    const baseUrl = BLOCKCHAIN_SERVICE_URL;
-
-    fetch(`${baseUrl}/register?name=${uniqueId}`, {
-      method: 'POST',
-    })
-      .then((res) => {
-        return res.json();
-      })
+    fakeBlockchainInfo.registerUser(uniqueId)
       .then((res) => {
         debugLog('Simulator wallet registered');
         setFakeAddress(res);

@@ -767,7 +767,7 @@ mod gaming_wasm {
             )?;
             let dr = cradle
                 .cradle
-                .drain_all(&mut cradle.allocator)?;
+                .flush_and_collect(&mut cradle.allocator)?;
 
             #[derive(Serialize)]
             struct ProposeGameResult {
@@ -1137,7 +1137,7 @@ mod gaming_wasm {
                     },
                 ));
             }
-            let dr = cradle.cradle.drain_all(&mut cradle.allocator)?;
+            let dr = cradle.cradle.flush_and_collect(&mut cradle.allocator)?;
             drain_result_to_js(&dr)
         })
     }
