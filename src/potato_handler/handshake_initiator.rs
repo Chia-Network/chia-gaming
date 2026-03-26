@@ -86,6 +86,9 @@ pub struct HandshakeInitiatorHandler {
     unroll_timeout: Timeout,
     reward_puzzle_hash: PuzzleHash,
 
+    last_height: u64,
+    channel_deadline: Option<u64>,
+
     waiting_to_start: bool,
     incoming_messages: VecDeque<Rc<PeerMessage>>,
 
@@ -113,6 +116,8 @@ impl HandshakeInitiatorHandler {
             channel_timeout: phi.channel_timeout,
             unroll_timeout: phi.unroll_timeout,
             reward_puzzle_hash: phi.reward_puzzle_hash,
+            last_height: 0,
+            channel_deadline: None,
             waiting_to_start: true,
             incoming_messages: VecDeque::new(),
             last_channel_coin_spend_info: None,
@@ -240,7 +245,7 @@ impl HandshakeInitiatorHandler {
     }
 
     fn compute_not_valid_after_height(&self) -> Option<u64> {
-        Some(self.channel_timeout.to_u64() + 100)
+        Some(self.last_height + self.channel_timeout.to_u64())
     }
 
     fn build_launcher_coin_spend(
@@ -448,6 +453,7 @@ impl HandshakeInitiatorHandler {
                 };
                 self.last_channel_coin_spend_info = Some(spend_info);
                 let coin_spend_request = self.build_alice_coin_spend_request(env)?;
+                self.channel_deadline = self.compute_not_valid_after_height();
                 effects.push(Effect::NeedCoinSpend(coin_spend_request));
 
                 let info = match std::mem::replace(&mut self.state, InitiatorState::WaitingForStart)
@@ -660,6 +666,10 @@ impl PeerHandler for HandshakeInitiatorHandler {
     fn take_replacement(&mut self) -> Option<Box<dyn PeerHandler>> {
         self.replacement.take().map(|ph| ph as Box<dyn PeerHandler>)
     }
+    fn new_block(&mut self, height: u64) -> Result<Vec<Effect>, Error> {
+        self.last_height = height;
+        Ok(vec![])
+    }
     fn handshake_finished(&self) -> bool {
         false
     }
@@ -716,7 +726,7 @@ impl PeerHandler for HandshakeInitiatorHandler {
         Ok(vec![
             Effect::RegisterCoin {
                 coin: channel_coin,
-                timeout: self.channel_timeout.clone(),
+                timeout: Timeout::new(1_000_000),
                 name: Some("channel"),
             },
             Effect::PeerHandshakeC(HandshakeC { launcher_coin }),
@@ -740,6 +750,18 @@ impl PeerHandler for HandshakeInitiatorHandler {
             .map(|effect| effect.into_iter().collect::<Vec<_>>())
     }
     fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
+        if let Some(deadline) = self.channel_deadline {
+            if self.waiting_to_start && self.last_height >= deadline {
+                return Some(ChannelStatusSnapshot {
+                    state: ChannelState::Failed,
+                    advisory: Some("channel coin not confirmed in time".to_string()),
+                    coin: None,
+                    our_balance: None,
+                    their_balance: None,
+                    game_allocated: None,
+                });
+            }
+        }
         let state = match &self.state {
             InitiatorState::WaitingForStart | InitiatorState::SentA(_) => ChannelState::Handshaking,
             InitiatorState::WaitingForLauncher(_) | InitiatorState::SentC(_) => {

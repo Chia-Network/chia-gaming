@@ -802,7 +802,6 @@ impl ToLocalUI for LocalTestUIReceiver {
                         | ChannelState::ResolvedClean
                         | ChannelState::ResolvedUnrolled
                         | ChannelState::ResolvedStale
-                        | ChannelState::Failed
                 ) {
                     self.assert_channel_created("channel_status");
                 }
@@ -999,7 +998,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             identity: identities[0].clone(),
             my_contribution: Amount::new(bal),
             their_contribution: Amount::new(bal),
-            channel_timeout: Timeout::new(100),
+            channel_timeout: Timeout::new(5),
             unroll_timeout: Timeout::new(5),
             reward_puzzle_hash: identities[0].puzzle_hash.clone(),
         },
@@ -1012,7 +1011,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             identity: identities[1].clone(),
             my_contribution: Amount::new(bal),
             their_contribution: Amount::new(bal),
-            channel_timeout: Timeout::new(100),
+            channel_timeout: Timeout::new(5),
             unroll_timeout: Timeout::new(5),
             reward_puzzle_hash: identities[1].puzzle_hash.clone(),
         },
@@ -1585,9 +1584,18 @@ fn run_game_container_with_action_list_with_success_predicate(
     }
 
     for (i, lui) in local_uis.iter().enumerate() {
+        let channel_failed = lui.notifications.iter().any(|n| {
+            matches!(
+                n,
+                GameNotification::ChannelStatus {
+                    state: ChannelState::Failed,
+                    ..
+                }
+            )
+        });
         assert!(
-            lui.channel_created,
-            "player {i} never received channel_created notification"
+            lui.channel_created || channel_failed,
+            "player {i} never received channel_created or ChannelState::Failed notification"
         );
     }
 
@@ -5771,6 +5779,43 @@ ChannelState::GoingOnChain,
             )),
             "Alice should get WeTimedOut with zero reward (on-chain AcceptTimeout), got: {p0_notifs:?}"
         );
+    }));
+
+    res.push(("test_channel_handshake_timeout", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        let moves = vec![
+            GameAction::NerfTransactions(0),
+            GameAction::NerfTransactions(1),
+            GameAction::WaitBlocks(10, 0),
+        ];
+
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            Some(&|_move_number, _cradles| {
+                false
+            }),
+            None,
+        )
+        .expect("should finish");
+
+        for i in 0..2 {
+            let has_failed = outcome.local_uis[i].notifications.iter().any(|n| {
+                matches!(
+                    n,
+                    GameNotification::ChannelStatus {
+                        state: ChannelState::Failed,
+                        ..
+                    }
+                )
+            });
+            assert!(
+                has_failed,
+                "player {i} should have received ChannelState::Failed, got: {:?}",
+                outcome.local_uis[i].notifications
+            );
+        }
     }));
 
     res

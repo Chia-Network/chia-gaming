@@ -82,6 +82,9 @@ pub struct HandshakeReceiverHandler {
     unroll_timeout: Timeout,
     reward_puzzle_hash: PuzzleHash,
 
+    last_height: u64,
+    channel_deadline: Option<u64>,
+
     waiting_to_start: bool,
     incoming_messages: VecDeque<Rc<PeerMessage>>,
 
@@ -109,6 +112,8 @@ impl HandshakeReceiverHandler {
             channel_timeout: phi.channel_timeout,
             unroll_timeout: phi.unroll_timeout,
             reward_puzzle_hash: phi.reward_puzzle_hash,
+            last_height: 0,
+            channel_deadline: None,
             waiting_to_start: true,
             incoming_messages: VecDeque::new(),
             last_channel_coin_spend_info: None,
@@ -201,7 +206,7 @@ impl HandshakeReceiverHandler {
     }
 
     fn compute_not_valid_after_height(&self) -> Option<u64> {
-        Some(self.channel_timeout.to_u64() + 100)
+        Some(self.last_height + self.channel_timeout.to_u64())
     }
 
     fn compute_coin_announcement_hash(
@@ -377,7 +382,6 @@ impl HandshakeReceiverHandler {
                     env,
                 )?;
                 let sigs = channel_handler.get_initial_signatures()?;
-                let channel_coin = channel_handler.state_channel_coin().clone();
                 self.launcher_coin = Some(msg.launcher_coin.clone());
                 self.channel_handler = Some(channel_handler);
                 self.last_channel_coin_spend_info = None;
@@ -403,12 +407,13 @@ impl HandshakeReceiverHandler {
                     effects.push(Effect::DebugLog(parts.join("\n")));
                 }
 
-                effects.push(Effect::PeerHandshakeD(HandshakeD { signatures: sigs }));
+                let channel_coin = self.channel_handler()?.state_channel_coin().clone();
                 effects.push(Effect::RegisterCoin {
                     coin: channel_coin,
-                    timeout: self.channel_timeout.clone(),
+                    timeout: Timeout::new(1_000_000),
                     name: Some("channel"),
                 });
+                effects.push(Effect::PeerHandshakeD(HandshakeD { signatures: sigs }));
                 self.state = ReceiverState::SentD(Box::new(info));
             }
 
@@ -433,6 +438,7 @@ impl HandshakeReceiverHandler {
                 };
                 self.last_channel_coin_spend_info = Some(spend_info);
                 let coin_spend_request = self.build_bob_coin_spend_request(env)?;
+                self.channel_deadline = self.compute_not_valid_after_height();
                 effects.push(Effect::NeedCoinSpend(coin_spend_request));
 
                 let bundle = bundle.clone();
@@ -662,6 +668,10 @@ impl PeerHandler for HandshakeReceiverHandler {
     fn take_replacement(&mut self) -> Option<Box<dyn PeerHandler>> {
         self.replacement.take().map(|ph| ph as Box<dyn PeerHandler>)
     }
+    fn new_block(&mut self, height: u64) -> Result<Vec<Effect>, Error> {
+        self.last_height = height;
+        Ok(vec![])
+    }
     fn handshake_finished(&self) -> bool {
         false
     }
@@ -712,6 +722,18 @@ impl PeerHandler for HandshakeReceiverHandler {
             .map(|effect| effect.into_iter().collect::<Vec<_>>())
     }
     fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
+        if let Some(deadline) = self.channel_deadline {
+            if self.waiting_to_start && self.last_height >= deadline {
+                return Some(ChannelStatusSnapshot {
+                    state: ChannelState::Failed,
+                    advisory: Some("channel coin not confirmed in time".to_string()),
+                    coin: None,
+                    our_balance: None,
+                    their_balance: None,
+                    game_allocated: None,
+                });
+            }
+        }
         let state = match &self.state {
             ReceiverState::WaitingForA | ReceiverState::SentB(_) => ChannelState::Handshaking,
             ReceiverState::SentD(_) => ChannelState::Handshaking,

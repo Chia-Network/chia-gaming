@@ -23,7 +23,6 @@ use crate::potato_handler::effects::{
     apply_effects, ChannelState, ChannelStatusSnapshot, CradleEvent, CradleEventQueue, Effect,
     GameNotification, ResyncInfo,
 };
-use crate::potato_handler::handshake::{decode_clvm_int_to_u64, encode_u64_as_clvm_int};
 use crate::potato_handler::handshake_initiator::HandshakeInitiatorHandler;
 use crate::potato_handler::handshake_receiver::HandshakeReceiverHandler;
 use crate::potato_handler::start::GameStart;
@@ -90,6 +89,10 @@ pub trait PeerHandler {
         entropy: Hash,
     ) -> Result<Vec<Effect>, Error>;
     fn take_replacement(&mut self) -> Option<Box<dyn PeerHandler>>;
+
+    fn new_block(&mut self, _height: u64) -> Result<Vec<Effect>, Error> {
+        Ok(vec![])
+    }
 
     fn handshake_finished(&self) -> bool {
         true
@@ -876,16 +879,7 @@ impl SynchronousGameCradle {
         for effect in effects {
             if matches!(effect, Effect::NeedLauncherCoinId) {
                 self.state.events.push_back(CradleEvent::NeedLauncherCoin);
-            } else if let Effect::NeedCoinSpend(mut req) = effect {
-                for cond in &mut req.conditions {
-                    if cond.opcode == crate::common::constants::ASSERT_BEFORE_HEIGHT_ABSOLUTE {
-                        if let Some(arg) = cond.args.first() {
-                            let relative = decode_clvm_int_to_u64(arg);
-                            let absolute = self.state.current_height + relative;
-                            cond.args[0] = encode_u64_as_clvm_int(absolute);
-                        }
-                    }
-                }
+            } else if let Effect::NeedCoinSpend(req) = effect {
                 self.state.events.push_back(CradleEvent::NeedCoinSpend(req));
             } else {
                 passthrough.push(effect);
@@ -1330,6 +1324,8 @@ impl GameCradle for SynchronousGameCradle {
             report_coin_changes_to_peer(&mut env, &mut self.peer, &filtered_report)?
         };
         self.process_effects(reported_effects, allocator)?;
+        let height_effects = self.peer.new_block(self.state.current_height)?;
+        self.process_effects(height_effects, allocator)?;
         Ok(())
     }
 
