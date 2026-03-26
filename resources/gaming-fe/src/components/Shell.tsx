@@ -71,7 +71,6 @@ const Shell = () => {
   const [unreadChat, setUnreadChat] = useState(false);
   const [unreadSession, setUnreadSession] = useState(false);
   const [iframeUrl, setIframeUrl] = useState('about:blank');
-  const [iframeAllowed, setIframeAllowed] = useState('');
 
   const trackerConnRef = useRef<TrackerConnection | null>(null);
   const activeTabRef = useRef<TabId>(activeTab);
@@ -97,7 +96,7 @@ const Shell = () => {
   }, []);
 
   // Fetch tracker URL, set up iframe and TrackerConnection.
-  // Deferred until the user resolves both the "resume or start fresh" prompt
+  // Deferred until the user resolves both the resume vs. start-over prompt
   // and the wallet/simulator selection.
   useEffect(() => {
     if (!restoreDecided || !walletConnected) return;
@@ -111,7 +110,6 @@ const Shell = () => {
 
         const trackerURL = new URL(urls.tracker);
         const trackerOrigin = trackerURL.origin;
-        setIframeAllowed(trackerOrigin);
 
         const lobbyUrl = `${trackerOrigin}/?lobby=true&session=${sessionId}&uniqueId=${uniqueId}`;
         setIframeUrl(lobbyUrl);
@@ -330,7 +328,7 @@ const Shell = () => {
     }
   }, [uniqueId]);
 
-  const handleStartFresh = useCallback(async () => {
+  const handleStartOver = useCallback(async () => {
     await hardReset();
     window.location.reload();
   }, []);
@@ -367,8 +365,8 @@ const Shell = () => {
             <p className='text-canvas-text-contrast font-semibold text-lg'>Saved session found</p>
             <p className='text-canvas-text text-sm text-center'>
               {pendingRestore
-                ? 'You have an in-progress game session. Resume where you left off, or start fresh?'
-                : 'You have a previous session. Resume where you left off, or start fresh?'}
+                ? 'You have an in-progress game session. Resume where you left off, or start over?'
+                : 'You have a previous session. Resume where you left off, or start over?'}
             </p>
             <button
               onClick={handleResume}
@@ -378,11 +376,11 @@ const Shell = () => {
               {resuming ? 'Resuming…' : 'Resume Session'}
             </button>
             <button
-              onClick={handleStartFresh}
+              onClick={handleStartOver}
               disabled={resuming}
               className='w-full px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-50'
             >
-              Start Fresh
+              Start over
             </button>
           </div>
         </div>
@@ -451,7 +449,6 @@ const Shell = () => {
             className='bg-canvas-bg-subtle'
             style={{ width: '100%', height: '100%', border: 'none', margin: 0 }}
             src={iframeUrl}
-            allow={`clipboard-write self ${iframeAllowed}`}
           />
         </div>
 

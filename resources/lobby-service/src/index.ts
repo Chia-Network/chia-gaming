@@ -28,6 +28,8 @@ const args = parseArgs();
 
 app.use(
   helmet({
+    // CSP frame-ancestors already controls framing; omit X-Frame-Options to avoid browser warnings.
+    frameguard: false,
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'", 'https://explorer-api.walletconnect.com'],

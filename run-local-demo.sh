@@ -15,6 +15,7 @@ GAME_PORT=${GAME_PORT:-3002}
 TRACKER_PORT=${TRACKER_PORT:-3003}
 WC_PORT=${WC_PORT:-3004}
 SIM_PORT=${SIM_PORT:-5800}
+SIM_WS_PORT=${SIM_WS_PORT:-5801}
 
 SKIP_BUILD=0
 PIDS=()
@@ -28,7 +29,7 @@ done
 
 # Kill anything still listening on our ports from a previous run.
 # Use -sTCP:LISTEN to avoid killing browsers that have connections to these ports.
-for p in $GAME_PORT $TRACKER_PORT $WC_PORT $SIM_PORT; do
+for p in $GAME_PORT $TRACKER_PORT $WC_PORT $SIM_PORT $SIM_WS_PORT; do
     pids=$(lsof -ti:"$p" -sTCP:LISTEN 2>/dev/null || true)
     [ -n "$pids" ] && kill $pids 2>/dev/null || true
 done
