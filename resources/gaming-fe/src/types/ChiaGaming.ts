@@ -28,7 +28,8 @@ export type CradleEvent =
   | { CoinSolutionRequest: string }
   | { ReceiveError: string }
   | { NeedCoinSpend: unknown }
-  | { NeedLauncherCoin: boolean };
+  | { NeedLauncherCoin: boolean }
+  | { WatchCoin: { coin_name: string; coin_string: string } };
 
 export interface WasmResult {
   events?: CradleEvent[];
@@ -139,7 +140,8 @@ export type WasmNotificationTag =
   | 'ActionFailed';
 
 export type ChannelState =
-  | 'Handshaking' | 'OfferSent' | 'TransactionPending'
+  | 'Handshaking' | 'WaitingForHeightToOffer' | 'WaitingForHeightToAccept'
+  | 'OfferSent' | 'TransactionPending'
   | 'Active' | 'ShuttingDown' | 'ShutdownTransactionPending'
   | 'GoingOnChain' | 'Unrolling'
   | 'ResolvedClean' | 'ResolvedUnrolled' | 'ResolvedStale'
@@ -211,7 +213,6 @@ export interface WasmConnection {
     amount: string,
   ) => string;
   convert_chia_public_key_to_puzzle_hash: (public_key: string) => string;
-  get_watching_coins: (cid: number) => { coin_string: string; coin_name: string }[];
   coin_string_to_name: (hex_coinstring: string) => string;
 
   // Game
@@ -746,6 +747,8 @@ export interface InternalBlockchainInterface {
     extraConditions?: Array<{ opcode: number; args: string[] }>,
     coinIds?: string[],
   ): Promise<any | null>;
+  /** Register interest in a single coin; called when WASM emits a WatchCoin event. */
+  registerCoin?(coinName: string, coinString: string): void;
 }
 
 export interface OutcomeHandType {

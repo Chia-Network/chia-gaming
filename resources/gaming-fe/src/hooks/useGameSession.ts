@@ -199,7 +199,7 @@ export function useGameSession(
     try {
       go.proposeGame({
         game_type: '63616c706f6b6572',
-        timeout: 5,
+        timeout: 15,
         amount: perGameAmount,
         my_contribution: perGameAmount / 2n,
         my_turn: !iStarted,

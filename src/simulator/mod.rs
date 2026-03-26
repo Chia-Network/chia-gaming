@@ -282,6 +282,19 @@ impl Simulator {
         }
     }
 
+    /// Coin state for a watched coin id (including spent coins still in the map).
+    /// Used by the gaming FE to mirror WalletConnect `getCoinRecordsByNames`.
+    pub fn get_watched_coin_snapshot(
+        &self,
+        coin_id: &CoinID,
+    ) -> Option<(CoinString, u32, Option<u32>)> {
+        let state = self.state.borrow();
+        state
+            .coins
+            .get(coin_id)
+            .map(|r| (r.coin.clone(), r.created_height, r.spent_height))
+    }
+
     pub fn push_tx(
         &self,
         allocator: &mut AllocEncoder,

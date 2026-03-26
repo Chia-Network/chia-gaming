@@ -88,6 +88,7 @@ pub struct HandshakeInitiatorHandler {
 
     last_height: u64,
     channel_deadline: Option<u64>,
+    pending_coin_spend: bool,
 
     waiting_to_start: bool,
     incoming_messages: VecDeque<Rc<PeerMessage>>,
@@ -118,6 +119,7 @@ impl HandshakeInitiatorHandler {
             reward_puzzle_hash: phi.reward_puzzle_hash,
             last_height: 0,
             channel_deadline: None,
+            pending_coin_spend: false,
             waiting_to_start: true,
             incoming_messages: VecDeque::new(),
             last_channel_coin_spend_info: None,
@@ -295,7 +297,6 @@ impl HandshakeInitiatorHandler {
 
     fn build_alice_coin_spend_request(
         &self,
-        _env: &mut ChannelHandlerEnv<'_>,
     ) -> Result<CoinSpendRequest, Error> {
         let ch = self.channel_handler()?;
         let channel_coin = ch.state_channel_coin();
@@ -452,9 +453,13 @@ impl HandshakeInitiatorHandler {
                         })?
                 };
                 self.last_channel_coin_spend_info = Some(spend_info);
-                let coin_spend_request = self.build_alice_coin_spend_request(env)?;
-                self.channel_deadline = self.compute_not_valid_after_height();
-                effects.push(Effect::NeedCoinSpend(coin_spend_request));
+                if self.last_height > 0 {
+                    let coin_spend_request = self.build_alice_coin_spend_request()?;
+                    self.channel_deadline = self.compute_not_valid_after_height();
+                    effects.push(Effect::NeedCoinSpend(coin_spend_request));
+                } else {
+                    self.pending_coin_spend = true;
+                }
 
                 let info = match std::mem::replace(&mut self.state, InitiatorState::WaitingForStart)
                 {
@@ -668,6 +673,12 @@ impl PeerHandler for HandshakeInitiatorHandler {
     }
     fn new_block(&mut self, height: u64) -> Result<Vec<Effect>, Error> {
         self.last_height = height;
+        if self.pending_coin_spend && self.last_height > 0 {
+            self.pending_coin_spend = false;
+            let req = self.build_alice_coin_spend_request()?;
+            self.channel_deadline = self.compute_not_valid_after_height();
+            return Ok(vec![Effect::NeedCoinSpend(req)]);
+        }
         Ok(vec![])
     }
     fn handshake_finished(&self) -> bool {
@@ -761,6 +772,16 @@ impl PeerHandler for HandshakeInitiatorHandler {
                     game_allocated: None,
                 });
             }
+        }
+        if self.pending_coin_spend {
+            return Some(ChannelStatusSnapshot {
+                state: ChannelState::WaitingForHeightToOffer,
+                advisory: None,
+                coin: self.channel_handler.as_ref().map(|ch| ch.state_channel_coin().clone()),
+                our_balance: self.channel_handler.as_ref().map(|ch| ch.my_out_of_game_balance()),
+                their_balance: self.channel_handler.as_ref().map(|ch| ch.their_out_of_game_balance()),
+                game_allocated: self.channel_handler.as_ref().map(|ch| ch.total_game_allocated()),
+            });
         }
         let state = match &self.state {
             InitiatorState::WaitingForStart | InitiatorState::SentA(_) => ChannelState::Handshaking,

@@ -1,23 +1,23 @@
 import bech32_module from 'bech32-buffer';
 import * as bech32_buffer from 'bech32-buffer';
-import { Subject, Subscription } from 'rxjs';
+import { Subscription } from 'rxjs';
 
 import { rpc } from '../hooks/JsonRpcContext';
 import {
-  BlockchainReport,
   SelectionMessage,
   BlockchainInboundAddressResult,
 } from '../types/ChiaGaming';
 import { WalletBalance } from '../types/WalletBalance';
 import { WalletType } from '../types/WalletType';
 import { CoinRecord } from '../types/rpc/CoinRecord';
-import { toHexString, toUint8 } from '../util';
+import { toHexString } from '../util';
 
 import {
   blockchainConnector,
   BlockchainOutboundRequest,
 } from './BlockchainConnector';
 import { blockchainDataEmitter } from './BlockchainInfo';
+import { CoinStateMonitor, CoinStateBackend } from './CoinStateMonitor';
 
 type Bech32Module = {
   encode: (prefix: string, data: Uint8Array, encoding: string) => string;
@@ -25,7 +25,7 @@ type Bech32Module = {
 };
 const bech32: Bech32Module = (bech32_module ? bech32_module : bech32_buffer) as Bech32Module;
 const PUSH_TX_RETRY_DELAY = 30000;
-const POLL_INTERVAL = 5000;
+const POLL_INTERVAL = 10000;
 
 function isRetryablePushTxError(errStr: string): boolean {
   return errStr.includes('UNKNOWN_UNSPENT') || errStr.includes('NO_TRANSACTIONS_WHILE_SYNCING');
@@ -45,82 +45,110 @@ function encodeClvmInt(n: number): Uint8Array {
   return new Uint8Array(bytes);
 }
 
-// Convert condition args from generic array format [{opcode, args: string[]}]
-// to the named-dict format the Chia wallet's conditions_from_json_dicts expects.
-// Without this, the wallet's UnknownCondition fallback tries Program(raw_bytes)
-// on non-CLVM data, producing "bad encoding".
 function convertConditionArgs(c: { opcode: number; args: string[] }): { opcode: number; args: any } {
   switch (c.opcode) {
-    case 60: // CREATE_COIN_ANNOUNCEMENT
-    case 62: // CREATE_PUZZLE_ANNOUNCEMENT
+    case 60:
+    case 62:
       return { opcode: c.opcode, args: { msg: c.args[0] } };
-    case 61: // ASSERT_COIN_ANNOUNCEMENT
-    case 63: // ASSERT_PUZZLE_ANNOUNCEMENT
+    case 61:
+    case 63:
       return { opcode: c.opcode, args: { msg: c.args[0] } };
-    case 64: // ASSERT_CONCURRENT_SPEND
+    case 64:
       return { opcode: c.opcode, args: { coin_id: c.args[0] } };
-    case 51: // CREATE_COIN
+    case 51:
       return { opcode: c.opcode, args: { puzzle_hash: c.args[0], amount: c.args[1] ? parseInt(c.args[1], 16) : 0 } };
     default:
       return { opcode: c.opcode, args: c.args };
   }
 }
 
-async function coinRecordToName(rec: CoinRecord): Promise<string | undefined> {
-  try {
-    const parentBytes = toUint8(rec.coin.parentCoinInfo.replace(/^0x/, ''));
-    const puzzleBytes = toUint8(rec.coin.puzzleHash.replace(/^0x/, ''));
-    const amountBytes = encodeClvmInt(rec.coin.amount);
+class WalletConnectPoller {
+  private pollingTimer: ReturnType<typeof setTimeout> | undefined;
+  private remoteWalletReady = false;
 
-    const data = new Uint8Array(parentBytes.length + puzzleBytes.length + amountBytes.length);
-    data.set(parentBytes, 0);
-    data.set(puzzleBytes, parentBytes.length);
-    data.set(amountBytes, parentBytes.length + puzzleBytes.length);
+  constructor(
+    private monitor: CoinStateMonitor,
+    private ensureRemoteWallet: () => void,
+    private isRemoteWalletReady: () => boolean,
+    private pollIntervalMs: number,
+  ) {}
 
-    const hash = await crypto.subtle.digest('SHA-256', data);
-    return toHexString(Array.from(new Uint8Array(hash)));
-  } catch {
-    return undefined;
+  start() {
+    if (this.pollingTimer) return;
+    this.tick();
   }
-}
 
-interface PendingRequest {
-  complete: (v: unknown) => void;
-  reject: (e: unknown) => void;
-  requestId: number;
+  stop() {
+    if (this.pollingTimer) {
+      clearTimeout(this.pollingTimer);
+      this.pollingTimer = undefined;
+    }
+  }
+
+  private async tick() {
+    this.ensureRemoteWallet();
+    try {
+      const height = await rpc.getHeightInfo({});
+      const names = this.monitor.getRegisteredCoinNames();
+      let records: CoinRecord[] = [];
+      for (const name of names) {
+        try {
+          const r = await rpc.getCoinRecordsByNames({
+            names: [name],
+            includeSpentCoins: true,
+          });
+          records.push(...r);
+        } catch {
+          // Coin not on-chain yet — skip.
+        }
+      }
+      await this.monitor.receiveCoinStates(height, records);
+    } catch (e) {
+      console.error('[wc-poller] poll failed', e);
+    }
+    this.pollingTimer = setTimeout(() => this.tick(), this.pollIntervalMs);
+  }
 }
 
 export class RealBlockchainInterface {
   addressData: BlockchainInboundAddressResult;
-  fingerprint?: string;
-  walletId: number;
-  requestId: number;
-  requests: Record<number, PendingRequest>;
-  peak: number;
-  at_block: number;
-  publicKey?: string;
-  observable: Subject<BlockchainReport>;
+  monitor: CoinStateMonitor;
 
-  private pollingTimer: ReturnType<typeof setTimeout> | undefined;
+  private poller: WalletConnectPoller;
   private remoteWalletId: number | undefined;
   private remoteWalletPending = false;
-  private registerCoinsPending = false;
-  private registeredCoinNames: Set<string> = new Set();
-  private previousCoinStates: Map<string, boolean> = new Map();
-  private watchingCoins: { coin_name: string; coin_string: string }[] = [];
 
   constructor() {
     this.addressData = { address: '', puzzleHash: '' };
-    this.walletId = 1;
-    this.requestId = 1;
-    this.requests = {};
-    this.peak = 0;
-    this.at_block = 0;
-    this.observable = new Subject();
+
+    const self = this;
+    const backend: CoinStateBackend = {
+      async registerCoins(names: string[]) {
+        await self.waitForRemoteWallet();
+        await rpc.registerRemoteCoins({
+          walletId: self.remoteWalletId!,
+          coinIds: names,
+        });
+      },
+      async getCoinRecords(names: string[]) {
+        return rpc.getCoinRecordsByNames({
+          names,
+          includeSpentCoins: true,
+        });
+      },
+    };
+    this.monitor = new CoinStateMonitor(backend);
+
+    this.poller = new WalletConnectPoller(
+      this.monitor,
+      () => this.ensureRemoteWallet(),
+      () => this.remoteWalletId !== undefined,
+      POLL_INTERVAL,
+    );
   }
 
-  setWatchingCoins(coins: { coin_name: string; coin_string: string }[]) {
-    this.watchingCoins = coins;
+  registerCoin(coinName: string, coinString: string) {
+    void this.monitor.registerCoin(coinName, coinString);
   }
 
   async getAddress() {
@@ -128,35 +156,15 @@ export class RealBlockchainInterface {
   }
 
   async startMonitoring() {
-    if (this.pollingTimer) return;
-    this.poll();
+    this.poller.start();
   }
 
   stopMonitoring() {
-    if (this.pollingTimer) {
-      clearTimeout(this.pollingTimer);
-      this.pollingTimer = undefined;
-    }
+    this.poller.stop();
   }
 
   getObservable() {
-    return this.observable;
-  }
-
-  does_initial_spend() {
-    return (target: string, amt: bigint) => {
-      const targetXch = bech32.encode('xch', toUint8(target), 'bech32m');
-      return this.push_request({
-        method: 'create_spendable',
-        target,
-        targetXch,
-        amt,
-      });
-    };
-  }
-
-  set_puzzle_hash(_puzzleHash: string) {
-    // TODO: Implement puzzle hash setting
+    return this.monitor.getObservable();
   }
 
   async spend(spend: unknown): Promise<string> {
@@ -213,138 +221,21 @@ export class RealBlockchainInterface {
       });
   }
 
-  private async poll() {
+  private waitForRemoteWallet(): Promise<void> {
+    if (this.remoteWalletId !== undefined) return Promise.resolve();
     this.ensureRemoteWallet();
-
-    try {
-      const height = await rpc.getHeightInfo({});
-      if (height > this.peak) {
-        console.log(`[wc-blockchain] new peak height=${height} (was ${this.peak})`);
-        this.peak = height;
-        if (this.at_block === 0) {
-          this.at_block = height;
+    return new Promise((resolve) => {
+      const check = () => {
+        if (this.remoteWalletId !== undefined) {
+          resolve();
+        } else {
+          setTimeout(check, 500);
         }
-        await this.checkCoinStates();
-      }
-    } catch (e) {
-      console.error('[wc-blockchain] height poll failed', e);
-    }
-    this.pollingTimer = setTimeout(() => this.poll(), POLL_INTERVAL);
-  }
-
-  private async checkCoinStates() {
-    const coinNameToString = new Map<string, string>();
-    for (const entry of this.watchingCoins) {
-      coinNameToString.set(entry.coin_name, entry.coin_string);
-    }
-
-    const allNames = Array.from(coinNameToString.keys());
-
-    if (this.remoteWalletId !== undefined && !this.registerCoinsPending) {
-      const newNames = allNames.filter((n) => !this.registeredCoinNames.has(n));
-      if (newNames.length > 0) {
-        this.registerCoinsPending = true;
-        console.log(`[wc-blockchain] registering ${newNames.length} new coin(s)`);
-        rpc.registerRemoteCoins({
-          walletId: this.remoteWalletId,
-          coinIds: newNames,
-        })
-          .then(() => {
-            for (const n of newNames) {
-              this.registeredCoinNames.add(n);
-            }
-            this.registerCoinsPending = false;
-          })
-          .catch((e) => {
-            this.registerCoinsPending = false;
-            console.error('[wc-blockchain] registerRemoteCoins failed', e);
-          });
-      }
-    }
-
-    const registeredNames = allNames.filter((n) => this.registeredCoinNames.has(n));
-
-    if (registeredNames.length === 0) {
-      this.observable.next({
-        peak: this.peak,
-        block: undefined,
-        report: { created_watched: [], deleted_watched: [], timed_out: [] },
-      });
-      return;
-    }
-
-    let records: CoinRecord[];
-    try {
-      records = await rpc.getCoinRecordsByNames({
-        names: registeredNames,
-        includeSpentCoins: true,
-      });
-    } catch (e) {
-      console.error('[wc-blockchain] getCoinRecordsByNames failed', e);
-      this.observable.next({
-        peak: this.peak,
-        block: undefined,
-        report: { created_watched: [], deleted_watched: [], timed_out: [] },
-      });
-      return;
-    }
-
-    const created_watched: string[] = [];
-    const deleted_watched: string[] = [];
-    const timed_out: string[] = [];
-
-    for (const rec of records) {
-      const coinName = await coinRecordToName(rec);
-      if (!coinName) continue;
-
-      const coinString = coinNameToString.get(coinName);
-      if (!coinString) continue;
-
-      const wasSpent = this.previousCoinStates.get(coinName);
-      const wasSeen = wasSpent !== undefined;
-
-      if (!wasSeen) {
-        created_watched.push(coinString);
-        this.previousCoinStates.set(coinName, rec.spent);
-      }
-
-      if (rec.spent && !wasSpent) {
-        deleted_watched.push(coinString);
-        this.previousCoinStates.set(coinName, true);
-      }
-    }
-
-    const report = { created_watched, deleted_watched, timed_out };
-    const hasChanges =
-      created_watched.length > 0 ||
-      deleted_watched.length > 0 ||
-      timed_out.length > 0;
-
-    if (hasChanges) {
-      console.log(
-        `[wc-blockchain] coin state changes: created=${created_watched.length} deleted=${deleted_watched.length} timed_out=${timed_out.length}`,
-      );
-    }
-
-    this.observable.next({
-      peak: this.peak,
-      block: undefined,
-      report,
-    });
-  }
-
-  private async push_request(req: Record<string, unknown>): Promise<unknown> {
-    const requestId = this.requestId++;
-    const tagged = { ...req, requestId };
-    window.parent.postMessage(tagged, '*');
-    return new Promise((resolve, reject) => {
-      this.requests[requestId] = {
-        complete: resolve,
-        reject,
-        requestId,
       };
+      check();
     });
   }
+
 }
 
 export const realBlockchainInfo: RealBlockchainInterface =
@@ -362,70 +253,10 @@ export function connectRealBlockchain() {
 
   realOutboundSubscription = blockchainConnector.getOutbound().subscribe({
     next: async (evt: BlockchainOutboundRequest) => {
-      let initialSpend = evt.initialSpend;
       let transaction = evt.transaction;
       let getAddress = evt.getAddress;
       let getBalance = evt.getBalance;
-      if (initialSpend) {
-        try {
-          const currentAddress = await rpc.getCurrentAddress({
-            walletId: 1,
-          });
-          if (currentAddress !== lastRecvAddress) {
-            lastRecvAddress = currentAddress;
-          }
-          const fromPuzzleHash = toHexString(
-            bech32.decode(currentAddress).data,
-          );
-          const result = await rpc.sendTransaction({
-            walletId: 1,
-            amount: Number(initialSpend.amount),
-            fee: 0,
-            address: bech32.encode(
-              'xch',
-              toUint8(initialSpend.target),
-              'bech32m',
-            ),
-            waitForConfirmation: false,
-          });
-
-          let resultCoin: { parentCoinInfo: string; puzzleHash: string; amount: number | bigint } | undefined;
-          if (result.transaction) {
-            result.transaction.additions.forEach((c) => {
-              if (
-                c.puzzleHash == '0x' + initialSpend.target &&
-                c.amount.toString() == initialSpend.amount.toString()
-              ) {
-                resultCoin = c;
-              }
-            });
-          } else {
-            const r = result as unknown as Record<string, unknown>;
-            if (r.coin && typeof r.coin === 'object') {
-              resultCoin = r.coin as { parentCoinInfo: string; puzzleHash: string; amount: number | bigint };
-            }
-          }
-
-          if (!resultCoin) {
-            blockchainConnector.replyEmitter({
-              responseId: evt.requestId,
-              error: `no corresponding coin created in ${JSON.stringify(result)}`,
-            });
-            return;
-          }
-
-          blockchainConnector.replyEmitter({
-            responseId: evt.requestId,
-            initialSpend: { coin: resultCoin, fromPuzzleHash },
-          });
-        } catch (e: unknown) {
-          console.error('rpc error', evt, ':', e);
-          blockchainConnector.replyEmitter({
-            responseId: evt.requestId,
-            error: JSON.stringify(e),
-          });
-        }
-      } else if (transaction) {
+      if (transaction) {
         while (true) {
           try {
             console.log(`[wc-blockchain] >>> walletPushTx (transaction req #${evt.requestId})`);

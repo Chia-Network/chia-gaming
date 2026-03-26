@@ -390,6 +390,13 @@ pub fn do_handshake<P>(
 where
     P: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + MessagePeerQueue,
 {
+    for handler in handlers.iter_mut() {
+        let effects = handler.new_block(1)?;
+        if !effects.is_empty() {
+            return Err(Error::StrErr("unexpected effects from initial new_block".to_string()));
+        }
+    }
+
     for _ in 0..100 {
         for who in 0..2 {
             if let Some(msg) = pipes[who ^ 1].message_pipe().queue.pop_front() {

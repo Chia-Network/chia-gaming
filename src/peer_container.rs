@@ -439,6 +439,7 @@ pub trait GameCradle {
 
 #[derive(Serialize, Deserialize)]
 struct SynchronousGameCradleState {
+    #[serde(skip)]
     current_height: u64,
     #[serde(with = "any_key_map")]
     watching_coins: HashMap<CoinString, WatchEntry>,
@@ -495,6 +496,11 @@ impl WalletSpendInterface for SynchronousGameCradleState {
                 name: name.map(|s| s.to_string()),
             },
         );
+
+        self.events.push_back(CradleEvent::WatchCoin {
+            coin_name: coin_id.to_coin_id(),
+            coin_string: coin_id.clone(),
+        });
 
         Ok(())
     }

@@ -29,6 +29,8 @@ function truncateHex(hex: string, head = 8, tail = 6): string {
 
 const CHANNEL_STATE_LABELS: Record<ChannelState, string> = {
   Handshaking: 'Handshaking',
+  WaitingForHeightToOffer: 'Waiting for block height\u2026',
+  WaitingForHeightToAccept: 'Waiting for block height\u2026',
   OfferSent: 'Offer sent',
   TransactionPending: 'Tx pending',
   Active: 'Active',

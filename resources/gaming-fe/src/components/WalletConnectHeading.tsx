@@ -48,7 +48,6 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
   const [haveBlock, setHaveBlock] = useState(false);
 
   const balanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const addressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const uniqueId = getPlayerId();
 
@@ -113,10 +112,6 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
             selection: REAL_BLOCKCHAIN_ID,
             uniqueId,
           });
-          if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
-          if (addressTimerRef.current) clearTimeout(addressTimerRef.current);
-          requestBalance();
-          requestRecvAddress();
         }
 
         const record = evt as unknown as Record<string, unknown>;
@@ -152,8 +147,6 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
         }
         if (evt.getAddress) {
           setRecvAddress(evt.getAddress.address);
-          if (addressTimerRef.current) clearTimeout(addressTimerRef.current);
-          addressTimerRef.current = setTimeout(requestRecvAddress, 15000);
         }
       },
     });
@@ -164,7 +157,6 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
           setHaveBlock(true);
           debugLog(`Blockchain peak received: height ${evt.peak}`);
           if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
-          if (addressTimerRef.current) clearTimeout(addressTimerRef.current);
           requestBalance();
           requestRecvAddress();
         }
@@ -173,7 +165,6 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
 
     return function () {
       if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
-      if (addressTimerRef.current) clearTimeout(addressTimerRef.current);
       bcSubscription.unsubscribe();
       biSubscription.unsubscribe();
     };
@@ -192,7 +183,6 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
           uniqueId,
         });
         if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
-        if (addressTimerRef.current) clearTimeout(addressTimerRef.current);
         requestBalance();
         requestRecvAddress();
       })

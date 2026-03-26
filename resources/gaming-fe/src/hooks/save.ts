@@ -55,19 +55,9 @@ export interface AppState {
 
 const APP_STATE_KEY = 'appState';
 const CURRENT_VERSION = 2;
-const LEGACY_STORAGE_KEYS = ['persistedState', 'playerId', 'sessionId', 'sessionSave', 'alias', 'theme', 'saveNames'];
-
 function isWalletConnectStorageKey(key: string): boolean {
   const lower = key.toLowerCase();
   return lower.startsWith('wc@') || lower.includes('walletconnect');
-}
-
-function clearLegacySaveEntries(): void {
-  const saveNamesRaw = localStorage.getItem('saveNames');
-  if (!saveNamesRaw) return;
-  for (const name of saveNamesRaw.split(',').filter(Boolean)) {
-    localStorage.removeItem(`save-${name}`);
-  }
 }
 
 function deleteIndexedDb(name: string): Promise<void> {
@@ -268,25 +258,8 @@ export function clearSession(): void {
 
 export async function hardReset(): Promise<void> {
   try {
-    clearLegacySaveEntries();
-    localStorage.removeItem(APP_STATE_KEY);
-    for (const key of LEGACY_STORAGE_KEYS) {
-      localStorage.removeItem(key);
-    }
-
-    for (let i = localStorage.length - 1; i >= 0; i -= 1) {
-      const key = localStorage.key(i);
-      if (key && isWalletConnectStorageKey(key)) {
-        localStorage.removeItem(key);
-      }
-    }
-
-    for (let i = sessionStorage.length - 1; i >= 0; i -= 1) {
-      const key = sessionStorage.key(i);
-      if (key && isWalletConnectStorageKey(key)) {
-        sessionStorage.removeItem(key);
-      }
-    }
+    localStorage.clear();
+    sessionStorage.clear();
   } catch (e) {
     console.error('[save] failed to clear browser storage during hard reset:', e);
   }

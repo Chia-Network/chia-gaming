@@ -1258,6 +1258,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                             CradleEvent::DebugLog(line) => {
                                 debug_logs[i].push(line.clone());
                             }
+                            CradleEvent::WatchCoin { .. } => {}
                         }
                     }
 
@@ -1748,7 +1749,9 @@ fn run_game_container_with_action_list_with_success_predicate(
     // Invariant 6: channel state monotonicity.
     fn channel_state_ordinal(s: &ChannelState) -> u8 {
         match s {
-            ChannelState::Handshaking => 0,
+            ChannelState::Handshaking
+            | ChannelState::WaitingForHeightToOffer
+            | ChannelState::WaitingForHeightToAccept => 0,
             ChannelState::OfferSent => 1,
             ChannelState::TransactionPending => 2,
             ChannelState::Active => 3,

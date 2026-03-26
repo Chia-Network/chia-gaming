@@ -16,6 +16,7 @@ import {
   SessionSave,
 } from '../hooks/save';
 import { blobSingleton } from '../hooks/blobSingleton';
+import { walletConnectState } from '../hooks/useWalletConnect';
 import { blockchainDataEmitter } from '../hooks/BlockchainInfo';
 import { FAKE_BLOCKCHAIN_ID, fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
@@ -291,6 +292,7 @@ const Shell = () => {
 
   const handleReset = useCallback(async () => {
     activePairingTokenRef.current = null;
+    try { await walletConnectState.disconnect(); } catch (_) {}
     await hardReset();
     window.location.reload();
   }, []);
@@ -329,6 +331,7 @@ const Shell = () => {
   }, [uniqueId]);
 
   const handleStartOver = useCallback(async () => {
+    try { await walletConnectState.disconnect(); } catch (_) {}
     await hardReset();
     window.location.reload();
   }, []);

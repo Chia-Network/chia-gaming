@@ -11,6 +11,9 @@ import {
   BlockchainOutboundRequest,
 } from './BlockchainConnector';
 import { blockchainDataEmitter } from './BlockchainInfo';
+import { FAKE_BLOCKCHAIN_ID, fakeBlockchainInfo } from './FakeBlockchainInterface';
+import { REAL_BLOCKCHAIN_ID, realBlockchainInfo } from './RealBlockchainInterface';
+import { debugLog } from '../services/debugLog';
 
 let requestNumber = 1;
 
@@ -28,6 +31,7 @@ function performTransaction<T>(
       next: (e: BlockchainInboundReply) => {
         if (e.error) {
           console.error('returning error in transaction', e);
+          debugLog(`[blockchain] request ${requestId} failed: ${String(e.error)}`);
           reject(e.error);
           return;
         }
@@ -35,6 +39,7 @@ function performTransaction<T>(
         const replyObject = checkReply(e);
         if (replyObject === undefined || replyObject === null) {
           console.error('no reply in transaction', e);
+          debugLog(`[blockchain] request ${requestId} returned no reply data`);
           reject(`no reply data in reply for request ${JSON.stringify(e)}`);
           return;
         }
@@ -60,6 +65,7 @@ function performNullableTransaction(
     thisRequestChannel.subscribe({
       next: (e: BlockchainInboundReply) => {
         if (e.error) {
+          debugLog(`[blockchain] request ${requestId} failed: ${String(e.error)}`);
           reject(e.error);
           return;
         }
@@ -162,5 +168,14 @@ export class ChildFrameBlockchainInterface {
 
   getObservable() {
     return blockchainDataEmitter.getObservable();
+  }
+
+  registerCoin(coinName: string, coinString: string) {
+    const sel = blockchainDataEmitter.selection;
+    if (sel === FAKE_BLOCKCHAIN_ID) {
+      fakeBlockchainInfo.registerCoin(coinName, coinString);
+    } else if (sel === REAL_BLOCKCHAIN_ID) {
+      realBlockchainInfo.registerCoin(coinName, coinString);
+    }
   }
 }

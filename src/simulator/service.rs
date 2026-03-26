@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::stdin;
 use std::mem::swap;
@@ -53,14 +53,7 @@ struct WsResponse {
 struct WsBlockEvent {
     event: &'static str,
     peak: u64,
-    report: WsBlockReport,
-}
-
-#[derive(Serialize)]
-struct WsBlockReport {
-    created: Vec<String>,
-    deleted: Vec<String>,
-    timed_out: Vec<String>,
+    records: Vec<Value>,
 }
 
 // ---------------------------------------------------------------------------
@@ -446,6 +439,71 @@ impl GameRunner {
         let serialized = serde_json::to_string(&value).into_gen()?;
         Ok(serialized)
     }
+
+    fn coin_record_json(&self, coin_id: &CoinID) -> Option<Value> {
+        let (coin, created_height, spent_height) =
+            self.simulator.get_watched_coin_snapshot(coin_id)?;
+        let (parent, puzzle_hash, amount) = coin.to_parts()?;
+        Some(serde_json::json!({
+            "coin": {
+                "parentCoinInfo": format!("0x{}", hex::encode(parent.bytes())),
+                "puzzleHash": format!("0x{}", hex::encode(puzzle_hash.bytes())),
+                "amount": amount.to_u64(),
+            },
+            "confirmedBlockIndex": created_height,
+            "spentBlockIndex": spent_height.unwrap_or(0),
+            "spent": spent_height.is_some(),
+            "coinbase": false,
+            "timestamp": 0,
+        }))
+    }
+
+    /// JSON array of coin records gated to registered coins.
+    fn get_coin_records_by_names(
+        &self,
+        params: &Value,
+        registered_coins: &HashSet<CoinID>,
+    ) -> StringWithError {
+        let names = params
+            .get("names")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| Error::StrErr("missing names array".to_string()))?;
+        let mut records = Vec::new();
+        for name_val in names {
+            let Some(name_hex) = name_val.as_str() else {
+                continue;
+            };
+            let bytes = match check_for_hex(name_hex) {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+            let hash = match Hash::from_slice(&bytes) {
+                Ok(h) => h,
+                Err(_) => continue,
+            };
+            let coin_id = CoinID::new(hash);
+            if !registered_coins.contains(&coin_id) {
+                continue;
+            }
+            if let Some(rec) = self.coin_record_json(&coin_id) {
+                records.push(rec);
+            }
+        }
+        Ok(format!(
+            "{}\n",
+            serde_json::to_string(&records).map_err(|e| Error::StrErr(format!("{e}")))?
+        ))
+    }
+
+    fn registered_coin_records(&self, registered_coins: &HashSet<CoinID>) -> Vec<Value> {
+        let mut records = Vec::new();
+        for coin_id in registered_coins {
+            if let Some(rec) = self.coin_record_json(coin_id) {
+                records.push(rec);
+            }
+        }
+        records
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -468,39 +526,16 @@ struct CreateOfferForIdsRequest {
 // WebSocket message dispatch
 // ---------------------------------------------------------------------------
 
-fn build_block_report(game_runner: &GameRunner, height: u64) -> WsBlockReport {
-    if let Some(report) = game_runner.sim_record.get(&height) {
-        WsBlockReport {
-            created: report
-                .created_watched
-                .iter()
-                .map(|c| hex::encode(c.to_bytes()))
-                .collect(),
-            deleted: report
-                .deleted_watched
-                .iter()
-                .map(|c| hex::encode(c.to_bytes()))
-                .collect(),
-            timed_out: report
-                .timed_out
-                .iter()
-                .map(|c| hex::encode(c.to_bytes()))
-                .collect(),
-        }
-    } else {
-        WsBlockReport {
-            created: vec![],
-            deleted: vec![],
-            timed_out: vec![],
-        }
-    }
-}
-
-fn make_block_event_json(game_runner: &GameRunner, height: u64) -> String {
+fn make_block_event_json_for_client(
+    game_runner: &GameRunner,
+    height: u64,
+    registered_coins: &HashSet<CoinID>,
+) -> String {
+    let records = game_runner.registered_coin_records(registered_coins);
     let evt = WsBlockEvent {
         event: "block",
         peak: height,
-        report: build_block_report(game_runner, height),
+        records,
     };
     serde_json::to_string(&evt).unwrap_or_default()
 }
@@ -528,7 +563,36 @@ fn get_u64_param(params: &Value, name: &str) -> Result<u64, Error> {
         .ok_or_else(|| Error::StrErr(format!("missing param: {name}")))
 }
 
-fn dispatch_ws_request(game_runner: &mut GameRunner, text: &str) -> DispatchResult {
+fn register_remote_coins(
+    params: &Value,
+    registered_coins: &mut HashSet<CoinID>,
+) -> StringWithError {
+    let coin_ids = params
+        .get("coinIds")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| Error::StrErr("missing coinIds array".to_string()))?;
+    for id_val in coin_ids {
+        let Some(hex_str) = id_val.as_str() else {
+            continue;
+        };
+        let bytes = match check_for_hex(hex_str) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let hash = match Hash::from_slice(&bytes) {
+            Ok(h) => h,
+            Err(_) => continue,
+        };
+        registered_coins.insert(CoinID::new(hash));
+    }
+    Ok("true\n".to_string())
+}
+
+fn dispatch_ws_request(
+    game_runner: &mut GameRunner,
+    text: &str,
+    registered_coins: &mut HashSet<CoinID>,
+) -> DispatchResult {
     let req: WsRequest = match serde_json::from_str(text) {
         Ok(r) => r,
         Err(e) => {
@@ -610,6 +674,10 @@ fn dispatch_ws_request(game_runner: &mut GameRunner, text: &str) -> DispatchResu
             let height = get_u64_param(&req.params, "height");
             height.and_then(|h| game_runner.block_spends(h))
         }
+        "get_coin_records_by_names" => {
+            game_runner.get_coin_records_by_names(&req.params, registered_coins)
+        }
+        "register_remote_coins" => register_remote_coins(&req.params, registered_coins),
         "reset" => game_runner.reset_sim(),
         "exit" => {
             std::process::exit(0);
@@ -620,7 +688,11 @@ fn dispatch_ws_request(game_runner: &mut GameRunner, text: &str) -> DispatchResu
     let height_after = game_runner.simulator.get_current_height() as u64;
     if height_after > height_before {
         for h in (height_before + 1)..=height_after {
-            extra_messages.push(make_block_event_json(game_runner, h));
+            extra_messages.push(make_block_event_json_for_client(
+                game_runner,
+                h,
+                registered_coins,
+            ));
         }
     }
 
@@ -712,6 +784,11 @@ fn run_health_server(height: Arc<AtomicUsize>) {
 
 const BLOCK_INTERVAL_SECS: u64 = 10;
 
+struct ClientState {
+    ws: WebSocket<TcpStream>,
+    registered_coins: HashSet<CoinID>,
+}
+
 fn ws_send(ws: &mut WebSocket<TcpStream>, text: String) -> Result<(), tungstenite::Error> {
     ws.send(Message::Text(text))
 }
@@ -748,7 +825,7 @@ fn service_main_inner() {
 
     println!("Simulator: health on :5800, WebSocket API on :5801");
 
-    let mut clients: Vec<WebSocket<TcpStream>> = Vec::new();
+    let mut clients: Vec<ClientState> = Vec::new();
     let mut last_block_time = Instant::now();
     let block_interval = Duration::from_secs(BLOCK_INTERVAL_SECS);
 
@@ -763,7 +840,10 @@ fn service_main_inner() {
                         if let Err(e) = ws.get_ref().set_nonblocking(true) {
                             eprintln!("failed to set ws non-blocking: {e}");
                         } else {
-                            clients.push(ws);
+                            clients.push(ClientState {
+                                ws,
+                                registered_coins: HashSet::new(),
+                            });
                             eprintln!("WebSocket client connected ({} total)", clients.len());
                         }
                     }
@@ -778,31 +858,35 @@ fn service_main_inner() {
 
         // 2. Read incoming WebSocket messages from all clients
         let mut to_remove: Vec<usize> = Vec::new();
-        for (i, ws) in clients.iter_mut().enumerate() {
+        for (i, client) in clients.iter_mut().enumerate() {
             loop {
-                match ws.read() {
+                match client.ws.read() {
                     Ok(Message::Text(text)) => {
-                        let dr = dispatch_ws_request(&mut game_runner, &text);
+                        let dr = dispatch_ws_request(
+                            &mut game_runner,
+                            &text,
+                            &mut client.registered_coins,
+                        );
                         height.store(
                             game_runner.simulator.get_current_height(),
                             Ordering::Relaxed,
                         );
-                        if ws_send(ws, dr.response).is_err() {
+                        if ws_send(&mut client.ws, dr.response).is_err() {
                             to_remove.push(i);
                             break;
                         }
                         for msg in dr.extra_messages {
-                            if ws_send(ws, msg).is_err() {
+                            if ws_send(&mut client.ws, msg).is_err() {
                                 to_remove.push(i);
                                 break;
                             }
                         }
                     }
                     Ok(Message::Ping(data)) => {
-                        let _ = ws.send(Message::Pong(data));
+                        let _ = client.ws.send(Message::Pong(data));
                     }
                     Ok(Message::Close(_)) => {
-                        let _ = ws.close(None);
+                        let _ = client.ws.close(None);
                         to_remove.push(i);
                         break;
                     }
@@ -828,15 +912,19 @@ fn service_main_inner() {
             eprintln!("WebSocket client disconnected ({} remaining)", clients.len());
         }
 
-        // 3. Block timer: farm a block and push event to all clients
+        // 3. Block timer: farm a block and push per-client event
         if last_block_time.elapsed() >= block_interval {
             match game_runner.farm_and_chase() {
                 Ok(new_height) => {
                     height.store(new_height as usize, Ordering::Relaxed);
-                    let evt_json = make_block_event_json(&game_runner, new_height);
                     let mut dead: Vec<usize> = Vec::new();
-                    for (i, ws) in clients.iter_mut().enumerate() {
-                        if ws_send(ws, evt_json.clone()).is_err() {
+                    for (i, client) in clients.iter_mut().enumerate() {
+                        let evt_json = make_block_event_json_for_client(
+                            &game_runner,
+                            new_height,
+                            &client.registered_coins,
+                        );
+                        if ws_send(&mut client.ws, evt_json).is_err() {
                             dead.push(i);
                         }
                     }

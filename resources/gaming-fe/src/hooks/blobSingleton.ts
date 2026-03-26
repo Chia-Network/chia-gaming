@@ -41,17 +41,10 @@ export async function configGameObject(
   gameObject.setBlockchainAddress(address);
   let { game: cradle, puzzleHash } = wasmStateInit.createGame(calpokerHexes.proposalHex, calpokerHexes.parserHex, rngId, wasmConnection, iStarted, amount, amount, address.puzzleHash);
   gameObject.setGameCradle(cradle);
-  const initialSpend = await blockchain.do_initial_spend(uniqueId, puzzleHash, amount);
-  let coin = initialSpend.coin;
-  if (typeof coin !== 'string') {
-    coin = wasmConnection.convert_coinset_to_coin_string(
-      coin.parentCoinInfo,
-      coin.puzzleHash,
-      coin.amount.toString(),
-    );
-  }
+  // Bootstrap must source funding from wallet coin selection, not local payment.
+  let coin = await blockchain.selectCoins(uniqueId, Number(amount));
   if (!coin) {
-    throw new Error('failed to get opening coin for handshake');
+    throw new Error('ASSERT_FAIL: selectCoins returned null for opening coin');
   }
   debugLog('[wasm] activateSpend');
   gameObject.activateSpend(coin);
@@ -151,6 +144,7 @@ export function getBlobSingleton(
         await restoreSession(blobSingleton!, sessionSave, wasmStateInit);
       } catch (e) {
         console.error('[blobSingleton] restoreSession error:', e);
+        debugLog(`[blobSingleton] restoreSession error: ${String(e)}`);
       }
     };
     doRestore();
@@ -169,7 +163,12 @@ export function getBlobSingleton(
           amount,
         );
       } catch (e) {
+        const msg = e instanceof Error ? e.message
+          : typeof e === 'object' && e !== null && 'data' in e ? (e as any).data?.error ?? String(e)
+          : String(e);
         console.error('[blobSingleton] newSession error:', e);
+        debugLog(`[blobSingleton] newSession error: ${msg}`);
+        blobSingleton!.rxjsEmitter?.next({ type: 'error', error: msg });
       }
     };
     newSession();

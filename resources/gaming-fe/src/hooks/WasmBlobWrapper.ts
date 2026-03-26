@@ -177,13 +177,6 @@ export class WasmBlobWrapper {
     return this.rxjsMessageSingleton;
   }
 
-  getWatchingCoins(): { coin_string: string; coin_name: string }[] {
-    if (!this.wc || !this.cradle) return [];
-    try {
-      return this.wc.get_watching_coins(this.cradle.cradle) || [];
-    } catch { return []; }
-  }
-
   spillStoredMessages() {
     if (this.qualifyingEvents != 7 || !this.cradle || this.reloading) {
       return;
@@ -224,7 +217,6 @@ export class WasmBlobWrapper {
       this.deliverBlockData(peak, report);
     }
     this.spillStoredMessages();
-    this.sendWatchingCoins();
   }
 
   getChannelPuzzleHash(): string | null {
@@ -236,25 +228,9 @@ export class WasmBlobWrapper {
     this.launcherProvided = true;
 
     try {
-      let coin: string | null = null;
-      try {
-        coin = await this.blockchain.selectCoins(this.uniqueId, Number(this.amount));
-      } catch (_e) {
-        // Simulator path may not expose select_coins; fall back below.
-      }
+      const coin = await this.blockchain.selectCoins(this.uniqueId, Number(this.amount));
       if (!coin) {
-        const addr = await this.blockchain.getAddress();
-        const minted = await this.blockchain.do_initial_spend(
-          this.uniqueId,
-          addr.puzzleHash,
-          this.amount,
-        );
-        coin = typeof minted.coin === 'string' ? minted.coin : null;
-      }
-      if (!coin) {
-        console.error('[wasm] unable to source launcher parent coin');
-        this.launcherProvided = false;
-        return;
+        throw new Error('ASSERT_FAIL: selectCoins returned null for launcher parent coin');
       }
       const { computeLauncherCoin } = await import('../util/launcher');
       const { launcherCoinHex } = await computeLauncherCoin(coin);
@@ -263,6 +239,7 @@ export class WasmBlobWrapper {
     } catch (e) {
       this.launcherProvided = false;
       console.error('[wasm] handleNeedLauncherCoin error:', e);
+      debugLog(`[wasm] handleNeedLauncherCoin error: ${String(e)}`);
     }
   }
 
@@ -296,6 +273,7 @@ export class WasmBlobWrapper {
       this.processResult(result);
     } catch (e) {
       console.error('[wasm] handleNeedCoinSpend error:', e);
+      debugLog(`[wasm] handleNeedCoinSpend error: ${String(e)}`);
     }
   }
 
@@ -336,6 +314,7 @@ export class WasmBlobWrapper {
       }
     }).catch(e => {
       console.error('[wasm] submitTransaction failed:', e);
+      debugLog(`[wasm] submitTransaction failed: ${String(e)}`);
       const idx = this.pendingTransactions.indexOf(blob);
       if (idx !== -1) {
         this.pendingTransactions.splice(idx, 1);
@@ -361,6 +340,7 @@ export class WasmBlobWrapper {
         }
       }).catch(e => {
         console.error('[wasm] resubmitPendingTransactions failed:', e);
+        debugLog(`[wasm] resubmitPendingTransactions failed: ${String(e)}`);
         const idx = this.pendingTransactions.indexOf(blob);
         if (idx !== -1) {
           this.pendingTransactions.splice(idx, 1);
@@ -386,7 +366,6 @@ export class WasmBlobWrapper {
     }
     this.draining = false;
 
-    this.sendWatchingCoins();
     this.scheduleSave();
   }
 
@@ -435,6 +414,9 @@ export class WasmBlobWrapper {
       this.handleNeedLauncherCoin();
     } else if ('NeedCoinSpend' in event) {
       this.handleNeedCoinSpend(event.NeedCoinSpend);
+    } else if ('WatchCoin' in event) {
+      const { coin_name, coin_string } = event.WatchCoin;
+      this.blockchain.registerCoin?.(coin_name, coin_string);
     }
   }
 
@@ -449,6 +431,7 @@ export class WasmBlobWrapper {
       }
     } catch (e) {
       console.error('[wasm] puzzle/solution fetch failed:', e);
+      debugLog(`[wasm] puzzle/solution fetch failed: ${String(e)}`);
     }
   }
 
@@ -545,17 +528,7 @@ export class WasmBlobWrapper {
         '\npeak:', peak,
         '\nreport:', JSON.stringify(block_report),
       );
-    }
-    this.sendWatchingCoins();
-  }
-
-  private sendWatchingCoins() {
-    if (!this.wc || !this.cradle || typeof window === 'undefined' || window.parent === window) return;
-    try {
-      const coins = this.wc.get_watching_coins(this.cradle.cradle);
-      window.parent.postMessage({ watching_coins: coins }, window.location.origin);
-    } catch (e) {
-      console.warn('[wasm] sendWatchingCoins failed:', e);
+      debugLog(`[wasm] block_data failed: ${String(e)}`);
     }
   }
 

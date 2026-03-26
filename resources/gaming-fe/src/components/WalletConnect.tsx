@@ -93,11 +93,11 @@ export const doConnectWallet = (
   setComplete: () => void,
   signalError: (s: string) => void,
 ) => {
-  setShowQRModal(true);
   walletConnectState
     .startConnect()
     .then((result) => {
       setConnectionUri(result.uri);
+      setShowQRModal(true);
       return walletConnectState.connect(result.approval);
     })
     .then(() => {

@@ -101,7 +101,8 @@ mod gaming_wasm {
             "conditions": Array<{ "opcode": number, "args": Array<string> }>,
             "coin_id"?: string,
           } }
-        | { NeedLauncherCoin: boolean };
+        | { NeedLauncherCoin: boolean }
+        | { WatchCoin: { coin_name: string, coin_string: string } };
 
     export type DrainResult = {
         "events": Array<CradleEvent>,
@@ -143,12 +144,6 @@ mod gaming_wasm {
         created_watched: Vec<String>,
         deleted_watched: Vec<String>,
         timed_out: Vec<String>,
-    }
-
-    #[derive(Serialize)]
-    struct JsWatchingCoin {
-        coin_name: String,
-        coin_string: String,
     }
 
     thread_local! {
@@ -1116,6 +1111,17 @@ mod gaming_wasm {
             CradleEvent::NeedLauncherCoin => {
                 serde_json::json!({ "NeedLauncherCoin": true })
             }
+            CradleEvent::WatchCoin {
+                coin_name,
+                coin_string,
+            } => {
+                serde_json::json!({
+                    "WatchCoin": {
+                        "coin_name": hex::encode(coin_name.bytes()),
+                        "coin_string": coin_string_to_hex(coin_string),
+                    }
+                })
+            }
         }
     }
 
@@ -1286,22 +1292,6 @@ mod gaming_wasm {
         let pubkey = PublicKey::from_slice(&public_key_bytes).into_js()?;
         let puzzle_hash = puzzle_hash_for_pk(&mut allocator, &pubkey).into_js()?;
         Ok(hex::encode(puzzle_hash.bytes()))
-    }
-
-    #[wasm_bindgen]
-    pub fn get_watching_coins(cid: i32) -> Result<JsValue, JsValue> {
-        with_game(cid, move |cradle: &mut JsCradle| {
-            let coins: Vec<JsWatchingCoin> = cradle
-                .cradle
-                .get_watching_coins()
-                .iter()
-                .map(|coin| JsWatchingCoin {
-                    coin_name: hex::encode(coin.to_coin_id().bytes()),
-                    coin_string: coin_string_to_hex(coin),
-                })
-                .collect();
-            serde_wasm_bindgen::to_value(&coins).into_e()
-        })
     }
 
     #[wasm_bindgen(typescript_type = "IChiaIdentityFun")]

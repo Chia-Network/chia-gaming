@@ -3,7 +3,8 @@ use std::collections::VecDeque;
 use crate::channel_handler::types::PotatoSignatures;
 use crate::channel_handler::types::ReadableMove;
 use crate::common::types::{
-    Aggsig, Amount, CoinSpend, CoinString, GameID, ProgramRef, PuzzleHash, SpendBundle, Timeout,
+    Aggsig, Amount, CoinID, CoinSpend, CoinString, GameID, ProgramRef, PuzzleHash, SpendBundle,
+    Timeout,
 };
 use crate::potato_handler::handshake::{CoinSpendRequest, HandshakeB, HandshakeC, HandshakeD};
 use crate::potato_handler::types::{BatchAction, PeerMessage};
@@ -25,6 +26,8 @@ pub struct ResyncInfo {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ChannelState {
     Handshaking,
+    WaitingForHeightToOffer,
+    WaitingForHeightToAccept,
     OfferSent,
     TransactionPending,
     Active,
@@ -147,6 +150,10 @@ pub enum CradleEvent {
     ReceiveError(String),
     NeedCoinSpend(CoinSpendRequest),
     NeedLauncherCoin,
+    WatchCoin {
+        coin_name: CoinID,
+        coin_string: CoinString,
+    },
 }
 
 /// Collect CradleEvents in insertion order.

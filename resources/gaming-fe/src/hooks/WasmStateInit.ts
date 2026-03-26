@@ -188,8 +188,8 @@ export class WasmStateInit {
       have_potato: have_potato,
       my_contribution: { amt: my_contribution },
       their_contribution: { amt: their_contribution },
-      channel_timeout: 5,
-      unroll_timeout: 5,
+      channel_timeout: 15,
+      unroll_timeout: 15,
       reward_puzzle_hash: rewardPuzzleHash,
     });
 

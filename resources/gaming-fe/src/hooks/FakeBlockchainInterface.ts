@@ -1,16 +1,15 @@
-import { Subject, Subscription } from 'rxjs';
+import { Subscription } from 'rxjs';
 // @ts-ignore
 import bech32_module from 'bech32-buffer';
 // @ts-ignore
 import * as bech32_buffer from 'bech32-buffer';
 import { toUint8 } from '../util';
+import { CoinRecord } from '../types/rpc/CoinRecord';
 
 import { BLOCKCHAIN_WS_URL } from '../settings';
 import {
   InternalBlockchainInterface,
   BlockchainInboundAddressResult,
-  BlockchainReport,
-  WatchReport,
   SelectionMessage,
 } from '../types/ChiaGaming';
 
@@ -19,6 +18,7 @@ import {
   BlockchainOutboundRequest,
 } from './BlockchainConnector';
 import { blockchainDataEmitter } from './BlockchainInfo';
+import { CoinStateMonitor, CoinStateBackend } from './CoinStateMonitor';
 
 type Bech32Module = { encode: (prefix: string, data: Uint8Array, encoding?: 'bech32' | 'bech32m') => string };
 const bech32: Bech32Module = (bech32_module ? bech32_module : bech32_buffer);
@@ -31,8 +31,7 @@ function getWebSocketClass(): any {
 export class FakeBlockchainInterface implements InternalBlockchainInterface {
   addressData: BlockchainInboundAddressResult;
   deleted: boolean;
-  blockEmitter: (b: BlockchainReport) => void;
-  observable: Subject<BlockchainReport>;
+  monitor: CoinStateMonitor;
 
   private ws: any | null = null;
   private wsUrl: string;
@@ -45,8 +44,18 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     this.wsUrl = wsUrl;
     this.addressData = { address: '', puzzleHash: '' };
     this.deleted = false;
-    this.observable = new Subject();
-    this.blockEmitter = (b) => this.observable.next(b);
+
+    const self = this;
+    const backend: CoinStateBackend = {
+      async registerCoins(names: string[]) {
+        await self.sendRequest('register_remote_coins', { coinIds: names });
+      },
+      async getCoinRecords(names: string[]) {
+        const raw = await self.sendRequest('get_coin_records_by_names', { names });
+        return Array.isArray(raw) ? (raw as CoinRecord[]) : [];
+      },
+    };
+    this.monitor = new CoinStateMonitor(backend);
   }
 
   private ensureConnected(): Promise<void> {
@@ -82,24 +91,11 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         try { data = JSON.parse(raw); } catch { return; }
 
         if (data.event === 'block') {
-          const report: WatchReport = data.report ?? {
-            created_watched: [],
-            deleted_watched: [],
-            timed_out: [],
-          };
-          // The server sends arrays named created/deleted/timed_out;
-          // normalize to the WatchReport field names used internally.
-          const normalized: WatchReport = {
-            created_watched: report.created_watched ?? (data.report?.created ?? []),
-            deleted_watched: report.deleted_watched ?? (data.report?.deleted ?? []),
-            timed_out: report.timed_out ?? (data.report?.timed_out ?? []),
-          };
-          if (!this.deleted) {
-            this.blockEmitter({
-              peak: data.peak,
-              block: [],
-              report: normalized,
-            });
+          if (!this.deleted && typeof data.peak === 'number') {
+            const records: CoinRecord[] = Array.isArray(data.records)
+              ? data.records
+              : [];
+            void this.monitor.receiveCoinStates(data.peak, records);
           }
           return;
         }
@@ -141,6 +137,10 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     return this.addressData;
   }
 
+  registerCoin(coinName: string, coinString: string) {
+    void this.monitor.registerCoin(coinName, coinString);
+  }
+
   async startMonitoring(uniqueId: string) {
     this.deleted = false;
     const puzzleHash = await this.getOrRequestToken(uniqueId);
@@ -150,7 +150,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   getObservable() {
-    return this.observable;
+    return this.monitor.getObservable();
   }
 
   async do_initial_spend(uniqueId: string, target: string, amt: bigint) {
