@@ -28,6 +28,7 @@ node_modules/
 .yarnrc.yml
 resources/**/public/index.js
 resources/**/serve/
+resources/wc-stub/package-lock.json
 # Virtual environments
 .venv/
 venv/

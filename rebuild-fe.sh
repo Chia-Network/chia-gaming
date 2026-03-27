@@ -8,6 +8,6 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FE_DIR="$SCRIPT_DIR/resources/gaming-fe"
 
 echo "=== Building gaming frontend ==="
-(cd "$FE_DIR" && npm run build)
+(cd "$FE_DIR" && yarn build)
 touch "$FE_DIR/dist/.fe-stamp"
 echo "=== Done — reload the browser ==="

@@ -45,6 +45,11 @@ cargo test --features sim-tests -- sim_tests --nocapture
 - **wasm-pack** — for building the WASM package (`cargo install wasm-pack`)
 - **LLVM** (Homebrew) — on macOS, needed for compiling `blst` to wasm (`brew install llvm`)
 
+### JS Package Manager Policy
+
+Use **Yarn** for repository JS package workflows and lockfiles. Avoid mixing `npm install`
+with Yarn-managed package directories.
+
 ## Project Structure
 
 ```

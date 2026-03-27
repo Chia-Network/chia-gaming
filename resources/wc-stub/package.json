@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@types/bignumber.js": "^5.0.4",
-    "@walletconnect/sign-client": "^2.21.4",
+    "@walletconnect/sign-client": "^2.23.9",
     "axios": "^1.9.0",
     "bech32-buffer": "^0.2.1",
     "bignumber.js": "^9.3.1",

@@ -56,10 +56,10 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/node-pkg" --dev --target=nodejs)
 
     echo "=== Building lobby-connection ==="
-    (cd "$LOBBY_CONN_DIR" && yarn install && yarn build)
+    (cd "$LOBBY_CONN_DIR" && yarn install --frozen-lockfile && yarn build)
 
     echo "=== Installing gaming-fe deps ==="
-    (cd "$FE_DIR" && yarn install)
+    (cd "$FE_DIR" && yarn install --frozen-lockfile)
 
     if [ "$SKIP_NATIVE" -eq 0 ]; then
         echo "=== Building simulator ==="

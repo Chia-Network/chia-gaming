@@ -94,7 +94,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
 
     if needs_build "$LOBBY_CONN_DIR/dist/.build-stamp" "$LOBBY_CONN_DIR/src" "$LOBBY_CONN_DIR/package.json"; then
         echo "=== Building lobby-connection ==="
-        (cd "$LOBBY_CONN_DIR" && yarn install && yarn build)
+        (cd "$LOBBY_CONN_DIR" && yarn install --frozen-lockfile && yarn build)
         touch "$LOBBY_CONN_DIR/dist/.build-stamp"
     else
         echo "=== lobby-connection is up to date ==="
@@ -102,7 +102,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
 
     if needs_build "$FE_DIR/dist/.fe-stamp" "$FE_DIR/src" "$FE_DIR/package.json" "$WASM_STAMP"; then
         echo "=== Building gaming frontend ==="
-        (cd "$FE_DIR" && yarn install && yarn build)
+        (cd "$FE_DIR" && yarn install --frozen-lockfile && yarn build)
         touch "$FE_DIR/dist/.fe-stamp"
     else
         echo "=== gaming-fe is up to date ==="
@@ -110,7 +110,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
 
     if needs_build "$LOBBY_VIEW_DIR/dist/.build-stamp" "$LOBBY_VIEW_DIR/src" "$LOBBY_VIEW_DIR/package.json"; then
         echo "=== Building lobby-view ==="
-        (cd "$LOBBY_VIEW_DIR" && yarn install && yarn build)
+        (cd "$LOBBY_VIEW_DIR" && yarn install --frozen-lockfile && yarn build)
         touch "$LOBBY_VIEW_DIR/dist/.build-stamp"
     else
         echo "=== lobby-view is up to date ==="
@@ -118,7 +118,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
 
     if needs_build "$LOBBY_SERVICE_DIR/dist/.build-stamp" "$LOBBY_SERVICE_DIR/src" "$LOBBY_SERVICE_DIR/package.json"; then
         echo "=== Building lobby-service ==="
-        (cd "$LOBBY_SERVICE_DIR" && yarn install && yarn build)
+        (cd "$LOBBY_SERVICE_DIR" && yarn install --frozen-lockfile && yarn build)
         touch "$LOBBY_SERVICE_DIR/dist/.build-stamp"
     else
         echo "=== lobby-service is up to date ==="
@@ -126,7 +126,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
 
     if needs_build "$WC_DIR/dist/.build-stamp" "$WC_DIR/src" "$WC_DIR/package.json"; then
         echo "=== Building wc-stub ==="
-        (cd "$WC_DIR" && yarn install && yarn build)
+        (cd "$WC_DIR" && yarn install --frozen-lockfile && yarn build)
         touch "$WC_DIR/dist/.build-stamp"
     else
         echo "=== wc-stub is up to date ==="

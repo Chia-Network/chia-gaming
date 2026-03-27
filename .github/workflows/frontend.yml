@@ -68,27 +68,27 @@ jobs:
       - name: Build lobby-connection
         run: |
           cd resources/lobby-connection
-          yarn install && yarn build
+          yarn install --frozen-lockfile && yarn build
 
       - name: Build gaming-fe
         run: |
           cd resources/gaming-fe
-          yarn install && yarn build
+          yarn install --frozen-lockfile && yarn build
 
       - name: Build lobby-view
         run: |
           cd resources/lobby-view
-          yarn install && yarn build
+          yarn install --frozen-lockfile && yarn build
 
       - name: Build lobby-service
         run: |
           cd resources/lobby-service
-          yarn install && yarn build
+          yarn install --frozen-lockfile && yarn build
 
       - name: Build wc-stub
         run: |
           cd resources/wc-stub
-          yarn install && yarn build
+          yarn install --frozen-lockfile && yarn build
 
       - name: Build simulator
         run: cargo build --features sim-tests,sim-server --bin chia-gaming-sim

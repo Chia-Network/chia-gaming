@@ -42,6 +42,29 @@ import { walletConnectState } from './useWalletConnect';
 type Loose = Record<string, unknown>;
 type GetWalletsRequest = Loose;
 type GetWalletsResponse = Array<{ id: number; type: number; [key: string]: unknown }>;
+const WC_REQUEST_TIMEOUT_MS = 15000;
+const WC_RETRY_DELAY_MS = 1000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getErrorText(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
+function isTransientWalletConnectError(err: unknown): boolean {
+  const message = getErrorText(err).toLowerCase();
+  return (
+    message.includes('socket stalled') ||
+    message.includes('failed to fetch') ||
+    message.includes('networkerror') ||
+    message.includes('connection') ||
+    message.includes('websocket') ||
+    message.includes('timed out')
+  );
+}
 
 async function request<T, D extends object = object>(
   method: ChiaMethod,
@@ -67,17 +90,33 @@ async function request<T, D extends object = object>(
   console.log('[WC] >>>', method, params);
 
   let raw: unknown;
-  try {
-    debugLog(`[WC RPC fire] ${method}`);
-    raw = await walletConnectState.getClient()!.request({
-      topic: walletConnectState.getSession()!.topic,
-      chainId: walletConnectState.getChainId(),
-      request: { method, params },
-    });
-  } catch (e) {
-    const elapsed = Date.now() - startedAt;
-    debugLog(`[WC RPC error] ${method} after ${elapsed}ms: ${String(e)}`);
-    throw e;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      debugLog(`[WC RPC fire] ${method} attempt=${attempt}`);
+      raw = await Promise.race([
+        walletConnectState.getClient()!.request({
+          topic: walletConnectState.getSession()!.topic,
+          chainId: walletConnectState.getChainId(),
+          request: { method, params },
+        }),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            reject(new Error(`WalletConnect RPC ${method} timed out after ${WC_REQUEST_TIMEOUT_MS}ms`));
+          }, WC_REQUEST_TIMEOUT_MS);
+        }),
+      ]);
+      break;
+    } catch (e) {
+      const elapsed = Date.now() - startedAt;
+      const errText = getErrorText(e);
+      const isRetryable = attempt < 2 && isTransientWalletConnectError(e);
+      debugLog(`[WC RPC error] ${method} after ${elapsed}ms attempt=${attempt}: ${errText}`);
+      if (!isRetryable) {
+        throw e;
+      }
+      console.warn(`[WC] ${method} transient failure, retrying once...`, e);
+      await delay(WC_RETRY_DELAY_MS);
+    }
   }
 
   const elapsed = Date.now() - startedAt;
