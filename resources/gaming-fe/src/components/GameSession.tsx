@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { Observable } from 'rxjs';
 import { useGameSession, ChannelStatusInfo, GameTurnState, GameplayEvent, isWindingDown } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
@@ -9,7 +9,7 @@ import { CalpokerOutcome, ChannelState } from '../types/ChiaGaming';
 import { WasmBlobWrapper } from '../hooks/WasmBlobWrapper';
 import Calpoker from '../features/calPoker';
 
-import { motion } from 'framer-motion';
+import { motion, useMotionValue } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
 import { Button } from './button';
@@ -50,6 +50,59 @@ const GAME_TURN_LABELS: Record<GameTurnState, string> = {
   'ended': 'Ended',
 };
 
+function formatOptionalMojos(raw: string | null): string {
+  if (raw == null) return '—';
+  try {
+    return formatMojos(BigInt(raw));
+  } catch {
+    return raw;
+  }
+}
+
+function useViewportClampedDrag(boundsRef?: RefObject<HTMLElement | null>) {
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const x = useMotionValue(0);
+  const y = useMotionValue(0);
+
+  const clampToViewport = useCallback(() => {
+    const el = cardRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const boundsRect = boundsRef?.current?.getBoundingClientRect();
+    const minX = boundsRect?.left ?? 0;
+    const minY = boundsRect?.top ?? 0;
+    const maxX = boundsRect?.right ?? window.innerWidth;
+    const maxY = boundsRect?.bottom ?? window.innerHeight;
+    let nextX = x.get();
+    let nextY = y.get();
+
+    if (rect.width >= maxX - minX) {
+      nextX -= rect.left - minX;
+    } else {
+      if (rect.left < minX) nextX -= rect.left - minX;
+      if (rect.right > maxX) nextX -= rect.right - maxX;
+    }
+
+    if (rect.height >= maxY - minY) {
+      nextY -= rect.top - minY;
+    } else {
+      if (rect.top < minY) nextY -= rect.top - minY;
+      if (rect.bottom > maxY) nextY -= rect.bottom - maxY;
+    }
+
+    if (nextX !== x.get()) x.set(nextX);
+    if (nextY !== y.get()) y.set(nextY);
+  }, [boundsRef, x, y]);
+
+  useEffect(() => {
+    const onResize = () => clampToViewport();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [clampToViewport]);
+
+  return { cardRef, x, y, clampToViewport };
+}
+
 function ExpandableCoinId({ hex }: { hex: string }) {
   const [expanded, setExpanded] = useState(false);
   return (
@@ -64,42 +117,6 @@ function ExpandableCoinId({ hex }: { hex: string }) {
   );
 }
 
-function ChannelStatusDisplay({ status }: { status: ChannelStatusInfo }) {
-  const stateLabel = CHANNEL_STATE_LABELS[status.state] ?? status.state;
-  const isResolved = status.state.startsWith('Resolved') || status.state === 'Failed';
-  const stateColor = status.state === 'Failed' ? 'text-alert-text'
-    : status.state === 'Active' ? 'text-success-text'
-    : isResolved ? 'text-canvas-text/80'
-    : 'text-canvas-text';
-
-  return (
-    <div className="flex flex-col gap-0.5">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
-        <span className="text-sm text-canvas-text">Channel:</span>
-        <span className={`text-sm font-medium ${stateColor}`}>{stateLabel}</span>
-        {status.coinHex && (
-          <>
-            <span className="text-sm text-canvas-text">·</span>
-            <ExpandableCoinId hex={status.coinHex} />
-          </>
-        )}
-      </div>
-      {!isResolved && (status.ourBalance != null || status.theirBalance != null) && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm text-canvas-text">
-          {status.ourBalance != null && <span>Ours: {status.ourBalance}</span>}
-          {status.theirBalance != null && <span>Theirs: {status.theirBalance}</span>}
-          {status.gameAllocated != null && status.gameAllocated !== '0' && (
-            <span>In game: {status.gameAllocated}</span>
-          )}
-        </div>
-      )}
-      {status.advisory && (
-        <p className="text-sm text-alert-text italic">{status.advisory}</p>
-      )}
-    </div>
-  );
-}
-
 function ChannelAttentionOverlay({
   info,
   onDismiss,
@@ -109,11 +126,17 @@ function ChannelAttentionOverlay({
 }) {
   const label = CHANNEL_STATE_LABELS[info.state] ?? info.state;
   const isBad = info.state === 'Failed' || info.state === 'ResolvedStale';
+  const { cardRef, x, y, clampToViewport } = useViewportClampedDrag();
   return (
     <motion.div
+      ref={cardRef}
       drag
       dragMomentum={false}
+      dragElastic={0}
       initial={false}
+      style={{ x, y }}
+      onDrag={clampToViewport}
+      onDragEnd={clampToViewport}
       className='fixed z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing'
     >
       <Card className='w-full max-w-md shadow-xl bg-canvas-bg border border-canvas-line'>
@@ -257,21 +280,61 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
   }
 
   const handEverStarted = session.handKey > 0;
+  const gameAreaRef = useRef<HTMLDivElement | null>(null);
+  const channelStateLabel = CHANNEL_STATE_LABELS[session.channelStatus.state] ?? session.channelStatus.state;
+  const channelOrRewardCoinHex = session.gameTerminal.rewardCoinHex ?? session.channelStatus.coinHex;
+  const gameStateLabel = session.gameTerminal.label ?? GAME_TURN_LABELS[session.gameCoin.turnState];
+  const handOverlayDrag = useViewportClampedDrag(gameAreaRef);
 
   return (
     <div className='w-full flex flex-col bg-canvas-bg-subtle text-canvas-text pt-6'>
       {/* Session header (shrink-0) */}
       <div className='flex-shrink-0 px-4 pt-3 pb-2 sm:px-6 md:px-8'>
-        {/* Row 1: title + financial summary + end session */}
-        <div className='flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between'>
-          <div className='flex flex-col gap-0.5'>
-            <h1 className='text-2xl font-semibold text-canvas-text-contrast sm:text-3xl'>
-              California Poker
-            </h1>
-            <div className='flex flex-wrap items-center gap-x-4 gap-y-0.5 text-sm text-canvas-text'>
-              <span>Channel: {formatMojos(session.amount * 2n)}</span>
-              <span>Per hand: {formatMojos(session.perGameAmount)}</span>
+        {/* Report + end session */}
+        <div className='flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between'>
+          <div className='flex flex-col gap-1 text-sm text-canvas-text'>
+            <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
+              <span className='text-canvas-text/80'>Channel size:</span>
+              <span className='font-medium'>{formatMojos(session.amount * 2n)}</span>
+              <span className='text-canvas-text/70'>·</span>
+              <span className='text-canvas-text/80'>My share:</span>
+              <span className='font-medium'>{formatOptionalMojos(session.channelStatus.ourBalance)}</span>
             </div>
+            <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
+              <span className='text-canvas-text/80'>Game terms:</span>
+              <span className='font-medium'>California Poker</span>
+              <span className='text-canvas-text/70'>·</span>
+              <span className='font-medium'>{formatMojos(session.perGameAmount)} per hand</span>
+            </div>
+            <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
+              <span className='text-canvas-text/80'>Channel status:</span>
+              <span className='font-medium'>{channelStateLabel}</span>
+              <span className='text-canvas-text/70'>·</span>
+              <span className='text-canvas-text/80'>Channel/reward coin:</span>
+              {channelOrRewardCoinHex ? (
+                <ExpandableCoinId hex={channelOrRewardCoinHex} />
+              ) : (
+                <span className='font-medium'>None</span>
+              )}
+            </div>
+            <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
+              <span className='text-canvas-text/80'>Game state:</span>
+              <span className='font-medium'>{gameStateLabel}</span>
+            </div>
+            <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
+              <span className='text-canvas-text/80'>Game coin:</span>
+              {session.gameCoin.coinHex ? (
+                <ExpandableCoinId hex={session.gameCoin.coinHex} />
+              ) : (
+                <span className='font-medium'>None</span>
+              )}
+              <span className='text-canvas-text/70'>·</span>
+              <span className='text-canvas-text/80'>My reward:</span>
+              <span className='font-medium'>{formatOptionalMojos(session.gameTerminal.myReward)}</span>
+            </div>
+            {session.channelStatus.advisory && (
+              <p className='text-sm text-alert-text italic'>{session.channelStatus.advisory}</p>
+            )}
           </div>
           <div className='flex items-center gap-2 mt-2 sm:mt-0'>
             <Button
@@ -286,30 +349,13 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
           </div>
         </div>
 
-        {/* Row 2: channel status */}
-        <ChannelStatusDisplay status={session.channelStatus} />
-
-        {/* Row 3: game status */}
-        <div className="flex items-center gap-x-2 text-sm text-canvas-text mt-0.5">
-          <span>Game:</span>
-          <span>{GAME_TURN_LABELS[session.gameCoin.turnState]}</span>
-          {session.gameCoin.coinHex && (
-            <>
-              <span className="text-canvas-text">·</span>
-              <span className="text-canvas-text font-medium">On-chain</span>
-              <span className="text-canvas-text">·</span>
-              <ExpandableCoinId hex={session.gameCoin.coinHex} />
-            </>
-          )}
-        </div>
-
         <Separator className='mt-2' />
       </div>
 
       {/* Main content area */}
       <div className='flex flex-col gap-2 px-4 pb-2 sm:px-6 md:px-8'>
         {/* Game area */}
-          <div className='relative'>
+          <div ref={gameAreaRef} className='relative'>
           {handEverStarted && (
             <CalpokerHand
               key={session.handKey}
@@ -332,9 +378,14 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
           {/* Between-hand overlay (draggable, no backdrop) */}
           {session.showBetweenHandOverlay && (
             <motion.div
+              ref={handOverlayDrag.cardRef}
               drag
               dragMomentum={false}
+              dragElastic={0}
               initial={false}
+              style={{ x: handOverlayDrag.x, y: handOverlayDrag.y }}
+              onDrag={handOverlayDrag.clampToViewport}
+              onDragEnd={handOverlayDrag.clampToViewport}
               className='absolute z-30 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing'
             >
               <Card className='w-full max-w-md shadow-xl bg-canvas-bg border border-canvas-line'>

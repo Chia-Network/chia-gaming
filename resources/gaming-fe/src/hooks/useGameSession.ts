@@ -38,7 +38,7 @@ function coinPayloadToHex(coin: unknown): string | undefined {
 const TERMINAL_TYPES = [
   'WeTimedOut', 'OpponentTimedOut', 'WeSlashedOpponent',
   'OpponentSlashedUs', 'OpponentSuccessfullyCheated',
-  'GameCancelled', 'GameError',
+  'GameCancelled', 'GameError', 'InsufficientBalance',
 ];
 
 function isTerminal(n: WasmNotification): boolean {
@@ -50,6 +50,24 @@ export type GameTurnState = 'my-turn' | 'their-turn' | 'ended';
 export interface GameCoinInfo {
   coinHex: string | null;
   turnState: GameTurnState;
+}
+
+export type GameTerminalType =
+  | 'none'
+  | 'we-timed-out'
+  | 'opponent-timed-out'
+  | 'we-slashed-opponent'
+  | 'opponent-slashed-us'
+  | 'opponent-successfully-cheated'
+  | 'insufficient-balance'
+  | 'game-cancelled'
+  | 'game-error';
+
+export interface GameTerminalInfo {
+  type: GameTerminalType;
+  label: string | null;
+  myReward: string | null;
+  rewardCoinHex: string | null;
 }
 
 export interface ChannelStatusInfo {
@@ -68,6 +86,13 @@ const INITIAL_CHANNEL_STATUS: ChannelStatusInfo = {
   ourBalance: null,
   theirBalance: null,
   gameAllocated: null,
+};
+
+const INITIAL_GAME_TERMINAL: GameTerminalInfo = {
+  type: 'none',
+  label: null,
+  myReward: null,
+  rewardCoinHex: null,
 };
 
 const ATTENTION_STATES: ChannelState[] = [
@@ -91,6 +116,93 @@ function parseAmount(v: unknown): string | null {
   return String(v);
 }
 
+function getPayload(n: WasmNotification, key: string): Record<string, unknown> | null {
+  const raw = (n as Record<string, unknown>)[key];
+  if (typeof raw !== 'object' || raw === null) return null;
+  return raw as Record<string, unknown>;
+}
+
+function parseTerminalInfo(n: WasmNotification): GameTerminalInfo {
+  const weTimedOut = getPayload(n, 'WeTimedOut');
+  if (weTimedOut) {
+    return {
+      type: 'we-timed-out',
+      label: 'Ended: we timed out',
+      myReward: parseAmount(weTimedOut.our_reward),
+      rewardCoinHex: coinPayloadToHex(weTimedOut.reward_coin) ?? null,
+    };
+  }
+
+  const opponentTimedOut = getPayload(n, 'OpponentTimedOut');
+  if (opponentTimedOut) {
+    return {
+      type: 'opponent-timed-out',
+      label: 'Ended: opponent timed out',
+      myReward: parseAmount(opponentTimedOut.our_reward),
+      rewardCoinHex: coinPayloadToHex(opponentTimedOut.reward_coin) ?? null,
+    };
+  }
+
+  const weSlashedOpponent = getPayload(n, 'WeSlashedOpponent');
+  if (weSlashedOpponent) {
+    return {
+      type: 'we-slashed-opponent',
+      label: 'Ended: we slashed opponent',
+      myReward: parseAmount(weSlashedOpponent.reward_amount),
+      rewardCoinHex: coinPayloadToHex(weSlashedOpponent.reward_coin) ?? null,
+    };
+  }
+
+  const opponentSlashedUs = getPayload(n, 'OpponentSlashedUs');
+  if (opponentSlashedUs) {
+    return {
+      type: 'opponent-slashed-us',
+      label: 'Ended: opponent slashed us',
+      myReward: null,
+      rewardCoinHex: null,
+    };
+  }
+
+  const opponentSuccessfullyCheated = getPayload(n, 'OpponentSuccessfullyCheated');
+  if (opponentSuccessfullyCheated) {
+    return {
+      type: 'opponent-successfully-cheated',
+      label: 'Ended: opponent successfully cheated',
+      myReward: parseAmount(opponentSuccessfullyCheated.our_reward),
+      rewardCoinHex: coinPayloadToHex(opponentSuccessfullyCheated.reward_coin) ?? null,
+    };
+  }
+
+  if (getPayload(n, 'GameCancelled')) {
+    return {
+      type: 'game-cancelled',
+      label: 'Ended: cancelled',
+      myReward: null,
+      rewardCoinHex: null,
+    };
+  }
+
+  if (getPayload(n, 'InsufficientBalance')) {
+    return {
+      type: 'insufficient-balance',
+      label: 'Ended: insufficient balance',
+      myReward: null,
+      rewardCoinHex: null,
+    };
+  }
+
+  if (getPayload(n, 'GameError')) {
+    return {
+      type: 'game-error',
+      label: 'Ended: error',
+      myReward: null,
+      rewardCoinHex: null,
+    };
+  }
+
+  return INITIAL_GAME_TERMINAL;
+}
+
 export interface UseGameSessionResult {
   error: string | undefined;
   gameConnectionState: GameConnectionState;
@@ -101,6 +213,7 @@ export interface UseGameSessionResult {
   playerNumber: number;
   channelStatus: ChannelStatusInfo;
   gameCoin: GameCoinInfo;
+  gameTerminal: GameTerminalInfo;
   handKey: number;
   activeGameId: string | null;
   gameObject: WasmBlobWrapper;
@@ -147,6 +260,7 @@ export function useGameSession(
   );
   const [channelAttention, setChannelAttention] = useState<ChannelStatusInfo | null>(null);
   const [gameCoin, setGameCoin] = useState<GameCoinInfo>({ coinHex: null, turnState: 'my-turn' });
+  const [gameTerminal, setGameTerminal] = useState<GameTerminalInfo>(INITIAL_GAME_TERMINAL);
   const [handKey, setHandKey] = useState(() => sessionSave?.activeGameId ? 1 : 0);
   const [gameIds, setGameIds] = useState<string[]>(() =>
     sessionSave?.activeGameId ? [sessionSave.activeGameId] : []
@@ -307,6 +421,7 @@ export function useGameSession(
       setHandKey(prev => prev + 1);
       setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
       setGameCoin({ coinHex: null, turnState: iStarted ? 'their-turn' : 'my-turn' });
+      setGameTerminal(INITIAL_GAME_TERMINAL);
       gameplayEventSubject.next({ GameProposalAccepted: { id: gpa.id as number | string } });
     } else if ('WeMoved' in n) {
       const hex = coinPayloadToHex(n.WeMoved?.coin);
@@ -319,14 +434,16 @@ export function useGameSession(
     } else if ('GameMessage' in n) {
       gameplayEventSubject.next({ GameMessage: { readable: n.GameMessage!.readable as number[] } });
     } else if (isTerminal(n)) {
+      const terminalInfo = parseTerminalInfo(n);
+      setGameTerminal(terminalInfo);
+      setGameCoin(prev => ({ ...prev, turnState: 'ended' }));
       const hadActiveGame = gameIdsRef.current.length > 0;
       if (hadActiveGame) {
         setGameIds(prev => prev.slice(1));
         gameIdsRef.current = gameIdsRef.current.slice(1);
-        setGameCoin({ coinHex: null, turnState: 'ended' });
         setShowBetweenHandOverlay(true);
-        gameplayEventSubject.next({ _terminal: true, notification: n });
       }
+      gameplayEventSubject.next({ _terminal: true, notification: n });
     } else if ('ActionFailed' in n) {
       const reason = String(n.ActionFailed?.reason ?? 'Unknown error');
       setActionFailedReason(reason);
@@ -418,6 +535,7 @@ export function useGameSession(
     playerNumber,
     channelStatus,
     gameCoin,
+    gameTerminal,
     handKey,
     activeGameId: gameIds[0] ?? null,
     gameObject,
