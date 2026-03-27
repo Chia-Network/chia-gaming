@@ -51,42 +51,45 @@ pub struct ChannelStatusSnapshot {
     pub game_allocated: Option<Amount>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum GameStatusKind {
+    MyTurn,
+    TheirTurn,
+    OnChainMyTurn,
+    OnChainTheirTurn,
+    Replaying,
+    IllegalMoveDetected,
+    EndedWeTimedOut,
+    EndedOpponentTimedOut,
+    EndedWeSlashedOpponent,
+    EndedOpponentSlashedUs,
+    EndedOpponentSuccessfullyCheated,
+    EndedCancelled,
+    EndedError,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct GameStatusOtherParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub readable: Option<ReadableMove>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mover_share: Option<Amount>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub illegal_move_detected: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub moved_by_us: Option<bool>,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum GameNotification {
-    GameCancelled {
+    GameStatus {
         id: GameID,
-    },
-    WeTimedOut {
-        id: GameID,
-        our_reward: Amount,
-        reward_coin: Option<CoinString>,
-    },
-    OpponentTimedOut {
-        id: GameID,
-        our_reward: Amount,
-        reward_coin: Option<CoinString>,
-    },
-    OpponentPlayedIllegalMove {
-        id: GameID,
-    },
-    WeSlashedOpponent {
-        id: GameID,
-        reward_coin: CoinString,
-        reward_amount: Amount,
-    },
-    OpponentSlashedUs {
-        id: GameID,
-    },
-    OpponentSuccessfullyCheated {
-        id: GameID,
-        our_reward: Amount,
-        reward_coin: Option<CoinString>,
-    },
-
-    /// A single game coin is in an unrecoverable state.
-    GameError {
-        id: GameID,
-        reason: String,
+        status: GameStatusKind,
+        my_reward: Option<Amount>,
+        coin_id: Option<CoinString>,
+        reason: Option<String>,
+        other_params: Option<GameStatusOtherParams>,
     },
 
     GameProposed {
@@ -107,26 +110,6 @@ pub enum GameNotification {
         their_balance_short: bool,
     },
 
-    WeMoved {
-        id: GameID,
-        coin: CoinString,
-    },
-    OpponentMoved {
-        id: GameID,
-        state_number: usize,
-        readable: ReadableMove,
-        mover_share: Amount,
-    },
-    GameMessage {
-        id: GameID,
-        readable: ReadableMove,
-    },
-    GameOnChain {
-        id: GameID,
-        coin: CoinString,
-        amount: Amount,
-        our_turn: bool,
-    },
     ActionFailed {
         reason: String,
     },
@@ -138,6 +121,19 @@ pub enum GameNotification {
         their_balance: Option<Amount>,
         game_allocated: Option<Amount>,
     },
+}
+
+impl GameNotification {
+    pub fn game_status(id: GameID, status: GameStatusKind) -> Self {
+        GameNotification::GameStatus {
+            id,
+            status,
+            my_reward: None,
+            coin_id: None,
+            reason: None,
+            other_params: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

@@ -23,7 +23,7 @@ use crate::peer_container::{
     PeerHandler, SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
 };
 use crate::potato_handler::effects::{
-    apply_effects, ChannelState, CradleEvent, Effect, GameNotification,
+    apply_effects, ChannelState, CradleEvent, Effect, GameNotification, GameStatusKind,
 };
 use crate::potato_handler::handshake::CoinSpendRequest;
 use crate::potato_handler::start::GameStart;
@@ -316,11 +316,16 @@ impl BootstrapTowardWallet for SimulatedPeer {
 impl ToLocalUI for SimulatedPeer {
     fn notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
         match notification {
-            GameNotification::GameMessage { readable, .. } => {
-                self.messages.push(readable.clone());
+            GameNotification::GameStatus { other_params, .. } => {
+                if let Some(params) = other_params {
+                    if let Some(readable) = &params.readable {
+                        if params.mover_share.is_none() {
+                            self.messages.push(readable.clone());
+                        }
+                    }
+                }
                 Ok(())
             }
-            GameNotification::OpponentMoved { .. } => Ok(()),
             GameNotification::ChannelStatus { state, .. } => {
                 use crate::potato_handler::effects::ChannelState;
                 match state {
@@ -455,16 +460,16 @@ pub enum TestEvent {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExpectedNotification {
-    WeTimedOut,
-    OpponentTimedOut,
-    GameCancelled,
-    OpponentPlayedIllegalMove,
-    WeSlashedOpponent,
-    OpponentSlashedUs,
-    OpponentSuccessfullyCheated,
-    WeMoved,
-    GameOnChain,
-    GameError,
+    GameStatusEndedWeTimedOut,
+    GameStatusEndedOpponentTimedOut,
+    GameStatusEndedCancelled,
+    GameStatusIllegalMoveDetected,
+    GameStatusEndedWeSlashedOpponent,
+    GameStatusEndedOpponentSlashedUs,
+    GameStatusEndedOpponentSuccessfullyCheated,
+    GameStatusMovedByUs,
+    GameStatusOnChainTurn,
+    GameStatusEndedError,
     GameProposed,
     GameProposalAccepted,
     GameProposalCancelled,
@@ -477,6 +482,35 @@ pub enum ExpectedEvent {
     OpponentMoved { mover_share: Amount },
     GameMessage,
     Notification(ExpectedNotification),
+}
+
+fn is_terminal_game_status(status: &GameStatusKind) -> bool {
+    matches!(
+        status,
+        GameStatusKind::EndedWeTimedOut
+            | GameStatusKind::EndedOpponentTimedOut
+            | GameStatusKind::EndedWeSlashedOpponent
+            | GameStatusKind::EndedOpponentSlashedUs
+            | GameStatusKind::EndedOpponentSuccessfullyCheated
+            | GameStatusKind::EndedCancelled
+            | GameStatusKind::EndedError
+    )
+}
+
+fn has_status(n: &GameNotification, want: GameStatusKind) -> bool {
+    matches!(n, GameNotification::GameStatus { status, .. } if *status == want)
+}
+
+fn is_terminal_for_id(n: &GameNotification, id: &GameID) -> bool {
+    match n {
+        GameNotification::InsufficientBalance { id: nid, .. } => nid == id,
+        GameNotification::GameStatus {
+            id: nid,
+            status,
+            ..
+        } => nid == id && is_terminal_game_status(status),
+        _ => false,
+    }
 }
 
 fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
@@ -493,33 +527,80 @@ fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
         (TestEvent::GameMessage { .. }, ExpectedEvent::GameMessage) => true,
         (TestEvent::Notification(actual_n), ExpectedEvent::Notification(expected_n)) => {
             match (actual_n, expected_n) {
-                (GameNotification::WeTimedOut { .. }, ExpectedNotification::WeTimedOut) => true,
                 (
-                    GameNotification::OpponentTimedOut { .. },
-                    ExpectedNotification::OpponentTimedOut,
-                ) => true,
-                (GameNotification::GameCancelled { .. }, ExpectedNotification::GameCancelled) => {
-                    true
-                }
-                (
-                    GameNotification::OpponentPlayedIllegalMove { .. },
-                    ExpectedNotification::OpponentPlayedIllegalMove,
+                    GameNotification::GameStatus {
+                        status: GameStatusKind::EndedWeTimedOut,
+                        ..
+                    },
+                    ExpectedNotification::GameStatusEndedWeTimedOut,
                 ) => true,
                 (
-                    GameNotification::WeSlashedOpponent { .. },
-                    ExpectedNotification::WeSlashedOpponent,
+                    GameNotification::GameStatus {
+                        status: GameStatusKind::EndedOpponentTimedOut,
+                        ..
+                    },
+                    ExpectedNotification::GameStatusEndedOpponentTimedOut,
                 ) => true,
                 (
-                    GameNotification::OpponentSlashedUs { .. },
-                    ExpectedNotification::OpponentSlashedUs,
+                    GameNotification::GameStatus {
+                        status: GameStatusKind::EndedCancelled,
+                        ..
+                    },
+                    ExpectedNotification::GameStatusEndedCancelled,
                 ) => true,
                 (
-                    GameNotification::OpponentSuccessfullyCheated { .. },
-                    ExpectedNotification::OpponentSuccessfullyCheated,
+                    GameNotification::GameStatus {
+                        status: GameStatusKind::IllegalMoveDetected,
+                        ..
+                    },
+                    ExpectedNotification::GameStatusIllegalMoveDetected,
                 ) => true,
-                (GameNotification::WeMoved { .. }, ExpectedNotification::WeMoved) => true,
-                (GameNotification::GameOnChain { .. }, ExpectedNotification::GameOnChain) => true,
-                (GameNotification::GameError { .. }, ExpectedNotification::GameError) => true,
+                (
+                    GameNotification::GameStatus {
+                        status: GameStatusKind::EndedWeSlashedOpponent,
+                        ..
+                    },
+                    ExpectedNotification::GameStatusEndedWeSlashedOpponent,
+                ) => true,
+                (
+                    GameNotification::GameStatus {
+                        status: GameStatusKind::EndedOpponentSlashedUs,
+                        ..
+                    },
+                    ExpectedNotification::GameStatusEndedOpponentSlashedUs,
+                ) => true,
+                (
+                    GameNotification::GameStatus {
+                        status: GameStatusKind::EndedOpponentSuccessfullyCheated,
+                        ..
+                    },
+                    ExpectedNotification::GameStatusEndedOpponentSuccessfullyCheated,
+                ) => true,
+                (
+                    GameNotification::GameStatus {
+                        status: GameStatusKind::OnChainTheirTurn,
+                        other_params: Some(params),
+                        ..
+                    },
+                    ExpectedNotification::GameStatusMovedByUs,
+                ) => params.moved_by_us.unwrap_or(false),
+                (
+                    GameNotification::GameStatus {
+                        status:
+                            GameStatusKind::OnChainMyTurn
+                            | GameStatusKind::OnChainTheirTurn
+                            | GameStatusKind::Replaying,
+                        ..
+                    },
+                    ExpectedNotification::GameStatusOnChainTurn,
+                ) => true,
+                (
+                    GameNotification::GameStatus {
+                        status: GameStatusKind::EndedError,
+                        ..
+                    },
+                    ExpectedNotification::GameStatusEndedError,
+                ) => true,
                 (GameNotification::GameProposed { .. }, ExpectedNotification::GameProposed) => true,
                 (
                     GameNotification::GameProposalAccepted { .. },
@@ -552,22 +633,21 @@ fn event_shape(actual: &TestEvent) -> String {
         TestEvent::OpponentMoved { state_number, mover_share, .. } => format!("OpponentMoved(sn={state_number},share={})", mover_share.to_u64()),
         TestEvent::GameMessage { .. } => "GameMessage".to_string(),
         TestEvent::Notification(n) => match n {
-            GameNotification::WeTimedOut { .. } => "Notif(WeTimedOut)".to_string(),
-            GameNotification::OpponentTimedOut { .. } => "Notif(OpponentTimedOut)".to_string(),
-            GameNotification::GameCancelled { .. } => "Notif(GameCancelled)".to_string(),
-            GameNotification::OpponentPlayedIllegalMove { .. } => "Notif(OpponentPlayedIllegalMove)".to_string(),
-            GameNotification::WeSlashedOpponent { .. } => "Notif(WeSlashedOpponent)".to_string(),
-            GameNotification::OpponentSlashedUs { .. } => "Notif(OpponentSlashedUs)".to_string(),
-            GameNotification::OpponentSuccessfullyCheated { .. } => "Notif(OpponentSuccessfullyCheated)".to_string(),
-            GameNotification::GameError { .. } => "Notif(GameError)".to_string(),
+            GameNotification::GameStatus { id, status, other_params, .. } => {
+                if matches!(status, GameStatusKind::OnChainTheirTurn)
+                    && other_params
+                        .as_ref()
+                        .and_then(|p| p.moved_by_us)
+                        .unwrap_or(false)
+                {
+                    return "Notif(GameStatusMovedByUs)".to_string();
+                }
+                format!("Notif(GameStatus(id={id:?},status={status:?}))")
+            }
             GameNotification::GameProposed { id, .. } => format!("Notif(GameProposed(id={id:?}))"),
             GameNotification::GameProposalAccepted { id } => format!("Notif(GameProposalAccepted(id={id:?}))"),
             GameNotification::GameProposalCancelled { id, reason } => format!("Notif(GameProposalCancelled(id={id:?},reason={reason}))"),
             GameNotification::InsufficientBalance { id, our_balance_short, their_balance_short } => format!("Notif(InsufficientBalance(id={id:?},ours={our_balance_short},theirs={their_balance_short}))"),
-            GameNotification::WeMoved { .. } => "Notif(WeMoved)".to_string(),
-            GameNotification::OpponentMoved { .. } => "Notif(OpponentMoved)".to_string(),
-            GameNotification::GameMessage { .. } => "Notif(GameMessage)".to_string(),
-            GameNotification::GameOnChain { id, .. } => format!("Notif(GameOnChain(id={id:?}))"),
             GameNotification::ActionFailed { reason } => format!("Notif(ActionFailed(reason={reason}))"),
             GameNotification::ChannelStatus { state, .. } => format!("Notif(ChannelStatus(state={state:?}))"),
         },
@@ -581,20 +661,36 @@ fn expected_shape(expected: &ExpectedEvent) -> String {
         }
         ExpectedEvent::GameMessage => "GameMessage".to_string(),
         ExpectedEvent::Notification(n) => match n {
-            ExpectedNotification::WeTimedOut => "Notif(WeTimedOut)".to_string(),
-            ExpectedNotification::OpponentTimedOut => "Notif(OpponentTimedOut)".to_string(),
-            ExpectedNotification::GameCancelled => "Notif(GameCancelled)".to_string(),
-            ExpectedNotification::OpponentPlayedIllegalMove => {
-                "Notif(OpponentPlayedIllegalMove)".to_string()
+            ExpectedNotification::GameStatusEndedWeTimedOut => {
+                "Notif(GameStatusEndedWeTimedOut)".to_string()
             }
-            ExpectedNotification::WeSlashedOpponent => "Notif(WeSlashedOpponent)".to_string(),
-            ExpectedNotification::OpponentSlashedUs => "Notif(OpponentSlashedUs)".to_string(),
-            ExpectedNotification::OpponentSuccessfullyCheated => {
-                "Notif(OpponentSuccessfullyCheated)".to_string()
+            ExpectedNotification::GameStatusEndedOpponentTimedOut => {
+                "Notif(GameStatusEndedOpponentTimedOut)".to_string()
             }
-            ExpectedNotification::WeMoved => "Notif(WeMoved)".to_string(),
-            ExpectedNotification::GameOnChain => "Notif(GameOnChain)".to_string(),
-            ExpectedNotification::GameError => "Notif(GameError)".to_string(),
+            ExpectedNotification::GameStatusEndedCancelled => {
+                "Notif(GameStatusEndedCancelled)".to_string()
+            }
+            ExpectedNotification::GameStatusIllegalMoveDetected => {
+                "Notif(GameStatusIllegalMoveDetected)".to_string()
+            }
+            ExpectedNotification::GameStatusEndedWeSlashedOpponent => {
+                "Notif(GameStatusEndedWeSlashedOpponent)".to_string()
+            }
+            ExpectedNotification::GameStatusEndedOpponentSlashedUs => {
+                "Notif(GameStatusEndedOpponentSlashedUs)".to_string()
+            }
+            ExpectedNotification::GameStatusEndedOpponentSuccessfullyCheated => {
+                "Notif(GameStatusEndedOpponentSuccessfullyCheated)".to_string()
+            }
+            ExpectedNotification::GameStatusMovedByUs => {
+                "Notif(GameStatusMovedByUs)".to_string()
+            }
+            ExpectedNotification::GameStatusOnChainTurn => {
+                "Notif(GameStatusOnChainTurn)".to_string()
+            }
+            ExpectedNotification::GameStatusEndedError => {
+                "Notif(GameStatusEndedError)".to_string()
+            }
             ExpectedNotification::GameProposed => "Notif(GameProposed)".to_string(),
             ExpectedNotification::GameProposalAccepted => "Notif(GameProposalAccepted)".to_string(),
             ExpectedNotification::GameProposalCancelled => {
@@ -644,22 +740,18 @@ pub fn assert_event_sequence(events: &[TestEvent], expected: &[ExpectedEvent], p
 pub fn assert_reward_coin_consistency(notifications: &[GameNotification], label: &str) {
     for n in notifications {
         match n {
-            GameNotification::WeTimedOut {
-                our_reward,
-                reward_coin,
-                ..
-            }
-            | GameNotification::OpponentTimedOut {
-                our_reward,
-                reward_coin,
-                ..
-            }
-            | GameNotification::OpponentSuccessfullyCheated {
-                our_reward,
-                reward_coin,
+            GameNotification::GameStatus {
+                status:
+                    GameStatusKind::EndedWeTimedOut
+                    | GameStatusKind::EndedOpponentTimedOut
+                    | GameStatusKind::EndedOpponentSuccessfullyCheated,
+                my_reward,
+                coin_id,
                 ..
             } => {
-                if let Some(rc) = reward_coin {
+                let our_reward = my_reward.clone().unwrap_or_default();
+                let reward_coin = coin_id.clone();
+                if let Some(ref rc) = reward_coin {
                     let parts = rc.to_parts();
                     assert!(
                         parts.is_some(),
@@ -671,18 +763,13 @@ pub fn assert_reward_coin_consistency(notifications: &[GameNotification], label:
                         "{label}: reward_coin is Some but amount is zero: {n:?}"
                     );
                 }
-                let has_reward = *our_reward > Amount::default();
+                let has_reward = our_reward > Amount::default();
                 let has_coin = reward_coin.is_some();
                 assert_eq!(
                     has_reward, has_coin,
                     "{label}: our_reward/reward_coin mismatch (has_reward={has_reward}, has_coin={has_coin}): {n:?}"
                 );
             }
-            GameNotification::WeSlashedOpponent { .. } => {
-                // reward_coin is CoinString (not Option); may be default if
-                // no reward coin was found. No structural assertion here.
-            }
-
             _ => {}
         }
     }
@@ -734,13 +821,9 @@ impl LocalTestUIReceiver {
                 .iter()
                 .filter(|n| match n {
                     GameNotification::InsufficientBalance { id: nid, .. } => nid == &id,
-                    GameNotification::GameCancelled { id: nid } => nid == &id,
-                    GameNotification::WeTimedOut { id: nid, .. } => nid == &id,
-                    GameNotification::OpponentTimedOut { id: nid, .. } => nid == &id,
-                    GameNotification::WeSlashedOpponent { id: nid, .. } => nid == &id,
-                    GameNotification::OpponentSlashedUs { id: nid } => nid == &id,
-                    GameNotification::OpponentSuccessfullyCheated { id: nid, .. } => nid == &id,
-                    GameNotification::GameError { id: nid, .. } => nid == &id,
+                    GameNotification::GameStatus { id: nid, status, .. } => {
+                        nid == &id && is_terminal_game_status(status)
+                    }
                     _ => false,
                 })
                 .count();
@@ -761,26 +844,67 @@ impl ToLocalUI for LocalTestUIReceiver {
             } => {
                 self.channel_created = true;
             }
-            GameNotification::OpponentMoved {
+            GameNotification::GameStatus {
                 id,
-                state_number,
-                readable,
-                mover_share,
+                status,
+                other_params,
+                ..
             } => {
-                self.assert_channel_created("opponent_moved");
-                self.opponent_moved_in_game.insert(id.clone());
-                self.opponent_moves.push((
-                    id.clone(),
-                    *state_number,
-                    readable.clone(),
-                    mover_share.clone(),
-                ));
-                self.events.push(TestEvent::OpponentMoved {
-                    id: id.clone(),
-                    state_number: *state_number,
-                    readable: readable.clone(),
-                    mover_share: mover_share.clone(),
-                });
+                if let Some(params) = other_params {
+                    if let Some(readable) = params.readable.clone() {
+                        if let Some(mover_share) = params.mover_share.clone() {
+                            self.assert_channel_created("opponent_moved");
+                            self.opponent_moved_in_game.insert(id.clone());
+                            self.opponent_moves.push((id.clone(), 0, readable.clone(), mover_share.clone()));
+                            self.events.push(TestEvent::OpponentMoved {
+                                id: id.clone(),
+                                state_number: 0,
+                                readable,
+                                mover_share,
+                            });
+                        } else {
+                            self.assert_channel_created("game_message");
+                            self.opponent_messages.push(OpponentMessageInfo {
+                                opponent_move_size: self.opponent_moves.len(),
+                                opponent_message: readable.clone(),
+                            });
+                            self.events.push(TestEvent::GameMessage {
+                                id: id.clone(),
+                                readable,
+                            });
+                        }
+                    }
+                }
+                self.notifications.push(notification.clone());
+                if is_terminal_game_status(status) {
+                    self.assert_channel_created("game_terminal");
+                    self.game_finished_ids.insert(id.clone());
+                    self.events
+                        .push(TestEvent::Notification(notification.clone()));
+                    return Ok(());
+                }
+                if matches!(
+                    status,
+                    GameStatusKind::OnChainMyTurn
+                        | GameStatusKind::OnChainTheirTurn
+                        | GameStatusKind::Replaying
+                        | GameStatusKind::IllegalMoveDetected
+                ) {
+                    self.events
+                        .push(TestEvent::Notification(notification.clone()));
+                }
+                if matches!(status, GameStatusKind::OnChainTheirTurn)
+                    && other_params
+                        .as_ref()
+                        .and_then(|p| p.moved_by_us)
+                        .unwrap_or(false)
+                {
+                    // Preserve event-count parity for tests expecting a separate GameStatusMovedByUs signal.
+                    self.events
+                        .push(TestEvent::Notification(notification.clone()));
+                } else {
+                    self.assert_channel_created("game_status");
+                }
             }
             GameNotification::GameProposed { id, .. } => {
                 self.assert_channel_created("game_proposed");
@@ -796,29 +920,12 @@ impl ToLocalUI for LocalTestUIReceiver {
                 self.events
                     .push(TestEvent::Notification(notification.clone()));
             }
-            GameNotification::WeTimedOut { id, .. }
-            | GameNotification::OpponentTimedOut { id, .. }
-            | GameNotification::WeSlashedOpponent { id, .. }
-            | GameNotification::OpponentSlashedUs { id }
-            | GameNotification::OpponentSuccessfullyCheated { id, .. }
-            | GameNotification::GameCancelled { id, .. }
-            | GameNotification::GameError { id, .. } => {
+            GameNotification::InsufficientBalance { id, .. } => {
                 self.assert_channel_created("game_terminal");
                 self.game_finished_ids.insert(id.clone());
                 self.notifications.push(notification.clone());
                 self.events
                     .push(TestEvent::Notification(notification.clone()));
-            }
-            GameNotification::GameMessage { id, readable } => {
-                self.assert_channel_created("game_message");
-                self.opponent_messages.push(OpponentMessageInfo {
-                    opponent_move_size: self.opponent_moves.len(),
-                    opponent_message: readable.clone(),
-                });
-                self.events.push(TestEvent::GameMessage {
-                    id: id.clone(),
-                    readable: readable.clone(),
-                });
             }
             GameNotification::ChannelStatus { state, .. } => {
                 if matches!(state, ChannelState::Active) {
@@ -919,10 +1026,9 @@ fn accept_resolved(local_uis: &[LocalTestUIReceiver; 2], who: usize, gid: &GameI
         || local_uis[who].notifications.iter().any(|n| {
             matches!(n,
                 GameNotification::InsufficientBalance { id, .. }
-                | GameNotification::GameCancelled { id }
                 | GameNotification::GameProposalCancelled { id, .. }
                     if id == gid
-            )
+            ) || is_terminal_for_id(n, gid)
         })
 }
 
@@ -1701,17 +1807,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             let terminal_count = lui
                 .notifications
                 .iter()
-                .filter(|n| match n {
-                    GameNotification::InsufficientBalance { id: nid, .. } => nid == id,
-                    GameNotification::GameCancelled { id: nid } => nid == id,
-                    GameNotification::WeTimedOut { id: nid, .. } => nid == id,
-                    GameNotification::OpponentTimedOut { id: nid, .. } => nid == id,
-                    GameNotification::WeSlashedOpponent { id: nid, .. } => nid == id,
-                    GameNotification::OpponentSlashedUs { id: nid } => nid == id,
-                    GameNotification::OpponentSuccessfullyCheated { id: nid, .. } => nid == id,
-                    GameNotification::GameError { id: nid, .. } => nid == id,
-                    _ => false,
-                })
+                .filter(|n| is_terminal_for_id(n, id))
                 .count();
             assert!(
                 terminal_count == 1,
@@ -1729,16 +1825,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 let terminal_count = lui
                     .notifications
                     .iter()
-                    .filter(|n2| match n2 {
-                        GameNotification::WeTimedOut { id: nid, .. } => nid == id,
-                        GameNotification::OpponentTimedOut { id: nid, .. } => nid == id,
-                        GameNotification::WeSlashedOpponent { id: nid, .. } => nid == id,
-                        GameNotification::OpponentSlashedUs { id: nid } => nid == id,
-                        GameNotification::OpponentSuccessfullyCheated { id: nid, .. } => nid == id,
-                        GameNotification::GameCancelled { id: nid } => nid == id,
-                        GameNotification::GameError { id: nid, .. } => nid == id,
-                        _ => false,
-                    })
+                    .filter(|n2| is_terminal_for_id(n2, id))
                     .count();
                 assert!(
                     terminal_count == 1,
@@ -1749,7 +1836,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         }
     }
 
-    // Invariant 5: GameOnChain only for accepted games.
+    // Invariant 5: on-chain statuses only for accepted games.
     for (i, lui) in local_uis.iter().enumerate() {
         let accepted_ids: HashSet<GameID> = lui
             .notifications
@@ -1763,10 +1850,18 @@ fn run_game_container_with_action_list_with_success_predicate(
             })
             .collect();
         for n in &lui.notifications {
-            if let GameNotification::GameOnChain { id, .. } = n {
+            if let GameNotification::GameStatus { id, status, .. } = n {
+                if !matches!(
+                    status,
+                    GameStatusKind::OnChainMyTurn
+                        | GameStatusKind::OnChainTheirTurn
+                        | GameStatusKind::Replaying
+                ) {
+                    continue;
+                }
                 assert!(
                     accepted_ids.contains(id),
-                    "player {i}: GameOnChain({id:?}) but no GameProposalAccepted for that game. \
+                    "player {i}: on-chain status for {id:?} but no GameProposalAccepted for that game. \
                      Accepted IDs: {accepted_ids:?}\nAll notifications: {:?}",
                     lui.notifications,
                 );
@@ -1774,7 +1869,92 @@ fn run_game_container_with_action_list_with_success_predicate(
         }
     }
 
-    // Invariant 6: channel state monotonicity.
+    // Invariant 6: for games that are still live when unrolling starts, the
+    // first post-unroll GameStatus classification is one of the allowed
+    // unroll-finish statuses.
+    fn is_allowed_unroll_finish_status(status: &GameStatusKind) -> bool {
+        matches!(
+            status,
+            GameStatusKind::OnChainMyTurn
+                | GameStatusKind::OnChainTheirTurn
+                | GameStatusKind::Replaying
+                | GameStatusKind::EndedCancelled
+                | GameStatusKind::EndedError
+                | GameStatusKind::EndedWeTimedOut
+        )
+    }
+    for (i, lui) in local_uis.iter().enumerate() {
+        let first_unrolling_idx = lui.notifications.iter().position(|n| {
+            matches!(
+                n,
+                GameNotification::ChannelStatus {
+                    state: ChannelState::Unrolling,
+                    ..
+                }
+            )
+        });
+        let Some(unroll_idx) = first_unrolling_idx else {
+            continue;
+        };
+
+        let accepted_before_unroll: HashSet<GameID> = lui.notifications[..unroll_idx]
+            .iter()
+            .filter_map(|n| {
+                if let GameNotification::GameProposalAccepted { id } = n {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let terminal_before_unroll: HashSet<GameID> = lui.notifications[..unroll_idx]
+            .iter()
+            .filter_map(|n| {
+                if let GameNotification::GameStatus { id, status, .. } = n {
+                    if is_terminal_game_status(status) {
+                        Some(*id)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let live_at_unroll: HashSet<GameID> = accepted_before_unroll
+            .difference(&terminal_before_unroll)
+            .copied()
+            .collect();
+
+        for gid in live_at_unroll {
+            let first_post_unroll = lui.notifications[unroll_idx..].iter().find_map(|n| {
+                if let GameNotification::GameStatus { id, status, .. } = n {
+                    if *id == gid {
+                        return Some(status);
+                    }
+                }
+                None
+            });
+            let Some(status) = first_post_unroll else {
+                panic!(
+                    "player {i}: game {gid:?} live at unroll but no post-unroll GameStatus found.\n\
+                     All notifications: {:?}",
+                    lui.notifications,
+                );
+            };
+            assert!(
+                is_allowed_unroll_finish_status(status),
+                "player {i}: first post-unroll status for game {gid:?} is {status:?}, expected one of \
+                 OnChainMyTurn/OnChainTheirTurn/Replaying/EndedCancelled/EndedError/EndedWeTimedOut.\n\
+                 All notifications: {:?}",
+                lui.notifications,
+            );
+        }
+    }
+
+    // Invariant 7: channel state monotonicity.
     fn channel_state_ordinal(s: &ChannelState) -> u8 {
         match s {
             ChannelState::Handshaking
@@ -2217,7 +2397,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::Unrolling,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::ResolvedUnrolled,
                     )),
@@ -2242,7 +2422,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::Unrolling,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::ResolvedUnrolled,
                     )),
@@ -2288,7 +2468,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ShutdownTransactionPending,
                 )),
@@ -2316,7 +2496,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ShuttingDown,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ShutdownTransactionPending,
                 )),
@@ -2388,17 +2568,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::Unrolling,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::ResolvedUnrolled,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
-                    ExpectedEvent::Notification(ExpectedNotification::WeMoved),
-                    ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
                 ],
                 "piss_off_complete p0",
             );
@@ -2420,17 +2600,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::Unrolling,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::ResolvedUnrolled,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
-                    ExpectedEvent::Notification(ExpectedNotification::WeMoved),
-                    ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(200),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
                 ],
                 "piss_off_complete p1",
             );
@@ -2466,11 +2646,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::Unrolling,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::ResolvedUnrolled,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
                 ],
                 "after_start p0",
             );
@@ -2485,11 +2665,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::Unrolling,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::ResolvedUnrolled,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
                 ],
                 "after_start p1",
             );
@@ -2535,7 +2715,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::GoingOnChain,
                     )),
@@ -2569,7 +2749,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::Unrolling,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::ResolvedUnrolled,
                     )),
@@ -2615,11 +2795,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::Unrolling,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::ResolvedUnrolled,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
                 ],
                 "timeout p0",
             );
@@ -2641,11 +2821,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::Unrolling,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::ResolvedUnrolled,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
                 ],
                 "timeout p1",
             );
@@ -2692,12 +2872,12 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentPlayedIllegalMove),
-                ExpectedEvent::Notification(ExpectedNotification::WeSlashedOpponent),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusIllegalMoveDetected),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeSlashedOpponent),
             ],
             "piss_off_slash p0",
         );
@@ -2719,13 +2899,13 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
-                ExpectedEvent::Notification(ExpectedNotification::WeMoved),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentSlashedUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentSlashedUs),
             ],
             "piss_off_slash p1",
         );
@@ -2774,12 +2954,12 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentPlayedIllegalMove),
-                ExpectedEvent::Notification(ExpectedNotification::WeSlashedOpponent),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusIllegalMoveDetected),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeSlashedOpponent),
             ],
             "alice_slash p0",
         );
@@ -2800,13 +2980,13 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
-                ExpectedEvent::Notification(ExpectedNotification::WeMoved),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentSlashedUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentSlashedUs),
             ],
             "alice_slash p1",
         );
@@ -2859,13 +3039,13 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
-                ExpectedEvent::Notification(ExpectedNotification::WeMoved),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentSlashedUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentSlashedUs),
             ],
             "bob_slash p0",
         );
@@ -2886,12 +3066,12 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentPlayedIllegalMove),
-                ExpectedEvent::Notification(ExpectedNotification::WeSlashedOpponent),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusIllegalMoveDetected),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeSlashedOpponent),
             ],
             "bob_slash p1",
         );
@@ -2939,7 +3119,7 @@ ChannelState::GoingOnChain,
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(150),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ShutdownTransactionPending,
                 )),
@@ -2966,7 +3146,7 @@ ChannelState::GoingOnChain,
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ShuttingDown,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ShutdownTransactionPending,
                 )),
@@ -3032,7 +3212,7 @@ ChannelState::GoingOnChain,
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(49),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ShutdownTransactionPending,
                 )),
@@ -3056,7 +3236,7 @@ ChannelState::GoingOnChain,
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(49),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ShuttingDown,
                 )),
@@ -3176,7 +3356,7 @@ ChannelState::GoingOnChain,
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ShutdownTransactionPending,
                 )),
@@ -3204,7 +3384,7 @@ ChannelState::GoingOnChain,
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ShuttingDown,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ShutdownTransactionPending,
                 )),
@@ -3251,7 +3431,7 @@ ChannelState::GoingOnChain,
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ShutdownTransactionPending,
                 )),
@@ -3279,7 +3459,7 @@ ChannelState::GoingOnChain,
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ShuttingDown,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ShutdownTransactionPending,
                 )),
@@ -3450,13 +3630,13 @@ ChannelState::GoingOnChain,
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedWeTimedOut)),
             "player 0 should get WeTimedOut (redo move couldn't land), got: {p0_notifs:?}"
         );
         assert!(
             p1_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::OpponentTimedOut { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedOpponentTimedOut)),
             "player 1 should get OpponentTimedOut, got: {p1_notifs:?}"
         );
 
@@ -3473,11 +3653,11 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
             ],
             "redo_timeout p0",
         );
@@ -3495,11 +3675,11 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
             ],
             "redo_timeout p1",
         );
@@ -3546,11 +3726,15 @@ ChannelState::GoingOnChain,
             assert_reward_coin_consistency(p0_notifs, "bob_redo_alice_timeout p0");
             assert_reward_coin_consistency(p1_notifs, "bob_redo_alice_timeout p1");
             assert!(
-                p0_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
+                p0_notifs
+                    .iter()
+                    .any(|n| has_status(n, GameStatusKind::EndedWeTimedOut)),
                 "player 0 (alice) should get WeTimedOut (nerfed, couldn't play move 4), got: {p0_notifs:?}"
             );
             assert!(
-                p1_notifs.iter().any(|n| matches!(n, GameNotification::OpponentTimedOut { .. })),
+                p1_notifs
+                    .iter()
+                    .any(|n| has_status(n, GameStatusKind::EndedOpponentTimedOut)),
                 "player 1 (bob) should get OpponentTimedOut (claimed timeout), got: {p1_notifs:?}"
             );
 
@@ -3559,11 +3743,11 @@ ChannelState::GoingOnChain,
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
             ], "bob_redo_alice_timeout p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 game_proposed(), game_accepted(),
@@ -3572,11 +3756,11 @@ ChannelState::GoingOnChain,
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
-                ExpectedEvent::Notification(ExpectedNotification::WeMoved),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
             ], "bob_redo_alice_timeout p1");
         },
     ));
@@ -3610,13 +3794,13 @@ ChannelState::GoingOnChain,
         assert!(
             p1_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedWeTimedOut)),
             "player 1 should get WeTimedOut (it was our turn, no move queued), got: {p1_notifs:?}"
         );
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::OpponentTimedOut { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedOpponentTimedOut)),
             "player 0 should get OpponentTimedOut, got: {p0_notifs:?}"
         );
 
@@ -3633,11 +3817,11 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
             ],
             "our_turn_timeout p0",
         );
@@ -3659,11 +3843,11 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
             ],
             "our_turn_timeout p1",
         );
@@ -3692,13 +3876,13 @@ ChannelState::GoingOnChain,
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::OpponentPlayedIllegalMove { .. })),
+                .any(|n| has_status(n, GameStatusKind::IllegalMoveDetected)),
             "player 0 should get OpponentPlayedIllegalMove, got: {p0_notifs:?}"
         );
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::WeSlashedOpponent { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedWeSlashedOpponent)),
             "player 0 should get WeSlashedOpponent, got: {p0_notifs:?}"
         );
 
@@ -3715,12 +3899,12 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentPlayedIllegalMove),
-                ExpectedEvent::Notification(ExpectedNotification::WeSlashedOpponent),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusIllegalMoveDetected),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeSlashedOpponent),
             ],
             "slash_illegal p0",
         );
@@ -3742,13 +3926,13 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
-                ExpectedEvent::Notification(ExpectedNotification::WeMoved),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentSlashedUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentSlashedUs),
             ],
             "slash_illegal p1",
         );
@@ -3778,7 +3962,7 @@ ChannelState::GoingOnChain,
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::OpponentSlashedUs { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedOpponentSlashedUs)),
             "player 0 (cheater) should get OpponentSlashedUs, got: {p0_notifs:?}"
         );
 
@@ -3795,17 +3979,17 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
-                ExpectedEvent::Notification(ExpectedNotification::WeMoved),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentSlashedUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentSlashedUs),
             ],
             "opponent_slashed p0",
         );
@@ -3827,14 +4011,14 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
-                ExpectedEvent::Notification(ExpectedNotification::WeMoved),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentPlayedIllegalMove),
-                ExpectedEvent::Notification(ExpectedNotification::WeSlashedOpponent),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusIllegalMoveDetected),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeSlashedOpponent),
             ],
             "opponent_slashed p1",
         );
@@ -3876,13 +4060,13 @@ ChannelState::GoingOnChain,
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::OpponentPlayedIllegalMove { .. })),
+                .any(|n| has_status(n, GameStatusKind::IllegalMoveDetected)),
             "player 0 should get OpponentPlayedIllegalMove, got: {p0_notifs:?}"
         );
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::WeSlashedOpponent { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedWeSlashedOpponent)),
             "player 0 should get WeSlashedOpponent, got: {p0_notifs:?}"
         );
 
@@ -3890,7 +4074,7 @@ ChannelState::GoingOnChain,
         assert!(
             p1_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::OpponentSlashedUs { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedOpponentSlashedUs)),
             "player 1 (cheater) should get OpponentSlashedUs, got: {p1_notifs:?}"
         );
 
@@ -3907,12 +4091,12 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentPlayedIllegalMove),
-                ExpectedEvent::Notification(ExpectedNotification::WeSlashedOpponent),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusIllegalMoveDetected),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeSlashedOpponent),
             ],
             "funny_share p0",
         );
@@ -3934,13 +4118,13 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
-                ExpectedEvent::Notification(ExpectedNotification::WeMoved),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentSlashedUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentSlashedUs),
             ],
             "funny_share p1",
         );
@@ -3993,11 +4177,22 @@ ChannelState::GoingOnChain,
             assert_reward_coin_consistency(p0_notifs, "nerfed_cheat p0");
             assert_reward_coin_consistency(p1_notifs, "nerfed_cheat p1");
             assert!(
-                p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentPlayedIllegalMove { .. })),
+                p0_notifs
+                    .iter()
+                    .any(|n| has_status(n, GameStatusKind::IllegalMoveDetected)),
                 "player 0 should get OpponentPlayedIllegalMove, got: {p0_notifs:?}"
             );
             assert!(
-                p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentSuccessfullyCheated { reward_coin: Some(_), .. })),
+                p0_notifs.iter().any(|n| {
+                    matches!(
+                        n,
+                        GameNotification::GameStatus {
+                            status: GameStatusKind::EndedOpponentSuccessfullyCheated,
+                            coin_id: Some(_),
+                            ..
+                        }
+                    )
+                }),
                 "player 0 should get OpponentSuccessfullyCheated with reward_coin (mover_share=137), got: {p0_notifs:?}"
             );
 
@@ -4006,10 +4201,10 @@ ChannelState::GoingOnChain,
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentPlayedIllegalMove),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentSuccessfullyCheated),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusIllegalMoveDetected),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentSuccessfullyCheated),
             ], "nerfed_cheat p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 game_proposed(), game_accepted(),
@@ -4018,11 +4213,11 @@ ChannelState::GoingOnChain,
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
-                ExpectedEvent::Notification(ExpectedNotification::WeMoved),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
             ], "nerfed_cheat p1");
         },
     ));
@@ -4055,7 +4250,7 @@ ChannelState::GoingOnChain,
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedWeTimedOut)),
             "player 0 (who accepted) should get WeTimedOut, got: {p0_notifs:?}"
         );
 
@@ -4072,12 +4267,12 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
             ],
             "accept_finished p0",
         );
@@ -4099,13 +4294,13 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
-                ExpectedEvent::Notification(ExpectedNotification::WeMoved),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
             ],
             "accept_finished p1",
         );
@@ -4137,7 +4332,7 @@ ChannelState::GoingOnChain,
         assert!(
             p1_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedWeTimedOut)),
             "player 1 should get WeTimedOut after nerfed accept + on-chain, got: {p1_notifs:?}"
         );
     }));
@@ -4180,7 +4375,16 @@ ChannelState::GoingOnChain,
         assert_reward_coin_consistency(p0_notifs, "nerfed_accept p0");
         assert_reward_coin_consistency(p1_notifs, "nerfed_accept p1");
         assert!(
-            p1_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOut { reward_coin: Some(_), .. })),
+            p1_notifs.iter().any(|n| {
+                matches!(
+                    n,
+                    GameNotification::GameStatus {
+                        status: GameStatusKind::EndedWeTimedOut,
+                        coin_id: Some(_),
+                        ..
+                    }
+                )
+            }),
             "Bob (who accepted) should get WeTimedOut with a non-null reward_coin, got: {p1_notifs:?}"
         );
 
@@ -4198,18 +4402,18 @@ ChannelState::GoingOnChain,
             game_accepted(),
             ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
             ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
-            ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+            ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
             ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
-            ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+            ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
         ], "nerfed_accept p0");
         assert_event_sequence(&outcome.local_uis[1].events, &[
             game_proposed(), game_accepted(),
             ExpectedEvent::OpponentMoved { mover_share: Amount::new(100) },
             ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
             ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
-            ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+            ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
             ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
-            ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+            ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
         ], "nerfed_accept p1");
     }));
 
@@ -4258,12 +4462,12 @@ ChannelState::GoingOnChain,
             ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
             ExpectedEvent::Notification(ExpectedNotification::GameProposalCancelled),
             ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
-            ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+            ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
             ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
         ], "cancellation_nerfed p0 prefix");
         let p0_tail: Vec<String> = outcome.local_uis[0].events[6..].iter().map(event_shape).collect();
         let p0_terminal: Vec<&str> = p0_tail.iter().filter(|s| {
-            s.starts_with("Notif(WeTimedOut)") || s.starts_with("Notif(OpponentTimedOut)")
+            s.contains("EndedWeTimedOut") || s.contains("EndedOpponentTimedOut")
         }).map(|s| s.as_str()).collect();
         assert_eq!(p0_terminal.len(), 1,
             "cancellation_nerfed p0 should have exactly 1 terminal notification, got {:?}. All events: {:?}",
@@ -4278,12 +4482,12 @@ ChannelState::GoingOnChain,
             ExpectedEvent::Notification(ExpectedNotification::GameProposalCancelled),
             ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
             ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
-            ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+            ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
             ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
         ], "cancellation_nerfed p1 prefix");
         let p1_tail: Vec<String> = outcome.local_uis[1].events[7..].iter().map(event_shape).collect();
         let p1_terminal: Vec<&str> = p1_tail.iter().filter(|s| {
-            s.starts_with("Notif(WeTimedOut)") || s.starts_with("Notif(OpponentTimedOut)")
+            s.contains("EndedWeTimedOut") || s.contains("EndedOpponentTimedOut")
         }).map(|s| s.as_str()).collect();
         assert_eq!(p1_terminal.len(), 1,
             "cancellation_nerfed p1 should have exactly 1 terminal notification, got {:?}. All events: {:?}",
@@ -4314,13 +4518,13 @@ ChannelState::GoingOnChain,
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedWeTimedOut)),
             "player 0 should get WeTimedOut (it was their turn, no move made), got: {p0_notifs:?}"
         );
         assert!(
             p1_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::OpponentTimedOut { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedOpponentTimedOut)),
             "player 1 should get OpponentTimedOut (claimed timeout), got: {p1_notifs:?}"
         );
 
@@ -4334,11 +4538,11 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
             ],
             "before_any_moves p0",
         );
@@ -4353,11 +4557,11 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
             ],
             "before_any_moves p1",
         );
@@ -4391,11 +4595,22 @@ ChannelState::GoingOnChain,
             assert_reward_coin_consistency(p0_notifs, "opp_cheated p0");
             assert_reward_coin_consistency(p1_notifs, "opp_cheated p1");
             assert!(
-                p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentPlayedIllegalMove { .. })),
+                p0_notifs
+                    .iter()
+                    .any(|n| has_status(n, GameStatusKind::IllegalMoveDetected)),
                 "player 0 should get OpponentPlayedIllegalMove, got: {p0_notifs:?}"
             );
             assert!(
-                p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentSuccessfullyCheated { reward_coin: None, .. })),
+                p0_notifs.iter().any(|n| {
+                    matches!(
+                        n,
+                        GameNotification::GameStatus {
+                            status: GameStatusKind::EndedOpponentSuccessfullyCheated,
+                            coin_id: None,
+                            ..
+                        }
+                    )
+                }),
                 "player 0 should get OpponentSuccessfullyCheated with no reward (cheat mover_share=0), got: {p0_notifs:?}"
             );
 
@@ -4404,10 +4619,10 @@ ChannelState::GoingOnChain,
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentPlayedIllegalMove),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentSuccessfullyCheated),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusIllegalMoveDetected),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentSuccessfullyCheated),
             ], "opp_cheated p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 game_proposed(), game_accepted(),
@@ -4416,11 +4631,11 @@ ChannelState::GoingOnChain,
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
-                ExpectedEvent::Notification(ExpectedNotification::WeMoved),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
             ], "opp_cheated p1");
         },
     ));
@@ -4447,7 +4662,9 @@ ChannelState::GoingOnChain,
 
             let p0_notifs = &outcome.local_uis[0].notifications;
             assert!(
-                p0_notifs.iter().any(|n| matches!(n, GameNotification::GameError { .. }))
+                p0_notifs
+                    .iter()
+                    .any(|n| has_status(n, GameStatusKind::EndedError))
                 || p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelStatus { state: ChannelState::Failed, .. })),
                 "player 0 should get GameError or ChannelError when coin is force-destroyed, got: {p0_notifs:?}"
             );
@@ -4457,9 +4674,9 @@ ChannelState::GoingOnChain,
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
-                ExpectedEvent::Notification(ExpectedNotification::GameError),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedError),
             ], "destroyed p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 game_proposed(), game_accepted(),
@@ -4468,9 +4685,9 @@ ChannelState::GoingOnChain,
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
-                ExpectedEvent::Notification(ExpectedNotification::GameError),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedError),
             ], "destroyed p1");
         },
     ));
@@ -4613,7 +4830,7 @@ ChannelState::GoingOnChain,
         assert!(
             all_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::GameError { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedError)),
             "some player should get GameError when game coin force-destroyed, got: {all_notifs:?}"
         );
 
@@ -4627,15 +4844,15 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::GameError),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedError),
             ],
             "impossible_spend p0",
         );
@@ -4653,13 +4870,13 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
-                ExpectedEvent::Notification(ExpectedNotification::WeMoved),
-                ExpectedEvent::Notification(ExpectedNotification::GameError),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedError),
             ],
             "impossible_spend p1",
         );
@@ -4688,7 +4905,9 @@ ChannelState::GoingOnChain,
                 .flat_map(|ui| ui.notifications.iter())
                 .collect();
             assert!(
-                all_notifs.iter().any(|n| matches!(n, GameNotification::GameError { .. })),
+                all_notifs
+                    .iter()
+                    .any(|n| has_status(n, GameStatusKind::EndedError)),
                 "some player should get GameError when own game coin force-destroyed, got: {all_notifs:?}"
             );
 
@@ -4696,22 +4915,22 @@ ChannelState::GoingOnChain,
                 game_accepted(),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
-                ExpectedEvent::Notification(ExpectedNotification::GameError),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedError),
             ], "our_turn_spent p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 game_proposed(), game_accepted(),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
-                ExpectedEvent::Notification(ExpectedNotification::WeMoved),
-                ExpectedEvent::Notification(ExpectedNotification::GameError),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedError),
             ], "our_turn_spent p1");
         },
     ));
@@ -4784,7 +5003,7 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
@@ -4799,7 +5018,7 @@ ChannelState::GoingOnChain,
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::GoingOnChain,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::GameError),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedError),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::Failed,
                 )),
@@ -4878,7 +5097,7 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
@@ -4893,7 +5112,7 @@ ChannelState::GoingOnChain,
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::GoingOnChain,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::GameError),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedError),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::Failed,
                 )),
@@ -4960,13 +5179,13 @@ ChannelState::GoingOnChain,
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::OpponentTimedOut { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedOpponentTimedOut)),
             "alice should get OpponentTimedOut (bob was nerfed), got: {p0_notifs:?}"
         );
         assert!(
             p1_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedWeTimedOut)),
             "bob should get WeTimedOut (nerfed, couldn't play), got: {p1_notifs:?}"
         );
 
@@ -4980,13 +5199,13 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
-                ExpectedEvent::Notification(ExpectedNotification::WeMoved),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
             ],
             "go_on_chain_then_move p0",
         );
@@ -5001,15 +5220,15 @@ ChannelState::GoingOnChain,
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::Unrolling,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                        ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ResolvedUnrolled,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::GameOnChain),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
             ],
             "go_on_chain_then_move p1",
         );
@@ -5318,7 +5537,10 @@ ChannelState::GoingOnChain,
         );
         // The accept round-tripped, so the second game is fully live (not a
         // pending accept). It's absent from the stale unroll → GameError.
-        let game_errors: Vec<_> = p0_notifs.iter().filter(|n| matches!(n, GameNotification::GameError { .. })).collect();
+        let game_errors: Vec<_> = p0_notifs
+            .iter()
+            .filter(|n| has_status(n, GameStatusKind::EndedError))
+            .collect();
         assert!(
             game_errors.len() == 1,
             "player 0 should get exactly one GameError for the fully-live second game, got: {game_errors:?}, all: {p0_notifs:?}"
@@ -5394,7 +5616,10 @@ ChannelState::GoingOnChain,
         );
         // The redo recovers the first game, but the second game's accept
         // round-tripped (fully live), absent from the stale unroll → GameError.
-        let game_errors: Vec<_> = p0_notifs.iter().filter(|n| matches!(n, GameNotification::GameError { .. })).collect();
+        let game_errors: Vec<_> = p0_notifs
+            .iter()
+            .filter(|n| has_status(n, GameStatusKind::EndedError))
+            .collect();
         assert!(
             game_errors.len() == 1,
             "player 0 should get exactly one GameError for the fully-live second game, got: {game_errors:?}, all: {p0_notifs:?}"
@@ -5475,7 +5700,7 @@ ChannelState::GoingOnChain,
         // Second game: accept round-tripped (fully live), absent from stale unroll → GameError.
         let game_errors: Vec<_> = p0_notifs
             .iter()
-            .filter(|n| matches!(n, GameNotification::GameError { .. }))
+            .filter(|n| has_status(n, GameStatusKind::EndedError))
             .collect();
         assert!(
             game_errors.len() >= 1,
@@ -5553,13 +5778,19 @@ ChannelState::GoingOnChain,
             "player 0 should see ResolvedStale, got: {p0_notifs:?}"
         );
         // The second game (fully live, round-tripped) is absent → GameError.
-        let game_errors: Vec<_> = p0_notifs.iter().filter(|n| matches!(n, GameNotification::GameError { .. })).collect();
+        let game_errors: Vec<_> = p0_notifs
+            .iter()
+            .filter(|n| has_status(n, GameStatusKind::EndedError))
+            .collect();
         assert!(
             game_errors.len() == 1,
             "player 0 should get exactly one GameError for the fully-live second game, got: {game_errors:?}, all: {p0_notifs:?}"
         );
         // The third game (in-flight proposal accept) is absent → GameCancelled.
-        let game_cancels: Vec<_> = p0_notifs.iter().filter(|n| matches!(n, GameNotification::GameCancelled { .. })).collect();
+        let game_cancels: Vec<_> = p0_notifs
+            .iter()
+            .filter(|n| has_status(n, GameStatusKind::EndedCancelled))
+            .collect();
         assert!(
             game_cancels.len() == 1,
             "player 0 should get exactly one GameCancelled for the in-flight accept, got: {game_cancels:?}, all: {p0_notifs:?}"
@@ -5617,8 +5848,12 @@ ChannelState::GoingOnChain,
         assert!(
             p0_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::WeTimedOut { our_reward, reward_coin: None, .. }
-                if *our_reward == Amount::default()
+                GameNotification::GameStatus {
+                    status: GameStatusKind::EndedWeTimedOut,
+                    my_reward: Some(our_reward),
+                    coin_id: None,
+                    ..
+                } if *our_reward == Amount::default()
             )),
             "Alice should get WeTimedOut with zero reward (redo skipped), got: {p0_notifs:?}"
         );
@@ -5665,8 +5900,12 @@ ChannelState::GoingOnChain,
         assert!(
             p0_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::WeTimedOut { our_reward, reward_coin: None, .. }
-                if *our_reward == Amount::default()
+                GameNotification::GameStatus {
+                    status: GameStatusKind::EndedWeTimedOut,
+                    my_reward: Some(our_reward),
+                    coin_id: None,
+                    ..
+                } if *our_reward == Amount::default()
             )),
             "Alice should get WeTimedOut with zero reward (accepted, unroll), got: {p0_notifs:?}"
         );
@@ -5707,8 +5946,12 @@ ChannelState::GoingOnChain,
         assert!(
             p0_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::WeTimedOut { our_reward, reward_coin: None, .. }
-                if *our_reward == Amount::default()
+                GameNotification::GameStatus {
+                    status: GameStatusKind::EndedWeTimedOut,
+                    my_reward: Some(our_reward),
+                    coin_id: None,
+                    ..
+                } if *our_reward == Amount::default()
             )),
             "Alice should get WeTimedOut with zero reward (opponent's turn, dead game), got: {p0_notifs:?}"
         );
@@ -5758,8 +6001,12 @@ ChannelState::GoingOnChain,
         assert!(
             p0_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::WeTimedOut { our_reward, reward_coin: None, .. }
-                if *our_reward == Amount::default()
+                GameNotification::GameStatus {
+                    status: GameStatusKind::EndedWeTimedOut,
+                    my_reward: Some(our_reward),
+                    coin_id: None,
+                    ..
+                } if *our_reward == Amount::default()
             )),
             "Alice should get WeTimedOut with zero reward (on-chain move skipped), got: {p0_notifs:?}"
         );
@@ -5805,8 +6052,12 @@ ChannelState::GoingOnChain,
         assert!(
             p0_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::WeTimedOut { our_reward, reward_coin: None, .. }
-                if *our_reward == Amount::default()
+                GameNotification::GameStatus {
+                    status: GameStatusKind::EndedWeTimedOut,
+                    my_reward: Some(our_reward),
+                    coin_id: None,
+                    ..
+                } if *our_reward == Amount::default()
             )),
             "Alice should get WeTimedOut with zero reward (on-chain AcceptTimeout), got: {p0_notifs:?}"
         );

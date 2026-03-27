@@ -394,14 +394,12 @@ export class WasmBlobWrapper {
       if (tag === 'GameProposalAccepted' && n.GameProposalAccepted) {
         this.activeGameId = String(n.GameProposalAccepted.id);
       }
-      const TERMINAL_TAGS = [
-        'WeTimedOut', 'OpponentTimedOut', 'WeSlashedOpponent',
-        'OpponentSlashedUs', 'OpponentSuccessfullyCheated',
-        'GameCancelled', 'GameError',
-      ];
-      if (TERMINAL_TAGS.includes(tag)) {
-        this.activeGameId = null;
-        this.handState = null;
+      if (tag === 'GameStatus') {
+        const gs = (n as Record<string, Record<string, unknown>>).GameStatus;
+        if (gs && typeof gs.status === 'string' && gs.status.startsWith('ended-')) {
+          this.activeGameId = null;
+          this.handState = null;
+        }
       }
       this.gameLog.push(JSON.stringify(n));
       this.rxjsEmitter?.next({ type: 'notification', data: n });

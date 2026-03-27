@@ -15,7 +15,8 @@ use crate::common::types::{
 };
 use crate::peer_container::PeerHandler;
 use crate::potato_handler::effects::{
-    format_coin, ChannelState, ChannelStatusSnapshot, Effect, GameNotification, ResyncInfo,
+    format_coin, ChannelState, ChannelStatusSnapshot, Effect, GameNotification, GameStatusKind,
+    GameStatusOtherParams, ResyncInfo,
 };
 use crate::potato_handler::types::{GameAction, PotatoState};
 use crate::referee::types::{GameMoveDetails, SlashOutcome, TheirTurnCoinSpentResult};
@@ -452,15 +453,18 @@ impl OnChainGameHandler {
                         },
                     );
 
-                    effects.push(Effect::Notify(GameNotification::GameOnChain {
+                    effects.push(Effect::Notify(GameNotification::GameStatus {
                         id: pending.game_id,
-                        coin: new_coin.clone(),
-                        amount: new_coin.amount().unwrap_or_default(),
-                        our_turn: false,
-                    }));
-                    effects.push(Effect::Notify(GameNotification::WeMoved {
-                        id: pending.game_id,
-                        coin: new_coin.clone(),
+                        status: GameStatusKind::OnChainTheirTurn,
+                        my_reward: None,
+                        coin_id: Some(new_coin.clone()),
+                        reason: None,
+                        other_params: Some(GameStatusOtherParams {
+                            readable: None,
+                            mover_share: None,
+                            illegal_move_detected: None,
+                            moved_by_us: Some(true),
+                        }),
                     }));
                     effects.push(Effect::RegisterCoin {
                         coin: new_coin,
@@ -509,19 +513,26 @@ impl OnChainGameHandler {
                 )));
             }
             let notification = if let Some(reward_coin) = reward_coin {
-                GameNotification::WeSlashedOpponent {
+                GameNotification::GameStatus {
                     id: old_definition.game_id,
-                    reward_amount: reward_coin.amount().unwrap_or_default(),
-                    reward_coin,
+                    status: GameStatusKind::EndedWeSlashedOpponent,
+                    my_reward: Some(reward_coin.amount().unwrap_or_default()),
+                    coin_id: Some(reward_coin),
+                    reason: None,
+                    other_params: None,
                 }
             } else {
                 effects.push(Effect::DebugLog(format!(
                     "[game-error] {} slash succeeded but no reward coin found",
                     format_coin(coin_id),
                 )));
-                GameNotification::GameError {
+                GameNotification::GameStatus {
                     id: old_definition.game_id,
-                    reason: "slash succeeded but no reward coin found".to_string(),
+                    status: GameStatusKind::EndedError,
+                    my_reward: None,
+                    coin_id: None,
+                    reason: Some("slash succeeded but no reward coin found".to_string()),
+                    other_params: None,
                 }
             };
             if let Some(eff) = self.try_emit_terminal(&old_definition.game_id, notification) {
@@ -553,10 +564,13 @@ impl OnChainGameHandler {
                     };
                     if let Some(eff) = self.try_emit_terminal(
                         &old_definition.game_id,
-                        GameNotification::WeTimedOut {
+                        GameNotification::GameStatus {
                             id: old_definition.game_id,
-                            our_reward: amt,
-                            reward_coin,
+                            status: GameStatusKind::EndedWeTimedOut,
+                            my_reward: Some(amt),
+                            coin_id: reward_coin,
+                            reason: None,
+                            other_params: None,
                         },
                     ) {
                         effects.push(eff);
@@ -571,10 +585,13 @@ impl OnChainGameHandler {
                     if !old_definition.notification_sent {
                         if let Some(eff) = self.try_emit_terminal(
                             &old_definition.game_id,
-                            GameNotification::WeTimedOut {
+                            GameNotification::GameStatus {
                                 id: old_definition.game_id,
-                                our_reward: Amount::default(),
-                                reward_coin: None,
+                                status: GameStatusKind::EndedWeTimedOut,
+                                my_reward: Some(Amount::default()),
+                                coin_id: None,
+                                reason: None,
+                                other_params: None,
                             },
                         ) {
                             effects.push(eff);
@@ -597,11 +614,17 @@ impl OnChainGameHandler {
                                 ..old_definition
                             },
                         );
-                        effects.push(Effect::Notify(GameNotification::GameOnChain {
+                        effects.push(Effect::Notify(GameNotification::GameStatus {
                             id: old_definition.game_id,
-                            coin: new_coin.clone(),
-                            amount: amt.clone(),
-                            our_turn: !old_definition.our_turn,
+                            status: if !old_definition.our_turn {
+                                GameStatusKind::OnChainMyTurn
+                            } else {
+                                GameStatusKind::OnChainTheirTurn
+                            },
+                            my_reward: None,
+                            coin_id: Some(new_coin.clone()),
+                            reason: None,
+                            other_params: None,
                         }));
                         effects.push(Effect::RegisterCoin {
                             coin: new_coin,
@@ -633,9 +656,13 @@ impl OnChainGameHandler {
             )));
             if let Some(eff) = self.try_emit_terminal(
                 &old_definition.game_id,
-                GameNotification::GameError {
+                GameNotification::GameStatus {
                     id: old_definition.game_id,
-                    reason,
+                    status: GameStatusKind::EndedError,
+                    my_reward: None,
+                    coin_id: None,
+                    reason: Some(reason),
+                    other_params: None,
                 },
             ) {
                 effects.push(eff);
@@ -659,9 +686,13 @@ impl OnChainGameHandler {
                 )));
                 if let Some(eff) = self.try_emit_terminal(
                     &old_definition.game_id,
-                    GameNotification::GameError {
+                    GameNotification::GameStatus {
                         id: old_definition.game_id,
-                        reason,
+                        status: GameStatusKind::EndedError,
+                        my_reward: None,
+                        coin_id: None,
+                        reason: Some(reason),
+                        other_params: None,
                     },
                 ) {
                     effects.push(eff);
@@ -698,11 +729,17 @@ impl OnChainGameHandler {
                     },
                 );
 
-                effects.push(Effect::Notify(GameNotification::GameOnChain {
+                effects.push(Effect::Notify(GameNotification::GameStatus {
                     id: old_definition.game_id,
-                    coin: new_coin_id.clone(),
-                    amount: amt.clone(),
-                    our_turn: is_my_turn,
+                    status: if is_my_turn {
+                        GameStatusKind::OnChainMyTurn
+                    } else {
+                        GameStatusKind::OnChainTheirTurn
+                    },
+                    my_reward: None,
+                    coin_id: Some(new_coin_id.clone()),
+                    reason: None,
+                    other_params: None,
                 }));
                 effects.push(Effect::RegisterCoin {
                     coin: new_coin_id,
@@ -756,20 +793,31 @@ impl OnChainGameHandler {
                 }
                 if !old_definition.notification_sent {
                     let notif = if old_definition.our_turn {
-                        GameNotification::WeTimedOut {
+                        GameNotification::GameStatus {
                             id: old_definition.game_id,
-                            our_reward: amount.clone(),
-                            reward_coin: my_reward_coin_string.clone(),
+                            status: GameStatusKind::EndedWeTimedOut,
+                            my_reward: Some(amount.clone()),
+                            coin_id: my_reward_coin_string.clone(),
+                            reason: None,
+                            other_params: None,
                         }
                     } else if is_slash {
-                        GameNotification::OpponentSlashedUs {
+                        GameNotification::GameStatus {
                             id: old_definition.game_id,
+                            status: GameStatusKind::EndedOpponentSlashedUs,
+                            my_reward: None,
+                            coin_id: None,
+                            reason: None,
+                            other_params: None,
                         }
                     } else {
-                        GameNotification::OpponentTimedOut {
+                        GameNotification::GameStatus {
                             id: old_definition.game_id,
-                            our_reward: amount.clone(),
-                            reward_coin: my_reward_coin_string.clone(),
+                            status: GameStatusKind::EndedOpponentTimedOut,
+                            my_reward: Some(amount.clone()),
+                            coin_id: my_reward_coin_string.clone(),
+                            reason: None,
+                            other_params: None,
                         }
                     };
                     if let Some(eff) = self.try_emit_terminal(&old_definition.game_id, notif) {
@@ -780,7 +828,7 @@ impl OnChainGameHandler {
             }
             CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Moved {
                 new_coin_string,
-                state_number,
+                state_number: _state_number,
                 readable,
                 mover_share,
                 ..
@@ -790,7 +838,7 @@ impl OnChainGameHandler {
                     format_coin(coin_id),
                     format_coin(&new_coin_string),
                 )));
-                let (puzzle_hash, amt) =
+                let (puzzle_hash, _amt) =
                     if let Some((orig_coin_id, ph, amt)) = new_coin_string.to_parts() {
                         game_assert_eq!(
                             coin_id.to_coin_id(),
@@ -813,18 +861,32 @@ impl OnChainGameHandler {
                     },
                 );
 
-                effects.push(Effect::Notify(GameNotification::GameOnChain {
+                effects.push(Effect::Notify(GameNotification::GameStatus {
                     id: old_definition.game_id,
-                    coin: new_coin_string.clone(),
-                    amount: amt.clone(),
-                    our_turn: true,
+                    status: GameStatusKind::OnChainMyTurn,
+                    my_reward: None,
+                    coin_id: Some(new_coin_string.clone()),
+                    reason: None,
+                    other_params: Some(GameStatusOtherParams {
+                        readable: None,
+                        mover_share: None,
+                        illegal_move_detected: None,
+                        moved_by_us: None,
+                    }),
                 }));
 
-                effects.push(Effect::Notify(GameNotification::OpponentMoved {
+                effects.push(Effect::Notify(GameNotification::GameStatus {
                     id: game_id,
-                    state_number,
-                    readable,
-                    mover_share,
+                    status: GameStatusKind::MyTurn,
+                    my_reward: None,
+                    coin_id: None,
+                    reason: None,
+                    other_params: Some(GameStatusOtherParams {
+                        readable: Some(readable),
+                        mover_share: Some(mover_share),
+                        illegal_move_detected: None,
+                        moved_by_us: None,
+                    }),
                 }));
                 effects.push(Effect::RegisterCoin {
                     coin: new_coin_string,
@@ -841,12 +903,6 @@ impl OnChainGameHandler {
                     "[slash-on-chain] {}",
                     format_coin(coin_id),
                 )));
-                effects.push(Effect::Notify(
-                    GameNotification::OpponentPlayedIllegalMove {
-                        id: old_definition.game_id,
-                    },
-                ));
-
                 match outcome.borrow() {
                     SlashOutcome::Reward {
                         my_reward_coin_string,
@@ -863,6 +919,19 @@ impl OnChainGameHandler {
                         }));
                         let slash_coin = transaction.coin.clone();
                         let gt = old_definition.game_timeout.clone();
+                        effects.push(Effect::Notify(GameNotification::GameStatus {
+                            id: old_definition.game_id,
+                            status: GameStatusKind::IllegalMoveDetected,
+                            my_reward: None,
+                            coin_id: Some(slash_coin.clone()),
+                            reason: None,
+                            other_params: Some(GameStatusOtherParams {
+                                readable: None,
+                                mover_share: Some(cheating_move_mover_share.clone()),
+                                illegal_move_detected: Some(true),
+                                moved_by_us: None,
+                            }),
+                        }));
                         self.game_map.insert(
                             slash_coin.clone(),
                             OnChainGameState {
@@ -879,10 +948,28 @@ impl OnChainGameHandler {
                         });
                     }
                     SlashOutcome::NoReward => {
+                        effects.push(Effect::Notify(GameNotification::GameStatus {
+                            id: old_definition.game_id,
+                            status: GameStatusKind::IllegalMoveDetected,
+                            my_reward: None,
+                            coin_id: None,
+                            reason: None,
+                            other_params: Some(GameStatusOtherParams {
+                                readable: None,
+                                mover_share: None,
+                                illegal_move_detected: Some(true),
+                                moved_by_us: None,
+                            }),
+                        }));
                         if let Some(eff) = self.try_emit_terminal(
                             &old_definition.game_id,
-                            GameNotification::OpponentSlashedUs {
+                            GameNotification::GameStatus {
                                 id: old_definition.game_id,
+                                status: GameStatusKind::EndedOpponentSlashedUs,
+                                my_reward: None,
+                                coin_id: None,
+                                reason: None,
+                                other_params: None,
                             },
                         ) {
                             effects.push(eff);
@@ -904,16 +991,22 @@ impl OnChainGameHandler {
                         None
                     };
                     let notif = if old_definition.our_turn {
-                        GameNotification::WeTimedOut {
+                        GameNotification::GameStatus {
                             id: old_definition.game_id,
-                            our_reward: amt,
-                            reward_coin,
+                            status: GameStatusKind::EndedWeTimedOut,
+                            my_reward: Some(amt),
+                            coin_id: reward_coin,
+                            reason: None,
+                            other_params: None,
                         }
                     } else {
-                        GameNotification::OpponentTimedOut {
+                        GameNotification::GameStatus {
                             id: old_definition.game_id,
-                            our_reward: amt,
-                            reward_coin,
+                            status: GameStatusKind::EndedOpponentTimedOut,
+                            my_reward: Some(amt),
+                            coin_id: reward_coin,
+                            reason: None,
+                            other_params: None,
                         }
                     };
                     if let Some(eff) = self.try_emit_terminal(&old_definition.game_id, notif) {
@@ -961,10 +1054,13 @@ impl OnChainGameHandler {
                 };
                 if let Some(eff) = self.try_emit_terminal(
                     &game_id,
-                    GameNotification::OpponentSuccessfullyCheated {
+                    GameNotification::GameStatus {
                         id: game_id,
-                        our_reward,
-                        reward_coin,
+                        status: GameStatusKind::EndedOpponentSuccessfullyCheated,
+                        my_reward: Some(our_reward),
+                        coin_id: reward_coin,
+                        reason: None,
+                        other_params: None,
                     },
                 ) {
                     effects.push(eff);
@@ -1010,16 +1106,22 @@ impl OnChainGameHandler {
                 }
 
                 let notif = if game_def.our_turn || game_def.accepted {
-                    GameNotification::WeTimedOut {
+                    GameNotification::GameStatus {
                         id: game_id,
-                        our_reward,
-                        reward_coin,
+                        status: GameStatusKind::EndedWeTimedOut,
+                        my_reward: Some(our_reward),
+                        coin_id: reward_coin,
+                        reason: None,
+                        other_params: None,
                     }
                 } else {
-                    GameNotification::OpponentTimedOut {
+                    GameNotification::GameStatus {
                         id: game_id,
-                        our_reward,
-                        reward_coin,
+                        status: GameStatusKind::EndedOpponentTimedOut,
+                        my_reward: Some(our_reward),
+                        coin_id: reward_coin,
+                        reason: None,
+                        other_params: None,
                     }
                 };
                 if let Some(eff) = self.try_emit_terminal(&game_id, notif) {
@@ -1079,16 +1181,22 @@ impl OnChainGameHandler {
 
                 if !already_notified {
                     let notif = if our_turn || accepted {
-                        GameNotification::WeTimedOut {
+                        GameNotification::GameStatus {
                             id: game_id,
-                            our_reward,
-                            reward_coin,
+                            status: GameStatusKind::EndedWeTimedOut,
+                            my_reward: Some(our_reward),
+                            coin_id: reward_coin,
+                            reason: None,
+                            other_params: None,
                         }
                     } else {
-                        GameNotification::OpponentTimedOut {
+                        GameNotification::GameStatus {
                             id: game_id,
-                            our_reward,
-                            reward_coin,
+                            status: GameStatusKind::EndedOpponentTimedOut,
+                            my_reward: Some(our_reward),
+                            coin_id: reward_coin,
+                            reason: None,
+                            other_params: None,
                         }
                     };
                     if let Some(eff) = self.try_emit_terminal(&game_id, notif) {
@@ -1138,10 +1246,13 @@ impl OnChainGameHandler {
         if move_result.basic.mover_share == game_amount && move_result.basic.max_move_size > 0 {
             self.restore_game_state(&game_id, pre_referee, pre_last_ph)?;
             self.game_map.retain(|_, def| def.game_id != game_id);
-            return Ok(Some(Effect::Notify(GameNotification::WeTimedOut {
+            return Ok(Some(Effect::Notify(GameNotification::GameStatus {
                 id: game_id,
-                our_reward: Amount::default(),
-                reward_coin: None,
+                status: GameStatusKind::EndedWeTimedOut,
+                my_reward: Some(Amount::default()),
+                coin_id: None,
+                reason: None,
+                other_params: None,
             })));
         }
 
@@ -1249,10 +1360,13 @@ impl OnChainGameHandler {
                     let our_share = self.get_game_our_current_share(&game_id);
                     if matches!(our_share, Ok(ref s) if *s == Amount::default()) {
                         self.game_map.remove(&current_coin);
-                        return Ok(vec![Effect::Notify(GameNotification::WeTimedOut {
+                        return Ok(vec![Effect::Notify(GameNotification::GameStatus {
                             id: game_id,
-                            our_reward: Amount::default(),
-                            reward_coin: None,
+                            status: GameStatusKind::EndedWeTimedOut,
+                            my_reward: Some(Amount::default()),
+                            coin_id: None,
+                            reason: None,
+                            other_params: None,
                         })]);
                     }
                     if let Some(def) = self.game_map.get_mut(&current_coin) {
@@ -1363,9 +1477,13 @@ impl OnChainGameHandler {
                 "[game-error] {} {reason}",
                 format_coin(coin_id),
             )));
-            let notification = GameNotification::GameError {
+            let notification = GameNotification::GameStatus {
                 id: game_id,
-                reason,
+                status: GameStatusKind::EndedError,
+                my_reward: None,
+                coin_id: None,
+                reason: Some(reason),
+                other_params: None,
             };
             effects.push(Effect::Notify(notification));
             effects.extend(self.next_action(env)?);

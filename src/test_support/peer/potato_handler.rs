@@ -145,17 +145,19 @@ impl BootstrapTowardWallet for Pipe {
 impl ToLocalUI for Pipe {
     fn notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
         match notification {
-            GameNotification::OpponentMoved {
+            GameNotification::GameStatus {
                 id,
-                readable,
-                mover_share,
+                other_params: Some(params),
                 ..
             } => {
-                self.opponent_moves
-                    .push((id.clone(), readable.clone(), mover_share.clone()));
-            }
-            GameNotification::GameMessage { id, readable } => {
-                self.opponent_messages.push((id.clone(), readable.clone()));
+                if let Some(readable) = params.readable.clone() {
+                    if let Some(mover_share) = params.mover_share.clone() {
+                        self.opponent_moves
+                            .push((id.clone(), readable, mover_share));
+                    } else {
+                        self.opponent_messages.push((id.clone(), readable));
+                    }
+                }
             }
             GameNotification::ChannelStatus {
                 state, advisory, ..

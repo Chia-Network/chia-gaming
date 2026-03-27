@@ -47,6 +47,8 @@ const CHANNEL_STATE_LABELS: Record<ChannelState, string> = {
 const GAME_TURN_LABELS: Record<GameTurnState, string> = {
   'my-turn': 'Your turn',
   'their-turn': 'Their turn',
+  'replaying': 'Replaying our move on-chain',
+  'opponent-illegal-move': 'Your turn (opponent attempted illegal move)',
   'ended': 'Ended',
 };
 

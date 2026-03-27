@@ -12,7 +12,8 @@ use crate::common::types::{
 };
 use crate::peer_container::PeerHandler;
 use crate::potato_handler::effects::{
-    format_coin, ChannelState, ChannelStatusSnapshot, Effect, GameNotification, ResyncInfo,
+    format_coin, ChannelState, ChannelStatusSnapshot, Effect, GameNotification, GameStatusKind,
+    ResyncInfo,
 };
 use crate::potato_handler::handler_base::{classify_unroll, ChannelHandlerBase, UnrollOutcome};
 use crate::potato_handler::on_chain::{
@@ -687,8 +688,13 @@ impl UnrollWatchHandler {
                 game_map_inner.values().map(|def| def.game_id).collect();
             for missing_id in pre_game_ids.difference(&surviving_ids) {
                 if in_flight_proposal_ids.contains(missing_id) {
-                    effects.push(Effect::Notify(GameNotification::GameCancelled {
+                    effects.push(Effect::Notify(GameNotification::GameStatus {
                         id: *missing_id,
+                        status: GameStatusKind::EndedCancelled,
+                        my_reward: None,
+                        coin_id: None,
+                        reason: None,
+                        other_params: None,
                     }));
                 } else {
                     let reason = if is_stale {
@@ -696,9 +702,13 @@ impl UnrollWatchHandler {
                     } else {
                         "live game absent from unroll"
                     };
-                    effects.push(Effect::Notify(GameNotification::GameError {
+                    effects.push(Effect::Notify(GameNotification::GameStatus {
                         id: *missing_id,
-                        reason: reason.to_string(),
+                        status: GameStatusKind::EndedError,
+                        my_reward: None,
+                        coin_id: None,
+                        reason: Some(reason.to_string()),
+                        other_params: None,
                     }));
                 }
             }
@@ -709,10 +719,13 @@ impl UnrollWatchHandler {
         };
 
         for (game_id, our_share) in &preempt_resolved {
-            effects.push(Effect::Notify(GameNotification::WeTimedOut {
+            effects.push(Effect::Notify(GameNotification::GameStatus {
                 id: *game_id,
-                our_reward: our_share.clone(),
-                reward_coin: on_chain_reward_coin.clone(),
+                status: GameStatusKind::EndedWeTimedOut,
+                my_reward: Some(our_share.clone()),
+                coin_id: on_chain_reward_coin.clone(),
+                reason: None,
+                other_params: None,
             }));
         }
 
@@ -745,10 +758,13 @@ impl UnrollWatchHandler {
             }
             for (coin, game_id) in &zero_reward_games {
                 game_map.remove(coin);
-                effects.push(Effect::Notify(GameNotification::WeTimedOut {
+                effects.push(Effect::Notify(GameNotification::GameStatus {
                     id: *game_id,
-                    our_reward: Amount::default(),
-                    reward_coin: None,
+                    status: GameStatusKind::EndedWeTimedOut,
+                    my_reward: Some(Amount::default()),
+                    coin_id: None,
+                    reason: None,
+                    other_params: None,
                 }));
             }
         }
@@ -758,12 +774,34 @@ impl UnrollWatchHandler {
             return Ok(effects);
         }
 
+        let replaying_ids: HashSet<GameID> = {
+            let player_ch = self.base.channel_handler()?;
+            game_map
+                .iter()
+                .filter_map(|(coin, state)| {
+                    if state.our_turn && player_ch.has_redo_for_game_coin(coin, &state.game_id) {
+                        Some(state.game_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
         for (coin, state) in game_map.iter() {
-            effects.push(Effect::Notify(GameNotification::GameOnChain {
+            effects.push(Effect::Notify(GameNotification::GameStatus {
                 id: state.game_id,
-                coin: coin.clone(),
-                amount: coin.amount().unwrap_or_default(),
-                our_turn: state.our_turn,
+                status: if replaying_ids.contains(&state.game_id) {
+                    GameStatusKind::Replaying
+                } else if state.our_turn {
+                    GameStatusKind::OnChainMyTurn
+                } else {
+                    GameStatusKind::OnChainTheirTurn
+                },
+                my_reward: None,
+                coin_id: Some(coin.clone()),
+                reason: None,
+                other_params: None,
             }));
             effects.push(Effect::RegisterCoin {
                 coin: coin.clone(),

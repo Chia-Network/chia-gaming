@@ -10,6 +10,8 @@ import {
   WasmNotification,
   ChannelState,
   ChannelStatusPayload,
+  GameStatusPayload,
+  GameStatusState,
 } from '../types/ChiaGaming';
 import { ChildFrameBlockchainInterface } from './ChildFrameBlockchainInterface';
 import {
@@ -35,17 +37,7 @@ function coinPayloadToHex(coin: unknown): string | undefined {
   return undefined;
 }
 
-const TERMINAL_TYPES = [
-  'WeTimedOut', 'OpponentTimedOut', 'WeSlashedOpponent',
-  'OpponentSlashedUs', 'OpponentSuccessfullyCheated',
-  'GameCancelled', 'GameError', 'InsufficientBalance',
-];
-
-function isTerminal(n: WasmNotification): boolean {
-  return TERMINAL_TYPES.some(t => t in n);
-}
-
-export type GameTurnState = 'my-turn' | 'their-turn' | 'ended';
+export type GameTurnState = 'my-turn' | 'their-turn' | 'replaying' | 'opponent-illegal-move' | 'ended';
 
 export interface GameCoinInfo {
   coinHex: string | null;
@@ -116,45 +108,35 @@ function parseAmount(v: unknown): string | null {
   return String(v);
 }
 
-function getPayload(n: WasmNotification, key: string): Record<string, unknown> | null {
-  const raw = (n as Record<string, unknown>)[key];
-  if (typeof raw !== 'object' || raw === null) return null;
-  return raw as Record<string, unknown>;
-}
-
-function parseTerminalInfo(n: WasmNotification): GameTerminalInfo {
-  const weTimedOut = getPayload(n, 'WeTimedOut');
-  if (weTimedOut) {
+function parseGameStatusTerminalInfo(gs: GameStatusPayload): GameTerminalInfo {
+  if (gs.status === 'ended-we-timed-out') {
     return {
       type: 'we-timed-out',
       label: 'Ended: we timed out',
-      myReward: parseAmount(weTimedOut.our_reward),
-      rewardCoinHex: coinPayloadToHex(weTimedOut.reward_coin) ?? null,
+      myReward: parseAmount(gs.my_reward),
+      rewardCoinHex: coinPayloadToHex(gs.coin_id) ?? null,
     };
   }
 
-  const opponentTimedOut = getPayload(n, 'OpponentTimedOut');
-  if (opponentTimedOut) {
+  if (gs.status === 'ended-opponent-timed-out') {
     return {
       type: 'opponent-timed-out',
       label: 'Ended: opponent timed out',
-      myReward: parseAmount(opponentTimedOut.our_reward),
-      rewardCoinHex: coinPayloadToHex(opponentTimedOut.reward_coin) ?? null,
+      myReward: parseAmount(gs.my_reward),
+      rewardCoinHex: coinPayloadToHex(gs.coin_id) ?? null,
     };
   }
 
-  const weSlashedOpponent = getPayload(n, 'WeSlashedOpponent');
-  if (weSlashedOpponent) {
+  if (gs.status === 'ended-we-slashed-opponent') {
     return {
       type: 'we-slashed-opponent',
       label: 'Ended: we slashed opponent',
-      myReward: parseAmount(weSlashedOpponent.reward_amount),
-      rewardCoinHex: coinPayloadToHex(weSlashedOpponent.reward_coin) ?? null,
+      myReward: parseAmount(gs.my_reward),
+      rewardCoinHex: coinPayloadToHex(gs.coin_id) ?? null,
     };
   }
 
-  const opponentSlashedUs = getPayload(n, 'OpponentSlashedUs');
-  if (opponentSlashedUs) {
+  if (gs.status === 'ended-opponent-slashed-us') {
     return {
       type: 'opponent-slashed-us',
       label: 'Ended: opponent slashed us',
@@ -163,17 +145,16 @@ function parseTerminalInfo(n: WasmNotification): GameTerminalInfo {
     };
   }
 
-  const opponentSuccessfullyCheated = getPayload(n, 'OpponentSuccessfullyCheated');
-  if (opponentSuccessfullyCheated) {
+  if (gs.status === 'ended-opponent-successfully-cheated') {
     return {
       type: 'opponent-successfully-cheated',
       label: 'Ended: opponent successfully cheated',
-      myReward: parseAmount(opponentSuccessfullyCheated.our_reward),
-      rewardCoinHex: coinPayloadToHex(opponentSuccessfullyCheated.reward_coin) ?? null,
+      myReward: parseAmount(gs.my_reward),
+      rewardCoinHex: coinPayloadToHex(gs.coin_id) ?? null,
     };
   }
 
-  if (getPayload(n, 'GameCancelled')) {
+  if (gs.status === 'ended-cancelled') {
     return {
       type: 'game-cancelled',
       label: 'Ended: cancelled',
@@ -182,25 +163,20 @@ function parseTerminalInfo(n: WasmNotification): GameTerminalInfo {
     };
   }
 
-  if (getPayload(n, 'InsufficientBalance')) {
-    return {
-      type: 'insufficient-balance',
-      label: 'Ended: insufficient balance',
-      myReward: null,
-      rewardCoinHex: null,
-    };
-  }
-
-  if (getPayload(n, 'GameError')) {
+  if (gs.status === 'ended-error') {
     return {
       type: 'game-error',
-      label: 'Ended: error',
+      label: gs.reason ? `Ended: ${gs.reason}` : 'Ended: error',
       myReward: null,
       rewardCoinHex: null,
     };
   }
 
   return INITIAL_GAME_TERMINAL;
+}
+
+function isTerminalStatus(status: GameStatusState): boolean {
+  return status.startsWith('ended-');
 }
 
 export interface UseGameSessionResult {
@@ -386,16 +362,6 @@ export function useGameSession(
       return;
     }
 
-    // Game coin lifecycle
-    if ('GameOnChain' in n) {
-      const hex = coinPayloadToHex(n.GameOnChain?.coin);
-      const ourTurn = n.GameOnChain?.our_turn;
-      setGameCoin({
-        coinHex: hex ?? null,
-        turnState: ourTurn === false ? 'their-turn' : 'my-turn',
-      });
-    }
-
     // Session lifecycle and game flow
     if ('GameProposed' in n) {
       if (!iStarted) {
@@ -423,26 +389,54 @@ export function useGameSession(
       setGameCoin({ coinHex: null, turnState: iStarted ? 'their-turn' : 'my-turn' });
       setGameTerminal(INITIAL_GAME_TERMINAL);
       gameplayEventSubject.next({ GameProposalAccepted: { id: gpa.id as number | string } });
-    } else if ('WeMoved' in n) {
-      const hex = coinPayloadToHex(n.WeMoved?.coin);
-      setGameCoin({
-        coinHex: hex ?? null,
-        turnState: 'their-turn',
-      });
-    } else if ('OpponentMoved' in n) {
-      gameplayEventSubject.next({ OpponentMoved: { readable: n.OpponentMoved!.readable as number[] } });
-    } else if ('GameMessage' in n) {
-      gameplayEventSubject.next({ GameMessage: { readable: n.GameMessage!.readable as number[] } });
-    } else if (isTerminal(n)) {
-      const terminalInfo = parseTerminalInfo(n);
-      setGameTerminal(terminalInfo);
-      setGameCoin(prev => ({ ...prev, turnState: 'ended' }));
-      const hadActiveGame = gameIdsRef.current.length > 0;
-      if (hadActiveGame) {
-        setGameIds(prev => prev.slice(1));
-        gameIdsRef.current = gameIdsRef.current.slice(1);
-        setShowBetweenHandOverlay(true);
+    } else if ('GameStatus' in n) {
+      const gs = n.GameStatus as GameStatusPayload | undefined;
+      if (!gs) return;
+      const gid = String(gs.id);
+      const status = gs.status;
+      const coinHex = coinPayloadToHex(gs.coin_id) ?? null;
+      if (status === 'my-turn' || status === 'on-chain-my-turn') {
+        setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'my-turn' }));
+      } else if (status === 'their-turn' || status === 'on-chain-their-turn') {
+        setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'their-turn' }));
+      } else if (status === 'replaying') {
+        setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'replaying' }));
+      } else if (status === 'illegal-move-detected') {
+        setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'opponent-illegal-move' }));
+      } else if (isTerminalStatus(status)) {
+        const terminalInfo = parseGameStatusTerminalInfo(gs);
+        setGameTerminal(terminalInfo);
+        setGameCoin(prev => ({ ...prev, turnState: 'ended' }));
+        const hadActiveGame = gameIdsRef.current.length > 0;
+        if (hadActiveGame) {
+          setGameIds(prev => prev.slice(1));
+          gameIdsRef.current = gameIdsRef.current.slice(1);
+          setShowBetweenHandOverlay(true);
+        }
+        gameplayEventSubject.next({ _terminal: true, notification: n });
       }
+
+      const other = gs.other_params ?? null;
+      const readable = other?.readable;
+      const readableArr = Array.isArray(readable) && readable.every((x): x is number => typeof x === 'number')
+        ? readable
+        : null;
+      if (readableArr) {
+        const hasMoverShare = other?.mover_share != null;
+        if (hasMoverShare) {
+          gameplayEventSubject.next({ OpponentMoved: { readable: readableArr } });
+        } else if (gameIdsRef.current.includes(gid)) {
+          gameplayEventSubject.next({ GameMessage: { readable: readableArr } });
+        }
+      }
+    } else if ('InsufficientBalance' in n) {
+      setGameTerminal({
+        type: 'insufficient-balance',
+        label: 'Ended: insufficient balance',
+        myReward: null,
+        rewardCoinHex: null,
+      });
+      setGameCoin(prev => ({ ...prev, turnState: 'ended' }));
       gameplayEventSubject.next({ _terminal: true, notification: n });
     } else if ('ActionFailed' in n) {
       const reason = String(n.ActionFailed?.reason ?? 'Unknown error');

@@ -11,6 +11,7 @@ use crate::common::types::{
     Amount, CoinSpend, CoinString, Error, GameID, Hash, PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::potato_handler::effects::{Effect, GameNotification};
+use crate::potato_handler::effects::GameStatusKind;
 use crate::potato_handler::types::{GameAction, PeerMessage, PotatoState};
 
 pub enum UnrollOutcome {
@@ -172,9 +173,13 @@ impl ChannelHandlerBase {
             }
             let game_ids = ch.all_game_ids();
             for id in game_ids {
-                effects.push(Effect::Notify(GameNotification::GameError {
+                effects.push(Effect::Notify(GameNotification::GameStatus {
                     id,
-                    reason: "channel error".to_string(),
+                    status: GameStatusKind::EndedError,
+                    my_reward: None,
+                    coin_id: None,
+                    reason: Some("channel error".to_string()),
+                    other_params: None,
                 }));
             }
         }

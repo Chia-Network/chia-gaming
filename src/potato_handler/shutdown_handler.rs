@@ -12,7 +12,8 @@ use crate::common::types::{
 };
 use crate::peer_container::PeerHandler;
 use crate::potato_handler::effects::{
-    format_coin, ChannelState, ChannelStatusSnapshot, Effect, GameNotification, ResyncInfo,
+    format_coin, ChannelState, ChannelStatusSnapshot, Effect, GameNotification, GameStatusKind,
+    ResyncInfo,
 };
 use crate::potato_handler::handler_base::{build_channel_to_unroll_bundle, ChannelHandlerBase};
 use crate::potato_handler::types::{GameAction, PotatoState, SpendWalletReceiver};
@@ -322,10 +323,13 @@ impl ShutdownHandler {
             {
                 let ch = self.base.channel_handler_mut()?;
                 for (id, amount) in ch.drain_cached_accept_timeouts() {
-                    effects.push(Effect::Notify(GameNotification::WeTimedOut {
+                    effects.push(Effect::Notify(GameNotification::GameStatus {
                         id,
-                        our_reward: amount,
-                        reward_coin: None,
+                        status: GameStatusKind::EndedWeTimedOut,
+                        my_reward: Some(amount),
+                        coin_id: None,
+                        reason: None,
+                        other_params: None,
                     }));
                 }
             }

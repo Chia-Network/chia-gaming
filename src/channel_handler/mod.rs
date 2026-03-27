@@ -2090,6 +2090,20 @@ impl ChannelHandler {
         false
     }
 
+    pub fn has_redo_for_game_coin(&self, coin: &CoinString, game_id: &GameID) -> bool {
+        self.cached_last_actions.iter().any(|entry| {
+            if let CachedPotatoRegenerateLastHop::PotatoMoveHappening(move_data) = entry {
+                move_data.game_id == *game_id
+                    && coin
+                        .to_parts()
+                        .map(|(_, ph, _)| ph == move_data.match_puzzle_hash)
+                        .unwrap_or(false)
+            } else {
+                false
+            }
+        })
+    }
+
     pub fn accept_or_timeout_game_on_chain(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,

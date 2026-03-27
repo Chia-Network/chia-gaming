@@ -20,7 +20,8 @@ use crate::common::types::{
     Program, ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::potato_handler::effects::{
-    format_coin, ChannelState, ChannelStatusSnapshot, Effect, GameNotification, ResyncInfo,
+    format_coin, ChannelState, ChannelStatusSnapshot, Effect, GameNotification, GameStatusKind,
+    GameStatusOtherParams, ResyncInfo,
 };
 use crate::shutdown::get_conditions_with_channel_handler;
 
@@ -359,10 +360,13 @@ impl PotatoHandler {
         {
             let ch = self.channel_handler_mut()?;
             for (id, amount) in ch.drain_cached_accept_timeouts() {
-                effects.push(Effect::Notify(GameNotification::WeTimedOut {
+                effects.push(Effect::Notify(GameNotification::GameStatus {
                     id,
-                    our_reward: amount,
-                    reward_coin: None,
+                    status: GameStatusKind::EndedWeTimedOut,
+                    my_reward: Some(amount),
+                    coin_id: None,
+                    reason: None,
+                    other_params: None,
                 }));
             }
         }
@@ -431,9 +435,26 @@ impl PotatoHandler {
                     let ch = self.channel_handler_mut()?;
                     ch.received_message(env, game_id, message)?
                 };
-                effects.push(Effect::Notify(GameNotification::GameMessage {
+                let status = {
+                    let ch = self.channel_handler()?;
+                    if ch.game_is_my_turn(game_id).unwrap_or(false) {
+                        GameStatusKind::MyTurn
+                    } else {
+                        GameStatusKind::TheirTurn
+                    }
+                };
+                effects.push(Effect::Notify(GameNotification::GameStatus {
                     id: *game_id,
-                    readable: decoded_message,
+                    status,
+                    my_reward: None,
+                    coin_id: None,
+                    reason: None,
+                    other_params: Some(GameStatusOtherParams {
+                        readable: Some(decoded_message),
+                        mover_share: None,
+                        illegal_move_detected: None,
+                        moved_by_us: None,
+                    }),
                 }));
             }
             PeerMessage::CleanShutdownComplete(coin_spend) => {
@@ -498,11 +519,18 @@ impl PotatoHandler {
                     };
                     let opponent_readable =
                         ReadableMove::from_program(move_result.readable_their_move);
-                    effects.push(Effect::Notify(GameNotification::OpponentMoved {
+                    effects.push(Effect::Notify(GameNotification::GameStatus {
                         id: *game_id,
-                        state_number: move_result.state_number,
-                        readable: opponent_readable,
-                        mover_share: move_result.mover_share,
+                        status: GameStatusKind::MyTurn,
+                        my_reward: None,
+                        coin_id: None,
+                        reason: None,
+                        other_params: Some(GameStatusOtherParams {
+                            readable: Some(opponent_readable),
+                            mover_share: Some(move_result.mover_share),
+                            illegal_move_detected: None,
+                            moved_by_us: None,
+                        }),
                     }));
                     if !move_result.message.is_empty() {
                         effects.push(Effect::PeerGameMessage(*game_id, move_result.message));
@@ -519,10 +547,13 @@ impl PotatoHandler {
                 BatchAction::AcceptTimeout(game_id, _peer_amount) => {
                     let ch = self.channel_handler_mut()?;
                     let our_reward = ch.apply_received_accept_timeout(game_id)?;
-                    effects.push(Effect::Notify(GameNotification::OpponentTimedOut {
+                    effects.push(Effect::Notify(GameNotification::GameStatus {
                         id: *game_id,
-                        our_reward,
-                        reward_coin: None,
+                        status: GameStatusKind::EndedOpponentTimedOut,
+                        my_reward: Some(our_reward),
+                        coin_id: None,
+                        reason: None,
+                        other_params: None,
                     }));
                 }
             }
@@ -606,10 +637,13 @@ impl PotatoHandler {
             {
                 let ch = self.channel_handler_mut()?;
                 for (id, amount) in ch.drain_cached_accept_timeouts() {
-                    effects.push(Effect::Notify(GameNotification::WeTimedOut {
+                    effects.push(Effect::Notify(GameNotification::GameStatus {
                         id,
-                        our_reward: amount,
-                        reward_coin: None,
+                        status: GameStatusKind::EndedWeTimedOut,
+                        my_reward: Some(amount),
+                        coin_id: None,
+                        reason: None,
+                        other_params: None,
                     }));
                 }
             }
@@ -766,8 +800,13 @@ impl PotatoHandler {
                         let ch = self.channel_handler_mut()?;
                         let proposal = ch.find_proposal(&game_id);
                         if proposal.is_none() {
-                            effects.push(Effect::Notify(GameNotification::GameCancelled {
+                            effects.push(Effect::Notify(GameNotification::GameStatus {
                                 id: game_id,
+                                status: GameStatusKind::EndedCancelled,
+                                my_reward: None,
+                                coin_id: None,
+                                reason: None,
+                                other_params: None,
                             }));
                             continue;
                         }

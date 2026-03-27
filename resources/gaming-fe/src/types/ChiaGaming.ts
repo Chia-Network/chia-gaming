@@ -129,15 +129,41 @@ export interface PeerIdentity {
 
 export type WasmNotificationTag =
   | 'ChannelStatus'
-  | 'GameOnChain'
+  | 'GameStatus'
   | 'GameProposed' | 'GameProposalAccepted' | 'GameProposalCancelled'
-  | 'WeMoved' | 'OpponentMoved' | 'GameMessage'
-  | 'OpponentPlayedIllegalMove'
-  | 'WeSlashedOpponent' | 'OpponentSlashedUs' | 'OpponentSuccessfullyCheated'
-  | 'WeTimedOut' | 'OpponentTimedOut'
-  | 'GameCancelled' | 'GameError'
   | 'InsufficientBalance'
   | 'ActionFailed';
+
+export type GameStatusState =
+  | 'my-turn'
+  | 'their-turn'
+  | 'on-chain-my-turn'
+  | 'on-chain-their-turn'
+  | 'replaying'
+  | 'illegal-move-detected'
+  | 'ended-we-timed-out'
+  | 'ended-opponent-timed-out'
+  | 'ended-we-slashed-opponent'
+  | 'ended-opponent-slashed-us'
+  | 'ended-opponent-successfully-cheated'
+  | 'ended-cancelled'
+  | 'ended-error';
+
+export interface GameStatusOtherParams {
+  readable?: unknown;
+  mover_share?: unknown;
+  illegal_move_detected?: boolean;
+  moved_by_us?: boolean;
+}
+
+export interface GameStatusPayload {
+  id: unknown;
+  status: GameStatusState;
+  my_reward?: unknown;
+  coin_id?: unknown;
+  reason?: string | null;
+  other_params?: GameStatusOtherParams | null;
+}
 
 export type ChannelState =
   | 'Handshaking' | 'WaitingForHeightToOffer' | 'WaitingForHeightToAccept'
