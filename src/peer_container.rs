@@ -16,8 +16,9 @@ use crate::common::standard_coin::{
     sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr, Program,
-    PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
+    Aggsig, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, GameType,
+    Hash, IntoErr, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Spend, SpendBundle,
+    Timeout, ToQuotedProgram,
 };
 use crate::potato_handler::effects::{
     apply_effects, ChannelState, ChannelStatusSnapshot, CradleEvent, CradleEventQueue, Effect,
@@ -540,6 +541,68 @@ pub struct SynchronousGameCradleConfig {
     pub reward_puzzle_hash: PuzzleHash,
 }
 
+/// Scan a wallet `SpendBundle` for settlement-payment outputs created by
+/// `createOfferForIds` and append claim spends that consume them.
+///
+/// The real Chia wallet's `createOfferForIds` produces balanced spends: the
+/// offered mojos are routed to a settlement-payment puzzle (OFFER_MOD) instead
+/// of creating a true deficit.  Channel funding needs deficit spends so the
+/// launcher's channel coin creation is covered.  By spending the settlement
+/// coins with an empty solution (no outputs), their value becomes deficit.
+fn claim_settlement_coins(
+    allocator: &mut AllocEncoder,
+    bundle: SpendBundle,
+) -> SpendBundle {
+    let settlement_ph = PuzzleHash::from_bytes(chia_puzzles::SETTLEMENT_PAYMENT_HASH);
+    let settlement_puzzle = Puzzle::from_bytes(&chia_puzzles::SETTLEMENT_PAYMENT);
+    let empty_solution: ProgramRef = Program::from_bytes(&[0x80]).into();
+
+    let mut claim_spends = Vec::new();
+
+    for spend in &bundle.spends {
+        let puzzle_prog = spend.bundle.puzzle.to_program();
+        let solution_prog = spend.bundle.solution.p();
+        let conditions = match CoinCondition::from_puzzle_and_solution(
+            allocator,
+            &puzzle_prog,
+            &solution_prog,
+        ) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let parent_coin_id = spend.coin.to_coin_id();
+
+        for cond in &conditions {
+            if let CoinCondition::CreateCoin(ph, amount) = cond {
+                if *ph == settlement_ph {
+                    let settlement_coin =
+                        CoinString::from_parts(&parent_coin_id, &settlement_ph, amount);
+                    claim_spends.push(CoinSpend {
+                        coin: settlement_coin,
+                        bundle: Spend {
+                            puzzle: settlement_puzzle.clone(),
+                            solution: empty_solution.clone(),
+                            signature: Aggsig::default(),
+                        },
+                    });
+                }
+            }
+        }
+    }
+
+    if claim_spends.is_empty() {
+        return bundle;
+    }
+
+    let mut spends = bundle.spends;
+    spends.extend(claim_spends);
+    SpendBundle {
+        name: bundle.name,
+        spends,
+    }
+}
+
 impl SynchronousGameCradle {
     pub fn new_with_keys(
         config: SynchronousGameCradleConfig,
@@ -750,6 +813,7 @@ impl SynchronousGameCradle {
         allocator: &mut AllocEncoder,
         bundle: SpendBundle,
     ) -> Result<(), Error> {
+        let bundle = claim_settlement_coins(allocator, bundle);
         let effects = {
             let mut env = ChannelHandlerEnv::new(allocator)?;
             self.peer.provide_coin_spend_bundle(&mut env, bundle)?

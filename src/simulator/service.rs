@@ -16,13 +16,13 @@ use tiny_http::{Header, Response, Server, StatusCode};
 use tungstenite::{Message, WebSocket};
 
 use crate::channel_handler::types::ChannelHandlerEnv;
-use crate::common::constants::{CREATE_COIN, SINGLETON_LAUNCHER_HASH};
+use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::standard_solution_partial;
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
-    check_for_hex, convert_coinset_org_spend_to_spend, map_m, Aggsig, AllocEncoder, Amount, CoinID,
-    CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord, Error, Hash,
-    IntoErr, PrivateKey, Program, PuzzleHash, SpendBundle,
+    check_for_hex, convert_coinset_org_spend_to_spend, map_m, u64_from_atom, Aggsig, AllocEncoder,
+    Amount, CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord,
+    Error, Hash, IntoErr, PrivateKey, Program, PuzzleHash, SpendBundle,
 };
 use crate::peer_container::{FullCoinSetAdapter, WatchReport};
 use crate::simulator::Simulator;
@@ -319,12 +319,39 @@ impl GameRunner {
                 })?
         };
 
+        let (_, _, coin_amount) = selected_coin
+            .to_parts()
+            .ok_or_else(|| Error::StrErr("selected coin missing parts".to_string()))?;
+
+        // Build conditions that mimic a real wallet's createOfferForIds: the
+        // spend is balanced because the requested amount goes to a settlement
+        // payment output.  claim_settlement_coins strips these later.
+        let settlement_ph = PuzzleHash::from_bytes(chia_puzzles::SETTLEMENT_PAYMENT_HASH);
+        let change = coin_amount.to_u64().saturating_sub(requested_amount);
+
         let mut create_targets: Vec<(PuzzleHash, Amount)> = Vec::new();
-        if !req.coin_ids.is_empty() {
-            create_targets.push((
-                PuzzleHash::from_bytes(SINGLETON_LAUNCHER_HASH),
-                Amount::default(),
-            ));
+        create_targets.push((settlement_ph, Amount::new(requested_amount)));
+        if change > 0 {
+            create_targets.push((identity.puzzle_hash.clone(), Amount::new(change)));
+        }
+
+        for ec in &req.extra_conditions {
+            if ec.opcode == CREATE_COIN && ec.args.len() >= 2 {
+                if let Ok(ph_bytes) = check_for_hex(&ec.args[0]) {
+                    if ph_bytes.len() == 32 {
+                        let mut arr = [0u8; 32];
+                        arr.copy_from_slice(&ph_bytes);
+                        let amt_val = if ec.args[1].is_empty() {
+                            0u64
+                        } else if let Ok(amt_bytes) = check_for_hex(&ec.args[1]) {
+                            u64_from_atom(&amt_bytes).unwrap_or(0)
+                        } else {
+                            0
+                        };
+                        create_targets.push((PuzzleHash::from_bytes(arr), Amount::new(amt_val)));
+                    }
+                }
+            }
         }
 
         let env = ChannelHandlerEnv::new(&mut self.allocator)?;
@@ -516,10 +543,18 @@ struct PushTxRequest {
 }
 
 #[derive(Serialize, Deserialize, Default)]
+struct ExtraCondition {
+    opcode: u32,
+    args: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
 struct CreateOfferForIdsRequest {
     offer: BTreeMap<String, i64>,
     #[serde(default, rename = "coinIds")]
     coin_ids: Vec<String>,
+    #[serde(default, rename = "extraConditions")]
+    extra_conditions: Vec<ExtraCondition>,
 }
 
 // ---------------------------------------------------------------------------
