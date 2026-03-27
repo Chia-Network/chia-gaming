@@ -69,7 +69,7 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent
-        className={"w-full max-w-full rounded-none p-0 pt-16 md:max-w-xl md:rounded-2xl border border-canvas-border bg-canvas-bg shadow-xl overflow-hidden"}
+        className={"w-full max-w-full rounded-none p-0 pt-16 md:max-w-xl md:rounded-2xl border border-canvas-border bg-canvas-bg shadow-xl max-h-[90vh] overflow-y-auto"}
       >
         {/* HEADER */}
         <DialogHeader className="

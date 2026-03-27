@@ -109,7 +109,12 @@ async function request<T, D extends object = object>(
     } catch (e) {
       const elapsed = Date.now() - startedAt;
       const errText = getErrorText(e);
-      const isRetryable = attempt < 2 && isTransientWalletConnectError(e);
+      const retryBlockedByMethod =
+        method === ChiaMethod.CreateOfferForIds
+        || method === ChiaMethod.CreateNewRemoteWallet;
+      const isRetryable = attempt < 2
+        && !retryBlockedByMethod
+        && isTransientWalletConnectError(e);
       debugLog(`[WC RPC error] ${method} after ${elapsed}ms attempt=${attempt}: ${errText}`);
       if (!isRetryable) {
         throw e;
