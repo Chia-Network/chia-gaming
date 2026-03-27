@@ -183,12 +183,40 @@ fn build_wallet_bundle_for_request(
             })
             .ok_or_else(|| Error::StrErr("no spendable coin for coin spend request".to_string()))?
     };
+
+    let (_, _, coin_amount) = selected_coin
+        .to_parts()
+        .ok_or_else(|| Error::StrErr("selected coin missing parts".to_string()))?;
+
+    // Build conditions that mimic a real wallet's createOfferForIds: the spend
+    // is balanced because the requested amount goes to a settlement payment
+    // output instead of being a deficit.  claim_settlement_coins (called in
+    // SynchronousGameCradle::provide_coin_spend_bundle) will add claim spends
+    // that consume these settlement outputs, restoring the deficit.
+    let settlement_ph = PuzzleHash::from_bytes(chia_puzzles::SETTLEMENT_PAYMENT_HASH);
+    let change_amount = Amount::new(coin_amount.to_u64() - request.amount.to_u64());
+
     let mut create_targets: Vec<(PuzzleHash, Amount)> = Vec::new();
-    if request.coin_id.is_some() {
-        create_targets.push((
-            PuzzleHash::from_bytes(SINGLETON_LAUNCHER_HASH),
-            Amount::default(),
-        ));
+    // Settlement output (offer-style: the "offered" mojos)
+    create_targets.push((settlement_ph, request.amount.clone()));
+    // Change back to wallet
+    if change_amount.to_u64() > 0 {
+        create_targets.push((identity.puzzle_hash.clone(), change_amount));
+    }
+    // Extra conditions from the request (e.g., CREATE_COIN for launcher)
+    for cond in &request.conditions {
+        if cond.opcode == CREATE_COIN && cond.args.len() >= 2 {
+            let ph_bytes: [u8; 32] = cond.args[0]
+                .as_slice()
+                .try_into()
+                .map_err(|_| Error::StrErr("bad puzzle hash in extra condition".to_string()))?;
+            let amt = if cond.args[1].is_empty() {
+                0u64
+            } else {
+                crate::common::types::u64_from_atom(&cond.args[1]).unwrap_or(0)
+            };
+            create_targets.push((PuzzleHash::from_bytes(ph_bytes), Amount::new(amt)));
+        }
     }
 
     let env = ChannelHandlerEnv::new(allocator)?;
