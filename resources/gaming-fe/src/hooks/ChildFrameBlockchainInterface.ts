@@ -157,11 +157,12 @@ export class ChildFrameBlockchainInterface {
     offer: { [walletId: string]: number },
     extraConditions?: Array<{ opcode: number; args: string[] }>,
     coinIds?: string[],
+    maxHeight?: number,
   ): Promise<any | null> {
     let requestId = requestNumber++;
     let request = {
       requestId,
-      createOfferForIds: { uniqueId, offer, extraConditions, coinIds },
+      createOfferForIds: { uniqueId, offer, extraConditions, coinIds, maxHeight },
     };
     return performTransaction((e: any) => e.createOfferForIds, requestId, request);
   }

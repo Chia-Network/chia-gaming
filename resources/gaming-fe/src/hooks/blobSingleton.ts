@@ -41,13 +41,8 @@ export async function configGameObject(
   gameObject.setBlockchainAddress(address);
   let { game: cradle, puzzleHash } = wasmStateInit.createGame(calpokerHexes.proposalHex, calpokerHexes.parserHex, rngId, wasmConnection, iStarted, amount, amount, address.puzzleHash);
   gameObject.setGameCradle(cradle);
-  // Bootstrap must source funding from wallet coin selection, not local payment.
-  let coin = await blockchain.selectCoins(uniqueId, Number(amount));
-  if (!coin) {
-    throw new Error('ASSERT_FAIL: selectCoins returned null for opening coin');
-  }
   debugLog('[wasm] activateSpend');
-  gameObject.activateSpend(coin);
+  gameObject.activateSpend();
   debugLog('[wasm] game object configured (handshake)');
   return gameObject;
 }

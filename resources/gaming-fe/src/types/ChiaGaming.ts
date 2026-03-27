@@ -349,6 +349,14 @@ export class ChiaGame {
     return this.wasm.opening_coin(this.cradle, coin_string);
   }
 
+  start_handshake(): WasmResult | undefined {
+    const maybeStart = (
+      this.wasm as unknown as { start_handshake?: (cid: number) => WasmResult | undefined }
+    ).start_handshake;
+    if (typeof maybeStart !== 'function') return undefined;
+    return maybeStart(this.cradle);
+  }
+
   provide_launcher_coin(hex_launcher_coin: string): WasmResult | undefined {
     const maybeProvide = (
       this.wasm as unknown as { provide_launcher_coin?: (cid: number, coin: string) => WasmResult | undefined }
@@ -746,6 +754,7 @@ export interface InternalBlockchainInterface {
     offer: { [walletId: string]: number },
     extraConditions?: Array<{ opcode: number; args: string[] }>,
     coinIds?: string[],
+    maxHeight?: number,
   ): Promise<any | null>;
   /** Register interest in a single coin; called when WASM emits a WatchCoin event. */
   registerCoin?(coinName: string, coinString: string): void;

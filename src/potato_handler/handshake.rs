@@ -36,6 +36,8 @@ pub struct CoinSpendRequest {
     pub amount: Amount,
     pub conditions: Vec<RawCoinCondition>,
     pub coin_id: Option<CoinID>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_height: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

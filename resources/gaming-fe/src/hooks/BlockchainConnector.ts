@@ -30,6 +30,7 @@ export interface BlockchainOutboundCreateOfferRequest {
   offer: { [walletId: string]: number };
   extraConditions?: Array<{ opcode: number; args: string[] }>;
   coinIds?: string[];
+  maxHeight?: number;
 }
 
 export interface BlockchainOutboundRequest {

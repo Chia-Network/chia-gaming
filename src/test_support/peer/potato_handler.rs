@@ -499,14 +499,14 @@ pub fn test_peer_smoke() {
         }
     };
 
-    let parent_private_key: PrivateKey = rng.gen();
-    let parent_public_key = private_to_public_key(&parent_private_key);
-    let parent_puzzle_hash =
-        puzzle_hash_for_pk(&mut allocator, &parent_public_key).expect("should work");
-
-    let parent_coin_id = CoinID::default();
-    let parent_coin =
-        CoinString::from_parts(&parent_coin_id, &parent_puzzle_hash, &Amount::new(200));
+    // Keep RNG draws stable for deterministic test vectors.
+    let _parent_private_key: PrivateKey = rng.gen();
+    let _parent_public_key = private_to_public_key(&_parent_private_key);
+    let _parent_puzzle_hash =
+        puzzle_hash_for_pk(&mut allocator, &_parent_public_key).expect("should work");
+    let _parent_coin_id = CoinID::default();
+    let _parent_coin =
+        CoinString::from_parts(&_parent_coin_id, &_parent_puzzle_hash, &Amount::new(200));
 
     let h1 = new_handler(&mut allocator, &mut rng, true);
     let h2 = new_handler(&mut allocator, &mut rng, false);
@@ -519,7 +519,7 @@ pub fn test_peer_smoke() {
                 .as_any_mut()
                 .downcast_mut::<HandshakeInitiatorHandler>()
                 .expect("handler[0] should be initiator");
-            ih.start(&mut env, parent_coin).expect("should work")
+            ih.start(&mut env).expect("should work")
         };
         apply_effects(
             start_effect.into_iter().collect(),

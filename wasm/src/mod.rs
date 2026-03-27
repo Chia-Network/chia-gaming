@@ -100,6 +100,7 @@ mod gaming_wasm {
             "amount": number,
             "conditions": Array<{ "opcode": number, "args": Array<string> }>,
             "coin_id"?: string,
+            "max_height"?: number,
           } }
         | { NeedLauncherCoin: boolean }
         | { WatchCoin: { coin_name: string, coin_string: string } };
@@ -438,6 +439,13 @@ mod gaming_wasm {
             cradle
                 .cradle
                 .opening_coin(&mut cradle.allocator, coin)
+        })
+    }
+
+    #[wasm_bindgen]
+    pub fn start_handshake(cid: i32) -> Result<JsValue, JsValue> {
+        with_game_drain(cid, move |cradle: &mut JsCradle| {
+            cradle.cradle.start_handshake(&mut cradle.allocator)
         })
     }
 
@@ -1006,6 +1014,8 @@ mod gaming_wasm {
         amount: u64,
         conditions: Vec<JsRawCoinCondition>,
         coin_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        max_height: Option<u64>,
     }
 
     #[derive(Serialize)]
@@ -1025,6 +1035,7 @@ mod gaming_wasm {
             amount: req.amount.to_u64(),
             conditions: req.conditions.iter().map(raw_condition_to_js).collect(),
             coin_id: req.coin_id.as_ref().map(|c| hex::encode(c.bytes())),
+            max_height: req.max_height,
         }
     }
 

@@ -190,22 +190,6 @@ impl HandshakeReceiverHandler {
             .ok_or_else(|| Error::StrErr("launcher_coin not set".to_string()))
     }
 
-    fn encode_u64_as_clvm_int(val: u64) -> Vec<u8> {
-        if val == 0 {
-            return vec![];
-        }
-        let mut bytes = Vec::new();
-        let mut h = val;
-        while h > 0 {
-            bytes.push((h & 0xff) as u8);
-            h >>= 8;
-        }
-        bytes.reverse();
-        if bytes[0] & 0x80 != 0 {
-            bytes.insert(0, 0);
-        }
-        bytes
-    }
 
     fn compute_not_valid_after_height(&self) -> Option<u64> {
         Some(self.last_height + self.channel_timeout.to_u64())
@@ -241,20 +225,15 @@ impl HandshakeReceiverHandler {
             &total_amount,
         )?;
         let per_player = Amount::new(total_amount.to_u64() / 2);
-        let mut conditions = vec![RawCoinCondition {
+        let conditions = vec![RawCoinCondition {
             opcode: crate::common::constants::ASSERT_COIN_ANNOUNCEMENT,
             args: vec![ann_hash.bytes().to_vec()],
         }];
-        if let Some(height) = self.compute_not_valid_after_height() {
-            conditions.push(RawCoinCondition {
-                opcode: crate::common::constants::ASSERT_BEFORE_HEIGHT_ABSOLUTE,
-                args: vec![Self::encode_u64_as_clvm_int(height)],
-            });
-        }
         Ok(CoinSpendRequest {
             amount: per_player,
             conditions,
             coin_id: None,
+            max_height: self.compute_not_valid_after_height(),
         })
     }
 

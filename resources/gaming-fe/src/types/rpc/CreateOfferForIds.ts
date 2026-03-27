@@ -6,8 +6,9 @@ export interface CreateOfferForIdsRequest {
   validateOnly?: boolean;
   disableJSONFormatting?: boolean;
   fee?: number;
-  extraConditions?: Array<{ opcode: number; args: string[] }>;
+  extraConditions?: Array<{ opcode: number; args: any }>;
   coinIds?: string[];
+  max_height?: number;
 }
 
 export interface CreateOfferForIdsResponse {

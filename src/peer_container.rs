@@ -333,6 +333,9 @@ pub trait GameCradle {
     fn opening_coin(&mut self, allocator: &mut AllocEncoder, coin: CoinString)
         -> Result<(), Error>;
 
+    /// Start handshake without selecting a funding coin up-front.
+    fn start_handshake(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error>;
+
     /// Tell the user that handshake has finished.
     fn handshake_finished(&self) -> bool;
 
@@ -1204,7 +1207,31 @@ impl GameCradle for SynchronousGameCradle {
                 .as_any_mut()
                 .downcast_mut::<HandshakeInitiatorHandler>()
             {
-                hh.start(&mut env, coin)?
+                hh.start(&mut env)?
+            } else {
+                None
+            }
+        };
+        let mut effects = Vec::new();
+        effects.extend(start_effect);
+        self.process_effects(effects, allocator)?;
+
+        Ok(())
+    }
+
+    fn start_handshake(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
+        if !self.state.is_initiator {
+            return Ok(());
+        }
+
+        let start_effect = {
+            let mut env = ChannelHandlerEnv::new(allocator)?;
+            if let Some(hh) = self
+                .peer
+                .as_any_mut()
+                .downcast_mut::<HandshakeInitiatorHandler>()
+            {
+                hh.start(&mut env)?
             } else {
                 None
             }

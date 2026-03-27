@@ -142,7 +142,6 @@ impl HandshakeInitiatorHandler {
     pub fn start(
         &mut self,
         _env: &mut ChannelHandlerEnv<'_>,
-        _parent_coin: CoinString,
     ) -> Result<Option<Effect>, Error> {
         game_assert!(
             matches!(self.state, InitiatorState::WaitingForStart),
@@ -314,7 +313,7 @@ impl HandshakeInitiatorHandler {
 
         let launcher_ph_bytes = crate::common::constants::SINGLETON_LAUNCHER_HASH.to_vec();
         let zero_bytes = Self::encode_u64_as_clvm_int(0);
-        let mut conditions = vec![
+        let conditions = vec![
             RawCoinCondition {
                 opcode: crate::common::constants::CREATE_COIN,
                 args: vec![launcher_ph_bytes, zero_bytes],
@@ -324,17 +323,11 @@ impl HandshakeInitiatorHandler {
                 args: vec![ann_hash.bytes().to_vec()],
             },
         ];
-        if let Some(height) = self.compute_not_valid_after_height() {
-            conditions.push(RawCoinCondition {
-                opcode: crate::common::constants::ASSERT_BEFORE_HEIGHT_ABSOLUTE,
-                args: vec![Self::encode_u64_as_clvm_int(height)],
-            });
-        }
-
         Ok(CoinSpendRequest {
             amount: per_player,
             conditions,
             coin_id: Some(launcher_parent),
+            max_height: self.compute_not_valid_after_height(),
         })
     }
 

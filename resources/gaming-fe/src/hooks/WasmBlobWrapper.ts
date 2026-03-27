@@ -207,9 +207,9 @@ export class WasmBlobWrapper {
     this.spillStoredMessages();
   }
 
-  activateSpend(coin: string) {
+  activateSpend() {
     if (!this.wc) { throw new Error("this.wc is falsey") }
-    const result = this.cradle?.opening_coin(coin);
+    const result = this.cradle?.start_handshake();
     this.processResult(result);
     if (this.pendingBlockNotification) {
       const { peak, report } = this.pendingBlockNotification;
@@ -251,12 +251,14 @@ export class WasmBlobWrapper {
         args: c.args,
       }));
       const coinIds = request.coin_id ? [request.coin_id] : undefined;
+      const maxHeight = request.max_height as number | undefined;
 
       const bundle = await this.blockchain.createOfferForIds(
         this.uniqueId,
         { '1': offerAmount },
         extraConditions,
         coinIds,
+        maxHeight,
       );
       if (!bundle) {
         console.error('[wasm] createOfferForIds returned null');

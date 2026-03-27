@@ -201,6 +201,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     offer: { [walletId: string]: number },
     extraConditions?: Array<{ opcode: number; args: string[] }>,
     coinIds?: string[],
+    _maxHeight?: number,
   ): Promise<any | null> {
     const params: any = { who: uniqueId, offer };
     if (extraConditions) params.extraConditions = extraConditions;
@@ -348,7 +349,9 @@ export function disconnectSimulatorBlockchain() {
 blockchainDataEmitter.getSelectionObservable().subscribe({
   next: (e: SelectionMessage) => {
     if (e.selection == FAKE_BLOCKCHAIN_ID) {
-      fakeBlockchainInfo.startMonitoring(e.uniqueId);
+      fakeBlockchainInfo.startMonitoring(e.uniqueId).catch((err: unknown) => {
+        console.warn('[blockchain] startMonitoring failed', err);
+      });
       connectSimulatorBlockchain();
     } else {
       disconnectSimulatorBlockchain();

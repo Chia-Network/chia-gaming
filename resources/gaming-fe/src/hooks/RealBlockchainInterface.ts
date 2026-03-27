@@ -171,7 +171,7 @@ export class RealBlockchainInterface {
     console.log('[wc-blockchain] >>> walletPushTx');
     try {
       const result = await rpc.walletPushTx({ spendBundle: spend as object });
-      console.log('[wc-blockchain] <<< walletPushTx', result.status);
+      console.log('[wc-blockchain] <<< walletPushTx', (result as any)?.status);
       return result as unknown as string;
     } catch (e: unknown) {
       const errStr = typeof e === 'string' ? e : ((e as any)?.message || JSON.stringify(e));
@@ -263,7 +263,7 @@ export function connectRealBlockchain() {
             const result = await rpc.walletPushTx({
               spendBundle: transaction.spendObject as object,
             });
-            console.log(`[wc-blockchain] <<< walletPushTx (transaction req #${evt.requestId})`, result.status);
+            console.log(`[wc-blockchain] <<< walletPushTx (transaction req #${evt.requestId})`, (result as any)?.status);
             blockchainConnector.replyEmitter({
               responseId: evt.requestId,
               transaction: result as any,
@@ -355,12 +355,16 @@ export function connectRealBlockchain() {
           blockchainConnector.replyEmitter({ responseId: evt.requestId, error: JSON.stringify(e) });
         });
       } else if (evt.createOfferForIds) {
-        rpc.createOfferForIds({
+        const rpcParams: any = {
           offer: evt.createOfferForIds.offer,
           driverDict: {},
           extraConditions: (evt.createOfferForIds.extraConditions || []).map(convertConditionArgs),
           coinIds: evt.createOfferForIds.coinIds,
-        } as any).then((result) => {
+        };
+        if (evt.createOfferForIds.maxHeight != null) {
+          rpcParams.max_height = evt.createOfferForIds.maxHeight;
+        }
+        rpc.createOfferForIds(rpcParams).then((result) => {
           blockchainConnector.replyEmitter({ responseId: evt.requestId, createOfferForIds: result.offer });
         }).catch((e: any) => {
           blockchainConnector.replyEmitter({
