@@ -1244,7 +1244,7 @@ impl PotatoHandler {
             ch.state_channel_coin().clone()
         };
 
-        let uw = crate::potato_handler::unroll_watch_handler::UnrollWatchHandler::new(
+        let mut uw = crate::potato_handler::unroll_watch_handler::UnrollWatchHandler::new(
             self.channel_handler.take(),
             channel_coin,
             std::mem::take(&mut self.game_action_queue),
@@ -1252,6 +1252,9 @@ impl PotatoHandler {
             self.channel_timeout.clone(),
             self.unroll_timeout.clone(),
         );
+        if got_error {
+            uw.set_advisory(Some("error receiving peer message".to_string()));
+        }
         self.unroll_watch_replacement = Some(Box::new(uw));
 
         Ok(effects)

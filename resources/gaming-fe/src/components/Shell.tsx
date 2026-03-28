@@ -63,6 +63,7 @@ const Shell = () => {
   const [peerConn, setPeerConn] = useState<PeerConnectionResult | null>(null);
 
   const [walletConnected, setWalletConnected] = useState(false);
+  const [peerConnected, setPeerConnected] = useState<boolean | null>(null);
   const [pendingRestore, setPendingRestore] = useState<SessionSave | null>(() => loadSession());
   const [restoreDecided, setRestoreDecided] = useState<boolean>(() => !loadSession() && !getBlockchainType());
   const [gameLog, setGameLog] = useState<string[]>([]);
@@ -150,6 +151,7 @@ const Shell = () => {
 
         const conn = new TrackerConnection(trackerOrigin, sessionId, {
           onMatched: (matched: MatchedParams) => {
+            setPeerConnected(true);
             let amount: bigint;
             let perGame: bigint;
             try { amount = BigInt(matched.amount); } catch { amount = FALLBACK_AMOUNT; }
@@ -157,6 +159,11 @@ const Shell = () => {
             startSession(conn, matched.i_am_initiator, amount, perGame, matched.token, null, matched.my_alias, matched.peer_alias);
           },
           onConnectionStatus: (status: ConnectionStatus) => {
+            setPeerConnected((prev) => {
+              if (!status.has_pairing) return false;
+              if (typeof status.peer_connected === 'boolean') return status.peer_connected;
+              return prev;
+            });
             // Mid-session reconnect: we already have an active session
             if (activePairingTokenRef.current !== null) {
               if (status.has_pairing && status.token === activePairingTokenRef.current) {
@@ -232,22 +239,28 @@ const Shell = () => {
             }
           },
           onPeerReconnected: () => {
+            setPeerConnected(true);
             blobSingleton?.resendUnacked();
           },
           onMessage: (_data: string) => {
+            setPeerConnected(true);
             // Will be replaced by registerMessageHandler once GameSession mounts
           },
           onAck: (_ack: number) => {
+            setPeerConnected(true);
             // Will be replaced by registerMessageHandler once GameSession mounts
           },
           onPing: () => {
+            setPeerConnected(true);
             // Peer pings are handled by registerMessageHandler
           },
           onClosed: () => {
             console.log('[Shell] tracker connection closed');
+            setPeerConnected(false);
           },
           onTrackerDisconnected: () => {
             console.log('[Shell] tracker disconnected');
+            setPeerConnected(false);
           },
           onTrackerReconnected: () => {
             console.log('[Shell] tracker reconnected');
@@ -461,6 +474,7 @@ const Shell = () => {
             <GameSession
               params={gameParams}
               peerConn={peerConn}
+              peerConnected={peerConnected}
               registerMessageHandler={registerMessageHandler}
               appendGameLog={appendGameLog}
               sessionSave={sessionSaveRef.current ?? undefined}

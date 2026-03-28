@@ -61,6 +61,7 @@ pub struct OnChainGameHandler {
     is_initial_potato: bool,
     state_number: usize,
     was_stale: bool,
+    terminal_reward_coin: Option<CoinString>,
 }
 
 impl std::fmt::Debug for OnChainGameHandler {
@@ -88,6 +89,7 @@ pub struct OnChainGameHandlerArgs {
     pub is_initial_potato: bool,
     pub state_number: usize,
     pub was_stale: bool,
+    pub terminal_reward_coin: Option<CoinString>,
 }
 
 impl OnChainGameHandler {
@@ -111,6 +113,7 @@ impl OnChainGameHandler {
             is_initial_potato: args.is_initial_potato,
             state_number: args.state_number,
             was_stale: args.was_stale,
+            terminal_reward_coin: args.terminal_reward_coin,
         }
     }
 
@@ -717,7 +720,10 @@ impl OnChainGameHandler {
                 )));
 
                 let game_id = old_definition.game_id;
-                let is_my_turn = matches!(self.game_is_my_turn(&game_id), Some(true));
+                // This path is an observed on-chain spend of the current game coin.
+                // Turn ownership on the next coin must flip from the previous tracked coin,
+                // regardless of whether live_games' off-chain referee view has drifted.
+                let is_my_turn = !old_definition.our_turn;
 
                 let gt = old_definition.game_timeout.clone();
                 self.game_map.insert(
@@ -1587,7 +1593,7 @@ impl PeerHandler for OnChainGameHandler {
                 ChannelState::ResolvedUnrolled
             },
             advisory: None,
-            coin: None,
+            coin: self.terminal_reward_coin.clone(),
             our_balance: Some(self.my_out_of_game_balance.clone()),
             their_balance: Some(self.their_out_of_game_balance.clone()),
             game_allocated: None,

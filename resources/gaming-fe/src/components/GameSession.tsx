@@ -13,15 +13,6 @@ import { motion, useMotionValue } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
 import { Button } from './button';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-  DialogClose,
-} from './ui/dialog';
 function truncateHex(hex: string, head = 8, tail = 6): string {
   if (hex.length <= head + tail + 1) return hex;
   return `${hex.slice(0, head)}…${hex.slice(-tail)}`;
@@ -51,6 +42,16 @@ const GAME_TURN_LABELS: Record<GameTurnState, string> = {
   'opponent-illegal-move': 'Your turn (opponent attempted illegal move)',
   'ended': 'Ended',
 };
+
+function channelCoinLabelForState(state: ChannelState): string {
+  if (state === 'ResolvedUnrolled' || state === 'ResolvedStale') {
+    return 'Channel reward coin';
+  }
+  if (state === 'Unrolling') {
+    return 'Unroll coin';
+  }
+  return 'Channel coin';
+}
 
 function formatOptionalMojos(raw: string | null): string {
   if (raw == null) return '—';
@@ -105,6 +106,53 @@ function useViewportClampedDrag(boundsRef?: RefObject<HTMLElement | null>) {
   return { cardRef, x, y, clampToViewport };
 }
 
+function useViewportClampedDragWithInsets(
+  boundsRef: RefObject<HTMLElement | null> | undefined,
+  insets: { top?: number; right?: number; bottom?: number; left?: number } = {},
+) {
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const x = useMotionValue(0);
+  const y = useMotionValue(0);
+
+  const clampToViewport = useCallback(() => {
+    const el = cardRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const boundsRect = boundsRef?.current?.getBoundingClientRect();
+    const minX = (boundsRect?.left ?? 0) + (insets.left ?? 0);
+    const minY = (boundsRect?.top ?? 0) + (insets.top ?? 0);
+    const maxX = (boundsRect?.right ?? window.innerWidth) - (insets.right ?? 0);
+    const maxY = (boundsRect?.bottom ?? window.innerHeight) - (insets.bottom ?? 0);
+    let nextX = x.get();
+    let nextY = y.get();
+
+    if (rect.width >= maxX - minX) {
+      nextX -= rect.left - minX;
+    } else {
+      if (rect.left < minX) nextX -= rect.left - minX;
+      if (rect.right > maxX) nextX -= rect.right - maxX;
+    }
+
+    if (rect.height >= maxY - minY) {
+      nextY -= rect.top - minY;
+    } else {
+      if (rect.top < minY) nextY -= rect.top - minY;
+      if (rect.bottom > maxY) nextY -= rect.bottom - maxY;
+    }
+
+    if (nextX !== x.get()) x.set(nextX);
+    if (nextY !== y.get()) y.set(nextY);
+  }, [boundsRef, insets.bottom, insets.left, insets.right, insets.top, x, y]);
+
+  useEffect(() => {
+    const onResize = () => clampToViewport();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [clampToViewport]);
+
+  return { cardRef, x, y, clampToViewport };
+}
+
 function ExpandableCoinId({ hex }: { hex: string }) {
   const [expanded, setExpanded] = useState(false);
   return (
@@ -122,13 +170,15 @@ function ExpandableCoinId({ hex }: { hex: string }) {
 function ChannelAttentionOverlay({
   info,
   onDismiss,
+  boundsRef,
 }: {
   info: ChannelStatusInfo;
   onDismiss: () => void;
+  boundsRef: RefObject<HTMLElement | null>;
 }) {
   const label = CHANNEL_STATE_LABELS[info.state] ?? info.state;
   const isBad = info.state === 'Failed' || info.state === 'ResolvedStale';
-  const { cardRef, x, y, clampToViewport } = useViewportClampedDrag();
+  const { cardRef, x, y, clampToViewport } = useViewportClampedDragWithInsets(boundsRef, { top: 8 });
   return (
     <motion.div
       ref={cardRef}
@@ -139,7 +189,7 @@ function ChannelAttentionOverlay({
       style={{ x, y }}
       onDrag={clampToViewport}
       onDragEnd={clampToViewport}
-      className='fixed z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing'
+      className='absolute z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing'
     >
       <Card className='w-full max-w-md shadow-xl bg-canvas-bg border border-canvas-line'>
         <CardHeader className='text-center pb-2'>
@@ -157,8 +207,71 @@ function ChannelAttentionOverlay({
               Coin: 0x{info.coinHex}
             </p>
           )}
+          {info.coinAmount && (
+            <p className='text-xs text-canvas-text/70'>
+              Coin amount: {formatOptionalMojos(info.coinAmount)} mojos
+            </p>
+          )}
           <Button variant="soft" onClick={onDismiss} className='w-full'>
             Dismiss
+          </Button>
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+}
+
+function GameTerminalAttentionOverlay({
+  label,
+  myReward,
+  rewardCoinHex,
+  onDismiss,
+  boundsRef,
+}: {
+  label: string;
+  myReward: string | null;
+  rewardCoinHex: string | null;
+  onDismiss: () => void;
+  boundsRef: RefObject<HTMLElement | null>;
+}) {
+  const { cardRef, x, y, clampToViewport } = useViewportClampedDrag(boundsRef);
+  const title = label.startsWith('Ended: ') ? label.slice('Ended: '.length) : label;
+  return (
+    <motion.div
+      ref={cardRef}
+      drag
+      dragMomentum={false}
+      dragElastic={0}
+      initial={false}
+      style={{ x, y }}
+      onDrag={clampToViewport}
+      onDragEnd={clampToViewport}
+      className='absolute z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing'
+    >
+      <Card className='w-full max-w-md shadow-xl bg-canvas-bg border border-canvas-line'>
+        <CardHeader className='text-center pb-2'>
+          <CardTitle className='text-xl text-canvas-text-contrast'>{title}</CardTitle>
+        </CardHeader>
+        <Separator />
+        <CardContent className='pt-4 flex flex-col gap-3'>
+          <div className='rounded-md border border-canvas-line bg-canvas-bg-subtle p-3 text-sm space-y-2'>
+            <p className='flex flex-wrap items-center gap-x-2 gap-y-1'>
+              <span className='text-canvas-text/80'>My reward:</span>
+              <span className='font-semibold text-canvas-text-contrast'>
+                {formatOptionalMojos(myReward)}
+              </span>
+            </p>
+            <p className='flex flex-wrap items-center gap-x-2 gap-y-1'>
+              <span className='text-canvas-text/80'>Reward coin:</span>
+              {rewardCoinHex ? (
+                <ExpandableCoinId hex={rewardCoinHex} />
+              ) : (
+                <span className='font-semibold text-canvas-text-contrast'>None</span>
+              )}
+            </p>
+          </div>
+          <Button variant='soft' size='sm' onClick={onDismiss} className='self-center min-w-[96px]'>
+            OK
           </Button>
         </CardContent>
       </Card>
@@ -244,6 +357,7 @@ function CalpokerHand({
 export interface GameSessionProps {
   params: import('../types/ChiaGaming').GameSessionParams;
   peerConn: import('../types/ChiaGaming').PeerConnectionResult;
+  peerConnected?: boolean | null;
   registerMessageHandler: (handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, pingHandler: () => void) => void;
   appendGameLog: (line: string) => void;
   sessionSave?: import('../hooks/save').SessionSave;
@@ -251,7 +365,7 @@ export interface GameSessionProps {
   onSessionActivity?: () => void;
 }
 
-const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMessageHandler, appendGameLog, sessionSave, blockchainType, onSessionActivity }) => {
+const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, peerConnected, registerMessageHandler, appendGameLog, sessionSave, blockchainType, onSessionActivity }) => {
   const uniqueId = getPlayerId();
 
   const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, sessionSave, blockchainType);
@@ -282,14 +396,35 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
   }
 
   const handEverStarted = session.handKey > 0;
+  const channelOverlayBoundsRef = useRef<HTMLDivElement | null>(null);
   const gameAreaRef = useRef<HTMLDivElement | null>(null);
   const channelStateLabel = CHANNEL_STATE_LABELS[session.channelStatus.state] ?? session.channelStatus.state;
-  const channelOrRewardCoinHex = session.gameTerminal.rewardCoinHex ?? session.channelStatus.coinHex;
+  const channelCoinLabel = channelCoinLabelForState(session.channelStatus.state);
   const gameStateLabel = session.gameTerminal.label ?? GAME_TURN_LABELS[session.gameCoin.turnState];
+  const gameCoinLabel = session.gameTerminal.type !== 'none' ? 'Game reward coin' : 'Game coin';
+  const gameCoinOrRewardHex = session.gameTerminal.rewardCoinHex ?? session.gameCoin.coinHex;
+  const betweenHandTitle = session.lastOutcome
+    ? session.lastOutcome.my_win_outcome === 'win'
+      ? 'You Won!'
+      : session.lastOutcome.my_win_outcome === 'lose'
+        ? 'You Lost'
+        : 'Tie Game'
+    : session.gameTerminal.type === 'we-timed-out'
+      ? 'You Won!'
+      : session.gameTerminal.type === 'opponent-timed-out'
+        ? 'You Lost'
+        : 'Hand Finished';
   const handOverlayDrag = useViewportClampedDrag(gameAreaRef);
+  const peerBadge =
+    peerConnected === null
+      ? { label: 'Peer: Unknown', className: 'bg-canvas-bg-hover text-canvas-text' }
+      : peerConnected
+        ? { label: 'Peer: Active', className: 'bg-emerald-600 text-white' }
+        : { label: 'Peer: Inactive', className: 'bg-alert-bg text-alert-text' };
 
   return (
-    <div className='w-full flex flex-col bg-canvas-bg-subtle text-canvas-text pt-6'>
+    <div className='relative w-full h-full min-h-0 flex flex-col bg-canvas-bg-subtle text-canvas-text pt-6'>
+      <div ref={channelOverlayBoundsRef} className='absolute inset-0 pointer-events-none' />
       {/* Session header (shrink-0) */}
       <div className='flex-shrink-0 px-4 pt-3 pb-2 sm:px-6 md:px-8'>
         {/* Report + end session */}
@@ -306,27 +441,34 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
               <span className='text-canvas-text/80'>Game terms:</span>
               <span className='font-medium'>California Poker</span>
               <span className='text-canvas-text/70'>·</span>
-              <span className='font-medium'>{formatMojos(session.perGameAmount)} per hand</span>
+              <span className='text-canvas-text/80'>Game size:</span>
+              <span className='font-medium'>{formatMojos(session.perGameAmount * 2n)}</span>
             </div>
             <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
               <span className='text-canvas-text/80'>Channel status:</span>
               <span className='font-medium'>{channelStateLabel}</span>
               <span className='text-canvas-text/70'>·</span>
-              <span className='text-canvas-text/80'>Channel/reward coin:</span>
-              {channelOrRewardCoinHex ? (
-                <ExpandableCoinId hex={channelOrRewardCoinHex} />
+              <span className='text-canvas-text/80'>{channelCoinLabel}:</span>
+              {session.channelStatus.coinHex ? (
+                <ExpandableCoinId hex={session.channelStatus.coinHex} />
               ) : (
                 <span className='font-medium'>None</span>
               )}
+            </div>
+            <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
+              <span className='text-canvas-text/80'>Peer connection:</span>
+              <span className='font-medium'>
+                {peerConnected === null ? 'Unknown' : peerConnected ? 'Active' : 'Inactive'}
+              </span>
             </div>
             <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
               <span className='text-canvas-text/80'>Game state:</span>
               <span className='font-medium'>{gameStateLabel}</span>
             </div>
             <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
-              <span className='text-canvas-text/80'>Game coin:</span>
-              {session.gameCoin.coinHex ? (
-                <ExpandableCoinId hex={session.gameCoin.coinHex} />
+              <span className='text-canvas-text/80'>{gameCoinLabel}:</span>
+              {gameCoinOrRewardHex ? (
+                <ExpandableCoinId hex={gameCoinOrRewardHex} />
               ) : (
                 <span className='font-medium'>None</span>
               )}
@@ -334,11 +476,13 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
               <span className='text-canvas-text/80'>My reward:</span>
               <span className='font-medium'>{formatOptionalMojos(session.gameTerminal.myReward)}</span>
             </div>
-            {session.channelStatus.advisory && (
-              <p className='text-sm text-alert-text italic'>{session.channelStatus.advisory}</p>
-            )}
           </div>
-          <div className='flex items-center gap-2 mt-2 sm:mt-0'>
+          <div className='flex flex-col items-stretch gap-2 mt-2 sm:mt-0'>
+            <div className='flex justify-center'>
+              <span className={`inline-flex items-center rounded-md px-2 py-1 text-xs font-semibold ${peerBadge.className}`}>
+                {peerBadge.label}
+              </span>
+            </div>
             <Button
               data-testid='go-on-chain'
               variant='destructive'
@@ -347,6 +491,22 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
               disabled={session.goOnChainPressed || isWindingDown(session.channelStatus.state)}
             >
               Go On-Chain
+            </Button>
+            <Button
+              data-testid='cut-peer-connection'
+              variant='outline'
+              onClick={session.cutPeerConnection}
+              size='sm'
+            >
+              Cut Peer Connection
+            </Button>
+            <Button
+              data-testid='toggle-tx-nerf'
+              variant={session.txPublishNerfed ? 'destructive' : 'outline'}
+              onClick={session.toggleTxPublishNerf}
+              size='sm'
+            >
+              {session.txPublishNerfed ? 'Unnerf Publish' : 'Nerf Publish'}
             </Button>
           </div>
         </div>
@@ -357,7 +517,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
       {/* Main content area */}
       <div className='flex flex-col gap-2 px-4 pb-2 sm:px-6 md:px-8'>
         {/* Game area */}
-          <div ref={gameAreaRef} className='relative'>
+          <div ref={gameAreaRef} className='relative overflow-hidden'>
           {handEverStarted && (
             <CalpokerHand
               key={session.handKey}
@@ -378,7 +538,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
           )}
 
           {/* Between-hand overlay (draggable, no backdrop) */}
-          {session.showBetweenHandOverlay && (
+          {session.showBetweenHandOverlay && !isWindingDown(session.channelStatus.state) && (
             <motion.div
               ref={handOverlayDrag.cardRef}
               drag
@@ -393,13 +553,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
               <Card className='w-full max-w-md shadow-xl bg-canvas-bg border border-canvas-line'>
                 <CardHeader className='text-center pb-2'>
                   <CardTitle className='text-xl'>
-                    {session.lastOutcome
-                      ? session.lastOutcome.my_win_outcome === 'win'
-                        ? 'You Won!'
-                        : session.lastOutcome.my_win_outcome === 'lose'
-                          ? 'You Lost'
-                          : 'Tie Game'
-                      : 'Hand Finished'}
+                    {betweenHandTitle}
                   </CardTitle>
                 </CardHeader>
                 <Separator />
@@ -435,27 +589,24 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, registerMes
               <p className='text-canvas-text'>Waiting for game to start…</p>
             </div>
           )}
+
+          {session.gameTerminalAttention && (
+            <GameTerminalAttentionOverlay
+              label={session.gameTerminalAttention.label}
+              myReward={session.gameTerminalAttention.myReward}
+              rewardCoinHex={session.gameTerminalAttention.rewardCoinHex}
+              onDismiss={session.dismissGameTerminalAttention}
+              boundsRef={gameAreaRef}
+            />
+          )}
         </div>
       </div>
-
-      <Dialog open={session.actionFailedReason !== null} onOpenChange={(open) => { if (!open) session.dismissActionFailed(); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Action Failed</DialogTitle>
-            <DialogDescription>{session.actionFailedReason}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button variant='soft'>Dismiss</Button>
-            </DialogClose>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {session.channelAttention && (
         <ChannelAttentionOverlay
           info={session.channelAttention}
           onDismiss={session.dismissChannelAttention}
+          boundsRef={channelOverlayBoundsRef}
         />
       )}
     </div>

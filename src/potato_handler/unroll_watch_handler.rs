@@ -53,6 +53,7 @@ pub struct UnrollWatchHandler {
 
     advisory: Option<String>,
     was_stale: bool,
+    terminal_reward_coin: Option<CoinString>,
 
     #[serde(skip)]
     replacement: Option<Box<OnChainGameHandler>>,
@@ -65,6 +66,10 @@ impl std::fmt::Debug for UnrollWatchHandler {
 }
 
 impl UnrollWatchHandler {
+    pub fn set_advisory(&mut self, advisory: Option<String>) {
+        self.advisory = advisory;
+    }
+
     pub fn new(
         channel_handler: Option<ChannelHandler>,
         channel_coin: CoinString,
@@ -84,6 +89,7 @@ impl UnrollWatchHandler {
             ),
             advisory: None,
             was_stale: false,
+            terminal_reward_coin: None,
             replacement: None,
         }
     }
@@ -111,6 +117,7 @@ impl UnrollWatchHandler {
             ),
             advisory: None,
             was_stale: false,
+            terminal_reward_coin: None,
             replacement: None,
         }
     }
@@ -143,6 +150,7 @@ impl UnrollWatchHandler {
             ),
             advisory: None,
             was_stale: false,
+            terminal_reward_coin: None,
             replacement: None,
         }
     }
@@ -718,6 +726,8 @@ impl UnrollWatchHandler {
             (game_map_inner, reward_coin, preempt_resolved)
         };
 
+        self.terminal_reward_coin = on_chain_reward_coin.clone();
+
         for (game_id, our_share) in &preempt_resolved {
             effects.push(Effect::Notify(GameNotification::GameStatus {
                 id: *game_id,
@@ -899,6 +909,7 @@ impl UnrollWatchHandler {
             is_initial_potato: player_ch.is_initial_potato(),
             state_number: player_ch.state_number(),
             was_stale: self.was_stale,
+            terminal_reward_coin: self.terminal_reward_coin.clone(),
         });
         effects.extend(on_chain.next_action(env)?);
         self.replacement = Some(Box::new(on_chain));
@@ -1027,9 +1038,15 @@ impl PeerHandler for UnrollWatchHandler {
             }
             UnrollState::Completed => {
                 if self.was_stale {
-                    (ChannelState::ResolvedStale, None)
+                    (
+                        ChannelState::ResolvedStale,
+                        self.terminal_reward_coin.clone(),
+                    )
                 } else {
-                    (ChannelState::ResolvedUnrolled, None)
+                    (
+                        ChannelState::ResolvedUnrolled,
+                        self.terminal_reward_coin.clone(),
+                    )
                 }
             }
             UnrollState::Failed => (ChannelState::Failed, None),

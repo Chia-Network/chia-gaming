@@ -30,11 +30,31 @@ export type GameplayEvent =
   | { GameMessage: { readable: number[] } }
   | { _terminal: true; notification: WasmNotification };
 
-function coinPayloadToHex(coin: unknown): string | undefined {
-  if (Array.isArray(coin) && coin.length > 0 && coin.every((b): b is number => typeof b === 'number')) {
-    return toHexString(coin);
+interface ParsedCoinPayload {
+  hex: string;
+  amount: string | null;
+}
+
+function parseCoinPayload(coin: unknown): ParsedCoinPayload | null {
+  if (!Array.isArray(coin) || coin.length === 0 || !coin.every((b): b is number => typeof b === 'number')) {
+    return null;
   }
-  return undefined;
+  let amount: string | null = null;
+  if (coin.length >= 64) {
+    let value = 0n;
+    for (let i = 64; i < coin.length; i++) {
+      value = (value << 8n) + BigInt(coin[i] & 0xff);
+    }
+    amount = value.toString();
+  }
+  return {
+    hex: toHexString(coin),
+    amount,
+  };
+}
+
+function coinPayloadToHex(coin: unknown): string | undefined {
+  return parseCoinPayload(coin)?.hex;
 }
 
 export type GameTurnState = 'my-turn' | 'their-turn' | 'replaying' | 'opponent-illegal-move' | 'ended';
@@ -62,10 +82,17 @@ export interface GameTerminalInfo {
   rewardCoinHex: string | null;
 }
 
+export interface GameTerminalAttentionInfo {
+  label: string;
+  myReward: string | null;
+  rewardCoinHex: string | null;
+}
+
 export interface ChannelStatusInfo {
   state: ChannelState;
   advisory: string | null;
   coinHex: string | null;
+  coinAmount: string | null;
   ourBalance: string | null;
   theirBalance: string | null;
   gameAllocated: string | null;
@@ -75,6 +102,7 @@ const INITIAL_CHANNEL_STATUS: ChannelStatusInfo = {
   state: 'Handshaking',
   advisory: null,
   coinHex: null,
+  coinAmount: null,
   ourBalance: null,
   theirBalance: null,
   gameAllocated: null,
@@ -88,12 +116,16 @@ const INITIAL_GAME_TERMINAL: GameTerminalInfo = {
 };
 
 const ATTENTION_STATES: ChannelState[] = [
-  'Failed', 'ResolvedStale', 'ResolvedClean', 'ResolvedUnrolled',
+  'GoingOnChain', 'Unrolling', 'ResolvedClean', 'ResolvedUnrolled', 'ResolvedStale', 'Failed',
 ];
 
 const WINDING_DOWN_STATES: ReadonlySet<ChannelState> = new Set<ChannelState>([
   'ShutdownTransactionPending', 'GoingOnChain', 'Unrolling',
   'ResolvedClean', 'ResolvedUnrolled', 'ResolvedStale', 'Failed',
+]);
+
+const ON_CHAIN_FLOW_STATES: ReadonlySet<ChannelState> = new Set<ChannelState>([
+  'GoingOnChain', 'Unrolling', 'ResolvedClean', 'ResolvedUnrolled', 'ResolvedStale',
 ]);
 
 export function isWindingDown(state: ChannelState): boolean {
@@ -201,11 +233,14 @@ export interface UseGameSessionResult {
   playAgain: () => void;
   stopPlaying: () => void;
   goOnChain: () => void;
+  cutPeerConnection: () => void;
+  txPublishNerfed: boolean;
+  toggleTxPublishNerf: () => void;
   showBetweenHandOverlay: boolean;
   lastOutcome: CalpokerOutcome | undefined;
   goOnChainPressed: boolean;
-  actionFailedReason: string | null;
-  dismissActionFailed: () => void;
+  gameTerminalAttention: GameTerminalAttentionInfo | null;
+  dismissGameTerminalAttention: () => void;
   channelAttention: ChannelStatusInfo | null;
   dismissChannelAttention: () => void;
 }
@@ -231,10 +266,14 @@ export function useGameSession(
   const [error, setRealError] = useState<string | undefined>(undefined);
   const [myRunningBalance, setMyRunningBalance] = useState(0n);
   const [goOnChainPressed, setGoOnChainPressed] = useState(false);
+  const [txPublishNerfed, setTxPublishNerfed] = useState(false);
   const [channelStatus, setChannelStatus] = useState<ChannelStatusInfo>(() =>
     sessionSave?.channelReady ? { ...INITIAL_CHANNEL_STATUS, state: 'Active' } : INITIAL_CHANNEL_STATUS
   );
   const [channelAttention, setChannelAttention] = useState<ChannelStatusInfo | null>(null);
+  const channelStateRef = useRef<ChannelState>(
+    sessionSave?.channelReady ? 'Active' : INITIAL_CHANNEL_STATUS.state
+  );
   const [gameCoin, setGameCoin] = useState<GameCoinInfo>({ coinHex: null, turnState: 'my-turn' });
   const [gameTerminal, setGameTerminal] = useState<GameTerminalInfo>(INITIAL_GAME_TERMINAL);
   const [handKey, setHandKey] = useState(() => sessionSave?.activeGameId ? 1 : 0);
@@ -243,7 +282,7 @@ export function useGameSession(
   );
   const [showBetweenHandOverlay, setShowBetweenHandOverlay] = useState(false);
   const [lastOutcome, setLastOutcome] = useState<CalpokerOutcome | undefined>(undefined);
-  const [actionFailedReason, setActionFailedReason] = useState<string | null>(null);
+  const [gameTerminalAttention, setGameTerminalAttention] = useState<GameTerminalAttentionInfo | null>(null);
 
   const gameIdsRef = useRef<string[]>(sessionSave?.activeGameId ? [sessionSave.activeGameId] : []);
   const pendingProposalIdRef = useRef<string | null>(null);
@@ -259,8 +298,6 @@ export function useGameSession(
       setRealError((prev) => prev === undefined ? e : prev);
     }
   }, []);
-
-  const dismissActionFailed = useCallback(() => setActionFailedReason(null), []);
 
   const blockchain = new ChildFrameBlockchainInterface();
 
@@ -287,11 +324,12 @@ export function useGameSession(
     const go = gameObjectRef.current;
     if (!go || !go.isChannelReady()) return;
     try {
+      // perGameAmount is per-player stake; game coin amount is both players combined.
       go.proposeGame({
         game_type: '63616c706f6b6572',
         timeout: 15,
-        amount: perGameAmount,
-        my_contribution: perGameAmount / 2n,
+        amount: perGameAmount * 2n,
+        my_contribution: perGameAmount,
         my_turn: !iStarted,
         parameters: null,
       });
@@ -305,8 +343,8 @@ export function useGameSession(
     setGameIds(prev => prev.slice(1));
     gameIdsRef.current = gameIdsRef.current.slice(1);
     setGameCoin({ coinHex: null, turnState: 'my-turn' });
-    const delta = outcome.my_win_outcome === 'win' ? perGameAmount / 2n
-                : outcome.my_win_outcome === 'lose' ? -(perGameAmount / 2n)
+    const delta = outcome.my_win_outcome === 'win' ? perGameAmount
+                : outcome.my_win_outcome === 'lose' ? -perGameAmount
                 : 0n;
     setMyRunningBalance(prev => prev + delta);
     awaitingDisplayCompleteRef.current = true;
@@ -332,6 +370,10 @@ export function useGameSession(
     setChannelAttention(null);
   }, []);
 
+  const dismissGameTerminalAttention = useCallback(() => {
+    setGameTerminalAttention(null);
+  }, []);
+
   const handleNotification = useCallback((n: WasmNotification) => {
     const go = gameObjectRef.current;
     if (typeof n !== 'object' || n === null) return;
@@ -340,14 +382,21 @@ export function useGameSession(
     if ('ChannelStatus' in n) {
       const cs = n.ChannelStatus as ChannelStatusPayload | undefined;
       if (!cs) return;
+      const parsedCoin = parseCoinPayload(cs.coin);
+      const isResolvedFromUnroll = cs.state === 'ResolvedUnrolled' || cs.state === 'ResolvedStale';
+      const resolvedShare = isResolvedFromUnroll
+        ? (parsedCoin?.amount ?? '0')
+        : parseAmount(cs.our_balance);
       const info: ChannelStatusInfo = {
         state: cs.state,
         advisory: cs.advisory ?? null,
-        coinHex: coinPayloadToHex(cs.coin) ?? null,
-        ourBalance: parseAmount(cs.our_balance),
+        coinHex: parsedCoin?.hex ?? null,
+        coinAmount: parsedCoin?.amount ?? null,
+        ourBalance: resolvedShare,
         theirBalance: parseAmount(cs.their_balance),
         gameAllocated: parseAmount(cs.game_allocated),
       };
+      channelStateRef.current = info.state;
       setChannelStatus(info);
       if (ATTENTION_STATES.includes(cs.state)) {
         setShowBetweenHandOverlay(false);
@@ -395,7 +444,18 @@ export function useGameSession(
       const gid = String(gs.id);
       const status = gs.status;
       const coinHex = coinPayloadToHex(gs.coin_id) ?? null;
-      if (status === 'my-turn' || status === 'on-chain-my-turn') {
+      const inOnChainFlow = ON_CHAIN_FLOW_STATES.has(channelStateRef.current);
+      const isOnChainTurnStatus =
+        status === 'on-chain-my-turn' || status === 'on-chain-their-turn' || status === 'replaying';
+      const isLocalTurnStatus = status === 'my-turn' || status === 'their-turn';
+      const ignoreLocalTurnDuringOnChain = inOnChainFlow && isLocalTurnStatus;
+      if (ignoreLocalTurnDuringOnChain) {
+        // During on-chain flow, on-chain turn statuses are authoritative.
+        // Keep any known coin id if local status messages continue to arrive.
+        if (coinHex) {
+          setGameCoin(prev => ({ ...prev, coinHex }));
+        }
+      } else if (status === 'my-turn' || status === 'on-chain-my-turn') {
         setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'my-turn' }));
       } else if (status === 'their-turn' || status === 'on-chain-their-turn') {
         setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'their-turn' }));
@@ -404,16 +464,42 @@ export function useGameSession(
       } else if (status === 'illegal-move-detected') {
         setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'opponent-illegal-move' }));
       } else if (isTerminalStatus(status)) {
+        const other = gs.other_params ?? null;
+        const readable = other?.readable;
+        const readableArr = Array.isArray(readable) && readable.every((x): x is number => typeof x === 'number')
+          ? readable
+          : null;
+        if (readableArr) {
+          const hasMoverShare = other?.mover_share != null;
+          if (hasMoverShare) {
+            gameplayEventSubject.next({ OpponentMoved: { readable: readableArr } });
+          } else if (gameIdsRef.current.includes(gid)) {
+            gameplayEventSubject.next({ GameMessage: { readable: readableArr } });
+          }
+        }
+
         const terminalInfo = parseGameStatusTerminalInfo(gs);
         setGameTerminal(terminalInfo);
         setGameCoin(prev => ({ ...prev, turnState: 'ended' }));
+        // On-chain terminal paths have their own dedicated dialogs/UX.
+        // For normal off-chain hand completion we still want the between-hand overlay.
+        if (inOnChainFlow) {
+          setShowBetweenHandOverlay(false);
+        }
         const hadActiveGame = gameIdsRef.current.length > 0;
         if (hadActiveGame) {
           setGameIds(prev => prev.slice(1));
           gameIdsRef.current = gameIdsRef.current.slice(1);
-          setShowBetweenHandOverlay(true);
+          if (inOnChainFlow) {
+            setGameTerminalAttention({
+              label: terminalInfo.label ?? `Ended: ${status}`,
+              myReward: terminalInfo.myReward,
+              rewardCoinHex: terminalInfo.rewardCoinHex,
+            });
+          }
         }
         gameplayEventSubject.next({ _terminal: true, notification: n });
+        return;
       }
 
       const other = gs.other_params ?? null;
@@ -440,7 +526,7 @@ export function useGameSession(
       gameplayEventSubject.next({ _terminal: true, notification: n });
     } else if ('ActionFailed' in n) {
       const reason = String(n.ActionFailed?.reason ?? 'Unknown error');
-      setActionFailedReason(reason);
+      debugLog(`[game] action failed: ${reason}`);
     }
   }, [iStarted, proposeNewGame, gameplayEventSubject, gameConnectionState.stateIdentifier]);
 
@@ -519,6 +605,17 @@ export function useGameSession(
     gameObject?.goOnChain();
   }, [gameObject]);
 
+  const cutPeerConnection = useCallback(() => {
+    debugLog('[game] cutting peer connection');
+    gameObject?.cutPeerConnection();
+  }, [gameObject]);
+
+  const toggleTxPublishNerf = useCallback(() => {
+    const next = !txPublishNerfed;
+    gameObject?.setTransactionPublishNerfed(next);
+    setTxPublishNerfed(next);
+  }, [gameObject, txPublishNerfed]);
+
   return {
     error,
     gameConnectionState,
@@ -541,11 +638,14 @@ export function useGameSession(
     playAgain,
     stopPlaying,
     goOnChain,
+    cutPeerConnection,
+    txPublishNerfed,
+    toggleTxPublishNerf,
     showBetweenHandOverlay,
     lastOutcome,
     goOnChainPressed,
-    actionFailedReason,
-    dismissActionFailed,
+    gameTerminalAttention,
+    dismissGameTerminalAttention,
     channelAttention,
     dismissChannelAttention,
   };

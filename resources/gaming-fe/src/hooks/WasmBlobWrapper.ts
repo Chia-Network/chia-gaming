@@ -52,6 +52,7 @@ export class WasmBlobWrapper {
   sendAck: (ackMsgno: number) => void;
   private peerSendPing: (() => void) | null = null;
   private peerClose: (() => void) | null = null;
+  private transactionPublishNerfed = false;
   private lastPeerMessageTime: number = Date.now();
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   messageNumber: number;
@@ -302,6 +303,10 @@ export class WasmBlobWrapper {
     const blob = spend_bundle_to_clvm(tx);
     this.pendingTransactions.push(blob);
     this.scheduleSave();
+    if (this.transactionPublishNerfed) {
+      debugLog('[wasm] submitTransaction blackholed (nerf enabled)');
+      return;
+    }
     const cvt = (blob: string) => {
       return this.wc?.convert_spend_to_coinset_org(blob);
     };
@@ -330,6 +335,10 @@ export class WasmBlobWrapper {
     debugLog(`[wasm] resubmitting ${this.pendingTransactions.length} pending transactions`);
     const blobs = [...this.pendingTransactions];
     for (const blob of blobs) {
+      if (this.transactionPublishNerfed) {
+        debugLog('[wasm] resubmitPendingTransactions blackholed (nerf enabled)');
+        return;
+      }
       const cvt = (b: string) => this.wc?.convert_spend_to_coinset_org(b);
       this.blockchain.spend(cvt, blob).then((result) => {
         if (result) {
@@ -644,5 +653,27 @@ export class WasmBlobWrapper {
       console.error('[wasm] goOnChain failed:', msg);
       this.rxjsEmitter?.next({ type: 'error', error: msg });
     }
+  }
+
+  cutPeerConnection(): void {
+    debugLog('[wasm] cutting peer connection');
+    try {
+      this.peerClose?.();
+    } catch (e) {
+      console.error('[wasm] cutPeerConnection failed:', e);
+      debugLog(`[wasm] cutPeerConnection failed: ${String(e)}`);
+    }
+  }
+
+  setTransactionPublishNerfed(enabled: boolean): void {
+    this.transactionPublishNerfed = enabled;
+    debugLog(`[wasm] transaction publish nerf ${enabled ? 'enabled' : 'disabled'}`);
+    if (!enabled) {
+      this.resubmitPendingTransactions();
+    }
+  }
+
+  isTransactionPublishNerfed(): boolean {
+    return this.transactionPublishNerfed;
   }
 }
