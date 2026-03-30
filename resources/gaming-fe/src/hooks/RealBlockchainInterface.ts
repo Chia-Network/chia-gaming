@@ -7,6 +7,7 @@ import { WalletType } from '../types/WalletType';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 
 import { CoinStateMonitor, CoinStateBackend } from './CoinStateMonitor';
+import { debugLog } from '../services/debugLog';
 
 const PUSH_TX_RETRY_DELAY = 30000;
 const ASSERT_BEFORE_HEIGHT_ABSOLUTE = 87;
@@ -74,6 +75,7 @@ class WalletConnectPoller {
       await this.monitor.receiveCoinStates(height, records);
     } catch (e) {
       console.error('[wc-poller] poll failed', e);
+      debugLog(`[wc-poller] poll failed: ${String(e)}`);
     }
     this.pollingTimer = setTimeout(() => this.tick(), this.pollIntervalMs);
   }
@@ -147,6 +149,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         });
       }
       console.error('[wc-blockchain] walletPushTx error', e);
+      debugLog(`[wc-blockchain] walletPushTx error: ${String(e)}`);
       throw e;
     }
   }
@@ -166,7 +169,9 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       const record = records.find((r: CoinRecord) => r.spent);
       if (!record) return null;
       return [record.coin.parentCoinInfo, record.coin.puzzleHash, String(record.coin.amount)];
-    } catch {
+    } catch (e) {
+      console.error('[wc-blockchain] getPuzzleAndSolution error', e);
+      debugLog(`[wc-blockchain] getPuzzleAndSolution error: ${String(e)}`);
       return null;
     }
   }
@@ -176,7 +181,9 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       const result = await rpc.selectCoins({ walletId: 1, amount });
       if (!result?.coins?.length) return null;
       return result.coins[0].parentCoinInfo ?? null;
-    } catch {
+    } catch (e) {
+      console.error('[wc-blockchain] selectCoins error', e);
+      debugLog(`[wc-blockchain] selectCoins error: ${String(e)}`);
       return null;
     }
   }
@@ -205,7 +212,9 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         extraConditions: conditions.length ? conditions : undefined,
         coinIds,
       });
-    } catch {
+    } catch (e) {
+      console.error('[wc-blockchain] createOfferForIds error', e);
+      debugLog(`[wc-blockchain] createOfferForIds error: ${String(e)}`);
       return null;
     }
   }
@@ -234,12 +243,14 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
             .catch((e) => {
               this.remoteWalletPending = false;
               console.warn('[wc-blockchain] createNewRemoteWallet failed, will retry', e);
+              debugLog(`[wc-blockchain] createNewRemoteWallet failed: ${String(e)}`);
             });
         }
       })
       .catch((e) => {
         this.remoteWalletPending = false;
         console.warn('[wc-blockchain] getWallets failed, will retry', e);
+        debugLog(`[wc-blockchain] getWallets failed: ${String(e)}`);
       });
   }
 
