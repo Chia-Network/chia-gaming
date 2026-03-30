@@ -307,10 +307,8 @@ export class WasmBlobWrapper {
       debugLog('[wasm] submitTransaction blackholed (nerf enabled)');
       return;
     }
-    const cvt = (blob: string) => {
-      return this.wc?.convert_spend_to_coinset_org(blob);
-    };
-    this.blockchain.spend(cvt, blob).then((result) => {
+    const spendBundle = this.wc?.convert_spend_to_coinset_org(blob);
+    this.blockchain.spend(blob, spendBundle).then((result) => {
       if (result) {
         debugLog(`[wasm] submitTransaction: ${result}`);
       }
@@ -339,8 +337,8 @@ export class WasmBlobWrapper {
         debugLog('[wasm] resubmitPendingTransactions blackholed (nerf enabled)');
         return;
       }
-      const cvt = (b: string) => this.wc?.convert_spend_to_coinset_org(b);
-      this.blockchain.spend(cvt, blob).then((result) => {
+      const spendBundle = this.wc?.convert_spend_to_coinset_org(blob);
+      this.blockchain.spend(blob, spendBundle).then((result) => {
         if (result) {
           debugLog(`[wasm] resubmitTransaction: ${result}`);
         }
@@ -425,7 +423,7 @@ export class WasmBlobWrapper {
       this.handleNeedCoinSpend(event.NeedCoinSpend);
     } else if ('WatchCoin' in event) {
       const { coin_name, coin_string } = event.WatchCoin;
-      this.blockchain.registerCoin?.(coin_name, coin_string);
+      this.blockchain.registerCoin(coin_name, coin_string);
     }
   }
 

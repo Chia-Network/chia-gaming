@@ -17,8 +17,8 @@ import {
 } from '../hooks/save';
 import { blobSingleton } from '../hooks/blobSingleton';
 import { walletConnectState } from '../hooks/useWalletConnect';
-import { blockchainDataEmitter } from '../hooks/BlockchainInfo';
-import { FAKE_BLOCKCHAIN_ID, fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
+import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
+import { setActiveBlockchain } from '../hooks/activeBlockchain';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import { debugLog } from '../services/debugLog';
 import ChatPanel from './ChatPanel';
@@ -319,12 +319,15 @@ const Shell = () => {
     setResuming(true);
 
     const onRegistered = () => {
+      fakeBlockchainInfo.startMonitoring(uniqueId).catch((err: unknown) => {
+        console.warn('[blockchain] startMonitoring failed on resume', err);
+      });
+      setActiveBlockchain(fakeBlockchainInfo);
       setPendingRestore(null);
       setResuming(false);
       setRestoreDecided(true);
       blockchainTypeRef.current = bcType;
       setWalletConnected(true);
-      blockchainDataEmitter.select({ selection: FAKE_BLOCKCHAIN_ID, uniqueId });
     };
     const onFailed = (e: unknown) => {
       console.error('[Shell] wallet register failed on resume:', e);

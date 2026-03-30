@@ -1,4 +1,4 @@
-import { Subject, ReplaySubject, Subscription } from 'rxjs';
+import { Observable } from 'rxjs';
 import { Program } from 'clvm-lib';
 
 export interface Amount {
@@ -692,70 +692,10 @@ export class CalpokerOutcome {
   }
 }
 
-export interface SelectionMessage {
-  selection: number;
-  uniqueId: string;
-}
-
-// An object which presents a single observable downstream of a number of other
-// observables.  It does not pass on events until one of the upstream slots is
-// selected.
-export class ToggleEmitter<T> {
-  upstream: Subject<T>[];
-  subscriptions: Subscription[];
-  downstream: Subject<T>;
-  upstreamSelection: Subject<SelectionMessage>;
-  selection: number;
-
-  addUpstream(upstream: Subject<T>): number {
-    const i = this.subscriptions.length;
-    this.subscriptions.push(
-      upstream.subscribe({
-        next: (elt: T) => {
-          if (this.selection === i) {
-            this.downstream.next(elt);
-          }
-        },
-      }),
-    );
-    return i;
-  }
-
-  select(s: SelectionMessage) {
-    this.selection = s.selection;
-    this.upstreamSelection.next(s);
-  }
-
-  getObservable() {
-    return this.downstream;
-  }
-
-  getSelectionObservable() {
-    return this.upstreamSelection;
-  }
-
-  close() {
-    this.subscriptions.forEach((s) => s.unsubscribe());
-  }
-
-  constructor() {
-    this.upstream = [];
-    this.selection = -1;
-    this.subscriptions = [];
-    this.downstream = new ReplaySubject<T>(1);
-    this.upstreamSelection = new Subject<SelectionMessage>();
-  }
-}
-
 export interface BlockchainReport {
   peak: number;
   block: CoinsetOrgBlockSpend[] | undefined;
   report: WatchReport | undefined;
-}
-
-export interface DoInitialSpendResult {
-  fromPuzzleHash: string;
-  coin: string | { parentCoinInfo: string; puzzleHash: string; amount: number | bigint };
 }
 
 export interface BlockchainInboundAddressResult {
@@ -764,12 +704,7 @@ export interface BlockchainInboundAddressResult {
 }
 
 export interface InternalBlockchainInterface {
-  do_initial_spend(
-    uniqueId: string,
-    target: string,
-    amt: bigint,
-  ): Promise<DoInitialSpendResult>;
-  spend(convert: (blob: string) => unknown, spend: string): Promise<string>;
+  spend(blob: string, spendBundle: unknown): Promise<string>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
   getBalance(): Promise<number>;
   getPuzzleAndSolution(coin: string): Promise<string[] | null>;
@@ -782,8 +717,8 @@ export interface InternalBlockchainInterface {
     coinIds?: string[],
     maxHeight?: number,
   ): Promise<any | null>;
-  /** Register interest in a single coin; called when WASM emits a WatchCoin event. */
-  registerCoin?(coinName: string, coinString: string): void;
+  registerCoin(coinName: string, coinString: string): void;
+  getObservable(): Observable<BlockchainReport>;
 }
 
 export interface OutcomeHandType {

@@ -13,7 +13,7 @@ import {
   GameStatusPayload,
   GameStatusState,
 } from '../types/ChiaGaming';
-import { ChildFrameBlockchainInterface } from './ChildFrameBlockchainInterface';
+import { getActiveBlockchain } from './activeBlockchain';
 import {
   getBlobSingleton,
   initStarted,
@@ -299,7 +299,7 @@ export function useGameSession(
     }
   }, []);
 
-  const blockchain = new ChildFrameBlockchainInterface();
+  const blockchain = getActiveBlockchain();
 
   const { gameObject } = getBlobSingleton(
     blockchain,

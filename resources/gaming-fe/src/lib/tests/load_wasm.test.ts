@@ -30,17 +30,8 @@ import {
 } from '../../types/ChiaGaming';
 import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
 import {
-  FAKE_BLOCKCHAIN_ID,
   fakeBlockchainInfo,
-  connectSimulatorBlockchain,
-  disconnectSimulatorBlockchain,
 } from '../../hooks/FakeBlockchainInterface';
-import { blockchainDataEmitter } from '../../hooks/BlockchainInfo';
-import {
-  blockchainConnector,
-  BlockchainOutboundRequest,
-} from '../../hooks/BlockchainConnector';
-import { ChildFrameBlockchainInterface } from '../../hooks/ChildFrameBlockchainInterface';
 import { configGameObject } from '../../hooks/blobSingleton';
 import { WasmBlobWrapper } from '../../hooks/WasmBlobWrapper';
 // @ts-ignore
@@ -105,7 +96,7 @@ function cleanupActiveResources() {
   while (activeCradles.length > 0) {
     activeCradles.pop()?.shutdown();
   }
-  disconnectSimulatorBlockchain();
+  fakeBlockchainInfo.close();
 }
 
 afterEach(() => {
@@ -169,7 +160,7 @@ function all_handshaked(cradles: Array<WasmBlobWrapperAdapter>) {
 }
 
 async function action_with_messages(
-  blockchainInterface: ChildFrameBlockchainInterface,
+  blockchainInterface: InternalBlockchainInterface,
   cradle1: WasmBlobWrapperAdapter,
   cradle2: WasmBlobWrapperAdapter,
 ) {
@@ -269,13 +260,8 @@ it(
       console.warn('Simulator not running at', BLOCKCHAIN_SERVICE_URL, '- skipping load_wasm test. Run ./ct.sh for full suite.');
       return;
     }
-    const blockchainInterface = new ChildFrameBlockchainInterface();
-    // The blockchain service does separate monitoring now.
-    blockchainDataEmitter.select({
-      selection: FAKE_BLOCKCHAIN_ID,
-      uniqueId: 'block-producer',
-    });
-    connectSimulatorBlockchain();
+    const blockchainInterface = fakeBlockchainInfo;
+    await fakeBlockchainInfo.startMonitoring('block-producer');
 
     const cradle1 = addActiveCradle(new WasmBlobWrapperAdapter());
     const cradle2 = addActiveCradle(new WasmBlobWrapperAdapter());

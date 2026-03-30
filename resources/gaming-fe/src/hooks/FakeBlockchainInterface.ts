@@ -1,4 +1,3 @@
-import { Subscription } from 'rxjs';
 // @ts-ignore
 import bech32_module from 'bech32-buffer';
 // @ts-ignore
@@ -10,14 +9,8 @@ import { BLOCKCHAIN_WS_URL } from '../settings';
 import {
   InternalBlockchainInterface,
   BlockchainInboundAddressResult,
-  SelectionMessage,
 } from '../types/ChiaGaming';
 
-import {
-  blockchainConnector,
-  BlockchainOutboundRequest,
-} from './BlockchainConnector';
-import { blockchainDataEmitter } from './BlockchainInfo';
 import { CoinStateMonitor, CoinStateBackend } from './CoinStateMonitor';
 
 type Bech32Module = { encode: (prefix: string, data: Uint8Array, encoding?: 'bech32' | 'bech32m') => string };
@@ -153,19 +146,8 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     return this.monitor.getObservable();
   }
 
-  async do_initial_spend(uniqueId: string, target: string, amt: bigint) {
-    const fromPuzzleHash = await this.getOrRequestToken(uniqueId);
-    const coin = await this.sendRequest('create_spendable', {
-      who: this.token,
-      target,
-      amount: Number(amt),
-    });
-    if (!coin) throw new Error('no coin returned.');
-    return { coin, fromPuzzleHash };
-  }
-
-  async spend(_convert: (blob: string) => unknown, spendBlob: string): Promise<string> {
-    const status_array = await this.sendRequest('spend', { blob: spendBlob });
+  async spend(blob: string, _spendBundle: unknown): Promise<string> {
+    const status_array = await this.sendRequest('spend', { blob });
     if (!Array.isArray(status_array) || status_array.length < 1) {
       throw new Error('status result array was empty');
     }
@@ -230,131 +212,3 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
 export const fakeBlockchainInfo = new FakeBlockchainInterface(
   BLOCKCHAIN_WS_URL,
 );
-export const FAKE_BLOCKCHAIN_ID = blockchainDataEmitter.addUpstream(
-  fakeBlockchainInfo.getObservable(),
-);
-
-let outboundSubscription: Subscription | undefined;
-
-export function connectSimulatorBlockchain() {
-  if (outboundSubscription) {
-    return outboundSubscription;
-  }
-  outboundSubscription = blockchainConnector.getOutbound().subscribe({
-    next: (evt: BlockchainOutboundRequest) => {
-      let initialSpend = evt.initialSpend;
-      let transaction = evt.transaction;
-      let getAddress = evt.getAddress;
-      let getBalance = evt.getBalance;
-      if (initialSpend) {
-        return fakeBlockchainInfo
-          .do_initial_spend(
-            initialSpend.uniqueId,
-            initialSpend.target,
-            initialSpend.amount,
-          )
-          .then((result) => {
-            blockchainConnector.replyEmitter({
-              responseId: evt.requestId,
-              initialSpend: result,
-            });
-          })
-          .catch((e: unknown) => {
-            blockchainConnector.replyEmitter({
-              responseId: evt.requestId,
-              error: String(e),
-            });
-          });
-      } else if (transaction) {
-        fakeBlockchainInfo
-          .spend((_blob: string) => transaction.spendObject, transaction.blob)
-          .then((response) => {
-            blockchainConnector.replyEmitter({
-              responseId: evt.requestId,
-              transaction: response,
-            });
-          })
-          .catch((e: unknown) => {
-            blockchainConnector.replyEmitter({
-              responseId: evt.requestId,
-              error: String(e),
-            });
-          });
-      } else if (getAddress) {
-        fakeBlockchainInfo.getAddress().then((address) => {
-          blockchainConnector.replyEmitter({
-            responseId: evt.requestId,
-            getAddress: address,
-          });
-        });
-      } else if (getBalance) {
-        fakeBlockchainInfo.getBalance().then((balance) => {
-          blockchainConnector.replyEmitter({ responseId: evt.requestId, getBalance: balance });
-        });
-      } else if (evt.getPuzzleAndSolution) {
-        fakeBlockchainInfo
-          .getPuzzleAndSolution(evt.getPuzzleAndSolution.coin)
-          .then((result) => {
-            blockchainConnector.replyEmitter({
-              responseId: evt.requestId,
-              getPuzzleAndSolution: result,
-            });
-          });
-      } else if (evt.selectCoins) {
-        fakeBlockchainInfo.selectCoins(evt.selectCoins.uniqueId, evt.selectCoins.amount).then((coin) => {
-          blockchainConnector.replyEmitter({ responseId: evt.requestId, selectCoins: coin });
-        }).catch((e: unknown) => {
-          blockchainConnector.replyEmitter({ responseId: evt.requestId, error: String(e) });
-        });
-      } else if (evt.getHeightInfo) {
-        fakeBlockchainInfo.getHeightInfo().then((height) => {
-          blockchainConnector.replyEmitter({ responseId: evt.requestId, getHeightInfo: height });
-        }).catch((e: unknown) => {
-          blockchainConnector.replyEmitter({ responseId: evt.requestId, error: String(e) });
-        });
-      } else if (evt.createOfferForIds) {
-        fakeBlockchainInfo.createOfferForIds(
-          evt.createOfferForIds.uniqueId,
-          evt.createOfferForIds.offer,
-          evt.createOfferForIds.extraConditions,
-          evt.createOfferForIds.coinIds,
-        ).then((result) => {
-          blockchainConnector.replyEmitter({ responseId: evt.requestId, createOfferForIds: result });
-        }).catch((e: unknown) => {
-          blockchainConnector.replyEmitter({ responseId: evt.requestId, error: String(e) });
-        });
-      } else {
-        console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);
-        blockchainConnector.replyEmitter({
-          responseId: evt.requestId,
-          error: `unknown blockchain request type ${JSON.stringify(evt)}`,
-        });
-      }
-    },
-  });
-  return outboundSubscription;
-}
-
-export function disconnectSimulatorBlockchain() {
-  if (outboundSubscription) {
-    outboundSubscription.unsubscribe();
-    outboundSubscription = undefined;
-  }
-  fakeBlockchainInfo.close();
-}
-
-// Set up to receive information about which blockchain system to use.
-// The signal from the blockchainDataEmitter will let the downstream system
-// choose and also inform us heore of the choice.
-blockchainDataEmitter.getSelectionObservable().subscribe({
-  next: (e: SelectionMessage) => {
-    if (e.selection == FAKE_BLOCKCHAIN_ID) {
-      fakeBlockchainInfo.startMonitoring(e.uniqueId).catch((err: unknown) => {
-        console.warn('[blockchain] startMonitoring failed', err);
-      });
-      connectSimulatorBlockchain();
-    } else {
-      disconnectSimulatorBlockchain();
-    }
-  },
-});

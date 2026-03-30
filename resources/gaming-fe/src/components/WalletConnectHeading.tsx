@@ -1,12 +1,8 @@
 import { useCallback, useState, useEffect, useRef } from 'react';
 import { Button } from './button';
-import { blockchainConnector } from '../hooks/BlockchainConnector';
-import { blockchainDataEmitter } from '../hooks/BlockchainInfo';
-import { FAKE_BLOCKCHAIN_ID, fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
-import {
-  REAL_BLOCKCHAIN_ID,
-  realBlockchainInfo,
-} from '../hooks/RealBlockchainInterface';
+import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
+import { realBlockchainInfo } from '../hooks/RealBlockchainInterface';
+import { setActiveBlockchain, getActiveBlockchain } from '../hooks/activeBlockchain';
 import useDebug from '../hooks/useDebug';
 import { walletConnectState } from '../hooks/useWalletConnect';
 import { getPlayerId, getTheme, setTheme as saveTheme } from '../hooks/save';
@@ -15,10 +11,8 @@ import Debug from './Debug';
 import { WalletConnectDialog, doConnectWallet } from './WalletConnect';
 import WalletBadge from './WalletBadge';
 
-
 import { WalletConnectOutboundState } from '../hooks/useWalletConnect';
-import { BlockchainReport } from '../types/ChiaGaming';
-import { BlockchainInboundReply } from '../hooks/BlockchainConnector';
+import { InternalBlockchainInterface } from '../types/ChiaGaming';
 import { debugLog } from '../services/debugLog';
 
 const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConnected?: (blockchainType: 'simulator' | 'walletconnect') => void; initialExpanded?: boolean }) => {
@@ -45,8 +39,6 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
   const [sessions, setSessions] = useState(0);
   const [recvAddress, setRecvAddress] = useState<string | undefined>();
   const [balance, setBalance] = useState<number | undefined>();
-  const [haveBlock, setHaveBlock] = useState(false);
-
   const balanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const uniqueId = getPlayerId();
@@ -87,17 +79,30 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
   };
 
   function requestBalance() {
-    blockchainConnector.getOutbound().next({
-      requestId: -2,
-      getBalance: true,
-    });
+    try {
+      getActiveBlockchain().getBalance()
+        .then((bal) => {
+          setBalance(bal);
+          if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
+          balanceTimerRef.current = setTimeout(requestBalance, 15000);
+        })
+        .catch(() => {
+          if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
+          balanceTimerRef.current = setTimeout(requestBalance, 15000);
+        });
+    } catch {
+      // blockchain not set yet
+    }
   }
 
   function requestRecvAddress() {
-    blockchainConnector.getOutbound().next({
-      requestId: -1,
-      getAddress: true,
-    });
+    try {
+      getActiveBlockchain().getAddress()
+        .then((addr) => setRecvAddress(addr.address))
+        .catch(() => {});
+    } catch {
+      // blockchain not set yet
+    }
   }
 
   useEffect(() => {
@@ -108,10 +113,10 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
           toggleExpanded();
           setAlreadyConnected(true);
           onConnected?.('walletconnect');
-          blockchainDataEmitter.select({
-            selection: REAL_BLOCKCHAIN_ID,
-            uniqueId,
-          });
+          realBlockchainInfo.startMonitoring();
+          setActiveBlockchain(realBlockchainInfo as unknown as InternalBlockchainInterface);
+          requestBalance();
+          requestRecvAddress();
         }
 
         const record = evt as unknown as Record<string, unknown>;
@@ -138,37 +143,10 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
   }, [initializing]);
 
   useEffect(() => {
-    const bcSubscription = blockchainConnector.getInbound().subscribe({
-      next: (evt: BlockchainInboundReply) => {
-        if (evt.getBalance) {
-          setBalance(evt.getBalance);
-          if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
-          balanceTimerRef.current = setTimeout(requestBalance, 15000);
-        }
-        if (evt.getAddress) {
-          setRecvAddress(evt.getAddress.address);
-        }
-      },
-    });
-
-    const biSubscription = blockchainDataEmitter.getObservable().subscribe({
-      next: (evt: BlockchainReport) => {
-        if (!haveBlock) {
-          setHaveBlock(true);
-          debugLog(`Blockchain peak received: height ${evt.peak}`);
-          if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
-          requestBalance();
-          requestRecvAddress();
-        }
-      },
-    });
-
-    return function () {
+    return () => {
       if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
-      bcSubscription.unsubscribe();
-      biSubscription.unsubscribe();
     };
-  }, [haveBlock]);
+  }, []);
 
   // (height managed by parent Shell layout)
   const handleConnectSimulator = useCallback(() => {
@@ -178,10 +156,10 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
         setFakeAddress(res);
         toggleExpanded();
         onConnected?.('simulator');
-        blockchainDataEmitter.select({
-          selection: FAKE_BLOCKCHAIN_ID,
-          uniqueId,
+        fakeBlockchainInfo.startMonitoring(uniqueId).catch((err: unknown) => {
+          console.warn('[blockchain] startMonitoring failed', err);
         });
+        setActiveBlockchain(fakeBlockchainInfo);
         if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
         requestBalance();
         requestRecvAddress();
