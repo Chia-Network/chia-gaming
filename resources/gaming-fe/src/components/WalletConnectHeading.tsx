@@ -138,7 +138,7 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
   const initWalletConnect = useCallback(async () => {
     if (!initializing) {
       setInitializing(true);
-      await walletConnectState.init();
+      await walletConnectState.init().catch(() => {});
     }
   }, [initializing]);
 

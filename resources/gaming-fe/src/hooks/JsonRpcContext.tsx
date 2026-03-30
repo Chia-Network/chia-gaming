@@ -131,7 +131,8 @@ async function request<T, D extends object = object>(
   const result = raw as Record<string, unknown> | undefined;
   if (result?.error) throw new Error(JSON.stringify(result.error));
 
-  return (result?.data ?? result) as T;
+  if (result?.data !== undefined) return result.data as T;
+  return result as T;
 }
 
 async function getWallets(data: GetWalletsRequest) {

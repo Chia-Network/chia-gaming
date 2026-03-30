@@ -26,17 +26,15 @@ export interface WalletConnectOutboundState {
 
 class WalletState {
   isConnected: boolean;
-  isInitialized: boolean;
   address?: string;
   chainId?: string;
   session?: SessionTypes.Struct;
-  error?: string;
   client?: InstanceType<typeof Client>;
   observable: Subject<WalletConnectOutboundState>;
+  private initPromise: Promise<void> | null = null;
 
   constructor() {
     this.isConnected = false;
-    this.isInitialized = false;
     this.observable = new Subject();
   }
 
@@ -60,14 +58,49 @@ class WalletState {
     return this.address;
   }
 
-  async init() {
-    if (this.isInitialized) {
-      console.log('[WC] init() skipped -- already initialized');
-      return;
-    }
+  private onSessionConnected(session: SessionTypes.Struct) {
+    const accountParts = session.namespaces.chia.accounts[0].split(':');
+    const address = accountParts[2];
+    const detectedChain = `${accountParts[0]}:${accountParts[1]}`;
 
-    this.isInitialized = true;
+    this.isConnected = true;
+    this.address = address;
+    this.chainId = detectedChain;
+    this.session = session;
+    this.observable.next({
+      stateName: 'connected',
+      initialized: true,
+      haveClient: true,
+      haveSession: true,
+      connected: true,
+      sessions: 1,
+      address,
+    });
+  }
 
+  private resetSession() {
+    this.isConnected = false;
+    this.session = undefined;
+    this.address = undefined;
+    this.chainId = undefined;
+    this.observable.next({
+      stateName: 'initialized',
+      connected: false,
+      sessions: 0,
+      address: undefined,
+    });
+  }
+
+  init(): Promise<void> {
+    if (this.initPromise) return this.initPromise;
+    this.initPromise = this.doInit().catch((err) => {
+      this.initPromise = null;
+      throw err;
+    });
+    return this.initPromise;
+  }
+
+  private async doInit(): Promise<void> {
     console.log(`[WC] network: ${CHAIN_ID}`);
     console.log('[WC] init() starting', {
       projectId: PROJECT_ID,
@@ -78,16 +111,6 @@ class WalletState {
 
     this.observable.next({ stateName: 'initializing', initializing: true });
     debugLog('WalletConnect initializing...');
-
-    const originalConsoleError = console.error;
-    console.error = (...args: unknown[]) => {
-      if (args.some(a => typeof a === 'object' && a instanceof Error
-        ? a.message?.includes('No matching key. history:')
-        : String(a).includes('No matching key. history:'))) {
-        return;
-      }
-      originalConsoleError.apply(console, args);
-    };
 
     try {
       const signClient = await Client.init({
@@ -104,35 +127,32 @@ class WalletState {
 
       console.log('[WC] Client.init() succeeded');
       this.client = signClient;
-      const sessions = signClient.session.getAll();
-      console.log(`[WC] existing sessions: ${sessions.length}`);
 
-      if (sessions.length > 0) {
-        const session = sessions[0];
-        const accountParts = session.namespaces.chia.accounts[0].split(':');
-        const address = accountParts[2];
-        const detectedChain = `${accountParts[0]}:${accountParts[1]}`;
+      signClient.on('session_update', ({ topic, params }) => {
+        const updated = signClient.session.get(topic);
+        const merged = { ...updated, namespaces: params.namespaces };
+        this.onSessionConnected(merged);
+      });
+
+      signClient.on('session_delete', () => {
+        console.log('[WC] session deleted by wallet');
+        this.resetSession();
+      });
+
+      signClient.on('session_expire', () => {
+        console.log('[WC] session expired');
+        this.resetSession();
+      });
+
+      if (signClient.session.length) {
+        const lastKey = signClient.session.keys[signClient.session.keys.length - 1];
+        const session = signClient.session.get(lastKey);
         console.log('[WC] restoring existing session', {
           topic: session.topic,
-          address,
-          chainId: detectedChain,
-          methods: session.namespaces.chia.methods,
           peer: session.peer?.metadata?.name,
           expiry: session.expiry,
         });
-
-        this.isConnected = true;
-        this.address = address;
-        this.chainId = detectedChain;
-        this.session = session;
-        this.observable.next({
-          stateName: 'connected',
-          initialized: true,
-          haveClient: true,
-          haveSession: true,
-          connected: true,
-          sessions: sessions.length,
-        });
+        this.onSessionConnected(session);
       }
 
       debugLog('WalletConnect initialized');
@@ -144,42 +164,35 @@ class WalletState {
     } catch (err) {
       console.error('[WC] Client.init() FAILED', err);
       debugLog(`WalletConnect init failed: ${err}`);
-      this.isInitialized = false;
       this.observable.next({
         stateName: 'initialized',
         initialized: true,
         haveClient: false,
       });
+      throw err;
     }
   }
 
   async disconnect() {
     if (!this.client || !this.session) return;
 
-    this.observable.next({
-      stateName: 'initialized',
-      connected: false,
-      sessions: 0,
-      address: undefined,
-    });
+    const topic = this.session.topic;
+    this.resetSession();
 
     try {
       await this.client.disconnect({
-        topic: this.session.topic,
-        reason: {
-          code: 6000,
-          message: 'User disconnected',
-        },
+        topic,
+        reason: { code: 6000, message: 'User disconnected' },
       });
-    } catch (error) {
-      this.error = 'Failed to disconnect wallet';
+    } catch {
+      // WC disconnect can fail if session is already gone
     }
   }
 
   async startConnect(): Promise<StartConnectResult> {
     console.log('[WC] startConnect() called', {
       hasClient: !!this.client,
-      isInitialized: this.isInitialized,
+      isInitialized: !!this.initPromise,
     });
 
     if (!this.client) {
@@ -195,7 +208,7 @@ class WalletState {
 
     try {
       const { uri, approval } = await this.client.connect({
-        optionalNamespaces: REQUIRED_NAMESPACES,
+        requiredNamespaces: REQUIRED_NAMESPACES,
       });
 
       console.log('[WC] startConnect() got URI', {
@@ -226,31 +239,12 @@ class WalletState {
     console.log('[WC] connect() waiting for wallet approval...');
     try {
       const session = await approval();
-      const accountParts = session.namespaces.chia.accounts[0].split(':');
-      const address = accountParts[2];
-      const detectedChain = `${accountParts[0]}:${accountParts[1]}`;
-
-      console.log(`[WC] network: ${detectedChain}`);
       console.log('[WC] connect() session approved', {
         topic: session.topic,
-        address,
-        chainId: detectedChain,
-        methods: session.namespaces.chia.methods,
         peer: session.peer?.metadata?.name,
         expiry: session.expiry,
       });
-
-      this.address = address;
-      this.chainId = detectedChain;
-      this.session = session;
-
-      this.observable.next({
-        stateName: 'connected',
-        waitingApproval: false,
-        connected: true,
-        sessions: 1,
-        address,
-      });
+      this.onSessionConnected(session);
     } catch (err) {
       console.error('[WC] connect() approval FAILED or rejected', err);
       this.observable.next({

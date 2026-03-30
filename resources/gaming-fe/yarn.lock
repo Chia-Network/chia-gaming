@@ -1843,7 +1843,7 @@
   dependencies:
     tslib "1.14.1"
 
-"@walletconnect/sign-client@^2.23.9":
+"@walletconnect/sign-client@^2.10.0":
   version "2.23.9"
   resolved "https://registry.yarnpkg.com/@walletconnect/sign-client/-/sign-client-2.23.9.tgz#b4902eb560771686a0528e454a17b9dbd7b7aa51"
   integrity sha512-Xj+hw4E6mGRyhCdVOT/RMgnG+up/Y3v0ho5PlkVozvXWeVSqHNh9DmjLuU97a7OACoGd/oHBF6g3NVqD7MgCMQ==
@@ -1877,7 +1877,7 @@
     "@walletconnect/logger" "3.0.2"
     events "3.3.0"
 
-"@walletconnect/utils@2.23.9":
+"@walletconnect/utils@2.23.9", "@walletconnect/utils@^2.10.0":
   version "2.23.9"
   resolved "https://registry.yarnpkg.com/@walletconnect/utils/-/utils-2.23.9.tgz#c128a98692859d2944653fcee5e51d03f6683360"
   integrity sha512-C5TltCs8UPypNiteYnKSv8+ZDK2EjVDyXCxN6kA9bkA+j6KGsNIV7l9MUA8WBAvE5Gi5EcBdhD3R9Hpo/1HHqQ==

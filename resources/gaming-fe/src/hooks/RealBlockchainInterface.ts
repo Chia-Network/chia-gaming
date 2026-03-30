@@ -1,5 +1,6 @@
 import { rpc } from '../hooks/JsonRpcContext';
 import {
+  InternalBlockchainInterface,
   BlockchainInboundAddressResult,
 } from '../types/ChiaGaming';
 import { WalletType } from '../types/WalletType';
@@ -62,7 +63,7 @@ class WalletConnectPoller {
   }
 }
 
-export class RealBlockchainInterface {
+export class RealBlockchainInterface implements InternalBlockchainInterface {
   addressData: BlockchainInboundAddressResult;
   monitor: CoinStateMonitor;
 
@@ -119,10 +120,10 @@ export class RealBlockchainInterface {
     return this.monitor.getObservable();
   }
 
-  async spend(spend: unknown): Promise<string> {
+  async spend(_blob: string, spendBundle: unknown): Promise<string> {
     console.log('[wc-blockchain] >>> walletPushTx');
     try {
-      const result = await rpc.walletPushTx({ spendBundle: spend as object });
+      const result = await rpc.walletPushTx({ spendBundle: spendBundle as object });
       console.log('[wc-blockchain] <<< walletPushTx', (result as any)?.status);
       return result as unknown as string;
     } catch (e: unknown) {
@@ -131,12 +132,64 @@ export class RealBlockchainInterface {
         console.warn(`[wc-blockchain] walletPushTx retryable error, retry in ${PUSH_TX_RETRY_DELAY / 1000}s:`, errStr);
         return new Promise((resolve, reject) => {
           setTimeout(() => {
-            this.spend(spend).then(resolve).catch(reject);
+            this.spend(_blob, spendBundle).then(resolve).catch(reject);
           }, PUSH_TX_RETRY_DELAY);
         });
       }
       console.error('[wc-blockchain] walletPushTx error', e);
       throw e;
+    }
+  }
+
+  async getBalance(): Promise<number> {
+    const result = await rpc.getWalletBalance({ walletId: 1 });
+    return (result as any)?.confirmedWalletBalance ?? 0;
+  }
+
+  async getPuzzleAndSolution(coin: string): Promise<string[] | null> {
+    try {
+      const height = await rpc.getHeightInfo({});
+      const records = await rpc.getCoinRecordsByNames({
+        names: [coin],
+        includeSpentCoins: true,
+      });
+      const record = records.find((r: CoinRecord) => r.spent);
+      if (!record) return null;
+      return [record.coin.parentCoinInfo, record.coin.puzzleHash, String(record.coin.amount)];
+    } catch {
+      return null;
+    }
+  }
+
+  async selectCoins(_uniqueId: string, amount: number): Promise<string | null> {
+    try {
+      const result = await rpc.selectCoins({ walletId: 1, amount });
+      if (!result?.coins?.length) return null;
+      return result.coins[0].parentCoinInfo ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  async getHeightInfo(): Promise<number> {
+    return rpc.getHeightInfo({});
+  }
+
+  async createOfferForIds(
+    _uniqueId: string,
+    offer: { [walletId: string]: number },
+    extraConditions?: Array<{ opcode: number; args: string[] }>,
+    coinIds?: string[],
+    maxHeight?: number,
+  ): Promise<any | null> {
+    try {
+      const params: any = { offer };
+      if (extraConditions) params.driverDict = extraConditions;
+      if (coinIds) params.coinIds = coinIds;
+      if (maxHeight) params.maxHeight = maxHeight;
+      return await rpc.createOfferForIds(params);
+    } catch {
+      return null;
     }
   }
 

@@ -1,6 +1,5 @@
 import {Button} from './button'
 import React from 'react';
-//import { useWalletConnect } from "../hooks/WalletConnectContext";
 
 interface DebugProps {
   connectString: string;

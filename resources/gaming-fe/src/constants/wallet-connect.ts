@@ -1,5 +1,7 @@
 import { CoreTypes, ProposalTypes } from '@walletconnect/types';
 
+import { CHAIN_ID } from './env';
+
 export enum ChiaMethod {
   GetWallets = 'chia_getWallets',
   GetWalletBalance = 'chia_getWalletBalance',
@@ -16,7 +18,7 @@ export enum ChiaMethod {
 export const REQUIRED_NAMESPACES: ProposalTypes.RequiredNamespaces = {
   chia: {
     methods: Object.values(ChiaMethod),
-    chains: ['chia:mainnet', 'chia:testnet'],
+    chains: [CHAIN_ID],
     events: [],
   },
 };
