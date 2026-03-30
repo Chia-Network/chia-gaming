@@ -9,6 +9,22 @@ import { CoinRecord } from '../types/rpc/CoinRecord';
 import { CoinStateMonitor, CoinStateBackend } from './CoinStateMonitor';
 
 const PUSH_TX_RETRY_DELAY = 30000;
+const ASSERT_BEFORE_HEIGHT_ABSOLUTE = 87;
+
+function encodeU64AsClvmHex(val: number): string {
+  if (val === 0) return '';
+  const bytes: number[] = [];
+  let h = val;
+  while (h > 0) {
+    bytes.push(h & 0xff);
+    h = Math.floor(h / 256);
+  }
+  bytes.reverse();
+  if (bytes[0] & 0x80) {
+    bytes.unshift(0);
+  }
+  return bytes.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
 const POLL_INTERVAL = 10000;
 
 function isRetryablePushTxError(errStr: string): boolean {
@@ -81,12 +97,6 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         await rpc.registerRemoteCoins({
           walletId: self.remoteWalletId!,
           coinIds: names,
-        });
-      },
-      async getCoinRecords(names: string[]) {
-        return rpc.getCoinRecordsByNames({
-          names,
-          includeSpentCoins: true,
         });
       },
     };
@@ -183,11 +193,18 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     maxHeight?: number,
   ): Promise<any | null> {
     try {
-      const params: any = { offer };
-      if (extraConditions) params.driverDict = extraConditions;
-      if (coinIds) params.coinIds = coinIds;
-      if (maxHeight) params.maxHeight = maxHeight;
-      return await rpc.createOfferForIds(params);
+      const conditions = [...(extraConditions ?? [])];
+      if (maxHeight !== undefined) {
+        conditions.push({
+          opcode: ASSERT_BEFORE_HEIGHT_ABSOLUTE,
+          args: [encodeU64AsClvmHex(maxHeight)],
+        });
+      }
+      return await rpc.createOfferForIds({
+        offer,
+        extraConditions: conditions.length ? conditions : undefined,
+        coinIds,
+      });
     } catch {
       return null;
     }

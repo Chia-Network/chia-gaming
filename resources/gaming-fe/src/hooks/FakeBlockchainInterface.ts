@@ -43,10 +43,6 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       async registerCoins(names: string[]) {
         await self.sendRequest('register_remote_coins', { coinIds: names });
       },
-      async getCoinRecords(names: string[]) {
-        const raw = await self.sendRequest('get_coin_records_by_names', { names });
-        return Array.isArray(raw) ? (raw as CoinRecord[]) : [];
-      },
     };
     this.monitor = new CoinStateMonitor(backend);
   }

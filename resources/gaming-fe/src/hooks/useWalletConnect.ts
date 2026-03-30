@@ -208,7 +208,7 @@ class WalletState {
 
     try {
       const { uri, approval } = await this.client.connect({
-        requiredNamespaces: REQUIRED_NAMESPACES,
+        optionalNamespaces: REQUIRED_NAMESPACES,
       });
 
       console.log('[WC] startConnect() got URI', {

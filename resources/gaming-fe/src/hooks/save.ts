@@ -57,7 +57,7 @@ const APP_STATE_KEY = 'appState';
 const CURRENT_VERSION = 2;
 function isWalletConnectStorageKey(key: string): boolean {
   const lower = key.toLowerCase();
-  return lower.startsWith('wc@') || lower.includes('walletconnect');
+  return lower.startsWith('wc@') || lower.includes('walletconnect') || lower.includes('wallet_connect');
 }
 
 function deleteIndexedDb(name: string): Promise<void> {

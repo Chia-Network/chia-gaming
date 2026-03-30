@@ -5,7 +5,6 @@ import { applyCoinRecordsWatchDiff } from '../util/coinWatch';
 
 export interface CoinStateBackend {
   registerCoins(names: string[]): Promise<void>;
-  getCoinRecords(names: string[]): Promise<CoinRecord[]>;
 }
 
 export class CoinStateMonitor {
@@ -37,12 +36,6 @@ export class CoinStateMonitor {
 
     try {
       await this.backend.registerCoins([coinName]);
-      try {
-        const records = await this.backend.getCoinRecords([coinName]);
-        await this.applyRecords(records);
-      } catch {
-        // Coin may not be confirmed on-chain yet; poller / block events will pick it up.
-      }
     } catch (e) {
       console.error('[coin-monitor] registerCoins failed', e);
       this.registeredCoinNames.delete(coinName);

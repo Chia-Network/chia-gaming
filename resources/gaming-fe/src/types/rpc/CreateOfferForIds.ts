@@ -8,7 +8,6 @@ export interface CreateOfferForIdsRequest {
   fee?: number;
   extraConditions?: Array<{ opcode: number; args: any }>;
   coinIds?: string[];
-  max_height?: number;
 }
 
 export interface CreateOfferForIdsResponse {
