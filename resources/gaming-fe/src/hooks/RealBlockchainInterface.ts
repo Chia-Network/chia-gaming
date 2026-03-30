@@ -121,6 +121,8 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async startMonitoring() {
+    await this.getHeightInfo();
+    debugLog('[wc-blockchain] relay probe succeeded, starting poller');
     this.poller.start();
   }
 

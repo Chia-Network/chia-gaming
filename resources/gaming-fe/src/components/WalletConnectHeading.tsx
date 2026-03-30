@@ -113,10 +113,13 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
           toggleExpanded();
           setAlreadyConnected(true);
           onConnected?.('walletconnect');
-          realBlockchainInfo.startMonitoring();
           setActiveBlockchain(realBlockchainInfo as unknown as InternalBlockchainInterface);
-          requestBalance();
-          requestRecvAddress();
+          realBlockchainInfo.startMonitoring().then(() => {
+            requestBalance();
+            requestRecvAddress();
+          }).catch((err: unknown) => {
+            console.warn('[blockchain] startMonitoring failed', err);
+          });
         }
 
         const record = evt as unknown as Record<string, unknown>;
@@ -156,13 +159,14 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
         setFakeAddress(res);
         toggleExpanded();
         onConnected?.('simulator');
-        fakeBlockchainInfo.startMonitoring(uniqueId).catch((err: unknown) => {
+        setActiveBlockchain(fakeBlockchainInfo);
+        fakeBlockchainInfo.startMonitoring(uniqueId).then(() => {
+          if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
+          requestBalance();
+          requestRecvAddress();
+        }).catch((err: unknown) => {
           console.warn('[blockchain] startMonitoring failed', err);
         });
-        setActiveBlockchain(fakeBlockchainInfo);
-        if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
-        requestBalance();
-        requestRecvAddress();
       })
       .catch((e) => console.error('register failed:', e));
   }, []);

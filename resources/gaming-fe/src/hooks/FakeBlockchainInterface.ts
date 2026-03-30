@@ -12,6 +12,7 @@ import {
 } from '../types/ChiaGaming';
 
 import { CoinStateMonitor, CoinStateBackend } from './CoinStateMonitor';
+import { debugLog } from '../services/debugLog';
 
 type Bech32Module = { encode: (prefix: string, data: Uint8Array, encoding?: 'bech32' | 'bech32m') => string };
 const bech32: Bech32Module = (bech32_module ? bech32_module : bech32_buffer);
@@ -136,6 +137,8 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     if (this.deleted) return;
     const address = bech32.encode('xch', toUint8(puzzleHash), 'bech32m');
     this.addressData = { address, puzzleHash };
+    await this.getHeightInfo();
+    debugLog('[sim-blockchain] simulator probe succeeded');
   }
 
   getObservable() {
