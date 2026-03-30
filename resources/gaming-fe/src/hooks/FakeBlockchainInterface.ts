@@ -2,7 +2,7 @@
 import bech32_module from 'bech32-buffer';
 // @ts-ignore
 import * as bech32_buffer from 'bech32-buffer';
-import { toUint8 } from '../util';
+import { toUint8, normalizeCoinStringHex } from '../util';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 
 import { BLOCKCHAIN_WS_URL } from '../settings';
@@ -170,7 +170,9 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
 
   async selectCoins(uniqueId: string, amount: number): Promise<string | null> {
     await this.getOrRequestToken(uniqueId);
-    return this.sendRequest('select_coins', { who: uniqueId, amount });
+    const response = await this.sendRequest('select_coins', { who: uniqueId, amount });
+    if (typeof response !== 'string') return response ?? null;
+    return normalizeCoinStringHex(response);
   }
 
   async getHeightInfo(): Promise<number> {
@@ -187,7 +189,9 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     const params: any = { who: uniqueId, offer };
     if (extraConditions) params.extraConditions = extraConditions;
     if (coinIds) params.coinIds = coinIds;
-    return this.sendRequest('create_offer_for_ids', params);
+    const raw = await this.sendRequest('create_offer_for_ids', params);
+    if (!raw) return null;
+    return typeof raw === 'string' ? JSON.parse(raw) : raw;
   }
 
   async registerUser(name: string): Promise<string> {

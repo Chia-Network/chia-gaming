@@ -1,4 +1,4 @@
-import { toUint8, toHexString } from '../util';
+import { toUint8, toHexString, normalizeCoinStringHex } from '../util';
 
 export const SINGLETON_LAUNCHER_PUZZLE_HASH =
   'eff07522495060c066f66f32acc2a77e3a3e737aca8baea4d1a64ea4cdc13da9';
@@ -17,7 +17,7 @@ export const SINGLETON_LAUNCHER_PUZZLE_HASH =
 export async function computeLauncherCoin(
   parentCoinHex: string,
 ): Promise<{ launcherCoinHex: string; launcherCoinId: string }> {
-  const parentBytes = toUint8(parentCoinHex);
+  const parentBytes = toUint8(normalizeCoinStringHex(parentCoinHex));
   const parentIdBuf = await crypto.subtle.digest('SHA-256', parentBytes);
   const parentId = new Uint8Array(parentIdBuf);
 

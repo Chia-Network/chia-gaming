@@ -1,4 +1,4 @@
-FROM node:20.19.0 AS stage1
+FROM node:20 AS stage1
 ENV PATH="/root/.cargo/bin:${PATH}"
 ENV RUSTUP_PERMIT_COPY_RENAME=1
 RUN apt-get update -y && \
@@ -175,7 +175,7 @@ COPY resources/wc-stub/tsconfig.json /app/wc/
 RUN cd /app/wc && yarn run build
 # rm -rf $(yarn cache dir)
 
-#CI FROM node:20.19.0
+#CI FROM node:20
 #CI RUN apt-get update -y && \
 #CI     apt-get install -y libc6 && \
 #CI     apt-get install -y python3 python3-dev python3-pip python3-venv curl nginx && \

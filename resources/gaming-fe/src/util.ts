@@ -20,6 +20,18 @@ export function toHexString(byteArray: Uint8Array | number[]) {
   }).join('');
 }
 
+export function normalizeHexString(hex: string) {
+  return hex.trim().toLowerCase().replace(/^0x/, '');
+}
+
+export function normalizeCoinStringHex(coinString: string) {
+  const normalized = coinString.trim().toLowerCase().replace(/0x/g, '');
+  if (normalized.length % 2 !== 0) {
+    throw new Error(`Invalid coin hex length: ${normalized.length}`);
+  }
+  return normalized;
+}
+
 export type FragmentData = Record<string, string>;
 
 export function getParamsFromString(paramString: string): Record<string, string> {

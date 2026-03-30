@@ -8,9 +8,12 @@ import { CoinRecord } from '../types/rpc/CoinRecord';
 
 import { CoinStateMonitor, CoinStateBackend } from './CoinStateMonitor';
 import { debugLog } from '../services/debugLog';
+import { normalizeHexString } from '../util';
 
 const PUSH_TX_RETRY_DELAY = 30000;
 const ASSERT_BEFORE_HEIGHT_ABSOLUTE = 87;
+const CREATE_COIN = 51;
+const ASSERT_COIN_ANNOUNCEMENT = 61;
 
 function encodeU64AsClvmHex(val: number): string {
   if (val === 0) return '';
@@ -26,6 +29,32 @@ function encodeU64AsClvmHex(val: number): string {
   }
   return bytes.map((b) => b.toString(16).padStart(2, '0')).join('');
 }
+
+function decodeNonNegativeClvmIntHex(hex: string): bigint {
+  const clean = hex.trim().toLowerCase();
+  if (clean === '') return 0n;
+  const normalized = clean.length % 2 === 0 ? clean : `0${clean}`;
+  const bytes = normalized.match(/.{1,2}/g)?.map((b) => Number.parseInt(b, 16)) ?? [];
+  if (bytes.length === 0) return 0n;
+  // We only expect non-negative values in this call path.
+  const isNegative = (bytes[0] & 0x80) !== 0 && bytes[0] !== 0;
+  if (isNegative) {
+    throw new Error(`unexpected negative CLVM integer encoding: ${hex}`);
+  }
+  let result = 0n;
+  for (const b of bytes) {
+    result = (result << 8n) + BigInt(b);
+  }
+  return result;
+}
+
+function toSafeNumber(value: bigint, fieldName: string): number {
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`${fieldName} exceeds Number.MAX_SAFE_INTEGER: ${value.toString()}`);
+  }
+  return Number(value);
+}
+
 const POLL_INTERVAL = 10000;
 
 function isRetryablePushTxError(errStr: string): boolean {
@@ -183,9 +212,26 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   async selectCoins(_uniqueId: string, amount: number): Promise<string | null> {
     try {
-      const result = await rpc.selectCoins({ walletId: 1, amount });
+      const result = await rpc.selectCoins({ walletId: 1, amount: String(amount) });
       if (!result?.coins?.length) return null;
-      return result.coins[0].parentCoinInfo ?? null;
+      console.log('[wc-blockchain] <<< selectCoins raw', result);
+      console.log('[wc-blockchain] <<< selectCoins raw(json)', JSON.stringify(result));
+      const selected = result.coins[0];
+      const parentCoinInfo = normalizeHexString(selected.parentCoinInfo);
+      const puzzleHash = normalizeHexString(selected.puzzleHash);
+      const amountHex = encodeU64AsClvmHex(Number(selected.amount));
+      const coinString = `${parentCoinInfo}${puzzleHash}${amountHex}`;
+      console.log('[wc-blockchain] selectCoins choosing coin[0]', {
+        parentCoinInfo: selected.parentCoinInfo,
+        puzzleHash: selected.puzzleHash,
+        amount: selected.amount,
+        amountHex,
+        coinStringLength: coinString.length,
+      });
+      debugLog(
+        `[wc-blockchain] selectCoins coin0 parent=${parentCoinInfo} ph=${puzzleHash} amount=${selected.amount} amountHex=${amountHex} coinStringLen=${coinString.length}`,
+      );
+      return coinString;
     } catch (e) {
       console.error('[wc-blockchain] selectCoins error', e);
       debugLog(`[wc-blockchain] selectCoins error: ${String(e)}`);
@@ -212,15 +258,88 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
           args: [encodeU64AsClvmHex(maxHeight)],
         });
       }
-      return await rpc.createOfferForIds({
-        offer,
-        driverDict: {},
-        extraConditions: conditions.length ? conditions : undefined,
-        coinIds,
+
+      const normalizedOffer = Object.fromEntries(
+        Object.entries(offer).map(([walletId, amount]) => [walletId, String(amount)]),
+      );
+
+      const normalizedConditions = conditions.map((condition) => {
+        const args = condition.args ?? [];
+        if (!Array.isArray(args)) {
+          return condition;
+        }
+        if (condition.opcode === CREATE_COIN) {
+          const [puzzleHash = '', amountHex = ''] = args;
+          return {
+            opcode: condition.opcode,
+            args: {
+              puzzle_hash: puzzleHash,
+              amount: toSafeNumber(decodeNonNegativeClvmIntHex(amountHex), 'create_coin.amount'),
+              memos: null,
+            },
+          };
+        }
+        if (condition.opcode === ASSERT_COIN_ANNOUNCEMENT) {
+          const [msg = ''] = args;
+          return {
+            opcode: condition.opcode,
+            args: { msg },
+          };
+        }
+        if (condition.opcode === ASSERT_BEFORE_HEIGHT_ABSOLUTE) {
+          const [heightHex = ''] = args;
+          return {
+            opcode: condition.opcode,
+            args: {
+              height: toSafeNumber(decodeNonNegativeClvmIntHex(heightHex), 'assert_before_height.height'),
+            },
+          };
+        }
+        return condition;
       });
+
+      const payload = {
+        offer: normalizedOffer,
+        driverDict: {},
+        extraConditions: normalizedConditions.length ? normalizedConditions : undefined,
+        coinIds,
+      };
+      console.log('[wc-blockchain] >>> createOfferForIds payload', payload);
+      console.log('[wc-blockchain] >>> createOfferForIds payload(json)', JSON.stringify(payload));
+      debugLog(`[wc-blockchain] createOfferForIds payload: ${JSON.stringify(payload)}`);
+      const response = await rpc.createOfferForIds(payload);
+      console.log('[wc-blockchain] <<< createOfferForIds', response);
+      console.log('[wc-blockchain] <<< createOfferForIds (json)', JSON.stringify(response));
+      const offerStr = (response as any)?.offer;
+      if (typeof offerStr === 'string' && offerStr.startsWith('offer')) {
+        return offerStr;
+      }
+      return response;
     } catch (e) {
-      console.error('[wc-blockchain] createOfferForIds error', e);
-      debugLog(`[wc-blockchain] createOfferForIds error: ${String(e)}`);
+      let parsedError: unknown = undefined;
+      if (e instanceof Error) {
+        try {
+          parsedError = JSON.parse(e.message);
+        } catch {
+          parsedError = undefined;
+        }
+      }
+      console.error('[wc-blockchain] createOfferForIds error', {
+        error: e,
+        parsedError,
+        offer,
+        extraConditions,
+        coinIds,
+        maxHeight,
+      });
+      debugLog(
+        `[wc-blockchain] createOfferForIds error: ${String(e)} payload=${JSON.stringify({
+          offer,
+          extraConditions,
+          coinIds,
+          maxHeight,
+        })}`,
+      );
       return null;
     }
   }

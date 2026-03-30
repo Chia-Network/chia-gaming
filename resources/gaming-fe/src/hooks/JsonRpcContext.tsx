@@ -54,6 +54,14 @@ function getErrorText(err: unknown): string {
   return String(err);
 }
 
+function toDebugJson(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
 function isTransientWalletConnectError(err: unknown): boolean {
   const message = getErrorText(err).toLowerCase();
   return (
@@ -87,7 +95,9 @@ async function request<T, D extends object = object>(
 
   const startedAt = Date.now();
   debugLog(`[WC RPC begin] ${method}`);
-  console.log('[WC] >>>', method, params);
+  const activeTopic = walletConnectState.getSession()?.topic;
+  console.log('[WC] >>>', method, params, { topic: activeTopic, chainId: walletConnectState.getChainId() });
+  debugLog(`[WC RPC topic] ${method} topic=${activeTopic ?? 'none'}`);
 
   let raw: unknown;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -129,7 +139,23 @@ async function request<T, D extends object = object>(
   console.log('[WC] <<<', method, raw);
 
   const result = raw as Record<string, unknown> | undefined;
-  if (result?.error) throw new Error(JSON.stringify(result.error));
+  if (result?.error) {
+    const errorText = toDebugJson(result.error);
+    if (method === ChiaMethod.CreateOfferForIds) {
+      console.error('[WC RPC protocol error] chia_createOfferForIds', {
+        params,
+        error: result.error,
+        raw,
+      });
+      console.error('[WC RPC protocol error] chia_createOfferForIds params(json)=', toDebugJson(params));
+      console.error('[WC RPC protocol error] chia_createOfferForIds error(json)=', errorText);
+      console.error('[WC RPC protocol error] chia_createOfferForIds raw(json)=', toDebugJson(raw));
+      debugLog(
+        `[WC RPC protocol error] ${method}: error=${errorText} params=${toDebugJson(params)}`,
+      );
+    }
+    throw new Error(errorText);
+  }
 
   if (result?.data !== undefined) return result.data as T;
   return result as T;

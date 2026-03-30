@@ -21,7 +21,6 @@ import {
 import { debugLog } from '../services/debugLog';
 import { saveSession, SessionSave, CalpokerHandState, BlockchainType } from './save';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
-import { normalizeSpendBundle } from '../util/offerDecode';
 
 function clvmToBytes(value: Program | null): Uint8Array {
   if (value === null || value === undefined) return new Uint8Array([0x80]);
@@ -73,6 +72,8 @@ export class WasmBlobWrapper {
   private draining = false;
   private pendingBlockNotification: { peak: number; report: WatchReport } | null = null;
   launcherProvided: boolean;
+  private lastSelectCoinsValue: string | null = null;
+  private lastLauncherCoinId: string | null = null;
 
   unackedMessages: Array<{ msgno: number; msg: string }> = [];
   pendingTransactions: string[] = [];
@@ -233,8 +234,20 @@ export class WasmBlobWrapper {
       if (!coin) {
         throw new Error('ASSERT_FAIL: selectCoins returned null for launcher parent coin');
       }
+      this.lastSelectCoinsValue = coin;
+      console.log('[wasm diag] selectCoins returned value', {
+        value: coin,
+        hexLength: coin.length,
+      });
+      debugLog(`[wasm diag] selectCoins value len=${coin.length} value=${coin}`);
       const { computeLauncherCoin } = await import('../util/launcher');
-      const { launcherCoinHex } = await computeLauncherCoin(coin);
+      const { launcherCoinHex, launcherCoinId } = await computeLauncherCoin(coin);
+      this.lastLauncherCoinId = launcherCoinId;
+      console.log('[wasm diag] computed launcher coin', {
+        launcherCoinHexLength: launcherCoinHex.length,
+        launcherCoinId,
+      });
+      debugLog(`[wasm diag] launcherCoinId=${launcherCoinId} launcherCoinHexLen=${launcherCoinHex.length}`);
       const result = this.cradle?.provide_launcher_coin(launcherCoinHex);
       this.processResult(result);
     } catch (e) {
@@ -246,6 +259,16 @@ export class WasmBlobWrapper {
 
   private async handleNeedCoinSpend(request: any) {
     try {
+      console.log('[wasm diag] NeedCoinSpend request', {
+        coin_id: request.coin_id,
+        amount: request.amount,
+        max_height: request.max_height,
+        lastSelectCoinsValue: this.lastSelectCoinsValue,
+        lastLauncherCoinId: this.lastLauncherCoinId,
+      });
+      debugLog(
+        `[wasm diag] NeedCoinSpend coin_id=${String(request.coin_id)} lastSelect=${String(this.lastSelectCoinsValue)} lastLauncherId=${String(this.lastLauncherCoinId)}`,
+      );
       const offerAmount = -request.amount;
       const extraConditions = (request.conditions || []).map((c: any) => ({
         opcode: c.opcode,

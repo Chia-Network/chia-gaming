@@ -1,6 +1,6 @@
 export interface SelectCoinsRequest {
   walletId: number;
-  amount: number;
+  amount: number | string;
 }
 
 export interface SelectCoinsCoin {
