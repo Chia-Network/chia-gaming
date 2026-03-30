@@ -33,7 +33,7 @@ function isRetryablePushTxError(errStr: string): boolean {
 }
 
 class WalletConnectPoller {
-  private pollingTimer: ReturnType<typeof setTimeout> | undefined;
+  private running = false;
   private remoteWalletReady = false;
 
   constructor(
@@ -44,18 +44,17 @@ class WalletConnectPoller {
   ) {}
 
   start() {
-    if (this.pollingTimer) return;
-    this.tick();
+    if (this.running) return;
+    this.running = true;
+    void this.tick();
   }
 
   stop() {
-    if (this.pollingTimer) {
-      clearTimeout(this.pollingTimer);
-      this.pollingTimer = undefined;
-    }
+    this.running = false;
   }
 
-  private async tick() {
+  private async tick(): Promise<void> {
+    if (!this.running) return;
     this.ensureRemoteWallet();
     try {
       const height = await rpc.getHeightInfo({});
@@ -77,7 +76,11 @@ class WalletConnectPoller {
       console.error('[wc-poller] poll failed', e);
       debugLog(`[wc-poller] poll failed: ${String(e)}`);
     }
-    this.pollingTimer = setTimeout(() => this.tick(), this.pollIntervalMs);
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, this.pollIntervalMs);
+    });
+    if (!this.running) return;
+    await this.tick();
   }
 }
 
@@ -211,6 +214,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       }
       return await rpc.createOfferForIds({
         offer,
+        driverDict: {},
         extraConditions: conditions.length ? conditions : undefined,
         coinIds,
       });
