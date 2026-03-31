@@ -285,7 +285,13 @@ impl HandshakeInitiatorHandler {
         total_amount: &Amount,
     ) -> Result<Hash, Error> {
         let allocator_for_hash = &mut crate::common::types::AllocEncoder::new();
-        let solution_tree_hash = (channel_puzzle_hash.clone(), (total_amount.clone(), ()))
+        // Must exactly match launcher solution shape:
+        // (channel_puzzle_hash, (total_amount, (nil, ())))
+        let nil: () = ();
+        let solution_tree_hash = (
+            channel_puzzle_hash.clone(),
+            (total_amount.clone(), (nil, ())),
+        )
             .sha256tree(allocator_for_hash);
         Ok(Sha256Input::Array(vec![
             Sha256Input::Bytes(launcher_coin_id.bytes()),

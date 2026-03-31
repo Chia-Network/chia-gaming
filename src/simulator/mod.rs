@@ -344,6 +344,8 @@ impl Simulator {
         let mut total_input = Amount::default();
         let mut total_output = Amount::default();
         let mut total_reserve_fee = Amount::default();
+        let mut created_coin_announcements: HashSet<Hash> = HashSet::new();
+        let mut asserted_coin_announcements: Vec<Vec<u8>> = Vec::new();
 
         // Track ephemeral coins (created and spent in the same transaction).
         let mut ephemeral_coins: HashMap<CoinID, PuzzleHash> = HashMap::new();
@@ -453,6 +455,17 @@ impl Simulator {
                     CoinCondition::ReserveFee(amt) => {
                         total_reserve_fee += amt.clone();
                     }
+                    CoinCondition::CreateCoinAnnouncement(msg) => {
+                        let ann = Sha256Input::Array(vec![
+                            Sha256Input::Bytes(coin_id.bytes()),
+                            Sha256Input::Bytes(msg),
+                        ])
+                        .hash();
+                        created_coin_announcements.insert(ann);
+                    }
+                    CoinCondition::AssertCoinAnnouncement(announcement_id) => {
+                        asserted_coin_announcements.push(announcement_id.clone());
+                    }
                     CoinCondition::AssertHeightRelative(blocks) => {
                         let elapsed = state.height.saturating_sub(record_created_height);
                         if (elapsed as u64) < *blocks {
@@ -485,6 +498,48 @@ impl Simulator {
                 aggregate_signature = tx.bundle.signature.clone();
             } else {
                 aggregate_signature += tx.bundle.signature.clone();
+            }
+        }
+
+        for expected in &asserted_coin_announcements {
+            let expected_hash = match Hash::from_slice(expected) {
+                Ok(h) => h,
+                Err(_) => {
+                    if self.strict {
+                        panic!(
+                            "Strict mode: ASSERT_COIN_ANNOUNCEMENT has invalid id length: {}",
+                            expected.len()
+                        );
+                    }
+                    return Ok(IncludeTransactionResult {
+                        code: 3,
+                        e: Some(23),
+                        diagnostic: format!(
+                            "ASSERT_COIN_ANNOUNCEMENT has invalid id length: {}",
+                            expected.len()
+                        ),
+                    });
+                }
+            };
+            if !created_coin_announcements.contains(&expected_hash) {
+                let created_hex: Vec<String> = created_coin_announcements
+                    .iter()
+                    .map(|h| format!("{:?}", h))
+                    .collect();
+                if self.strict {
+                    panic!(
+                        "Strict mode: ASSERT_COIN_ANNOUNCEMENT failed: announcement {:?} not created in spend bundle; created={:?}",
+                        expected_hash, created_hex
+                    );
+                }
+                return Ok(IncludeTransactionResult {
+                    code: 3,
+                    e: Some(24),
+                    diagnostic: format!(
+                        "ASSERT_COIN_ANNOUNCEMENT failed: announcement {:?} not created in spend bundle; created={:?}",
+                        expected_hash, created_hex
+                    ),
+                });
             }
         }
 

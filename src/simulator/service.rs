@@ -16,16 +16,21 @@ use tiny_http::{Header, Response, Server, StatusCode};
 use tungstenite::{Message, WebSocket};
 
 use crate::channel_handler::types::ChannelHandlerEnv;
-use crate::common::constants::CREATE_COIN;
+use crate::common::constants::{
+    ASSERT_BEFORE_HEIGHT_ABSOLUTE, ASSERT_COIN_ANNOUNCEMENT, CREATE_COIN,
+    CREATE_COIN_ANNOUNCEMENT,
+};
 use crate::common::standard_coin::standard_solution_partial;
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
     check_for_hex, convert_coinset_org_spend_to_spend, map_m, u64_from_atom, Aggsig, AllocEncoder,
     Amount, CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord,
-    Error, Hash, IntoErr, PrivateKey, Program, PuzzleHash, SpendBundle,
+    Error, Hash, IntoErr, Node, PrivateKey, Program, PuzzleHash, SpendBundle,
 };
 use crate::peer_container::{FullCoinSetAdapter, WatchReport};
 use crate::simulator::Simulator;
+use clvm_traits::ClvmEncoder;
+use clvm_traits::Atom;
 use clvm_traits::ToClvm;
 
 // ---------------------------------------------------------------------------
@@ -335,31 +340,89 @@ impl GameRunner {
             create_targets.push((identity.puzzle_hash.clone(), Amount::new(change)));
         }
 
+        let mut atom_conditions: Vec<(u32, Vec<u8>)> = Vec::new();
         for ec in &req.extra_conditions {
-            if ec.opcode == CREATE_COIN && ec.args.len() >= 2 {
-                if let Ok(ph_bytes) = check_for_hex(&ec.args[0]) {
-                    if ph_bytes.len() == 32 {
-                        let mut arr = [0u8; 32];
-                        arr.copy_from_slice(&ph_bytes);
-                        let amt_val = if ec.args[1].is_empty() {
-                            0u64
-                        } else if let Ok(amt_bytes) = check_for_hex(&ec.args[1]) {
-                            u64_from_atom(&amt_bytes).unwrap_or(0)
-                        } else {
-                            0
-                        };
-                        create_targets.push((PuzzleHash::from_bytes(arr), Amount::new(amt_val)));
+            match ec.opcode {
+                CREATE_COIN => {
+                    if ec.args.len() < 2 {
+                        return Err(Error::StrErr(
+                            "CREATE_COIN extra condition missing args".to_string(),
+                        ));
                     }
+                    let ph_bytes = check_for_hex(&ec.args[0])?;
+                    if ph_bytes.len() != 32 {
+                        return Err(Error::StrErr(
+                            "CREATE_COIN puzzle hash must be 32 bytes".to_string(),
+                        ));
+                    }
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&ph_bytes);
+                    let amt_bytes = check_for_hex(&ec.args[1])?;
+                    let amt_val = u64_from_atom(&amt_bytes).ok_or_else(|| {
+                        Error::StrErr("CREATE_COIN amount is not a valid CLVM int".to_string())
+                    })?;
+                    create_targets.push((PuzzleHash::from_bytes(arr), Amount::new(amt_val)));
+                }
+                ASSERT_COIN_ANNOUNCEMENT | CREATE_COIN_ANNOUNCEMENT => {
+                    if ec.args.len() != 1 {
+                        return Err(Error::StrErr(format!(
+                            "announcement condition opcode {} must have exactly one arg",
+                            ec.opcode
+                        )));
+                    }
+                    let arg = check_for_hex(&ec.args[0])?;
+                    if ec.opcode == ASSERT_COIN_ANNOUNCEMENT && arg.len() != 32 {
+                        return Err(Error::StrErr(
+                            "ASSERT_COIN_ANNOUNCEMENT arg must be 32-byte announcement id"
+                                .to_string(),
+                        ));
+                    }
+                    atom_conditions.push((ec.opcode, arg));
+                }
+                ASSERT_BEFORE_HEIGHT_ABSOLUTE => {
+                    if ec.args.len() != 1 {
+                        return Err(Error::StrErr(
+                            "ASSERT_BEFORE_HEIGHT_ABSOLUTE must have exactly one arg".to_string(),
+                        ));
+                    }
+                    let arg = check_for_hex(&ec.args[0])?;
+                    if u64_from_atom(&arg).is_none() {
+                        return Err(Error::StrErr(
+                            "ASSERT_BEFORE_HEIGHT_ABSOLUTE arg is not a valid CLVM int"
+                                .to_string(),
+                        ));
+                    }
+                    atom_conditions.push((ec.opcode, arg));
+                }
+                _ => {
+                    return Err(Error::StrErr(format!(
+                        "unsupported extra condition opcode {} in simulator create_offer_for_ids",
+                        ec.opcode
+                    )));
                 }
             }
         }
 
         let env = ChannelHandlerEnv::new(&mut self.allocator)?;
-        let clvm_conditions: Vec<(u32, (PuzzleHash, (Amount, ())))> = create_targets
+        let mut condition_nodes: Vec<Node> = create_targets
             .iter()
-            .map(|(ph, amt)| (CREATE_COIN, (ph.clone(), (amt.clone(), ()))))
-            .collect();
-        let conditions_clvm = clvm_conditions.to_clvm(env.allocator).into_gen()?;
+            .map(|(ph, amt)| {
+                (CREATE_COIN, (ph.clone(), (amt.clone(), ())))
+                    .to_clvm(env.allocator)
+                    .map(Node)
+                    .map_err(|e| Error::StrErr(format!("{e:?}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for (opcode, arg) in atom_conditions {
+            let arg_node = Node(
+                env.allocator
+                    .encode_atom(Atom::Borrowed(arg.as_slice()))
+                    .into_gen()?,
+            );
+            let cond_node = (opcode, (arg_node, ())).to_clvm(env.allocator).into_gen()?;
+            condition_nodes.push(Node(cond_node));
+        }
+        let conditions_clvm = condition_nodes.to_clvm(env.allocator).into_gen()?;
 
         let spend = standard_solution_partial(
             env.allocator,
