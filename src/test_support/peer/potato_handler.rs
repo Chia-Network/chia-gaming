@@ -395,7 +395,9 @@ where
     for handler in handlers.iter_mut() {
         let effects = handler.new_block(1)?;
         if !effects.is_empty() {
-            return Err(Error::StrErr("unexpected effects from initial new_block".to_string()));
+            return Err(Error::StrErr(
+                "unexpected effects from initial new_block".to_string(),
+            ));
         }
     }
 

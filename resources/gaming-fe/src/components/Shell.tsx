@@ -38,8 +38,18 @@ const FALLBACK_PER_GAME = 10n;
 
 function LogPanel({ lines }: { lines: string[] }) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  const isNearBottom = useRef(true);
+
+  const handleScroll = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    const threshold = 48;
+    isNearBottom.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
+  }, []);
+
   useEffect(() => {
-    if (ref.current) {
+    if (isNearBottom.current && ref.current) {
       ref.current.scrollTop = ref.current.scrollHeight;
     }
   }, [lines]);
@@ -49,6 +59,7 @@ function LogPanel({ lines }: { lines: string[] }) {
       ref={ref}
       readOnly
       value={lines.join('\n')}
+      onScroll={handleScroll}
       className='w-full h-full resize-none rounded-md border border-canvas-border bg-canvas-bg p-3 text-xs font-mono text-canvas-text focus:outline-none'
     />
   );

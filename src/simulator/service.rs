@@ -17,8 +17,7 @@ use tungstenite::{Message, WebSocket};
 
 use crate::channel_handler::types::ChannelHandlerEnv;
 use crate::common::constants::{
-    ASSERT_BEFORE_HEIGHT_ABSOLUTE, ASSERT_COIN_ANNOUNCEMENT, CREATE_COIN,
-    CREATE_COIN_ANNOUNCEMENT,
+    ASSERT_BEFORE_HEIGHT_ABSOLUTE, ASSERT_COIN_ANNOUNCEMENT, CREATE_COIN, CREATE_COIN_ANNOUNCEMENT,
 };
 use crate::common::standard_coin::standard_solution_partial;
 use crate::common::standard_coin::ChiaIdentity;
@@ -29,8 +28,8 @@ use crate::common::types::{
 };
 use crate::peer_container::{FullCoinSetAdapter, WatchReport};
 use crate::simulator::Simulator;
-use clvm_traits::ClvmEncoder;
 use clvm_traits::Atom;
+use clvm_traits::ClvmEncoder;
 use clvm_traits::ToClvm;
 
 // ---------------------------------------------------------------------------
@@ -64,7 +63,6 @@ struct WsBlockEvent {
 // ---------------------------------------------------------------------------
 // GameRunner (unchanged business logic)
 // ---------------------------------------------------------------------------
-
 
 fn hex_to_bytes(hexstr: &str) -> Result<Vec<u8>, Error> {
     hex::decode(hexstr).map_err(|_e| Error::StrErr("not hex".to_string()))
@@ -388,8 +386,7 @@ impl GameRunner {
                     let arg = check_for_hex(&ec.args[0])?;
                     if u64_from_atom(&arg).is_none() {
                         return Err(Error::StrErr(
-                            "ASSERT_BEFORE_HEIGHT_ABSOLUTE arg is not a valid CLVM int"
-                                .to_string(),
+                            "ASSERT_BEFORE_HEIGHT_ABSOLUTE arg is not a valid CLVM int".to_string(),
                         ));
                     }
                     atom_conditions.push((ec.opcode, arg));
@@ -763,9 +760,8 @@ fn dispatch_ws_request(
             blob.and_then(|b| game_runner.spend(b))
         }
         "push_tx" => {
-            let push_req: Result<PushTxRequest, Error> =
-                serde_json::from_value(req.params.clone())
-                    .map_err(|e| Error::StrErr(format!("bad push_tx params: {e}")));
+            let push_req: Result<PushTxRequest, Error> = serde_json::from_value(req.params.clone())
+                .map_err(|e| Error::StrErr(format!("bad push_tx params: {e}")));
             push_req.and_then(|r| game_runner.push_tx(&r.spend_bundle))
         }
         "block_spends" => {
@@ -898,9 +894,7 @@ fn service_main_inner() {
         .map_err(|e| format!("{e}"))
         .unwrap();
 
-    let height = Arc::new(AtomicUsize::new(
-        game_runner.simulator.get_current_height(),
-    ));
+    let height = Arc::new(AtomicUsize::new(game_runner.simulator.get_current_height()));
 
     // Background: tiny_http health + static files on port 5800
     let health_height = height.clone();
@@ -1007,7 +1001,10 @@ fn service_main_inner() {
         to_remove.dedup();
         for i in to_remove.into_iter().rev() {
             clients.remove(i);
-            eprintln!("WebSocket client disconnected ({} remaining)", clients.len());
+            eprintln!(
+                "WebSocket client disconnected ({} remaining)",
+                clients.len()
+            );
         }
 
         // 3. Block timer: farm a block and push per-client event
