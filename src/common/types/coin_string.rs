@@ -1,4 +1,5 @@
-use serde::{Deserialize, Serialize};
+use serde::de::{self, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use num_bigint::{BigInt, Sign};
 use num_traits::cast::ToPrimitive;
@@ -8,8 +9,61 @@ use clvm_traits::ToClvm;
 use crate::common::types::{AllocEncoder, Amount, CoinID, Error, Hash as Hash32, PuzzleHash};
 
 /// Coin String
-#[derive(Default, Clone, Serialize, Deserialize, Eq, PartialEq, Hash, PartialOrd, Ord)]
+#[derive(Default, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct CoinString(Vec<u8>);
+
+impl Serialize for CoinString {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(&self.0)
+    }
+}
+
+struct CoinStringVisitor;
+
+impl<'de> Visitor<'de> for CoinStringVisitor {
+    type Value = CoinString;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a byte array or sequence of u8")
+    }
+
+    fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(CoinString(v.to_vec()))
+    }
+
+    fn visit_byte_buf<E>(self, v: Vec<u8>) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(CoinString(v))
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut out = Vec::new();
+        while let Some(b) = seq.next_element::<u8>()? {
+            out.push(b);
+        }
+        Ok(CoinString(out))
+    }
+}
+
+impl<'de> Deserialize<'de> for CoinString {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(CoinStringVisitor)
+    }
+}
 
 impl std::fmt::Debug for CoinString {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
@@ -93,5 +147,34 @@ impl GetCoinStringParts for Option<CoinString> {
         } else {
             Ok(None)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CoinString;
+
+    #[test]
+    fn coin_string_serializes_to_bson_binary() {
+        let coin = CoinString::from_bytes(&[1, 2, 3, 4, 5]);
+        let bson = bson::to_bson(&coin).expect("coinstring should serialize");
+        match bson {
+            bson::Bson::Binary(bin) => {
+                assert_eq!(bin.bytes, vec![1, 2, 3, 4, 5]);
+            }
+            other => panic!("expected bson binary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn coin_string_deserializes_from_legacy_array() {
+        let legacy = bson::Bson::Array(vec![
+            bson::Bson::Int32(1),
+            bson::Bson::Int32(2),
+            bson::Bson::Int32(3),
+            bson::Bson::Int32(4),
+        ]);
+        let coin: CoinString = bson::from_bson(legacy).expect("legacy array should deserialize");
+        assert_eq!(coin.to_bytes(), &[1, 2, 3, 4]);
     }
 }

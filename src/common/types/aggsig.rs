@@ -1,5 +1,6 @@
 use std::ops::{Add, AddAssign};
 
+use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use clvmr::allocator::NodePtr;
@@ -26,7 +27,39 @@ impl Serialize for Aggsig {
     where
         S: Serializer,
     {
-        hex::encode(self.0).serialize(serializer)
+        if self.is_twos_complement_zero() {
+            serializer.serialize_bytes(&[])
+        } else {
+            serializer.serialize_bytes(&self.0)
+        }
+    }
+}
+
+struct AggsigVisitor;
+
+impl<'de> Visitor<'de> for AggsigVisitor {
+    type Value = Aggsig;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a 96-byte signature as raw bytes (or empty for default)")
+    }
+
+    fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        if v.is_empty() {
+            Ok(Aggsig::default())
+        } else {
+            Aggsig::from_slice(v).map_err(|e| E::custom(format!("{e:?}")))
+        }
+    }
+
+    fn visit_byte_buf<E>(self, v: Vec<u8>) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        self.visit_bytes(&v)
     }
 }
 
@@ -35,9 +68,7 @@ impl<'de> Deserialize<'de> for Aggsig {
     where
         D: Deserializer<'de>,
     {
-        let st = String::deserialize(deserializer)?;
-        let slice = hex::decode(&st).map_err(serde::de::Error::custom)?;
-        Aggsig::from_slice(&slice).map_err(|e| serde::de::Error::custom(format!("{e:?}")))
+        deserializer.deserialize_bytes(AggsigVisitor)
     }
 }
 
@@ -62,6 +93,10 @@ impl Aggsig {
 
     pub fn bytes(&self) -> [u8; 96] {
         self.0
+    }
+
+    pub fn is_twos_complement_zero(&self) -> bool {
+        self.0 == Aggsig::default().0
     }
 
     pub fn to_bls(&self) -> chia_bls::Signature {
@@ -105,5 +140,58 @@ impl Add for Aggsig {
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Aggsig {
     fn to_clvm(&self, encoder: &mut E) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
         encoder.encode_atom(clvm_traits::Atom::Borrowed(&self.0))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Aggsig;
+    use crate::common::standard_coin::{private_to_public_key, signer};
+    use crate::common::types::PrivateKey;
+
+    #[test]
+    fn aggsig_nonzero_serializes_to_bson_binary() {
+        let sk = PrivateKey::default();
+        let (_pk, sig) = signer(&sk, b"aggsig-test");
+        let bson = bson::to_bson(&sig).expect("aggsig should serialize");
+        match bson {
+            bson::Bson::Binary(bin) => assert_eq!(bin.bytes.len(), 96),
+            other => panic!("expected bson binary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn aggsig_zero_serializes_as_empty_binary() {
+        let sig = Aggsig::default();
+        let bson = bson::to_bson(&sig).expect("aggsig should serialize");
+        match bson {
+            bson::Bson::Binary(bin) => assert!(bin.bytes.is_empty()),
+            other => panic!("expected bson binary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn aggsig_deserializes_empty_binary_to_default() {
+        let bson = bson::Bson::Binary(bson::Binary {
+            subtype: bson::spec::BinarySubtype::Generic,
+            bytes: vec![],
+        });
+        let sig: Aggsig = bson::from_bson(bson).expect("empty binary should deserialize");
+        assert_eq!(sig, Aggsig::default());
+    }
+
+    #[test]
+    fn aggsig_rejects_hex_string_legacy_format() {
+        let legacy = bson::Bson::String("deadbeef".to_string());
+        let parsed: Result<Aggsig, _> = bson::from_bson(legacy);
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn public_key_stays_valid_with_sign_verify_after_roundtrip_inputs() {
+        let sk = PrivateKey::default();
+        let pk = private_to_public_key(&sk);
+        let sig = sk.sign(b"pk-roundtrip");
+        assert!(sig.verify(&pk, b"pk-roundtrip"));
     }
 }

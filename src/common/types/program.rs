@@ -1,4 +1,5 @@
-use serde::{Deserialize, Serialize};
+use serde::de::{self, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use clvmr::allocator::{NodePtr, SExp};
 use clvmr::serde::node_from_bytes;
@@ -32,8 +33,50 @@ impl<X: ToClvm<AllocEncoder>> Sha256tree for X {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Program(pub Vec<u8>);
+
+impl Serialize for Program {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(&self.0)
+    }
+}
+
+struct ProgramVisitor;
+
+impl<'de> Visitor<'de> for ProgramVisitor {
+    type Value = Program;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a clvm program encoded as raw bytes")
+    }
+
+    fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Program(v.to_vec()))
+    }
+
+    fn visit_byte_buf<E>(self, v: Vec<u8>) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Program(v))
+    }
+}
+
+impl<'de> Deserialize<'de> for Program {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_bytes(ProgramVisitor)
+    }
+}
 
 impl std::fmt::Debug for Program {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
@@ -92,5 +135,20 @@ impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Program {
         let result = node_from_bytes(&mut allocator, &self.0)
             .map_err(|e| ToClvmError::Custom(format!("{e:?}")))?;
         clone_to_encoder(encoder, &allocator, result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Program;
+
+    #[test]
+    fn program_serializes_to_bson_binary() {
+        let p = Program::from_bytes(&[0xff, 0x01, 0x80]);
+        let bson = bson::to_bson(&p).expect("program should serialize");
+        match bson {
+            bson::Bson::Binary(bin) => assert_eq!(bin.bytes, vec![0xff, 0x01, 0x80]),
+            other => panic!("expected bson binary, got {other:?}"),
+        }
     }
 }
