@@ -10,8 +10,8 @@ use crate::common::standard_coin::puzzle_for_synthetic_public_key;
 use crate::common::types::{
     Amount, CoinSpend, CoinString, Error, GameID, Hash, PuzzleHash, Spend, SpendBundle, Timeout,
 };
-use crate::potato_handler::effects::{Effect, GameNotification};
 use crate::potato_handler::effects::GameStatusKind;
+use crate::potato_handler::effects::{Effect, GameNotification};
 use crate::potato_handler::types::{GameAction, PeerMessage, PotatoState};
 
 pub enum UnrollOutcome {

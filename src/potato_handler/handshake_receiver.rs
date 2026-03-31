@@ -186,7 +186,6 @@ impl HandshakeReceiverHandler {
             .ok_or_else(|| Error::StrErr("launcher_coin not set".to_string()))
     }
 
-
     fn compute_not_valid_after_height(&self) -> Option<u64> {
         Some(self.last_height + self.channel_timeout.to_u64())
     }
@@ -213,9 +212,7 @@ impl HandshakeReceiverHandler {
         .hash())
     }
 
-    fn build_bob_coin_spend_request(
-        &self,
-    ) -> Result<CoinSpendRequest, Error> {
+    fn build_bob_coin_spend_request(&self) -> Result<CoinSpendRequest, Error> {
         let ch = self.channel_handler()?;
         let channel_coin = ch.state_channel_coin();
         let (_, channel_puzzle_hash, total_amount) = channel_coin.get_coin_string_parts()?;
@@ -729,10 +726,22 @@ impl PeerHandler for HandshakeReceiverHandler {
             return Some(ChannelStatusSnapshot {
                 state: ChannelState::WaitingForHeightToAccept,
                 advisory: None,
-                coin: self.channel_handler.as_ref().map(|ch| ch.state_channel_coin().clone()),
-                our_balance: self.channel_handler.as_ref().map(|ch| ch.my_out_of_game_balance()),
-                their_balance: self.channel_handler.as_ref().map(|ch| ch.their_out_of_game_balance()),
-                game_allocated: self.channel_handler.as_ref().map(|ch| ch.total_game_allocated()),
+                coin: self
+                    .channel_handler
+                    .as_ref()
+                    .map(|ch| ch.state_channel_coin().clone()),
+                our_balance: self
+                    .channel_handler
+                    .as_ref()
+                    .map(|ch| ch.my_out_of_game_balance()),
+                their_balance: self
+                    .channel_handler
+                    .as_ref()
+                    .map(|ch| ch.their_out_of_game_balance()),
+                game_allocated: self
+                    .channel_handler
+                    .as_ref()
+                    .map(|ch| ch.total_game_allocated()),
             });
         }
         let state = match &self.state {

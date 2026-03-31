@@ -549,10 +549,7 @@ pub struct SynchronousGameCradleConfig {
 /// of creating a true deficit.  Channel funding needs deficit spends so the
 /// launcher's channel coin creation is covered.  By spending the settlement
 /// coins with an empty solution (no outputs), their value becomes deficit.
-fn claim_settlement_coins(
-    allocator: &mut AllocEncoder,
-    bundle: SpendBundle,
-) -> SpendBundle {
+fn claim_settlement_coins(allocator: &mut AllocEncoder, bundle: SpendBundle) -> SpendBundle {
     let settlement_ph = PuzzleHash::from_bytes(chia_puzzles::SETTLEMENT_PAYMENT_HASH);
     let settlement_puzzle = Puzzle::from_bytes(&chia_puzzles::SETTLEMENT_PAYMENT);
     let empty_solution: ProgramRef = Program::from_bytes(&[0x80]).into();
@@ -790,7 +787,6 @@ impl SynchronousGameCradle {
         )
     }
 
-
     pub fn get_watching_coins(&self) -> Vec<CoinString> {
         self.state.watching_coins.keys().cloned().collect()
     }
@@ -826,7 +822,10 @@ impl SynchronousGameCradle {
     /// flush potato-gated pending actions, and collect all accumulated events.
     /// Call this after any operation that may have changed state (delivering a
     /// message, processing a block, making a move, etc.).
-    pub fn flush_and_collect(&mut self, allocator: &mut AllocEncoder) -> Result<DrainResult, Error> {
+    pub fn flush_and_collect(
+        &mut self,
+        allocator: &mut AllocEncoder,
+    ) -> Result<DrainResult, Error> {
         while let Some(msg) = self.state.inbound_messages.pop_front() {
             let recv_result = {
                 let mut env = ChannelHandlerEnv::new(allocator)?;
@@ -914,8 +913,7 @@ impl SynchronousGameCradle {
         if Self::should_emit_status(&self.last_channel_status, &snapshot) {
             if let Some(ref snap) = snapshot {
                 match snap.state {
-                    ChannelState::ShuttingDown
-                    | ChannelState::ShutdownTransactionPending => {
+                    ChannelState::ShuttingDown | ChannelState::ShutdownTransactionPending => {
                         self.state.clean_shutdown_received = true;
                     }
                     ChannelState::ResolvedClean => {

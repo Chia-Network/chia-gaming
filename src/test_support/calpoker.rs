@@ -477,7 +477,9 @@ mod sim_tests {
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::ShuttingDown,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
+                    ExpectedEvent::Notification(
+                        ExpectedNotification::GameStatusEndedOpponentTimedOut,
+                    ),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::ShutdownTransactionPending,
                     )),
@@ -594,7 +596,9 @@ mod sim_tests {
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::ResolvedUnrolled,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
+                    ExpectedEvent::Notification(
+                        ExpectedNotification::GameStatusEndedOpponentTimedOut,
+                    ),
                 ],
                 "on_chain_1move_p1 p0",
             );
@@ -652,7 +656,9 @@ mod sim_tests {
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::ResolvedUnrolled,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
+                        ExpectedEvent::Notification(
+                            ExpectedNotification::GameStatusEndedOpponentTimedOut,
+                        ),
                     ],
                     "on_chain_1move_p0_lost p0",
                 );
@@ -674,7 +680,9 @@ mod sim_tests {
                         ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                             ChannelState::ResolvedUnrolled,
                         )),
-                        ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
+                        ExpectedEvent::Notification(
+                            ExpectedNotification::GameStatusEndedWeTimedOut,
+                        ),
                     ],
                     "on_chain_1move_p0_lost p1",
                 );
@@ -707,7 +715,9 @@ mod sim_tests {
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::ResolvedUnrolled,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
+                    ExpectedEvent::Notification(
+                        ExpectedNotification::GameStatusEndedOpponentTimedOut,
+                    ),
                 ],
                 "on_chain_1move_p0 p0",
             );
@@ -789,7 +799,9 @@ mod sim_tests {
                     )),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
-                    ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
+                    ExpectedEvent::Notification(
+                        ExpectedNotification::GameStatusEndedOpponentTimedOut,
+                    ),
                 ],
                 "on_chain_2moves_p0 p1",
             );
@@ -846,7 +858,9 @@ mod sim_tests {
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::ResolvedUnrolled,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
+                    ExpectedEvent::Notification(
+                        ExpectedNotification::GameStatusEndedOpponentTimedOut,
+                    ),
                 ],
                 "on_chain_2moves_p1 p1",
             );
@@ -878,7 +892,9 @@ mod sim_tests {
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::ShuttingDown,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
+                    ExpectedEvent::Notification(
+                        ExpectedNotification::GameStatusEndedOpponentTimedOut,
+                    ),
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::ShutdownTransactionPending,
                     )),

@@ -139,10 +139,7 @@ impl HandshakeInitiatorHandler {
             .ok_or_else(|| Error::StrErr("initiator handshake: no channel handler yet".to_string()))
     }
 
-    pub fn start(
-        &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
-    ) -> Result<Option<Effect>, Error> {
+    pub fn start(&mut self, _env: &mut ChannelHandlerEnv<'_>) -> Result<Option<Effect>, Error> {
         game_assert!(
             matches!(self.state, InitiatorState::WaitingForStart),
             "start: expected WaitingForStart state"
@@ -300,9 +297,7 @@ impl HandshakeInitiatorHandler {
         .hash())
     }
 
-    fn build_alice_coin_spend_request(
-        &self,
-    ) -> Result<CoinSpendRequest, Error> {
+    fn build_alice_coin_spend_request(&self) -> Result<CoinSpendRequest, Error> {
         let ch = self.channel_handler()?;
         let channel_coin = ch.state_channel_coin();
         let (_, channel_puzzle_hash, total_amount) = channel_coin.get_coin_string_parts()?;
@@ -780,10 +775,22 @@ impl PeerHandler for HandshakeInitiatorHandler {
             return Some(ChannelStatusSnapshot {
                 state: ChannelState::WaitingForHeightToOffer,
                 advisory: None,
-                coin: self.channel_handler.as_ref().map(|ch| ch.state_channel_coin().clone()),
-                our_balance: self.channel_handler.as_ref().map(|ch| ch.my_out_of_game_balance()),
-                their_balance: self.channel_handler.as_ref().map(|ch| ch.their_out_of_game_balance()),
-                game_allocated: self.channel_handler.as_ref().map(|ch| ch.total_game_allocated()),
+                coin: self
+                    .channel_handler
+                    .as_ref()
+                    .map(|ch| ch.state_channel_coin().clone()),
+                our_balance: self
+                    .channel_handler
+                    .as_ref()
+                    .map(|ch| ch.my_out_of_game_balance()),
+                their_balance: self
+                    .channel_handler
+                    .as_ref()
+                    .map(|ch| ch.their_out_of_game_balance()),
+                game_allocated: self
+                    .channel_handler
+                    .as_ref()
+                    .map(|ch| ch.total_game_allocated()),
             });
         }
         let state = match &self.state {
