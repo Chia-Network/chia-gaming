@@ -29,6 +29,7 @@ use crate::peer_container::PeerHandler;
 use crate::potato_handler::types::{
     BatchAction, FromLocalUI, GameAction, GameFactory, PeerMessage, PotatoState,
     SpendWalletReceiver,
+    WireProposeGame,
 };
 
 use crate::potato_handler::start::GameStart;
@@ -139,12 +140,13 @@ fn format_batch_action(action: &BatchAction) -> String {
     match action {
         BatchAction::ProposeGame(gsi) => {
             format!(
-                "ProposeGame id={} amt={} my={} their={} timeout={}",
+                "ProposeGame id={} idx={} type={} amt={} my={} timeout={}",
                 gsi.game_id,
-                gsi.amount,
-                gsi.my_contribution_this_game,
-                gsi.their_contribution_this_game,
-                gsi.timeout,
+                gsi.start_index,
+                hex::encode(&gsi.start.game_type.0),
+                gsi.start.amount,
+                gsi.start.my_contribution,
+                gsi.start.timeout,
             )
         }
         BatchAction::AcceptProposal(id) => format!("AcceptProposal id={id}"),
@@ -203,6 +205,26 @@ pub(crate) fn make_send_debug_log(
 }
 
 impl PotatoHandler {
+    fn hydrate_wire_proposal(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_>,
+        wire: &WireProposeGame,
+    ) -> Result<Rc<GameStartInfo>, Error> {
+        let (my_games, their_games) =
+            self.get_games_by_start_type(env, true, &wire.game_id, &wire.start)?;
+        let (_mine, theirs) = if wire.start.my_turn {
+            (my_games, their_games)
+        } else {
+            (their_games, my_games)
+        };
+        theirs.get(wire.start_index).cloned().ok_or_else(|| {
+            Error::StrErr(format!(
+                "wire proposal start_index {} out of range for game {}",
+                wire.start_index, wire.game_id
+            ))
+        })
+    }
+
     pub fn from_completed_handshake(
         initiator: bool,
         channel_handler: ChannelHandler,
@@ -485,9 +507,10 @@ impl PotatoHandler {
 
         for action in actions.iter() {
             match action {
-                BatchAction::ProposeGame(gsi) => {
+                BatchAction::ProposeGame(wire) => {
+                    let gsi = self.hydrate_wire_proposal(env, wire)?;
                     let ch = self.channel_handler_mut()?;
-                    ch.apply_received_proposal(env, gsi)?;
+                    ch.apply_received_proposal(env, &gsi)?;
                     let game_id = gsi.game_id;
                     let my_contribution = gsi.my_contribution_this_game.clone();
                     let their_contribution = gsi.their_contribution_this_game.clone();
@@ -788,12 +811,12 @@ impl PotatoHandler {
                     };
                     batch_actions.push(BatchAction::AcceptTimeout(game_id, amount));
                 }
-                GameAction::QueuedProposal(my_gsi, their_gsi) => {
+                GameAction::QueuedProposal(my_gsi, their_wire) => {
                     {
                         let ch = self.channel_handler_mut()?;
                         ch.send_propose_game(env, &my_gsi)?;
                     }
-                    batch_actions.push(BatchAction::ProposeGame(their_gsi));
+                    batch_actions.push(BatchAction::ProposeGame(their_wire));
                 }
                 GameAction::QueuedAcceptProposal(game_id) => {
                     {
@@ -1340,8 +1363,14 @@ impl FromLocalUI for PotatoHandler {
 
         let game_id_list: Vec<GameID> = my_games.iter().map(|g| g.game_id).collect();
 
-        for (mine, theirs) in my_games.into_iter().zip(their_games.into_iter()) {
-            self.push_action(GameAction::QueuedProposal(mine, theirs));
+        for (index, (mine, _theirs)) in my_games.into_iter().zip(their_games.into_iter()).enumerate()
+        {
+            let wire = WireProposeGame {
+                start: game.clone(),
+                game_id,
+                start_index: index,
+            };
+            self.push_action(GameAction::QueuedProposal(mine, wire));
         }
 
         let (_has_potato, effect) = self.send_potato_request_if_needed()?;

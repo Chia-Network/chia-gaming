@@ -17,6 +17,13 @@ use crate::potato_handler::handshake::{HandshakeB, HandshakeC, HandshakeD};
 use crate::potato_handler::start::GameStart;
 use crate::referee::types::GameMoveDetails;
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct WireProposeGame {
+    pub start: GameStart,
+    pub game_id: GameID,
+    pub start_index: usize,
+}
+
 /// Async interface implemented by Peer to receive notifications about wallet
 /// state.
 pub trait BootstrapTowardWallet {
@@ -135,7 +142,7 @@ pub trait FromLocalUI {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum BatchAction {
-    ProposeGame(Rc<GameStartInfo>),
+    ProposeGame(WireProposeGame),
     AcceptProposal(GameID),
     CancelProposal(GameID),
     Move(GameID, GameMoveDetails),
@@ -199,7 +206,7 @@ pub enum GameAction {
     AcceptTimeout(GameID),
     CleanShutdown,
     SendPotato,
-    QueuedProposal(Rc<GameStartInfo>, Rc<GameStartInfo>),
+    QueuedProposal(Rc<GameStartInfo>, WireProposeGame),
     QueuedAcceptProposal(GameID),
     QueuedCancelProposal(GameID),
     Cheat(GameID, Amount, Hash),

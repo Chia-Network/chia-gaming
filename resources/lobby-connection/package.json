@@ -19,9 +19,7 @@
     "pre-commit-safe": "yarn format || true",
     "lint:report": "yarn lint:errors-only || echo 'Linting found issues but not blocking commit. Run yarn lint:fix to auto-fix many issues.'"
   },
-  "dependencies": {
-    "socket.io-client": "^4.8.1"
-  },
+  "dependencies": {},
   "peerDependencies": {
     "@types/react": "19.2.0",
     "react": "19.2.0"

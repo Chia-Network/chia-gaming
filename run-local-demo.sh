@@ -108,7 +108,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
         echo "=== gaming-fe is up to date ==="
     fi
 
-    if needs_build "$LOBBY_VIEW_DIR/dist/.build-stamp" "$LOBBY_VIEW_DIR/src" "$LOBBY_VIEW_DIR/package.json"; then
+    if needs_build "$LOBBY_VIEW_DIR/dist/.build-stamp" "$LOBBY_VIEW_DIR/src" "$LOBBY_VIEW_DIR/package.json" "$LOBBY_CONN_DIR/dist/.build-stamp"; then
         echo "=== Building lobby-view ==="
         (cd "$LOBBY_VIEW_DIR" && yarn install --frozen-lockfile && yarn build)
         touch "$LOBBY_VIEW_DIR/dist/.build-stamp"

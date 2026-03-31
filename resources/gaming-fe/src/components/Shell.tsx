@@ -242,7 +242,7 @@ const Shell = () => {
             setPeerConnected(true);
             blobSingleton?.resendUnacked();
           },
-          onMessage: (_data: string) => {
+          onMessage: (_data: unknown) => {
             setPeerConnected(true);
             // Will be replaced by registerMessageHandler once GameSession mounts
           },
