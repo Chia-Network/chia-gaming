@@ -1,6 +1,7 @@
 {
   "name": "wc-stub",
   "version": "1.0.0",
+  "license": "Apache-2.0",
   "description": "Stub for supporting a walletconnect connection",
   "main": "dist/index.js",
   "scripts": {
