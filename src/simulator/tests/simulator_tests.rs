@@ -280,7 +280,48 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let tx2 = spend_coin(&mut allocator);
         let r2 = s.push_tx(&mut allocator, &[tx2]).expect("ok");
-        assert_eq!(r2.code, 3, "second spend of same coin should be rejected");
+        assert_eq!(
+            r2.code, 1,
+            "re-submitting the exact same transaction should de-duplicate"
+        );
+
+        let altered_conditions = (
+            (
+                CREATE_COIN,
+                (
+                    identity.puzzle_hash.clone(),
+                    (Amount::new(amt.to_u64().saturating_sub(1)), ()),
+                ),
+            ),
+            (),
+        )
+            .to_clvm(&mut allocator)
+            .into_gen()
+            .unwrap();
+        let altered_solution = solution_for_conditions(&mut allocator, altered_conditions).unwrap();
+        let altered_quoted = altered_conditions.to_quoted_program(&mut allocator).unwrap();
+        let altered_qhash = altered_quoted.sha256tree(&mut allocator);
+        let altered_sig = sign_agg_sig_me(
+            &identity.synthetic_private_key,
+            altered_qhash.bytes(),
+            &coin.to_coin_id(),
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+        );
+        let altered_tx = CoinSpend {
+            coin: coin.clone(),
+            bundle: Spend {
+                puzzle: identity.puzzle.clone(),
+                solution: Program::from_nodeptr(&mut allocator, altered_solution)
+                    .unwrap()
+                    .into(),
+                signature: altered_sig,
+            },
+        };
+        let r3 = s.push_tx(&mut allocator, &[altered_tx]).expect("ok");
+        assert_eq!(
+            r3.code, 3,
+            "re-submitting a different transaction for an already-spent coin should be rejected"
+        );
     }));
 
     res.push(("test_simulator_nonexistent_coin_rejected", &|| {

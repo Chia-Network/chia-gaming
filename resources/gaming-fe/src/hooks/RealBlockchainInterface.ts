@@ -167,10 +167,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async spend(_blob: string, spendBundle: unknown): Promise<string> {
-    console.log('[wc-blockchain] >>> walletPushTx');
+    debugLog('[wc-blockchain] walletPushTx submitting');
     try {
       const result = await rpc.walletPushTx({ spendBundle: spendBundle as object });
-      console.log('[wc-blockchain] <<< walletPushTx', (result as any)?.status);
+      debugLog(`[wc-blockchain] walletPushTx submitted result=${JSON.stringify(result)}`);
       return result as unknown as string;
     } catch (e: unknown) {
       const errStr = typeof e === 'string' ? e : ((e as any)?.message || JSON.stringify(e));

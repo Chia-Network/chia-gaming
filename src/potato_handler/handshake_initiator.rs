@@ -467,7 +467,11 @@ impl HandshakeInitiatorHandler {
             }
 
             InitiatorState::Finished(_) => {
-                self.incoming_messages.push_front(msg_envelope);
+                if let PeerMessage::HandshakeF { bundle } = msg_envelope.borrow() {
+                    effects.push(Effect::SpendTransaction(bundle.clone()));
+                } else {
+                    self.incoming_messages.push_front(msg_envelope);
+                }
             }
 
             InitiatorState::Done => {

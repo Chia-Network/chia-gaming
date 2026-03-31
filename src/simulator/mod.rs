@@ -4,7 +4,7 @@ pub mod service;
 pub mod tests;
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chia_bls::aggregate_verify;
 use clvm_traits::{ClvmEncoder, ToClvm};
@@ -67,6 +67,7 @@ struct CoinRecord {
 }
 
 struct PendingSpend {
+    fingerprint: Hash,
     removals: Vec<CoinID>,
     additions: Vec<(CoinID, PuzzleHash, Amount)>,
     puzzle_solutions: Vec<(CoinID, Program, Program)>,
@@ -76,6 +77,7 @@ struct SimulatorState {
     coins: HashMap<CoinID, CoinRecord>,
     mempool: Vec<PendingSpend>,
     spent_puzzle_solutions: HashMap<CoinID, (Program, Program)>,
+    confirmed_spend_fingerprints: HashSet<Hash>,
     height: u32,
 }
 
@@ -90,6 +92,7 @@ impl SimulatorState {
             coins: HashMap::new(),
             mempool: Vec::new(),
             spent_puzzle_solutions: HashMap::new(),
+            confirmed_spend_fingerprints: HashSet::new(),
             height: 0,
         }
     }
@@ -149,6 +152,7 @@ impl SimulatorState {
 
         let pending: Vec<PendingSpend> = self.mempool.drain(..).collect();
         for spend in pending {
+            self.confirmed_spend_fingerprints.insert(spend.fingerprint);
             for removal in &spend.removals {
                 if let Some(record) = self.coins.get_mut(removal) {
                     record.spent_height = Some(next_height);
@@ -185,6 +189,21 @@ impl Default for Simulator {
 }
 
 impl Simulator {
+    fn fingerprint_spend_bundle(spends: &[CoinSpend]) -> Hash {
+        let mut chunks: Vec<Vec<u8>> = Vec::with_capacity(spends.len() * 4);
+        for spend in spends {
+            chunks.push(spend.coin.to_bytes().to_vec());
+            chunks.push(spend.bundle.puzzle.to_program().bytes().to_vec());
+            chunks.push(spend.bundle.solution.pref().bytes().to_vec());
+            chunks.push(spend.bundle.signature.0.to_vec());
+        }
+        let parts: Vec<Sha256Input<'_>> = chunks
+            .iter()
+            .map(|chunk| Sha256Input::Bytes(chunk))
+            .collect();
+        Sha256Input::Array(parts).hash()
+    }
+
     pub fn new(strict: bool) -> Self {
         let mut state = SimulatorState::new();
         let zero_ph = PuzzleHash::from_hash(Hash::from_bytes([0u8; 32]));
@@ -308,7 +327,15 @@ impl Simulator {
             });
         }
 
+        let tx_fingerprint = Self::fingerprint_spend_bundle(txs);
         let state = self.state.borrow();
+        if state.confirmed_spend_fingerprints.contains(&tx_fingerprint) {
+            return Ok(IncludeTransactionResult {
+                code: 1,
+                e: None,
+                diagnostic: "duplicate confirmed transaction re-submitted".to_string(),
+            });
+        }
         let mut removals = Vec::new();
         let mut additions = Vec::new();
         let mut puzzle_solutions = Vec::new();
@@ -515,19 +542,18 @@ impl Simulator {
 
         // Check for duplicate or conflicting transactions already in the mempool.
         for existing in state.mempool.iter() {
+            if existing.fingerprint == tx_fingerprint {
+                return Ok(IncludeTransactionResult {
+                    code: 1,
+                    e: None,
+                    diagnostic: "duplicate transaction de-duplicated".to_string(),
+                });
+            }
             let overlap: Vec<&CoinID> = removals
                 .iter()
                 .filter(|r| existing.removals.contains(r))
                 .collect();
             if !overlap.is_empty() {
-                if existing.removals == removals && existing.additions == additions {
-                    // Identical transaction already in mempool -- de-duplicate.
-                    return Ok(IncludeTransactionResult {
-                        code: 1,
-                        e: None,
-                        diagnostic: "duplicate transaction de-duplicated".to_string(),
-                    });
-                }
                 if self.strict {
                     panic!(
                         "Strict mode: conflicting transactions in mempool: existing tx and new tx both \
@@ -571,6 +597,7 @@ impl Simulator {
         }
 
         self.state.borrow_mut().mempool.push(PendingSpend {
+            fingerprint: tx_fingerprint,
             removals,
             additions,
             puzzle_solutions,

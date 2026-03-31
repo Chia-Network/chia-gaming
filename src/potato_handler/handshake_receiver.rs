@@ -169,10 +169,6 @@ impl HandshakeReceiverHandler {
     }
 
     fn try_send_step_f(&mut self, info: HandshakeStepInfo) -> Result<Option<Effect>, Error> {
-        if self.waiting_to_start {
-            return Ok(None);
-        }
-
         if let Some(spend) = self.channel_finished_transaction.clone() {
             let send_effect = Effect::PeerHandshakeF {
                 bundle: spend.clone(),
@@ -700,10 +696,9 @@ impl PeerHandler for HandshakeReceiverHandler {
             let mut spends = alice_bundle.spends.clone();
             spends.extend(bundle.spends.clone());
             let final_bundle = SpendBundle { name: None, spends };
-            let mut effects = self
-                .channel_transaction_completion(env, &final_bundle)?
-                .into_iter()
-                .collect::<Vec<_>>();
+            let completion_effect = self.channel_transaction_completion(env, &final_bundle)?;
+            let mut effects = Vec::new();
+            effects.extend(completion_effect.into_iter());
             effects.push(Effect::SpendTransaction(final_bundle));
             return Ok(effects);
         }

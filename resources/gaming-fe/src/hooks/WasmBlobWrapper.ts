@@ -43,6 +43,37 @@ const SAVE_DEBOUNCE_MS = 500;
 const PING_INTERVAL_MS = 15_000;
 const PEER_TIMEOUT_MS = 60_000;
 
+function toSafeJson(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function strip0xDeep(value: unknown): unknown {
+  if (typeof value === 'string') {
+    return value.startsWith('0x') ? value.slice(2) : value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => strip0xDeep(item));
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, strip0xDeep(v)]),
+    );
+  }
+  return value;
+}
+
+function summarizeEvents(result: WasmResult | undefined) {
+  const events = result?.events ?? [];
+  const tags = events.map((event) => (typeof event === 'object' && event !== null ? Object.keys(event)[0] : 'unknown'));
+  const outboundTransactions = tags.filter((tag) => tag === 'OutboundTransaction').length;
+  const outboundMessages = tags.filter((tag) => tag === 'OutboundMessage').length;
+  return { tags, outboundTransactions, outboundMessages };
+}
+
 export class WasmBlobWrapper {
   amount: bigint;
   perGameAmount: bigint;
@@ -284,6 +315,9 @@ export class WasmBlobWrapper {
         coinIds,
         maxHeight,
       );
+      debugLog(
+        `[wasm diag] NeedCoinSpend createOfferForIds done coin_id=${String(request.coin_id)} bundleType=${typeof bundle} offerLike=${typeof bundle === 'string' && bundle.startsWith('offer')}`,
+      );
       if (!bundle) {
         console.error('[wasm] createOfferForIds returned null');
         return;
@@ -291,10 +325,19 @@ export class WasmBlobWrapper {
 
       let result;
       if (typeof bundle === 'string' && bundle.startsWith('offer')) {
+        debugLog('[wasm diag] NeedCoinSpend using provide_offer_bech32');
         result = this.cradle?.provide_offer_bech32(bundle);
       } else {
         const bundleJson = typeof bundle === 'string' ? bundle : JSON.stringify(bundle);
+        debugLog(`[wasm diag] NeedCoinSpend using provide_coin_spend_bundle jsonLen=${bundleJson.length}`);
         result = this.cradle?.provide_coin_spend_bundle(bundleJson);
+      }
+      const summary = summarizeEvents(result);
+      debugLog(
+        `[wasm diag] NeedCoinSpend result events=${summary.tags.join(',') || 'none'} outboundTx=${summary.outboundTransactions} outboundMsg=${summary.outboundMessages}`,
+      );
+      if (summary.outboundTransactions === 0) {
+        debugLog('[wasm diag] NeedCoinSpend produced no OutboundTransaction');
       }
       this.processResult(result);
     } catch (e) {
@@ -331,6 +374,9 @@ export class WasmBlobWrapper {
       return;
     }
     const spendBundle = this.wc?.convert_spend_to_coinset_org(blob);
+    const spendBundleNo0xJson = toSafeJson(strip0xDeep(spendBundle));
+    debugLog(`[wasm tx] formed blobLen=${blob.length}`);
+    debugLog(`[TX_COINSET_JSON_NO0X] ${spendBundleNo0xJson}`);
     this.blockchain.spend(blob, spendBundle).then((result) => {
       if (result) {
         debugLog(`[wasm] submitTransaction: ${result}`);
@@ -489,6 +535,10 @@ export class WasmBlobWrapper {
   private deliverSingleMessage(msgno: number, msg: string) {
     this.remoteNumber = msgno;
     const result = this.cradle!.deliver_message(msg);
+    const summary = summarizeEvents(result);
+    debugLog(
+      `[wasm diag] deliver_message msgno=${msgno} events=${summary.tags.join(',') || 'none'} outboundTx=${summary.outboundTransactions} outboundMsg=${summary.outboundMessages}`,
+    );
     this.processResult(result);
     this.sendAck(msgno);
   }

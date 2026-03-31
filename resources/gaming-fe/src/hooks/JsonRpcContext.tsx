@@ -94,15 +94,10 @@ async function request<T, D extends object = object>(
   };
 
   const startedAt = Date.now();
-  debugLog(`[WC RPC begin] ${method}`);
-  const activeTopic = walletConnectState.getSession()?.topic;
-  console.log('[WC] >>>', method, params, { topic: activeTopic, chainId: walletConnectState.getChainId() });
-  debugLog(`[WC RPC topic] ${method} topic=${activeTopic ?? 'none'}`);
 
   let raw: unknown;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
-      debugLog(`[WC RPC fire] ${method} attempt=${attempt}`);
       raw = await Promise.race([
         walletConnectState.getClient()!.request({
           topic: walletConnectState.getSession()!.topic,
@@ -119,13 +114,17 @@ async function request<T, D extends object = object>(
     } catch (e) {
       const elapsed = Date.now() - startedAt;
       const errText = getErrorText(e);
+      const knownTopics = walletConnectState.getClient()?.session?.keys ?? [];
+      const activeTopicNow = walletConnectState.getSession()?.topic ?? 'none';
       const retryBlockedByMethod =
         method === ChiaMethod.CreateOfferForIds
         || method === ChiaMethod.CreateNewRemoteWallet;
       const isRetryable = attempt < 2
         && !retryBlockedByMethod
         && isTransientWalletConnectError(e);
-      debugLog(`[WC RPC error] ${method} after ${elapsed}ms attempt=${attempt}: ${errText}`);
+      debugLog(
+        `[WC RPC error] ${method} after ${elapsed}ms attempt=${attempt}: ${errText} active=${activeTopicNow} known=${knownTopics.join(',') || 'none'}`,
+      );
       if (!isRetryable) {
         throw e;
       }
@@ -133,10 +132,6 @@ async function request<T, D extends object = object>(
       await delay(WC_RETRY_DELAY_MS);
     }
   }
-
-  const elapsed = Date.now() - startedAt;
-  debugLog(`[WC RPC end] ${method} after ${elapsed}ms`);
-  console.log('[WC] <<<', method, raw);
 
   const result = raw as Record<string, unknown> | undefined;
   if (result?.error) {

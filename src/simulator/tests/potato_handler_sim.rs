@@ -1323,13 +1323,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                                     nerfed_tx_backlog.push(tx.clone());
                                     continue;
                                 }
-                                let all_unspendable = tx
-                                    .spends
-                                    .iter()
-                                    .all(|cs| !simulator.is_coin_spendable(&cs.coin));
-                                if all_unspendable {
-                                    continue;
-                                }
                                 let t_tx = std::time::Instant::now();
                                 let included_result = simulator.push_tx(allocator, &tx.spends)?;
                                 if timing_enabled {
@@ -2514,6 +2507,62 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             outcome.local_uis[1].clean_shutdown_complete,
             "p1 should reach ResolvedClean"
         );
+    }));
+
+    res.push(("test_clean_shutdown_no_games_nerf_p0", &|| {
+        let mut allocator = AllocEncoder::new();
+        let moves = vec![GameAction::NerfTransactions(0), GameAction::CleanShutdown(1)];
+        let outcome =
+            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+
+        for i in 0..2 {
+            assert!(
+                outcome.local_uis[i].clean_shutdown_complete,
+                "player {i} should reach ResolvedClean"
+            );
+            let has_failed = outcome.local_uis[i].notifications.iter().any(|n| {
+                matches!(
+                    n,
+                    GameNotification::ChannelStatus {
+                        state: ChannelState::Failed,
+                        ..
+                    }
+                )
+            });
+            assert!(
+                !has_failed,
+                "player {i} should not hit ChannelState::Failed, got: {:?}",
+                outcome.local_uis[i].notifications
+            );
+        }
+    }));
+
+    res.push(("test_clean_shutdown_no_games_nerf_p1", &|| {
+        let mut allocator = AllocEncoder::new();
+        let moves = vec![GameAction::NerfTransactions(1), GameAction::CleanShutdown(1)];
+        let outcome =
+            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+
+        for i in 0..2 {
+            assert!(
+                outcome.local_uis[i].clean_shutdown_complete,
+                "player {i} should reach ResolvedClean"
+            );
+            let has_failed = outcome.local_uis[i].notifications.iter().any(|n| {
+                matches!(
+                    n,
+                    GameNotification::ChannelStatus {
+                        state: ChannelState::Failed,
+                        ..
+                    }
+                )
+            });
+            assert!(
+                !has_failed,
+                "player {i} should not hit ChannelState::Failed, got: {:?}",
+                outcome.local_uis[i].notifications
+            );
+        }
     }));
 
     res.push((
@@ -6095,6 +6144,78 @@ ChannelState::GoingOnChain,
             assert!(
                 has_failed,
                 "player {i} should have received ChannelState::Failed, got: {:?}",
+                outcome.local_uis[i].notifications
+            );
+        }
+    }));
+
+    res.push(("test_channel_handshake_alice_nerfed_still_creates_channel", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        let moves = vec![GameAction::NerfTransactions(0)];
+
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            Some(&|_, cradles| cradles[0].handshake_finished() && cradles[1].handshake_finished()),
+            None,
+        )
+        .expect("should finish");
+
+        for i in 0..2 {
+            assert!(
+                outcome.local_uis[i].channel_created,
+                "player {i} should have channel_created=true, notifications: {:?}",
+                outcome.local_uis[i].notifications
+            );
+            let has_failed = outcome.local_uis[i].notifications.iter().any(|n| {
+                matches!(
+                    n,
+                    GameNotification::ChannelStatus {
+                        state: ChannelState::Failed,
+                        ..
+                    }
+                )
+            });
+            assert!(
+                !has_failed,
+                "player {i} should not have ChannelState::Failed, got: {:?}",
+                outcome.local_uis[i].notifications
+            );
+        }
+    }));
+
+    res.push(("test_channel_handshake_bob_nerfed_still_creates_channel", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        let moves = vec![GameAction::NerfTransactions(1)];
+
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            Some(&|_, cradles| cradles[0].handshake_finished() && cradles[1].handshake_finished()),
+            None,
+        )
+        .expect("should finish");
+
+        for i in 0..2 {
+            assert!(
+                outcome.local_uis[i].channel_created,
+                "player {i} should have channel_created=true, notifications: {:?}",
+                outcome.local_uis[i].notifications
+            );
+            let has_failed = outcome.local_uis[i].notifications.iter().any(|n| {
+                matches!(
+                    n,
+                    GameNotification::ChannelStatus {
+                        state: ChannelState::Failed,
+                        ..
+                    }
+                )
+            });
+            assert!(
+                !has_failed,
+                "player {i} should not have ChannelState::Failed, got: {:?}",
                 outcome.local_uis[i].notifications
             );
         }

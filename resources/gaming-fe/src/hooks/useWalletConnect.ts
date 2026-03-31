@@ -58,6 +58,12 @@ class WalletState {
     return this.address;
   }
 
+  private logSessionIds(label: string) {
+    const sessionTopic = this.session?.topic ?? 'none';
+    const knownTopics = this.client?.session?.keys ?? [];
+    debugLog(`[WC session] ${label} active=${sessionTopic} known=${knownTopics.join(',') || 'none'}`);
+  }
+
   private onSessionConnected(session: SessionTypes.Struct) {
     const accountParts = session.namespaces.chia.accounts[0].split(':');
     const address = accountParts[2];
@@ -67,6 +73,7 @@ class WalletState {
     this.address = address;
     this.chainId = detectedChain;
     this.session = session;
+    this.logSessionIds('connected');
     this.observable.next({
       stateName: 'connected',
       initialized: true,
@@ -79,6 +86,7 @@ class WalletState {
   }
 
   private resetSession() {
+    this.logSessionIds('before-reset');
     this.isConnected = false;
     this.session = undefined;
     this.address = undefined;
@@ -131,16 +139,19 @@ class WalletState {
       signClient.on('session_update', ({ topic, params }) => {
         const updated = signClient.session.get(topic);
         const merged = { ...updated, namespaces: params.namespaces };
+        debugLog(`[WC session] update topic=${topic}`);
         this.onSessionConnected(merged);
       });
 
-      signClient.on('session_delete', () => {
-        console.log('[WC] session deleted by wallet');
+      signClient.on('session_delete', ({ topic }: { topic: string }) => {
+        console.log('[WC] session deleted by wallet', { topic });
+        debugLog(`[WC session] delete topic=${topic}`);
         this.resetSession();
       });
 
-      signClient.on('session_expire', () => {
-        console.log('[WC] session expired');
+      signClient.on('session_expire', ({ topic }: { topic: string }) => {
+        console.log('[WC] session expired', { topic });
+        debugLog(`[WC session] expire topic=${topic}`);
         this.resetSession();
       });
 
