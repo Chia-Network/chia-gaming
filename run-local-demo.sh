@@ -18,14 +18,21 @@ SIM_PORT=${SIM_PORT:-5800}
 SIM_WS_PORT=${SIM_WS_PORT:-5801}
 
 SKIP_BUILD=0
+FORCE_BUILD=0
 PIDS=()
 
 for arg in "$@"; do
     case "$arg" in
         --skip-build) SKIP_BUILD=1 ;;
+        --force-build) FORCE_BUILD=1 ;;
         *) echo "Unknown argument: $arg"; exit 1 ;;
     esac
 done
+
+if [ "$SKIP_BUILD" -eq 1 ] && [ "$FORCE_BUILD" -eq 1 ]; then
+    echo "Error: --skip-build and --force-build are mutually exclusive"
+    exit 1
+fi
 
 # Kill anything still listening on our ports from a previous run.
 # Use -sTCP:LISTEN to avoid killing browsers that have connections to these ports.
@@ -77,7 +84,18 @@ needs_build() {
     return 1
 }
 
-# ── Build (skip with --skip-build) ──────────────────────────────────
+# ── Build (skip with --skip-build, force with --force-build) ────────
+
+if [ "$FORCE_BUILD" -eq 1 ]; then
+    echo "=== --force-build: clearing Rust and JS build caches ==="
+    cargo clean 2>/dev/null || true
+    rm -f "$FE_DIR/dist/.wasm-stamp" \
+          "$FE_DIR/dist/.fe-stamp" \
+          "$LOBBY_CONN_DIR/dist/.build-stamp" \
+          "$LOBBY_VIEW_DIR/dist/.build-stamp" \
+          "$LOBBY_SERVICE_DIR/dist/.build-stamp" \
+          "$WC_DIR/dist/.build-stamp"
+fi
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
     echo "=== Building simulator + chialisp (if needed) ==="
