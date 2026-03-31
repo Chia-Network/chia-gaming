@@ -54,15 +54,6 @@ app.use(
   }),
 );
 
-app.use((req, _res, next) => {
-  const contentLengthHeader = req.headers['content-length'];
-  const contentLength = Number(contentLengthHeader);
-  if (Number.isFinite(contentLength) && contentLength > 5 * 1024) {
-    console.warn(`[tracker] large request: ${req.method} ${req.path} content-length=${contentLength}`);
-  }
-  next();
-});
-
 app.use(express.json());
 if (args.dir) {
   app.use(express.static(args.dir));
