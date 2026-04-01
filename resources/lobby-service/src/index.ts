@@ -70,10 +70,12 @@ interface SSEClient {
 }
 
 const RING_BUFFER_SIZE = 100;
+const LOBBY_DISCONNECT_GRACE_MS = 3000;
 
 const lobbySSE = new Map<string, SSEClient>();
 // Game SSE keyed by session_id (game client connects before player_id is known)
 const gameSSE = new Map<string, SSEClient>();
+const pendingLobbyLeaves = new Map<string, ReturnType<typeof setTimeout>>();
 
 type RelayPayload =
   | { msgno: number; msg: string }
@@ -182,6 +184,14 @@ function leaveLobby(id: string): boolean {
   return false;
 }
 
+function cancelPendingLobbyLeave(playerId: string): void {
+  const timer = pendingLobbyLeaves.get(playerId);
+  if (timer) {
+    clearTimeout(timer);
+    pendingLobbyLeaves.delete(playerId);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Game registration (replaces completeGameSocketRegistration)
 // ---------------------------------------------------------------------------
@@ -272,6 +282,8 @@ app.get('/lobby/events', (req, res) => {
   const playerId = req.query.player_id as string;
   if (!playerId) return res.status(400).json({ error: 'Missing player_id.' });
 
+  cancelPendingLobbyLeave(playerId);
+
   const oldClient = lobbySSE.get(playerId);
   if (oldClient) {
     try { oldClient.res.end(); } catch {}
@@ -300,8 +312,15 @@ app.get('/lobby/events', (req, res) => {
     const current = lobbySSE.get(playerId);
     if (current && current.res === res) {
       lobbySSE.delete(playerId);
-      leaveLobby(playerId);
-      console.log(`[tracker] lobby SSE disconnected player=${playerId}`);
+      cancelPendingLobbyLeave(playerId);
+      const timer = setTimeout(() => {
+        pendingLobbyLeaves.delete(playerId);
+        if (!lobbySSE.has(playerId)) {
+          leaveLobby(playerId);
+          console.log(`[tracker] lobby SSE disconnected player=${playerId}`);
+        }
+      }, LOBBY_DISCONNECT_GRACE_MS);
+      pendingLobbyLeaves.set(playerId, timer);
     }
   });
 });
@@ -313,6 +332,7 @@ app.get('/lobby/events', (req, res) => {
 app.post('/lobby/join', (req, res) => {
   const { id, alias, session_id } = req.body;
   if (!id) return res.status(400).json({ error: 'Missing id.' });
+  cancelPendingLobbyLeave(id);
 
   console.log(`[tracker] join: player=${id} session=${session_id ?? 'none'}`);
 
@@ -356,6 +376,7 @@ app.post('/lobby/join', (req, res) => {
 app.post('/lobby/leave', (req, res) => {
   const { id } = req.body;
   if (!id) return res.status(400).json({ error: 'Missing id.' });
+  cancelPendingLobbyLeave(id);
   leaveLobby(id);
   res.json({ ok: true });
 });

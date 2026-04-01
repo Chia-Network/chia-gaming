@@ -38,7 +38,7 @@ const LobbyScreen = () => {
     setLobbyAlias,
   } = useLobbySocket(
     window.location.origin,
-    aliasConfirmed ? uniqueId : '',
+    uniqueId,
     sessionId,
     aliasConfirmed ? myAlias : undefined,
   );

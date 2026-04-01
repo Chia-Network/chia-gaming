@@ -154,6 +154,10 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
     };
   }, []);
 
+  useEffect(() => {
+    setExpanded(initialExpanded);
+  }, [initialExpanded]);
+
   // (height managed by parent Shell layout)
   const handleConnectSimulator = useCallback(() => {
     fakeBlockchainInfo.registerUser(uniqueId)

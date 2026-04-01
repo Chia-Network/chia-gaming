@@ -51,9 +51,16 @@ export function useLobbySocket(
       session_id: sessionId,
       ...(alias?.trim() ? { alias: alias.trim() } : {}),
     };
-    postJSON(`${lobbyUrl}/lobby/join`, joinPayload);
+    const sendJoin = () => {
+      postJSON(`${lobbyUrl}/lobby/join`, joinPayload);
+    };
+    sendJoin();
 
     const es = new EventSource(`${lobbyUrl}/lobby/events?player_id=${encodeURIComponent(uniqueId)}`);
+    es.onopen = () => {
+      // Re-assert lobby membership after SSE reconnects (e.g. tracker restart).
+      sendJoin();
+    };
 
     es.addEventListener('lobby_update', (e: MessageEvent) => {
       setPlayers(JSON.parse(e.data));
