@@ -17,6 +17,28 @@ import { debugLog } from '../services/debugLog';
 type Bech32Module = { encode: (prefix: string, data: Uint8Array, encoding?: 'bech32' | 'bech32m') => string };
 const bech32: Bech32Module = (bech32_module ? bech32_module : bech32_buffer);
 
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTransientWsError(err: any): boolean {
+  const msg = String(
+    err?.message ??
+    err?.error?.message ??
+    err?.type ??
+    err ??
+    ''
+  ).toLowerCase();
+  return (
+    msg.includes('websocket') ||
+    msg.includes('handshake') ||
+    msg.includes('wouldblock') ||
+    msg.includes('econnrefused') ||
+    msg.includes('closed') ||
+    msg.includes('network')
+  );
+}
+
 function getWebSocketClass(): any {
   if (typeof globalThis.WebSocket !== 'undefined') return globalThis.WebSocket;
   try { return require('ws'); } catch { throw new Error('No WebSocket implementation available'); }
@@ -33,6 +55,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
   private token = '';
   private connectPromise: Promise<void> | null = null;
+  private readonly retryBackoffMs = [0, 100, 250, 500, 1000];
 
   constructor(wsUrl: string) {
     this.wsUrl = wsUrl;
@@ -64,7 +87,9 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         resolve();
       };
       ws.onerror = (e: any) => {
+        this.ws = null;
         this.connectPromise = null;
+        try { ws.close(); } catch { /* ignore */ }
         reject(e);
       };
       ws.onclose = () => {
@@ -106,6 +131,25 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     return this.connectPromise;
   }
 
+  private async withTransientRetry<T>(label: string, op: () => Promise<T>): Promise<T> {
+    let lastErr: any;
+    for (const delay of this.retryBackoffMs) {
+      if (delay > 0) {
+        await sleepMs(delay);
+      }
+      try {
+        return await op();
+      } catch (e) {
+        lastErr = e;
+        if (!isTransientWsError(e)) {
+          throw e;
+        }
+        this.close();
+      }
+    }
+    throw new Error(`${label} failed after retries: ${String(lastErr)}`);
+  }
+
   private async sendRequest(method: string, params?: any): Promise<any> {
     await this.ensureConnected();
     const id = this.nextId++;
@@ -118,7 +162,10 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
 
   private async getOrRequestToken(uniqueId: string): Promise<string> {
     if (this.token) return this.token;
-    const result = await this.sendRequest('register', { name: uniqueId });
+    const result = await this.withTransientRetry(
+      'register',
+      () => this.sendRequest('register', { name: uniqueId }),
+    );
     this.token = result;
     return this.token;
   }
@@ -137,7 +184,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     if (this.deleted) return;
     const address = bech32.encode('xch', toUint8(puzzleHash), 'bech32m');
     this.addressData = { address, puzzleHash };
-    await this.getHeightInfo();
+    await this.withTransientRetry('get_peak', () => this.getHeightInfo());
     debugLog('[sim-blockchain] simulator probe succeeded');
   }
 
@@ -195,7 +242,10 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async registerUser(name: string): Promise<string> {
-    return this.sendRequest('register', { name });
+    return this.withTransientRetry(
+      'registerUser',
+      () => this.sendRequest('register', { name }),
+    );
   }
 
   close() {
