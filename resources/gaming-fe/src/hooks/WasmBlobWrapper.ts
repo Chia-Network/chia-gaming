@@ -462,6 +462,7 @@ export class WasmBlobWrapper {
         if (cs) {
           this.lastChannelStatus = cs as unknown as ChannelStatusPayload;
           if (!this.channelReady && cs.state === 'Active') {
+            debugLog('[wasm] channel creation transaction confirmed on-chain');
             this.channelReady = true;
             this.startPingTimer();
           }
