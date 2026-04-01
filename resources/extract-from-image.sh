@@ -5,7 +5,6 @@ if [ "x$1" = x ] ; then
     exit 1
 fi
 
-export VERSION="$(./resources/get_chia_gaming_version.py)"
 export SOURCE="$1/artifacts"
 export TARGET="$1/chia-gaming-deploy"
 export SHORT_GAME="chia-gaming-game"

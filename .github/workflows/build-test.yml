@@ -6,7 +6,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  UV_VERSION: 0.7.9
   GRCOV_VERSION: 0.8.1
   RUST_VERSION: stable
 
@@ -89,60 +88,6 @@ jobs:
           cargo test --no-run
           # Run simulator tests (matches local ct.sh)
           cargo test --lib --features sim-tests,sim-server -- --nocapture
-
-  # Disabled python clisp tests for now
-  # We need to verify that all of this has been ported to rust.
-
-  # calpoker_onchain_tests:
-  #   runs-on: ubuntu-22.04
-  #   needs: [fmt, clippy]
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #       with:
-  #         fetch-depth: 1
-
-  #     - name: Install rust
-  #       uses: dtolnay/rust-toolchain@master
-  #       with:
-  #         toolchain: ${{ env.RUST_VERSION }}
-
-  #     - name: Build rust code
-  #       run: cargo build
-
-  #     - name: Set up Python 3.12
-  #       uses: Chia-Network/actions/setup-python@main
-  #       with:
-  #         python-version: 3.12
-
-  #     - name: Install uv
-  #       run: |
-  #         pip install uv==$UV_VERSION
-
-  #     - name: install chia_gaming into .venv
-  #       run: |
-  #         cd python
-  #         uv venv
-  #         uv pip install -e .
-
-  #     - name: Build hex files
-  #       run: |
-  #         tools/build-chialisp.sh
-
-  #     - name: calpoker_onchain_tests
-  #       run: |
-  #         cd python
-  #         source .venv/bin/activate
-  #         cd tests
-  #         uv run compute_hashes.py
-  #         uv run ./test_calpoker_validation.py
-
-  #     - name: calpoker_handler tests
-  #       run: |
-  #         cd python
-  #         source .venv/bin/activate
-  #         cd tests
-  #         uv run compute_hashes.py
-  #         uv run ./test_calpoker_handlers.py
 
   coverage:
     needs: [fmt, clippy]

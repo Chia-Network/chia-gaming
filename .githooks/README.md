@@ -1,7 +1,7 @@
 # Objectives
 
-- After an update, rebuild. This will ensure your hex files are up-to-date.
-- Before a push, run fmt, clippy, and the fast tests
+- Enforce filename portability checks at commit time.
+- Run build and test commands manually via `./cb.sh` and `./ct.sh`.
 
 # Use
 

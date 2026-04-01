@@ -71,7 +71,6 @@ clsp/
   test/             — Chialisp test programs
 
 wasm/               — WebAssembly bindings for browser use
-python/             — Python test harness for chialisp validation
 resources/          — Frontend (gaming-fe), lobby, and test infrastructure
 ```
 
