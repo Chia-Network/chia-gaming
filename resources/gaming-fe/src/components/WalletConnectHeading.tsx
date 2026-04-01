@@ -15,7 +15,7 @@ import { WalletConnectOutboundState } from '../hooks/useWalletConnect';
 import { InternalBlockchainInterface } from '../types/ChiaGaming';
 import { debugLog } from '../services/debugLog';
 
-const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConnected?: (blockchainType: 'simulator' | 'walletconnect') => void; initialExpanded?: boolean }) => {
+const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConnected?: (blockchainType: 'simulator' | 'walletconnect', source?: 'auto' | 'manual') => void; initialExpanded?: boolean }) => {
   const { wcInfo, setWcInfo } = useDebug();
   const [_alreadyConnected, setAlreadyConnected] = useState(false);
   const [_walletConnectError, setWalletConnectError] = useState<
@@ -40,6 +40,7 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
   const [recvAddress, setRecvAddress] = useState<string | undefined>();
   const [balance, setBalance] = useState<number | undefined>();
   const balanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const walletConnectStartedManuallyRef = useRef(false);
 
   const uniqueId = getPlayerId();
 
@@ -109,10 +110,12 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
     const subscription = walletConnectState.getObservable().subscribe({
       next: (evt: WalletConnectOutboundState) => {
         if (evt.stateName === 'connected') {
+          const source: 'auto' | 'manual' = walletConnectStartedManuallyRef.current ? 'manual' : 'auto';
+          walletConnectStartedManuallyRef.current = false;
           debugLog('WalletConnect connected');
           toggleExpanded();
           setAlreadyConnected(true);
-          onConnected?.('walletconnect');
+          onConnected?.('walletconnect', source);
           setActiveBlockchain(realBlockchainInfo as unknown as InternalBlockchainInterface);
           realBlockchainInfo.startMonitoring().then(() => {
             requestBalance();
@@ -172,6 +175,7 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
   }, []);
 
   const onDoWalletConnect = useCallback(async () => {
+    walletConnectStartedManuallyRef.current = true;
     await initWalletConnect();
     doConnectWallet(
       setShowQRModal,

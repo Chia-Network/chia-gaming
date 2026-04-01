@@ -13,6 +13,7 @@ use clvm_utils::CurriedProgram;
 use clvmr::allocator::NodePtr;
 
 use serde::{Deserialize, Serialize};
+use serde_json_any_key::*;
 
 use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::channel_handler::types::{
@@ -124,6 +125,7 @@ pub struct ChannelHandler {
     // Maps state_number → timeout_conditions_hash (DEFAULT_HASH) for each
     // exchange we've participated in.  Needed to reconstruct the unroll coin
     // puzzle for preemption when the on-chain state is from an older exchange.
+    #[serde(with = "any_key_map")]
     state_conditions_hashes: HashMap<usize, PuzzleHash>,
 
     // Live games

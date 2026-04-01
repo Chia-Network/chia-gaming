@@ -139,6 +139,30 @@ const playerToSession = new Map<string, string>();
 const knownAliases = new Map<string, string>();
 const pendingIdentifySessions = new Set<string>();
 
+function bindSessionToPlayer(playerId: string, sessionId: string): boolean {
+  const previousSession = playerToSession.get(playerId);
+  if (previousSession && previousSession !== sessionId) {
+    sessionToPlayer.delete(previousSession);
+    pendingIdentifySessions.delete(previousSession);
+    const previousClient = gameSSE.get(previousSession);
+    if (previousClient) {
+      try { previousClient.res.end(); } catch {}
+      gameSSE.delete(previousSession);
+    }
+    console.log(`[tracker] session replaced player=${playerId} old=${previousSession} new=${sessionId}`);
+  }
+
+  const previousPlayer = sessionToPlayer.get(sessionId);
+  if (previousPlayer && previousPlayer !== playerId) {
+    console.warn(`[tracker] rejected session reuse session=${sessionId} owner=${previousPlayer} requester=${playerId}`);
+    return false;
+  }
+
+  sessionToPlayer.set(sessionId, playerId);
+  playerToSession.set(playerId, sessionId);
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Broadcast helpers
 // ---------------------------------------------------------------------------
@@ -169,8 +193,8 @@ function completeGameRegistration(playerId: string): void {
     const peerSessionId = playerToSession.get(peerId);
     const peerConnected = peerSessionId ? gameSSE.has(peerSessionId) : false;
     console.log(`[tracker] game registered player=${playerId} pairing=${pairing.token} peer_connected=${peerConnected}`);
-    const myAlias = lobby.players[playerId]?.alias ?? playerId;
-    const peerAlias = lobby.players[peerId]?.alias ?? peerId;
+    const myAlias = lobby.players[playerId]?.alias ?? knownAliases.get(playerId) ?? playerId;
+    const peerAlias = lobby.players[peerId]?.alias ?? knownAliases.get(peerId) ?? peerId;
     sendGameEvent(playerId, 'connection_status', {
       has_pairing: true,
       token: pairing.token,
@@ -293,8 +317,9 @@ app.post('/lobby/join', (req, res) => {
   console.log(`[tracker] join: player=${id} session=${session_id ?? 'none'}`);
 
   if (session_id) {
-    sessionToPlayer.set(session_id, id);
-    playerToSession.set(id, session_id);
+    if (!bindSessionToPlayer(id, session_id)) {
+      return res.status(403).json({ error: 'Session ID does not belong to this player.' });
+    }
   }
 
   const resolvedAlias = alias || knownAliases.get(id) || id;

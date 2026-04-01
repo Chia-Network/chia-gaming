@@ -72,6 +72,7 @@ async function restoreSession(
   gameObject.lastChannelStatus = save.channelStatus ?? null;
   gameObject.myAlias = save.myAlias;
   gameObject.opponentAlias = save.opponentAlias;
+  gameObject.restoreSavedWatchCoins(save.channelStatus);
   gameObject.markRestored();
 
   debugLog('[restore] session restored');

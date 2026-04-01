@@ -1,6 +1,6 @@
 use std::ops::{Add, AddAssign};
 
-use serde::de::{self, Visitor};
+use serde::de::{self, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use clvmr::allocator::NodePtr;
@@ -60,6 +60,21 @@ impl<'de> Visitor<'de> for AggsigVisitor {
         E: de::Error,
     {
         self.visit_bytes(&v)
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut bytes = Vec::with_capacity(96);
+        while let Some(b) = seq.next_element::<u8>()? {
+            bytes.push(b);
+        }
+        if bytes.is_empty() {
+            Ok(Aggsig::default())
+        } else {
+            Aggsig::from_slice(&bytes).map_err(|e| de::Error::custom(format!("{e:?}")))
+        }
     }
 }
 

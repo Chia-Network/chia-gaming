@@ -18,6 +18,7 @@ import {
 import { blobSingleton } from '../hooks/blobSingleton';
 import { walletConnectState } from '../hooks/useWalletConnect';
 import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
+import { realBlockchainInfo } from '../hooks/RealBlockchainInterface';
 import { setActiveBlockchain } from '../hooks/activeBlockchain';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import { debugLog } from '../services/debugLog';
@@ -91,10 +92,19 @@ const Shell = () => {
   const sessionSaveRef = useRef<SessionSave | null>(null);
   const activePairingTokenRef = useRef<string | null>(null);
   const blockchainTypeRef = useRef<import('../hooks/save').BlockchainType>('simulator');
+  const deferStateUpdate = useCallback((fn: () => void) => {
+    if (typeof queueMicrotask === 'function') {
+      queueMicrotask(fn);
+    } else {
+      setTimeout(fn, 0);
+    }
+  }, []);
 
   const appendGameLog = useCallback((line: string) => {
-    setGameLog(prev => [...prev, line]);
-  }, []);
+    deferStateUpdate(() => {
+      setGameLog(prev => [...prev, line]);
+    });
+  }, [deferStateUpdate]);
 
   const registerMessageHandler = useCallback((handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, pingHandler: () => void) => {
     if (trackerConnRef.current) {
@@ -104,15 +114,17 @@ const Shell = () => {
 
   useEffect(() => {
     return subscribeDebugLog((line) => {
-      setDebugLogLines(prev => [...prev, line]);
+      deferStateUpdate(() => {
+        setDebugLogLines(prev => [...prev, line]);
+      });
     });
-  }, []);
+  }, [deferStateUpdate]);
 
   // Fetch tracker URL, set up iframe and TrackerConnection.
   // Deferred until the user resolves both the resume vs. start-over prompt
   // and the wallet/simulator selection.
   useEffect(() => {
-    if (!restoreDecided || !walletConnected) return;
+    if (!restoreDecided) return;
 
     let cancelled = false;
 
@@ -175,15 +187,15 @@ const Shell = () => {
               if (typeof status.peer_connected === 'boolean') return status.peer_connected;
               return prev;
             });
-            // Mid-session reconnect: we already have an active session
+            // Mid-session reconnect: we already have an active session.
+            // Tracker status should not be able to destroy local session state.
             if (activePairingTokenRef.current !== null) {
               if (status.has_pairing && status.token === activePairingTokenRef.current) {
                 console.log('[Shell] mid-session reconnect: token matches, resending un-acked');
                 blobSingleton?.resendUnacked();
               } else {
-                console.warn('[Shell] mid-session reconnect: pairing lost or mismatched, going on-chain');
-                blobSingleton?.goOnChain();
-                conn.close();
+                console.warn('[Shell] mid-session reconnect: pairing lost or mismatched, keeping local session active');
+                setPeerConnected(false);
               }
               return;
             }
@@ -284,6 +296,25 @@ const Shell = () => {
           },
         });
         trackerConnRef.current = conn;
+
+        // Local save hydration is authoritative for restoring UI state.
+        // Do not wait for tracker connection_status before showing an existing session.
+        const initialSave = loadSession();
+        if (initialSave) {
+          let amount: bigint;
+          let perGame: bigint;
+          try { amount = BigInt(initialSave.amount); } catch { amount = FALLBACK_AMOUNT; }
+          try { perGame = BigInt(initialSave.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
+          startSession(
+            conn,
+            initialSave.iStarted,
+            amount,
+            perGame,
+            initialSave.pairingToken,
+            initialSave,
+          );
+          setPeerConnected(false);
+        }
       })
       .catch(e => {
         if (!cancelled) console.error('[Shell] failed to fetch /urls:', e);
@@ -294,7 +325,7 @@ const Shell = () => {
       trackerConnRef.current?.disconnect();
       trackerConnRef.current = null;
     };
-  }, [uniqueId, sessionId, restoreDecided, walletConnected]);
+  }, [uniqueId, sessionId, restoreDecided]);
 
   const sendChat = useCallback((text: string) => {
     const myAlias = gameParams?.myAlias ?? 'You';
@@ -304,9 +335,11 @@ const Shell = () => {
 
   const onSessionActivity = useCallback(() => {
     if (activeTabRef.current !== 'session') {
-      setUnreadSession(true);
+      deferStateUpdate(() => {
+        setUnreadSession(true);
+      });
     }
-  }, []);
+  }, [deferStateUpdate]);
 
   const handleTabChange = useCallback((tabId: TabId) => {
     setActiveTab(tabId);
@@ -346,13 +379,41 @@ const Shell = () => {
     };
 
     if (bcType === 'simulator') {
+      // If the saved mode is simulator, keep simulator authoritative on reload.
+      void walletConnectState.disconnect().catch(() => {});
       fakeBlockchainInfo.registerUser(uniqueId)
-        .then(() => { debugLog('Simulator wallet registered (resume)'); onRegistered(); })
+        .then(() => {
+          persistBlockchainType('simulator');
+          debugLog('Simulator wallet registered (resume)');
+          onRegistered();
+        })
         .catch(onFailed);
     } else {
-      debugLog('WalletConnect resume not yet implemented, falling back to simulator');
-      fakeBlockchainInfo.registerUser(uniqueId)
-        .then(onRegistered)
+      debugLog('WalletConnect resume: initializing client');
+      walletConnectState.init()
+        .then(() => {
+          const session = walletConnectState.getSession();
+          if (session) {
+            debugLog('WalletConnect resume: restored existing session');
+            setActiveBlockchain(realBlockchainInfo);
+            realBlockchainInfo.startMonitoring().catch((err: unknown) => {
+              console.warn('[blockchain] startMonitoring failed on WC resume', err);
+            });
+            setPendingRestore(null);
+            setResuming(false);
+            setRestoreDecided(true);
+            blockchainTypeRef.current = 'walletconnect';
+            setWalletConnected(true);
+            return;
+          }
+
+          debugLog('WalletConnect resume: no existing session, waiting for user reconnect');
+          setPendingRestore(null);
+          setResuming(false);
+          setRestoreDecided(true);
+          blockchainTypeRef.current = 'walletconnect';
+          setWalletConnected(false);
+        })
         .catch(onFailed);
     }
   }, [uniqueId]);
@@ -416,7 +477,11 @@ const Shell = () => {
         </div>
       ) : (
         <WalletConnectHeading
-          onConnected={(bcType) => {
+          onConnected={(bcType, source) => {
+            if (bcType === 'walletconnect' && source !== 'manual' && blockchainTypeRef.current === 'simulator' && walletConnected) {
+              debugLog('Ignoring walletconnect auto-connect while simulator session is active');
+              return;
+            }
             blockchainTypeRef.current = bcType;
             persistBlockchainType(bcType);
             setWalletConnected(true);
@@ -464,11 +529,13 @@ const Shell = () => {
     </div>
   );
 
+  const canShowApp = walletConnected || (gameParams !== null && peerConn !== null);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', position: 'relative', width: '100vw', height: '100vh' }}
          className='bg-canvas-bg-subtle text-canvas-text'>
       {wcHeading}
-      {walletConnected && (<>
+      {canShowApp && (<>
       {tabBar}
       <div style={{ position: 'relative', flex: '1 1 0%', minHeight: 0, zIndex: 0 }}
            className='bg-canvas-bg-subtle'>
@@ -484,7 +551,7 @@ const Shell = () => {
 
         {/* Game Session tab — use visibility instead of display to keep layout computed and avoid flicker on tab switch */}
         <div style={{ position: 'absolute', inset: 0, overflow: 'auto', visibility: activeTab === 'session' ? 'visible' : 'hidden' }}>
-          {gameParams && peerConn ? (
+          {gameParams && peerConn && walletConnected ? (
             <GameSession
               params={gameParams}
               peerConn={peerConn}
@@ -495,6 +562,10 @@ const Shell = () => {
               blockchainType={blockchainTypeRef.current}
               onSessionActivity={onSessionActivity}
             />
+          ) : gameParams && peerConn ? (
+            <div className='w-full h-full flex items-center justify-center text-canvas-text/70'>
+              Session restored locally. Waiting for wallet connection...
+            </div>
           ) : (
             <div className='w-full h-full flex items-center justify-center text-canvas-text/50'>
               No active game session

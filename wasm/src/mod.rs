@@ -387,9 +387,18 @@ mod gaming_wasm {
 
     #[wasm_bindgen]
     pub fn create_serialized_game(json: &str, new_seed: &str) -> Result<i32, JsValue> {
-        let mut cradle: JsCradle = serde_json::from_str(json)
-            .map_err(|e| types::Error::StrErr(e.to_string()))
-            .into_js()?;
+        let mut cradle: JsCradle = if json.starts_with('{') {
+            serde_json::from_str(json)
+                .map_err(|e| types::Error::StrErr(e.to_string()))
+                .into_js()?
+        } else {
+            let bytes = hex::decode(json)
+                .map_err(|e| types::Error::StrErr(e.to_string()))
+                .into_js()?;
+            bson::from_slice::<JsCradle>(&bytes)
+                .map_err(|e| types::Error::StrErr(e.to_string()))
+                .into_js()?
+        };
         let hashed = Sha256Input::Bytes(new_seed.as_bytes()).hash();
         cradle.rng = ChaCha8SerializationWrapper(ChaCha8Rng::from_seed(*hashed.bytes()));
         let new_id = get_next_id();
@@ -416,8 +425,9 @@ mod gaming_wasm {
     #[wasm_bindgen]
     pub fn serialize_cradle(cid: i32) -> Result<String, JsValue> {
         with_game(cid, move |cradle: &mut JsCradle| {
-            serde_json::to_string(&cradle)
-                .map_err(|e| types::Error::StrErr(e.to_string()))
+            let bytes = bson::to_vec(&cradle)
+                .map_err(|e| types::Error::StrErr(e.to_string()))?;
+            Ok(hex::encode(bytes))
         })
     }
 

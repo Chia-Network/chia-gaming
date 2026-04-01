@@ -415,6 +415,7 @@ name = "chia_gaming_wasm"
 version = "0.1.0"
 dependencies = [
  "bech32",
+ "bson",
  "chia-protocol",
  "chia-puzzles",
  "chia-traits 0.35.2",
