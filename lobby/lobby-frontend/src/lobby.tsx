@@ -32,6 +32,8 @@ const LobbyScreen = () => {
     players,
     pendingChallenge,
     challengeSent,
+    isConnected,
+    reconnectBlocked,
     sendChallenge,
     acceptChallenge,
     declineChallenge,
@@ -230,6 +232,15 @@ const LobbyScreen = () => {
           Waiting for opponent to respond to your challenge...
         </div>
       )}
+      {reconnectBlocked ? (
+        <div className="mb-4 p-3 rounded-lg bg-warning-bg border border-warning-border text-warning-text text-sm">
+          This player is active in another tab/window. Close the other tab or use a separate browser profile for Alice/Bob.
+        </div>
+      ) : !isConnected && (
+        <div className="mb-4 p-3 rounded-lg bg-warning-bg border border-warning-border text-warning-text text-sm">
+          Reconnecting to tracker...
+        </div>
+      )}
 
       <h3 className="text-lg font-semibold text-canvas-text-contrast mb-3">
         Connected Players
@@ -269,7 +280,7 @@ const LobbyScreen = () => {
                   variant="solid"
                   color="primary"
                   size="sm"
-                  disabled={challengeSent || !!challengeTarget}
+                  disabled={reconnectBlocked || !isConnected || challengeSent || !!challengeTarget}
                   onClick={() => openChallengeDialog(player.id, player.alias)}
                   leadingIcon={<Swords className="w-4 h-4" />}
                 >

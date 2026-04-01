@@ -41,6 +41,15 @@ export type MessagePayload =
   | { ack: number }
   | { ping: true };
 
+type TrackerEnvelope =
+  | { type: 'connection_status'; has_pairing: boolean; token?: string; game_type?: string; amount?: string; per_game?: string; i_am_initiator?: boolean; peer_connected?: boolean; my_alias?: string; peer_alias?: string }
+  | { type: 'matched'; token: string; game_type: string; amount: string; per_game: string; i_am_initiator: boolean; my_alias?: string; peer_alias?: string }
+  | { type: 'message'; data?: unknown }
+  | { type: 'chat'; text: string; from_alias: string; timestamp: number }
+  | { type: 'peer_reconnected' }
+  | { type: 'closed' }
+  | { type: 'error'; error?: string };
+
 function isMessagePayload(data: unknown): data is MessagePayload {
   if (!data || typeof data !== 'object') return false;
   if ('ping' in data) return (data as { ping?: unknown }).ping === true;
@@ -70,130 +79,184 @@ export class TrackerConnection {
   private trackerUrl: string;
   private sessionId: string;
   private callbacks: TrackerConnectionCallbacks;
-  private eventSource: EventSource | null = null;
+  private ws: WebSocket | null = null;
   private messageBuffer: MessagePayload[] = [];
   private handlerRegistered = false;
   private closed = false;
   private closePending = false;
   private wasDisconnected = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(trackerUrl: string, sessionId: string, callbacks: TrackerConnectionCallbacks) {
     this.trackerUrl = trackerUrl;
     this.sessionId = sessionId;
     this.callbacks = callbacks;
-
-    this.postJSON('/game/identify', { session_id: sessionId });
-    this.connectSSE();
+    this.connectWs();
   }
 
-  private connectSSE(): void {
+  private getWsUrl(): string {
+    const url = new URL(this.trackerUrl);
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    url.pathname = '/ws';
+    url.search = '';
+    url.hash = '';
+    return url.toString();
+  }
+
+  private sendWs(payload: Record<string, unknown>): void {
+    const ws = this.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify(payload));
+  }
+
+  private connectWs(): void {
     if (this.closed) return;
+    const ws = new WebSocket(this.getWsUrl());
+    this.ws = ws;
 
-    const url = `${this.trackerUrl}/game/events?session_id=${encodeURIComponent(this.sessionId)}`;
-    const es = new EventSource(url);
-    this.eventSource = es;
-
-    es.addEventListener('connection_status', (e: MessageEvent) => {
-      const status: ConnectionStatus = JSON.parse(e.data);
-      debugLog(`[tracker] connection_status has_pairing=${status.has_pairing} token=${status.token ?? 'none'} peer=${status.peer_connected ?? 'n/a'}`);
-      this.callbacks.onConnectionStatus(status);
-    });
-
-    es.addEventListener('matched', (e: MessageEvent) => {
-      const params: MatchedParams = JSON.parse(e.data);
-      debugLog(`[tracker] matched initiator=${params.i_am_initiator} amount=${params.amount}`);
-      this.callbacks.onMatched(params);
-    });
-
-    es.addEventListener('message', (e: MessageEvent) => {
-      const event = JSON.parse(e.data) as { data?: unknown };
-      if (this.closed || this.closePending) return;
-      if (!isMessagePayload(event.data)) {
-        debugLog('[tracker] recv malformed envelope');
-        return;
-      }
-      const payload: MessagePayload = event.data;
-      try {
-        if (isPingPayload(payload)) {
-          this.callbacks.onPing();
-          return;
-        }
-        if (isAckPayload(payload)) {
-          debugLog(`[tracker] recv ack=${payload.ack}`);
-          this.callbacks.onAck(payload.ack);
-          return;
-        }
-        if (!isDataPayload(payload)) {
-          throw new Error('unknown message payload');
-        }
-        debugLog(`[tracker] recv msgno=${payload.msgno} len=${payload.msg.length}`);
-      } catch {
-        debugLog(`[tracker] recv malformed payload`);
-        return;
-      }
-      if (!this.handlerRegistered) {
-        this.messageBuffer.push(payload);
-        return;
-      }
-      this.callbacks.onMessage(payload);
-    });
-
-    es.addEventListener('chat', (e: MessageEvent) => {
-      const { text, from_alias, timestamp } = JSON.parse(e.data);
-      this.callbacks.onChat({ text, fromAlias: from_alias, timestamp, isMine: false });
-    });
-
-    es.addEventListener('peer_reconnected', () => {
-      debugLog('[tracker] peer_reconnected');
-      this.callbacks.onPeerReconnected();
-    });
-
-    es.addEventListener('closed', () => {
-      this.closePending = false;
-      this.callbacks.onClosed();
-    });
-
-    es.onopen = () => {
+    ws.onopen = () => {
+      this.sendWs({ type: 'identify', session_id: this.sessionId });
       if (this.wasDisconnected) {
         debugLog('[tracker] reconnected to tracker');
         this.callbacks.onTrackerReconnected();
-        this.postJSON('/game/identify', { session_id: this.sessionId });
       }
       this.wasDisconnected = false;
+      if (this.reconnectTimer !== null) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
     };
 
-    es.onerror = () => {
+    ws.onmessage = (evt: MessageEvent<string>) => {
+      let msg: TrackerEnvelope | null = null;
+      try {
+        msg = JSON.parse(evt.data) as TrackerEnvelope;
+      } catch {
+        debugLog('[tracker] recv malformed ws json');
+        return;
+      }
+      if (!msg || typeof msg !== 'object' || !('type' in msg)) {
+        debugLog('[tracker] recv malformed ws envelope');
+        return;
+      }
+
+      switch (msg.type) {
+        case 'connection_status': {
+          const status: ConnectionStatus = {
+            has_pairing: msg.has_pairing,
+            token: msg.token,
+            game_type: msg.game_type,
+            amount: msg.amount,
+            per_game: msg.per_game,
+            i_am_initiator: msg.i_am_initiator,
+            peer_connected: msg.peer_connected,
+            my_alias: msg.my_alias,
+            peer_alias: msg.peer_alias,
+          };
+          debugLog(`[tracker] connection_status has_pairing=${status.has_pairing} token=${status.token ?? 'none'} peer=${status.peer_connected ?? 'n/a'}`);
+          this.callbacks.onConnectionStatus(status);
+          break;
+        }
+        case 'matched': {
+          const params: MatchedParams = {
+            token: msg.token,
+            game_type: msg.game_type,
+            amount: msg.amount,
+            per_game: msg.per_game,
+            i_am_initiator: msg.i_am_initiator,
+            my_alias: msg.my_alias,
+            peer_alias: msg.peer_alias,
+          };
+          debugLog(`[tracker] matched initiator=${params.i_am_initiator} amount=${params.amount}`);
+          this.callbacks.onMatched(params);
+          break;
+        }
+        case 'message': {
+          if (this.closed || this.closePending) return;
+          if (!isMessagePayload(msg.data)) {
+            debugLog('[tracker] recv malformed envelope');
+            return;
+          }
+          const payload: MessagePayload = msg.data;
+          if (isPingPayload(payload)) {
+            this.callbacks.onPing();
+            return;
+          }
+          if (isAckPayload(payload)) {
+            debugLog(`[tracker] recv ack=${payload.ack}`);
+            this.callbacks.onAck(payload.ack);
+            return;
+          }
+          if (!isDataPayload(payload)) {
+            debugLog('[tracker] recv malformed payload');
+            return;
+          }
+          debugLog(`[tracker] recv msgno=${payload.msgno} len=${payload.msg.length}`);
+          if (!this.handlerRegistered) {
+            this.messageBuffer.push(payload);
+            return;
+          }
+          this.callbacks.onMessage(payload);
+          break;
+        }
+        case 'chat':
+          this.callbacks.onChat({ text: msg.text, fromAlias: msg.from_alias, timestamp: msg.timestamp, isMine: false });
+          break;
+        case 'peer_reconnected':
+          debugLog('[tracker] peer_reconnected');
+          this.callbacks.onPeerReconnected();
+          break;
+        case 'closed':
+          this.closePending = false;
+          this.callbacks.onClosed();
+          break;
+        case 'error':
+          debugLog(`[tracker] server error: ${msg.error ?? 'unknown'}`);
+          break;
+        default:
+          break;
+      }
+    };
+
+    ws.onerror = () => {
       if (!this.closed && !this.wasDisconnected) {
         this.wasDisconnected = true;
-        debugLog('[tracker] SSE connection error, will auto-reconnect');
+        debugLog('[tracker] WS connection error, will auto-reconnect');
         this.callbacks.onTrackerDisconnected();
       }
     };
-  }
 
-  private postJSON(path: string, body: unknown): void {
-    fetch(`${this.trackerUrl}${path}`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-      headers: { 'Content-Type': 'application/json' },
-    }).catch((err) => debugLog(`[tracker] POST ${path} failed: ${err}`));
+    ws.onclose = () => {
+      if (this.closed) return;
+      if (!this.wasDisconnected) {
+        this.wasDisconnected = true;
+        this.callbacks.onTrackerDisconnected();
+      }
+      this.ws = null;
+      if (this.reconnectTimer === null) {
+        this.reconnectTimer = globalThis.setTimeout(() => {
+          this.reconnectTimer = null;
+          this.connectWs();
+        }, 1000);
+      }
+    };
   }
 
   sendMessage(msgno: number, input: string) {
     const payload: MessagePayload = { msgno, msg: input };
     debugLog(`[tracker] send msgno=${msgno} len=${input.length}`);
-    this.postJSON('/game/send', { session_id: this.sessionId, data: payload });
+    this.sendWs({ type: 'message', session_id: this.sessionId, data: payload });
   }
 
   sendAck(ackMsgno: number) {
     const payload: MessagePayload = { ack: ackMsgno };
     debugLog(`[tracker] send ack=${ackMsgno}`);
-    this.postJSON('/game/send', { session_id: this.sessionId, data: payload });
+    this.sendWs({ type: 'message', session_id: this.sessionId, data: payload });
   }
 
   sendPing() {
     const payload: MessagePayload = { ping: true };
-    this.postJSON('/game/send', { session_id: this.sessionId, data: payload });
+    this.sendWs({ type: 'message', session_id: this.sessionId, data: payload });
   }
 
   hostLog(_msg: string) {
@@ -201,22 +264,22 @@ export class TrackerConnection {
   }
 
   sendChat(text: string) {
-    this.postJSON('/game/chat', { session_id: this.sessionId, text });
+    this.sendWs({ type: 'chat', session_id: this.sessionId, text });
   }
 
   close() {
     if (this.closed) return;
     this.closePending = true;
     debugLog('[tracker] requesting close');
-    this.postJSON('/game/close', { session_id: this.sessionId });
+    this.sendWs({ type: 'close', session_id: this.sessionId });
   }
 
   forceDisconnect() {
     if (this.closed) return;
     this.closed = true;
     debugLog('[tracker] force disconnect');
-    this.eventSource?.close();
-    this.eventSource = null;
+    this.ws?.close();
+    this.ws = null;
   }
 
   getPeerConnection(): PeerConnectionResult {
@@ -264,7 +327,11 @@ export class TrackerConnection {
 
   disconnect() {
     this.closed = true;
-    this.eventSource?.close();
-    this.eventSource = null;
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.ws?.close();
+    this.ws = null;
   }
 }

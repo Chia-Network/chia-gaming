@@ -18,12 +18,20 @@ export interface ChallengeReceived {
   per_game: string;
 }
 
-function postJSON(url: string, body: unknown): void {
-  fetch(url, {
-    method: 'POST',
-    body: JSON.stringify(body),
-    headers: { 'Content-Type': 'application/json' },
-  }).catch((err) => console.error('[lobby] POST failed:', url, err));
+type InboundMessage =
+  | { type: 'lobby_update'; players: Player[] }
+  | { type: 'challenge_received'; challenge_id: string; from_id: string; from_alias: string; game: string; amount: string; per_game: string }
+  | { type: 'challenge_resolved'; challenge_id: string; accepted: boolean }
+  | { type: 'game_update' }
+  | { type: 'error'; error?: string };
+
+function toWsUrl(input: string): string {
+  const url = new URL(input);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  url.pathname = '/ws';
+  url.search = '';
+  url.hash = '';
+  return url.toString();
 }
 
 export function useLobbySocket(
@@ -35,62 +43,125 @@ export function useLobbySocket(
   const [players, setPlayers] = useState<Player[]>([]);
   const [pendingChallenge, setPendingChallenge] = useState<ChallengeReceived | null>(null);
   const [challengeSent, setChallengeSent] = useState(false);
-  const lobbyUrlRef = useRef(lobbyUrl);
-  const aliasRef = useRef(alias);
+  const [isConnected, setIsConnected] = useState(false);
+  const [reconnectBlocked, setReconnectBlocked] = useState(false);
   const uniqueIdRef = useRef(uniqueId);
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const closingRef = useRef(false);
+  const pendingOutboundRef = useRef<Record<string, unknown>[]>([]);
 
-  useEffect(() => { aliasRef.current = alias; }, [alias]);
-  useEffect(() => { lobbyUrlRef.current = lobbyUrl; }, [lobbyUrl]);
   useEffect(() => { uniqueIdRef.current = uniqueId; }, [uniqueId]);
+
+  const send = useCallback((payload: Record<string, unknown>, queueIfClosed = true) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      if (queueIfClosed) pendingOutboundRef.current.push(payload);
+      return false;
+    }
+    ws.send(JSON.stringify(payload));
+    return true;
+  }, []);
 
   useEffect(() => {
     if (!uniqueId) return;
 
-    const joinPayload = {
+    const wsUrl = toWsUrl(lobbyUrl);
+    const joinPayload: Record<string, unknown> = {
+      type: 'join',
       id: uniqueId,
       session_id: sessionId,
       ...(alias?.trim() ? { alias: alias.trim() } : {}),
     };
-    const sendJoin = () => {
-      postJSON(`${lobbyUrl}/lobby/join`, joinPayload);
+
+    closingRef.current = false;
+    setReconnectBlocked(false);
+
+    const connect = () => {
+      if (closingRef.current) return;
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        if (wsRef.current !== ws) return;
+        setIsConnected(true);
+        ws.send(JSON.stringify(joinPayload));
+        if (pendingOutboundRef.current.length > 0) {
+          const queued = pendingOutboundRef.current.splice(0, pendingOutboundRef.current.length);
+          for (const payload of queued) {
+            ws.send(JSON.stringify(payload));
+          }
+        }
+      };
+
+      ws.onmessage = (event: MessageEvent<string>) => {
+        if (wsRef.current !== ws) return;
+        let msg: InboundMessage | null = null;
+        try {
+          msg = JSON.parse(event.data) as InboundMessage;
+        } catch {
+          return;
+        }
+        if (!msg || typeof msg !== 'object' || !('type' in msg)) return;
+        switch (msg.type) {
+          case 'lobby_update':
+            setPlayers(msg.players ?? []);
+            break;
+          case 'challenge_received':
+            setPendingChallenge(msg);
+            break;
+          case 'challenge_resolved':
+            setChallengeSent(false);
+            if (!msg.accepted) {
+              console.log('[lobby] challenge declined');
+            }
+            break;
+          case 'error':
+            if (msg.error) console.warn('[lobby] tracker error:', msg.error);
+            break;
+          default:
+            break;
+        }
+      };
+
+      ws.onclose = (event: CloseEvent) => {
+        if (wsRef.current !== ws) return;
+        setIsConnected(false);
+        wsRef.current = null;
+        if (closingRef.current) return;
+        if (event.code === 4001) {
+          setReconnectBlocked(true);
+          return;
+        }
+        reconnectTimerRef.current = window.setTimeout(connect, 1000);
+      };
+
+      ws.onerror = () => {
+        if (wsRef.current !== ws) return;
+        try { ws.close(); } catch {}
+      };
     };
-    sendJoin();
 
-    const es = new EventSource(`${lobbyUrl}/lobby/events?player_id=${encodeURIComponent(uniqueId)}`);
-    es.onopen = () => {
-      // Re-assert lobby membership after SSE reconnects (e.g. tracker restart).
-      sendJoin();
-    };
-
-    es.addEventListener('lobby_update', (e: MessageEvent) => {
-      setPlayers(JSON.parse(e.data));
-    });
-
-    es.addEventListener('challenge_received', (e: MessageEvent) => {
-      setPendingChallenge(JSON.parse(e.data));
-    });
-
-    es.addEventListener('challenge_resolved', (e: MessageEvent) => {
-      const r = JSON.parse(e.data);
-      setChallengeSent(false);
-      if (!r.accepted) {
-        console.log('[lobby] challenge declined');
-      }
-    });
-
-    es.onerror = () => {
-      console.warn('[lobby] SSE connection error, will auto-reconnect');
-    };
+    connect();
 
     return () => {
-      postJSON(`${lobbyUrl}/lobby/leave`, { id: uniqueId });
-      es.close();
+      closingRef.current = true;
+      setIsConnected(false);
+      if (reconnectTimerRef.current !== null) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      send({ type: 'leave', id: uniqueId }, false);
+      try { wsRef.current?.close(); } catch {}
+      wsRef.current = null;
+      pendingOutboundRef.current = [];
     };
-  }, [uniqueId, lobbyUrl, sessionId, alias]);
+  }, [uniqueId, lobbyUrl, sessionId, alias, send]);
 
   const sendChallenge = useCallback(
     (targetId: string, game: string, amount: string, perGame: string) => {
-      postJSON(`${lobbyUrlRef.current}/lobby/challenge`, {
+      send({
+        type: 'challenge',
         from_id: uniqueIdRef.current,
         target_id: targetId,
         game,
@@ -99,45 +170,45 @@ export function useLobbySocket(
       });
       setChallengeSent(true);
     },
-    [],
+    [send],
   );
 
   const acceptChallenge = useCallback(
     (challengeId: string) => {
-      postJSON(`${lobbyUrlRef.current}/lobby/challenge/accept`, {
+      send({
+        type: 'challenge_accept',
         challenge_id: challengeId,
         accepter_id: uniqueIdRef.current,
       });
       setPendingChallenge(null);
     },
-    [],
+    [send],
   );
 
   const declineChallenge = useCallback(
     (challengeId: string) => {
-      postJSON(`${lobbyUrlRef.current}/lobby/challenge/decline`, {
+      send({
+        type: 'challenge_decline',
         challenge_id: challengeId,
       });
       setPendingChallenge(null);
     },
-    [],
+    [send],
   );
 
   const setLobbyAlias = useCallback(
     async (id: string, newAlias: string) => {
-      await fetch(`${lobbyUrlRef.current}/lobby/change-alias`, {
-        method: 'POST',
-        body: JSON.stringify({ id, newAlias }),
-        headers: { 'Content-Type': 'application/json' },
-      });
+      send({ type: 'change_alias', id, newAlias });
     },
-    [],
+    [send],
   );
 
   return {
     players,
     pendingChallenge,
     challengeSent,
+    isConnected,
+    reconnectBlocked,
     sendChallenge,
     acceptChallenge,
     declineChallenge,

@@ -15,7 +15,7 @@ commit-reveal randomness.
 - **[DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)** — How to build, run tests, read
   output, and debug failures.
 - **[FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md)** — Player app and
-  tracker: React components, WASM bridge, REST/SSE relay protocol.
+  tracker: React components, WASM bridge, WebSocket relay protocol.
 ## Quick Start
 
 ```bash

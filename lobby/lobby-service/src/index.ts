@@ -1,9 +1,10 @@
 import { createServer } from 'http';
 
 import cors from 'cors';
-import express, { Response } from 'express';
+import express from 'express';
 import helmet from 'helmet';
 import minimist from 'minimist';
+import { WebSocketServer, WebSocket } from 'ws';
 
 import { Lobby } from './lobbyState';
 
@@ -21,6 +22,48 @@ function parseArgs() {
 }
 
 const args = parseArgs();
+const selfWs = String(args.self).replace(/^http/i, 'ws');
+
+type RelayPayload =
+  | { msgno: number; msg: string }
+  | { ack: number }
+  | { ping: true };
+
+type InboundMessage =
+  | { type: 'join'; id: string; alias?: string; session_id?: string }
+  | { type: 'leave'; id: string }
+  | { type: 'challenge'; from_id: string; target_id: string; game?: string; amount?: string; per_game?: string }
+  | { type: 'challenge_accept'; challenge_id: string; accepter_id: string }
+  | { type: 'challenge_decline'; challenge_id: string }
+  | { type: 'change_alias'; id: string; newAlias: string }
+  | { type: 'identify'; session_id: string }
+  | { type: 'message'; session_id: string; data: RelayPayload }
+  | { type: 'chat'; session_id: string; text: string }
+  | { type: 'close'; session_id: string };
+
+interface LobbyConnMeta {
+  playerId: string;
+}
+
+interface GameConnMeta {
+  sessionId: string;
+  playerId?: string;
+}
+
+const LOBBY_DISCONNECT_GRACE_MS = 3000;
+const wsServer = new WebSocketServer({ server: httpServer, path: '/ws' });
+
+const lobbyConnections = new Map<string, WebSocket>();
+const gameConnections = new Map<string, WebSocket>(); // keyed by session_id
+const pendingGameIdentifies = new Map<string, WebSocket>(); // session_id -> ws
+const wsLobbyMeta = new WeakMap<WebSocket, LobbyConnMeta>();
+const wsGameMeta = new WeakMap<WebSocket, GameConnMeta>();
+
+const pendingLobbyLeaves = new Map<string, ReturnType<typeof setTimeout>>();
+const sessionToPlayer = new Map<string, string>();
+const playerToSession = new Map<string, string>();
+const knownAliases = new Map<string, string>();
+const peerLastSeenAt = new Map<string, number>(); // keyed by player_id
 
 app.use(
   helmet({
@@ -39,6 +82,7 @@ app.use(
           'http://localhost:5800',
           'wss://relay.walletconnect.org',
           args.self,
+          selfWs,
         ],
         frameSrc: ["'self'", 'https://verify.walletconnect.org', args.self],
         frameAncestors: ["'self'", '*'],
@@ -59,29 +103,6 @@ if (args.dir) {
   app.use(express.static(args.dir));
 }
 
-// ---------------------------------------------------------------------------
-// SSE infrastructure
-// ---------------------------------------------------------------------------
-
-interface SSEClient {
-  res: Response;
-  nextId: number;
-  ringBuffer: { id: number; event: string; data: string }[];
-}
-
-const RING_BUFFER_SIZE = 100;
-const LOBBY_DISCONNECT_GRACE_MS = 3000;
-
-const lobbySSE = new Map<string, SSEClient>();
-// Game SSE keyed by session_id (game client connects before player_id is known)
-const gameSSE = new Map<string, SSEClient>();
-const pendingLobbyLeaves = new Map<string, ReturnType<typeof setTimeout>>();
-
-type RelayPayload =
-  | { msgno: number; msg: string }
-  | { ack: number }
-  | { ping: true };
-
 function isRelayPayload(data: unknown): data is RelayPayload {
   if (!data || typeof data !== 'object') return false;
   if ('ping' in data) return (data as { ping?: unknown }).ping === true;
@@ -95,61 +116,79 @@ function isRelayPayload(data: unknown): data is RelayPayload {
   return false;
 }
 
-function initSSE(res: Response): void {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
-  res.flushHeaders();
+function sendWs(ws: WebSocket, type: string, payload: unknown): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type, ...((payload as Record<string, unknown>) ?? {}) }));
 }
 
-function sendSSE(client: SSEClient, event: string, data: unknown): void {
-  const id = client.nextId++;
-  const json = JSON.stringify(data);
-  client.ringBuffer.push({ id, event, data: json });
-  if (client.ringBuffer.length > RING_BUFFER_SIZE) {
-    client.ringBuffer.shift();
-  }
-  client.res.write(`event: ${event}\nid: ${id}\ndata: ${json}\n\n`);
+function sendLobbyEvent(playerId: string, type: string, payload: unknown): void {
+  const ws = lobbyConnections.get(playerId);
+  if (!ws) return;
+  sendWs(ws, type, payload);
 }
 
-function replayFromId(client: SSEClient, lastEventId: number): void {
-  for (const entry of client.ringBuffer) {
-    if (entry.id > lastEventId) {
-      client.res.write(`event: ${entry.event}\nid: ${entry.id}\ndata: ${entry.data}\n\n`);
-    }
+function replayPendingChallengesToPlayer(playerId: string): void {
+  for (const challenge of lobby.challenges.values()) {
+    if (challenge.target_id !== playerId) continue;
+    const fromAlias = lobby.players[challenge.from_id]?.alias ?? knownAliases.get(challenge.from_id) ?? challenge.from_id;
+    sendLobbyEvent(playerId, 'challenge_received', {
+      challenge_id: challenge.id,
+      from_id: challenge.from_id,
+      from_alias: fromAlias,
+      game: challenge.game,
+      amount: challenge.amount,
+      per_game: challenge.per_game,
+    });
   }
 }
 
-function sendGameEvent(playerId: string, event: string, data: unknown): void {
+function sendGameEvent(playerId: string, type: string, payload: unknown): void {
   const sessionId = playerToSession.get(playerId);
   if (!sessionId) return;
-  const client = gameSSE.get(sessionId);
-  if (client) {
-    sendSSE(client, event, data);
+  const ws = gameConnections.get(sessionId);
+  if (!ws) return;
+  sendWs(ws, type, payload);
+}
+
+function broadcastLobbyUpdate(): void {
+  const players = lobby.getPlayers();
+  for (const [playerId] of lobbyConnections) {
+    sendLobbyEvent(playerId, 'lobby_update', { players });
   }
 }
 
-// ---------------------------------------------------------------------------
-// Player tracking
-// ---------------------------------------------------------------------------
+function broadcastGameUpdate(): void {
+  const games = lobby.getGames();
+  for (const [playerId] of lobbyConnections) {
+    sendLobbyEvent(playerId, 'game_update', { games });
+  }
+}
 
-const sessionToPlayer = new Map<string, string>();
-const playerToSession = new Map<string, string>();
-const knownAliases = new Map<string, string>();
-const pendingIdentifySessions = new Set<string>();
+function cancelPendingLobbyLeave(playerId: string): void {
+  const timer = pendingLobbyLeaves.get(playerId);
+  if (timer) {
+    clearTimeout(timer);
+    pendingLobbyLeaves.delete(playerId);
+  }
+}
+
+function leaveLobby(playerId: string): boolean {
+  if (lobby.removePlayer(playerId)) {
+    broadcastLobbyUpdate();
+    return true;
+  }
+  return false;
+}
 
 function bindSessionToPlayer(playerId: string, sessionId: string): boolean {
   const previousSession = playerToSession.get(playerId);
   if (previousSession && previousSession !== sessionId) {
     sessionToPlayer.delete(previousSession);
-    pendingIdentifySessions.delete(previousSession);
-    const previousClient = gameSSE.get(previousSession);
-    if (previousClient) {
-      try { previousClient.res.end(); } catch {}
-      gameSSE.delete(previousSession);
+    pendingGameIdentifies.delete(previousSession);
+    const previousConn = gameConnections.get(previousSession);
+    if (previousConn) {
+      try { previousConn.close(); } catch {}
+      gameConnections.delete(previousSession);
     }
     console.log(`[tracker] session replaced player=${playerId} old=${previousSession} new=${sessionId}`);
   }
@@ -165,46 +204,22 @@ function bindSessionToPlayer(playerId: string, sessionId: string): boolean {
   return true;
 }
 
-// ---------------------------------------------------------------------------
-// Broadcast helpers
-// ---------------------------------------------------------------------------
-
-function broadcastLobbyUpdate(): void {
-  const players = lobby.getPlayers();
-  for (const [, client] of lobbySSE) {
-    sendSSE(client, 'lobby_update', players);
-  }
+function computePeerConnected(playerId: string): boolean {
+  const peerId = lobby.getPairedPlayerId(playerId);
+  if (!peerId) return false;
+  const seen = peerLastSeenAt.get(peerId) ?? 0;
+  return Date.now() - seen <= 60_000;
 }
-
-function leaveLobby(id: string): boolean {
-  if (lobby.removePlayer(id)) {
-    broadcastLobbyUpdate();
-    return true;
-  }
-  return false;
-}
-
-function cancelPendingLobbyLeave(playerId: string): void {
-  const timer = pendingLobbyLeaves.get(playerId);
-  if (timer) {
-    clearTimeout(timer);
-    pendingLobbyLeaves.delete(playerId);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Game registration (replaces completeGameSocketRegistration)
-// ---------------------------------------------------------------------------
 
 function completeGameRegistration(playerId: string): void {
   const pairing = lobby.getPairingForPlayer(playerId);
   if (pairing) {
     const peerId = pairing.playerA_id === playerId ? pairing.playerB_id : pairing.playerA_id;
     const peerSessionId = playerToSession.get(peerId);
-    const peerConnected = peerSessionId ? gameSSE.has(peerSessionId) : false;
-    console.log(`[tracker] game registered player=${playerId} pairing=${pairing.token} peer_connected=${peerConnected}`);
+    const peerConn = peerSessionId ? gameConnections.get(peerSessionId) : undefined;
     const myAlias = lobby.players[playerId]?.alias ?? knownAliases.get(playerId) ?? playerId;
     const peerAlias = lobby.players[peerId]?.alias ?? knownAliases.get(peerId) ?? peerId;
+    const peerConnected = computePeerConnected(playerId) && !!peerConn;
     sendGameEvent(playerId, 'connection_status', {
       has_pairing: true,
       token: pairing.token,
@@ -216,134 +231,23 @@ function completeGameRegistration(playerId: string): void {
       my_alias: myAlias,
       peer_alias: peerAlias,
     });
-    if (peerConnected) {
+    if (peerConn) {
       sendGameEvent(peerId, 'peer_reconnected', {});
     }
   } else {
-    console.log(`[tracker] game registered player=${playerId} (no pairing)`);
     sendGameEvent(playerId, 'connection_status', { has_pairing: false });
   }
 }
 
-// ---------------------------------------------------------------------------
-// Existing HTTP endpoints (unchanged API)
-// ---------------------------------------------------------------------------
-
-app.get('/lobby/alias', (req, res) => {
-  const id = req.query.id as string;
-  if (!id) return res.status(400).json({ error: 'Missing id.' });
-  const alias = knownAliases.get(id) ?? null;
-  res.json({ alias });
-});
-
-app.post('/lobby/set-alias', (req, res) => {
-  const { id, alias } = req.body;
-  if (!id || !alias)
-    return res.status(400).json({ error: 'Missing id or alias.' });
-  knownAliases.set(id, alias);
-  const player = lobby.players[id];
-  if (player) {
-    player.alias = alias;
-    broadcastLobbyUpdate();
-  }
-  res.json({ ok: true });
-});
-
-app.post('/lobby/change-alias', (req, res) => {
-  const { id, newAlias } = req.body;
-  if (!id || !newAlias)
-    return res.status(400).json({ error: 'Missing id or new_alias.' });
-  knownAliases.set(id, newAlias);
-  const player = lobby.players[id];
-  if (player) {
-    player.alias = newAlias;
-    broadcastLobbyUpdate();
-    return res.json(player);
-  }
-  res.json({});
-});
-
-app.post('/lobby/game', (req, res) => {
-  const { game, target } = req.body;
-  const time = Date.now();
-  lobby.addGame(time, game, target);
-  const games = lobby.getGames();
-  for (const [, client] of lobbySSE) {
-    sendSSE(client, 'game_update', games);
-  }
-  res.json({ ok: true });
-});
-
-// ---------------------------------------------------------------------------
-// Lobby SSE stream
-// ---------------------------------------------------------------------------
-
-app.get('/lobby/events', (req, res) => {
-  const playerId = req.query.player_id as string;
-  if (!playerId) return res.status(400).json({ error: 'Missing player_id.' });
-
-  cancelPendingLobbyLeave(playerId);
-
-  const oldClient = lobbySSE.get(playerId);
-  if (oldClient) {
-    try { oldClient.res.end(); } catch {}
-  }
-
-  initSSE(res);
-
-  const lastEventId = req.headers['last-event-id']
-    ? parseInt(req.headers['last-event-id'] as string, 10)
-    : -1;
-
-  const client: SSEClient = {
-    res,
-    nextId: oldClient ? oldClient.nextId : 0,
-    ringBuffer: oldClient ? oldClient.ringBuffer : [],
-  };
-  lobbySSE.set(playerId, client);
-
-  if (lastEventId >= 0 && client.ringBuffer.length > 0) {
-    replayFromId(client, lastEventId);
-  } else {
-    sendSSE(client, 'lobby_update', lobby.getPlayers());
-  }
-
-  req.on('close', () => {
-    const current = lobbySSE.get(playerId);
-    if (current && current.res === res) {
-      lobbySSE.delete(playerId);
-      cancelPendingLobbyLeave(playerId);
-      const timer = setTimeout(() => {
-        pendingLobbyLeaves.delete(playerId);
-        if (!lobbySSE.has(playerId)) {
-          leaveLobby(playerId);
-          console.log(`[tracker] lobby SSE disconnected player=${playerId}`);
-        }
-      }, LOBBY_DISCONNECT_GRACE_MS);
-      pendingLobbyLeaves.set(playerId, timer);
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Lobby action endpoints
-// ---------------------------------------------------------------------------
-
-app.post('/lobby/join', (req, res) => {
-  const { id, alias, session_id } = req.body;
-  if (!id) return res.status(400).json({ error: 'Missing id.' });
+function onLobbyJoin(msg: Extract<InboundMessage, { type: 'join' }>): void {
+  const { id, alias, session_id } = msg;
   cancelPendingLobbyLeave(id);
-
-  console.log(`[tracker] join: player=${id} session=${session_id ?? 'none'}`);
-
-  if (session_id) {
-    if (!bindSessionToPlayer(id, session_id)) {
-      return res.status(403).json({ error: 'Session ID does not belong to this player.' });
-    }
+  if (session_id && !bindSessionToPlayer(id, session_id)) {
+    sendLobbyEvent(id, 'error', { error: 'Session ID does not belong to this player.' });
+    return;
   }
 
   const resolvedAlias = alias || knownAliases.get(id) || id;
-
   if (!lobby.players[id]) {
     const lastActive = Date.now();
     lobby.addPlayer({
@@ -357,86 +261,86 @@ app.post('/lobby/join', (req, res) => {
     });
   } else {
     lobby.players[id].alias = resolvedAlias;
-    if (session_id) {
-      lobby.players[id].session_id = session_id;
+    if (session_id) lobby.players[id].session_id = session_id;
+    lobby.players[id].lastActive = Date.now();
+  }
+  knownAliases.set(id, resolvedAlias);
+  broadcastLobbyUpdate();
+  replayPendingChallengesToPlayer(id);
+
+  if (session_id) {
+    const pendingIdentify = pendingGameIdentifies.get(session_id);
+    if (pendingIdentify) {
+      pendingGameIdentifies.delete(session_id);
+      const meta = wsGameMeta.get(pendingIdentify);
+      if (meta) meta.playerId = id;
+      completeGameRegistration(id);
     }
   }
-  lobby.players[id].lastActive = Date.now();
-  broadcastLobbyUpdate();
+}
 
-  if (session_id && pendingIdentifySessions.has(session_id)) {
-    pendingIdentifySessions.delete(session_id);
-    console.log(`[tracker] join: resolving pending identify for session=${session_id} player=${id}`);
-    completeGameRegistration(id);
+function onLobbyLeave(msg: Extract<InboundMessage, { type: 'leave' }>): void {
+  cancelPendingLobbyLeave(msg.id);
+  leaveLobby(msg.id);
+}
+
+function getLobbySenderId(ws: WebSocket): string | undefined {
+  return wsLobbyMeta.get(ws)?.playerId;
+}
+
+function onChallenge(ws: WebSocket, msg: Extract<InboundMessage, { type: 'challenge' }>): void {
+  const senderId = getLobbySenderId(ws) ?? msg.from_id;
+  const { target_id, game, amount, per_game } = msg;
+  const fromPlayer = senderId ? lobby.players[senderId] : undefined;
+  if (!fromPlayer) {
+    console.warn('[tracker] challenge dropped: unknown sender', { senderId, target: target_id });
+    sendWs(ws, 'error', { error: 'Unknown challenger. Rejoin lobby and retry.' });
+    return;
   }
-
-  res.json({ ok: true });
-});
-
-app.post('/lobby/leave', (req, res) => {
-  const { id } = req.body;
-  if (!id) return res.status(400).json({ error: 'Missing id.' });
-  cancelPendingLobbyLeave(id);
-  leaveLobby(id);
-  res.json({ ok: true });
-});
-
-app.post('/lobby/challenge', (req, res) => {
-  const { from_id, target_id, game, amount, per_game } = req.body;
-  if (!from_id || !target_id)
-    return res.status(400).json({ error: 'Missing from_id or target_id.' });
-
-  const fromPlayer = lobby.players[from_id];
-  if (!fromPlayer) return res.status(400).json({ error: 'Unknown from_id.' });
 
   const challenge = lobby.createChallenge(
-    from_id, target_id, game || 'calpoker',
-    amount || '100', per_game || '10',
+    fromPlayer.id,
+    target_id,
+    game || 'calpoker',
+    amount || '100',
+    per_game || '10',
   );
 
-  const targetClient = lobbySSE.get(target_id);
-  if (targetClient) {
-    sendSSE(targetClient, 'challenge_received', {
-      challenge_id: challenge.id,
-      from_id,
-      from_alias: fromPlayer.alias,
-      game: challenge.game,
-      amount: challenge.amount,
-      per_game: challenge.per_game,
-    });
-  }
+  sendLobbyEvent(target_id, 'challenge_received', {
+    challenge_id: challenge.id,
+    from_id: fromPlayer.id,
+    from_alias: fromPlayer.alias,
+    game: challenge.game,
+    amount: challenge.amount,
+    per_game: challenge.per_game,
+  });
+}
 
-  res.json({ ok: true });
-});
-
-app.post('/lobby/challenge/accept', (req, res) => {
-  const { challenge_id, accepter_id } = req.body;
-  if (!challenge_id || !accepter_id)
-    return res.status(400).json({ error: 'Missing challenge_id or accepter_id.' });
-
+function onChallengeAccept(ws: WebSocket, msg: Extract<InboundMessage, { type: 'challenge_accept' }>): void {
+  const accepter_id = getLobbySenderId(ws) ?? msg.accepter_id;
+  const { challenge_id } = msg;
   const challenge = lobby.getChallenge(challenge_id);
-  if (!challenge) return res.status(404).json({ error: 'Challenge not found.' });
-  if (accepter_id !== challenge.target_id)
-    return res.status(403).json({ error: 'Not the challenge target.' });
+  if (!challenge || !accepter_id || accepter_id !== challenge.target_id) {
+    console.warn('[tracker] challenge_accept dropped: invalid accepter', { challenge_id, accepter_id });
+    return;
+  }
 
   lobby.removeChallenge(challenge_id);
-
   const pairing = lobby.createPairing(
-    challenge.from_id, challenge.target_id,
-    challenge.game, challenge.amount, challenge.per_game,
+    challenge.from_id,
+    challenge.target_id,
+    challenge.game,
+    challenge.amount,
+    challenge.per_game,
   );
 
-  const challengerLobbyClient = lobbySSE.get(challenge.from_id);
-  if (challengerLobbyClient) {
-    sendSSE(challengerLobbyClient, 'challenge_resolved', {
-      challenge_id,
-      accepted: true,
-    });
-  }
+  sendLobbyEvent(challenge.from_id, 'challenge_resolved', {
+    challenge_id,
+    accepted: true,
+  });
 
   const challengerAlias = lobby.players[challenge.from_id]?.alias ?? challenge.from_id;
   const accepterAlias = lobby.players[challenge.target_id]?.alias ?? challenge.target_id;
-
   const matchedBase = {
     token: pairing.token,
     game_type: challenge.game,
@@ -445,178 +349,204 @@ app.post('/lobby/challenge/accept', (req, res) => {
   };
 
   sendGameEvent(challenge.from_id, 'matched', {
-    ...matchedBase, i_am_initiator: true, my_alias: challengerAlias, peer_alias: accepterAlias,
+    ...matchedBase,
+    i_am_initiator: true,
+    my_alias: challengerAlias,
+    peer_alias: accepterAlias,
   });
   sendGameEvent(challenge.target_id, 'matched', {
-    ...matchedBase, i_am_initiator: false, my_alias: accepterAlias, peer_alias: challengerAlias,
+    ...matchedBase,
+    i_am_initiator: false,
+    my_alias: accepterAlias,
+    peer_alias: challengerAlias,
+  });
+}
+
+function onChallengeDecline(msg: Extract<InboundMessage, { type: 'challenge_decline' }>): void {
+  const challenge = lobby.getChallenge(msg.challenge_id);
+  if (!challenge) return;
+  lobby.removeChallenge(msg.challenge_id);
+  sendLobbyEvent(challenge.from_id, 'challenge_resolved', {
+    challenge_id: msg.challenge_id,
+    accepted: false,
+  });
+}
+
+function onChangeAlias(ws: WebSocket, msg: Extract<InboundMessage, { type: 'change_alias' }>): void {
+  const playerId = getLobbySenderId(ws) ?? msg.id;
+  if (!playerId) return;
+  knownAliases.set(playerId, msg.newAlias);
+  const player = lobby.players[playerId];
+  if (player) {
+    player.alias = msg.newAlias;
+    broadcastLobbyUpdate();
+  }
+}
+
+function onIdentify(ws: WebSocket, msg: Extract<InboundMessage, { type: 'identify' }>): void {
+  const playerId = sessionToPlayer.get(msg.session_id);
+  wsGameMeta.set(ws, { sessionId: msg.session_id, playerId });
+  gameConnections.set(msg.session_id, ws);
+  if (!playerId) {
+    pendingGameIdentifies.set(msg.session_id, ws);
+    return;
+  }
+  completeGameRegistration(playerId);
+}
+
+function onGameMessage(msg: Extract<InboundMessage, { type: 'message' }>): void {
+  const playerId = sessionToPlayer.get(msg.session_id);
+  if (!playerId) return;
+  if (!isRelayPayload(msg.data)) return;
+  const peerId = lobby.getPairedPlayerId(playerId);
+  if (!peerId) return;
+  peerLastSeenAt.set(playerId, Date.now());
+  sendGameEvent(peerId, 'message', { data: msg.data });
+}
+
+function onGameChat(msg: Extract<InboundMessage, { type: 'chat' }>): void {
+  const playerId = sessionToPlayer.get(msg.session_id);
+  if (!playerId) return;
+  const peerId = lobby.getPairedPlayerId(playerId);
+  if (!peerId) return;
+  const fromAlias = lobby.players[playerId]?.alias ?? playerId;
+  sendGameEvent(peerId, 'chat', {
+    text: msg.text,
+    from_alias: fromAlias,
+    timestamp: Date.now(),
+  });
+}
+
+function onGameClose(msg: Extract<InboundMessage, { type: 'close' }>): void {
+  const playerId = sessionToPlayer.get(msg.session_id);
+  if (!playerId) return;
+  const peerId = lobby.getPairedPlayerId(playerId);
+  if (peerId) sendGameEvent(peerId, 'closed', {});
+  sendGameEvent(playerId, 'closed', {});
+  const pairing = lobby.getPairingForPlayer(playerId);
+  if (pairing) lobby.removePairing(pairing.token);
+}
+
+function parseInbound(raw: string): InboundMessage | null {
+  try {
+    const parsed = JSON.parse(raw) as InboundMessage;
+    if (!parsed || typeof parsed !== 'object' || !('type' in parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+wsServer.on('connection', (ws) => {
+  ws.on('message', (message) => {
+    const text = typeof message === 'string' ? message : message.toString();
+    const parsed = parseInbound(text);
+    if (!parsed) return;
+
+    switch (parsed.type) {
+      case 'join': {
+        wsLobbyMeta.set(ws, { playerId: parsed.id });
+        const previous = lobbyConnections.get(parsed.id);
+        if (previous && previous !== ws) {
+          try { previous.close(4001, 'replaced_by_new_connection'); } catch {}
+        }
+        lobbyConnections.set(parsed.id, ws);
+        onLobbyJoin(parsed);
+        break;
+      }
+      case 'leave':
+        onLobbyLeave(parsed);
+        break;
+      case 'challenge':
+        onChallenge(ws, parsed);
+        break;
+      case 'challenge_accept':
+        onChallengeAccept(ws, parsed);
+        break;
+      case 'challenge_decline':
+        onChallengeDecline(parsed);
+        break;
+      case 'change_alias':
+        onChangeAlias(ws, parsed);
+        break;
+      case 'identify':
+        onIdentify(ws, parsed);
+        break;
+      case 'message':
+        onGameMessage(parsed);
+        break;
+      case 'chat':
+        onGameChat(parsed);
+        break;
+      case 'close':
+        onGameClose(parsed);
+        break;
+      default:
+        break;
+    }
   });
 
-  res.json({ ok: true });
-});
+  ws.on('close', () => {
+    const lobbyMeta = wsLobbyMeta.get(ws);
+    if (lobbyMeta) {
+      const playerId = lobbyMeta.playerId;
+      if (lobbyConnections.get(playerId) === ws) {
+        lobbyConnections.delete(playerId);
+      }
+      cancelPendingLobbyLeave(playerId);
+      const timer = setTimeout(() => {
+        pendingLobbyLeaves.delete(playerId);
+        if (!lobbyConnections.has(playerId)) {
+          leaveLobby(playerId);
+        }
+      }, LOBBY_DISCONNECT_GRACE_MS);
+      pendingLobbyLeaves.set(playerId, timer);
+    }
 
-app.post('/lobby/challenge/decline', (req, res) => {
-  const { challenge_id } = req.body;
-  if (!challenge_id)
-    return res.status(400).json({ error: 'Missing challenge_id.' });
-
-  const challenge = lobby.getChallenge(challenge_id);
-  if (!challenge) return res.status(404).json({ error: 'Challenge not found.' });
-
-  lobby.removeChallenge(challenge_id);
-
-  const challengerLobbyClient = lobbySSE.get(challenge.from_id);
-  if (challengerLobbyClient) {
-    sendSSE(challengerLobbyClient, 'challenge_resolved', {
-      challenge_id,
-      accepted: false,
-    });
-  }
-
-  res.json({ ok: true });
-});
-
-// ---------------------------------------------------------------------------
-// Game SSE stream (keyed by session_id)
-// ---------------------------------------------------------------------------
-
-app.get('/game/events', (req, res) => {
-  const sessionId = req.query.session_id as string;
-  if (!sessionId) return res.status(400).json({ error: 'Missing session_id.' });
-
-  const oldClient = gameSSE.get(sessionId);
-  if (oldClient) {
-    try { oldClient.res.end(); } catch {}
-  }
-
-  initSSE(res);
-
-  const lastEventId = req.headers['last-event-id']
-    ? parseInt(req.headers['last-event-id'] as string, 10)
-    : -1;
-
-  const client: SSEClient = {
-    res,
-    nextId: oldClient ? oldClient.nextId : 0,
-    ringBuffer: oldClient ? oldClient.ringBuffer : [],
-  };
-  gameSSE.set(sessionId, client);
-
-  if (lastEventId >= 0 && client.ringBuffer.length > 0) {
-    replayFromId(client, lastEventId);
-  }
-
-  console.log(`[tracker] game SSE connected session=${sessionId}`);
-
-  req.on('close', () => {
-    const current = gameSSE.get(sessionId);
-    if (current && current.res === res) {
-      gameSSE.delete(sessionId);
-      console.log(`[tracker] game SSE disconnected session=${sessionId}`);
+    const gameMeta = wsGameMeta.get(ws);
+    if (gameMeta) {
+      const { sessionId } = gameMeta;
+      if (gameConnections.get(sessionId) === ws) {
+        gameConnections.delete(sessionId);
+      }
+      pendingGameIdentifies.delete(sessionId);
     }
   });
 });
 
-// ---------------------------------------------------------------------------
-// Game action endpoints
-// ---------------------------------------------------------------------------
-
-app.post('/game/identify', (req, res) => {
-  const { session_id } = req.body;
-  if (!session_id) return res.status(400).json({ error: 'Missing session_id.' });
-
-  console.log(`[tracker] identify: session_id=${session_id}`);
-
-  const playerId = sessionToPlayer.get(session_id);
-  if (!playerId) {
-    console.log(`[tracker] identify: no player yet for session=${session_id}, queuing as pending`);
-    pendingIdentifySessions.add(session_id);
-    return res.json({ ok: true, player_id: null });
-  }
-
-  console.log(`[tracker] identify: resolved session=${session_id} -> player=${playerId}`);
-  completeGameRegistration(playerId);
-
-  res.json({ ok: true, player_id: playerId });
+app.get('/lobby/alias', (req, res) => {
+  const id = req.query.id as string;
+  if (!id) return res.status(400).json({ error: 'Missing id.' });
+  const alias = knownAliases.get(id) ?? null;
+  res.json({ alias });
 });
 
-app.post('/game/send', (req, res) => {
-  const { session_id, data } = req.body;
-  if (!session_id) return res.status(400).json({ error: 'Missing session_id.' });
-  if (!isRelayPayload(data)) {
-    console.warn('[tracker] malformed /game/send payload shape');
-    return res.status(400).json({ error: 'Malformed data payload.' });
+app.post('/lobby/set-alias', (req, res) => {
+  const { id, alias } = req.body;
+  if (!id || !alias) return res.status(400).json({ error: 'Missing id or alias.' });
+  knownAliases.set(id, alias);
+  const player = lobby.players[id];
+  if (player) {
+    player.alias = alias;
+    broadcastLobbyUpdate();
   }
-
-  const playerId = sessionToPlayer.get(session_id);
-  if (!playerId) return res.json({ ok: true, delivered: false });
-
-  const peerId = lobby.getPairedPlayerId(playerId);
-  if (!peerId) return res.json({ ok: true, delivered: false });
-
-  sendGameEvent(peerId, 'message', { data });
-  res.json({ ok: true, delivered: true });
-});
-
-app.post('/game/chat', (req, res) => {
-  const { session_id, text } = req.body;
-  if (!session_id || !text) return res.status(400).json({ error: 'Missing session_id or text.' });
-
-  const playerId = sessionToPlayer.get(session_id);
-  if (!playerId) return res.json({ ok: true, delivered: false });
-
-  const peerId = lobby.getPairedPlayerId(playerId);
-  if (!peerId) return res.json({ ok: true, delivered: false });
-
-  const fromAlias = lobby.players[playerId]?.alias ?? playerId;
-  sendGameEvent(peerId, 'chat', { text, from_alias: fromAlias, timestamp: Date.now() });
-  res.json({ ok: true, delivered: true });
-});
-
-app.post('/game/close', (req, res) => {
-  const { session_id } = req.body;
-  if (!session_id) return res.status(400).json({ error: 'Missing session_id.' });
-
-  const playerId = sessionToPlayer.get(session_id);
-  console.log(`[tracker] close: session=${session_id} player=${playerId ?? 'none'}`);
-  if (!playerId) return res.json({ ok: true });
-
-  const peerId = lobby.getPairedPlayerId(playerId);
-  if (peerId) {
-    sendGameEvent(peerId, 'closed', {});
-  }
-  sendGameEvent(playerId, 'closed', {});
-
-  const pairing = lobby.getPairingForPlayer(playerId);
-  if (pairing) {
-    lobby.removePairing(pairing.token);
-  }
-
   res.json({ ok: true });
 });
 
-// ---------------------------------------------------------------------------
-// Periodic sweep + SSE keepalive
-// ---------------------------------------------------------------------------
+app.post('/lobby/game', (req, res) => {
+  const { game, target } = req.body;
+  const time = Date.now();
+  lobby.addGame(time, game, target);
+  broadcastGameUpdate();
+  res.json({ ok: true });
+});
 
 setInterval(() => {
-  const time = Date.now();
-  lobby.sweep(time);
+  lobby.sweep(Date.now());
   broadcastLobbyUpdate();
-
-  for (const [, client] of lobbySSE) {
-    try { client.res.write(': keepalive\n\n'); } catch {}
-  }
-  for (const [, client] of gameSSE) {
-    try { client.res.write(': keepalive\n\n'); } catch {}
-  }
 }, 15_000);
 
-// ---------------------------------------------------------------------------
-// Start server
-// ---------------------------------------------------------------------------
-
 const port = process.env.PORT || 5801;
-httpServer.listen(
-  { host: '0.0.0.0', port },
-  () => { console.log(`Server running on port ${port}`); },
-);
+httpServer.listen({ host: '0.0.0.0', port }, () => {
+  console.log(`Server running on port ${port}`);
+});

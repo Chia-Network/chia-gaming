@@ -1,76 +1,61 @@
 // ---------------------------------------------------------------------------
-// Mock EventSource
+// Mock WebSocket
 // ---------------------------------------------------------------------------
 
-type ESListener = (e: MessageEvent) => void;
+type WSHandler = ((ev: any) => void) | null;
 
-class MockEventSource {
-  static instance: MockEventSource | null = null;
+class MockWebSocket {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
+
+  static instance: MockWebSocket | null = null;
 
   url: string;
-  listeners = new Map<string, ESListener[]>();
-  onopen: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  readyState = 0; // CONNECTING
+  readyState = MockWebSocket.CONNECTING;
+  onopen: WSHandler = null;
+  onmessage: WSHandler = null;
+  onerror: WSHandler = null;
+  onclose: WSHandler = null;
+  sent: unknown[] = [];
   closed = false;
 
   constructor(url: string) {
     this.url = url;
-    MockEventSource.instance = this;
-    // Simulate async open
+    MockWebSocket.instance = this;
     queueMicrotask(() => {
-      if (!this.closed) {
-        this.readyState = 1; // OPEN
-        this.onopen?.();
-      }
+      if (this.closed) return;
+      this.readyState = MockWebSocket.OPEN;
+      this.onopen?.({ type: 'open' });
     });
   }
 
-  addEventListener(event: string, handler: ESListener) {
-    if (!this.listeners.has(event)) this.listeners.set(event, []);
-    this.listeners.get(event)!.push(handler);
-  }
-
-  removeEventListener(event: string, handler: ESListener) {
-    const arr = this.listeners.get(event);
-    if (arr) {
-      const idx = arr.indexOf(handler);
-      if (idx >= 0) arr.splice(idx, 1);
-    }
+  send(data: string) {
+    this.sent.push(JSON.parse(data));
   }
 
   close() {
     this.closed = true;
-    this.readyState = 2; // CLOSED
+    this.readyState = MockWebSocket.CLOSED;
   }
 
-  _fire(event: string, data?: unknown) {
-    const json = data !== undefined ? JSON.stringify(data) : '';
-    const me = new MessageEvent(event, { data: json });
-    for (const h of this.listeners.get(event) || []) {
-      h(me);
-    }
+  _fire(data: unknown) {
+    this.onmessage?.({ data: JSON.stringify(data) });
   }
 
   _fireError() {
-    this.readyState = 0;
-    this.onerror?.();
+    this.onerror?.({ type: 'error' });
+  }
+
+  _fireClose() {
+    this.closed = true;
+    this.readyState = MockWebSocket.CLOSED;
+    this.onclose?.({ type: 'close' });
   }
 }
 
-(globalThis as any).EventSource = MockEventSource;
-
-// ---------------------------------------------------------------------------
-// Mock fetch
-// ---------------------------------------------------------------------------
-
-const fetchCalls: { url: string; body: any }[] = [];
-
-(globalThis as any).fetch = jest.fn(async (url: string, init?: RequestInit) => {
-  const body = init?.body ? JSON.parse(init.body as string) : undefined;
-  fetchCalls.push({ url, body });
-  return { ok: true, json: async () => ({ ok: true, player_id: null }) };
-});
+(globalThis as any).WebSocket = MockWebSocket;
 
 // ---------------------------------------------------------------------------
 // Imports (after mocks are installed)
@@ -101,16 +86,10 @@ function makeCallbacks(): TrackerConnectionCallbacks {
   };
 }
 
-function getMockES(): MockEventSource {
-  return MockEventSource.instance!;
-}
-
 beforeEach(() => {
   trackerDisconnectCount = 0;
   expectedTrackerDisconnects = 0;
-  fetchCalls.length = 0;
-  MockEventSource.instance = null;
-  (fetch as jest.Mock).mockClear();
+  MockWebSocket.instance = null;
 });
 
 afterEach(() => {
@@ -122,13 +101,14 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('connection setup', () => {
-  it('posts identify and opens EventSource on construction', async () => {
+  it('sends identify over ws on open', async () => {
     const cb = makeCallbacks();
     new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve(); // flush microtasks
 
-    expect(fetchCalls.some(c => c.url === 'http://t/game/identify' && c.body.session_id === 's1')).toBe(true);
-    expect(getMockES().url).toBe('http://t/game/events?session_id=s1');
+    const ws = MockWebSocket.instance!;
+    expect(ws.url).toBe('ws://t/ws');
+    expect(ws.sent).toEqual([{ type: 'identify', session_id: 's1' }]);
   });
 });
 
@@ -149,7 +129,7 @@ describe('event routing', () => {
       per_game: '10',
       i_am_initiator: true,
     };
-    getMockES()._fire('matched', params);
+    MockWebSocket.instance!._fire({ type: 'matched', ...params });
     expect(cb.onMatched).toHaveBeenCalledWith(params);
   });
 
@@ -159,7 +139,7 @@ describe('event routing', () => {
     await Promise.resolve();
 
     const status: ConnectionStatus = { has_pairing: true, token: 'tok', peer_connected: true };
-    getMockES()._fire('connection_status', status);
+    MockWebSocket.instance!._fire({ type: 'connection_status', ...status });
     expect(cb.onConnectionStatus).toHaveBeenCalledWith(status);
   });
 
@@ -168,7 +148,7 @@ describe('event routing', () => {
     new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
 
-    getMockES()._fire('peer_reconnected', {});
+    MockWebSocket.instance!._fire({ type: 'peer_reconnected' });
     expect(cb.onPeerReconnected).toHaveBeenCalled();
   });
 
@@ -177,28 +157,28 @@ describe('event routing', () => {
     new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
 
-    getMockES()._fire('closed');
+    MockWebSocket.instance!._fire({ type: 'closed' });
     expect(cb.onClosed).toHaveBeenCalled();
   });
 
-  it('fires onTrackerDisconnected on SSE error', async () => {
+  it('fires onTrackerDisconnected on ws error', async () => {
     expectedTrackerDisconnects = 1;
     const cb = makeCallbacks();
     new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
 
-    getMockES()._fireError();
+    MockWebSocket.instance!._fireError();
     expect(cb.onTrackerDisconnected).toHaveBeenCalled();
   });
 
-  it('fires onTrackerReconnected on SSE reopen after error', async () => {
+  it('fires onTrackerReconnected on ws reopen after error', async () => {
     expectedTrackerDisconnects = 1;
     const cb = makeCallbacks();
     new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
 
-    getMockES()._fireError();
-    getMockES().onopen?.();
+    MockWebSocket.instance!._fireError();
+    MockWebSocket.instance!.onopen?.({ type: 'open' });
     expect(cb.onTrackerReconnected).toHaveBeenCalled();
   });
 });
@@ -213,7 +193,7 @@ describe('message discrimination', () => {
     new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
 
-    getMockES()._fire('message', { data: { ping: true } });
+    MockWebSocket.instance!._fire({ type: 'message', data: { ping: true } });
     expect(cb.onPing).toHaveBeenCalled();
     expect(cb.onMessage).not.toHaveBeenCalled();
   });
@@ -223,7 +203,7 @@ describe('message discrimination', () => {
     new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
 
-    getMockES()._fire('message', { data: { ack: 5 } });
+    MockWebSocket.instance!._fire({ type: 'message', data: { ack: 5 } });
     expect((cb.onAck as jest.Mock)).toHaveBeenCalledWith(5);
     expect(cb.onMessage).not.toHaveBeenCalled();
   });
@@ -236,7 +216,7 @@ describe('message discrimination', () => {
     const handler = jest.fn();
     conn.registerMessageHandler(handler, jest.fn(), jest.fn());
 
-    getMockES()._fire('message', { data: { msgno: 1, msg: 'hello' } });
+    MockWebSocket.instance!._fire({ type: 'message', data: { msgno: 1, msg: 'hello' } });
     expect(handler).toHaveBeenCalledWith(1, 'hello');
   });
 
@@ -248,7 +228,7 @@ describe('message discrimination', () => {
     const handler = jest.fn();
     conn.registerMessageHandler(handler, jest.fn(), jest.fn());
 
-    getMockES()._fire('message', { data: '{"msgno":9,"msg":"legacy"}' });
+    MockWebSocket.instance!._fire({ type: 'message', data: '{"msgno":9,"msg":"legacy"}' });
     expect(handler).not.toHaveBeenCalled();
   });
 });
@@ -263,8 +243,8 @@ describe('message buffering before registerMessageHandler', () => {
     const conn = new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
 
-    getMockES()._fire('message', { data: { msgno: 1, msg: 'first' } });
-    getMockES()._fire('message', { data: { msgno: 2, msg: 'second' } });
+    MockWebSocket.instance!._fire({ type: 'message', data: { msgno: 1, msg: 'first' } });
+    MockWebSocket.instance!._fire({ type: 'message', data: { msgno: 2, msg: 'second' } });
     expect(cb.onMessage).not.toHaveBeenCalled();
 
     const handler = jest.fn();
@@ -290,15 +270,15 @@ describe('close-pending suppresses messages', () => {
     conn.registerMessageHandler(handler, jest.fn(), jest.fn());
 
     conn.close();
-    expect(fetchCalls.some(c => c.url === 'http://t/game/close')).toBe(true);
+    expect(MockWebSocket.instance!.sent).toContainEqual({ type: 'close', session_id: 's1' });
 
-    getMockES()._fire('message', { data: { msgno: 1, msg: 'suppressed' } });
+    MockWebSocket.instance!._fire({ type: 'message', data: { msgno: 1, msg: 'suppressed' } });
     expect(handler).not.toHaveBeenCalled();
 
-    getMockES()._fire('closed');
+    MockWebSocket.instance!._fire({ type: 'closed' });
     expect(cb.onClosed).toHaveBeenCalled();
 
-    getMockES()._fire('message', { data: { msgno: 2, msg: 'delivered' } });
+    MockWebSocket.instance!._fire({ type: 'message', data: { msgno: 2, msg: 'delivered' } });
     expect(handler).toHaveBeenCalledWith(2, 'delivered');
   });
 });
@@ -312,36 +292,30 @@ describe('outbound message format', () => {
     const cb = makeCallbacks();
     const conn = new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
-    fetchCalls.length = 0;
-
+    const ws = MockWebSocket.instance!;
+    ws.sent = [];
     conn.sendMessage(3, 'payload');
-    expect(fetchCalls).toEqual([
-      { url: 'http://t/game/send', body: { session_id: 's1', data: { msgno: 3, msg: 'payload' } } },
-    ]);
+    expect(ws.sent).toEqual([{ type: 'message', session_id: 's1', data: { msgno: 3, msg: 'payload' } }]);
   });
 
   it('sendAck posts ack payload', async () => {
     const cb = makeCallbacks();
     const conn = new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
-    fetchCalls.length = 0;
-
+    const ws = MockWebSocket.instance!;
+    ws.sent = [];
     conn.sendAck(5);
-    expect(fetchCalls).toEqual([
-      { url: 'http://t/game/send', body: { session_id: 's1', data: { ack: 5 } } },
-    ]);
+    expect(ws.sent).toEqual([{ type: 'message', session_id: 's1', data: { ack: 5 } }]);
   });
 
   it('sendPing posts ping payload', async () => {
     const cb = makeCallbacks();
     const conn = new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
-    fetchCalls.length = 0;
-
+    const ws = MockWebSocket.instance!;
+    ws.sent = [];
     conn.sendPing();
-    expect(fetchCalls).toEqual([
-      { url: 'http://t/game/send', body: { session_id: 's1', data: { ping: true } } },
-    ]);
+    expect(ws.sent).toEqual([{ type: 'message', session_id: 's1', data: { ping: true } }]);
   });
 });
 
@@ -354,10 +328,8 @@ describe('forceDisconnect lifecycle', () => {
     const cb = makeCallbacks();
     const conn = new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
-    fetchCalls.length = 0;
-
     conn.forceDisconnect();
-    expect(fetchCalls.some(c => c.url.includes('/game/close'))).toBe(false);
-    expect(getMockES().closed).toBe(true);
+    expect(MockWebSocket.instance!.sent.some((m) => (m as any).type === 'close')).toBe(false);
+    expect(MockWebSocket.instance!.closed).toBe(true);
   });
 });
