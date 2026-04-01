@@ -4,7 +4,7 @@ This document describes the architecture of the frontend JavaScript/TypeScript
 code. It reflects the current implementation unless explicitly marked as a future
 direction.
 
-For the backend/WASM architecture, see `ARCHITECTURE.MD`.
+For the backend/WASM architecture, see `OVERVIEW.md`.
 
 ## System-Level View
 

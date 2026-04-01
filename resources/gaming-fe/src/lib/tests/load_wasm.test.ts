@@ -28,8 +28,9 @@ import {
   WatchReport,
   WasmEvent,
 } from '../../types/ChiaGaming';
-import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
+import { BLOCKCHAIN_SERVICE_URL, BLOCKCHAIN_WS_URL } from '../../settings';
 import {
+  FakeBlockchainInterface,
   fakeBlockchainInfo,
 } from '../../hooks/FakeBlockchainInterface';
 import { configGameObject } from '../../hooks/blobSingleton';
@@ -244,13 +245,35 @@ const doInternalLoadWasm = async () => {
   return new ArrayBuffer(0);
 };
 
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function isSimulatorAvailable(): Promise<boolean> {
-  try {
-    await fetch(`${BLOCKCHAIN_SERVICE_URL}/get_peak`, { method: 'POST' });
-    return true;
-  } catch {
-    return false;
+  // HTTP health alone can be ready slightly before WS RPC accepts requests.
+  // Probe both endpoints with short retries to reduce startup race flakiness.
+  const attempts = [0, 150, 300, 600, 1000];
+  for (const delayMs of attempts) {
+    if (delayMs > 0) {
+      await sleepMs(delayMs);
+    }
+
+    try {
+      await fetch(`${BLOCKCHAIN_SERVICE_URL}/get_peak`, { method: 'POST' });
+
+      const probe = new FakeBlockchainInterface(BLOCKCHAIN_WS_URL);
+      try {
+        await probe.registerUser(`ws-ready-probe-${Date.now()}-${getRandomInt(1_000_000)}`);
+      } finally {
+        probe.close();
+      }
+
+      return true;
+    } catch {
+      // Retry; simulator may still be in the HTTP-ready / WS-not-ready window.
+    }
   }
+  return false;
 }
 
 it(

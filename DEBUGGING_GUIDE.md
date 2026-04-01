@@ -1,6 +1,6 @@
 # Debugging & Testing Reference
 
-For architecture and design, see `ARCHITECTURE.MD`. This document covers how
+For architecture and design, see `OVERVIEW.md`. This document covers how
 to build, run tests, read output, and debug failures.
 
 ## Building and Running Tests
@@ -117,7 +117,7 @@ prints `PANIC IN TEST: <name>` and `panic payload:` with the error message
 inline, then continues running remaining tests. Example mid-run output:
 
 ```
-PANIC IN TEST: accept_finished_on_chain
+PANIC IN TEST: test_notification_accept_finished
 panic payload: tx include failed: move_number=10 tx_name=Some("false accept transaction") ...
 ```
 

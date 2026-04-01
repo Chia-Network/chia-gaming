@@ -6,8 +6,8 @@ handlers produce moves, how validators enforce rules, and how the two systems
 connect through the referee puzzle.
 
 For the broader architecture (state channels, potato protocol, dispute
-resolution), see `ARCHITECTURE.MD`. For the raw calling conventions, see
-`clsp/handler_api.txt`.
+resolution), see `OVERVIEW.md`. For the raw calling conventions, see
+`clsp/handler_api.md`.
 
 ## Table of Contents
 
@@ -514,4 +514,4 @@ and nil for `incoming_validator_hash`, signaling the game is over.
 - Rust-side handler invocation: `src/channel_handler/game_handler.rs`
 - Rust-side referee state machine: `src/referee/my_turn.rs`,
   `src/referee/their_turn.rs`
-- Handler API reference: `clsp/handler_api.txt`
+- Handler API reference: `clsp/handler_api.md`

@@ -1,16 +1,13 @@
-Handler API
-===========
+# Handler API
 
-Scope
------
+## Scope
 This describes the calling convention and return shapes for off-chain
 "handler" functions used by the game framework. Handlers are chialisp
 programs that drive the game logic on each player's side. They are not
 game-specific — calpoker is one implementation.
 
 
-Proposal / Parser
------------------
+## Proposal / Parser
 Games are created via a proposal/parser handshake:
 
 Proposal factory: (bet_size) -> (wire_data local_data)
@@ -30,8 +27,7 @@ Parser: (wire_data) -> (readable [(initial_validator initial_handler)]) or error
 See calpoker_make_proposal and calpoker_parser in calpoker_generate.clinc.
 
 
-Handler parameters
-------------------
+## Handler parameters
 There are two kinds of handlers:
 
 1) My-turn handler (I am making a move)
@@ -54,8 +50,7 @@ There are two kinds of handlers:
    - mover_share: opponent's share claim
 
 
-Return values
--------------
+## Return values
 
 My-turn return (success, 10 elements):
   (
@@ -114,8 +109,7 @@ Their-turn return (normal move, 3-4 elements):
     sent out-of-band to the opponent and parsed by their message_parser.
 
 
-Message Parser
---------------
+## Message Parser
 An optional program returned by a my-turn handler. It runs on the
 receiver's side to parse out-of-band messages from the opponent.
 
@@ -135,8 +129,7 @@ sha256(preimage) == alice_commit, then returns the derived cards for
 display.
 
 
-Notes on validators vs handlers
---------------------------------
+## Notes on validators vs handlers
 Validators (a.clsp through e.clsp) run both on-chain and off-chain.
 Handlers run off-chain only to produce moves and interpret opponent moves.
 

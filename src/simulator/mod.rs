@@ -583,16 +583,12 @@ impl Simulator {
         }
 
         if self.strict && implicit_fee != total_reserve_fee {
-            return Ok(IncludeTransactionResult {
-                code: 3,
-                e: Some(22),
-                diagnostic: format!(
-                    "Strict mode: implicit fee ({}) != declared RESERVE_FEE ({}). \
-                     All fees must be explicitly declared.",
-                    implicit_fee.to_u64(),
-                    total_reserve_fee.to_u64()
-                ),
-            });
+            panic!(
+                "Strict mode: implicit fee ({}) != declared RESERVE_FEE ({}). \
+                 All fees must be explicitly declared.",
+                implicit_fee.to_u64(),
+                total_reserve_fee.to_u64()
+            );
         }
 
         // Check for duplicate or conflicting transactions already in the mempool.

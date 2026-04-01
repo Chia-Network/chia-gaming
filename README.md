@@ -10,8 +10,8 @@ commit-reveal randomness.
 
 ## Documentation
 
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** — How state channels, the referee, the
-  potato protocol, and Calpoker work.
+- **[OVERVIEW.md](OVERVIEW.md)** — How state channels, the referee, the
+  potato protocol, and Calpoker work. Links to detailed docs.
 - **[DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)** — How to build, run tests, read
   output, and debug failures.
 - **[FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md)** — Player app and
@@ -19,23 +19,23 @@ commit-reveal randomness.
 ## Quick Start
 
 ```bash
-# Build
-cargo build
+# Build test binaries (no test execution)
+./cb.sh
 
-# Run unit tests
-cargo test
+# Run full default test flow:
+# - rust + chialisp build
+# - rust sim tests
+# - JS/WASM integration tests
+./ct.sh
 
-# Run chialisp tests
-./run-clsp-tests.sh
+# Run only matching sim test(s) while debugging
+./ct.sh -o accept_finished
 
-# Run simulation tests
-cargo test --features sim-tests -- sim_tests --nocapture
+# Start full suite from first matching test name (wraparound)
+./ct.sh accept_finished
 
 # Run JS/WASM integration tests (builds WASM, starts simulator, runs Jest)
 ./tools/local-wasm-tests.sh
-
-# Run everything
-./run-all-tests.sh
 ```
 
 ### Prerequisites
