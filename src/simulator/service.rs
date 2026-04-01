@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, HashSet};
-use std::fs;
 use std::io::stdin;
 use std::mem::swap;
 use std::net::{TcpListener, TcpStream};
@@ -12,7 +11,7 @@ use rand_chacha::ChaCha8Rng;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{self, Value};
-use tiny_http::{Header, Response, Server, StatusCode};
+use tiny_http::{Response, Server, StatusCode};
 use tungstenite::{Message, WebSocket};
 
 use crate::channel_handler::types::ChannelHandlerEnv;
@@ -817,22 +816,6 @@ fn url_path(url: &str) -> &str {
     url.split('?').next().unwrap_or(url)
 }
 
-fn respond_file(request: tiny_http::Request, path: &str, content_type: &str) {
-    match fs::read_to_string(path) {
-        Ok(content) => {
-            let response = Response::from_data(content.into_bytes()).with_header(
-                Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()).unwrap(),
-            );
-            let _ = request.respond(response);
-        }
-        Err(e) => {
-            let response = Response::from_data(format!("{e:?}").into_bytes())
-                .with_status_code(StatusCode(404));
-            let _ = request.respond(response);
-        }
-    }
-}
-
 fn respond_not_found(request: tiny_http::Request) {
     let response = Response::from_data(b"not found".to_vec()).with_status_code(StatusCode(404));
     let _ = request.respond(response);
@@ -862,11 +845,6 @@ fn run_health_server(height: Arc<AtomicUsize>) {
                 let h = height.load(Ordering::Relaxed);
                 let _ = request.respond(Response::from_data(format!("{h}\n").into_bytes()));
             }
-            "/" => respond_file(request, "resources/web/index.html", "text/html"),
-            "/index.css" => respond_file(request, "resources/web/index.css", "text/css"),
-            "/index.js" => respond_file(request, "resources/web/index.js", "text/javascript"),
-            "/player.html" => respond_file(request, "resources/web/player.html", "text/html"),
-            "/player.js" => respond_file(request, "resources/web/player.js", "text/javascript"),
             _ => respond_not_found(request),
         }
     }
@@ -896,7 +874,7 @@ fn service_main_inner() {
 
     let height = Arc::new(AtomicUsize::new(game_runner.simulator.get_current_height()));
 
-    // Background: tiny_http health + static files on port 5800
+    // Background: tiny_http health API on port 5800
     let health_height = height.clone();
     std::thread::spawn(move || run_health_server(health_height));
 
