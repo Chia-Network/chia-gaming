@@ -97,8 +97,6 @@ pub struct ChannelHandler {
     their_allocated_balance: Amount,
 
     have_potato: bool,
-    initiated_on_chain: bool,
-    on_chain_for_error: bool,
 
     // Specifies the time lock that should be used in the unroll coin's conditions.
     unroll_advance_timeout: Timeout,
@@ -153,18 +151,6 @@ impl ChannelHandler {
 
     pub fn unroll_private_key(&self) -> PrivateKey {
         self.private_keys.my_unroll_coin_private_key.clone()
-    }
-
-    pub fn initiated_on_chain(&self) -> bool {
-        self.initiated_on_chain
-    }
-
-    pub fn set_initiated_on_chain(&mut self) {
-        self.initiated_on_chain = true;
-    }
-
-    pub fn set_on_chain_for_error(&mut self) {
-        self.on_chain_for_error = true;
     }
 
     pub fn allocate_my_nonce(&mut self) -> usize {
@@ -512,8 +498,6 @@ impl ChannelHandler {
             their_allocated_balance: Amount::default(),
 
             have_potato: we_start_with_potato,
-            initiated_on_chain: false,
-            on_chain_for_error: false,
 
             cached_last_actions: Vec::new(),
 

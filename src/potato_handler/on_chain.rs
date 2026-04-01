@@ -1363,21 +1363,20 @@ impl OnChainGameHandler {
             },
             GameAction::AcceptTimeout(game_id) => {
                 let current_coin = get_current_coin(&game_id)?;
-                game_assert!(
-                    self.my_move_in_game(&game_id) == Some(true),
-                    "accept_timeout requires it to be our turn (on-chain)"
-                );
-                let our_share = self.get_game_our_current_share(&game_id);
-                if matches!(our_share, Ok(ref s) if *s == Amount::default()) {
-                    self.game_map.remove(&current_coin);
-                    return Ok(vec![Effect::Notify(GameNotification::GameStatus {
-                        id: game_id,
-                        status: GameStatusKind::EndedWeTimedOut,
-                        my_reward: Some(Amount::default()),
-                        coin_id: None,
-                        reason: None,
-                        other_params: None,
-                    })]);
+                let my_turn = self.my_move_in_game(&game_id);
+                if my_turn == Some(true) {
+                    let our_share = self.get_game_our_current_share(&game_id);
+                    if matches!(our_share, Ok(ref s) if *s == Amount::default()) {
+                        self.game_map.remove(&current_coin);
+                        return Ok(vec![Effect::Notify(GameNotification::GameStatus {
+                            id: game_id,
+                            status: GameStatusKind::EndedWeTimedOut,
+                            my_reward: Some(Amount::default()),
+                            coin_id: None,
+                            reason: None,
+                            other_params: None,
+                        })]);
+                    }
                 }
                 if let Some(def) = self.game_map.get_mut(&current_coin) {
                     def.accepted = true;

@@ -821,8 +821,7 @@ impl PotatoHandler {
                 GameAction::QueuedAcceptProposal(game_id) => {
                     {
                         let ch = self.channel_handler_mut()?;
-                        let proposal = ch.find_proposal(&game_id);
-                        if proposal.is_none() {
+                        let Some(proposal) = ch.find_proposal(&game_id) else {
                             effects.push(Effect::Notify(GameNotification::GameStatus {
                                 id: game_id,
                                 status: GameStatusKind::EndedCancelled,
@@ -832,8 +831,7 @@ impl PotatoHandler {
                                 other_params: None,
                             }));
                             continue;
-                        }
-                        let proposal = proposal.unwrap();
+                        };
                         if ch.is_our_nonce_parity(&game_id) {
                             return Err(Error::StrErr("cannot accept own proposal".to_string()));
                         }
@@ -1234,9 +1232,6 @@ impl PotatoHandler {
 
         {
             let player_ch = self.channel_handler_mut()?;
-            if got_error {
-                player_ch.set_on_chain_for_error();
-            }
             let cancelled_ids = player_ch.cancel_all_proposals();
             for id in cancelled_ids {
                 effects.push(Effect::Notify(GameNotification::GameProposalCancelled {
