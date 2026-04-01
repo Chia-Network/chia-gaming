@@ -3,12 +3,12 @@ set -e
 set -E
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-FE_DIR="$SCRIPT_DIR/resources/gaming-fe"
+FE_DIR="$SCRIPT_DIR/front-end"
 WASM_DIR="$SCRIPT_DIR/wasm"
-LOBBY_SERVICE_DIR="$SCRIPT_DIR/resources/lobby-service"
-LOBBY_VIEW_DIR="$SCRIPT_DIR/resources/lobby-view"
-LOBBY_CONN_DIR="$SCRIPT_DIR/resources/lobby-connection"
-WC_DIR="$SCRIPT_DIR/resources/wc-stub"
+LOBBY_SERVICE_DIR="$SCRIPT_DIR/lobby/lobby-service"
+LOBBY_VIEW_DIR="$SCRIPT_DIR/lobby/lobby-view"
+LOBBY_CONN_DIR="$SCRIPT_DIR/lobby/lobby-connection"
+WC_DIR="$SCRIPT_DIR/wc-stub"
 CLSP_DIR="$SCRIPT_DIR/clsp"
 
 GAME_PORT=${GAME_PORT:-3002}
@@ -145,7 +145,7 @@ if ! curl -s -X POST "http://localhost:$SIM_PORT/get_peak" >/dev/null 2>&1; then
 fi
 
 echo "=== Starting player app static server (port $GAME_PORT) ==="
-node "$SCRIPT_DIR/resources/static-server.js" "$GAME_SERVE" "$GAME_PORT" &
+node "$SCRIPT_DIR/local-static-test-server.js" "$GAME_SERVE" "$GAME_PORT" &
 PIDS+=($!)
 
 echo "=== Starting wc-stub (port $WC_PORT) ==="
@@ -167,7 +167,7 @@ for i in $(seq 1 10); do
 done
 
 echo "=== Starting beacon ==="
-"$SCRIPT_DIR/resources/nginx/beacon.sh" "http://localhost:$GAME_PORT" "http://localhost:$TRACKER_PORT" &
+"$SCRIPT_DIR/lobby/nginx/beacon.sh" "http://localhost:$GAME_PORT" "http://localhost:$TRACKER_PORT" &
 PIDS+=($!)
 
 echo ""

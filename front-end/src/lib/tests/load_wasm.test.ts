@@ -48,7 +48,7 @@ async function fetchHex(key: string): Promise<string> {
 
 function rooted(name: string) {
   // @ts-ignore
-  return resolve(__dirname, '../../../../..', name);
+  return resolve(__dirname, '../../../..', name);
 }
 
 function preset_file(name: string) {

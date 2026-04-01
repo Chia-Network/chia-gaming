@@ -71,7 +71,9 @@ clsp/
   test/             — Chialisp test programs
 
 wasm/               — WebAssembly bindings for browser use
-resources/          — Frontend (gaming-fe), lobby, and test infrastructure
+front-end/          — Player frontend (React + WASM bridge)
+lobby/              — Lobby view, tracker service, and nginx/deploy helpers
+wc-stub/            — WalletConnect stub service
 ```
 
 ## Key Concepts

@@ -38,20 +38,19 @@ for arg in "$@"; do
 done
 
 TARGETS=(
-    "resources/gaming-fe/node_modules"
-    "resources/lobby-view/node_modules"
-    "resources/lobby-service/node_modules"
-    "resources/lobby-connection/node_modules"
-    "resources/wc-stub/node_modules"
-    "resources/fe-test/node_modules"
-    "resources/gaming-fe/dist"
-    "resources/lobby-view/dist"
-    "resources/lobby-service/dist"
-    "resources/lobby-connection/dist"
-    "resources/wc-stub/dist"
-    "resources/gaming-fe/serve"
-    "resources/lobby-view/serve"
-    "resources/wc-stub/package-lock.json"
+    "front-end/node_modules"
+    "lobby/lobby-view/node_modules"
+    "lobby/lobby-service/node_modules"
+    "lobby/lobby-connection/node_modules"
+    "wc-stub/node_modules"
+    "front-end/dist"
+    "lobby/lobby-view/dist"
+    "lobby/lobby-service/dist"
+    "lobby/lobby-connection/dist"
+    "wc-stub/dist"
+    "front-end/serve"
+    "lobby/lobby-view/serve"
+    "wc-stub/package-lock.json"
 )
 
 if [ "$INCLUDE_RUST" -eq 1 ]; then

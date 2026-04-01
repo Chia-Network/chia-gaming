@@ -16,9 +16,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-FE_DIR="$REPO_ROOT/resources/gaming-fe"
+FE_DIR="$REPO_ROOT/front-end"
 WASM_DIR="$REPO_ROOT/wasm"
-LOBBY_CONN_DIR="$REPO_ROOT/resources/lobby-connection"
+LOBBY_CONN_DIR="$REPO_ROOT/lobby/lobby-connection"
 
 SKIP_BUILD=0
 SKIP_NATIVE=0

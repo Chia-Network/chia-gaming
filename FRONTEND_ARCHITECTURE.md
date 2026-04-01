@@ -570,16 +570,16 @@ game.
 
 | File | Purpose |
 |------|---------|
-| `resources/gaming-fe/src/components/Shell.tsx` | Top-level component: wallet, tracker, tabs, logs |
-| `resources/gaming-fe/src/components/GameSession.tsx` | Game session UI: header, coin status, game area, overlays |
-| `resources/gaming-fe/src/hooks/useGameSession.ts` | Session hook: WASM subscription, notification routing, game flow |
-| `resources/gaming-fe/src/hooks/useCalpokerHand.ts` | Calpoker hook: five-step protocol, card parsing, move submission |
-| `resources/gaming-fe/src/hooks/WasmBlobWrapper.ts` | WASM bridge: message delivery, block data, event queue |
-| `resources/gaming-fe/src/hooks/WasmStateInit.ts` | WASM initialization: load binary, deposit .hex files, create cradle |
-| `resources/gaming-fe/src/hooks/blobSingleton.ts` | Singleton management: create or retrieve the WasmBlobWrapper; restore path for session persistence |
-| `resources/gaming-fe/src/hooks/save.ts` | `SessionSave` interface and `saveSession`/`loadSession`/`clearSession` functions |
-| `resources/gaming-fe/src/services/TrackerConnection.ts` | Socket.io connection to tracker relay |
-| `resources/gaming-fe/src/types/ChiaGaming.ts` | TypeScript types for WASM interface and game data |
-| `resources/lobby-connection/src/index.ts` | Lobby socket hook (`useLobbySocket`): socket.io connection from lobby iframe to tracker |
-| `resources/lobby-service/src/index.ts` | Tracker server: lobby, challenges, pairing, message relay, liveness sweep |
-| `resources/lobby-service/src/lobbyState.ts` | Tracker state: players, challenges, pairings |
+| `front-end/src/components/Shell.tsx` | Top-level component: wallet, tracker, tabs, logs |
+| `front-end/src/components/GameSession.tsx` | Game session UI: header, coin status, game area, overlays |
+| `front-end/src/hooks/useGameSession.ts` | Session hook: WASM subscription, notification routing, game flow |
+| `front-end/src/hooks/useCalpokerHand.ts` | Calpoker hook: five-step protocol, card parsing, move submission |
+| `front-end/src/hooks/WasmBlobWrapper.ts` | WASM bridge: message delivery, block data, event queue |
+| `front-end/src/hooks/WasmStateInit.ts` | WASM initialization: load binary, deposit .hex files, create cradle |
+| `front-end/src/hooks/blobSingleton.ts` | Singleton management: create or retrieve the WasmBlobWrapper; restore path for session persistence |
+| `front-end/src/hooks/save.ts` | `SessionSave` interface and `saveSession`/`loadSession`/`clearSession` functions |
+| `front-end/src/services/TrackerConnection.ts` | Socket.io connection to tracker relay |
+| `front-end/src/types/ChiaGaming.ts` | TypeScript types for WASM interface and game data |
+| `lobby/lobby-connection/src/index.ts` | Lobby socket hook (`useLobbySocket`): socket.io connection from lobby iframe to tracker |
+| `lobby/lobby-service/src/index.ts` | Tracker server: lobby, challenges, pairing, message relay, liveness sweep |
+| `lobby/lobby-service/src/lobbyState.ts` | Tracker state: players, challenges, pairings |

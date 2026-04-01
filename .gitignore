@@ -22,9 +22,10 @@ node_modules/
 .pnp.cjs
 .pnp.loader.mjs
 .yarnrc.yml
-resources/**/public/index.js
-resources/**/serve/
-resources/wc-stub/package-lock.json
+lobby/**/public/index.js
+lobby/**/serve/
+front-end/**/serve/
+wc-stub/package-lock.json
 # Virtual environments
 .venv/
 venv/

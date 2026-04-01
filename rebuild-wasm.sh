@@ -5,7 +5,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WASM_DIR="$SCRIPT_DIR/wasm"
-FE_DIR="$SCRIPT_DIR/resources/gaming-fe"
+FE_DIR="$SCRIPT_DIR/front-end"
 
 # macOS wasm32 clang workaround
 if [ -x /opt/homebrew/opt/llvm/bin/clang ]; then
