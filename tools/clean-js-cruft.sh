@@ -39,17 +39,15 @@ done
 
 TARGETS=(
     "front-end/node_modules"
-    "lobby/lobby-view/node_modules"
+    "lobby/lobby-frontend/node_modules"
     "lobby/lobby-service/node_modules"
-    "lobby/lobby-connection/node_modules"
     "wc-stub/node_modules"
     "front-end/dist"
-    "lobby/lobby-view/dist"
+    "lobby/lobby-frontend/dist"
     "lobby/lobby-service/dist"
-    "lobby/lobby-connection/dist"
     "wc-stub/dist"
     "front-end/serve"
-    "lobby/lobby-view/serve"
+    "lobby/lobby-frontend/serve"
     "wc-stub/package-lock.json"
 )
 

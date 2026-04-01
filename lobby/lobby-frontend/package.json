@@ -1,5 +1,5 @@
 {
-  "name": "chia-gaming-lobby-view",
+  "name": "chia-gaming-lobby-frontend",
   "version": "1.0.0",
   "license": "Apache-2.0",
   "description": "Chia Gaming Lobby Frontend",
@@ -19,7 +19,6 @@
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.2.4",
-    "chia-gaming-lobby-connection": "link:../lobby-connection",
     "class-variance-authority": "^0.7.1",
     "lucide-react": "^0.554.0",
     "react": "19.2.0",

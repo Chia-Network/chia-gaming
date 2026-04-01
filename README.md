@@ -15,7 +15,7 @@ commit-reveal randomness.
 - **[DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)** — How to build, run tests, read
   output, and debug failures.
 - **[FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md)** — Player app and
-  tracker: React components, WASM bridge, socket.io relay protocol.
+  tracker: React components, WASM bridge, REST/SSE relay protocol.
 ## Quick Start
 
 ```bash
@@ -72,7 +72,7 @@ clsp/
 
 wasm/               — WebAssembly bindings for browser use
 front-end/          — Player frontend (React + WASM bridge)
-lobby/              — Lobby view, tracker service, and nginx/deploy helpers
+lobby/              — Lobby frontend, tracker service, and nginx/deploy helpers
 wc-stub/            — WalletConnect stub service
 ```
 

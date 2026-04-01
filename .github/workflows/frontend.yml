@@ -65,19 +65,14 @@ jobs:
           wasm-pack build --out-dir=../front-end/dist --release --target=web
           wasm-pack build --out-dir=../front-end/node-pkg --release --target=nodejs
 
-      - name: Build lobby-connection
-        run: |
-          cd lobby/lobby-connection
-          yarn install --frozen-lockfile && yarn build
-
       - name: Build gaming-fe
         run: |
           cd front-end
           yarn install --frozen-lockfile && yarn build
 
-      - name: Build lobby-view
+      - name: Build lobby-frontend
         run: |
-          cd lobby/lobby-view
+          cd lobby/lobby-frontend
           yarn install --frozen-lockfile && yarn build
 
       - name: Build lobby-service
@@ -192,8 +187,8 @@ jobs:
           LOBBY="${TARGET}/l/chia-gaming-lobby"
           mkdir -p "${LOBBY}/public" "${LOBBY}/dist/css" "${LOBBY}/nginx"
 
-          cp -r lobby/lobby-view/public/* "${LOBBY}/public/"
-          cp lobby/lobby-view/dist/css/index.css "${LOBBY}/dist/css/" 2>/dev/null || true
+          cp -r lobby/lobby-frontend/public/* "${LOBBY}/public/"
+          cp lobby/lobby-frontend/dist/css/index.css "${LOBBY}/dist/css/" 2>/dev/null || true
           cp lobby/lobby-service/dist/index-rollup.cjs "${LOBBY}/service.js"
           cp lobby/nginx/lobby-install.sh "${LOBBY}/lobby-install.sh"
           cp lobby/nginx/lobby.service "${LOBBY}/lobby.service"

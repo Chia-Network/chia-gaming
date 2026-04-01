@@ -4,9 +4,8 @@ front-end/node-pkg
 front-end/resources
 front-end/clsp
 wc-stub/node_modules
-lobby/lobby-connection/node_modules
 lobby/lobby-service/node_modules
-lobby/lobby-view/node_modules
+lobby/lobby-frontend/node_modules
 target
 wasm/target
 test

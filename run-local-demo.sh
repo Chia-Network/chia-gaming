@@ -6,8 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FE_DIR="$SCRIPT_DIR/front-end"
 WASM_DIR="$SCRIPT_DIR/wasm"
 LOBBY_SERVICE_DIR="$SCRIPT_DIR/lobby/lobby-service"
-LOBBY_VIEW_DIR="$SCRIPT_DIR/lobby/lobby-view"
-LOBBY_CONN_DIR="$SCRIPT_DIR/lobby/lobby-connection"
+LOBBY_FRONTEND_DIR="$SCRIPT_DIR/lobby/lobby-frontend"
 WC_DIR="$SCRIPT_DIR/wc-stub"
 CLSP_DIR="$SCRIPT_DIR/clsp"
 
@@ -79,12 +78,10 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     cargo build --features sim-server --bin chia-gaming-sim
     echo "=== Building WASM (web target) ==="
     (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/dist" --release --target=web)
-    echo "=== Building lobby-connection ==="
-    (cd "$LOBBY_CONN_DIR" && yarn install --frozen-lockfile && yarn build)
     echo "=== Building gaming frontend ==="
     (cd "$FE_DIR" && yarn install --frozen-lockfile && yarn build)
-    echo "=== Building lobby-view ==="
-    (cd "$LOBBY_VIEW_DIR" && yarn install --frozen-lockfile && yarn build)
+    echo "=== Building lobby-frontend ==="
+    (cd "$LOBBY_FRONTEND_DIR" && yarn install --frozen-lockfile && yarn build)
     echo "=== Building lobby-service ==="
     (cd "$LOBBY_SERVICE_DIR" && yarn install --frozen-lockfile && yarn build)
     echo "=== Building wc-stub ==="
@@ -115,13 +112,13 @@ if [ -d "$FE_DIR/public/images" ]; then
     ln -sf "$FE_DIR/public/images" "$GAME_SERVE/images"
 fi
 
-echo "=== Assembling lobby-view staging directory (symlinks) ==="
-LOBBY_SERVE="$LOBBY_VIEW_DIR/serve"
+echo "=== Assembling lobby-frontend staging directory (symlinks) ==="
+LOBBY_SERVE="$LOBBY_FRONTEND_DIR/serve"
 rm -rf "$LOBBY_SERVE"
 mkdir -p "$LOBBY_SERVE"
-ln -sf "$LOBBY_VIEW_DIR/public/index.html" "$LOBBY_SERVE/index.html"
-ln -sf "$LOBBY_VIEW_DIR/public/index.js" "$LOBBY_SERVE/index.js"
-ln -sf "$LOBBY_VIEW_DIR/dist/css/index.css" "$LOBBY_SERVE/index.css"
+ln -sf "$LOBBY_FRONTEND_DIR/public/index.html" "$LOBBY_SERVE/index.html"
+ln -sf "$LOBBY_FRONTEND_DIR/public/index.js" "$LOBBY_SERVE/index.js"
+ln -sf "$LOBBY_FRONTEND_DIR/dist/css/index.css" "$LOBBY_SERVE/index.css"
 
 # ── Start services ──────────────────────────────────────────────────
 
@@ -152,7 +149,7 @@ echo "=== Starting wc-stub (port $WC_PORT) ==="
 (cd "$WC_DIR" && PORT=$WC_PORT exec node --disable-warning=DEP0169 ./dist/index.js) &
 PIDS+=($!)
 
-echo "=== Starting tracker (lobby-service + lobby-view on port $TRACKER_PORT) ==="
+echo "=== Starting tracker (lobby-service + lobby-frontend on port $TRACKER_PORT) ==="
 (cd "$LOBBY_SERVICE_DIR" && PORT=$TRACKER_PORT exec node ./dist/index-rollup.cjs --self "http://localhost:$TRACKER_PORT" --dir "$LOBBY_SERVE") &
 PIDS+=($!)
 

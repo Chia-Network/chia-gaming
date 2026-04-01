@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useLobbySocket, ChallengeReceived } from 'chia-gaming-lobby-connection';
+import { useLobbySocket, ChallengeReceived } from './useLobbySocket';
 import { getSearchParams } from './util';
 import { Edit, Cross, User, Crown, Swords } from 'lucide-react';
 import { Button } from './button';

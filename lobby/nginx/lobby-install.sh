@@ -1,7 +1,7 @@
 #!/bin/sh
 
 NGINX=/etc/nginx/sites-available
-WEBROOT=/usr/share/nginx/html/lobby-view
+WEBROOT=/usr/share/nginx/html/lobby-frontend
 SELF_URL=""
 SERVICE=""
 PORT=""
@@ -90,7 +90,7 @@ if [ -d /etc/systemd/system ] ; then
 fi
 
 sed -e "s!/app!${WEBROOT}!g" -e "s!@PORT@!${PORT}!g" < nginx/lobby.conf > "${NGINX}/lobby.conf"
-mkdir -p "${WEBROOT}/lobby-view"
-cp -r public "${WEBROOT}/lobby-view"
-cp -r dist "${WEBROOT}/lobby-view"
+mkdir -p "${WEBROOT}/lobby-frontend"
+cp -r public "${WEBROOT}/lobby-frontend"
+cp -r dist "${WEBROOT}/lobby-frontend"
 cp service.js "${SERVICE}"

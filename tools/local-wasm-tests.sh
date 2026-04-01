@@ -18,7 +18,7 @@ cd "$REPO_ROOT"
 
 FE_DIR="$REPO_ROOT/front-end"
 WASM_DIR="$REPO_ROOT/wasm"
-LOBBY_CONN_DIR="$REPO_ROOT/lobby/lobby-connection"
+LOBBY_FRONTEND_DIR="$REPO_ROOT/lobby/lobby-frontend"
 
 SKIP_BUILD=0
 SKIP_NATIVE=0
@@ -55,8 +55,8 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     echo "=== Building WASM (nodejs target for tests) ==="
     (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/node-pkg" --dev --target=nodejs)
 
-    echo "=== Building lobby-connection ==="
-    (cd "$LOBBY_CONN_DIR" && yarn install --frozen-lockfile && yarn build)
+    echo "=== Building lobby-frontend ==="
+    (cd "$LOBBY_FRONTEND_DIR" && yarn install --frozen-lockfile && yarn build)
 
     echo "=== Installing gaming-fe deps ==="
     (cd "$FE_DIR" && yarn install --frozen-lockfile)
