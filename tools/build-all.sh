@@ -9,6 +9,4 @@ cd "$REPO_ROOT"
 (cd wasm && cargo build)
 (cd ./resources/gaming-fe && yarn install --frozen-lockfile)
 
-"$SCRIPT_DIR/build-docker-images.sh"
-
 

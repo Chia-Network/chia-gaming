@@ -168,7 +168,7 @@ jobs:
       #     kill "$SIM_PID" "$SERVER_PID" $(jobs -p) 2>/dev/null || true
       #     exit ${STATUS:-0}
 
-      # ── Collect artifacts (mirrors extract-from-image.sh) ───────────
+      # ── Collect deployment artifacts ─────────────────────────────────
 
       - name: Collect deployment artifacts
         run: |

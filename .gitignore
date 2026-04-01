@@ -7,10 +7,6 @@
 vendor/
 target/
 
-# TLA
-tla_plus/states
-tla_plus/*_TTrace*
-
 # Python files
 __pycache__/
 *.py[oc]
@@ -41,6 +37,9 @@ target/
 # IDE / editor
 .vscode/
 .cursor-acp-plan-*
+
+# Local sidecar repos
+chia-blockchain/
 
 # Misc.
 *.diff
