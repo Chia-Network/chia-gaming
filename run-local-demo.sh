@@ -89,7 +89,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     (cd "$LOBBY_SERVICE_DIR" && yarn install --frozen-lockfile && yarn build)
     echo "=== Building wc-stub ==="
     (cd "$WC_DIR" && yarn install --frozen-lockfile && yarn build)
-i
+fi
 
 # ── Assemble staging directories ────────────────────────────────────
 
