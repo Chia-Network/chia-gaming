@@ -18,29 +18,24 @@ sim-server = ["sim-tests", "dep:tiny_http", "dep:tungstenite"]
 used_linker = []
 
 [dependencies]
-blst = "^0.3.13"
 bson = "2.13.0"
 chia-bls = "0.35.2"
 chia-puzzles = "0.20.2"
 clvm-traits = "0.35.0"
 clvm-utils = "0.35.0"
 clvmr = { version = "=0.16.2", features = ["pre-eval"] }
-ff = { version = "0.13.0", features = ["derive"] }
 hex = "0.4.3"
-indoc = "2.0.5"
 lazy_static = "1.4.0"
 num-bigint = "0.4.4"
 num-traits = "0.2.15"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
-regex = "1.12.3"
 tiny_http = { version = "0.12", optional = true }
 tungstenite = { version = "0.24", optional = true }
 serde = { version = "1.0.228", features = ["rc"] }
 serde_json = "1.0.145"
 serde_json_any_key = "2.0.0"
 sha2 = "0.10.9"
-subtle = "2.5.0"
 typetag = "0.2.21"
 
 [dev-dependencies]
@@ -49,8 +44,6 @@ bls12_381 = { version = "=0.8.0", features = ["experimental"] }
 chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "308eb9ca1ba27913c8c0ab033dfc922a10b0f3c4" }
 clvm_tools_rs = { git = "https://github.com/Chia-Network/chialisp.git", rev = "783b8bef4856928086865538fc3de34fe437e3a1" }
 clvmr = { version = "=0.16.2" }
-colored = "3.0.0"
-serde = "1.0.228"
 toml = "0.8.14"
 
 [[bin]]

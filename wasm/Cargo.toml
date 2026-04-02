@@ -19,11 +19,7 @@ path = "src/mod.rs"
 chia_gaming = { path= "..", features = [] }
 clvmr = { version = "=0.16.2", features = ["pre-eval"] }
 hex = "0.4.3"
-indexmap = "=1.6.2"
-js-sys = "0.3.77"
 lol_alloc = "0.4.1"
-num-bigint = "0.4.4"
-num-traits = "0.2.15"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 bson = "2.13.0"
@@ -36,4 +32,3 @@ chia-puzzles = "0.20.2"
 chia-traits = "0.35.0"
 flate2 = { version = "1.1.1", default-features = false, features = ["zlib-rs"] }
 wasm-bindgen = { version = "0.2.104", features = ["serde-serialize"] }
-wasm-bindgen-test = "0.3.54"
