@@ -516,6 +516,7 @@ export class WasmBlobWrapper {
       this.handleNeedCoinSpend(event.NeedCoinSpend);
     } else if ('WatchCoin' in event) {
       const { coin_name, coin_string } = event.WatchCoin;
+      debugLog(`[wasm] WatchCoin name=${coin_name} strLen=${coin_string?.length ?? 0}`);
       this.blockchain.registerCoin(coin_name, coin_string);
     }
   }

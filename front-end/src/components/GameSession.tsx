@@ -156,14 +156,13 @@ function useViewportClampedDragWithInsets(
 function ExpandableCoinId({ hex }: { hex: string }) {
   const [expanded, setExpanded] = useState(false);
   return (
-    <button
-      type="button"
+    <span
       onClick={() => setExpanded(e => !e)}
-      className="font-mono text-[11px] hover:text-canvas-text-contrast transition-colors"
+      className="font-mono text-[11px] hover:text-canvas-text-contrast transition-colors cursor-pointer select-all"
       title={expanded ? 'Click to collapse' : 'Click to expand full coin ID'}
     >
       0x{expanded ? hex : truncateHex(hex)}
-    </button>
+    </span>
   );
 }
 

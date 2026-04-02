@@ -7,4 +7,7 @@ export interface GetCoinRecordsByNamesRequest {
   includeSpentCoins?: boolean;
 }
 
-export type GetCoinRecordsByNamesResponse = CoinRecord[];
+export interface GetCoinRecordsByNamesResponse {
+  coinRecords: CoinRecord[];
+  success: boolean;
+}

@@ -125,11 +125,11 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   async getPuzzleAndSolution(coin: string): Promise<string[] | null> {
     try {
       const height = await rpc.getHeightInfo({});
-      const records = await rpc.getCoinRecordsByNames({
+      const resp = await rpc.getCoinRecordsByNames({
         names: [coin],
         includeSpentCoins: true,
       });
-      const record = records.find((r: CoinRecord) => r.spent);
+      const record = (resp.coinRecords ?? []).find((r: CoinRecord) => r.spent);
       if (!record) return null;
       return [record.coin.parentCoinInfo, record.coin.puzzleHash, String(record.coin.amount)];
     } catch (e) {
@@ -279,13 +279,17 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     const records: CoinRecord[] = [];
     for (const name of names) {
       try {
-        const r = await rpc.getCoinRecordsByNames({
+        const resp = await rpc.getCoinRecordsByNames({
           names: [name],
           includeSpentCoins: true,
         });
+        const r = resp.coinRecords ?? [];
+        if (r.length > 0) {
+          debugLog(`[wc-blockchain] getCoinRecordsByNames hit name=${name} count=${r.length}`);
+        }
         records.push(...r);
-      } catch {
-        // Coin not on-chain yet — skip.
+      } catch (e) {
+        debugLog(`[wc-blockchain] getCoinRecordsByNames miss name=${name}: ${String(e)}`);
       }
     }
     return records;
@@ -293,10 +297,11 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   async registerCoins(names: string[]): Promise<void> {
     await this.waitForRemoteWallet();
-    await rpc.registerRemoteCoins({
+    const result = await rpc.registerRemoteCoins({
       walletId: this.remoteWalletId!,
       coinIds: names,
     });
+    debugLog(`[wc-blockchain] registerRemoteCoins names=${names.join(',')} result=${JSON.stringify(result)}`);
   }
 
   // --- Private ---
