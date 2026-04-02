@@ -14,6 +14,9 @@ importers:
       '@walletconnect/sign-client':
         specifier: 2.23.9
         version: 2.23.9(typescript@5.3.3)
+      '@walletconnect/utils':
+        specifier: 2.23.9
+        version: 2.23.9(typescript@5.3.3)
       axios:
         specifier: 1.13.6
         version: 1.13.6
