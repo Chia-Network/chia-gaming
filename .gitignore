@@ -30,6 +30,9 @@ venv/
 
 target/
 
+.pnpm-store/
+pnpm-store/
+
 # macos
 .DS_Store
 
