@@ -1,4 +1,4 @@
-import { Observable } from 'rxjs';
+import { CoinRecord } from './rpc/CoinRecord';
 import { Program } from 'clvm-lib';
 
 export interface Amount {
@@ -716,8 +716,8 @@ export interface InternalBlockchainInterface {
     coinIds?: string[],
     maxHeight?: number,
   ): Promise<any | null>;
-  registerCoin(coinName: string, coinString: string): void;
-  getObservable(): Observable<BlockchainReport>;
+  getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]>;
+  registerCoins(names: string[]): Promise<void>;
 }
 
 export interface OutcomeHandType {

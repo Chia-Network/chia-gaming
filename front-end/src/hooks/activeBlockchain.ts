@@ -1,12 +1,12 @@
-import { InternalBlockchainInterface } from '../types/ChiaGaming';
+import { BlockchainPoller } from './BlockchainPoller';
 
-let active: InternalBlockchainInterface | null = null;
+let active: BlockchainPoller | null = null;
 
-export function setActiveBlockchain(impl: InternalBlockchainInterface) {
-  active = impl;
+export function setActiveBlockchain(poller: BlockchainPoller) {
+  active = poller;
 }
 
-export function getActiveBlockchain(): InternalBlockchainInterface {
+export function getActiveBlockchain(): BlockchainPoller {
   if (!active) throw new Error('No blockchain selected');
   return active;
 }

@@ -73,7 +73,7 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
 
   function requestBalance() {
     try {
-      getActiveBlockchain().getBalance()
+      getActiveBlockchain().rpc.getBalance()
         .then((bal) => {
           setBalance(bal);
           if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);

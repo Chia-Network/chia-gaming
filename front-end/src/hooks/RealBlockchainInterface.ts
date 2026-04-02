@@ -6,7 +6,6 @@ import {
 import { WalletType } from '../types/WalletType';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 
-import { CoinStateMonitor, CoinStateBackend } from './CoinStateMonitor';
 import { debugLog } from '../services/debugLog';
 import { normalizeHexString } from '../util';
 
@@ -55,97 +54,18 @@ function toSafeNumber(value: bigint, fieldName: string): number {
   return Number(value);
 }
 
-const POLL_INTERVAL = 10000;
-
 function isRetryablePushTxError(errStr: string): boolean {
   return errStr.includes('UNKNOWN_UNSPENT') || errStr.includes('NO_TRANSACTIONS_WHILE_SYNCING');
 }
 
-class WalletConnectPoller {
-  private running = false;
-  private remoteWalletReady = false;
-
-  constructor(
-    private monitor: CoinStateMonitor,
-    private ensureRemoteWallet: () => void,
-    private isRemoteWalletReady: () => boolean,
-    private pollIntervalMs: number,
-  ) {}
-
-  start() {
-    if (this.running) return;
-    this.running = true;
-    void this.tick();
-  }
-
-  stop() {
-    this.running = false;
-  }
-
-  private async tick(): Promise<void> {
-    if (!this.running) return;
-    this.ensureRemoteWallet();
-    try {
-      const height = await rpc.getHeightInfo({});
-      const names = this.monitor.getRegisteredCoinNames();
-      let records: CoinRecord[] = [];
-      for (const name of names) {
-        try {
-          const r = await rpc.getCoinRecordsByNames({
-            names: [name],
-            includeSpentCoins: true,
-          });
-          records.push(...r);
-        } catch {
-          // Coin not on-chain yet — skip.
-        }
-      }
-      await this.monitor.receiveCoinStates(height, records);
-    } catch (e) {
-      console.error('[wc-poller] poll failed', e);
-      debugLog(`[wc-poller] poll failed: ${String(e)}`);
-    }
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, this.pollIntervalMs);
-    });
-    if (!this.running) return;
-    await this.tick();
-  }
-}
-
 export class RealBlockchainInterface implements InternalBlockchainInterface {
   blockchainAddressData: BlockchainInboundAddressResult;
-  monitor: CoinStateMonitor;
 
-  private poller: WalletConnectPoller;
   private remoteWalletId: number | undefined;
   private remoteWalletPending = false;
 
   constructor() {
     this.blockchainAddressData = { puzzleHash: '' };
-
-    const self = this;
-    const backend: CoinStateBackend = {
-      async registerCoins(names: string[]) {
-        await self.waitForRemoteWallet();
-        await rpc.registerRemoteCoins({
-          walletId: self.remoteWalletId!,
-          coinIds: names,
-        });
-      },
-    };
-    this.monitor = new CoinStateMonitor(backend);
-
-    this.poller = new WalletConnectPoller(
-      this.monitor,
-      () => this.ensureRemoteWallet(),
-      () => this.remoteWalletId !== undefined,
-      POLL_INTERVAL,
-    );
-  }
-
-  registerCoin(coinName: string, coinString: string) {
-    void this.monitor.registerCoin(coinName, coinString);
   }
 
   async getAddress() {
@@ -154,16 +74,8 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   async startMonitoring() {
     await this.getHeightInfo();
-    debugLog('[wc-blockchain] relay probe succeeded, starting poller');
-    this.poller.start();
-  }
-
-  stopMonitoring() {
-    this.poller.stop();
-  }
-
-  getObservable() {
-    return this.monitor.getObservable();
+    this.ensureRemoteWallet();
+    debugLog('[wc-blockchain] relay probe succeeded');
   }
 
   async spend(_blob: string, spendBundle: unknown): Promise<string> {
@@ -344,6 +256,30 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       );
       return null;
     }
+  }
+
+  async getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]> {
+    const records: CoinRecord[] = [];
+    for (const name of names) {
+      try {
+        const r = await rpc.getCoinRecordsByNames({
+          names: [name],
+          includeSpentCoins: true,
+        });
+        records.push(...r);
+      } catch {
+        // Coin not on-chain yet — skip.
+      }
+    }
+    return records;
+  }
+
+  async registerCoins(names: string[]): Promise<void> {
+    await this.waitForRemoteWallet();
+    await rpc.registerRemoteCoins({
+      walletId: this.remoteWalletId!,
+      coinIds: names,
+    });
   }
 
   // --- Private ---

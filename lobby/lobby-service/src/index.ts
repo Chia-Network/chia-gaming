@@ -98,6 +98,14 @@ app.use(
   }),
 );
 
+// Prevent HTTP keep-alive from exhausting the browser's per-host connection
+// pool (typically 6 for HTTP/1.1), which would block WebSocket upgrades when
+// multiple tabs connect to the same tracker origin.
+app.use((_req, res, next) => {
+  res.set('Connection', 'close');
+  next();
+});
+
 app.use(express.json());
 if (args.dir) {
   app.use(express.static(args.dir));

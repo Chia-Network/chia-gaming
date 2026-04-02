@@ -33,6 +33,7 @@ const LobbyScreen = () => {
     pendingChallenge,
     challengeSent,
     isConnected,
+    isReconnecting,
     reconnectBlocked,
     sendChallenge,
     acceptChallenge,
@@ -236,7 +237,7 @@ const LobbyScreen = () => {
         <div className="mb-4 p-3 rounded-lg bg-warning-bg border border-warning-border text-warning-text text-sm">
           This player is active in another tab/window. Close the other tab or use a separate browser profile for Alice/Bob.
         </div>
-      ) : !isConnected && (
+      ) : isReconnecting && (
         <div className="mb-4 p-3 rounded-lg bg-warning-bg border border-warning-border text-warning-text text-sm">
           Reconnecting to tracker...
         </div>

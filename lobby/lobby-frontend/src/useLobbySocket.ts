@@ -44,6 +44,7 @@ export function useLobbySocket(
   const [pendingChallenge, setPendingChallenge] = useState<ChallengeReceived | null>(null);
   const [challengeSent, setChallengeSent] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [hasConnected, setHasConnected] = useState(false);
   const [reconnectBlocked, setReconnectBlocked] = useState(false);
   const uniqueIdRef = useRef(uniqueId);
   const aliasRef = useRef(alias);
@@ -87,6 +88,7 @@ export function useLobbySocket(
       ws.onopen = () => {
         if (wsRef.current !== ws) return;
         setIsConnected(true);
+        setHasConnected(true);
         ws.send(JSON.stringify(joinPayload));
         if (pendingOutboundRef.current.length > 0) {
           const queued = pendingOutboundRef.current.splice(0, pendingOutboundRef.current.length);
@@ -205,11 +207,14 @@ export function useLobbySocket(
     [send],
   );
 
+    const isReconnecting = hasConnected && !isConnected;
+
   return {
     players,
     pendingChallenge,
     challengeSent,
     isConnected,
+    isReconnecting,
     reconnectBlocked,
     sendChallenge,
     acceptChallenge,

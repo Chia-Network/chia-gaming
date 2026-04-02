@@ -19,9 +19,13 @@ import { blobSingleton } from '../hooks/blobSingleton';
 import { walletConnectState } from '../hooks/useWalletConnect';
 import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
 import { realBlockchainInfo } from '../hooks/RealBlockchainInterface';
+import { BlockchainPoller } from '../hooks/BlockchainPoller';
 import { setActiveBlockchain } from '../hooks/activeBlockchain';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import { debugLog } from '../services/debugLog';
+
+const fakePoller = new BlockchainPoller(fakeBlockchainInfo, 5000);
+const realPoller = new BlockchainPoller(realBlockchainInfo, 10000);
 import ChatPanel from './ChatPanel';
 
 type TabId = 'tracker' | 'session' | 'chat' | 'game-log' | 'debug-log';
@@ -125,9 +129,9 @@ const Shell = () => {
     const bcType = getBlockchainType() ?? 'simulator';
     blockchainTypeRef.current = bcType;
     if (bcType === 'walletconnect') {
-      setActiveBlockchain(realBlockchainInfo);
+      setActiveBlockchain(realPoller);
     } else {
-      setActiveBlockchain(fakeBlockchainInfo);
+      setActiveBlockchain(fakePoller);
     }
   }, []);
 
@@ -335,7 +339,8 @@ const Shell = () => {
 
     if (bcType === 'simulator') {
       setWalletConnected(false);
-      setActiveBlockchain(fakeBlockchainInfo);
+      realPoller.stop();
+      setActiveBlockchain(fakePoller);
       void walletConnectState.disconnect().catch(() => {});
       fakeBlockchainInfo.registerUser(uniqueId)
         .then(() => {
@@ -345,7 +350,9 @@ const Shell = () => {
           return fakeBlockchainInfo.startMonitoring(uniqueId);
         })
         .then(() => {
-          if (!cancelled) setWalletConnected(true);
+          if (cancelled) return;
+          fakePoller.start();
+          setWalletConnected(true);
         })
         .catch((err: unknown) => {
           if (!cancelled) {
@@ -354,10 +361,12 @@ const Shell = () => {
         });
       return () => {
         cancelled = true;
+        fakePoller.stop();
       };
     }
 
-    setActiveBlockchain(realBlockchainInfo);
+    fakePoller.stop();
+    setActiveBlockchain(realPoller);
     walletConnectState.init()
       .then(() => {
         if (cancelled) return;
@@ -366,6 +375,7 @@ const Shell = () => {
           realBlockchainInfo.startMonitoring().catch((err: unknown) => {
             console.warn('[blockchain] startMonitoring failed on WC startup', err);
           });
+          realPoller.start();
           setWalletConnected(true);
         } else {
           setWalletConnected(false);
@@ -380,6 +390,7 @@ const Shell = () => {
 
     return () => {
       cancelled = true;
+      realPoller.stop();
     };
   }, [uniqueId, userReady]);
 
@@ -527,13 +538,15 @@ const Shell = () => {
             blockchainTypeRef.current = bcType;
             persistBlockchainType(bcType);
             if (bcType === 'walletconnect') {
-              setActiveBlockchain(realBlockchainInfo);
+              fakePoller.stop();
+              setActiveBlockchain(realPoller);
               const hasSession = !!walletConnectState.getSession();
               setWalletConnected(hasSession);
               if (hasSession) {
                 realBlockchainInfo.startMonitoring().catch((err: unknown) => {
                   console.warn('[blockchain] startMonitoring failed', err);
                 });
+                realPoller.start();
               }
             }
             setUserReady(true);
@@ -554,13 +567,15 @@ const Shell = () => {
             blockchainTypeRef.current = bcType;
             persistBlockchainType(bcType);
             if (bcType === 'walletconnect') {
-              setActiveBlockchain(realBlockchainInfo);
+              fakePoller.stop();
+              setActiveBlockchain(realPoller);
               const hasSession = !!walletConnectState.getSession();
               setWalletConnected(hasSession);
               if (hasSession) {
                 realBlockchainInfo.startMonitoring().catch((err: unknown) => {
                   console.warn('[blockchain] startMonitoring failed', err);
                 });
+                realPoller.start();
               }
             }
           }}

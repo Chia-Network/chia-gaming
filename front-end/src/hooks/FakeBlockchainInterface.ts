@@ -7,7 +7,6 @@ import {
   BlockchainInboundAddressResult,
 } from '../types/ChiaGaming';
 
-import { CoinStateMonitor, CoinStateBackend } from './CoinStateMonitor';
 import { debugLog } from '../services/debugLog';
 
 function sleepMs(ms: number): Promise<void> {
@@ -40,7 +39,6 @@ function getWebSocketClass(): any {
 export class FakeBlockchainInterface implements InternalBlockchainInterface {
   blockchainAddressData: BlockchainInboundAddressResult;
   deleted: boolean;
-  monitor: CoinStateMonitor;
 
   private ws: any | null = null;
   private wsUrl: string;
@@ -54,14 +52,6 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     this.wsUrl = wsUrl;
     this.blockchainAddressData = { puzzleHash: '' };
     this.deleted = false;
-
-    const self = this;
-    const backend: CoinStateBackend = {
-      async registerCoins(names: string[]) {
-        await self.sendRequest('register_remote_coins', { coinIds: names });
-      },
-    };
-    this.monitor = new CoinStateMonitor(backend);
   }
 
   private ensureConnected(): Promise<void> {
@@ -99,12 +89,6 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         try { data = JSON.parse(raw); } catch { return; }
 
         if (data.event === 'block') {
-          if (!this.deleted && typeof data.peak === 'number') {
-            const records: CoinRecord[] = Array.isArray(data.records)
-              ? data.records
-              : [];
-            void this.monitor.receiveCoinStates(data.peak, records);
-          }
           return;
         }
 
@@ -167,10 +151,6 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     return this.blockchainAddressData;
   }
 
-  registerCoin(coinName: string, coinString: string) {
-    void this.monitor.registerCoin(coinName, coinString);
-  }
-
   async startMonitoring(uniqueId: string) {
     this.deleted = false;
     const puzzleHash = await this.getOrRequestToken(uniqueId);
@@ -178,10 +158,6 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     this.blockchainAddressData = { puzzleHash };
     await this.withTransientRetry('get_peak', () => this.getHeightInfo());
     debugLog('[sim-blockchain] simulator probe succeeded');
-  }
-
-  getObservable() {
-    return this.monitor.getObservable();
   }
 
   async spend(blob: string, _spendBundle: unknown): Promise<string> {
@@ -231,6 +207,15 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     const raw = await this.sendRequest('create_offer_for_ids', params);
     if (!raw) return null;
     return typeof raw === 'string' ? JSON.parse(raw) : raw;
+  }
+
+  async getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]> {
+    const result = await this.sendRequest('get_coin_records_by_names', { names });
+    return Array.isArray(result) ? result : [];
+  }
+
+  async registerCoins(names: string[]): Promise<void> {
+    await this.sendRequest('register_remote_coins', { coinIds: names });
   }
 
   async registerUser(name: string): Promise<string> {

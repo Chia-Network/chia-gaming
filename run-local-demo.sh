@@ -176,8 +176,10 @@ echo "    Tracker:             http://localhost:$TRACKER_PORT"
 echo "    WC stub:             http://localhost:$WC_PORT"
 echo "    Simulator:           http://localhost:$SIM_PORT"
 echo ""
-echo "  Press any key (or Ctrl-C) to stop all services."
+echo "  Press Ctrl-C to stop all services."
 echo "════════════════════════════════════════════════════════"
 echo ""
 
-read -r -s -n 1
+while true; do
+    sleep 3600
+done

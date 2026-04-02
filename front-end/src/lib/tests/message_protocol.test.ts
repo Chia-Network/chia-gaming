@@ -7,6 +7,7 @@ import {
   InternalBlockchainInterface,
   PeerConnectionResult,
 } from '../../types/ChiaGaming';
+import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 
 const emptyReport: WatchReport = {
   created_watched: [],
@@ -14,9 +15,10 @@ const emptyReport: WatchReport = {
   timed_out: [],
 };
 
-const mockBlockchain = new Proxy({} as InternalBlockchainInterface, {
+const mockRpc = new Proxy({} as InternalBlockchainInterface, {
   get: () => () => Promise.resolve(undefined),
 });
+const mockBlockchain = new BlockchainPoller(mockRpc, 60000);
 
 const mockWasmConnection = new Proxy({} as WasmConnection, {
   get: () => () => undefined,

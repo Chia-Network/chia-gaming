@@ -21,7 +21,6 @@ import {
 import { getSearchParams, empty, getRandomInt, getEvenHexString } from '../../util';
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
 import {
-  InternalBlockchainInterface,
   PeerConnectionResult,
   BlockchainReport,
   CoinsetOrgBlockSpend,
@@ -33,6 +32,7 @@ import {
   FakeBlockchainInterface,
   fakeBlockchainInfo,
 } from '../../hooks/FakeBlockchainInterface';
+import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { configGameObject } from '../../hooks/blobSingleton';
 import { WasmBlobWrapper } from '../../hooks/WasmBlobWrapper';
 // @ts-ignore
@@ -79,6 +79,7 @@ afterAll(() => {
 
 const activeSubscriptions: Subscription[] = [];
 const activeCradles: WasmBlobWrapperAdapter[] = [];
+let testPoller: BlockchainPoller | null = null;
 
 function addActiveSubscription(sub: Subscription): Subscription {
   activeSubscriptions.push(sub);
@@ -97,6 +98,8 @@ function cleanupActiveResources() {
   while (activeCradles.length > 0) {
     activeCradles.pop()?.shutdown();
   }
+  testPoller?.stop();
+  testPoller = null;
   fakeBlockchainInfo.close();
 }
 
@@ -161,14 +164,14 @@ function all_handshaked(cradles: Array<WasmBlobWrapperAdapter>) {
 }
 
 async function action_with_messages(
-  blockchainInterface: InternalBlockchainInterface,
+  poller: BlockchainPoller,
   cradle1: WasmBlobWrapperAdapter,
   cradle2: WasmBlobWrapperAdapter,
 ) {
   let cradles = [cradle1, cradle2];
   let subscriptions: Subscription[] = [];
 
-  subscriptions.push(addActiveSubscription(blockchainInterface.getObservable().subscribe({
+  subscriptions.push(addActiveSubscription(poller.getObservable().subscribe({
     next: (evt: BlockchainReport) => {
       cradles.forEach((c, i) => {
         let block_array = [];
@@ -218,7 +221,7 @@ async function action_with_messages(
 }
 
 async function initWasmBlobWrapper(
-  blockchain: InternalBlockchainInterface,
+  blockchain: BlockchainPoller,
   uniqueId: string,
   iStarted: boolean,
   peer_conn: PeerConnectionResult,
@@ -283,8 +286,10 @@ it(
       console.warn('Simulator not running at', BLOCKCHAIN_SERVICE_URL, '- skipping load_wasm test. Run ./ct.sh for full suite.');
       return;
     }
-    const blockchainInterface = fakeBlockchainInfo;
     await fakeBlockchainInfo.startMonitoring('block-producer');
+    testPoller = new BlockchainPoller(fakeBlockchainInfo, 1000);
+    testPoller.start();
+    const poller = testPoller;
 
     const cradle1 = addActiveCradle(new WasmBlobWrapperAdapter());
     const cradle2 = addActiveCradle(new WasmBlobWrapperAdapter());
@@ -301,7 +306,7 @@ it(
       let wasm_init1 = new WasmStateInit(doInternalLoadWasm, fetchHex);
       storeInitArgs(() => {}, WholeWasmObject);
       let wasm_blob1 = await initWasmBlobWrapper(
-        blockchainInterface,
+        poller,
         'a11ce000',
         true,
         peer_conn1,
@@ -320,7 +325,7 @@ it(
       };
       let wasm_init2 = new WasmStateInit(doInternalLoadWasm, fetchHex);
       let wasm_blob2 = await initWasmBlobWrapper(
-        blockchainInterface,
+        poller,
         'b0b77777',
         false,
         peer_conn2,
@@ -328,7 +333,7 @@ it(
       );
       cradle2.set_blob(wasm_blob2);
 
-      await action_with_messages(blockchainInterface, cradle1, cradle2);
+      await action_with_messages(poller, cradle1, cradle2);
     } finally {
       cradle1.shutdown();
       cradle2.shutdown();

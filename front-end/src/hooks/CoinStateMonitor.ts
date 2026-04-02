@@ -1,4 +1,4 @@
-import { Subject } from 'rxjs';
+import { ReplaySubject } from 'rxjs';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 import { BlockchainReport } from '../types/ChiaGaming';
 import { applyCoinRecordsWatchDiff } from '../util/coinWatch';
@@ -13,7 +13,7 @@ export class CoinStateMonitor {
   private previousCoinStates = new Map<string, boolean>();
   private peak = 0;
   private lastEmittedPeak = -1;
-  private observable = new Subject<BlockchainReport>();
+  private observable = new ReplaySubject<BlockchainReport>(1);
 
   constructor(private backend: CoinStateBackend) {}
 

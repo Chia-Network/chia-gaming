@@ -11,10 +11,10 @@ import {
   SpendBundle,
   CoinsetOrgBlockSpend,
   ProposeGameParams,
-  InternalBlockchainInterface,
   BlockchainInboundAddressResult,
   WasmEvent,
 } from '../types/ChiaGaming';
+import { BlockchainPoller } from './BlockchainPoller';
 import {
   spend_bundle_to_clvm,
 } from '../util';
@@ -96,7 +96,7 @@ export class WasmBlobWrapper {
   cleanShutdownCalled: boolean;
   reloading: boolean;
   qualifyingEvents: number;
-  blockchain: InternalBlockchainInterface;
+  blockchain: BlockchainPoller;
   rxjsMessageSingleton: Subject<WasmEvent>;
   rxjsEmitter: NextObserver<WasmEvent> | undefined;
   private eventQueue: CradleEvent[] = [];
@@ -121,7 +121,7 @@ export class WasmBlobWrapper {
   opponentAlias: string | undefined = undefined;
 
   constructor(
-    blockchain: InternalBlockchainInterface,
+    blockchain: BlockchainPoller,
     uniqueId: string,
     amount: bigint,
     peer_conn: PeerConnectionResult,
@@ -261,7 +261,7 @@ export class WasmBlobWrapper {
     this.launcherProvided = true;
 
     try {
-      const coin = await this.blockchain.selectCoins(this.uniqueId, Number(this.amount));
+      const coin = await this.blockchain.rpc.selectCoins(this.uniqueId, Number(this.amount));
       if (!coin) {
         throw new Error('ASSERT_FAIL: selectCoins returned null for launcher parent coin');
       }
@@ -308,7 +308,7 @@ export class WasmBlobWrapper {
       const coinIds = request.coin_id ? [request.coin_id] : undefined;
       const maxHeight = request.max_height as number | undefined;
 
-      const bundle = await this.blockchain.createOfferForIds(
+      const bundle = await this.blockchain.rpc.createOfferForIds(
         this.uniqueId,
         { '1': offerAmount },
         extraConditions,
@@ -378,7 +378,7 @@ export class WasmBlobWrapper {
     const spendBundleNo0xJson = toSafeJson(strip0xDeep(spendBundle));
     debugLog(`[wasm tx] formed blobLen=${blob.length}`);
     debugLog(`[TX_COINSET_JSON_NO0X] ${spendBundleNo0xJson}`);
-    this.blockchain.spend(blob, spendBundle).then((result) => {
+    this.blockchain.rpc.spend(blob, spendBundle).then((result) => {
       if (result) {
         debugLog(`[wasm] submitTransaction: ${result}`);
       }
@@ -408,7 +408,7 @@ export class WasmBlobWrapper {
         return;
       }
       const spendBundle = this.wc?.convert_spend_to_coinset_org(blob);
-      this.blockchain.spend(blob, spendBundle).then((result) => {
+      this.blockchain.rpc.spend(blob, spendBundle).then((result) => {
         if (result) {
           debugLog(`[wasm] resubmitTransaction: ${result}`);
         }
@@ -500,7 +500,7 @@ export class WasmBlobWrapper {
 
   private async fulfillPuzzleSolutionRequest(coinHex: string) {
     try {
-      const ps = await this.blockchain.getPuzzleAndSolution(coinHex);
+      const ps = await this.blockchain.rpc.getPuzzleAndSolution(coinHex);
       if (this.cradle) {
         const result = ps
           ? this.cradle.report_puzzle_and_solution(coinHex, ps[0], ps[1])
