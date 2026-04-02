@@ -164,7 +164,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     } catch (e) {
       console.error('[wc-blockchain] selectCoins error', e);
       debugLog(`[wc-blockchain] selectCoins error: ${String(e)}`);
-      return null;
+      throw e;
     }
   }
 

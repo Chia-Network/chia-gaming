@@ -286,7 +286,8 @@ it(
       console.warn('Simulator not running at', BLOCKCHAIN_SERVICE_URL, '- skipping load_wasm test. Run ./ct.sh for full suite.');
       return;
     }
-    await fakeBlockchainInfo.startMonitoring('block-producer');
+    await fakeBlockchainInfo.registerUser('block-producer');
+    await fakeBlockchainInfo.startMonitoring();
     testPoller = new BlockchainPoller(fakeBlockchainInfo, 1000);
     testPoller.start();
     const poller = testPoller;

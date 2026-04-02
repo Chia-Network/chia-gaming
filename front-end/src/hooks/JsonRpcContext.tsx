@@ -44,13 +44,27 @@ type GetWalletsRequest = Loose;
 type GetWalletsResponse = Array<{ id: number; type: number; [key: string]: unknown }>;
 const WC_REQUEST_TIMEOUT_MS = 15000;
 const WC_RETRY_DELAY_MS = 1000;
+const WC_INTER_REQUEST_MS = 50;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+let queueTail: Promise<unknown> = Promise.resolve();
+
+function serialized<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = queueTail;
+  const result = prev.then(() => delay(WC_INTER_REQUEST_MS)).then(fn);
+  queueTail = result.catch(() => {});
+  return result;
+}
+
 function getErrorText(err: unknown): string {
   if (err instanceof Error) return err.message;
+  if (err && typeof err === 'object') {
+    if ('message' in err && typeof (err as any).message === 'string') return (err as any).message;
+    try { return JSON.stringify(err); } catch { /* fall through */ }
+  }
   return String(err);
 }
 
@@ -94,22 +108,25 @@ async function request<T, D extends object = object>(
   };
 
   const startedAt = Date.now();
+  console.warn(`[DBG_RPC] ${new Date(startedAt).toISOString()} >>> ${method}`);
 
   let raw: unknown;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
-      raw = await Promise.race([
-        walletConnectState.getClient()!.request({
-          topic: walletConnectState.getSession()!.topic,
-          chainId: walletConnectState.getChainId(),
-          request: { method, params },
-        }),
-        new Promise<never>((_, reject) => {
-          setTimeout(() => {
-            reject(new Error(`WalletConnect RPC ${method} timed out after ${WC_REQUEST_TIMEOUT_MS}ms`));
-          }, WC_REQUEST_TIMEOUT_MS);
-        }),
-      ]);
+      raw = await serialized(() =>
+        Promise.race([
+          walletConnectState.getClient()!.request({
+            topic: walletConnectState.getSession()!.topic,
+            chainId: walletConnectState.getChainId(),
+            request: { method, params },
+          }),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => {
+              reject(new Error(`WalletConnect RPC ${method} timed out after ${WC_REQUEST_TIMEOUT_MS}ms`));
+            }, WC_REQUEST_TIMEOUT_MS);
+          }),
+        ]),
+      );
       break;
     } catch (e) {
       const elapsed = Date.now() - startedAt;
@@ -119,7 +136,8 @@ async function request<T, D extends object = object>(
       const retryBlockedByMethod =
         method === ChiaMethod.CreateOfferForIds
         || method === ChiaMethod.CreateNewRemoteWallet;
-      const isRetryable = attempt < 2
+      const isRetryable = false
+        && attempt < 2
         && !retryBlockedByMethod
         && isTransientWalletConnectError(e);
       debugLog(

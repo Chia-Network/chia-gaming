@@ -13,19 +13,17 @@ import {
   loadSession,
   clearSession,
   hardReset,
+  hasAnySessionInfo,
   SessionSave,
 } from '../hooks/save';
 import { blobSingleton } from '../hooks/blobSingleton';
 import { walletConnectState } from '../hooks/useWalletConnect';
 import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
 import { realBlockchainInfo } from '../hooks/RealBlockchainInterface';
-import { BlockchainPoller } from '../hooks/BlockchainPoller';
-import { setActiveBlockchain } from '../hooks/activeBlockchain';
+import { activate, deactivate } from '../hooks/activeBlockchain';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import { debugLog } from '../services/debugLog';
 
-const fakePoller = new BlockchainPoller(fakeBlockchainInfo, 5000);
-const realPoller = new BlockchainPoller(realBlockchainInfo, 10000);
 import ChatPanel from './ChatPanel';
 
 type TabId = 'tracker' | 'session' | 'chat' | 'game-log' | 'debug-log';
@@ -82,7 +80,7 @@ const Shell = () => {
   const [, setTrackerConnected] = useState<boolean | null>(null);
   const [peerConnected, setPeerConnected] = useState<boolean | null>(null);
   const [pendingRestore, setPendingRestore] = useState<SessionSave | null>(() => loadSession());
-  const [restoreDecided, setRestoreDecided] = useState<boolean>(() => !loadSession());
+  const [restoreDecided, setRestoreDecided] = useState<boolean>(() => !hasAnySessionInfo());
   const [gameLog, setGameLog] = useState<string[]>([]);
   const [debugLogLines, setDebugLogLines] = useState<string[]>([]);
 
@@ -96,7 +94,6 @@ const Shell = () => {
   activeTabRef.current = activeTab;
   const sessionSaveRef = useRef<SessionSave | null>(null);
   const activePairingTokenRef = useRef<string | null>(null);
-  const blockchainTypeRef = useRef<import('../hooks/save').BlockchainType>('simulator');
   const deferStateUpdate = useCallback((fn: () => void) => {
     if (typeof queueMicrotask === 'function') {
       queueMicrotask(fn);
@@ -124,16 +121,6 @@ const Shell = () => {
       });
     });
   }, [deferStateUpdate]);
-
-  useEffect(() => {
-    const bcType = getBlockchainType() ?? 'simulator';
-    blockchainTypeRef.current = bcType;
-    if (bcType === 'walletconnect') {
-      setActiveBlockchain(realPoller);
-    } else {
-      setActiveBlockchain(fakePoller);
-    }
-  }, []);
 
   // Whether the user has clicked through the initial gate (wallet choice or
   // restore decision).  Only then do we connect to the tracker.
@@ -331,68 +318,28 @@ const Shell = () => {
     };
   }, [uniqueId, sessionId, userReady]);
 
-  // Blockchain startup is owned by the page lifecycle, not button click handlers.
-  useEffect(() => {
-    if (!userReady) return;
-    let cancelled = false;
-    const bcType = blockchainTypeRef.current;
-
-    if (bcType === 'simulator') {
-      setWalletConnected(false);
-      realPoller.stop();
-      setActiveBlockchain(fakePoller);
-      void walletConnectState.disconnect().catch(() => {});
-      fakeBlockchainInfo.registerUser(uniqueId)
-        .then(() => {
-          if (cancelled) return;
-          persistBlockchainType('simulator');
-          debugLog('Simulator wallet registered');
-          return fakeBlockchainInfo.startMonitoring(uniqueId);
-        })
-        .then(() => {
-          if (cancelled) return;
-          fakePoller.start();
-          setWalletConnected(true);
-        })
-        .catch((err: unknown) => {
-          if (!cancelled) {
-            console.error('[blockchain] simulator startup failed', err);
-          }
-        });
-      return () => {
-        cancelled = true;
-        fakePoller.stop();
-      };
-    }
-
-    fakePoller.stop();
-    setActiveBlockchain(realPoller);
-    walletConnectState.init()
+  const startSimulator = useCallback(() => {
+    deactivate();
+    void walletConnectState.disconnect().catch(() => {});
+    setWalletConnected(false);
+    fakeBlockchainInfo.registerUser(uniqueId)
       .then(() => {
-        if (cancelled) return;
-        const session = walletConnectState.getSession();
-        if (session) {
-          realBlockchainInfo.startMonitoring().catch((err: unknown) => {
-            console.warn('[blockchain] startMonitoring failed on WC startup', err);
-          });
-          realPoller.start();
-          setWalletConnected(true);
-        } else {
-          setWalletConnected(false);
-        }
+        persistBlockchainType('simulator');
+        debugLog('Simulator wallet registered');
+        activate(fakeBlockchainInfo, 5000);
+        setWalletConnected(true);
       })
       .catch((err: unknown) => {
-        if (!cancelled) {
-          console.warn('[blockchain] walletconnect init failed', err);
-          setWalletConnected(false);
-        }
+        console.error('[blockchain] simulator startup failed', err);
       });
+  }, [uniqueId]);
 
-    return () => {
-      cancelled = true;
-      realPoller.stop();
-    };
-  }, [uniqueId, userReady]);
+  const startWalletConnect = useCallback(() => {
+    deactivate();
+    persistBlockchainType('walletconnect');
+    activate(realBlockchainInfo, 10000);
+    setWalletConnected(true);
+  }, []);
 
   const sendChat = useCallback((text: string) => {
     const myAlias = gameParams?.myAlias ?? 'You';
@@ -428,13 +375,24 @@ const Shell = () => {
   const handleResume = useCallback(() => {
     const bcType = getBlockchainType() ?? 'simulator';
     setResuming(true);
-    blockchainTypeRef.current = bcType;
-    persistBlockchainType(bcType);
     setPendingRestore(null);
     setRestoreDecided(true);
     setUserReady(true);
+    if (bcType === 'walletconnect') {
+      walletConnectState.init()
+        .then(() => {
+          if (walletConnectState.getSession()) {
+            startWalletConnect();
+          }
+        })
+        .catch((err: unknown) => {
+          console.warn('[blockchain] walletconnect init on resume failed', err);
+        });
+    } else {
+      startSimulator();
+    }
     setResuming(false);
-  }, []);
+  }, [startSimulator, startWalletConnect]);
 
   const handleStartOver = useCallback(async () => {
     try { await walletConnectState.disconnect(); } catch (_) {}
@@ -446,7 +404,7 @@ const Shell = () => {
   // 1. Saved session exists, user hasn't decided yet → restore dialog only
   // 2. No session and no wallet connected yet → wallet/simulator chooser only
   // 3. User has clicked through → full app UI
-  const showRestoreDialog = pendingRestore !== null && !restoreDecided;
+  const showRestoreDialog = !restoreDecided;
   const showWalletChooser = !showRestoreDialog && !userReady;
 
   const tabBar = (
@@ -505,9 +463,9 @@ const Shell = () => {
           maxWidth: '24rem',
           width: '90%',
         }}>
-          <p className='text-canvas-text-contrast font-semibold text-lg'>Saved session found</p>
+          <p className='text-canvas-text-contrast font-semibold text-lg'>Previously saved state</p>
           <p className='text-canvas-text text-sm text-center'>
-            You have an in-progress game session. Resume where you left off, or start over?
+            You have previously saved state. Resume where you left off, or start over?
           </p>
           <button
             onClick={handleResume}
@@ -534,13 +492,11 @@ const Shell = () => {
       <div style={{ display: 'flex', flexDirection: 'column', width: '100vw', height: '100vh' }}
            className='bg-canvas-bg-subtle text-canvas-text'>
         <WalletConnectHeading
-          onConnected={(bcType, source) => {
-            blockchainTypeRef.current = bcType;
-            persistBlockchainType(bcType);
+          onConnected={(bcType) => {
             if (bcType === 'walletconnect') {
-              fakePoller.stop();
-              setActiveBlockchain(realPoller);
-              setWalletConnected(!!walletConnectState.getSession());
+              startWalletConnect();
+            } else {
+              startSimulator();
             }
             setUserReady(true);
           }}
@@ -556,13 +512,11 @@ const Shell = () => {
          className='bg-canvas-bg-subtle text-canvas-text'>
       <div style={{ width: '100%', flexShrink: 0 }}>
         <WalletConnectHeading
-          onConnected={(bcType, source) => {
-            blockchainTypeRef.current = bcType;
-            persistBlockchainType(bcType);
+          onConnected={(bcType) => {
             if (bcType === 'walletconnect') {
-              fakePoller.stop();
-              setActiveBlockchain(realPoller);
-              setWalletConnected(!!walletConnectState.getSession());
+              startWalletConnect();
+            } else {
+              startSimulator();
             }
           }}
           initialExpanded={false}
@@ -591,7 +545,7 @@ const Shell = () => {
               registerMessageHandler={registerMessageHandler}
               appendGameLog={appendGameLog}
               sessionSave={sessionSaveRef.current ?? undefined}
-              blockchainType={blockchainTypeRef.current}
+              blockchainType={getBlockchainType()}
               onSessionActivity={onSessionActivity}
             />
           ) : gameParams && peerConn ? (

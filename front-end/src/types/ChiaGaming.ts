@@ -718,6 +718,7 @@ export interface InternalBlockchainInterface {
   ): Promise<any | null>;
   getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]>;
   registerCoins(names: string[]): Promise<void>;
+  startMonitoring(): Promise<void>;
 }
 
 export interface OutcomeHandType {

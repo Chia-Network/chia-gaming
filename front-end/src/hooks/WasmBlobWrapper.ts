@@ -51,6 +51,22 @@ function toSafeJson(value: unknown): string {
   }
 }
 
+function extractErrorMessage(e: unknown): string {
+  if (e instanceof Error) {
+    try {
+      const parsed = JSON.parse(e.message);
+      if (parsed?.data?.error) return parsed.data.error;
+      if (parsed?.data?.structuredError?.message) return parsed.data.structuredError.message;
+    } catch { /* not JSON */ }
+    return e.message;
+  }
+  if (e && typeof e === 'object') {
+    if ('message' in e && typeof (e as any).message === 'string') return (e as any).message;
+    try { return JSON.stringify(e); } catch { /* fall through */ }
+  }
+  return String(e);
+}
+
 function strip0xDeep(value: unknown): unknown {
   if (typeof value === 'string') {
     return value.startsWith('0x') ? value.slice(2) : value;
@@ -285,6 +301,7 @@ export class WasmBlobWrapper {
       this.launcherProvided = false;
       console.error('[wasm] handleNeedLauncherCoin error:', e);
       debugLog(`[wasm] handleNeedLauncherCoin error: ${String(e)}`);
+      this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
     }
   }
 
@@ -344,6 +361,7 @@ export class WasmBlobWrapper {
     } catch (e) {
       console.error('[wasm] handleNeedCoinSpend error:', e);
       debugLog(`[wasm] handleNeedCoinSpend error: ${String(e)}`);
+      this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
     }
   }
 
@@ -391,6 +409,7 @@ export class WasmBlobWrapper {
     }).catch(e => {
       console.error('[wasm] submitTransaction failed:', e);
       debugLog(`[wasm] submitTransaction failed: ${String(e)}`);
+      this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
       const idx = this.pendingTransactions.indexOf(blob);
       if (idx !== -1) {
         this.pendingTransactions.splice(idx, 1);
@@ -422,6 +441,7 @@ export class WasmBlobWrapper {
       }).catch(e => {
         console.error('[wasm] resubmitPendingTransactions failed:', e);
         debugLog(`[wasm] resubmitPendingTransactions failed: ${String(e)}`);
+        this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
         const idx = this.pendingTransactions.indexOf(blob);
         if (idx !== -1) {
           this.pendingTransactions.splice(idx, 1);
@@ -512,6 +532,7 @@ export class WasmBlobWrapper {
     } catch (e) {
       console.error('[wasm] puzzle/solution fetch failed:', e);
       debugLog(`[wasm] puzzle/solution fetch failed: ${String(e)}`);
+      this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
     }
   }
 

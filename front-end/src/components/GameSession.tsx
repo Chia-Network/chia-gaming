@@ -380,6 +380,10 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, peerConnect
     return () => sub.unsubscribe();
   }, [session.gameplayEvent$, onSessionActivity]);
 
+  const channelOverlayBoundsRef = useRef<HTMLDivElement | null>(null);
+  const gameAreaRef = useRef<HTMLDivElement | null>(null);
+  const handOverlayDrag = useViewportClampedDrag(gameAreaRef);
+
   if (session.error) {
     return (
       <div className='flex items-center justify-center h-full p-4'>
@@ -396,8 +400,6 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, peerConnect
   }
 
   const handEverStarted = session.handKey > 0;
-  const channelOverlayBoundsRef = useRef<HTMLDivElement | null>(null);
-  const gameAreaRef = useRef<HTMLDivElement | null>(null);
   const channelStateLabel = CHANNEL_STATE_LABELS[session.channelStatus.state] ?? session.channelStatus.state;
   const channelCoinLabel = channelCoinLabelForState(session.channelStatus.state);
   const gameStateLabel = session.gameTerminal.label ?? GAME_TURN_LABELS[session.gameCoin.turnState];
@@ -414,7 +416,6 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, peerConnect
       : session.gameTerminal.type === 'opponent-timed-out'
         ? 'You Lost'
         : 'Hand Finished';
-  const handOverlayDrag = useViewportClampedDrag(gameAreaRef);
   const peerBadge =
     peerConnected === null
       ? { label: 'Peer: Unknown', className: 'bg-canvas-bg-hover text-canvas-text' }

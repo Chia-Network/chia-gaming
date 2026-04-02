@@ -245,6 +245,11 @@ export function loadSession(): SessionSave | null {
   return loadAppState().gameSave ?? null;
 }
 
+export function hasAnySessionInfo(): boolean {
+  const state = loadAppState();
+  return state.blockchainType !== undefined || state.gameSave !== undefined;
+}
+
 export function clearSession(): void {
   const state = loadAppState();
   const cleared: AppState = {

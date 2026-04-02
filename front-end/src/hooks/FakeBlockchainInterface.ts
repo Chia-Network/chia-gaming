@@ -45,6 +45,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   private nextId = 0;
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
   private token = '';
+  private uniqueId = '';
   private connectPromise: Promise<void> | null = null;
   private readonly retryBackoffMs = [0, 100, 250, 500, 1000];
 
@@ -137,11 +138,12 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     });
   }
 
-  private async getOrRequestToken(uniqueId: string): Promise<string> {
+  private async getOrRequestToken(): Promise<string> {
     if (this.token) return this.token;
+    if (!this.uniqueId) throw new Error('registerUser must be called before startMonitoring');
     const result = await this.withTransientRetry(
       'register',
-      () => this.sendRequest('register', { name: uniqueId }),
+      () => this.sendRequest('register', { name: this.uniqueId }),
     );
     this.token = result;
     return this.token;
@@ -151,9 +153,9 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     return this.blockchainAddressData;
   }
 
-  async startMonitoring(uniqueId: string) {
+  async startMonitoring() {
     this.deleted = false;
-    const puzzleHash = await this.getOrRequestToken(uniqueId);
+    const puzzleHash = await this.getOrRequestToken();
     if (this.deleted) return;
     this.blockchainAddressData = { puzzleHash };
     await this.withTransientRetry('get_peak', () => this.getHeightInfo());
@@ -184,7 +186,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async selectCoins(uniqueId: string, amount: number): Promise<string | null> {
-    await this.getOrRequestToken(uniqueId);
+    await this.getOrRequestToken();
     const response = await this.sendRequest('select_coins', { who: uniqueId, amount });
     if (typeof response !== 'string') return response ?? null;
     return normalizeCoinStringHex(response);
@@ -219,6 +221,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async registerUser(name: string): Promise<string> {
+    this.uniqueId = name;
     return this.withTransientRetry(
       'registerUser',
       () => this.sendRequest('register', { name }),
