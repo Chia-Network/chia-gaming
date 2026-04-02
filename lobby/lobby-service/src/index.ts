@@ -100,9 +100,11 @@ app.use(
 
 // Prevent HTTP keep-alive from exhausting the browser's per-host connection
 // pool (typically 6 for HTTP/1.1), which would block WebSocket upgrades when
-// multiple tabs connect to the same tracker origin.
+// multiple tabs connect to the same tracker origin.  Also disable caching so
+// the browser never serves stale lobby JS after a rebuild.
 app.use((_req, res, next) => {
   res.set('Connection', 'close');
+  res.set('Cache-Control', 'no-store');
   next();
 });
 

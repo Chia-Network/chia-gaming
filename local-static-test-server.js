@@ -49,7 +49,7 @@ const server = http.createServer((req, res) => {
       if (err.code === 'ENOENT' && !path.extname(pathname)) {
         return fs.readFile(path.join(SERVE_DIR, 'index.html'), (err2, html) => {
           if (err2) { res.writeHead(404); return res.end('Not found'); }
-          res.writeHead(200, { 'Content-Type': 'text/html' });
+          res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
           res.end(html);
         });
       }
