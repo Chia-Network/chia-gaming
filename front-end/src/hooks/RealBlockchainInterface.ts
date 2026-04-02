@@ -289,7 +289,13 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         }
         records.push(...r);
       } catch (e) {
-        debugLog(`[wc-blockchain] getCoinRecordsByNames miss name=${name}: ${String(e)}`);
+        const msg = String(e);
+        if (msg.includes('not found')) {
+          debugLog(`[wc-blockchain] getCoinRecordsByNames miss name=${name}: ${msg}`);
+        } else {
+          console.error(`[wc-blockchain] getCoinRecordsByNames unexpected error name=${name}:`, e);
+          throw e;
+        }
       }
     }
     return records;
