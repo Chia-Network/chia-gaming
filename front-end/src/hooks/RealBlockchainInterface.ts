@@ -8,6 +8,7 @@ import { CoinRecord } from '../types/rpc/CoinRecord';
 
 import { debugLog } from '../services/debugLog';
 import { normalizeHexString } from '../util';
+import { decodeBech32mPuzzleHash } from '../util/bech32m';
 
 const PUSH_TX_RETRY_DELAY = 30000;
 const ASSERT_BEFORE_HEIGHT_ABSOLUTE = 87;
@@ -73,29 +74,45 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async startMonitoring() {
-    await this.getHeightInfo();
+    try {
+      const addr = await rpc.getCurrentAddress({ walletId: 1 });
+      const puzzleHash = decodeBech32mPuzzleHash(addr);
+      if (puzzleHash) {
+        this.blockchainAddressData = { puzzleHash };
+        debugLog(`[wc-blockchain] address resolved: ${addr} → ${puzzleHash}`);
+      } else {
+        console.warn('[wc-blockchain] failed to decode address:', addr);
+      }
+    } catch (e) {
+      console.warn('[wc-blockchain] getCurrentAddress failed, puzzleHash will be empty', e);
+    }
     this.ensureRemoteWallet();
-    debugLog('[wc-blockchain] relay probe succeeded');
   }
 
-  async spend(_blob: string, spendBundle: unknown): Promise<string> {
-    debugLog('[wc-blockchain] walletPushTx submitting');
+  private spendSeq = 0;
+
+  async spend(_blob: string, spendBundle: unknown, _source?: string): Promise<string> {
+    const seq = ++this.spendSeq;
+    const src = _source ?? 'unknown';
+    console.warn(`[DBG_TX] spend #${seq} from=${src} ts=${new Date().toISOString()}`);
+    debugLog(`[wc-blockchain] walletPushTx submitting #${seq} from=${src}`);
     try {
       const result = await rpc.walletPushTx({ spendBundle: spendBundle as object });
-      debugLog(`[wc-blockchain] walletPushTx submitted result=${JSON.stringify(result)}`);
+      console.warn(`[DBG_TX] spend #${seq} OK result=${JSON.stringify(result)}`);
+      debugLog(`[wc-blockchain] walletPushTx submitted #${seq} result=${JSON.stringify(result)}`);
       return result as unknown as string;
     } catch (e: unknown) {
       const errStr = typeof e === 'string' ? e : ((e as any)?.message || JSON.stringify(e));
       if (isRetryablePushTxError(errStr)) {
-        console.warn(`[wc-blockchain] walletPushTx retryable error, retry in ${PUSH_TX_RETRY_DELAY / 1000}s:`, errStr);
+        console.warn(`[DBG_TX] spend #${seq} retryable error, will retry: ${errStr}`);
         return new Promise((resolve, reject) => {
           setTimeout(() => {
-            this.spend(_blob, spendBundle).then(resolve).catch(reject);
+            this.spend(_blob, spendBundle, `retry-of-#${seq}`).then(resolve).catch(reject);
           }, PUSH_TX_RETRY_DELAY);
         });
       }
-      console.error('[wc-blockchain] walletPushTx error', e);
-      debugLog(`[wc-blockchain] walletPushTx error: ${String(e)}`);
+      console.error(`[DBG_TX] spend #${seq} FAILED: ${errStr}`);
+      debugLog(`[wc-blockchain] walletPushTx error #${seq}: ${String(e)}`);
       throw e;
     }
   }

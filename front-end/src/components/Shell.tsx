@@ -540,14 +540,7 @@ const Shell = () => {
             if (bcType === 'walletconnect') {
               fakePoller.stop();
               setActiveBlockchain(realPoller);
-              const hasSession = !!walletConnectState.getSession();
-              setWalletConnected(hasSession);
-              if (hasSession) {
-                realBlockchainInfo.startMonitoring().catch((err: unknown) => {
-                  console.warn('[blockchain] startMonitoring failed', err);
-                });
-                realPoller.start();
-              }
+              setWalletConnected(!!walletConnectState.getSession());
             }
             setUserReady(true);
           }}
@@ -569,14 +562,7 @@ const Shell = () => {
             if (bcType === 'walletconnect') {
               fakePoller.stop();
               setActiveBlockchain(realPoller);
-              const hasSession = !!walletConnectState.getSession();
-              setWalletConnected(hasSession);
-              if (hasSession) {
-                realBlockchainInfo.startMonitoring().catch((err: unknown) => {
-                  console.warn('[blockchain] startMonitoring failed', err);
-                });
-                realPoller.start();
-              }
+              setWalletConnected(!!walletConnectState.getSession());
             }
           }}
           initialExpanded={false}

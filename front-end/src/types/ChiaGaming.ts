@@ -703,7 +703,7 @@ export interface BlockchainInboundAddressResult {
 }
 
 export interface InternalBlockchainInterface {
-  spend(blob: string, spendBundle: unknown): Promise<string>;
+  spend(blob: string, spendBundle: unknown, source?: string): Promise<string>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
   getBalance(): Promise<number>;
   getPuzzleAndSolution(coin: string): Promise<string[] | null>;

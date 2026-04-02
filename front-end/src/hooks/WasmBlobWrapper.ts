@@ -378,7 +378,8 @@ export class WasmBlobWrapper {
     const spendBundleNo0xJson = toSafeJson(strip0xDeep(spendBundle));
     debugLog(`[wasm tx] formed blobLen=${blob.length}`);
     debugLog(`[TX_COINSET_JSON_NO0X] ${spendBundleNo0xJson}`);
-    this.blockchain.rpc.spend(blob, spendBundle).then((result) => {
+    console.warn(`[DBG_TX] submitTransaction called ts=${new Date().toISOString()} pending=${this.pendingTransactions.length}`);
+    this.blockchain.rpc.spend(blob, spendBundle, 'submitTransaction').then((result) => {
       if (result) {
         debugLog(`[wasm] submitTransaction: ${result}`);
       }
@@ -400,6 +401,7 @@ export class WasmBlobWrapper {
 
   private resubmitPendingTransactions() {
     if (this.pendingTransactions.length === 0) return;
+    console.warn(`[DBG_TX] resubmitPendingTransactions called ts=${new Date().toISOString()} count=${this.pendingTransactions.length}`);
     debugLog(`[wasm] resubmitting ${this.pendingTransactions.length} pending transactions`);
     const blobs = [...this.pendingTransactions];
     for (const blob of blobs) {
@@ -408,7 +410,7 @@ export class WasmBlobWrapper {
         return;
       }
       const spendBundle = this.wc?.convert_spend_to_coinset_org(blob);
-      this.blockchain.rpc.spend(blob, spendBundle).then((result) => {
+      this.blockchain.rpc.spend(blob, spendBundle, 'resubmitPendingTransactions').then((result) => {
         if (result) {
           debugLog(`[wasm] resubmitTransaction: ${result}`);
         }
