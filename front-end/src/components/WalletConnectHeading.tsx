@@ -18,7 +18,6 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
   const [_walletConnectError, setWalletConnectError] = useState<
     string | undefined
   >();
-  const [fakeAddress, setFakeAddress] = useState<string | undefined>();
   const [expanded, setExpanded] = useState(initialExpanded);
   const [showQRModal, setShowQRModal] = useState(false);
   const [connectionUri, setConnectionUri] = useState<string | undefined>();
@@ -137,7 +136,6 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
 
   // (height managed by parent Shell layout)
   const handleConnectSimulator = useCallback(() => {
-    setFakeAddress(undefined);
     toggleExpanded();
     onConnected?.('simulator', 'manual');
     requestBalance();
@@ -165,9 +163,7 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
 
   const sessionConnected = connected
     ? 'connected'
-    : fakeAddress
-      ? 'simulator'
-      : 'disconnected';
+    : 'disconnected';
 
   const ifSession = (
     <div className='flex flex-col justify-center items-center w-full px-1.5 sm:px-2 md:px-4 py-3 sm:py-4 md:py-6 gap-2 sm:gap-3'>
@@ -338,7 +334,6 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
               <div>
                 <WalletBadge
                   sessionConnected={sessionConnected}
-                  fakeAddress={fakeAddress}
                 />
               </div>
             </div>

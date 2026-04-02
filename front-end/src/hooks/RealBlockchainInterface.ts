@@ -312,8 +312,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       console.log('[wc-blockchain] <<< createOfferForIds (json)', JSON.stringify(response));
       const offerStr = (response as any)?.offer;
       if (typeof offerStr === 'string' && offerStr.startsWith('offer')) {
+        debugLog('[wc-blockchain] createOfferForIds returned bech32 offer string path');
         return offerStr;
       }
+      debugLog(`[wc-blockchain] createOfferForIds returned non-offer payload type=${typeof response}`);
       return response;
     } catch (e) {
       let parsedError: unknown = undefined;

@@ -325,6 +325,7 @@ export class WasmBlobWrapper {
 
       let result;
       if (typeof bundle === 'string' && bundle.startsWith('offer')) {
+        console.warn('[wasm] createOfferForIds returned offer string; decoding via bech32 WASM path');
         debugLog('[wasm diag] NeedCoinSpend using provide_offer_bech32');
         result = this.cradle?.provide_offer_bech32(bundle);
       } else {

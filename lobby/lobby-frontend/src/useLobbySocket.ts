@@ -46,12 +46,14 @@ export function useLobbySocket(
   const [isConnected, setIsConnected] = useState(false);
   const [reconnectBlocked, setReconnectBlocked] = useState(false);
   const uniqueIdRef = useRef(uniqueId);
+  const aliasRef = useRef(alias);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const closingRef = useRef(false);
   const pendingOutboundRef = useRef<Record<string, unknown>[]>([]);
 
   useEffect(() => { uniqueIdRef.current = uniqueId; }, [uniqueId]);
+  useEffect(() => { aliasRef.current = alias; }, [alias]);
 
   const send = useCallback((payload: Record<string, unknown>, queueIfClosed = true) => {
     const ws = wsRef.current;
@@ -71,7 +73,7 @@ export function useLobbySocket(
       type: 'join',
       id: uniqueId,
       session_id: sessionId,
-      ...(alias?.trim() ? { alias: alias.trim() } : {}),
+      ...(aliasRef.current?.trim() ? { alias: aliasRef.current.trim() } : {}),
     };
 
     closingRef.current = false;
@@ -156,7 +158,7 @@ export function useLobbySocket(
       wsRef.current = null;
       pendingOutboundRef.current = [];
     };
-  }, [uniqueId, lobbyUrl, sessionId, alias, send]);
+  }, [uniqueId, lobbyUrl, sessionId, send]);
 
   const sendChallenge = useCallback(
     (targetId: string, game: string, amount: string, perGame: string) => {

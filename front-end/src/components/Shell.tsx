@@ -417,65 +417,13 @@ const Shell = () => {
   const handleResume = useCallback(() => {
     const bcType = getBlockchainType() ?? 'simulator';
     setResuming(true);
-
-    const onRegistered = () => {
-      fakeBlockchainInfo.startMonitoring(uniqueId).catch((err: unknown) => {
-        console.warn('[blockchain] startMonitoring failed on resume', err);
-      });
-      setActiveBlockchain(fakeBlockchainInfo);
-      setPendingRestore(null);
-      setResuming(false);
-      setRestoreDecided(true);
-      blockchainTypeRef.current = bcType;
-      setWalletConnected(true);
-      setUserReady(true);
-    };
-    const onFailed = (e: unknown) => {
-      console.error('[Shell] wallet register failed on resume:', e);
-      setResuming(false);
-    };
-
-    if (bcType === 'simulator') {
-      // If the saved mode is simulator, keep simulator authoritative on reload.
-      void walletConnectState.disconnect().catch(() => {});
-      fakeBlockchainInfo.registerUser(uniqueId)
-        .then(() => {
-          persistBlockchainType('simulator');
-          debugLog('Simulator wallet registered (resume)');
-          onRegistered();
-        })
-        .catch(onFailed);
-    } else {
-      debugLog('WalletConnect resume: initializing client');
-      walletConnectState.init()
-        .then(() => {
-          const session = walletConnectState.getSession();
-          if (session) {
-            debugLog('WalletConnect resume: restored existing session');
-            setActiveBlockchain(realBlockchainInfo);
-            realBlockchainInfo.startMonitoring().catch((err: unknown) => {
-              console.warn('[blockchain] startMonitoring failed on WC resume', err);
-            });
-            setPendingRestore(null);
-            setResuming(false);
-            setRestoreDecided(true);
-            blockchainTypeRef.current = 'walletconnect';
-            setWalletConnected(true);
-            setUserReady(true);
-            return;
-          }
-
-          debugLog('WalletConnect resume: no existing session, waiting for user reconnect');
-          setPendingRestore(null);
-          setResuming(false);
-          setRestoreDecided(true);
-          blockchainTypeRef.current = 'walletconnect';
-          setWalletConnected(false);
-          setUserReady(true);
-        })
-        .catch(onFailed);
-    }
-  }, [uniqueId]);
+    blockchainTypeRef.current = bcType;
+    persistBlockchainType(bcType);
+    setPendingRestore(null);
+    setRestoreDecided(true);
+    setUserReady(true);
+    setResuming(false);
+  }, []);
 
   const handleStartOver = useCallback(async () => {
     try { await walletConnectState.disconnect(); } catch (_) {}
@@ -576,10 +524,6 @@ const Shell = () => {
            className='bg-canvas-bg-subtle text-canvas-text'>
         <WalletConnectHeading
           onConnected={(bcType, source) => {
-            if (bcType === 'walletconnect' && source !== 'manual' && blockchainTypeRef.current === 'simulator' && walletConnected) {
-              debugLog('Ignoring walletconnect auto-connect while simulator session is active');
-              return;
-            }
             blockchainTypeRef.current = bcType;
             persistBlockchainType(bcType);
             if (bcType === 'walletconnect') {
@@ -607,10 +551,6 @@ const Shell = () => {
       <div style={{ width: '100%', flexShrink: 0 }}>
         <WalletConnectHeading
           onConnected={(bcType, source) => {
-            if (bcType === 'walletconnect' && source !== 'manual' && blockchainTypeRef.current === 'simulator' && walletConnected) {
-              debugLog('Ignoring walletconnect auto-connect while simulator session is active');
-              return;
-            }
             blockchainTypeRef.current = bcType;
             persistBlockchainType(bcType);
             if (bcType === 'walletconnect') {
