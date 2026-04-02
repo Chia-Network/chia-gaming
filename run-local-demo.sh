@@ -79,13 +79,14 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     echo "=== Building WASM (web target) ==="
     (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/dist" --release --target=web)
     echo "=== Building gaming frontend ==="
-    (cd "$FE_DIR" && yarn install --frozen-lockfile && yarn build)
+    (cd "$FE_DIR" && pnpm install --frozen-lockfile && pnpm run build)
     echo "=== Building lobby-frontend ==="
-    (cd "$LOBBY_FRONTEND_DIR" && yarn install --frozen-lockfile && yarn build)
+    (cd "$SCRIPT_DIR/lobby" && pnpm install --frozen-lockfile)
+    (cd "$LOBBY_FRONTEND_DIR" && pnpm run build)
     echo "=== Building lobby-service ==="
-    (cd "$LOBBY_SERVICE_DIR" && yarn install --frozen-lockfile && yarn build)
+    (cd "$LOBBY_SERVICE_DIR" && pnpm run build)
     echo "=== Building wc-stub ==="
-    (cd "$WC_DIR" && yarn install --frozen-lockfile && yarn build)
+    (cd "$WC_DIR" && pnpm install --frozen-lockfile && pnpm run build)
 fi
 
 # ── Assemble staging directories ────────────────────────────────────

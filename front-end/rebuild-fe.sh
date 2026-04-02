@@ -10,9 +10,9 @@ FE_DIR="$SCRIPT_DIR"
 CLSP_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)/clsp"
 
 echo "=== Building gaming-fe ==="
-(cd "$FE_DIR" && ./node_modules/.bin/tsc --project . && \
- ./node_modules/.bin/esbuild dist/js/index.js --bundle --outfile=dist/js/index-rollup.js && \
- npx @tailwindcss/cli -i ./src/index.css -o ./dist/css/index.css)
+(cd "$FE_DIR" && pnpm exec tsc --project . && \
+ pnpm exec esbuild dist/js/index.js --bundle --outfile=dist/js/index-rollup.js && \
+ pnpm exec tailwindcss -i ./src/index.css -o ./dist/css/index.css)
 
 echo "=== Ensuring serve/ symlinks ==="
 SERVE="$FE_DIR/serve"

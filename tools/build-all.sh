@@ -7,6 +7,6 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
 (cd wasm && cargo build)
-(cd ./front-end && yarn install --frozen-lockfile)
+(cd ./front-end && pnpm install --frozen-lockfile)
 
 

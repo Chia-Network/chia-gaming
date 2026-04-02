@@ -42,6 +42,11 @@ jobs:
         with:
           node-version: 20
 
+      - name: Setup pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.33.0 --activate
+
       - name: Install rust
         uses: dtolnay/rust-toolchain@master
         with:
@@ -68,22 +73,23 @@ jobs:
       - name: Build gaming-fe
         run: |
           cd front-end
-          yarn install --frozen-lockfile && yarn build
+          pnpm install --frozen-lockfile && pnpm run build
 
       - name: Build lobby-frontend
         run: |
-          cd lobby/lobby-frontend
-          yarn install --frozen-lockfile && yarn build
+          cd lobby
+          pnpm install --frozen-lockfile
+          pnpm --filter chia-gaming-lobby-frontend run build
 
       - name: Build lobby-service
         run: |
-          cd lobby/lobby-service
-          yarn install --frozen-lockfile && yarn build
+          cd lobby
+          pnpm --filter chia-gaming-lobby-service run build
 
       - name: Build wc-stub
         run: |
           cd wc-stub
-          yarn install --frozen-lockfile && yarn build
+          pnpm install --frozen-lockfile && pnpm run build
 
       - name: Build simulator
         run: cargo build --features sim-tests,sim-server --bin chia-gaming-sim
@@ -113,7 +119,7 @@ jobs:
               exit 1
           fi
 
-          (cd front-end && yarn test)
+          (cd front-end && pnpm run test)
 
           kill "$SIM_PID" 2>/dev/null || true
 

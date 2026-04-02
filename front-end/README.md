@@ -15,24 +15,24 @@ Cal Poker is a simple real-time poker game where two players can connect, place 
 ## **Prerequisites**
 
 - **Node.js**
-- **yarn**
+- **pnpm**
 - **TypeScript**
 
 ## **Setup**
 
 1. **Install dependencies for the client:**
-   ```yarn install --frozen-lockfile```
+   ```pnpm install --frozen-lockfile```
 
 2. **Starting the lobby service:**
    ```node ./dist/lobby.js```
 
 3. **Build the React application:**
-   ```yarn build```
+   ```pnpm run build```
 
 ## Package Manager Policy
 
-Use **Yarn** for JS package operations in this repository. Avoid running `npm install`
-inside package directories, because mixing lockfile managers causes dependency drift.
+Use **pnpm** for JS package operations in this repository. Avoid mixing package
+managers inside package directories, because mixed lockfile managers cause drift.
 
 The client will start on port 3000 by default and should open automatically in your default browser.
 

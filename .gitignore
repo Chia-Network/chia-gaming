@@ -18,10 +18,8 @@ wheels/
 
 # javascript
 node_modules/
-.yarn/
 .pnp.cjs
 .pnp.loader.mjs
-.yarnrc.yml
 lobby/**/public/index.js
 lobby/**/serve/
 front-end/**/serve/

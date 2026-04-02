@@ -41,14 +41,14 @@ commit-reveal randomness.
 ### Prerequisites
 
 - **Rust** (nightly) with `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
-- **Node.js** and **yarn** — for JS/WASM integration tests
+- **Node.js** and **pnpm** — for JS/WASM integration tests
 - **wasm-pack** — for building the WASM package (`cargo install wasm-pack`)
 - **LLVM** (Homebrew) — on macOS, needed for compiling `blst` to wasm (`brew install llvm`)
 
 ### JS Package Manager Policy
 
-Use **Yarn** for repository JS package workflows and lockfiles. Avoid mixing `npm install`
-with Yarn-managed package directories.
+Use **pnpm** for repository JS package workflows and lockfiles. Avoid mixing package
+managers inside a given package directory.
 
 ## Project Structure
 

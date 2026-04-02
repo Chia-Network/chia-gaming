@@ -55,11 +55,13 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     echo "=== Building WASM (nodejs target for tests) ==="
     (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/node-pkg" --dev --target=nodejs)
 
+    echo "=== Installing lobby workspace deps ==="
+    (cd "$REPO_ROOT/lobby" && pnpm install --frozen-lockfile)
     echo "=== Building lobby-frontend ==="
-    (cd "$LOBBY_FRONTEND_DIR" && yarn install --frozen-lockfile && yarn build)
+    (cd "$LOBBY_FRONTEND_DIR" && pnpm run build)
 
     echo "=== Installing gaming-fe deps ==="
-    (cd "$FE_DIR" && yarn install --frozen-lockfile)
+    (cd "$FE_DIR" && pnpm install --frozen-lockfile)
 
     if [ "$SKIP_NATIVE" -eq 0 ]; then
         echo "=== Building simulator ==="
@@ -93,4 +95,4 @@ fi
 
 echo "=== Running tests ==="
 cd "$FE_DIR"
-yarn test
+pnpm run test
