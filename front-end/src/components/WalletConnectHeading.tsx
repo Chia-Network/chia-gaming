@@ -1,18 +1,15 @@
 import { useCallback, useState, useEffect, useRef } from 'react';
 import { Button } from './button';
-import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
-import { realBlockchainInfo } from '../hooks/RealBlockchainInterface';
-import { setActiveBlockchain, getActiveBlockchain } from '../hooks/activeBlockchain';
+import { getActiveBlockchain } from '../hooks/activeBlockchain';
 import useDebug from '../hooks/useDebug';
 import { walletConnectState } from '../hooks/useWalletConnect';
-import { getPlayerId, getTheme, setTheme as saveTheme } from '../hooks/save';
+import { getTheme, setTheme as saveTheme } from '../hooks/save';
 
 import Debug from './Debug';
 import { WalletConnectDialog, doConnectWallet } from './WalletConnect';
 import WalletBadge from './WalletBadge';
 
 import { WalletConnectOutboundState } from '../hooks/useWalletConnect';
-import { InternalBlockchainInterface } from '../types/ChiaGaming';
 import { debugLog } from '../services/debugLog';
 
 const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConnected?: (blockchainType: 'simulator' | 'walletconnect', source?: 'auto' | 'manual') => void; initialExpanded?: boolean }) => {
@@ -37,12 +34,9 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
   const [haveClient, setHaveClient] = useState(false);
   const [haveSession, setHaveSession] = useState(false);
   const [sessions, setSessions] = useState(0);
-  const [recvAddress, setRecvAddress] = useState<string | undefined>();
   const [balance, setBalance] = useState<number | undefined>();
   const balanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const walletConnectStartedManuallyRef = useRef(false);
-
-  const uniqueId = getPlayerId();
 
   // Theme state: keep dark/light in sync with document root and localStorage
   const [isDark, setIsDark] = useState<boolean>(() => {
@@ -76,7 +70,6 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
     haveClient: setHaveClient,
     haveSession: setHaveSession,
     sessions: setSessions,
-    address: setRecvAddress,
   };
 
   function requestBalance() {
@@ -96,16 +89,6 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
     }
   }
 
-  function requestRecvAddress() {
-    try {
-      getActiveBlockchain().getAddress()
-        .then((addr) => setRecvAddress(addr.address))
-        .catch(() => {});
-    } catch {
-      // blockchain not set yet
-    }
-  }
-
   useEffect(() => {
     const subscription = walletConnectState.getObservable().subscribe({
       next: (evt: WalletConnectOutboundState) => {
@@ -116,13 +99,7 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
           toggleExpanded();
           setAlreadyConnected(true);
           onConnected?.('walletconnect', source);
-          setActiveBlockchain(realBlockchainInfo as unknown as InternalBlockchainInterface);
-          realBlockchainInfo.startMonitoring().then(() => {
-            requestBalance();
-            requestRecvAddress();
-          }).catch((err: unknown) => {
-            console.warn('[blockchain] startMonitoring failed', err);
-          });
+          requestBalance();
         }
 
         const record = evt as unknown as Record<string, unknown>;
@@ -160,26 +137,15 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
 
   // (height managed by parent Shell layout)
   const handleConnectSimulator = useCallback(() => {
-    fakeBlockchainInfo.registerUser(uniqueId)
-      .then((res) => {
-        debugLog('Simulator wallet registered');
-        setFakeAddress(res);
-        toggleExpanded();
-        onConnected?.('simulator');
-        setActiveBlockchain(fakeBlockchainInfo);
-        fakeBlockchainInfo.startMonitoring(uniqueId).then(() => {
-          if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
-          requestBalance();
-          requestRecvAddress();
-        }).catch((err: unknown) => {
-          console.warn('[blockchain] startMonitoring failed', err);
-        });
-      })
-      .catch((e) => console.error('register failed:', e));
-  }, []);
+    setFakeAddress(undefined);
+    toggleExpanded();
+    onConnected?.('simulator', 'manual');
+    requestBalance();
+  }, [onConnected, toggleExpanded]);
 
   const onDoWalletConnect = useCallback(async () => {
     walletConnectStartedManuallyRef.current = true;
+    onConnected?.('walletconnect', 'manual');
     await initWalletConnect();
     doConnectWallet(
       setShowQRModal,
@@ -190,7 +156,7 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
         setWalletConnectError(e);
       },
     );
-  }, [initWalletConnect]);
+  }, [initWalletConnect, onConnected]);
 
   const onWalletDismiss = useCallback(() => {
     // toggleExpanded();

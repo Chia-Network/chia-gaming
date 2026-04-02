@@ -22,11 +22,7 @@ try {
 const container = document.getElementById('root');
 const root = createRoot(container!);
 
-root.render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-);
+root.render(<App />);
 
 // Optional: leave listener installed for life of page; if unmount logic
 // ever added, call `uninstallThemeListener()` to remove.

@@ -114,7 +114,7 @@ class WalletConnectPoller {
 }
 
 export class RealBlockchainInterface implements InternalBlockchainInterface {
-  addressData: BlockchainInboundAddressResult;
+  blockchainAddressData: BlockchainInboundAddressResult;
   monitor: CoinStateMonitor;
 
   private poller: WalletConnectPoller;
@@ -122,7 +122,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   private remoteWalletPending = false;
 
   constructor() {
-    this.addressData = { address: '', puzzleHash: '' };
+    this.blockchainAddressData = { puzzleHash: '' };
 
     const self = this;
     const backend: CoinStateBackend = {
@@ -149,7 +149,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async getAddress() {
-    return this.addressData;
+    return this.blockchainAddressData;
   }
 
   async startMonitoring() {

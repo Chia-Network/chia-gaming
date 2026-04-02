@@ -1,8 +1,4 @@
-// @ts-ignore
-import bech32_module from 'bech32-buffer';
-// @ts-ignore
-import * as bech32_buffer from 'bech32-buffer';
-import { toUint8, normalizeCoinStringHex } from '../util';
+import { normalizeCoinStringHex } from '../util';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 
 import { BLOCKCHAIN_WS_URL } from '../settings';
@@ -13,9 +9,6 @@ import {
 
 import { CoinStateMonitor, CoinStateBackend } from './CoinStateMonitor';
 import { debugLog } from '../services/debugLog';
-
-type Bech32Module = { encode: (prefix: string, data: Uint8Array, encoding?: 'bech32' | 'bech32m') => string };
-const bech32: Bech32Module = (bech32_module ? bech32_module : bech32_buffer);
 
 function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -41,11 +34,11 @@ function isTransientWsError(err: any): boolean {
 
 function getWebSocketClass(): any {
   if (typeof globalThis.WebSocket !== 'undefined') return globalThis.WebSocket;
-  try { return require('ws'); } catch { throw new Error('No WebSocket implementation available'); }
+  throw new Error('No WebSocket implementation available');
 }
 
 export class FakeBlockchainInterface implements InternalBlockchainInterface {
-  addressData: BlockchainInboundAddressResult;
+  blockchainAddressData: BlockchainInboundAddressResult;
   deleted: boolean;
   monitor: CoinStateMonitor;
 
@@ -59,7 +52,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
 
   constructor(wsUrl: string) {
     this.wsUrl = wsUrl;
-    this.addressData = { address: '', puzzleHash: '' };
+    this.blockchainAddressData = { puzzleHash: '' };
     this.deleted = false;
 
     const self = this;
@@ -171,7 +164,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async getAddress() {
-    return this.addressData;
+    return this.blockchainAddressData;
   }
 
   registerCoin(coinName: string, coinString: string) {
@@ -182,8 +175,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     this.deleted = false;
     const puzzleHash = await this.getOrRequestToken(uniqueId);
     if (this.deleted) return;
-    const address = bech32.encode('xch', toUint8(puzzleHash), 'bech32m');
-    this.addressData = { address, puzzleHash };
+    this.blockchainAddressData = { puzzleHash };
     await this.withTransientRetry('get_peak', () => this.getHeightInfo());
     debugLog('[sim-blockchain] simulator probe succeeded');
   }

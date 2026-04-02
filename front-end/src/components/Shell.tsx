@@ -136,7 +136,7 @@ const Shell = () => {
   const [userReady, setUserReady] = useState(false);
 
   // Fetch tracker URL, set up iframe and TrackerConnection.
-  // Deferred until userReady so we never connect during the initial choice screens.
+  // Runs once the app enters the full UI state.
   useEffect(() => {
     if (!userReady) return;
     let cancelled = false;
@@ -186,117 +186,117 @@ const Shell = () => {
         setIframeUrl(lobbyUrl);
 
         const conn = new TrackerConnection(trackerOrigin, sessionId, {
-          onMatched: (matched: MatchedParams) => {
-            setTrackerConnected(true);
-            setPeerConnected(false);
-            let amount: bigint;
-            let perGame: bigint;
-            try { amount = BigInt(matched.amount); } catch { amount = FALLBACK_AMOUNT; }
-            try { perGame = BigInt(matched.per_game); } catch { perGame = FALLBACK_PER_GAME; }
-            startSession(conn, matched.i_am_initiator, amount, perGame, matched.token, null, matched.my_alias, matched.peer_alias);
-          },
-          onConnectionStatus: (status: ConnectionStatus) => {
-            setTrackerConnected(true);
-            setPeerConnected((prev) => {
-              if (!status.has_pairing) return false;
-              if (typeof status.peer_connected === 'boolean') return status.peer_connected;
-              return prev;
-            });
-            if (activePairingTokenRef.current !== null) {
-              if (status.has_pairing && status.token === activePairingTokenRef.current) {
-                console.log('[Shell] mid-session reconnect: token matches, resending un-acked');
-                blobSingleton?.resendUnacked();
-              } else {
-                console.warn('[Shell] mid-session reconnect: pairing lost or mismatched, keeping local session active');
-                setPeerConnected(false);
+            onMatched: (matched: MatchedParams) => {
+              setTrackerConnected(true);
+              setPeerConnected(false);
+              let amount: bigint;
+              let perGame: bigint;
+              try { amount = BigInt(matched.amount); } catch { amount = FALLBACK_AMOUNT; }
+              try { perGame = BigInt(matched.per_game); } catch { perGame = FALLBACK_PER_GAME; }
+              startSession(conn, matched.i_am_initiator, amount, perGame, matched.token, null, matched.my_alias, matched.peer_alias);
+            },
+            onConnectionStatus: (status: ConnectionStatus) => {
+              setTrackerConnected(true);
+              setPeerConnected((prev) => {
+                if (!status.has_pairing) return false;
+                if (typeof status.peer_connected === 'boolean') return status.peer_connected;
+                return prev;
+              });
+              if (activePairingTokenRef.current !== null) {
+                if (status.has_pairing && status.token === activePairingTokenRef.current) {
+                  console.log('[Shell] mid-session reconnect: token matches, resending un-acked');
+                  blobSingleton?.resendUnacked();
+                } else {
+                  console.warn('[Shell] mid-session reconnect: pairing lost or mismatched, keeping local session active');
+                  setPeerConnected(false);
+                }
+                return;
               }
-              return;
-            }
 
-            const save = loadSession();
+              const save = loadSession();
 
-            if (status.has_pairing && status.token) {
-              if (save && save.pairingToken === status.token) {
-                let amount: bigint;
-                let perGame: bigint;
-                try { amount = BigInt(save.amount); } catch { amount = FALLBACK_AMOUNT; }
-                try { perGame = BigInt(save.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
-                startSession(conn, status.i_am_initiator!, amount, perGame, status.token, save, status.my_alias, status.peer_alias);
-              } else if (!save) {
-                console.warn('[Shell] connection_status: unrecognized pairing, requesting close');
-                conn.close();
-                clearSession();
+              if (status.has_pairing && status.token) {
+                if (save && save.pairingToken === status.token) {
+                  let amount: bigint;
+                  let perGame: bigint;
+                  try { amount = BigInt(save.amount); } catch { amount = FALLBACK_AMOUNT; }
+                  try { perGame = BigInt(save.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
+                  startSession(conn, status.i_am_initiator!, amount, perGame, status.token, save, status.my_alias, status.peer_alias);
+                } else if (!save) {
+                  console.warn('[Shell] connection_status: unrecognized pairing, requesting close');
+                  conn.close();
+                  clearSession();
+                } else {
+                  console.warn('[Shell] connection_status: token mismatch (tracker=%s, save=%s), closing unknown pairing', status.token, save.pairingToken);
+                  conn.close();
+                  let amount: bigint;
+                  let perGame: bigint;
+                  try { amount = BigInt(save.amount); } catch { amount = FALLBACK_AMOUNT; }
+                  try { perGame = BigInt(save.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
+                  sessionSaveRef.current = save;
+                  setGameParams({
+                    iStarted: save.iStarted,
+                    amount,
+                    perGameAmount: perGame,
+                    restoring: true,
+                    pairingToken: save.pairingToken,
+                    myAlias: save.myAlias,
+                    opponentAlias: save.opponentAlias,
+                  });
+                  setPeerConn(conn.getPeerConnection());
+                  setGameLog(save.gameLog);
+                  setDebugLogLines(save.debugLog);
+                  setActiveTab('session');
+                }
               } else {
-                console.warn('[Shell] connection_status: token mismatch (tracker=%s, save=%s), closing unknown pairing', status.token, save.pairingToken);
-                conn.close();
-                let amount: bigint;
-                let perGame: bigint;
-                try { amount = BigInt(save.amount); } catch { amount = FALLBACK_AMOUNT; }
-                try { perGame = BigInt(save.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
-                sessionSaveRef.current = save;
-                setGameParams({
-                  iStarted: save.iStarted,
-                  amount,
-                  perGameAmount: perGame,
-                  restoring: true,
-                  pairingToken: save.pairingToken,
-                  myAlias: save.myAlias,
-                  opponentAlias: save.opponentAlias,
-                });
-                setPeerConn(conn.getPeerConnection());
-                setGameLog(save.gameLog);
-                setDebugLogLines(save.debugLog);
-                setActiveTab('session');
+                if (save) {
+                  console.warn('[Shell] connection_status: no pairing but have save, going on-chain');
+                  let amount: bigint;
+                  let perGame: bigint;
+                  try { amount = BigInt(save.amount); } catch { amount = FALLBACK_AMOUNT; }
+                  try { perGame = BigInt(save.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
+                  sessionSaveRef.current = save;
+                  setGameParams({
+                    iStarted: save.iStarted,
+                    amount,
+                    perGameAmount: perGame,
+                    restoring: true,
+                    pairingToken: save.pairingToken,
+                    myAlias: save.myAlias,
+                    opponentAlias: save.opponentAlias,
+                  });
+                  setPeerConn(conn.getPeerConnection());
+                  setGameLog(save.gameLog);
+                  setDebugLogLines(save.debugLog);
+                  setActiveTab('session');
+                }
               }
-            } else {
-              if (save) {
-                console.warn('[Shell] connection_status: no pairing but have save, going on-chain');
-                let amount: bigint;
-                let perGame: bigint;
-                try { amount = BigInt(save.amount); } catch { amount = FALLBACK_AMOUNT; }
-                try { perGame = BigInt(save.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
-                sessionSaveRef.current = save;
-                setGameParams({
-                  iStarted: save.iStarted,
-                  amount,
-                  perGameAmount: perGame,
-                  restoring: true,
-                  pairingToken: save.pairingToken,
-                  myAlias: save.myAlias,
-                  opponentAlias: save.opponentAlias,
-                });
-                setPeerConn(conn.getPeerConnection());
-                setGameLog(save.gameLog);
-                setDebugLogLines(save.debugLog);
-                setActiveTab('session');
+            },
+            onPeerReconnected: () => {
+              blobSingleton?.resendUnacked();
+            },
+            onMessage: (_data: unknown) => { setPeerConnected(true); },
+            onAck: (_ack: number) => { setPeerConnected(true); },
+            onPing: () => { setPeerConnected(true); },
+            onClosed: () => {
+              console.log('[Shell] tracker connection closed');
+              setPeerConnected(false);
+            },
+            onTrackerDisconnected: () => {
+              console.log('[Shell] tracker disconnected');
+              setTrackerConnected(false);
+            },
+            onTrackerReconnected: () => {
+              console.log('[Shell] tracker reconnected');
+              setTrackerConnected(true);
+            },
+            onChat: (msg: ChatMessage) => {
+              setChatMessages(prev => [...prev, msg]);
+              if (activeTabRef.current !== 'chat') {
+                setUnreadChat(true);
               }
-            }
-          },
-          onPeerReconnected: () => {
-            blobSingleton?.resendUnacked();
-          },
-          onMessage: (_data: unknown) => { setPeerConnected(true); },
-          onAck: (_ack: number) => { setPeerConnected(true); },
-          onPing: () => { setPeerConnected(true); },
-          onClosed: () => {
-            console.log('[Shell] tracker connection closed');
-            setPeerConnected(false);
-          },
-          onTrackerDisconnected: () => {
-            console.log('[Shell] tracker disconnected');
-            setTrackerConnected(false);
-          },
-          onTrackerReconnected: () => {
-            console.log('[Shell] tracker reconnected');
-            setTrackerConnected(true);
-          },
-          onChat: (msg: ChatMessage) => {
-            setChatMessages(prev => [...prev, msg]);
-            if (activeTabRef.current !== 'chat') {
-              setUnreadChat(true);
-            }
-          },
-        });
+            },
+          });
         trackerConnRef.current = conn;
 
         const initialSave = loadSession();
@@ -326,6 +326,62 @@ const Shell = () => {
       trackerConnRef.current = null;
     };
   }, [uniqueId, sessionId, userReady]);
+
+  // Blockchain startup is owned by the page lifecycle, not button click handlers.
+  useEffect(() => {
+    if (!userReady) return;
+    let cancelled = false;
+    const bcType = blockchainTypeRef.current;
+
+    if (bcType === 'simulator') {
+      setWalletConnected(false);
+      setActiveBlockchain(fakeBlockchainInfo);
+      void walletConnectState.disconnect().catch(() => {});
+      fakeBlockchainInfo.registerUser(uniqueId)
+        .then(() => {
+          if (cancelled) return;
+          persistBlockchainType('simulator');
+          debugLog('Simulator wallet registered');
+          return fakeBlockchainInfo.startMonitoring(uniqueId);
+        })
+        .then(() => {
+          if (!cancelled) setWalletConnected(true);
+        })
+        .catch((err: unknown) => {
+          if (!cancelled) {
+            console.error('[blockchain] simulator startup failed', err);
+          }
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setActiveBlockchain(realBlockchainInfo);
+    walletConnectState.init()
+      .then(() => {
+        if (cancelled) return;
+        const session = walletConnectState.getSession();
+        if (session) {
+          realBlockchainInfo.startMonitoring().catch((err: unknown) => {
+            console.warn('[blockchain] startMonitoring failed on WC startup', err);
+          });
+          setWalletConnected(true);
+        } else {
+          setWalletConnected(false);
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          console.warn('[blockchain] walletconnect init failed', err);
+          setWalletConnected(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [uniqueId, userReady]);
 
   const sendChat = useCallback((text: string) => {
     const myAlias = gameParams?.myAlias ?? 'You';
@@ -526,7 +582,16 @@ const Shell = () => {
             }
             blockchainTypeRef.current = bcType;
             persistBlockchainType(bcType);
-            setWalletConnected(true);
+            if (bcType === 'walletconnect') {
+              setActiveBlockchain(realBlockchainInfo);
+              const hasSession = !!walletConnectState.getSession();
+              setWalletConnected(hasSession);
+              if (hasSession) {
+                realBlockchainInfo.startMonitoring().catch((err: unknown) => {
+                  console.warn('[blockchain] startMonitoring failed', err);
+                });
+              }
+            }
             setUserReady(true);
           }}
           initialExpanded
@@ -548,7 +613,16 @@ const Shell = () => {
             }
             blockchainTypeRef.current = bcType;
             persistBlockchainType(bcType);
-            setWalletConnected(true);
+            if (bcType === 'walletconnect') {
+              setActiveBlockchain(realBlockchainInfo);
+              const hasSession = !!walletConnectState.getSession();
+              setWalletConnected(hasSession);
+              if (hasSession) {
+                realBlockchainInfo.startMonitoring().catch((err: unknown) => {
+                  console.warn('[blockchain] startMonitoring failed', err);
+                });
+              }
+            }
           }}
           initialExpanded={false}
         />

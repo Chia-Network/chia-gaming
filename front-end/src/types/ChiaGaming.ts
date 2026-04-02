@@ -699,7 +699,6 @@ export interface BlockchainReport {
 }
 
 export interface BlockchainInboundAddressResult {
-  address: string;
   puzzleHash: string;
 }
 
