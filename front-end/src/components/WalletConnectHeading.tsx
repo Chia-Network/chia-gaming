@@ -143,7 +143,6 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
 
   const onDoWalletConnect = useCallback(async () => {
     walletConnectStartedManuallyRef.current = true;
-    onConnected?.('walletconnect', 'manual');
     await initWalletConnect();
     doConnectWallet(
       setShowQRModal,
@@ -154,7 +153,7 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
         setWalletConnectError(e);
       },
     );
-  }, [initWalletConnect, onConnected]);
+  }, [initWalletConnect]);
 
   const onWalletDismiss = useCallback(() => {
     // toggleExpanded();
