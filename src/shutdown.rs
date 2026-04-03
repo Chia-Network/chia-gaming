@@ -1,7 +1,5 @@
 use clvm_traits::ToClvm;
 use clvmr::NodePtr;
-use log::debug;
-use rand::Rng;
 
 use crate::channel_handler::types::ChannelHandlerEnv;
 use crate::channel_handler::ChannelHandler;
@@ -31,16 +29,12 @@ fn compute_shutdown_conditions(
         ));
     }
 
-    debug!("Reward coins:");
-    debug!("me   {our_share:?} {our_reward_ph:?}");
-    debug!("them {their_share:?} {their_reward_ph:?}");
-
     v.to_clvm(allocator).into_gen()
 }
 
 /// Given a channel handler and env, compute the CREATE_COIN conditions for clean shutdown.
-pub fn get_conditions_with_channel_handler<R: Rng>(
-    env: &mut ChannelHandlerEnv<R>,
+pub fn get_conditions_with_channel_handler(
+    env: &mut ChannelHandlerEnv<'_>,
     ch: &ChannelHandler,
 ) -> Result<NodePtr, Error> {
     let our_reward_ph = ch.get_reward_puzzle_hash(env)?;

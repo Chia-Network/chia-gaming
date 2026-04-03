@@ -2,7 +2,6 @@ use crate::channel_handler::types::PotatoSignatures;
 use crate::common::types::{
     Aggsig, Amount, CoinID, CoinString, PublicKey, PuzzleHash, SpendBundle,
 };
-use crate::potato_handler::on_chain::OnChainGameHandler;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -13,6 +12,8 @@ pub struct HandshakeB {
     pub referee_pubkey: PublicKey,
     pub reward_payout_signature: Aggsig,
 }
+
+pub type HandshakeA = HandshakeB;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct HandshakeC {
@@ -35,6 +36,8 @@ pub struct CoinSpendRequest {
     pub amount: Amount,
     pub conditions: Vec<RawCoinCondition>,
     pub coin_id: Option<CoinID>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_height: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,28 +52,30 @@ pub struct HandshakeStepWithSpend {
     pub spend: SpendBundle,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub enum ChannelState {
-    // -- Handshake states --
-    StepA,
-    StepB,
-    WaitForBobKeys(Box<HandshakeB>),
-    WaitForLauncher(Box<HandshakeStepInfo>),
-    WaitForCoinId(Box<HandshakeStepInfo>),
-    WaitForBobSigs(Box<HandshakeStepInfo>),
-    WaitForAliceSpend(Box<HandshakeStepInfo>, PotatoSignatures),
-    WaitForOffer(Box<HandshakeStepInfo>),
-    WaitForBobSpend(Box<HandshakeStepInfo>, SpendBundle),
-    WaitForCompletion(Box<HandshakeStepInfo>),
+pub fn encode_u64_as_clvm_int(val: u64) -> Vec<u8> {
+    if val == 0 {
+        return vec![];
+    }
+    let mut bytes = Vec::new();
+    let mut h = val;
+    while h > 0 {
+        bytes.push((h & 0xff) as u8);
+        h >>= 8;
+    }
+    bytes.reverse();
+    if bytes[0] & 0x80 != 0 {
+        bytes.insert(0, 0);
+    }
+    bytes
+}
 
-    // -- Post-handshake states --
-    Finished(Box<HandshakeStepWithSpend>),
-    OnChainWaitingForUnrollTimeoutOrSpend(CoinString, usize),
-    OnChainWaitForConditions(CoinString, Box<HandshakeStepWithSpend>),
-    OnChainWaitingForUnrollSpend(CoinString, usize, Option<CoinString>),
-    OnChainWaitingForUnrollConditions(CoinString, usize),
-    CleanShutdownWaitForConditions(CoinString, Option<CoinString>),
-    OnChain(Box<OnChainGameHandler>),
-    Completed,
-    Failed,
+pub fn decode_clvm_int_to_u64(bytes: &[u8]) -> u64 {
+    if bytes.is_empty() {
+        return 0;
+    }
+    let mut result: u64 = 0;
+    for &b in bytes {
+        result = (result << 8) | (b as u64);
+    }
+    result
 }

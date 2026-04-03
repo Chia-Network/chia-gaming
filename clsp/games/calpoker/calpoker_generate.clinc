@@ -74,7 +74,7 @@
 ; immediately sends a message giving Alice's seed
 (defun calpoker_alice_handler_b (PREIMAGE amount pre_state state move validation_info_hash split)
     (list
-        (make_cards_readable (sha256 PREIMAGE move amount))
+        (make_cards (sha256 PREIMAGE move amount))
         0
         (curry calpoker_alice_handler_c PREIMAGE)
         PREIMAGE
@@ -219,7 +219,7 @@
 ; move is Alice commit
 ; state is alice_commit
 (defun calpoker_bob_handler_a (amount pre_state state move validation_program_hash split)
-    (list 0 () calpoker_bob_handler_b)
+    (list 0 0 calpoker_bob_handler_b)
 )
 
 ; local_move is nil
@@ -244,18 +244,17 @@
 (defun parse_message (message (alice_commit bob_seed) amount)
     (assert
         (= (sha256 message) alice_commit)
-        (make_cards_readable (sha256 (substr message 0 16) (substr bob_seed 0 16) amount))
+        (make_cards (sha256 (substr message 0 16) (substr bob_seed 0 16) amount))
     )
 )
 
-; TODO pull bob_seed out of state instead of currying it in here
 ; state is alice's commit and bob's seed
 ; move is alice's reveal of her card generating seed and her commit to which cards she's picking
 ; expecting a message revealing Alice's seed which results in local display once verified
 ; return readable is (alice_cards bob_cards)
 (defun calpoker_bob_handler_c (amount pre_state (alice_commit alice_cards bob_cards) move validation_program_hash split)
     (list
-        (list (make_readable_card_descriptions alice_cards) (make_readable_card_descriptions bob_cards))
+        (list alice_cards bob_cards)
         0
         calpoker_bob_handler_d
     )
@@ -327,17 +326,8 @@
                     (deep_compare split (/ amount 2))
                 )
                 (list (indices_to_bitfield bob_selects))
-                ()
+                0
             )
         )
     )
 )
-
-(defun make_cards_readable (seed)
-    (assign
-        (cardsa cardsb) (make_cards seed)
-        (list cardsa cardsb)
-    )
-)
-
-(defun make_readable_card_descriptions (cards) cards)

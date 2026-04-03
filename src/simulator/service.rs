@@ -1,67 +1,75 @@
-use std::collections::BTreeMap;
-use std::fs;
+use std::collections::{BTreeMap, HashSet};
 use std::io::stdin;
 use std::mem::swap;
-use std::sync::mpsc;
-use std::sync::mpsc::{Receiver, Sender};
-use std::sync::Mutex;
-use std::time::Duration;
+use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use lazy_static::lazy_static;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
-use salvo::http::ResBody;
-use salvo::hyper::body::Bytes;
-use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
-use serde_json;
-use serde_json::{Map, Value};
+use serde_json::{self, Value};
+use tiny_http::{Header, Response, Server, StatusCode};
+use tungstenite::{Message, WebSocket};
 
-use clvm_traits::ToClvm;
-use clvmr::NodePtr;
-
-use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
-use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
+use crate::channel_handler::types::ChannelHandlerEnv;
+use crate::common::constants::{
+    ASSERT_BEFORE_HEIGHT_ABSOLUTE, ASSERT_COIN_ANNOUNCEMENT, CREATE_COIN, CREATE_COIN_ANNOUNCEMENT,
+};
+use crate::common::standard_coin::standard_solution_partial;
+use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
-    check_for_hex, convert_coinset_org_spend_to_spend, map_m, Aggsig, AllocEncoder, Amount, CoinID,
-    CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord, Error, Hash,
-    IntoErr, PrivateKey, Program, PuzzleHash, Spend, SpendBundle,
+    check_for_hex, convert_coinset_org_spend_to_spend, map_m, u64_from_atom, Aggsig, AllocEncoder,
+    Amount, CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord,
+    Error, Hash, IntoErr, Node, PrivateKey, Program, PuzzleHash, SpendBundle,
 };
 use crate::peer_container::{FullCoinSetAdapter, WatchReport};
 use crate::simulator::Simulator;
-trait HttpError<V> {
-    fn report_err(self) -> Result<V, String>;
+use clvm_traits::Atom;
+use clvm_traits::ClvmEncoder;
+use clvm_traits::ToClvm;
+
+// ---------------------------------------------------------------------------
+// WebSocket protocol types
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct WsRequest {
+    id: u64,
+    method: String,
+    #[serde(default)]
+    params: Value,
 }
 
-impl<V> HttpError<V> for Result<V, Error> {
-    fn report_err(self) -> Result<V, String> {
-        match self {
-            Ok(x) => Ok(x),
-            Err(e) => {
-                let mut error = Map::default();
-                error.insert("error".to_string(), Value::String(format!("{e:?}")));
-                let as_string = serde_json::to_string(&Value::Object(error))
-                    .map_err(|_| "\"bad json conversion\"".to_string())?;
-                Err(as_string)
-            }
-        }
-    }
+#[derive(Serialize)]
+struct WsResponse {
+    id: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
-impl<V> HttpError<V> for Result<V, salvo::http::ParseError> {
-    fn report_err(self) -> Result<V, String> {
-        match self {
-            Ok(x) => Ok(x),
-            Err(e) => {
-                let mut error = Map::default();
-                error.insert("error".to_string(), Value::String(format!("{e:?}")));
-                let as_string = serde_json::to_string(&Value::Object(error))
-                    .map_err(|_| "\"bad json conversion\"".to_string())?;
-                Err(as_string)
-            }
-        }
-    }
+#[derive(Serialize)]
+struct WsBlockEvent {
+    event: &'static str,
+    peak: u64,
+    records: Vec<Value>,
+}
+
+// ---------------------------------------------------------------------------
+// GameRunner (unchanged business logic)
+// ---------------------------------------------------------------------------
+
+fn hex_to_bytes(hexstr: &str) -> Result<Vec<u8>, Error> {
+    hex::decode(hexstr).map_err(|_e| Error::StrErr("not hex".to_string()))
+}
+
+#[derive(Serialize)]
+struct CoinsetBlockSpends {
+    block_spends: Vec<CoinsetSpendRecord>,
 }
 
 struct GameRunner {
@@ -78,49 +86,7 @@ struct GameRunner {
     sim_record: BTreeMap<u64, WatchReport>,
 }
 
-#[derive(Debug, Clone)]
-enum WebRequest {
-    Reset,
-    Register(String),                     // Register a user
-    GetCurrentPeak,                       // Ask for the current peak
-    GetBalance(String),                   // Ask for the user's balance
-    GetBlockData(u64),                    // Get the additions and deletons from the given block
-    GetPuzzleAndSolution(String),         // Given a coin id, get the puzzle and solution
-    CreateSpendable(String, String, u64), // Use the named wallet to give n mojo to a target puzzle hash
-    SelectCoins(String, u64),             // Return a coin owned by this user with at least n mojo
-    CreateOfferForIds(String, String), // (who, json_body) -> build a signed single-coin SpendBundle
-    Spend(String),                     // Perform this spend on the blockchain
-    WaitBlock,                         // Return when a new block arrives
-    BlockSpends(u64),                  // Get block spends in coinset.org style
-    PushTx(CoinsetSpendBundle),        // Spend with a coinset.org spend
-}
-
 type StringWithError = Result<String, Error>;
-
-lazy_static! {
-    static ref ONE_REQUEST: Mutex<()> = Mutex::new(());
-    static ref PERFORM_REQUEST: Mutex<()> = Mutex::new(());
-    static ref TO_WEB: (Mutex<Sender<WebRequest>>, Mutex<Receiver<WebRequest>>) = {
-        let (tx, rx) = mpsc::channel();
-        (tx.into(), rx.into())
-    };
-    static ref FROM_WEB: (
-        Mutex<Sender<StringWithError>>,
-        Mutex<Receiver<StringWithError>>
-    ) = {
-        let (tx, rx) = mpsc::channel();
-        (tx.into(), rx.into())
-    };
-}
-
-fn hex_to_bytes(hexstr: &str) -> Result<Vec<u8>, Error> {
-    hex::decode(hexstr).map_err(|_e| Error::StrErr("not hex".to_string()))
-}
-
-#[derive(Serialize)]
-struct CoinsetBlockSpends {
-    block_spends: Vec<CoinsetSpendRecord>,
-}
 
 impl GameRunner {
     fn new(simulator: Simulator, coinset_adapter: FullCoinSetAdapter) -> Result<Self, Error> {
@@ -172,11 +138,10 @@ impl GameRunner {
         Ok(new_height)
     }
 
-    fn wait_block(&mut self) -> StringWithError {
+    fn farm_and_chase(&mut self) -> Result<u64, Error> {
         self.simulator
             .farm_block(&self.neutral_identity.puzzle_hash);
-        let new_height = self.chase_block()?;
-        Ok(format!("{}\n", new_height))
+        self.chase_block()
     }
 
     fn get_block_data(&self, block: u64) -> StringWithError {
@@ -281,7 +246,7 @@ impl GameRunner {
                             coin_amt.clone(),
                         )?;
                         let parent_coin_bytes = parent_coin_0.to_bytes();
-                        self.wait_block()?;
+                        self.farm_and_chase()?;
                         return Ok(format!("\"{}\"\n", hex::encode(parent_coin_bytes)));
                     }
                 }
@@ -291,157 +256,197 @@ impl GameRunner {
         Ok("null\n".to_string())
     }
 
-    fn select_coins(&self, who: &str, amt: u64) -> StringWithError {
+    fn select_coins(&self, who: &str, amount: u64) -> StringWithError {
         let identity = self.lookup_identity(who).cloned();
         if let Some(identity) = identity {
-            let coin_amt = Amount::new(amt);
-            if let Some(coin) = self
-                .simulator
-                .select_coins(&identity.puzzle_hash, &coin_amt)?
-            {
-                return Ok(format!("\"{}\"\n", hex::encode(coin.to_bytes())));
+            let mut candidates = self.simulator.get_my_coins(&identity.puzzle_hash)?;
+            candidates.retain(|c| {
+                c.to_parts()
+                    .map(|(_, _, amt)| amt.to_u64() >= amount)
+                    .unwrap_or(false)
+            });
+            if let Some(selected) = candidates.into_iter().min_by_key(|c| {
+                c.to_parts()
+                    .map(|(_, _, amt)| amt.to_u64())
+                    .unwrap_or(u64::MAX)
+            }) {
+                return Ok(format!("\"{}\"\n", hex::encode(selected.to_bytes())));
             }
         }
         Ok("null\n".to_string())
     }
 
-    fn create_offer_for_ids(&mut self, who: &str, json_body: &str) -> StringWithError {
+    fn create_offer_for_ids(
+        &mut self,
+        who: &str,
+        req: &CreateOfferForIdsRequest,
+    ) -> StringWithError {
         let identity = self
             .lookup_identity(who)
             .cloned()
-            .ok_or_else(|| Error::StrErr(format!("identity not found: {who}")))?;
+            .ok_or_else(|| Error::StrErr(format!("unknown wallet user: {who}")))?;
 
-        let body: serde_json::Value =
-            serde_json::from_str(json_body).map_err(|e| Error::StrErr(format!("bad JSON: {e}")))?;
-
-        let offer = body
-            .get("offer")
-            .ok_or_else(|| Error::StrErr("missing 'offer' field".into()))?;
-
-        let total_amount: u64 = offer
-            .as_object()
-            .ok_or_else(|| Error::StrErr("offer must be an object".into()))?
+        let requested_amount = req
+            .offer
             .values()
-            .filter_map(|v| v.as_i64())
-            .filter(|v| *v < 0)
-            .map(|v| (-v) as u64)
-            .sum();
+            .filter(|v| **v < 0)
+            .map(|v| (-*v) as u64)
+            .max()
+            .ok_or_else(|| Error::StrErr("offer does not request any spend amount".to_string()))?;
 
-        if total_amount == 0 {
-            return Err(Error::StrErr(
-                "offer must include negative (giving) amounts".into(),
-            ));
-        }
+        let mut candidates = self.simulator.get_my_coins(&identity.puzzle_hash)?;
+        candidates.retain(|c| {
+            c.to_parts()
+                .map(|(_, _, amt)| amt.to_u64() >= requested_amount)
+                .unwrap_or(false)
+        });
 
-        let coin_ids = body.get("coinIds").and_then(|v| v.as_array());
-        let selected_coin = if let Some(ids) = coin_ids {
-            if let Some(first_id) = ids.first().and_then(|v| v.as_str()) {
-                let id_bytes = hex_to_bytes(first_id)?;
-                let target_id = CoinID::new(
-                    Hash::from_slice(&id_bytes)
-                        .map_err(|_| Error::StrErr("bad coinId length".into()))?,
-                );
-                self.simulator
-                    .find_coin_by_id(&target_id)?
-                    .ok_or_else(|| Error::StrErr(format!("coin not found: {first_id}")))?
-            } else {
-                self.simulator
-                    .select_coins(&identity.puzzle_hash, &Amount::new(total_amount))?
-                    .ok_or_else(|| {
-                        Error::StrErr(format!("no coin with enough balance for {who}"))
-                    })?
-            }
+        let selected_coin = if let Some(first_coin_id) = req.coin_ids.first() {
+            let expected_bytes = check_for_hex(first_coin_id)?;
+            let expected_id = CoinID::new(Hash::from_slice(&expected_bytes)?);
+            candidates
+                .into_iter()
+                .find(|coin| coin.to_coin_id() == expected_id)
+                .ok_or_else(|| Error::StrErr("requested coin id not found".to_string()))?
         } else {
-            self.simulator
-                .select_coins(&identity.puzzle_hash, &Amount::new(total_amount))?
-                .ok_or_else(|| Error::StrErr(format!("no coin with enough balance for {who}")))?
+            candidates
+                .into_iter()
+                .min_by_key(|c| {
+                    c.to_parts()
+                        .map(|(_, _, amt)| amt.to_u64())
+                        .unwrap_or(u64::MAX)
+                })
+                .ok_or_else(|| {
+                    Error::StrErr("no spendable coin for requested amount".to_string())
+                })?
         };
 
-        let extra_conditions = body.get("extraConditions").and_then(|v| v.as_array());
-        let mut condition_nodes = Vec::new();
+        let (_, _, coin_amount) = selected_coin
+            .to_parts()
+            .ok_or_else(|| Error::StrErr("selected coin missing parts".to_string()))?;
 
-        if let Some(conditions) = extra_conditions {
-            for cond in conditions {
-                let opcode = cond
-                    .get("opcode")
-                    .and_then(|v| v.as_u64())
-                    .ok_or_else(|| Error::StrErr("condition missing opcode".into()))?
-                    as u32;
-                let args = cond
-                    .get("args")
-                    .and_then(|v| v.as_array())
-                    .ok_or_else(|| Error::StrErr("condition missing args".into()))?;
-                let mut arg_nodes = Vec::new();
-                for arg in args {
-                    let hex_str = arg
-                        .as_str()
-                        .ok_or_else(|| Error::StrErr("condition arg must be hex string".into()))?;
-                    let bytes = hex_to_bytes(hex_str)?;
-                    let node = self.allocator.allocator().new_atom(&bytes).into_gen()?;
-                    arg_nodes.push(node);
+        // Build conditions that mimic a real wallet's createOfferForIds: the
+        // spend is balanced because the requested amount goes to a settlement
+        // payment output.  claim_settlement_coins strips these later.
+        let settlement_ph = PuzzleHash::from_bytes(chia_puzzles::SETTLEMENT_PAYMENT_HASH);
+        let change = coin_amount.to_u64().saturating_sub(requested_amount);
+
+        let mut create_targets: Vec<(PuzzleHash, Amount)> = Vec::new();
+        create_targets.push((settlement_ph, Amount::new(requested_amount)));
+        if change > 0 {
+            create_targets.push((identity.puzzle_hash.clone(), Amount::new(change)));
+        }
+
+        let mut atom_conditions: Vec<(u32, Vec<u8>)> = Vec::new();
+        for ec in &req.extra_conditions {
+            match ec.opcode {
+                CREATE_COIN => {
+                    if ec.args.len() < 2 {
+                        return Err(Error::StrErr(
+                            "CREATE_COIN extra condition missing args".to_string(),
+                        ));
+                    }
+                    let ph_bytes = check_for_hex(&ec.args[0])?;
+                    if ph_bytes.len() != 32 {
+                        return Err(Error::StrErr(
+                            "CREATE_COIN puzzle hash must be 32 bytes".to_string(),
+                        ));
+                    }
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&ph_bytes);
+                    let amt_bytes = check_for_hex(&ec.args[1])?;
+                    let amt_val = u64_from_atom(&amt_bytes).ok_or_else(|| {
+                        Error::StrErr("CREATE_COIN amount is not a valid CLVM int".to_string())
+                    })?;
+                    create_targets.push((PuzzleHash::from_bytes(arr), Amount::new(amt_val)));
                 }
-                let cond_node = self.build_condition(opcode, &arg_nodes)?;
-                condition_nodes.push(cond_node);
+                ASSERT_COIN_ANNOUNCEMENT | CREATE_COIN_ANNOUNCEMENT => {
+                    if ec.args.len() != 1 {
+                        return Err(Error::StrErr(format!(
+                            "announcement condition opcode {} must have exactly one arg",
+                            ec.opcode
+                        )));
+                    }
+                    let arg = check_for_hex(&ec.args[0])?;
+                    if ec.opcode == ASSERT_COIN_ANNOUNCEMENT && arg.len() != 32 {
+                        return Err(Error::StrErr(
+                            "ASSERT_COIN_ANNOUNCEMENT arg must be 32-byte announcement id"
+                                .to_string(),
+                        ));
+                    }
+                    atom_conditions.push((ec.opcode, arg));
+                }
+                ASSERT_BEFORE_HEIGHT_ABSOLUTE => {
+                    if ec.args.len() != 1 {
+                        return Err(Error::StrErr(
+                            "ASSERT_BEFORE_HEIGHT_ABSOLUTE must have exactly one arg".to_string(),
+                        ));
+                    }
+                    let arg = check_for_hex(&ec.args[0])?;
+                    if u64_from_atom(&arg).is_none() {
+                        return Err(Error::StrErr(
+                            "ASSERT_BEFORE_HEIGHT_ABSOLUTE arg is not a valid CLVM int".to_string(),
+                        ));
+                    }
+                    atom_conditions.push((ec.opcode, arg));
+                }
+                _ => {
+                    return Err(Error::StrErr(format!(
+                        "unsupported extra condition opcode {} in simulator create_offer_for_ids",
+                        ec.opcode
+                    )));
+                }
             }
         }
 
-        let conditions = self.build_conditions_list(&condition_nodes)?;
+        let env = ChannelHandlerEnv::new(&mut self.allocator)?;
+        let mut condition_nodes: Vec<Node> = create_targets
+            .iter()
+            .map(|(ph, amt)| {
+                (CREATE_COIN, (ph.clone(), (amt.clone(), ())))
+                    .to_clvm(env.allocator)
+                    .map(Node)
+                    .map_err(|e| Error::StrErr(format!("{e:?}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for (opcode, arg) in atom_conditions {
+            let arg_node = Node(
+                env.allocator
+                    .encode_atom(Atom::Borrowed(arg.as_slice()))
+                    .into_gen()?,
+            );
+            let cond_node = (opcode, (arg_node, ())).to_clvm(env.allocator).into_gen()?;
+            condition_nodes.push(Node(cond_node));
+        }
+        let conditions_clvm = condition_nodes.to_clvm(env.allocator).into_gen()?;
 
-        let agg_sig_me_data = Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA);
-
-        let spend_info = standard_solution_partial(
-            &mut self.allocator,
+        let spend = standard_solution_partial(
+            env.allocator,
             &identity.synthetic_private_key,
             &selected_coin.to_coin_id(),
-            conditions,
+            conditions_clvm,
             &identity.synthetic_public_key,
-            &agg_sig_me_data,
+            &env.agg_sig_me_additional_data,
             false,
         )?;
 
-        let spend_bundle = SpendBundle {
-            name: None,
-            spends: vec![CoinSpend {
-                coin: selected_coin,
-                bundle: Spend {
-                    puzzle: identity.puzzle.clone(),
-                    solution: spend_info.solution.clone(),
-                    signature: spend_info.signature.clone(),
+        let (parent, puzzle_hash, amount) = selected_coin
+            .to_parts()
+            .ok_or_else(|| Error::StrErr("selected coin missing parts".to_string()))?;
+        let result = CoinsetSpendBundle {
+            aggregated_signature: format!("0x{}", hex::encode(spend.signature.bytes())),
+            coin_spends: vec![CoinsetSpendRecord {
+                coin: CoinsetCoin {
+                    parent_coin_info: format!("0x{}", hex::encode(parent.bytes())),
+                    puzzle_hash: format!("0x{}", hex::encode(puzzle_hash.bytes())),
+                    amount: amount.to_u64(),
                 },
+                puzzle_reveal: format!("0x{}", identity.puzzle.to_program().to_hex()),
+                solution: format!("0x{}", spend.solution.p().to_hex()),
             }],
         };
 
-        let result = serde_json::to_string(&spend_bundle)
-            .map_err(|e| Error::StrErr(format!("serialize error: {e}")))?;
-        Ok(format!("{result}\n"))
-    }
-
-    fn build_condition(&mut self, opcode: u32, args: &[NodePtr]) -> Result<NodePtr, Error> {
-        let opcode_node = opcode.to_clvm(&mut self.allocator).into_gen()?;
-        let mut result = NodePtr::NIL;
-        for arg in args.iter().rev() {
-            result = self
-                .allocator
-                .allocator()
-                .new_pair(*arg, result)
-                .into_gen()?;
-        }
-        self.allocator
-            .allocator()
-            .new_pair(opcode_node, result)
-            .into_gen()
-    }
-
-    fn build_conditions_list(&mut self, conditions: &[NodePtr]) -> Result<NodePtr, Error> {
-        let mut result = NodePtr::NIL;
-        for cond in conditions.iter().rev() {
-            result = self
-                .allocator
-                .allocator()
-                .new_pair(*cond, result)
-                .into_gen()?;
-        }
-        Ok(result)
+        serde_json::to_string(&result).into_gen()
     }
 
     fn spend_list_of_spends(&mut self, spends: &[CoinSpend]) -> StringWithError {
@@ -450,7 +455,15 @@ impl GameRunner {
             .e
             .map(|e| format!("{e}"))
             .unwrap_or_else(|| "null".to_string());
-        Ok(format!("[{},{e_res}]\n", result.code))
+        if result.code != 1 && !result.diagnostic.is_empty() {
+            Ok(format!(
+                "[{},{e_res},{}]\n",
+                result.code,
+                serde_json::to_string(&result.diagnostic).unwrap_or_default()
+            ))
+        } else {
+            Ok(format!("[{},{e_res}]\n", result.code))
+        }
     }
 
     fn spend(&mut self, blob: &str) -> StringWithError {
@@ -512,334 +525,513 @@ impl GameRunner {
         let serialized = serde_json::to_string(&value).into_gen()?;
         Ok(serialized)
     }
-}
 
-fn get_file(name: &str, content_type: &str, response: &mut Response) -> Result<(), String> {
-    let content = fs::read_to_string(name).map_err(|e| format!("{e:?}"))?;
-    response
-        .add_header("Content-Type", content_type, true)
-        .map_err(|e| format!("{e:?}"))?;
-    response.replace_body(ResBody::Once(Bytes::from(content.as_bytes().to_vec())));
-    Ok(())
-}
-
-#[handler]
-async fn index(response: &mut Response) -> Result<(), String> {
-    get_file("resources/web/index.html", "text/html", response)
-}
-
-#[handler]
-async fn player_html(response: &mut Response) -> Result<(), String> {
-    get_file("resources/web/player.html", "text/html", response)
-}
-
-#[handler]
-async fn index_js(response: &mut Response) -> Result<(), String> {
-    get_file("resources/web/index.js", "text/javascript", response)
-}
-
-#[handler]
-async fn player_js(response: &mut Response) -> Result<(), String> {
-    get_file("resources/web/player.js", "text/javascript", response)
-}
-
-#[handler]
-async fn index_css(response: &mut Response) -> Result<(), String> {
-    get_file("resources/web/index.css", "text/css", response)
-}
-
-fn pass_on_request(
-    req: &mut Request,
-    response: &mut Response,
-    wr: WebRequest,
-) -> Result<(), String> {
-    let locked = ONE_REQUEST.lock().unwrap();
-
-    {
-        let to_web = TO_WEB.0.lock().unwrap();
-        (*to_web).send(wr).unwrap();
+    fn coin_record_json(&self, coin_id: &CoinID) -> Option<Value> {
+        let (coin, created_height, spent_height) =
+            self.simulator.get_watched_coin_snapshot(coin_id)?;
+        let (parent, puzzle_hash, amount) = coin.to_parts()?;
+        Some(serde_json::json!({
+            "coin": {
+                "parentCoinInfo": format!("0x{}", hex::encode(parent.bytes())),
+                "puzzleHash": format!("0x{}", hex::encode(puzzle_hash.bytes())),
+                "amount": amount.to_u64(),
+            },
+            "confirmedBlockIndex": created_height,
+            "spentBlockIndex": spent_height.unwrap_or(0),
+            "spent": spent_height.is_some(),
+            "coinbase": false,
+            "timestamp": 0,
+        }))
     }
 
-    let from_web = FROM_WEB.1.lock().unwrap();
-    let result = (*from_web).recv().unwrap();
-    drop(locked);
-
-    result.report_err().and_then(|r| {
-        cors_origin(req, response)?;
-
-        let response_bytes: Vec<u8> = r.bytes().collect();
-        response.replace_body(ResBody::Once(Bytes::from(response_bytes)));
-        Ok(())
-    })
-}
-
-#[handler]
-async fn get_current_peak(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    pass_on_request(req, response, WebRequest::GetCurrentPeak)
-}
-
-fn get_arg_string(req: &mut Request, name: &str) -> Result<String, Error> {
-    let uri_string = req.uri().to_string();
-    let want_string = format!("{name}=");
-    if let Some(found_eq) = uri_string.find(&want_string) {
-        let arg: String = uri_string
-            .chars()
-            .skip(found_eq + want_string.len())
-            .take_while(|c| *c != '&')
-            .collect();
-        return Ok(arg);
+    /// JSON array of coin records gated to registered coins.
+    fn get_coin_records_by_names(
+        &self,
+        params: &Value,
+        registered_coins: &HashSet<CoinID>,
+    ) -> StringWithError {
+        let names = params
+            .get("names")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| Error::StrErr("missing names array".to_string()))?;
+        let mut records = Vec::new();
+        for name_val in names {
+            let Some(name_hex) = name_val.as_str() else {
+                continue;
+            };
+            let bytes = match check_for_hex(name_hex) {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+            let hash = match Hash::from_slice(&bytes) {
+                Ok(h) => h,
+                Err(_) => continue,
+            };
+            let coin_id = CoinID::new(hash);
+            if !registered_coins.contains(&coin_id) {
+                continue;
+            }
+            if let Some(rec) = self.coin_record_json(&coin_id) {
+                records.push(rec);
+            }
+        }
+        Ok(format!(
+            "{}\n",
+            serde_json::to_string(&records).map_err(|e| Error::StrErr(format!("{e}")))?
+        ))
     }
 
-    Err(Error::StrErr("no argument".to_string()))
+    fn registered_coin_records(&self, registered_coins: &HashSet<CoinID>) -> Vec<Value> {
+        let mut records = Vec::new();
+        for coin_id in registered_coins {
+            if let Some(rec) = self.coin_record_json(coin_id) {
+                records.push(rec);
+            }
+        }
+        records
+    }
 }
 
-fn get_arg_integer(req: &mut Request, name: &str) -> Result<u64, Error> {
-    let arg = get_arg_string(req, name)?;
-    arg.parse::<u64>()
-        .map_err(|_e| Error::StrErr(format!("{name} is not an integer")))
-}
+// ---------------------------------------------------------------------------
+// Request / response helper types
+// ---------------------------------------------------------------------------
 
-#[handler]
-async fn get_block_data(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    let arg = get_arg_integer(req, "block").report_err()?;
-    pass_on_request(req, response, WebRequest::GetBlockData(arg))
-}
-
-#[handler]
-async fn get_balance(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    let arg = get_arg_string(req, "user").report_err()?;
-    pass_on_request(req, response, WebRequest::GetBalance(arg))
-}
-
-#[handler]
-async fn exit(_req: &mut Request) -> Result<String, String> {
-    std::process::exit(0);
-}
-
-#[handler]
-async fn reset(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    pass_on_request(req, response, WebRequest::Reset)
-}
-
-#[handler]
-async fn register(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    let arg = get_arg_string(req, "name").report_err()?;
-    pass_on_request(req, response, WebRequest::Register(arg))
-}
-
-#[handler]
-async fn get_peak(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    pass_on_request(req, response, WebRequest::GetCurrentPeak)
-}
-
-#[handler]
-async fn wait_block(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    pass_on_request(req, response, WebRequest::WaitBlock)
-}
-
-#[handler]
-async fn get_puzzle_and_solution(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    let arg = get_arg_string(req, "coin").report_err()?;
-    pass_on_request(req, response, WebRequest::GetPuzzleAndSolution(arg))
-}
-
-#[handler]
-async fn create_spendable(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    let who = get_arg_string(req, "who").report_err()?;
-    let target = get_arg_string(req, "target").report_err()?;
-    let amount = get_arg_integer(req, "amount").report_err()?;
-    pass_on_request(
-        req,
-        response,
-        WebRequest::CreateSpendable(who, target, amount),
-    )
-}
-
-#[handler]
-async fn select_coins(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    let who = get_arg_string(req, "who").report_err()?;
-    let amount = get_arg_integer(req, "amount").report_err()?;
-    pass_on_request(req, response, WebRequest::SelectCoins(who, amount))
-}
-
-#[handler]
-async fn create_offer_for_ids(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    let who = get_arg_string(req, "who").report_err()?;
-    let body = req.payload().await.map_err(|e| format!("{e:?}"))?;
-    let json_body = String::from_utf8_lossy(body).to_string();
-    pass_on_request(req, response, WebRequest::CreateOfferForIds(who, json_body))
-}
-
-#[handler]
-async fn spend(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    let blob = get_arg_string(req, "blob").report_err()?;
-    pass_on_request(req, response, WebRequest::Spend(blob))
-}
-
-#[handler]
-async fn block_spends(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    let header_hash = get_arg_integer(req, "header_hash").report_err()?;
-    pass_on_request(req, response, WebRequest::BlockSpends(header_hash))
-}
-
-#[derive(Extractible, Serialize, Deserialize)]
-#[salvo(extract(default_source(from = "body")))]
+#[derive(Serialize, Deserialize)]
 struct PushTxRequest {
     spend_bundle: CoinsetSpendBundle,
 }
 
-#[handler]
-async fn push_tx(
-    req: &mut Request,
-    response: &mut Response,
-    salvo_depot: &mut Depot,
-) -> Result<(), String> {
-    let spend_decoded: PushTxRequest = req.extract(salvo_depot).await.report_err()?;
-    pass_on_request(
-        req,
-        response,
-        WebRequest::PushTx(spend_decoded.spend_bundle.clone()),
-    )
+#[derive(Serialize, Deserialize, Default)]
+struct ExtraCondition {
+    opcode: u32,
+    args: Vec<String>,
 }
 
-fn cors_origin(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    let origin_header: Option<String> = req.header("Origin");
-    if let Some(origin) = origin_header {
-        response
-            .add_header("Access-Control-Allow-Origin", origin, true)
-            .map_err(|e| format!("{e:?}"))?;
+#[derive(Serialize, Deserialize, Default)]
+struct CreateOfferForIdsRequest {
+    offer: BTreeMap<String, i64>,
+    #[serde(default, rename = "coinIds")]
+    coin_ids: Vec<String>,
+    #[serde(default, rename = "extraConditions")]
+    extra_conditions: Vec<ExtraCondition>,
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket message dispatch
+// ---------------------------------------------------------------------------
+
+fn make_block_event_json_for_client(
+    game_runner: &GameRunner,
+    height: u64,
+    registered_coins: &HashSet<CoinID>,
+) -> String {
+    let records = game_runner.registered_coin_records(registered_coins);
+    let evt = WsBlockEvent {
+        event: "block",
+        peak: height,
+        records,
+    };
+    serde_json::to_string(&evt).unwrap_or_default()
+}
+
+/// Parse a GameRunner method result (which is a JSON-encoded string body)
+/// into a serde_json::Value so it can be embedded directly in the response.
+fn parse_result_body(body: &str) -> Value {
+    serde_json::from_str(body.trim()).unwrap_or(Value::String(body.trim().to_string()))
+}
+
+struct DispatchResult {
+    response: String,
+    extra_messages: Vec<String>,
+}
+
+fn get_str_param<'a>(params: &'a Value, name: &str) -> Result<&'a str, Error> {
+    params[name]
+        .as_str()
+        .ok_or_else(|| Error::StrErr(format!("missing param: {name}")))
+}
+
+fn get_u64_param(params: &Value, name: &str) -> Result<u64, Error> {
+    params[name]
+        .as_u64()
+        .ok_or_else(|| Error::StrErr(format!("missing param: {name}")))
+}
+
+fn register_remote_coins(
+    params: &Value,
+    registered_coins: &mut HashSet<CoinID>,
+) -> StringWithError {
+    let coin_ids = params
+        .get("coinIds")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| Error::StrErr("missing coinIds array".to_string()))?;
+    for id_val in coin_ids {
+        let Some(hex_str) = id_val.as_str() else {
+            continue;
+        };
+        let bytes = match check_for_hex(hex_str) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let hash = match Hash::from_slice(&bytes) {
+            Ok(h) => h,
+            Err(_) => continue,
+        };
+        registered_coins.insert(CoinID::new(hash));
     }
-    Ok(())
+    Ok("true\n".to_string())
 }
 
-#[handler]
-async fn cors(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    cors_origin(req, response)?;
-    response
-        .add_header("Access-Control-Allow-Headers", "content-type", true)
-        .map_err(|e| format!("{e:?}"))?;
-    response
-        .add_header("Access-Control-Allow-Methods", "POST, OPTIONS", true)
-        .map_err(|e| format!("{e:?}"))?;
-    response.replace_body(ResBody::Once(Bytes::from(Vec::new())));
-    Ok(())
+fn dispatch_ws_request(
+    game_runner: &mut GameRunner,
+    text: &str,
+    registered_coins: &mut HashSet<CoinID>,
+) -> DispatchResult {
+    let req: WsRequest = match serde_json::from_str(text) {
+        Ok(r) => r,
+        Err(e) => {
+            let resp = WsResponse {
+                id: 0,
+                result: None,
+                error: Some(format!("invalid request JSON: {e}")),
+            };
+            return DispatchResult {
+                response: serde_json::to_string(&resp).unwrap_or_default(),
+                extra_messages: vec![],
+            };
+        }
+    };
+
+    let mut extra_messages: Vec<String> = Vec::new();
+
+    let height_before = game_runner.simulator.get_current_height() as u64;
+
+    let result: Result<String, Error> = match req.method.as_str() {
+        "register" => {
+            let name = get_str_param(&req.params, "name");
+            name.and_then(|n| game_runner.register(n))
+        }
+        "get_peak" => {
+            let h = game_runner.simulator.get_current_height();
+            Ok(format!("{h}\n"))
+        }
+        "get_block_data" => {
+            let block = get_u64_param(&req.params, "block");
+            block.and_then(|b| game_runner.get_block_data(b))
+        }
+        "get_balance" => {
+            let user = get_str_param(&req.params, "user");
+            user.and_then(|u| game_runner.get_balance(u))
+        }
+        "get_puzzle_and_solution" => {
+            let coin = get_str_param(&req.params, "coin");
+            coin.and_then(|c| game_runner.get_puzzle_and_solution(c))
+        }
+        "create_spendable" => {
+            let who = get_str_param(&req.params, "who").map(|s| s.to_string());
+            let target = get_str_param(&req.params, "target").map(|s| s.to_string());
+            let amount = get_u64_param(&req.params, "amount");
+            match (who, target, amount) {
+                (Ok(w), Ok(t), Ok(a)) => game_runner.create_spendable(&w, &t, a),
+                (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => Err(e),
+            }
+        }
+        "select_coins" => {
+            let who = get_str_param(&req.params, "who").map(|s| s.to_string());
+            let amount = get_u64_param(&req.params, "amount");
+            match (who, amount) {
+                (Ok(w), Ok(a)) => game_runner.select_coins(&w, a),
+                (Err(e), _) | (_, Err(e)) => Err(e),
+            }
+        }
+        "create_offer_for_ids" => {
+            let who = get_str_param(&req.params, "who").map(|s| s.to_string());
+            let offer_req: Result<CreateOfferForIdsRequest, Error> =
+                serde_json::from_value(req.params.clone())
+                    .map_err(|e| Error::StrErr(format!("bad offer params: {e}")));
+            match (who, offer_req) {
+                (Ok(w), Ok(r)) => game_runner.create_offer_for_ids(&w, &r),
+                (Err(e), _) | (_, Err(e)) => Err(e),
+            }
+        }
+        "spend" => {
+            let blob = get_str_param(&req.params, "blob");
+            blob.and_then(|b| game_runner.spend(b))
+        }
+        "push_tx" => {
+            let push_req: Result<PushTxRequest, Error> = serde_json::from_value(req.params.clone())
+                .map_err(|e| Error::StrErr(format!("bad push_tx params: {e}")));
+            push_req.and_then(|r| game_runner.push_tx(&r.spend_bundle))
+        }
+        "block_spends" => {
+            let height = get_u64_param(&req.params, "height");
+            height.and_then(|h| game_runner.block_spends(h))
+        }
+        "get_coin_records_by_names" => {
+            game_runner.get_coin_records_by_names(&req.params, registered_coins)
+        }
+        "register_remote_coins" => register_remote_coins(&req.params, registered_coins),
+        "reset" => game_runner.reset_sim(),
+        "exit" => {
+            std::process::exit(0);
+        }
+        other => Err(Error::StrErr(format!("unknown method: {other}"))),
+    };
+
+    let height_after = game_runner.simulator.get_current_height() as u64;
+    if height_after > height_before {
+        for h in (height_before + 1)..=height_after {
+            extra_messages.push(make_block_event_json_for_client(
+                game_runner,
+                h,
+                registered_coins,
+            ));
+        }
+    }
+
+    let resp = match result {
+        Ok(body) => WsResponse {
+            id: req.id,
+            result: Some(parse_result_body(&body)),
+            error: None,
+        },
+        Err(e) => WsResponse {
+            id: req.id,
+            result: None,
+            error: Some(format!("{e:?}")),
+        },
+    };
+
+    DispatchResult {
+        response: serde_json::to_string(&resp).unwrap_or_default(),
+        extra_messages,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// tiny_http health/static server (background thread)
+// ---------------------------------------------------------------------------
+
+fn url_path(url: &str) -> &str {
+    url.split('?').next().unwrap_or(url)
+}
+
+fn cors_headers() -> Vec<Header> {
+    vec![
+        Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap(),
+        Header::from_bytes("Access-Control-Allow-Methods", "GET, POST, OPTIONS").unwrap(),
+        Header::from_bytes("Access-Control-Allow-Headers", "Content-Type").unwrap(),
+    ]
+}
+
+fn respond_not_found(request: tiny_http::Request) {
+    let mut response = Response::from_data(b"not found".to_vec()).with_status_code(StatusCode(404));
+    for h in cors_headers() {
+        response.add_header(h);
+    }
+    let _ = request.respond(response);
+}
+
+fn run_health_server(height: Arc<AtomicUsize>) {
+    let server = match Server::http("0.0.0.0:5800") {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("failed to bind health server on port 5800: {e}");
+            return;
+        }
+    };
+
+    for request in server.incoming_requests() {
+        let url = request.url().to_string();
+        let path = url_path(&url);
+
+        if request.method() == &tiny_http::Method::Options {
+            let mut response = Response::from_data(Vec::new());
+            for h in cors_headers() {
+                response.add_header(h);
+            }
+            let _ = request.respond(response);
+            continue;
+        }
+
+        match path {
+            "/get_peak" => {
+                let h = height.load(Ordering::Relaxed);
+                let mut response = Response::from_data(format!("{h}\n").into_bytes());
+                for h in cors_headers() {
+                    response.add_header(h);
+                }
+                let _ = request.respond(response);
+            }
+            _ => respond_not_found(request),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Main event loop
+// ---------------------------------------------------------------------------
+
+const BLOCK_INTERVAL_SECS: u64 = 10;
+
+struct ClientState {
+    ws: WebSocket<TcpStream>,
+    registered_coins: HashSet<CoinID>,
+}
+
+#[allow(clippy::result_large_err)]
+fn ws_send(ws: &mut WebSocket<TcpStream>, text: String) -> Result<(), tungstenite::Error> {
+    ws.send(Message::Text(text))
 }
 
 fn service_main_inner() {
-    let rt = tokio::runtime::Runtime::new().unwrap();
+    let simulator = Simulator::default();
+    let coinset_adapter = FullCoinSetAdapter::default();
+    let mut game_runner = GameRunner::new(simulator, coinset_adapter)
+        .map_err(|e| format!("{e}"))
+        .unwrap();
 
-    rt.block_on(async {
-        let router = Router::new()
-            .get(index)
-            .push(Router::with_path("index.css").get(index_css))
-            .push(Router::with_path("index.js").get(index_js))
-            .push(Router::with_path("player.html").get(player_html))
-            .push(Router::with_path("player.js").get(player_js))
-            .push(Router::with_path("exit").post(exit))
-            .push(Router::with_path("reset").post(reset))
-            .push(Router::with_path("register").options(cors))
-            .push(Router::with_path("register").post(register))
-            .push(Router::with_path("get_peak").options(cors))
-            .push(Router::with_path("get_peak").post(get_peak))
-            .push(Router::with_path("get_block_data").options(cors))
-            .push(Router::with_path("get_block_data").post(get_block_data))
-            .push(Router::with_path("get_balance").post(get_balance))
-            .push(Router::with_path("get_balance").options(cors))
-            .push(Router::with_path("wait_block").options(cors))
-            .push(Router::with_path("wait_block").post(wait_block))
-            .push(Router::with_path("get_puzzle_and_solution").options(cors))
-            .push(Router::with_path("get_puzzle_and_solution").post(get_puzzle_and_solution))
-            .push(Router::with_path("spend").options(cors))
-            .push(Router::with_path("spend").post(spend))
-            .push(Router::with_path("create_spendable").options(cors))
-            .push(Router::with_path("create_spendable").post(create_spendable))
-            .push(Router::with_path("select_coins").options(cors))
-            .push(Router::with_path("select_coins").post(select_coins))
-            .push(Router::with_path("create_offer_for_ids").options(cors))
-            .push(Router::with_path("create_offer_for_ids").post(create_offer_for_ids))
-            .push(Router::with_path("block_spends").options(cors))
-            .push(Router::with_path("block_spends").post(block_spends))
-            .push(Router::with_path("push_tx").options(cors))
-            .push(Router::with_path("push_tx").post(push_tx));
-        let acceptor = TcpListener::new("0.0.0.0:5800").bind().await;
+    let height = Arc::new(AtomicUsize::new(game_runner.simulator.get_current_height()));
 
-        let s = std::thread::spawn(move || {
-            std::panic::catch_unwind(move || {
-                let simulator = Simulator::default();
-                let coinset_adapter = FullCoinSetAdapter::default();
-                let mut game_runner = GameRunner::new(simulator, coinset_adapter)
-                    .map_err(|e| format!("{e}"))
-                    .unwrap();
+    // Background: tiny_http health API on port 5800
+    let health_height = height.clone();
+    std::thread::spawn(move || run_health_server(health_height));
 
-                loop {
-                    let request = {
-                        let channel = TO_WEB.1.lock().unwrap();
-                        (*channel).recv().unwrap()
-                    };
+    // Background: stdin exit
+    std::thread::spawn(|| {
+        let mut buffer = String::default();
+        if !matches!(stdin().read_line(&mut buffer), Ok(0)) {
+            println!("simulator server stopping");
+            std::process::exit(0);
+        }
+    });
 
-                    let result = {
-                        match request {
-                            WebRequest::Register(name) => game_runner.register(&name),
-                            WebRequest::GetCurrentPeak => {
-                                let result = game_runner.simulator.get_current_height();
-                                Ok(format!("{result}\n"))
-                            }
-                            WebRequest::GetBlockData(n) => game_runner.get_block_data(n),
-                            WebRequest::GetBalance(user) => game_runner.get_balance(&user),
-                            WebRequest::WaitBlock => {
-                                let result = game_runner.wait_block();
-                                std::thread::spawn(move || {
-                                    std::thread::sleep(Duration::from_millis(1000));
-                                    let channel = FROM_WEB.0.lock().unwrap();
-                                    (*channel).send(result).unwrap();
-                                });
-                                continue;
-                            }
-                            WebRequest::GetPuzzleAndSolution(coin) => {
-                                game_runner.get_puzzle_and_solution(&coin)
-                            }
-                            WebRequest::CreateSpendable(who, target, amt) => {
-                                game_runner.create_spendable(&who, &target, amt)
-                            }
-                            WebRequest::SelectCoins(who, amt) => {
-                                game_runner.select_coins(&who, amt)
-                            }
-                            WebRequest::CreateOfferForIds(who, json_body) => {
-                                game_runner.create_offer_for_ids(&who, &json_body)
-                            }
-                            WebRequest::Spend(blob) => game_runner.spend(&blob),
-                            WebRequest::BlockSpends(height) => game_runner.block_spends(height),
-                            WebRequest::PushTx(spend_data) => game_runner.push_tx(&spend_data),
-                            WebRequest::Reset => game_runner.reset_sim(),
+    // WebSocket API on port 5801
+    let ws_listener = TcpListener::bind("0.0.0.0:5801").expect("failed to bind port 5801");
+    ws_listener
+        .set_nonblocking(true)
+        .expect("set_nonblocking failed");
+
+    println!("Simulator: health on :5800, WebSocket API on :5801");
+
+    let mut clients: Vec<ClientState> = Vec::new();
+    let mut last_block_time = Instant::now();
+    let block_interval = Duration::from_secs(BLOCK_INTERVAL_SECS);
+
+    loop {
+        // 1. Accept new WebSocket connections (non-blocking)
+        match ws_listener.accept() {
+            Ok((stream, addr)) => {
+                eprintln!("new TCP connection from {addr}");
+                // Accepted socket is blocking by default — handshake completes fast
+                match tungstenite::accept(stream) {
+                    Ok(ws) => {
+                        if let Err(e) = ws.get_ref().set_nonblocking(true) {
+                            eprintln!("failed to set ws non-blocking: {e}");
+                        } else {
+                            clients.push(ClientState {
+                                ws,
+                                registered_coins: HashSet::new(),
+                            });
+                            eprintln!("WebSocket client connected ({} total)", clients.len());
                         }
-                    };
+                    }
+                    Err(e) => eprintln!("WebSocket handshake error: {e}"),
+                }
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                // No pending connection
+            }
+            Err(e) => eprintln!("accept error: {e}"),
+        }
 
+        // 2. Read incoming WebSocket messages from all clients
+        let mut to_remove: Vec<usize> = Vec::new();
+        for (i, client) in clients.iter_mut().enumerate() {
+            loop {
+                match client.ws.read() {
+                    Ok(Message::Text(text)) => {
+                        let dr = dispatch_ws_request(
+                            &mut game_runner,
+                            &text,
+                            &mut client.registered_coins,
+                        );
+                        height.store(
+                            game_runner.simulator.get_current_height(),
+                            Ordering::Relaxed,
+                        );
+                        if ws_send(&mut client.ws, dr.response).is_err() {
+                            to_remove.push(i);
+                            break;
+                        }
+                        for msg in dr.extra_messages {
+                            if ws_send(&mut client.ws, msg).is_err() {
+                                to_remove.push(i);
+                                break;
+                            }
+                        }
+                    }
+                    Ok(Message::Ping(data)) => {
+                        let _ = client.ws.send(Message::Pong(data));
+                    }
+                    Ok(Message::Close(_)) => {
+                        let _ = client.ws.close(None);
+                        to_remove.push(i);
+                        break;
+                    }
+                    Err(tungstenite::Error::Io(ref e))
+                        if e.kind() == std::io::ErrorKind::WouldBlock =>
                     {
-                        let channel = FROM_WEB.0.lock().unwrap();
-                        (*channel).send(result).unwrap();
+                        break; // No more messages right now
+                    }
+                    Err(_) => {
+                        to_remove.push(i);
+                        break;
+                    }
+                    _ => {} // Binary, Pong — ignore
+                }
+            }
+        }
+
+        // Remove disconnected clients (reverse order to preserve indices)
+        to_remove.sort_unstable();
+        to_remove.dedup();
+        for i in to_remove.into_iter().rev() {
+            clients.remove(i);
+            eprintln!(
+                "WebSocket client disconnected ({} remaining)",
+                clients.len()
+            );
+        }
+
+        // 3. Block timer: farm a block and push per-client event
+        if last_block_time.elapsed() >= block_interval {
+            match game_runner.farm_and_chase() {
+                Ok(new_height) => {
+                    height.store(new_height as usize, Ordering::Relaxed);
+                    let mut dead: Vec<usize> = Vec::new();
+                    for (i, client) in clients.iter_mut().enumerate() {
+                        let evt_json = make_block_event_json_for_client(
+                            &game_runner,
+                            new_height,
+                            &client.registered_coins,
+                        );
+                        if ws_send(&mut client.ws, evt_json).is_err() {
+                            dead.push(i);
+                        }
+                    }
+                    for i in dead.into_iter().rev() {
+                        clients.remove(i);
                     }
                 }
-            })
-            .map_err(|e| {
-                eprintln!("error bringing up simulator thread: {e:?}");
-                std::process::exit(0);
-            })
-        });
-
-        println!("port 5800.  press return to exit gracefully...");
-        let t = std::thread::spawn(|| {
-            let mut buffer = String::default();
-            if !matches!(stdin().read_line(&mut buffer), Ok(0)) {
-                println!("simulator server stopping");
-                std::process::exit(0);
+                Err(e) => eprintln!("farm_and_chase error: {e:?}"),
             }
-        });
+            last_block_time = Instant::now();
+        }
 
-        println!("doing actual service");
-        Server::new(acceptor).serve(router).await;
-        let _ = s.join().unwrap();
-        t.join().unwrap();
-    })
+        // 4. Avoid busy-spin
+        std::thread::sleep(Duration::from_millis(1));
+    }
 }
 
 pub fn service_main() {

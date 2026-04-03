@@ -3,33 +3,40 @@ set -e
 set -E
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-FE_DIR="$SCRIPT_DIR/resources/gaming-fe"
+FE_DIR="$SCRIPT_DIR/front-end"
 WASM_DIR="$SCRIPT_DIR/wasm"
-LOBBY_SERVICE_DIR="$SCRIPT_DIR/resources/lobby-service"
-LOBBY_VIEW_DIR="$SCRIPT_DIR/resources/lobby-view"
-LOBBY_CONN_DIR="$SCRIPT_DIR/resources/lobby-connection"
-WC_DIR="$SCRIPT_DIR/resources/wc-stub"
+LOBBY_SERVICE_DIR="$SCRIPT_DIR/lobby/lobby-service"
+LOBBY_FRONTEND_DIR="$SCRIPT_DIR/lobby/lobby-frontend"
+WC_DIR="$SCRIPT_DIR/wc-stub"
 CLSP_DIR="$SCRIPT_DIR/clsp"
 
 GAME_PORT=${GAME_PORT:-3002}
-LOBBY_PORT=${LOBBY_PORT:-3003}
+TRACKER_PORT=${TRACKER_PORT:-3003}
 WC_PORT=${WC_PORT:-3004}
 SIM_PORT=${SIM_PORT:-5800}
-LOBBY_SERVICE_PORT=${LOBBY_SERVICE_PORT:-5801}
+SIM_WS_PORT=${SIM_WS_PORT:-5801}
 
 SKIP_BUILD=0
+FORCE_BUILD=0
 PIDS=()
 
 for arg in "$@"; do
     case "$arg" in
         --skip-build) SKIP_BUILD=1 ;;
+        --force-build) FORCE_BUILD=1 ;;
         *) echo "Unknown argument: $arg"; exit 1 ;;
     esac
 done
 
+if [ "$SKIP_BUILD" -eq 1 ] && [ "$FORCE_BUILD" -eq 1 ]; then
+    echo "Error: --skip-build and --force-build are mutually exclusive"
+    exit 1
+fi
+
 # Kill anything still listening on our ports from a previous run.
-for p in $GAME_PORT $LOBBY_PORT $WC_PORT $SIM_PORT $LOBBY_SERVICE_PORT; do
-    pids=$(lsof -ti:"$p" 2>/dev/null || true)
+# Use -sTCP:LISTEN to avoid killing browsers that have connections to these ports.
+for p in $GAME_PORT $TRACKER_PORT $WC_PORT $SIM_PORT $SIM_WS_PORT; do
+    pids=$(lsof -ti:"$p" -sTCP:LISTEN 2>/dev/null || true)
     [ -n "$pids" ] && kill $pids 2>/dev/null || true
 done
 sleep 0.5
@@ -40,7 +47,10 @@ cleanup() {
     for pid in "${PIDS[@]}"; do
         kill "$pid" 2>/dev/null || true
     done
-    kill $(lsof -i -n -P | grep LISTEN | grep :3004 | awk '{print $2}')
+    kill $(lsof -i -n -P | grep LISTEN | grep :$WC_PORT | awk '{print $2}') 2>/dev/null || true
+    for pid in "${PIDS[@]}"; do
+        wait "$pid" 2>/dev/null || true
+    done
     echo "All services stopped."
 }
 trap cleanup EXIT
@@ -56,83 +66,60 @@ elif [ -x /usr/local/opt/llvm/bin/clang ]; then
     export AR_wasm32_unknown_unknown=/usr/local/opt/llvm/bin/llvm-ar
 fi
 
-# ── Incremental build helpers ─────────────────────────────────────────
+# ── Build (skip with --skip-build, force with --force-build) ────────
 
-# Returns 0 (needs build) if any file under the watched dirs is newer
-# than the stamp file, or if the stamp doesn't exist yet.
-needs_build() {
-    local stamp="$1"; shift
-    [ ! -f "$stamp" ] && return 0
-    for dir in "$@"; do
-        if [ -f "$dir" ]; then
-            [ "$dir" -nt "$stamp" ] && return 0
-        elif [ -d "$dir" ]; then
-            if find "$dir" -newer "$stamp" -print -quit 2>/dev/null | grep -q .; then
-                return 0
-            fi
-        fi
-    done
-    return 1
-}
-
-# ── Build (skip with --skip-build) ──────────────────────────────────
+if [ "$FORCE_BUILD" -eq 1 ]; then
+    echo "=== --force-build: clearing Rust and JS build caches ==="
+    cargo clean 2>/dev/null || true
+fi
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
     echo "=== Building simulator + chialisp (if needed) ==="
-    cargo build --features sim-tests,sim-server --bin chia-gaming-sim
-
-    WASM_STAMP="$FE_DIR/dist/.wasm-stamp"
-    if needs_build "$WASM_STAMP" "$WASM_DIR/src" "$WASM_DIR/Cargo.toml" "$SCRIPT_DIR/src" "$SCRIPT_DIR/Cargo.toml"; then
-        echo "=== Building WASM (web target) ==="
-        (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/dist" --release --target=web)
-        touch "$WASM_STAMP"
-    else
-        echo "=== WASM is up to date ==="
-    fi
-
-    if needs_build "$LOBBY_CONN_DIR/dist/.build-stamp" "$LOBBY_CONN_DIR/src" "$LOBBY_CONN_DIR/package.json"; then
-        echo "=== Building lobby-connection ==="
-        (cd "$LOBBY_CONN_DIR" && yarn install && yarn build)
-        touch "$LOBBY_CONN_DIR/dist/.build-stamp"
-    else
-        echo "=== lobby-connection is up to date ==="
-    fi
-
-    if needs_build "$FE_DIR/dist/.fe-stamp" "$FE_DIR/src" "$FE_DIR/package.json" "$WASM_STAMP"; then
-        echo "=== Building gaming frontend ==="
-        (cd "$FE_DIR" && yarn install && yarn build)
-        touch "$FE_DIR/dist/.fe-stamp"
-    else
-        echo "=== gaming-fe is up to date ==="
-    fi
-
-    if needs_build "$LOBBY_VIEW_DIR/dist/.build-stamp" "$LOBBY_VIEW_DIR/src" "$LOBBY_VIEW_DIR/package.json"; then
-        echo "=== Building lobby-view ==="
-        (cd "$LOBBY_VIEW_DIR" && yarn install && yarn build)
-        touch "$LOBBY_VIEW_DIR/dist/.build-stamp"
-    else
-        echo "=== lobby-view is up to date ==="
-    fi
-
-    if needs_build "$LOBBY_SERVICE_DIR/dist/.build-stamp" "$LOBBY_SERVICE_DIR/src" "$LOBBY_SERVICE_DIR/package.json"; then
-        echo "=== Building lobby-service ==="
-        (cd "$LOBBY_SERVICE_DIR" && yarn install && yarn build)
-        touch "$LOBBY_SERVICE_DIR/dist/.build-stamp"
-    else
-        echo "=== lobby-service is up to date ==="
-    fi
-
-    if needs_build "$WC_DIR/dist/.build-stamp" "$WC_DIR/src" "$WC_DIR/package.json"; then
-        echo "=== Building wc-stub ==="
-        (cd "$WC_DIR" && yarn install && yarn build)
-        touch "$WC_DIR/dist/.build-stamp"
-    else
-        echo "=== wc-stub is up to date ==="
-    fi
+    cargo build --features sim-server --bin chia-gaming-sim
+    echo "=== Building WASM (web target) ==="
+    (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/dist" --release --target=web)
+    echo "=== Building gaming frontend ==="
+    (cd "$FE_DIR" && pnpm install --frozen-lockfile && pnpm run build)
+    echo "=== Building lobby-frontend ==="
+    (cd "$SCRIPT_DIR/lobby" && pnpm install --frozen-lockfile)
+    (cd "$LOBBY_FRONTEND_DIR" && pnpm run build)
+    echo "=== Building lobby-service ==="
+    (cd "$LOBBY_SERVICE_DIR" && pnpm run build)
+    echo "=== Building wc-stub ==="
+    (cd "$WC_DIR" && pnpm install --frozen-lockfile && pnpm run build)
 fi
 
-# Generate the urls file with the actual lobby port
-echo "{\"tracker\": \"http://localhost:$LOBBY_PORT/?lobby=true\"}" > "$FE_DIR/dist/urls"
+# ── Assemble staging directories ────────────────────────────────────
+
+echo "=== Assembling player app staging directory (symlinks) ==="
+GAME_SERVE="$FE_DIR/serve"
+rm -rf "$GAME_SERVE"
+mkdir -p "$GAME_SERVE"
+ln -sf "$FE_DIR/public/index.html" "$GAME_SERVE/index.html"
+if [ -f "$FE_DIR/public/favicon.svg" ]; then
+    ln -sf "$FE_DIR/public/favicon.svg" "$GAME_SERVE/favicon.svg"
+fi
+ln -sf "$FE_DIR/dist/js/index-rollup.js" "$GAME_SERVE/index.js"
+ln -sf "$FE_DIR/dist/css/index.css" "$GAME_SERVE/index.css"
+ln -sf "$FE_DIR/dist/chia_gaming_wasm.js" "$GAME_SERVE/chia_gaming_wasm.js"
+ln -sf "$FE_DIR/dist/chia_gaming_wasm_bg.wasm" "$GAME_SERVE/chia_gaming_wasm_bg.wasm"
+echo '{"version":3,"sources":[],"mappings":""}' > "$GAME_SERVE/chia_gaming_wasm_bg.wasm.map"
+# Static urls config for the player app
+echo "{\"tracker\": \"http://localhost:$TRACKER_PORT\"}" > "$GAME_SERVE/urls"
+# Symlink chialisp hex files
+ln -sf "$CLSP_DIR" "$GAME_SERVE/clsp"
+# Symlink images if they exist
+if [ -d "$FE_DIR/public/images" ]; then
+    ln -sf "$FE_DIR/public/images" "$GAME_SERVE/images"
+fi
+
+echo "=== Assembling lobby-frontend staging directory (symlinks) ==="
+LOBBY_SERVE="$LOBBY_FRONTEND_DIR/serve"
+rm -rf "$LOBBY_SERVE"
+mkdir -p "$LOBBY_SERVE"
+ln -sf "$LOBBY_FRONTEND_DIR/public/index.html" "$LOBBY_SERVE/index.html"
+ln -sf "$LOBBY_FRONTEND_DIR/public/index.js" "$LOBBY_SERVE/index.js"
+ln -sf "$LOBBY_FRONTEND_DIR/dist/css/index.css" "$LOBBY_SERVE/index.css"
 
 # ── Start services ──────────────────────────────────────────────────
 
@@ -155,41 +142,44 @@ if ! curl -s -X POST "http://localhost:$SIM_PORT/get_peak" >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "=== Starting static file server (ports $GAME_PORT, $LOBBY_PORT) ==="
-node "$SCRIPT_DIR/resources/local-server.js" "$SCRIPT_DIR" "$GAME_PORT" "$LOBBY_PORT" &
+echo "=== Starting player app static server (port $GAME_PORT) ==="
+node "$SCRIPT_DIR/local-static-test-server.js" "$GAME_SERVE" "$GAME_PORT" &
 PIDS+=($!)
 
 echo "=== Starting wc-stub (port $WC_PORT) ==="
-(cd "$WC_DIR" && PORT=$WC_PORT node ./dist/index.js) &
+(cd "$WC_DIR" && PORT=$WC_PORT exec node --disable-warning=DEP0169 ./dist/index.js) &
 PIDS+=($!)
 
-echo "=== Starting lobby-service (port $LOBBY_SERVICE_PORT) ==="
-(cd "$LOBBY_SERVICE_DIR" && PORT=$LOBBY_SERVICE_PORT node ./dist/index-rollup.cjs --self "http://localhost:$LOBBY_PORT") &
+echo "=== Starting tracker (lobby-service + lobby-frontend on port $TRACKER_PORT) ==="
+(cd "$LOBBY_SERVICE_DIR" && PORT=$TRACKER_PORT exec node ./dist/index-rollup.cjs --self "http://localhost:$TRACKER_PORT" --dir "$LOBBY_SERVE") &
 PIDS+=($!)
 
-echo "=== Waiting for static file server ==="
+echo "=== Waiting for services ==="
 for i in $(seq 1 10); do
-    if curl -s "http://localhost:$LOBBY_PORT/" >/dev/null 2>&1; then
-        echo "Static file server ready"
+    if curl -s "http://localhost:$GAME_PORT/" >/dev/null 2>&1 && \
+       curl -s "http://localhost:$TRACKER_PORT/" >/dev/null 2>&1; then
+        echo "All servers ready"
         break
     fi
     sleep 1
 done
 
 echo "=== Starting beacon ==="
-"$SCRIPT_DIR/resources/nginx/beacon.sh" "http://localhost:$GAME_PORT" "http://localhost:$LOBBY_PORT" &
+"$SCRIPT_DIR/lobby/nginx/beacon.sh" "http://localhost:$GAME_PORT" "http://localhost:$TRACKER_PORT" &
 PIDS+=($!)
 
 echo ""
 echo "════════════════════════════════════════════════════════"
 echo "  All services running:"
-echo "    Game frontend:  http://localhost:$GAME_PORT"
-echo "    Lobby view:     http://localhost:$LOBBY_PORT"
-echo "    WC stub:        http://localhost:$WC_PORT"
-echo "    Simulator:      http://localhost:$SIM_PORT"
+echo "    Player app (static): http://localhost:$GAME_PORT"
+echo "    Tracker:             http://localhost:$TRACKER_PORT"
+echo "    WC stub:             http://localhost:$WC_PORT"
+echo "    Simulator:           http://localhost:$SIM_PORT"
 echo ""
-echo "  Press any key (or Ctrl-C) to stop all services."
+echo "  Press Ctrl-C to stop all services."
 echo "════════════════════════════════════════════════════════"
 echo ""
 
-read -r -s -n 1
+while true; do
+    sleep 3600
+done

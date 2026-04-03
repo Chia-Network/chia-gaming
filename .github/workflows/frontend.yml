@@ -40,7 +40,12 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20.19.0
+          node-version: 20
+
+      - name: Setup pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.33.0 --activate
 
       - name: Install rust
         uses: dtolnay/rust-toolchain@master
@@ -62,38 +67,34 @@ jobs:
       - name: Build WASM (web + nodejs targets)
         run: |
           cd wasm
-          wasm-pack build --out-dir=../resources/gaming-fe/dist --release --target=web
-          wasm-pack build --out-dir=../resources/gaming-fe/node-pkg --release --target=nodejs
-
-      - name: Build lobby-connection
-        run: |
-          cd resources/lobby-connection
-          yarn install && yarn build
+          wasm-pack build --out-dir=../front-end/dist --release --target=web
+          wasm-pack build --out-dir=../front-end/node-pkg --release --target=nodejs
 
       - name: Build gaming-fe
         run: |
-          cd resources/gaming-fe
-          yarn install && yarn build
+          cd front-end
+          pnpm install --frozen-lockfile && pnpm run build
 
-      - name: Build lobby-view
+      - name: Build lobby-frontend
         run: |
-          cd resources/lobby-view
-          yarn install && yarn build
+          cd lobby
+          pnpm install --frozen-lockfile
+          pnpm --filter chia-gaming-lobby-frontend run build
 
       - name: Build lobby-service
         run: |
-          cd resources/lobby-service
-          yarn install && yarn build
+          cd lobby
+          pnpm --filter chia-gaming-lobby-service run build
 
       - name: Build wc-stub
         run: |
-          cd resources/wc-stub
-          yarn install && yarn build
+          cd wc-stub
+          pnpm install --frozen-lockfile && pnpm run build
 
       - name: Build simulator
         run: cargo build --features sim-tests,sim-server --bin chia-gaming-sim
 
-      # ── WASM/Jest tests (mirrors run-js-tests.sh) ──────────────────
+      # ── WASM/Jest tests (mirrors tools/local-wasm-tests.sh) ────────
 
       - name: Run WASM/Jest tests
         run: |
@@ -118,7 +119,7 @@ jobs:
               exit 1
           fi
 
-          (cd resources/gaming-fe && yarn test)
+          (cd front-end && pnpm run test)
 
           kill "$SIM_PID" 2>/dev/null || true
 
@@ -152,23 +153,22 @@ jobs:
       #         sleep 1
       #     done
 
-      #     node resources/local-server.js "$(pwd)" "$GAME_PORT" "$LOBBY_PORT" &
+      #     node local-static-test-server.js "$(pwd)" "$GAME_PORT" "$LOBBY_PORT" &
       #     SERVER_PID=$!
 
-      #     (cd resources/wc-stub && PORT=$WC_PORT node ./dist/index.js) &
-      #     (cd resources/lobby-service && PORT=$LOBBY_SERVICE_PORT node ./dist/index-rollup.cjs --self "http://localhost:${LOBBY_PORT}") &
-      #     resources/nginx/beacon.sh "http://localhost:${GAME_PORT}" "http://localhost:${LOBBY_PORT}" &
+      #     (cd wc-stub && PORT=$WC_PORT node ./dist/index.js) &
+      #     (cd lobby/lobby-service && PORT=$LOBBY_SERVICE_PORT node ./dist/index-rollup.cjs --self "http://localhost:${LOBBY_PORT}") &
+      #     lobby/nginx/beacon.sh "http://localhost:${GAME_PORT}" "http://localhost:${LOBBY_PORT}" &
 
       #     sleep 8
 
-      #     cd resources/fe-test
-      #     yarn install
-      #     xvfb-run -a yarn jest || STATUS=$?
+      #     # Legacy Selenium harness removed in step-1 reorg.
+      #     # Add a new browser test harness here when reintroduced.
 
       #     kill "$SIM_PID" "$SERVER_PID" $(jobs -p) 2>/dev/null || true
       #     exit ${STATUS:-0}
 
-      # ── Collect artifacts (mirrors extract-from-image.sh) ───────────
+      # ── Collect deployment artifacts ─────────────────────────────────
 
       - name: Collect deployment artifacts
         run: |
@@ -178,28 +178,28 @@ jobs:
           GAME="${TARGET}/g/chia-gaming-game"
           mkdir -p "${GAME}/dist/js" "${GAME}/dist/css" "${GAME}/public" "${GAME}/clsp" "${GAME}/nginx"
 
-          cp -r resources/gaming-fe/dist/*.* "${GAME}/dist/" 2>/dev/null || true
-          cp resources/gaming-fe/dist/js/index-rollup.js "${GAME}/dist/js/" 2>/dev/null || true
-          cp resources/gaming-fe/dist/css/index.css "${GAME}/dist/css/" 2>/dev/null || true
-          cp -r resources/gaming-fe/public/* "${GAME}/public/"
+          cp -r front-end/dist/*.* "${GAME}/dist/" 2>/dev/null || true
+          cp front-end/dist/js/index-rollup.js "${GAME}/dist/js/" 2>/dev/null || true
+          cp front-end/dist/css/index.css "${GAME}/dist/css/" 2>/dev/null || true
+          cp -r front-end/public/* "${GAME}/public/"
           cp -r clsp/* "${GAME}/clsp/"
-          cp resources/nginx/urls "${GAME}/dist/"
-          cp resources/nginx/game.conf "${GAME}/nginx/"
-          cp resources/nginx/beacon.sh "${GAME}/beacon.sh"
-          cp resources/nginx/game-install.sh "${GAME}/game-install.sh"
-          cp resources/nginx/beacon.service "${GAME}/beacon.service"
-          cp resources/nginx/GAME.md "${GAME}/README.md"
+          cp lobby/nginx/urls "${GAME}/dist/"
+          cp lobby/nginx/game.conf "${GAME}/nginx/"
+          cp lobby/nginx/beacon.sh "${GAME}/beacon.sh"
+          cp lobby/nginx/game-install.sh "${GAME}/game-install.sh"
+          cp lobby/nginx/beacon.service "${GAME}/beacon.service"
+          cp lobby/nginx/GAME.md "${GAME}/README.md"
 
           LOBBY="${TARGET}/l/chia-gaming-lobby"
           mkdir -p "${LOBBY}/public" "${LOBBY}/dist/css" "${LOBBY}/nginx"
 
-          cp -r resources/lobby-view/public/* "${LOBBY}/public/"
-          cp resources/lobby-view/dist/css/index.css "${LOBBY}/dist/css/" 2>/dev/null || true
-          cp resources/lobby-service/dist/index-rollup.cjs "${LOBBY}/service.js"
-          cp resources/nginx/lobby-install.sh "${LOBBY}/lobby-install.sh"
-          cp resources/nginx/lobby.service "${LOBBY}/lobby.service"
-          cp resources/nginx/lobby.conf "${LOBBY}/nginx/"
-          cp resources/nginx/LOBBY.md "${LOBBY}/README.md"
+          cp -r lobby/lobby-frontend/public/* "${LOBBY}/public/"
+          cp lobby/lobby-frontend/dist/css/index.css "${LOBBY}/dist/css/" 2>/dev/null || true
+          cp lobby/lobby-service/dist/index-rollup.cjs "${LOBBY}/service.js"
+          cp lobby/nginx/lobby-install.sh "${LOBBY}/lobby-install.sh"
+          cp lobby/nginx/lobby.service "${LOBBY}/lobby.service"
+          cp lobby/nginx/lobby.conf "${LOBBY}/nginx/"
+          cp lobby/nginx/LOBBY.md "${LOBBY}/README.md"
 
       - name: Archive chia-gaming-frontend
         uses: actions/upload-artifact@v4

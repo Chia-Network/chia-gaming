@@ -42,6 +42,10 @@ impl LiveGame {
         self.referee_maker.is_my_turn()
     }
 
+    pub fn is_game_over(&self) -> bool {
+        self.referee_maker.is_game_over()
+    }
+
     pub fn get_max_move_size(&self) -> usize {
         self.referee_maker.get_max_move_size()
     }

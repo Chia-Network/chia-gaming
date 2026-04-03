@@ -170,8 +170,8 @@ install_corepack() {
     fi
 }
 
-install_yarn() {
-    if need_cmd yarn; then
+install_pnpm() {
+    if need_cmd pnpm; then
         return 0
     fi
 
@@ -180,8 +180,8 @@ install_yarn() {
     fi
 
     corepack enable
-    corepack prepare yarn@stable --activate
-    need_cmd yarn
+    corepack prepare pnpm@10.33.0 --activate
+    need_cmd pnpm
 }
 
 check_python_version() {
@@ -210,7 +210,7 @@ check_deps() {
     need_cmd node || add_missing node
     need_cmd npm || add_missing npm
     need_cmd corepack || add_missing corepack
-    need_cmd yarn || add_missing yarn
+    need_cmd pnpm || add_missing pnpm
     need_cmd rustup || add_missing rustup
     need_cmd rustc || add_missing rustc
     need_cmd cargo || add_missing cargo
@@ -344,8 +344,8 @@ install_dep() {
     corepack)
         install_corepack
         ;;
-    yarn)
-        install_yarn
+    pnpm)
+        install_pnpm
         ;;
     rustup|rustc|cargo)
         install_rustup

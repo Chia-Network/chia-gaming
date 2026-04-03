@@ -10,38 +10,45 @@ commit-reveal randomness.
 
 ## Documentation
 
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** — How state channels, the referee, the
-  potato protocol, and Calpoker work.
+- **[OVERVIEW.md](OVERVIEW.md)** — How state channels, the referee, the
+  potato protocol, and Calpoker work. Links to detailed docs.
 - **[DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)** — How to build, run tests, read
   output, and debug failures.
+- **[FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md)** — Player app and
+  tracker: React components, WASM bridge, WebSocket relay protocol.
 ## Quick Start
 
 ```bash
-# Build
-cargo build
+# Build test binaries (no test execution)
+./cb.sh
 
-# Run unit tests
-cargo test
+# Run full default test flow:
+# - rust + chialisp build
+# - rust sim tests
+# - JS/WASM integration tests
+./ct.sh
 
-# Run chialisp tests
-./run-clsp-tests.sh
+# Run only matching sim test(s) while debugging
+./ct.sh -o accept_finished
 
-# Run simulation tests
-cargo test --features sim-tests -- sim_tests --nocapture
+# Start full suite from first matching test name (wraparound)
+./ct.sh accept_finished
 
 # Run JS/WASM integration tests (builds WASM, starts simulator, runs Jest)
-./run-js-tests.sh
-
-# Run everything
-./run-all-tests.sh
+./tools/local-wasm-tests.sh
 ```
 
 ### Prerequisites
 
 - **Rust** (nightly) with `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
-- **Node.js** and **yarn** — for JS/WASM integration tests
+- **Node.js** and **pnpm** — for JS/WASM integration tests
 - **wasm-pack** — for building the WASM package (`cargo install wasm-pack`)
 - **LLVM** (Homebrew) — on macOS, needed for compiling `blst` to wasm (`brew install llvm`)
+
+### JS Package Manager Policy
+
+Use **pnpm** for repository JS package workflows and lockfiles. Avoid mixing package
+managers inside a given package directory.
 
 ## Project Structure
 
@@ -64,8 +71,9 @@ clsp/
   test/             — Chialisp test programs
 
 wasm/               — WebAssembly bindings for browser use
-python/             — Python test harness for chialisp validation
-resources/          — Frontend (gaming-fe), lobby, and test infrastructure
+front-end/          — Player frontend (React + WASM bridge)
+lobby/              — Lobby frontend, tracker service, and nginx/deploy helpers
+wc-stub/            — WalletConnect stub service
 ```
 
 ## Key Concepts
@@ -96,6 +104,6 @@ select cards. The five on-chain validator steps (a–e) enforce this protocol.
 | `GameStartInfo` | Initial game parameters (state, handler, validator, timeout) |
 | `Referee` | Manages referee coin state and on-chain transactions |
 | `GameFactory` | Holds proposal and parser programs for a game type |
-| `GameAction` | Enum of test actions (Move, Accept, Shutdown, RedoMove, etc.) |
+| `GameAction` | Enum of test actions (Move, Accept, Shutdown, Cheat, etc.) |
 | `Spend` | Spend bundle for an on-chain referee action |
 | `SynchronousGameCradle` | High-level game wrapper used in tests |

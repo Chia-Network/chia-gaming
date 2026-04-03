@@ -1,0 +1,30 @@
+{
+  "name": "chia-gaming-lobby-frontend",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "description": "Chia Gaming Lobby Frontend",
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "build": "pnpm exec tsc --project . && NODE_PATH=./node_modules pnpm exec esbuild dist/js/index.js --bundle --outfile=./public/index.js && pnpm exec tailwindcss -i ./src/index.css -o ./dist/css/index.css",
+    "test": "pnpm exec tsc -p tsconfig.json --noEmit",
+    "format": "prettier --write 'src/**/*.{ts,tsx,js,jsx,mjs,json}' '*.{ts,js,mjs,json}'",
+    "format:check": "prettier --check 'src/**/*.{ts,tsx,js,jsx,mjs,json}' '*.{ts,js,mjs,json}'"
+  },
+  "dependencies": {
+    "@radix-ui/react-slot": "1.2.4",
+    "class-variance-authority": "0.7.1",
+    "lucide-react": "0.554.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "4.1.17",
+    "@types/react": "19.2.0",
+    "@types/react-dom": "19.2.0",
+    "esbuild": "0.25.5",
+    "prettier": "3.5.3",
+    "tailwindcss": "4.1.17",
+    "typescript": "5.9.2"
+  }
+}

@@ -7,10 +7,6 @@
 vendor/
 target/
 
-# TLA
-tla_plus/states
-tla_plus/*_TTrace*
-
 # Python files
 __pycache__/
 *.py[oc]
@@ -22,20 +18,34 @@ wheels/
 
 # javascript
 node_modules/
-.yarn/
 .pnp.cjs
 .pnp.loader.mjs
-.yarnrc.yml
+lobby/**/public/index.js
+lobby/**/serve/
+front-end/**/serve/
+wc-stub/package-lock.json
 # Virtual environments
 .venv/
 venv/
 
 target/
 
+.pnpm-store/
+pnpm-store/
+
 # macos
 .DS_Store
+
+# IDE / editor
+.vscode/
+.cursor-acp-plan-*
+
+# Local sidecar repos
+chia-blockchain/
 
 # Misc.
 *.diff
 *.bak
 *.tmp
+*.log
+*.vsix

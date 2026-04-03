@@ -27,6 +27,12 @@ impl PuzzleHash {
     }
 }
 
+impl std::fmt::Display for PuzzleHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 impl Distribution<PuzzleHash> for Standard {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> PuzzleHash {
         PuzzleHash::from_hash(rng.gen())

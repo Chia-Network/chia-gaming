@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::common::load_clvm::read_hex_puzzle;
-use crate::common::types::{chia_dialect, AllocEncoder, Puzzle, Sha256Input, Sha256tree};
+use crate::common::types::{chia_dialect, AllocEncoder, Program, Puzzle, Sha256Input, Sha256tree};
 use crate::utils::proper_list;
 
 use clvm_traits::ToClvm;
@@ -50,6 +50,195 @@ fn sha256_bytes(data: &[u8]) -> [u8; 32] {
 fn sha256_concat(parts: &[&[u8]]) -> [u8; 32] {
     let inputs: Vec<Sha256Input> = parts.iter().map(|b| Sha256Input::Bytes(b)).collect();
     *Sha256Input::Array(inputs).hash().bytes()
+}
+
+fn list_from_nodes(allocator: &mut AllocEncoder, nodes: &[NodePtr]) -> NodePtr {
+    let mut tail = NodePtr::NIL;
+    for node in nodes.iter().rev() {
+        tail = allocator
+            .allocator()
+            .new_pair(*node, tail)
+            .expect("should build list");
+    }
+    tail
+}
+
+fn hash_to_node(allocator: &mut AllocEncoder, hash: &[u8; 32]) -> NodePtr {
+    allocator
+        .allocator()
+        .new_atom(hash.as_slice())
+        .expect("should build hash atom")
+}
+
+fn load_referee_puzzle(allocator: &mut AllocEncoder) -> Puzzle {
+    read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex")
+        .expect("failed to load referee puzzle")
+}
+
+fn run_referee_slash_case(
+    allocator: &mut AllocEncoder,
+    move_bytes: &[u8],
+    committed_max_move_size: i64,
+    committed_infohash_b: &[u8; 32],
+) -> Result<NodePtr, String> {
+    let referee = load_referee_puzzle(allocator);
+    let referee_clvm = referee.to_clvm(allocator).expect("referee to clvm");
+    let referee_hash: [u8; 32] = *referee.sha256tree(allocator).hash().bytes();
+
+    let a_validator = read_hex_puzzle(allocator, "clsp/games/calpoker/onchain/a.hex")
+        .expect("failed to load a validator");
+    let a_validator_clvm = a_validator.to_clvm(allocator).expect("a validator to clvm");
+    let a_validator_hash: [u8; 32] = *a_validator.sha256tree(allocator).hash().bytes();
+
+    let previous_state = NodePtr::NIL;
+    let previous_state_hash: [u8; 32] = *Program::from_nodeptr(allocator, previous_state)
+        .expect("state program")
+        .sha256tree(allocator)
+        .hash()
+        .bytes();
+    let infohash_a = sha256_concat(&[&a_validator_hash, &previous_state_hash]);
+
+    let mover_pk = allocator
+        .allocator()
+        .new_atom(&[0x11; 48])
+        .expect("mover pk atom");
+    let waiter_pk = allocator
+        .allocator()
+        .new_atom(&[0x22; 48])
+        .expect("waiter pk atom");
+    let timeout = 10i64.to_clvm(allocator).expect("timeout");
+    let amount = AMOUNT.to_clvm(allocator).expect("amount");
+    let mod_hash = hash_to_node(allocator, &referee_hash);
+    let nonce = 1i64.to_clvm(allocator).expect("nonce");
+    let move_node = allocator
+        .allocator()
+        .new_atom(move_bytes)
+        .expect("move atom");
+    let max_move_size = committed_max_move_size
+        .to_clvm(allocator)
+        .expect("max_move_size");
+    let infohash_b = hash_to_node(allocator, committed_infohash_b);
+    let mover_share = 0i64.to_clvm(allocator).expect("mover_share");
+    let infohash_a_node = hash_to_node(allocator, &infohash_a);
+
+    let evidence = NodePtr::NIL;
+    let payout_ph = allocator
+        .allocator()
+        .new_atom(&[0x33; 32])
+        .expect("payout ph atom");
+
+    let curried_args = list_from_nodes(
+        allocator,
+        &[
+            mover_pk,
+            waiter_pk,
+            timeout,
+            amount,
+            mod_hash,
+            nonce,
+            move_node,
+            max_move_size,
+            infohash_b,
+            mover_share,
+            infohash_a_node,
+        ],
+    );
+    let slash_args = list_from_nodes(
+        allocator,
+        &[previous_state, a_validator_clvm, evidence, payout_ph],
+    );
+    let args = allocator
+        .allocator()
+        .new_pair(curried_args, slash_args)
+        .expect("should build referee args");
+
+    match run_program(
+        allocator.allocator(),
+        &chia_dialect(),
+        referee_clvm,
+        args,
+        0,
+    ) {
+        Ok(reduction) => Ok(reduction.1),
+        Err(e) => Err(format!("CLVM error: {e:?}")),
+    }
+}
+
+fn run_referee_move_case(
+    allocator: &mut AllocEncoder,
+    current_max_move_size: i64,
+    new_move_bytes: &[u8],
+) -> Result<NodePtr, String> {
+    let referee = load_referee_puzzle(allocator);
+    let referee_clvm = referee.to_clvm(allocator).expect("referee to clvm");
+    let referee_hash: [u8; 32] = *referee.sha256tree(allocator).hash().bytes();
+
+    let mover_pk = allocator
+        .allocator()
+        .new_atom(&[0x11; 48])
+        .expect("mover pk atom");
+    let waiter_pk = allocator
+        .allocator()
+        .new_atom(&[0x22; 48])
+        .expect("waiter pk atom");
+    let timeout = 10i64.to_clvm(allocator).expect("timeout");
+    let amount = AMOUNT.to_clvm(allocator).expect("amount");
+    let mod_hash = hash_to_node(allocator, &referee_hash);
+    let nonce = 1i64.to_clvm(allocator).expect("nonce");
+    let move_node = allocator
+        .allocator()
+        .new_atom(&[0x44; 32])
+        .expect("current move atom");
+    let max_move_size = current_max_move_size
+        .to_clvm(allocator)
+        .expect("max_move_size");
+    let infohash_b = hash_to_node(allocator, &[0x55; 32]);
+    let mover_share = 0i64.to_clvm(allocator).expect("mover_share");
+    let infohash_a = hash_to_node(allocator, &[0x66; 32]);
+
+    let new_move = allocator
+        .allocator()
+        .new_atom(new_move_bytes)
+        .expect("new_move atom");
+    let infohash_c = hash_to_node(allocator, &[0x77; 32]);
+    let new_mover_share = 0i64.to_clvm(allocator).expect("new_mover_share");
+    let new_max_move_size = 16i64.to_clvm(allocator).expect("new_max_move_size");
+
+    let curried_args = list_from_nodes(
+        allocator,
+        &[
+            mover_pk,
+            waiter_pk,
+            timeout,
+            amount,
+            mod_hash,
+            nonce,
+            move_node,
+            max_move_size,
+            infohash_b,
+            mover_share,
+            infohash_a,
+        ],
+    );
+    let move_args = list_from_nodes(
+        allocator,
+        &[new_move, infohash_c, new_mover_share, new_max_move_size],
+    );
+    let args = allocator
+        .allocator()
+        .new_pair(curried_args, move_args)
+        .expect("should build referee args");
+
+    match run_program(
+        allocator.allocator(),
+        &chia_dialect(),
+        referee_clvm,
+        args,
+        0,
+    ) {
+        Ok(reduction) => Ok(reduction.1),
+        Err(e) => Err(format!("CLVM error: {e:?}")),
+    }
 }
 
 fn bitfield_to_byte(indices: &[u8]) -> Vec<u8> {
@@ -107,22 +296,16 @@ fn int_from_atom(allocator: &mut AllocEncoder, node: NodePtr) -> i64 {
 fn parse_validator_output(allocator: &mut AllocEncoder, result: NodePtr) -> MoveResult {
     let items = proper_list(allocator.allocator(), result, true)
         .expect("validator output should be a proper list");
-    assert!(
-        !items.is_empty(),
-        "validator output too short: {}",
-        items.len()
-    );
-
-    let code_int = int_from_atom(allocator, items[0]);
-    let move_code = match code_int {
-        0 => MoveCode::MakeMove,
-        2 => MoveCode::Slash,
-        _ => panic!("unexpected move code: {code_int}"),
-    };
-
-    if move_code == MoveCode::MakeMove {
+    if items.is_empty() {
+        MoveResult {
+            move_code: MoveCode::Slash,
+            next_validator_hash: None,
+            state: NodePtr::NIL,
+            next_max_move_size: 0,
+        }
+    } else {
         assert!(items.len() >= 4, "MAKE_MOVE output too short");
-        let hash_bytes = allocator.allocator().atom(items[1]);
+        let hash_bytes = allocator.allocator().atom(items[0]);
         let next_validator_hash = if hash_bytes.is_empty() {
             None
         } else {
@@ -130,19 +313,12 @@ fn parse_validator_output(allocator: &mut AllocEncoder, result: NodePtr) -> Move
             h.copy_from_slice(hash_bytes.as_ref());
             Some(h)
         };
-        let max_move_size = int_from_atom(allocator, items[3]);
+        let max_move_size = int_from_atom(allocator, items[2]);
         MoveResult {
-            move_code,
+            move_code: MoveCode::MakeMove,
             next_validator_hash,
-            state: items[2],
+            state: items[1],
             next_max_move_size: max_move_size,
-        }
-    } else {
-        MoveResult {
-            move_code,
-            next_validator_hash: None,
-            state: NodePtr::NIL,
-            next_max_move_size: 0,
         }
     }
 }
@@ -268,11 +444,15 @@ fn run_step_and_check(
     let vh = last.next_validator_hash.as_ref()?;
 
     let info = lib.by_hash.get(vh).unwrap_or_else(|| {
-        eprintln!("HASH MISMATCH: looking for {}", hex::encode(vh));
-        for (k, v) in &lib.by_hash {
-            eprintln!("  library has {} => {}", hex::encode(k), v.name);
-        }
-        panic!("validator hash not found in library");
+        panic!(
+            "validator hash {} not found in library (have: {})",
+            hex::encode(vh),
+            lib.by_hash
+                .keys()
+                .map(|k| hex::encode(k))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
     });
     assert_eq!(
         info.name, spec.validator_name,
@@ -1035,6 +1215,77 @@ fn test_calpoker_e_bad_evidence_exception() {
     );
 }
 
+fn expected_infohash_b_for_valid_a_move(
+    allocator: &mut AllocEncoder,
+    move_bytes: &[u8],
+) -> [u8; 32] {
+    let b_validator = read_hex_puzzle(allocator, "clsp/games/calpoker/onchain/b.hex")
+        .expect("failed to load b validator");
+    let b_hash: [u8; 32] = *b_validator.sha256tree(allocator).hash().bytes();
+    let move_node = allocator
+        .allocator()
+        .new_atom(move_bytes)
+        .expect("move atom for state hash");
+    let move_state_hash: [u8; 32] = *Program::from_nodeptr(allocator, move_node)
+        .expect("move program")
+        .sha256tree(allocator)
+        .hash()
+        .bytes();
+    sha256_concat(&[&b_hash, &move_state_hash])
+}
+
+fn test_slash_succeeds_on_explicit_validator_slash() {
+    let mut allocator = AllocEncoder::new();
+    let invalid_move = vec![0xAA; 31];
+    let result = run_referee_slash_case(&mut allocator, &invalid_move, 16, &[0x10; 32]);
+    assert!(
+        result.is_ok(),
+        "slash should succeed when validator explicitly returns nil: {result:?}"
+    );
+}
+
+fn test_slash_succeeds_on_infohash_misalignment() {
+    let mut allocator = AllocEncoder::new();
+    let valid_move = vec![0xAB; 32];
+    let result = run_referee_slash_case(&mut allocator, &valid_move, 16, &[0x99; 32]);
+    assert!(
+        result.is_ok(),
+        "slash should succeed when infohash is misaligned: {result:?}"
+    );
+}
+
+fn test_slash_succeeds_on_max_move_size_misalignment() {
+    let mut allocator = AllocEncoder::new();
+    let valid_move = vec![0xAC; 32];
+    let aligned_infohash_b = expected_infohash_b_for_valid_a_move(&mut allocator, &valid_move);
+    let result = run_referee_slash_case(&mut allocator, &valid_move, 99, &aligned_infohash_b);
+    assert!(
+        result.is_ok(),
+        "slash should succeed when max move size is misaligned: {result:?}"
+    );
+}
+
+fn test_slash_fails_on_aligned_valid_move() {
+    let mut allocator = AllocEncoder::new();
+    let valid_move = vec![0xAD; 32];
+    let aligned_infohash_b = expected_infohash_b_for_valid_a_move(&mut allocator, &valid_move);
+    let result = run_referee_slash_case(&mut allocator, &valid_move, 16, &aligned_infohash_b);
+    assert!(
+        result.is_err(),
+        "slash should fail when validator payload aligns with committed fields"
+    );
+}
+
+fn test_move_rejects_when_new_move_exceeds_max_move_size() {
+    let mut allocator = AllocEncoder::new();
+    let too_large_move = vec![0xEF; 9];
+    let result = run_referee_move_case(&mut allocator, 8, &too_large_move);
+    assert!(
+        result.is_err(),
+        "move path should reject moves larger than MAX_MOVE_SIZE"
+    );
+}
+
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
         (
@@ -1145,6 +1396,26 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_calpoker_e_bad_evidence_exception",
             &test_calpoker_e_bad_evidence_exception,
+        ),
+        (
+            "test_slash_succeeds_on_explicit_validator_slash",
+            &test_slash_succeeds_on_explicit_validator_slash,
+        ),
+        (
+            "test_slash_succeeds_on_infohash_misalignment",
+            &test_slash_succeeds_on_infohash_misalignment,
+        ),
+        (
+            "test_slash_succeeds_on_max_move_size_misalignment",
+            &test_slash_succeeds_on_max_move_size_misalignment,
+        ),
+        (
+            "test_slash_fails_on_aligned_valid_move",
+            &test_slash_fails_on_aligned_valid_move,
+        ),
+        (
+            "test_move_rejects_when_new_move_exceeds_max_move_size",
+            &test_move_rejects_when_new_move_exceeds_max_move_size,
         ),
     ]
 }

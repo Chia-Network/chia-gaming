@@ -14,17 +14,17 @@ else
 fi
 
 echo "=== Building rust + chialisp ==="
-cargo build --features sim-tests
+cargo build --features sim-server
 echo "Build took: ${SECONDS} seconds"
 
 ./tools/build-chialisp.sh
 
 echo "=== Running rust tests ==="
-cargo test --lib --features sim-tests -- --nocapture
+cargo test --lib --features sim-server -- --nocapture
 
 if [ "$RUN_AUX_TESTS" -eq 1 ]; then
     echo "=== Running JS/WASM tests ==="
-    ./tools/local-wasm-tests.sh
+    ./tools/local-wasm-tests.sh --skip-native
 else
     echo "=== Skipping JS/WASM tests for -o targeted run ==="
 fi

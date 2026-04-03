@@ -1,5 +1,6 @@
 use std::ops::{Add, AddAssign};
 
+use serde::de::{self, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use clvmr::allocator::NodePtr;
@@ -19,7 +20,42 @@ impl Serialize for PublicKey {
     where
         S: Serializer,
     {
-        hex::encode(self.bytes()).serialize(serializer)
+        serializer.serialize_bytes(&self.bytes())
+    }
+}
+
+struct PublicKeyVisitor;
+
+impl<'de> Visitor<'de> for PublicKeyVisitor {
+    type Value = PublicKey;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a 48-byte public key as raw bytes")
+    }
+
+    fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        PublicKey::from_slice(v).map_err(|e| E::custom(format!("{e:?}")))
+    }
+
+    fn visit_byte_buf<E>(self, v: Vec<u8>) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        self.visit_bytes(&v)
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut bytes = Vec::with_capacity(48);
+        while let Some(b) = seq.next_element::<u8>()? {
+            bytes.push(b);
+        }
+        PublicKey::from_slice(&bytes).map_err(|e| de::Error::custom(format!("{e:?}")))
     }
 }
 
@@ -28,9 +64,7 @@ impl<'de> Deserialize<'de> for PublicKey {
     where
         D: Deserializer<'de>,
     {
-        let st = String::deserialize(deserializer)?;
-        let slice = hex::decode(&st).map_err(serde::de::Error::custom)?;
-        PublicKey::from_slice(&slice).map_err(|e| serde::de::Error::custom(format!("{e:?}")))
+        deserializer.deserialize_bytes(PublicKeyVisitor)
     }
 }
 
@@ -50,10 +84,11 @@ impl PublicKey {
     }
 
     pub fn from_slice(slice: &[u8]) -> Result<PublicKey, Error> {
-        let mut bytes: [u8; 48] = [0; 48];
-        for (i, b) in slice.iter().enumerate() {
-            bytes[i % 48] = *b;
+        if slice.len() != 48 {
+            return Err(Error::StrErr("bad public key length".to_string()));
         }
+        let mut bytes: [u8; 48] = [0; 48];
+        bytes.copy_from_slice(slice);
         PublicKey::from_bytes(bytes)
     }
 
@@ -80,5 +115,30 @@ impl Add for PublicKey {
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for PublicKey {
     fn to_clvm(&self, encoder: &mut E) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
         encoder.encode_atom(clvm_traits::Atom::Borrowed(&self.0.to_bytes()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PublicKey;
+    use crate::common::standard_coin::private_to_public_key;
+    use crate::common::types::PrivateKey;
+
+    #[test]
+    fn public_key_serializes_to_bson_binary() {
+        let sk = PrivateKey::default();
+        let pk = private_to_public_key(&sk);
+        let bson = bson::to_bson(&pk).expect("public key should serialize");
+        match bson {
+            bson::Bson::Binary(bin) => assert_eq!(bin.bytes.len(), 48),
+            other => panic!("expected bson binary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn public_key_rejects_hex_string_legacy_format() {
+        let legacy = bson::Bson::String("deadbeef".to_string());
+        let parsed: Result<PublicKey, _> = bson::from_bson(legacy);
+        assert!(parsed.is_err());
     }
 }

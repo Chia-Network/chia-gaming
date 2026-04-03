@@ -22,6 +22,12 @@ impl GameID {
     }
 }
 
+impl std::fmt::Display for GameID {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for GameID {
     fn to_clvm(&self, encoder: &mut E) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
         self.0.to_clvm(encoder)

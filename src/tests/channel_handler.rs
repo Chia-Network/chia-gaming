@@ -21,11 +21,15 @@ pub(crate) mod sim_tests {
     use crate::test_support::game::{ChannelHandlerGame, DEFAULT_UNROLL_TIME_LOCK};
 
     /// Helper: create a ChannelHandlerGame with completed handshake.
-    fn setup_handshake(env: &mut ChannelHandlerEnv<impl rand::Rng>) -> ChannelHandlerGame {
+    fn setup_handshake(
+        rng: &mut impl rand::Rng,
+        env: &mut ChannelHandlerEnv<'_>,
+    ) -> ChannelHandlerGame {
         let game_id = GameID(42);
         let launcher_coin = CoinID::default();
 
         let mut game = ChannelHandlerGame::new(
+            rng,
             env,
             game_id,
             &launcher_coin,
@@ -43,7 +47,7 @@ pub(crate) mod sim_tests {
     /// Player `sender` sends first, then `sender^1` sends back.
     fn empty_potato_round_trip(
         game: &mut ChannelHandlerGame,
-        env: &mut ChannelHandlerEnv<impl rand::Rng>,
+        env: &mut ChannelHandlerEnv<'_>,
         sender: usize,
     ) {
         let sigs_a = game
@@ -82,20 +86,20 @@ pub(crate) mod sim_tests {
     /// Test the parity constraint in preemption unroll spends.
     ///
     /// After 3 round-trips of empty potato exchanges, player 0 has:
-    ///   current_state_number = 7
-    ///   unroll.state_number  = 6 (no peer signature)
-    ///   timeout.state_number = 7 (has peer signature)
+    ///   state_number           = 6
+    ///   unroll.state_number    = 5 (no peer signature)
+    ///   timeout.state_number   = 6 (has peer signature)
     ///
     /// Case 1 — higher state, wrong parity for preemption:
-    ///   on-chain = 5.  timeout parity: (7^5)&1=0 BAD. unroll parity: (6^5)&1=1
+    ///   on-chain = 4.  timeout parity: (6^4)&1=0 BAD. unroll parity: (5^4)&1=1
     ///   but unroll has no peer sig.  Preemption must fail.
     ///
     /// Case 2 — higher state, correct parity:
-    ///   on-chain = 4.  timeout parity: (7^4)&1=1 GOOD, has peer sig.
+    ///   on-chain = 3.  timeout parity: (6^3)&1=1 GOOD, has peer sig.
     ///   Preemption must succeed.
     ///
     /// Case 3 — state from the future:
-    ///   on-chain = 9 > our 7.  Must fail regardless of parity.
+    ///   on-chain = 8 > our 6.  Must fail regardless of parity.
     pub(crate) fn test_preemption_parity_constraint() {
         let mut allocator = AllocEncoder::new();
         let mut rng = ChaCha8Rng::from_seed([0; 32]);
@@ -107,7 +111,6 @@ pub(crate) mod sim_tests {
         let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should load");
         let mut env = ChannelHandlerEnv {
             allocator: &mut allocator,
-            rng: &mut rng,
             referee_coin_puzzle: ref_coin_puz,
             referee_coin_puzzle_hash: ref_coin_ph,
             unroll_metapuzzle,
@@ -116,18 +119,18 @@ pub(crate) mod sim_tests {
             agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
         };
 
-        let mut game = setup_handshake(&mut env);
+        let mut game = setup_handshake(&mut rng, &mut env);
 
-        // 3 round-trips: state goes 1 → 3 → 5 → 7
+        // 3 round-trips: state goes 0 → 2 → 4 → 6
         for _ in 0..3 {
             empty_potato_round_trip(&mut game, &mut env, 0);
         }
 
         let p0 = &game.player(0).ch;
 
-        // Case 1: on-chain=5, higher state but wrong parity → must FAIL
+        // Case 1: on-chain=4, higher state but wrong parity → must FAIL
         {
-            let conditions = make_conditions_with_state_number(env.allocator, 5);
+            let conditions = make_conditions_with_state_number(env.allocator, 4);
             let result = p0.channel_coin_spent(&mut env, false, conditions);
             assert!(
                 result.is_err(),
@@ -140,9 +143,9 @@ pub(crate) mod sim_tests {
             );
         }
 
-        // Case 2: on-chain=4, higher state with correct parity → must SUCCEED
+        // Case 2: on-chain=3, higher state with correct parity → must SUCCEED
         {
-            let conditions = make_conditions_with_state_number(env.allocator, 4);
+            let conditions = make_conditions_with_state_number(env.allocator, 3);
             let result = p0.channel_coin_spent(&mut env, false, conditions);
             assert!(
                 result.is_ok(),
@@ -152,9 +155,9 @@ pub(crate) mod sim_tests {
             assert!(!info.timeout, "should be a preemption, not a timeout");
         }
 
-        // Case 3: on-chain=9 (from the future) → must FAIL regardless of parity
+        // Case 3: on-chain=8 (from the future) → must FAIL regardless of parity
         {
-            let conditions = make_conditions_with_state_number(env.allocator, 9);
+            let conditions = make_conditions_with_state_number(env.allocator, 8);
             let result = p0.channel_coin_spent(&mut env, false, conditions);
             assert!(
                 result.is_err(),
@@ -198,7 +201,6 @@ pub(crate) fn test_unroll_can_verify_own_signature() {
     let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should load");
     let mut env = ChannelHandlerEnv {
         allocator: &mut allocator,
-        rng: &mut rng,
         referee_coin_puzzle: ref_coin_puz,
         referee_coin_puzzle_hash: ref_coin_ph.clone(),
         unroll_metapuzzle,

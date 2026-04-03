@@ -8,7 +8,6 @@
 pub mod common;
 pub mod channel_handler;
 pub mod games;
-pub mod log;
 /// Provides as simple as possible a full blockchain interface that can be spoken
 /// with via a trait interface that's either local and synchronous or over a pipe.
 pub mod peer_container;

@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-rm -rf ./resources/gaming-fe/node_modules
+rm -rf ./front-end/node_modules
 rm -rf ./wasm/node_modules
 rm -rf ./wasm/tests/node_modules
 rm -rf ./wasm/target

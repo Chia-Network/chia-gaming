@@ -4,7 +4,6 @@ use std::rc::Rc;
 
 use clvm_traits::ToClvm;
 use clvmr::NodePtr;
-use log::debug;
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
@@ -15,20 +14,21 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{atom_from_clvm, i64_from_atom, usize_from_atom};
 use crate::common::types::{
-    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, IntoErr, Node,
-    PrivateKey, Program, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
+    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, IntoErr, PrivateKey,
+    Program, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
 use crate::games::poker_collection;
 use crate::peer_container::{
     report_coin_changes_to_peer, FullCoinSetAdapter, GameCradle, MessagePeerQueue, MessagePipe,
-    SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
+    PeerHandler, SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
 };
-use crate::potato_handler::effects::{apply_effects, Effect, GameNotification};
+use crate::potato_handler::effects::{
+    apply_effects, ChannelState, CradleEvent, Effect, GameNotification, GameStatusKind,
+};
 use crate::potato_handler::handshake::CoinSpendRequest;
 use crate::potato_handler::start::GameStart;
 use crate::potato_handler::types::{
-    BatchAction, BootstrapTowardGame, BootstrapTowardWallet, PacketSender, PeerMessage, ToLocalUI,
-    WalletSpendInterface,
+    BatchAction, BootstrapTowardWallet, PacketSender, PeerMessage, ToLocalUI, WalletSpendInterface,
 };
 use crate::potato_handler::PotatoHandler;
 use crate::utils::proper_list;
@@ -78,9 +78,8 @@ impl MessagePeerQueue for SimulatedPeer {
 }
 
 /// Check the reported coins vs the current coin set and report changes.
-pub fn update_and_report_coins<'a, R: Rng>(
+pub fn update_and_report_coins<'a>(
     allocator: &mut AllocEncoder,
-    rng: &mut R,
     coinset_adapter: &mut FullCoinSetAdapter,
     peers: &mut [PotatoHandler; 2],
     pipes: &'a mut [SimulatedPeer; 2],
@@ -93,7 +92,7 @@ pub fn update_and_report_coins<'a, R: Rng>(
 
     for who in 0..=1 {
         {
-            let mut env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
+            let mut env = ChannelHandlerEnv::new(allocator).expect("should work");
             let reported_effects =
                 report_coin_changes_to_peer(&mut env, &mut peers[who], &watch_report)?;
             apply_effects(reported_effects, allocator, &mut pipes[who])?;
@@ -103,8 +102,8 @@ pub fn update_and_report_coins<'a, R: Rng>(
     Ok(watch_report)
 }
 
-fn handle_received_channel_puzzle_hash<R: Rng>(
-    env: &mut ChannelHandlerEnv<'_, R>,
+fn handle_received_channel_puzzle_hash(
+    env: &mut ChannelHandlerEnv<'_>,
     identity: &ChiaIdentity,
     peer: &mut PotatoHandler,
     parent: &CoinString,
@@ -150,7 +149,103 @@ fn handle_received_channel_puzzle_hash<R: Rng>(
             }],
         },
     )
-    .map(|effect| effect.into_iter().collect())
+    .map(|effect| effect.into_iter().collect::<Vec<_>>())
+}
+
+fn build_wallet_bundle_for_request(
+    allocator: &mut AllocEncoder,
+    simulator: &Simulator,
+    identity: &ChiaIdentity,
+    request: &crate::potato_handler::handshake::CoinSpendRequest,
+) -> Result<SpendBundle, Error> {
+    let mut candidate_coins = simulator.get_my_coins(&identity.puzzle_hash)?;
+    candidate_coins.retain(|coin| {
+        coin.to_parts()
+            .map(|(_, _, amt)| amt.to_u64() >= request.amount.to_u64())
+            .unwrap_or(false)
+    });
+    let selected_coin = if let Some(expected_coin_id) = request.coin_id.as_ref() {
+        candidate_coins
+            .into_iter()
+            .find(|coin| coin.to_coin_id() == *expected_coin_id)
+            .ok_or_else(|| {
+                Error::StrErr(format!(
+                    "no spendable coin for requested coin_id {expected_coin_id:?}"
+                ))
+            })?
+    } else {
+        candidate_coins
+            .into_iter()
+            .min_by_key(|coin| {
+                coin.to_parts()
+                    .map(|(_, _, amt)| amt.to_u64())
+                    .unwrap_or(u64::MAX)
+            })
+            .ok_or_else(|| Error::StrErr("no spendable coin for coin spend request".to_string()))?
+    };
+
+    let (_, _, coin_amount) = selected_coin
+        .to_parts()
+        .ok_or_else(|| Error::StrErr("selected coin missing parts".to_string()))?;
+
+    // Build conditions that mimic a real wallet's createOfferForIds: the spend
+    // is balanced because the requested amount goes to a settlement payment
+    // output instead of being a deficit.  claim_settlement_coins (called in
+    // SynchronousGameCradle::provide_coin_spend_bundle) will add claim spends
+    // that consume these settlement outputs, restoring the deficit.
+    let settlement_ph = PuzzleHash::from_bytes(chia_puzzles::SETTLEMENT_PAYMENT_HASH);
+    let change_amount = Amount::new(coin_amount.to_u64() - request.amount.to_u64());
+
+    let mut create_targets: Vec<(PuzzleHash, Amount)> = Vec::new();
+    // Settlement output (offer-style: the "offered" mojos)
+    create_targets.push((settlement_ph, request.amount.clone()));
+    // Change back to wallet
+    if change_amount.to_u64() > 0 {
+        create_targets.push((identity.puzzle_hash.clone(), change_amount));
+    }
+    // Extra conditions from the request (e.g., CREATE_COIN for launcher)
+    for cond in &request.conditions {
+        if cond.opcode == CREATE_COIN && cond.args.len() >= 2 {
+            let ph_bytes: [u8; 32] = cond.args[0]
+                .as_slice()
+                .try_into()
+                .map_err(|_| Error::StrErr("bad puzzle hash in extra condition".to_string()))?;
+            let amt = if cond.args[1].is_empty() {
+                0u64
+            } else {
+                crate::common::types::u64_from_atom(&cond.args[1]).unwrap_or(0)
+            };
+            create_targets.push((PuzzleHash::from_bytes(ph_bytes), Amount::new(amt)));
+        }
+    }
+
+    let env = ChannelHandlerEnv::new(allocator)?;
+    let clvm_conditions: Vec<(u32, (PuzzleHash, (Amount, ())))> = create_targets
+        .iter()
+        .map(|(ph, amt)| (CREATE_COIN, (ph.clone(), (amt.clone(), ()))))
+        .collect();
+    let conditions_clvm = clvm_conditions.to_clvm(env.allocator).into_gen()?;
+    let spend = standard_solution_partial(
+        env.allocator,
+        &identity.synthetic_private_key,
+        &selected_coin.to_coin_id(),
+        conditions_clvm,
+        &identity.synthetic_public_key,
+        &env.agg_sig_me_additional_data,
+        false,
+    )?;
+
+    Ok(SpendBundle {
+        name: Some("wallet coin spend request".to_string()),
+        spends: vec![CoinSpend {
+            coin: selected_coin,
+            bundle: Spend {
+                puzzle: identity.puzzle.clone(),
+                solution: spend.solution.clone(),
+                signature: spend.signature.clone(),
+            },
+        }],
+    })
 }
 
 impl PacketSender for SimulatedPeer {
@@ -169,7 +264,6 @@ impl SimulatedWalletSpend {
         opt_name: Option<&'static str>,
     ) -> Result<(), Error> {
         let name: Option<String> = opt_name.map(str::to_string);
-        debug!("register coin {name:?}");
         self.watching_coins.insert(
             coin_id.clone(),
             WatchEntry {
@@ -185,7 +279,6 @@ impl SimulatedWalletSpend {
 impl WalletSpendInterface for SimulatedPeer {
     /// Enqueue an outbound transaction.
     fn spend_transaction_and_add_fee(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
-        debug!("waiting to spend transaction");
         self.outbound_transactions.push(bundle.clone());
         Ok(())
     }
@@ -197,7 +290,6 @@ impl WalletSpendInterface for SimulatedPeer {
         timeout: &Timeout,
         name: Option<&'static str>,
     ) -> Result<(), Error> {
-        debug!("register coin {coin_id:?}");
         self.simulated_wallet_spend
             .register_coin(coin_id, timeout, name)
     }
@@ -211,13 +303,11 @@ impl WalletSpendInterface for SimulatedPeer {
 
 impl BootstrapTowardWallet for SimulatedPeer {
     fn channel_puzzle_hash(&mut self, puzzle_hash: &PuzzleHash) -> Result<(), Error> {
-        debug!("channel puzzle hash");
         self.channel_puzzle_hash = Some(puzzle_hash.clone());
         Ok(())
     }
 
     fn received_channel_offer(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
-        debug!("received channel offer");
         self.unfunded_offer = Some(bundle.clone());
         Ok(())
     }
@@ -226,30 +316,36 @@ impl BootstrapTowardWallet for SimulatedPeer {
 impl ToLocalUI for SimulatedPeer {
     fn notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
         match notification {
-            GameNotification::GameMessage { readable, .. } => {
-                self.messages.push(readable.clone());
+            GameNotification::GameStatus { other_params, .. } => {
+                if let Some(params) = other_params {
+                    if let Some(readable) = &params.readable {
+                        if params.mover_share.is_none() {
+                            self.messages.push(readable.clone());
+                        }
+                    }
+                }
                 Ok(())
             }
-            GameNotification::OpponentMoved { .. } | GameNotification::ChannelCreated { .. } => {
-                Ok(())
+            GameNotification::ChannelStatus { state, .. } => {
+                use crate::potato_handler::effects::ChannelState;
+                match state {
+                    ChannelState::GoingOnChain
+                    | ChannelState::Unrolling
+                    | ChannelState::ResolvedUnrolled
+                    | ChannelState::ResolvedStale
+                    | ChannelState::Failed => Err(Error::StrErr(format!(
+                        "unexpected channel status during handshake: {state:?}"
+                    ))),
+                    _ => Ok(()),
+                }
             }
-            GameNotification::CleanShutdownStarted { .. } => Err(Error::StrErr(
-                "clean_shutdown_started not expected during handshake".to_string(),
-            )),
-            GameNotification::CleanShutdownComplete { .. } => Err(Error::StrErr(
-                "clean_shutdown_complete not expected during handshake".to_string(),
-            )),
-            GameNotification::GoingOnChain { reason } => Err(Error::StrErr(format!(
-                "unexpected going_on_chain during handshake: {reason}"
-            ))),
             _ => Ok(()),
         }
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn handshake<R: Rng>(
-    rng: &mut R,
+pub fn handshake(
     allocator: &mut AllocEncoder,
     _amount: Amount,
     coinset_adapter: &mut FullCoinSetAdapter,
@@ -267,22 +363,12 @@ pub fn handshake<R: Rng>(
         steps += 1;
         assert!(steps < 50);
 
-        debug!("handshake iterate {who}");
-        run_move(
-            allocator,
-            rng,
-            Amount::new(200),
-            pipes,
-            &mut peers[who],
-            who,
-        )
-        .expect("should send");
+        run_move(allocator, Amount::new(200), pipes, &mut peers[who], who).expect("should send");
 
         if let Some(ph) = pipes[who].channel_puzzle_hash.clone() {
-            debug!("puzzle hash");
             pipes[who].channel_puzzle_hash = None;
             let reported_effects = {
-                let mut env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
+                let mut env = ChannelHandlerEnv::new(allocator).expect("should work");
                 handle_received_channel_puzzle_hash(
                     &mut env,
                     &identities[who],
@@ -295,20 +381,15 @@ pub fn handshake<R: Rng>(
         }
 
         if let Some(u) = pipes[who].unfunded_offer.clone() {
-            debug!(
-                "unfunded offer received by {:?}",
-                identities[who].synthetic_private_key
-            );
-
             let reported_effect = {
-                let mut env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
+                let mut env = ChannelHandlerEnv::new(allocator).expect("should work");
                 peers[who].channel_transaction_completion(&mut env, &u)?
             };
             if let Some(effect) = reported_effect {
                 apply_effects(vec![effect], allocator, &mut pipes[who])?;
             }
 
-            let env = ChannelHandlerEnv::new(allocator, rng).expect("should work");
+            let env = ChannelHandlerEnv::new(allocator).expect("should work");
             let mut spends = u.clone();
             // Create no coins.  The target is already created in the partially funded
             // transaction.
@@ -335,13 +416,12 @@ pub fn handshake<R: Rng>(
             let included_result = simulator.push_tx(env.allocator, &spends.spends)?;
 
             pipes[who].unfunded_offer = None;
-            debug!("included_result {included_result:?}");
             assert_eq!(included_result.code, 1);
 
             simulator.farm_block(&identities[who].puzzle_hash);
             simulator.farm_block(&identities[who].puzzle_hash);
 
-            update_and_report_coins(allocator, rng, coinset_adapter, peers, pipes, simulator)?;
+            update_and_report_coins(allocator, coinset_adapter, peers, pipes, simulator)?;
         }
 
         if !pipes[who].outbound_transactions.is_empty() {
@@ -375,40 +455,60 @@ pub enum TestEvent {
         id: GameID,
         readable: ReadableMove,
     },
-    GoingOnChain {
-        reason: String,
-    },
     Notification(GameNotification),
-    CleanShutdownComplete,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExpectedNotification {
-    WeTimedOut,
-    OpponentTimedOut,
-    GameCancelled,
-    OpponentPlayedIllegalMove,
-    WeSlashedOpponent,
-    OpponentSlashedUs,
-    OpponentSuccessfullyCheated,
-    StaleChannelUnroll,
-    ChannelCoinSpent,
-    UnrollCoinSpent,
-    ChannelError,
-    GameError,
+    GameStatusEndedWeTimedOut,
+    GameStatusEndedOpponentTimedOut,
+    GameStatusEndedCancelled,
+    GameStatusIllegalMoveDetected,
+    GameStatusEndedWeSlashedOpponent,
+    GameStatusEndedOpponentSlashedUs,
+    GameStatusEndedOpponentSuccessfullyCheated,
+    GameStatusMovedByUs,
+    GameStatusOnChainTurn,
+    GameStatusEndedError,
     GameProposed,
     GameProposalAccepted,
     GameProposalCancelled,
     InsufficientBalance,
+    ChannelState(ChannelState),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExpectedEvent {
     OpponentMoved { mover_share: Amount },
     GameMessage,
-    GoingOnChain,
     Notification(ExpectedNotification),
-    CleanShutdownComplete,
+}
+
+fn is_terminal_game_status(status: &GameStatusKind) -> bool {
+    matches!(
+        status,
+        GameStatusKind::EndedWeTimedOut
+            | GameStatusKind::EndedOpponentTimedOut
+            | GameStatusKind::EndedWeSlashedOpponent
+            | GameStatusKind::EndedOpponentSlashedUs
+            | GameStatusKind::EndedOpponentSuccessfullyCheated
+            | GameStatusKind::EndedCancelled
+            | GameStatusKind::EndedError
+    )
+}
+
+fn has_status(n: &GameNotification, want: GameStatusKind) -> bool {
+    matches!(n, GameNotification::GameStatus { status, .. } if *status == want)
+}
+
+fn is_terminal_for_id(n: &GameNotification, id: &GameID) -> bool {
+    match n {
+        GameNotification::InsufficientBalance { id: nid, .. } => nid == id,
+        GameNotification::GameStatus {
+            id: nid, status, ..
+        } => nid == id && is_terminal_game_status(status),
+        _ => false,
+    }
 }
 
 fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
@@ -423,48 +523,82 @@ fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
             },
         ) => a_share == e_share,
         (TestEvent::GameMessage { .. }, ExpectedEvent::GameMessage) => true,
-        (TestEvent::GoingOnChain { .. }, ExpectedEvent::GoingOnChain) => true,
-        (TestEvent::CleanShutdownComplete, ExpectedEvent::CleanShutdownComplete) => true,
         (TestEvent::Notification(actual_n), ExpectedEvent::Notification(expected_n)) => {
             match (actual_n, expected_n) {
-                (GameNotification::WeTimedOut { .. }, ExpectedNotification::WeTimedOut) => true,
                 (
-                    GameNotification::OpponentTimedOut { .. },
-                    ExpectedNotification::OpponentTimedOut,
-                ) => true,
-                (GameNotification::GameCancelled { .. }, ExpectedNotification::GameCancelled) => {
-                    true
-                }
-                (
-                    GameNotification::OpponentPlayedIllegalMove { .. },
-                    ExpectedNotification::OpponentPlayedIllegalMove,
+                    GameNotification::GameStatus {
+                        status: GameStatusKind::EndedWeTimedOut,
+                        ..
+                    },
+                    ExpectedNotification::GameStatusEndedWeTimedOut,
                 ) => true,
                 (
-                    GameNotification::WeSlashedOpponent { .. },
-                    ExpectedNotification::WeSlashedOpponent,
+                    GameNotification::GameStatus {
+                        status: GameStatusKind::EndedOpponentTimedOut,
+                        ..
+                    },
+                    ExpectedNotification::GameStatusEndedOpponentTimedOut,
                 ) => true,
                 (
-                    GameNotification::OpponentSlashedUs { .. },
-                    ExpectedNotification::OpponentSlashedUs,
+                    GameNotification::GameStatus {
+                        status: GameStatusKind::EndedCancelled,
+                        ..
+                    },
+                    ExpectedNotification::GameStatusEndedCancelled,
                 ) => true,
                 (
-                    GameNotification::OpponentSuccessfullyCheated { .. },
-                    ExpectedNotification::OpponentSuccessfullyCheated,
+                    GameNotification::GameStatus {
+                        status: GameStatusKind::IllegalMoveDetected,
+                        ..
+                    },
+                    ExpectedNotification::GameStatusIllegalMoveDetected,
                 ) => true,
                 (
-                    GameNotification::StaleChannelUnroll { .. },
-                    ExpectedNotification::StaleChannelUnroll,
+                    GameNotification::GameStatus {
+                        status: GameStatusKind::EndedWeSlashedOpponent,
+                        ..
+                    },
+                    ExpectedNotification::GameStatusEndedWeSlashedOpponent,
                 ) => true,
                 (
-                    GameNotification::ChannelCoinSpent { .. },
-                    ExpectedNotification::ChannelCoinSpent,
+                    GameNotification::GameStatus {
+                        status: GameStatusKind::EndedOpponentSlashedUs,
+                        ..
+                    },
+                    ExpectedNotification::GameStatusEndedOpponentSlashedUs,
                 ) => true,
                 (
-                    GameNotification::UnrollCoinSpent { .. },
-                    ExpectedNotification::UnrollCoinSpent,
+                    GameNotification::GameStatus {
+                        status: GameStatusKind::EndedOpponentSuccessfullyCheated,
+                        ..
+                    },
+                    ExpectedNotification::GameStatusEndedOpponentSuccessfullyCheated,
                 ) => true,
-                (GameNotification::ChannelError { .. }, ExpectedNotification::ChannelError) => true,
-                (GameNotification::GameError { .. }, ExpectedNotification::GameError) => true,
+                (
+                    GameNotification::GameStatus {
+                        status: GameStatusKind::OnChainTheirTurn,
+                        other_params: Some(params),
+                        ..
+                    },
+                    ExpectedNotification::GameStatusMovedByUs,
+                ) => params.moved_by_us.unwrap_or(false),
+                (
+                    GameNotification::GameStatus {
+                        status:
+                            GameStatusKind::OnChainMyTurn
+                            | GameStatusKind::OnChainTheirTurn
+                            | GameStatusKind::Replaying,
+                        ..
+                    },
+                    ExpectedNotification::GameStatusOnChainTurn,
+                ) => true,
+                (
+                    GameNotification::GameStatus {
+                        status: GameStatusKind::EndedError,
+                        ..
+                    },
+                    ExpectedNotification::GameStatusEndedError,
+                ) => true,
                 (GameNotification::GameProposed { .. }, ExpectedNotification::GameProposed) => true,
                 (
                     GameNotification::GameProposalAccepted { .. },
@@ -478,6 +612,13 @@ fn event_matches(actual: &TestEvent, expected: &ExpectedEvent) -> bool {
                     GameNotification::InsufficientBalance { .. },
                     ExpectedNotification::InsufficientBalance,
                 ) => true,
+                (
+                    GameNotification::ChannelStatus {
+                        state: actual_state,
+                        ..
+                    },
+                    ExpectedNotification::ChannelState(expected_state),
+                ) => actual_state == expected_state,
                 _ => false,
             }
         }
@@ -489,31 +630,24 @@ fn event_shape(actual: &TestEvent) -> String {
     match actual {
         TestEvent::OpponentMoved { state_number, mover_share, .. } => format!("OpponentMoved(sn={state_number},share={})", mover_share.to_u64()),
         TestEvent::GameMessage { .. } => "GameMessage".to_string(),
-        TestEvent::GoingOnChain { reason } => format!("GoingOnChain(reason={reason})"),
-        TestEvent::CleanShutdownComplete => "CleanShutdownComplete".to_string(),
         TestEvent::Notification(n) => match n {
-            GameNotification::WeTimedOut { .. } => "Notif(WeTimedOut)".to_string(),
-            GameNotification::OpponentTimedOut { .. } => "Notif(OpponentTimedOut)".to_string(),
-            GameNotification::GameCancelled { .. } => "Notif(GameCancelled)".to_string(),
-            GameNotification::OpponentPlayedIllegalMove { .. } => "Notif(OpponentPlayedIllegalMove)".to_string(),
-            GameNotification::WeSlashedOpponent { .. } => "Notif(WeSlashedOpponent)".to_string(),
-            GameNotification::OpponentSlashedUs { .. } => "Notif(OpponentSlashedUs)".to_string(),
-            GameNotification::OpponentSuccessfullyCheated { .. } => "Notif(OpponentSuccessfullyCheated)".to_string(),
-            GameNotification::StaleChannelUnroll { .. } => "Notif(StaleChannelUnroll)".to_string(),
-            GameNotification::ChannelCoinSpent { .. } => "Notif(ChannelCoinSpent)".to_string(),
-            GameNotification::UnrollCoinSpent { .. } => "Notif(UnrollCoinSpent)".to_string(),
-            GameNotification::ChannelError { .. } => "Notif(ChannelError)".to_string(),
-            GameNotification::GameError { .. } => "Notif(GameError)".to_string(),
+            GameNotification::GameStatus { id, status, other_params, .. } => {
+                if matches!(status, GameStatusKind::OnChainTheirTurn)
+                    && other_params
+                        .as_ref()
+                        .and_then(|p| p.moved_by_us)
+                        .unwrap_or(false)
+                {
+                    return "Notif(GameStatusMovedByUs)".to_string();
+                }
+                format!("Notif(GameStatus(id={id:?},status={status:?}))")
+            }
             GameNotification::GameProposed { id, .. } => format!("Notif(GameProposed(id={id:?}))"),
             GameNotification::GameProposalAccepted { id } => format!("Notif(GameProposalAccepted(id={id:?}))"),
             GameNotification::GameProposalCancelled { id, reason } => format!("Notif(GameProposalCancelled(id={id:?},reason={reason}))"),
             GameNotification::InsufficientBalance { id, our_balance_short, their_balance_short } => format!("Notif(InsufficientBalance(id={id:?},ours={our_balance_short},theirs={their_balance_short}))"),
-            GameNotification::OpponentMoved { .. } => "Notif(OpponentMoved)".to_string(),
-            GameNotification::GameMessage { .. } => "Notif(GameMessage)".to_string(),
-            GameNotification::ChannelCreated { .. } => "Notif(ChannelCreated)".to_string(),
-            GameNotification::CleanShutdownStarted { .. } => "Notif(CleanShutdownStarted)".to_string(),
-            GameNotification::CleanShutdownComplete { .. } => "Notif(CleanShutdownComplete)".to_string(),
-            GameNotification::GoingOnChain { reason } => format!("Notif(GoingOnChain(reason={reason}))"),
+            GameNotification::ActionFailed { reason } => format!("Notif(ActionFailed(reason={reason}))"),
+            GameNotification::ChannelStatus { state, .. } => format!("Notif(ChannelStatus(state={state:?}))"),
         },
     }
 }
@@ -524,31 +658,40 @@ fn expected_shape(expected: &ExpectedEvent) -> String {
             format!("OpponentMoved(share={})", mover_share.to_u64())
         }
         ExpectedEvent::GameMessage => "GameMessage".to_string(),
-        ExpectedEvent::GoingOnChain => "GoingOnChain".to_string(),
-        ExpectedEvent::CleanShutdownComplete => "CleanShutdownComplete".to_string(),
         ExpectedEvent::Notification(n) => match n {
-            ExpectedNotification::WeTimedOut => "Notif(WeTimedOut)".to_string(),
-            ExpectedNotification::OpponentTimedOut => "Notif(OpponentTimedOut)".to_string(),
-            ExpectedNotification::GameCancelled => "Notif(GameCancelled)".to_string(),
-            ExpectedNotification::OpponentPlayedIllegalMove => {
-                "Notif(OpponentPlayedIllegalMove)".to_string()
+            ExpectedNotification::GameStatusEndedWeTimedOut => {
+                "Notif(GameStatusEndedWeTimedOut)".to_string()
             }
-            ExpectedNotification::WeSlashedOpponent => "Notif(WeSlashedOpponent)".to_string(),
-            ExpectedNotification::OpponentSlashedUs => "Notif(OpponentSlashedUs)".to_string(),
-            ExpectedNotification::OpponentSuccessfullyCheated => {
-                "Notif(OpponentSuccessfullyCheated)".to_string()
+            ExpectedNotification::GameStatusEndedOpponentTimedOut => {
+                "Notif(GameStatusEndedOpponentTimedOut)".to_string()
             }
-            ExpectedNotification::StaleChannelUnroll => "Notif(StaleChannelUnroll)".to_string(),
-            ExpectedNotification::ChannelCoinSpent => "Notif(ChannelCoinSpent)".to_string(),
-            ExpectedNotification::UnrollCoinSpent => "Notif(UnrollCoinSpent)".to_string(),
-            ExpectedNotification::ChannelError => "Notif(ChannelError)".to_string(),
-            ExpectedNotification::GameError => "Notif(GameError)".to_string(),
+            ExpectedNotification::GameStatusEndedCancelled => {
+                "Notif(GameStatusEndedCancelled)".to_string()
+            }
+            ExpectedNotification::GameStatusIllegalMoveDetected => {
+                "Notif(GameStatusIllegalMoveDetected)".to_string()
+            }
+            ExpectedNotification::GameStatusEndedWeSlashedOpponent => {
+                "Notif(GameStatusEndedWeSlashedOpponent)".to_string()
+            }
+            ExpectedNotification::GameStatusEndedOpponentSlashedUs => {
+                "Notif(GameStatusEndedOpponentSlashedUs)".to_string()
+            }
+            ExpectedNotification::GameStatusEndedOpponentSuccessfullyCheated => {
+                "Notif(GameStatusEndedOpponentSuccessfullyCheated)".to_string()
+            }
+            ExpectedNotification::GameStatusMovedByUs => "Notif(GameStatusMovedByUs)".to_string(),
+            ExpectedNotification::GameStatusOnChainTurn => {
+                "Notif(GameStatusOnChainTurn)".to_string()
+            }
+            ExpectedNotification::GameStatusEndedError => "Notif(GameStatusEndedError)".to_string(),
             ExpectedNotification::GameProposed => "Notif(GameProposed)".to_string(),
             ExpectedNotification::GameProposalAccepted => "Notif(GameProposalAccepted)".to_string(),
             ExpectedNotification::GameProposalCancelled => {
                 "Notif(GameProposalCancelled)".to_string()
             }
             ExpectedNotification::InsufficientBalance => "Notif(InsufficientBalance)".to_string(),
+            ExpectedNotification::ChannelState(s) => format!("Notif(ChannelStatus(state={s:?}))"),
         },
     }
 }
@@ -591,22 +734,18 @@ pub fn assert_event_sequence(events: &[TestEvent], expected: &[ExpectedEvent], p
 pub fn assert_reward_coin_consistency(notifications: &[GameNotification], label: &str) {
     for n in notifications {
         match n {
-            GameNotification::WeTimedOut {
-                our_reward,
-                reward_coin,
-                ..
-            }
-            | GameNotification::OpponentTimedOut {
-                our_reward,
-                reward_coin,
-                ..
-            }
-            | GameNotification::OpponentSuccessfullyCheated {
-                our_reward,
-                reward_coin,
+            GameNotification::GameStatus {
+                status:
+                    GameStatusKind::EndedWeTimedOut
+                    | GameStatusKind::EndedOpponentTimedOut
+                    | GameStatusKind::EndedOpponentSuccessfullyCheated,
+                my_reward,
+                coin_id,
                 ..
             } => {
-                if let Some(rc) = reward_coin {
+                let our_reward = my_reward.clone().unwrap_or_default();
+                let reward_coin = coin_id.clone();
+                if let Some(ref rc) = reward_coin {
                     let parts = rc.to_parts();
                     assert!(
                         parts.is_some(),
@@ -618,24 +757,12 @@ pub fn assert_reward_coin_consistency(notifications: &[GameNotification], label:
                         "{label}: reward_coin is Some but amount is zero: {n:?}"
                     );
                 }
-                let has_reward = *our_reward > Amount::default();
+                let has_reward = our_reward > Amount::default();
                 let has_coin = reward_coin.is_some();
                 assert_eq!(
                     has_reward, has_coin,
                     "{label}: our_reward/reward_coin mismatch (has_reward={has_reward}, has_coin={has_coin}): {n:?}"
                 );
-            }
-            GameNotification::WeSlashedOpponent { .. } => {
-                // reward_coin is CoinString (not Option); may be default if
-                // no reward coin was found. No structural assertion here.
-            }
-            GameNotification::UnrollCoinSpent { reward_coin } => {
-                if let Some(rc) = reward_coin {
-                    assert!(
-                        rc.to_parts().is_some(),
-                        "{label}: UnrollCoinSpent reward_coin is Some but not parseable: {n:?}"
-                    );
-                }
             }
             _ => {}
         }
@@ -668,61 +795,115 @@ impl LocalTestUIReceiver {
         );
     }
 
-    pub fn has_terminal_notification(&self) -> bool {
-        let has_game_terminal = self.notifications.iter().any(|n| {
-            matches!(
-                n,
-                GameNotification::WeTimedOut { .. }
-                    | GameNotification::OpponentTimedOut { .. }
-                    | GameNotification::WeSlashedOpponent { .. }
-                    | GameNotification::OpponentSlashedUs { .. }
-                    | GameNotification::OpponentSuccessfullyCheated { .. }
-                    | GameNotification::GameCancelled { .. }
-                    | GameNotification::GameError { .. }
-                    | GameNotification::ChannelError { .. }
-            )
-        });
-        if has_game_terminal {
-            return true;
+    /// True when every accepted game has exactly one terminal game notification (same notion as
+    /// post-run invariants). Vacuously true if there are no `GameProposalAccepted` games.
+    pub fn all_accepted_games_have_terminal_notification(&self) -> bool {
+        let accepted_ids: HashSet<GameID> = self
+            .notifications
+            .iter()
+            .filter_map(|n| {
+                if let GameNotification::GameProposalAccepted { id } = n {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for id in accepted_ids {
+            let terminal_count = self
+                .notifications
+                .iter()
+                .filter(|n| match n {
+                    GameNotification::InsufficientBalance { id: nid, .. } => nid == &id,
+                    GameNotification::GameStatus {
+                        id: nid, status, ..
+                    } => nid == &id && is_terminal_game_status(status),
+                    _ => false,
+                })
+                .count();
+            if terminal_count != 1 {
+                return false;
+            }
         }
-        let has_unroll = self
-            .notifications
-            .iter()
-            .any(|n| matches!(n, GameNotification::UnrollCoinSpent { .. }));
-        let had_games = self
-            .notifications
-            .iter()
-            .any(|n| matches!(n, GameNotification::GameProposalAccepted { .. }));
-        has_unroll && !had_games
+        true
     }
 }
 
 impl ToLocalUI for LocalTestUIReceiver {
     fn notification(&mut self, notification: &GameNotification) -> Result<(), Error> {
         match notification {
-            GameNotification::ChannelCreated { .. } => {
+            GameNotification::ChannelStatus {
+                state: ChannelState::Active,
+                ..
+            } => {
                 self.channel_created = true;
             }
-            GameNotification::OpponentMoved {
+            GameNotification::GameStatus {
                 id,
-                state_number,
-                readable,
-                mover_share,
+                status,
+                other_params,
+                ..
             } => {
-                self.assert_channel_created("opponent_moved");
-                self.opponent_moved_in_game.insert(id.clone());
-                self.opponent_moves.push((
-                    id.clone(),
-                    *state_number,
-                    readable.clone(),
-                    mover_share.clone(),
-                ));
-                self.events.push(TestEvent::OpponentMoved {
-                    id: id.clone(),
-                    state_number: *state_number,
-                    readable: readable.clone(),
-                    mover_share: mover_share.clone(),
-                });
+                if let Some(params) = other_params {
+                    if let Some(readable) = params.readable.clone() {
+                        if let Some(mover_share) = params.mover_share.clone() {
+                            self.assert_channel_created("opponent_moved");
+                            self.opponent_moved_in_game.insert(id.clone());
+                            self.opponent_moves.push((
+                                id.clone(),
+                                0,
+                                readable.clone(),
+                                mover_share.clone(),
+                            ));
+                            self.events.push(TestEvent::OpponentMoved {
+                                id: id.clone(),
+                                state_number: 0,
+                                readable,
+                                mover_share,
+                            });
+                        } else {
+                            self.assert_channel_created("game_message");
+                            self.opponent_messages.push(OpponentMessageInfo {
+                                opponent_move_size: self.opponent_moves.len(),
+                                opponent_message: readable.clone(),
+                            });
+                            self.events.push(TestEvent::GameMessage {
+                                id: id.clone(),
+                                readable,
+                            });
+                        }
+                    }
+                }
+                self.notifications.push(notification.clone());
+                if is_terminal_game_status(status) {
+                    self.assert_channel_created("game_terminal");
+                    self.game_finished_ids.insert(id.clone());
+                    self.events
+                        .push(TestEvent::Notification(notification.clone()));
+                    return Ok(());
+                }
+                if matches!(
+                    status,
+                    GameStatusKind::OnChainMyTurn
+                        | GameStatusKind::OnChainTheirTurn
+                        | GameStatusKind::Replaying
+                        | GameStatusKind::IllegalMoveDetected
+                ) {
+                    self.events
+                        .push(TestEvent::Notification(notification.clone()));
+                }
+                if matches!(status, GameStatusKind::OnChainTheirTurn)
+                    && other_params
+                        .as_ref()
+                        .and_then(|p| p.moved_by_us)
+                        .unwrap_or(false)
+                {
+                    // Preserve event-count parity for tests expecting a separate GameStatusMovedByUs signal.
+                    self.events
+                        .push(TestEvent::Notification(notification.clone()));
+                } else {
+                    self.assert_channel_created("game_status");
+                }
             }
             GameNotification::GameProposed { id, .. } => {
                 self.assert_channel_created("game_proposed");
@@ -738,44 +919,54 @@ impl ToLocalUI for LocalTestUIReceiver {
                 self.events
                     .push(TestEvent::Notification(notification.clone()));
             }
-            GameNotification::WeTimedOut { id, .. }
-            | GameNotification::OpponentTimedOut { id, .. }
-            | GameNotification::WeSlashedOpponent { id, .. }
-            | GameNotification::OpponentSlashedUs { id }
-            | GameNotification::OpponentSuccessfullyCheated { id, .. }
-            | GameNotification::GameCancelled { id, .. }
-            | GameNotification::GameError { id, .. } => {
+            GameNotification::InsufficientBalance { id, .. } => {
                 self.assert_channel_created("game_terminal");
                 self.game_finished_ids.insert(id.clone());
                 self.notifications.push(notification.clone());
                 self.events
                     .push(TestEvent::Notification(notification.clone()));
             }
-            GameNotification::GameMessage { id, readable } => {
-                self.assert_channel_created("game_message");
-                self.opponent_messages.push(OpponentMessageInfo {
-                    opponent_move_size: self.opponent_moves.len(),
-                    opponent_message: readable.clone(),
-                });
-                self.events.push(TestEvent::GameMessage {
-                    id: id.clone(),
-                    readable: readable.clone(),
-                });
-            }
-            GameNotification::CleanShutdownStarted { .. } => {
-                self.assert_channel_created("clean_shutdown_started");
-            }
-            GameNotification::CleanShutdownComplete { .. } => {
-                self.assert_channel_created("clean_shutdown_complete");
-                self.clean_shutdown_complete = true;
-                self.events.push(TestEvent::CleanShutdownComplete);
-            }
-            GameNotification::GoingOnChain { reason } => {
-                self.go_on_chain = true;
-                self.got_error = true;
-                self.events.push(TestEvent::GoingOnChain {
-                    reason: reason.clone(),
-                });
+            GameNotification::ChannelStatus { state, .. } => {
+                if matches!(state, ChannelState::Active) {
+                    self.channel_created = true;
+                }
+                if matches!(
+                    state,
+                    ChannelState::ShuttingDown
+                        | ChannelState::ResolvedClean
+                        | ChannelState::ResolvedUnrolled
+                        | ChannelState::ResolvedStale
+                ) {
+                    self.assert_channel_created("channel_status");
+                }
+                if matches!(state, ChannelState::ResolvedClean) {
+                    self.clean_shutdown_complete = true;
+                }
+                if matches!(
+                    state,
+                    ChannelState::GoingOnChain
+                        | ChannelState::Unrolling
+                        | ChannelState::ResolvedStale
+                        | ChannelState::Failed
+                ) {
+                    self.go_on_chain = true;
+                    self.got_error = true;
+                }
+                self.notifications.push(notification.clone());
+                if matches!(
+                    state,
+                    ChannelState::GoingOnChain
+                        | ChannelState::Unrolling
+                        | ChannelState::ShuttingDown
+                        | ChannelState::ShutdownTransactionPending
+                        | ChannelState::ResolvedClean
+                        | ChannelState::ResolvedUnrolled
+                        | ChannelState::ResolvedStale
+                        | ChannelState::Failed
+                ) {
+                    self.events
+                        .push(TestEvent::Notification(notification.clone()));
+                }
             }
             other => {
                 self.assert_channel_created("game_notification");
@@ -794,6 +985,7 @@ pub struct GameRunOutcome {
     pub cradles: [SynchronousGameCradle; 2],
     pub local_uis: [LocalTestUIReceiver; 2],
     pub simulator: Simulator,
+    pub debug_logs: [Vec<String>; 2],
 }
 
 fn reports_blocked(i: usize, blocked: &Option<(usize, usize)>) -> bool {
@@ -802,29 +994,6 @@ fn reports_blocked(i: usize, blocked: &Option<(usize, usize)>) -> bool {
     }
 
     false
-}
-
-fn gid_flipped(gid: &GameID) -> GameID {
-    GameID(gid.0 ^ 1)
-}
-
-fn gid_matches(set: &HashSet<GameID>, gid: &GameID) -> bool {
-    set.contains(gid) || set.contains(&gid_flipped(gid))
-}
-
-fn gid_resolve_from_sets(
-    gid: &GameID,
-    first: &HashSet<GameID>,
-    second: &HashSet<GameID>,
-) -> GameID {
-    if first.contains(gid) || second.contains(gid) {
-        return *gid;
-    }
-    let flipped = gid_flipped(gid);
-    if first.contains(&flipped) || second.contains(&flipped) {
-        return flipped;
-    }
-    *gid
 }
 
 fn gid_diag_enabled() -> bool {
@@ -844,22 +1013,21 @@ fn move_ready(moves: &[GameAction], mn: usize, local_uis: &[LocalTestUIReceiver;
     }
     match &moves[mn] {
         GameAction::Move(who, gid, _, _) | GameAction::FakeMove(who, gid, _, _) => {
-            gid_matches(&local_uis[*who].game_accepted_ids, gid)
-                || gid_matches(&local_uis[*who].opponent_moved_in_game, gid)
+            local_uis[*who].game_accepted_ids.contains(gid)
+                || local_uis[*who].opponent_moved_in_game.contains(gid)
         }
         _ => false,
     }
 }
 
 fn accept_resolved(local_uis: &[LocalTestUIReceiver; 2], who: usize, gid: &GameID) -> bool {
-    gid_matches(&local_uis[who].game_accepted_ids, gid)
+    local_uis[who].game_accepted_ids.contains(gid)
         || local_uis[who].notifications.iter().any(|n| {
             matches!(n,
                 GameNotification::InsufficientBalance { id, .. }
-                | GameNotification::GameCancelled { id }
                 | GameNotification::GameProposalCancelled { id, .. }
-                    if id == gid || *id == gid_flipped(gid)
-            )
+                    if id == gid
+            ) || is_terminal_for_id(n, gid)
         })
 }
 
@@ -872,17 +1040,10 @@ fn accept_proposal_ready(
         return false;
     }
     if let GameAction::AcceptProposal(who, gid) = &moves[mn] {
-        if local_uis[*who].accepted_proposal_ids.contains(gid)
-            || local_uis[*who]
-                .accepted_proposal_ids
-                .contains(&gid_flipped(gid))
-        {
+        if local_uis[*who].accepted_proposal_ids.contains(gid) {
             accept_resolved(local_uis, *who, gid)
         } else {
             local_uis[*who].received_proposal_ids.contains(gid)
-                || local_uis[*who]
-                    .received_proposal_ids
-                    .contains(&gid_flipped(gid))
         }
     } else {
         false
@@ -906,101 +1067,6 @@ fn propose_ready(moves: &[GameAction], mn: usize, local_uis: &[LocalTestUIReceiv
     }
 }
 
-fn build_condition(
-    allocator: &mut AllocEncoder,
-    opcode: u32,
-    args: &[NodePtr],
-) -> Result<NodePtr, Error> {
-    let op_node = opcode.to_clvm(allocator).into_gen()?;
-    let mut result = allocator.allocator().nil();
-    for arg in args.iter().rev() {
-        result = allocator.allocator().new_pair(*arg, result).into_gen()?;
-    }
-    allocator.allocator().new_pair(op_node, result).into_gen()
-}
-
-fn build_conditions_list(
-    allocator: &mut AllocEncoder,
-    conditions: &[NodePtr],
-) -> Result<NodePtr, Error> {
-    let mut result = allocator.allocator().nil();
-    for cond in conditions.iter().rev() {
-        result = allocator.allocator().new_pair(*cond, result).into_gen()?;
-    }
-    Ok(result)
-}
-
-fn build_wallet_bundle_for_request(
-    allocator: &mut AllocEncoder,
-    rng: &mut ChaCha8Rng,
-    simulator: &Simulator,
-    identity: &ChiaIdentity,
-    req: &CoinSpendRequest,
-) -> Result<SpendBundle, Error> {
-    let coin_amount = Amount::new(req.amount.to_u64());
-    let selected_coin = if let Some(ref cid) = req.coin_id {
-        simulator
-            .find_coin_by_id(cid)?
-            .ok_or_else(|| Error::StrErr(format!("requested coin not found: {:?}", cid)))?
-    } else {
-        simulator
-            .select_coins(&identity.puzzle_hash, &coin_amount)?
-            .ok_or_else(|| Error::StrErr("no coin with enough balance".into()))?
-    };
-
-    let mut condition_nodes = Vec::new();
-    for cond in &req.conditions {
-        let mut arg_nodes = Vec::new();
-        for arg in &cond.args {
-            let node = allocator.allocator().new_atom(arg).into_gen()?;
-            arg_nodes.push(node);
-        }
-        let cond_node = build_condition(allocator, cond.opcode, &arg_nodes)?;
-        condition_nodes.push(cond_node);
-    }
-
-    let selected_amount = selected_coin
-        .to_parts()
-        .ok_or_else(|| Error::StrErr("bad coin string".into()))?
-        .2;
-    let excess = selected_amount.to_u64().saturating_sub(req.amount.to_u64());
-    if excess > 0 {
-        let ph_node = identity.puzzle_hash.to_clvm(allocator).into_gen()?;
-        let amt_node = excess.to_clvm(allocator).into_gen()?;
-        let change_cond = build_condition(allocator, CREATE_COIN, &[ph_node, amt_node])?;
-        condition_nodes.push(change_cond);
-    }
-
-    let conditions = build_conditions_list(allocator, &condition_nodes)?;
-
-    let agg_sig_me_data = {
-        let env = ChannelHandlerEnv::new(allocator, rng)?;
-        env.agg_sig_me_additional_data.clone()
-    };
-
-    let spend_info = standard_solution_partial(
-        allocator,
-        &identity.synthetic_private_key,
-        &selected_coin.to_coin_id(),
-        conditions,
-        &identity.synthetic_public_key,
-        &agg_sig_me_data,
-        false,
-    )?;
-
-    Ok(SpendBundle {
-        name: None,
-        spends: vec![CoinSpend {
-            coin: selected_coin,
-            bundle: Spend {
-                puzzle: identity.puzzle.clone(),
-                solution: spend_info.solution.clone(),
-                signature: spend_info.signature.clone(),
-            },
-        }],
-    })
-}
-
 fn run_game_container_with_action_list_with_success_predicate(
     allocator: &mut AllocEncoder,
     rng: &mut ChaCha8Rng,
@@ -1016,8 +1082,6 @@ fn run_game_container_with_action_list_with_success_predicate(
     let mut move_number = 0;
     let gid_diag_on = gid_diag_enabled();
     let test_name = crate::simulator::current_test_name().unwrap_or_else(|| "unknown".to_string());
-    debug!("DEBUG: RNG {:?}", rng);
-    // debug!("DEBUG: KEYS {:?}", private_keys);
     // Coinset adapter for each side.
     let game_type_map = poker_collection(allocator);
 
@@ -1045,13 +1109,18 @@ fn run_game_container_with_action_list_with_success_predicate(
         &coins0[0],
         Amount::new(bal),
     )?;
-    let (_parent_coin_1, _rest_1) = simulator.transfer_coin_amount(
+    let (parent_coin_1, _rest_1) = simulator.transfer_coin_amount(
         allocator,
         &identities[1].puzzle_hash,
         &identities[1],
         &coins1[0],
         Amount::new(bal),
     )?;
+    let launcher_coin = CoinString::from_parts(
+        &parent_coin_0.to_coin_id(),
+        &PuzzleHash::from_bytes(SINGLETON_LAUNCHER_HASH),
+        &Amount::default(),
+    );
 
     simulator.farm_block(&neutral_identity.puzzle_hash);
 
@@ -1062,7 +1131,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             identity: identities[0].clone(),
             my_contribution: Amount::new(bal),
             their_contribution: Amount::new(bal),
-            channel_timeout: Timeout::new(100),
+            channel_timeout: Timeout::new(5),
             unroll_timeout: Timeout::new(5),
             reward_puzzle_hash: identities[0].puzzle_hash.clone(),
         },
@@ -1075,7 +1144,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             identity: identities[1].clone(),
             my_contribution: Amount::new(bal),
             their_contribution: Amount::new(bal),
-            channel_timeout: Timeout::new(100),
+            channel_timeout: Timeout::new(5),
             unroll_timeout: Timeout::new(5),
             reward_puzzle_hash: identities[1].puzzle_hash.clone(),
         },
@@ -1094,22 +1163,11 @@ fn run_game_container_with_action_list_with_success_predicate(
     let mut nerf_messages_for: u8 = 0;
     let mut start_step = 0;
     let mut num_steps = 0;
+    let mut debug_logs: [Vec<String>; 2] = [Vec::new(), Vec::new()];
 
-    // Compute the launcher coin ID upfront so the handshake uses the correct
-    // channel coin parent for all AGG_SIG_ME signatures.
-    let launcher_ph = PuzzleHash::from_bytes(SINGLETON_LAUNCHER_HASH);
-    let launcher_coin = CoinString::from_parts(
-        &parent_coin_0.to_coin_id(),
-        &launcher_ph,
-        &Amount::default(),
-    );
-    cradles[0].start_handshake(allocator, rng)?;
-    cradles[1].start_handshake(allocator, rng)?;
-    debug!(
-        "HANDSHAKE STARTED: cradle[0].handshake_finished={} cradle[1].handshake_finished={}",
-        cradles[0].handshake_finished(),
-        cradles[1].handshake_finished()
-    );
+    // Give coins to the cradles.
+    cradles[0].opening_coin(allocator, parent_coin_0)?;
+    cradles[1].opening_coin(allocator, parent_coin_1)?;
 
     let global_move = |moves: &[GameAction], move_number: usize| {
         move_number < moves.len()
@@ -1150,27 +1208,15 @@ fn run_game_container_with_action_list_with_success_predicate(
 
     while !matches!(ending, Some(0)) {
         num_steps += 1;
-        debug!(
-            "{num_steps} can move {can_move} {move_number} {:?}",
-            &moves_input[move_number..]
-        );
-        let move_input = moves_input.get(move_number);
 
-        if let Some(GameAction::Move(_, _, rm, _)) = &move_input {
-            debug!("ReadableMove is {:?}", rm);
-        } else if let Some(GameAction::FakeMove(_, _, rm, _)) = &move_input {
-            debug!("ReadableMove is {:?}", rm);
-        } else {
-            let length = moves_input.len();
-            if move_number < length {
-                debug!("Got move_input {move_input:?} but could not construct ReadableMove!!");
-            } else {
-                debug!("We're past the end of the given actions, probably waiting to shut down");
-            }
-        }
+        let handshake_flags = [
+            cradles[0].handshake_finished(),
+            cradles[1].handshake_finished(),
+        ];
+        let channel_created_flags = [local_uis[0].channel_created, local_uis[1].channel_created];
         assert!(
             num_steps < 200,
-            "simulation stalled: num_steps={num_steps} move_number={move_number} can_move={can_move} next_action={:?} explicit_go_on_chain={has_explicit_go_on_chain}",
+            "simulation stalled: num_steps={num_steps} move_number={move_number} can_move={can_move} next_action={:?} explicit_go_on_chain={has_explicit_go_on_chain} handshake_finished={handshake_flags:?} channel_created={channel_created_flags:?}",
             moves_input.get(move_number)
         );
 
@@ -1200,13 +1246,13 @@ fn run_game_container_with_action_list_with_success_predicate(
                     cradles,
                     local_uis,
                     simulator,
+                    debug_logs,
                 });
             }
         }
 
         for i in 0..=1 {
             if local_uis[i].go_on_chain && cradles[i].is_on_chain() {
-                debug!("go_on_chain flag set for player {i} but already on chain (handled internally), clearing flag");
                 local_uis[i].go_on_chain = false;
             } else if local_uis[i].go_on_chain && cradles[i].handshake_finished() {
                 if !has_explicit_go_on_chain && !local_uis[i].got_error {
@@ -1216,20 +1262,16 @@ fn run_game_container_with_action_list_with_success_predicate(
                         moves_input.get(move_number)
                     );
                 }
-                debug!(
-                    "GO_ON_CHAIN: player {i} got_error={} move_number={move_number}",
-                    local_uis[i].got_error
-                );
                 local_uis[i].go_on_chain = false;
                 let got_error = local_uis[i].got_error;
-                cradles[i].go_on_chain(allocator, rng, &mut local_uis[i], got_error)?;
+                cradles[i].go_on_chain(allocator, &mut local_uis[i], got_error)?;
             }
 
             if reports_blocked(i, &wait_blocks) {
                 report_backlogs[i].push((current_height, watch_report.clone()));
             } else {
                 let t_nb = std::time::Instant::now();
-                cradles[i].new_block(allocator, rng, current_height, &watch_report)?;
+                cradles[i].new_block(allocator, current_height, &watch_report)?;
                 if timing_enabled {
                     let nb_elapsed = t_nb.elapsed();
                     if nb_elapsed.as_millis() > 10 {
@@ -1239,152 +1281,147 @@ fn run_game_container_with_action_list_with_success_predicate(
             }
 
             {
-                let mut result = cradles[i].drain_all(allocator, rng)?;
+                let result = cradles[i].flush_and_collect(allocator)?;
 
-                if result.need_launcher_coin && i == 0 {
-                    cradles[0].provide_launcher_coin(allocator, rng, launcher_coin.clone())?;
-                    result = cradles[0].drain_all(allocator, rng)?;
+                // Collect coin solution requests, launcher/coin-spend
+                // requests from this flush and all subsequent flushes they
+                // trigger, processing every other event inline in FIFO order.
+                let mut pending_events = result.events;
+                if matches!(result.resync, Some((_, true))) {
+                    can_move = true;
+                    let saved = move_number;
+                    while move_number > 0
+                        && (move_number >= moves_input.len()
+                            || !matches!(moves_input[move_number], GameAction::Move(_, _, _, _)))
+                    {
+                        move_number -= 1;
+                    }
+                    let dominated_by_other = match moves_input.get(move_number) {
+                        Some(GameAction::Move(who, _, _, _)) => *who != i,
+                        _ => true,
+                    };
+                    if dominated_by_other {
+                        move_number = saved;
+                    }
                 }
 
-                if let Some(ref req) = result.need_coin_spend {
-                    let wallet_bundle = build_wallet_bundle_for_request(
-                        allocator,
-                        rng,
-                        &simulator,
-                        &identities[i],
-                        req,
-                    )?;
-                    cradles[i].provide_coin_spend_bundle(allocator, rng, wallet_bundle)?;
-                    result = cradles[i].drain_all(allocator, rng)?;
-                }
+                loop {
+                    let mut coin_requests = Vec::new();
+                    let mut need_launcher = false;
+                    let mut coin_spend_req: Option<CoinSpendRequest> = None;
+                    for event in pending_events.iter() {
+                        match event {
+                            CradleEvent::NeedLauncherCoin => {
+                                need_launcher = true;
+                            }
+                            CradleEvent::NeedCoinSpend(req) => {
+                                coin_spend_req = Some(req.clone());
+                            }
+                            CradleEvent::OutboundTransaction(tx) => {
+                                if nerf_transactions_for & (1 << i) != 0 {
+                                    nerfed_tx_backlog.push(tx.clone());
+                                    continue;
+                                }
+                                let t_tx = std::time::Instant::now();
+                                let included_result = simulator.push_tx(allocator, &tx.spends)?;
+                                if timing_enabled {
+                                    let tx_elapsed = t_tx.elapsed();
+                                    if tx_elapsed.as_millis() > 10 {
+                                        eprintln!(
+                                            "  step {num_steps}: p{i} push_tx({:?}) {tx_elapsed:.2?}",
+                                            tx.name
+                                        );
+                                    }
+                                }
+                                let is_expected_duplicate = included_result.code == 3
+                                    && matches!(included_result.e, Some(5) | Some(20));
+                                let include_ok = included_result.code == 1 || is_expected_duplicate;
+                                assert!(
+                                    include_ok,
+                                    "tx include failed: move_number={move_number} tx_name={:?} code={} e={:?} diagnostic={:?}",
+                                    tx.name,
+                                    included_result.code,
+                                    included_result.e,
+                                    included_result.diagnostic
+                                );
+                            }
+                            CradleEvent::OutboundMessage(msg) => {
+                                if nerf_messages_for & (1 << i) != 0 {
+                                    continue;
+                                }
+                                if cradles[i].is_peer_disconnected() {
+                                    continue;
+                                }
+                                let t_msg = std::time::Instant::now();
+                                cradles[i ^ 1].deliver_message(msg)?;
+                                if timing_enabled {
+                                    let msg_elapsed = t_msg.elapsed();
+                                    if msg_elapsed.as_millis() > 10 {
+                                        eprintln!(
+                                            "  step {num_steps}: p{i}->p{} deliver_message {msg_elapsed:.2?}",
+                                            i ^ 1
+                                        );
+                                    }
+                                }
+                            }
+                            CradleEvent::Notification(n) => {
+                                local_uis[i].notification(n)?;
+                            }
+                            CradleEvent::ReceiveError(e) => {
+                                eprintln!("SIM receive error p{i}: {e}");
+                                local_uis[i].notification(&GameNotification::ChannelStatus {
+                                    state: ChannelState::Failed,
+                                    advisory: Some(format!("error receiving peer message: {e}")),
+                                    coin: None,
+                                    our_balance: None,
+                                    their_balance: None,
+                                    game_allocated: None,
+                                })?;
+                            }
+                            CradleEvent::CoinSolutionRequest(coin) => {
+                                coin_requests.push(coin.clone());
+                            }
+                            CradleEvent::DebugLog(line) => {
+                                debug_logs[i].push(line.clone());
+                            }
+                            CradleEvent::WatchCoin { .. } => {}
+                        }
+                    }
 
-                // Feed puzzle/solution requests back, then drain again
-                // to collect the effects they produce.
-                let mut extra_results = Vec::new();
-                for coin in result.coin_solution_requests.iter() {
-                    let ps_res = simulator
-                        .get_puzzle_and_solution(&coin.to_coin_id())
-                        .expect("should work");
-                    for (_ci, cradle) in cradles.iter_mut().enumerate() {
-                        cradle.report_puzzle_and_solution(
+                    let has_followup =
+                        need_launcher || coin_spend_req.is_some() || !coin_requests.is_empty();
+                    if !has_followup {
+                        break;
+                    }
+
+                    if i == 0 && need_launcher {
+                        cradles[i].provide_launcher_coin(allocator, launcher_coin.clone())?;
+                    }
+
+                    if let Some(req) = coin_spend_req {
+                        let wallet_bundle = build_wallet_bundle_for_request(
                             allocator,
-                            rng,
-                            coin,
-                            ps_res.as_ref().map(|ps| (&ps.0, &ps.1)),
+                            &simulator,
+                            &identities[i],
+                            &req,
                         )?;
-                    }
-                    extra_results.push(cradles[i].drain_all(allocator, rng)?);
-                }
-
-                // Process all drain results (initial + post-puzzle-solution).
-                let all_results = std::iter::once(&result).chain(extra_results.iter());
-                for dr in all_results {
-                    if matches!(dr.resync, Some((_, true))) {
-                        can_move = true;
-                        let saved = move_number;
-                        while move_number > 0
-                            && (move_number >= moves_input.len()
-                                || !matches!(
-                                    moves_input[move_number],
-                                    GameAction::Move(_, _, _, _)
-                                ))
-                        {
-                            move_number -= 1;
-                        }
-                        let dominated_by_other = match moves_input.get(move_number) {
-                            Some(GameAction::Move(who, _, _, _)) => *who != i,
-                            _ => true,
-                        };
-                        if dominated_by_other {
-                            move_number = saved;
-                        }
-                        debug!(
-                            "{num_steps} can move {can_move} {move_number} {:?}",
-                            &moves_input[move_number..]
-                        );
+                        cradles[i].provide_coin_spend_bundle(allocator, wallet_bundle)?;
                     }
 
-                    for tx in dr.outbound_transactions.iter() {
-                        if nerf_transactions_for & (1 << i) != 0 {
-                            debug!("NERFED tx from player {i}: {:?}", tx.name);
-                            nerfed_tx_backlog.push(tx.clone());
-                            continue;
-                        }
-                        let any_stale =
-                            tx.spends.iter().any(|cs| simulator.is_coin_spent(&cs.coin));
-                        if any_stale {
-                            debug!("step {num_steps}: p{i} skipping stale tx {:?}", tx.name);
-                            continue;
-                        }
-                        let t_tx = std::time::Instant::now();
-                        let included_result = simulator.push_tx(allocator, &tx.spends)?;
-                        if timing_enabled {
-                            let tx_elapsed = t_tx.elapsed();
-                            if tx_elapsed.as_millis() > 10 {
-                                eprintln!(
-                                    "  step {num_steps}: p{i} push_tx({:?}) {tx_elapsed:.2?}",
-                                    tx.name
-                                );
-                            }
-                        }
-                        debug!(
-                            "TX result: code={} e={:?} diag={:?}",
-                            included_result.code, included_result.e, included_result.diagnostic
-                        );
-                        let is_expected_duplicate = included_result.code == 3
-                            && matches!(included_result.e, Some(5) | Some(20));
-                        let include_ok = included_result.code == 1 || is_expected_duplicate;
-                        assert!(
-                            include_ok,
-                            "tx include failed: move_number={move_number} tx_name={:?} code={} e={:?} diagnostic={:?}",
-                            tx.name,
-                            included_result.code,
-                            included_result.e,
-                            included_result.diagnostic
-                        );
-                    }
-
-                    if !handshake_done && !dr.outbound_messages.is_empty() {
-                        debug!(
-                            "MSGS step={} p{}: {} outbound messages",
-                            num_steps,
-                            i,
-                            dr.outbound_messages.len()
-                        );
-                    }
-                    for msg in dr.outbound_messages.iter() {
-                        if nerf_messages_for & (1 << i) != 0 {
-                            debug!("NERFED msg from player {i}");
-                            continue;
-                        }
-                        if cradles[i].is_peer_disconnected() {
-                            debug!("dropping outbound msg from player {i} (peer_disconnected)");
-                            continue;
-                        }
-                        let t_msg = std::time::Instant::now();
-                        cradles[i ^ 1].deliver_message(msg)?;
-                        if timing_enabled {
-                            let msg_elapsed = t_msg.elapsed();
-                            if msg_elapsed.as_millis() > 10 {
-                                eprintln!(
-                                    "  step {num_steps}: p{i}->p{} deliver_message {msg_elapsed:.2?}",
-                                    i ^ 1
-                                );
-                            }
+                    for coin in coin_requests.iter() {
+                        let ps_res = simulator
+                            .get_puzzle_and_solution(&coin.to_coin_id())
+                            .expect("should work");
+                        for (_ci, cradle) in cradles.iter_mut().enumerate() {
+                            cradle.report_puzzle_and_solution(
+                                allocator,
+                                coin,
+                                ps_res.as_ref().map(|ps| (&ps.0, &ps.1)),
+                            )?;
                         }
                     }
-
-                    for n in dr.notifications.iter() {
-                        debug!("NOTIFICATION player {i}: {n:?}");
-                        local_uis[i].notification(n)?;
-                    }
-
-                    for e in dr.receive_errors.iter() {
-                        debug!("RECEIVE ERROR player {i}: {e:?}");
-                        local_uis[i].notification(&GameNotification::GoingOnChain {
-                            reason: format!("error receiving peer message: {e:?}"),
-                        })?;
-                    }
+                    let follow_up = cradles[i].flush_and_collect(allocator)?;
+                    pending_events = follow_up.events;
                 }
             }
         }
@@ -1399,9 +1436,9 @@ fn run_game_container_with_action_list_with_success_predicate(
         }
         step_start = std::time::Instant::now();
 
-        let all_actions_processed = move_number >= moves_input.len();
         let should_end = cradles.iter().enumerate().all(|(i, c)| {
-            c.finished() || (all_actions_processed && local_uis[i].has_terminal_notification())
+            c.channel_status_terminal()
+                && local_uis[i].all_accepted_games_have_terminal_notification()
         }) && ending.is_none();
         if should_end {
             ending = Some(10);
@@ -1411,14 +1448,6 @@ fn run_game_container_with_action_list_with_success_predicate(
             *ending -= 1;
         }
 
-        if !handshake_done {
-            debug!(
-                "HANDSHAKE CHECK step={}: [0]={} [1]={}",
-                num_steps,
-                cradles[0].handshake_finished(),
-                cradles[1].handshake_finished()
-            );
-        }
         if !handshake_done && cradles.iter().all(|c| c.handshake_finished()) {
             if start_step == 0 {
                 start_step += 1;
@@ -1426,14 +1455,13 @@ fn run_game_container_with_action_list_with_success_predicate(
             }
 
             handshake_done = true;
-            debug!("HANDSHAKE DONE at step {}", num_steps);
         }
 
         if let Some((wb, _)) = &mut wait_blocks {
             #[allow(clippy::needless_range_loop)]
             for i in 0..=1 {
                 for (current_height, watch_report) in report_backlogs[i].iter() {
-                    cradles[i].new_block(allocator, rng, *current_height, watch_report)?;
+                    cradles[i].new_block(allocator, *current_height, watch_report)?;
                 }
                 report_backlogs[i].clear();
             }
@@ -1455,40 +1483,25 @@ fn run_game_container_with_action_list_with_success_predicate(
 
                 match ga {
                     GameAction::Move(who, gid, readable, _share) => {
-                        let runtime_gid = gid_resolve_from_sets(
-                            gid,
-                            &local_uis[*who].game_accepted_ids,
-                            &local_uis[*who].opponent_moved_in_game,
-                        );
                         if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "Move", gid, &runtime_gid);
+                            gid_diag(&test_name, action_idx, "Move", gid, gid);
                         }
                         let entropy = rng.gen();
                         let t_mv = std::time::Instant::now();
-                        cradles[*who].make_move(
-                            allocator,
-                            rng,
-                            &runtime_gid,
-                            readable.clone(),
-                            entropy,
-                        )?;
+                        cradles[*who].make_move(allocator, gid, readable.clone(), entropy)?;
                         if timing_enabled {
                             let mv_elapsed = t_mv.elapsed();
                             eprintln!("  step {num_steps}: p{who} make_move(move_number={move_number}) {mv_elapsed:.2?}");
                         }
-                        local_uis[*who].game_accepted_ids.remove(&runtime_gid);
-                        local_uis[*who].opponent_moved_in_game.remove(&runtime_gid);
+                        local_uis[*who].game_accepted_ids.remove(gid);
+                        local_uis[*who].opponent_moved_in_game.remove(gid);
                     }
                     GameAction::ProposeNewGame(who, _trigger)
                     | GameAction::ProposeNewGameTheirTurn(who, _trigger) => {
                         let my_turn = matches!(ga, GameAction::ProposeNewGame(_, _));
-                        let new_game_id = cradles[*who].next_game_id().unwrap();
-                        debug!("ProposeNewGame({who}, my_turn={my_turn}): game_id={new_game_id:?}");
                         let new_ids = cradles[*who].propose_game(
                             allocator,
-                            rng,
                             &GameStart {
-                                game_id: new_game_id,
                                 amount: Amount::new(200),
                                 my_contribution: Amount::new(100),
                                 game_type: GameType(game_type.to_vec()),
@@ -1502,53 +1515,25 @@ fn run_game_container_with_action_list_with_success_predicate(
                             .extend(new_ids.iter().cloned());
                     }
                     GameAction::AcceptProposal(who, gid) => {
-                        let runtime_gid = if local_uis[*who].received_proposal_ids.contains(gid) {
-                            *gid
-                        } else if local_uis[*who]
-                            .received_proposal_ids
-                            .contains(&gid_flipped(gid))
-                        {
-                            gid_flipped(gid)
-                        } else {
-                            *gid
-                        };
                         if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "AcceptProposal", gid, &runtime_gid);
+                            gid_diag(&test_name, action_idx, "AcceptProposal", gid, gid);
                         }
-                        if !local_uis[*who].accepted_proposal_ids.contains(&runtime_gid) {
-                            debug!(
-                                "AcceptProposal({who}, {runtime_gid:?}) [phase 1: calling accept]"
-                            );
-                            cradles[*who].accept_proposal(allocator, rng, &runtime_gid)?;
-                            local_uis[*who].accepted_proposal_ids.push(runtime_gid);
+                        if !local_uis[*who].accepted_proposal_ids.contains(gid) {
+                            cradles[*who].accept_proposal(allocator, gid)?;
+                            local_uis[*who].accepted_proposal_ids.push(*gid);
                             move_number -= 1;
-                        } else {
-                            debug!(
-                                "AcceptProposal({who}, {runtime_gid:?}) [phase 2: resolved, advancing]"
-                            );
                         }
                     }
                     GameAction::CancelProposal(who, gid) => {
-                        let runtime_gid = if local_uis[*who].received_proposal_ids.contains(gid) {
-                            *gid
-                        } else if local_uis[*who]
-                            .received_proposal_ids
-                            .contains(&gid_flipped(gid))
-                        {
-                            gid_flipped(gid)
-                        } else {
-                            *gid
-                        };
                         if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "CancelProposal", gid, &runtime_gid);
+                            gid_diag(&test_name, action_idx, "CancelProposal", gid, gid);
                         }
-                        debug!("CancelProposal({who}): game_id={runtime_gid:?}");
-                        cradles[*who].cancel_proposal(allocator, rng, &runtime_gid)?;
+                        cradles[*who].cancel_proposal(allocator, gid)?;
                     }
                     GameAction::GoOnChain(who) => {
                         assert!(
-                            !local_uis[*who].has_terminal_notification(),
-                            "GameAction::GoOnChain({who}) but game is already finished: move_number={move_number} notifications={:?}",
+                            !cradles[*who].channel_status_terminal(),
+                            "GameAction::GoOnChain({who}) but channel is already terminal: move_number={move_number} notifications={:?}",
                             local_uis[*who].notifications
                         );
                         if cradles[*who].is_on_chain() {
@@ -1560,7 +1545,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                             move_number -= 1;
                             continue;
                         }
-                        debug!("go on chain");
                         local_uis[*who].go_on_chain = true;
                     }
                     GameAction::GoOnChainThenMove(who) => {
@@ -1569,15 +1553,9 @@ fn run_game_container_with_action_list_with_success_predicate(
                             continue;
                         }
 
-                        debug!("go on chain then move for player {who}");
                         local_uis[*who].go_on_chain = true;
                         let got_error = local_uis[*who].got_error;
-                        cradles[*who].go_on_chain(
-                            allocator,
-                            rng,
-                            &mut local_uis[*who],
-                            got_error,
-                        )?;
+                        cradles[*who].go_on_chain(allocator, &mut local_uis[*who], got_error)?;
                         local_uis[*who].go_on_chain = false;
 
                         let next = moves_input.get(move_number);
@@ -1586,30 +1564,17 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 *mwho, *who,
                                 "GoOnChainThenMove({who}) followed by Move({mwho},...) — player mismatch"
                             );
-                            let runtime_gid = if cradles[*who].my_move_in_game(gid).is_some()
-                                || cradles[*who].get_game_coin(gid).is_some()
-                            {
-                                *gid
-                            } else {
-                                gid_flipped(gid)
-                            };
                             if gid_diag_on {
                                 gid_diag(
                                     &test_name,
                                     move_number,
                                     "GoOnChainThenMove/Move",
                                     gid,
-                                    &runtime_gid,
+                                    gid,
                                 );
                             }
                             let entropy = rng.gen();
-                            cradles[*who].make_move(
-                                allocator,
-                                rng,
-                                &runtime_gid,
-                                readable.clone(),
-                                entropy,
-                            )?;
+                            cradles[*who].make_move(allocator, gid, readable.clone(), entropy)?;
                             move_number += 1;
                         } else {
                             panic!(
@@ -1618,28 +1583,19 @@ fn run_game_container_with_action_list_with_success_predicate(
                         }
                     }
                     GameAction::FakeMove(who, gid, readable, move_data) => {
-                        let runtime_gid = gid_resolve_from_sets(
-                            gid,
-                            &local_uis[*who].game_accepted_ids,
-                            &local_uis[*who].opponent_moved_in_game,
-                        );
                         if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "FakeMove", gid, &runtime_gid);
+                            gid_diag(&test_name, action_idx, "FakeMove", gid, gid);
                         }
-                        debug!("make move (fake)");
                         let entropy = rng.gen();
-                        cradles[*who].make_move(
-                            allocator,
-                            rng,
-                            &runtime_gid,
-                            readable.clone(),
-                            entropy,
-                        )?;
-                        local_uis[*who].game_accepted_ids.remove(&runtime_gid);
-                        local_uis[*who].opponent_moved_in_game.remove(&runtime_gid);
+                        cradles[*who].make_move(allocator, gid, readable.clone(), entropy)?;
+                        // Flush pending actions into the events queue
+                        // (without draining) so replace_last_message can
+                        // find the outbound batch.
+                        cradles[*who].flush_pending(allocator)?;
+                        local_uis[*who].game_accepted_ids.remove(gid);
+                        local_uis[*who].opponent_moved_in_game.remove(gid);
 
                         cradles[*who].replace_last_message(|msg_envelope| {
-                            debug!("sabotage envelope = {msg_envelope:?}");
                             if let PeerMessage::Batch { actions, signatures, clean_shutdown } = msg_envelope {
                                 let mut new_actions = actions.clone();
                                 let mut found = false;
@@ -1668,34 +1624,16 @@ fn run_game_container_with_action_list_with_success_predicate(
                         })?;
                     }
                     GameAction::Cheat(who, gid, cheat_share) => {
-                        let runtime_gid = if cradles[*who].my_move_in_game(gid).is_some()
-                            || cradles[*who].get_game_coin(gid).is_some()
-                        {
-                            *gid
-                        } else {
-                            gid_flipped(gid)
-                        };
                         if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "Cheat", gid, &runtime_gid);
+                            gid_diag(&test_name, action_idx, "Cheat", gid, gid);
                         }
-                        cradles[*who].cheat(allocator, rng, &runtime_gid, cheat_share.clone())?;
+                        cradles[*who].cheat(allocator, gid, cheat_share.clone())?;
                     }
                     GameAction::ForceDestroyCoin(who, gid) => {
-                        let runtime_gid = if cradles[*who].get_game_coin(gid).is_some() {
-                            *gid
-                        } else {
-                            gid_flipped(gid)
-                        };
                         if gid_diag_on {
-                            gid_diag(
-                                &test_name,
-                                action_idx,
-                                "ForceDestroyCoin",
-                                gid,
-                                &runtime_gid,
-                            );
+                            gid_diag(&test_name, action_idx, "ForceDestroyCoin", gid, gid);
                         }
-                        if let Some(game_coin) = cradles[*who].get_game_coin(&runtime_gid) {
+                        if let Some(game_coin) = cradles[*who].get_game_coin(gid) {
                             force_destroyed_coins.push(game_coin);
                         } else {
                             move_number -= 1;
@@ -1714,17 +1652,9 @@ fn run_game_container_with_action_list_with_success_predicate(
                                     .iter()
                                     .any(|cs| !simulator.is_coin_spendable(&cs.coin));
                                 if any_stale {
-                                    debug!("REPLAY: skipping stale nerfed tx {:?}", tx.name);
                                     continue;
                                 }
-                                debug!("REPLAYING nerfed tx: {:?}", tx.name);
-                                let included_result = simulator.push_tx(allocator, &tx.spends)?;
-                                debug!(
-                                    "REPLAY result: code={} e={:?} diag={:?}",
-                                    included_result.code,
-                                    included_result.e,
-                                    included_result.diagnostic
-                                );
+                                simulator.push_tx(allocator, &tx.spends)?;
                             }
                         } else {
                             nerfed_tx_backlog.clear();
@@ -1740,18 +1670,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                         wait_blocks = Some((*n, *players));
                     }
                     GameAction::AcceptTimeout(who, gid) => {
-                        let runtime_gid = if cradles[*who].my_move_in_game(gid).is_some()
-                            || cradles[*who].get_game_coin(gid).is_some()
-                        {
-                            *gid
-                        } else {
-                            gid_flipped(gid)
-                        };
                         if gid_diag_on {
-                            gid_diag(&test_name, action_idx, "AcceptTimeout", gid, &runtime_gid);
+                            gid_diag(&test_name, action_idx, "AcceptTimeout", gid, gid);
                         }
-                        debug!("{who} doing ACCEPT for {runtime_gid:?}");
-                        cradles[*who].accept_timeout(allocator, rng, &runtime_gid)?;
+                        cradles[*who].accept_timeout(allocator, gid)?;
                     }
                     GameAction::Timeout(_who) => {
                         panic!("Timeout action is not supported in sim tests; use AcceptTimeout(player, game_id)");
@@ -1762,36 +1684,26 @@ fn run_game_container_with_action_list_with_success_predicate(
                             "CleanShutdown({who}) called while on chain; on-chain completion is automatic"
                         );
                         if !cradles[*who].handshake_finished() {
-                            debug!("CleanShutdown({who}) deferred: handshake not finished");
                             move_number -= 1;
                             continue;
                         }
-                        debug!("CleanShutdown({who}) processing");
-                        cradles[*who].shut_down(allocator, rng)?;
+                        cradles[*who].shut_down(allocator)?;
                     }
                     GameAction::CorruptStateNumber(who, new_sn) => {
-                        debug!("CorruptStateNumber({who}, {new_sn})");
                         cradles[*who].corrupt_state_for_testing(*new_sn)?;
                     }
                     GameAction::ForceUnroll(who) => {
-                        debug!("ForceUnroll({who})");
-                        let spend = cradles[*who].force_unroll_spend(allocator, rng)?;
-                        let included_result = simulator.push_tx(allocator, &spend.spends)?;
-                        debug!(
-                            "ForceUnroll TX result: code={} e={:?} diag={:?}",
-                            included_result.code, included_result.e, included_result.diagnostic
-                        );
+                        let spend = cradles[*who].force_unroll_spend(allocator)?;
+                        simulator.push_tx(allocator, &spend.spends)?;
                     }
                     GameAction::SaveUnrollSnapshot(who) => {
-                        debug!("SaveUnrollSnapshot({who})");
                         cradles[*who].save_unroll_snapshot();
                     }
                     GameAction::ForceStaleUnroll(who) => {
-                        let spend = cradles[*who].force_stale_unroll_spend(allocator, rng)?;
+                        let spend = cradles[*who].force_stale_unroll_spend(allocator)?;
                         let _included_result = simulator.push_tx(allocator, &spend.spends)?;
                     }
                     GameAction::InjectRawMessage(who, data) => {
-                        debug!("InjectRawMessage({who}, {} bytes)", data.len());
                         cradles[*who].deliver_message(data)?;
                     }
                 }
@@ -1800,9 +1712,18 @@ fn run_game_container_with_action_list_with_success_predicate(
     }
 
     for (i, lui) in local_uis.iter().enumerate() {
+        let channel_failed = lui.notifications.iter().any(|n| {
+            matches!(
+                n,
+                GameNotification::ChannelStatus {
+                    state: ChannelState::Failed,
+                    ..
+                }
+            )
+        });
         assert!(
-            lui.channel_created,
-            "player {i} never received channel_created notification"
+            lui.channel_created || channel_failed,
+            "player {i} never received channel_created or ChannelState::Failed notification"
         );
     }
 
@@ -1879,17 +1800,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             let terminal_count = lui
                 .notifications
                 .iter()
-                .filter(|n| match n {
-                    GameNotification::InsufficientBalance { id: nid, .. } => nid == id,
-                    GameNotification::GameCancelled { id: nid } => nid == id,
-                    GameNotification::WeTimedOut { id: nid, .. } => nid == id,
-                    GameNotification::OpponentTimedOut { id: nid, .. } => nid == id,
-                    GameNotification::WeSlashedOpponent { id: nid, .. } => nid == id,
-                    GameNotification::OpponentSlashedUs { id: nid } => nid == id,
-                    GameNotification::OpponentSuccessfullyCheated { id: nid, .. } => nid == id,
-                    GameNotification::GameError { id: nid, .. } => nid == id,
-                    _ => false,
-                })
+                .filter(|n| is_terminal_for_id(n, id))
                 .count();
             assert!(
                 terminal_count == 1,
@@ -1907,16 +1818,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 let terminal_count = lui
                     .notifications
                     .iter()
-                    .filter(|n2| match n2 {
-                        GameNotification::WeTimedOut { id: nid, .. } => nid == id,
-                        GameNotification::OpponentTimedOut { id: nid, .. } => nid == id,
-                        GameNotification::WeSlashedOpponent { id: nid, .. } => nid == id,
-                        GameNotification::OpponentSlashedUs { id: nid } => nid == id,
-                        GameNotification::OpponentSuccessfullyCheated { id: nid, .. } => nid == id,
-                        GameNotification::GameCancelled { id: nid } => nid == id,
-                        GameNotification::GameError { id: nid, .. } => nid == id,
-                        _ => false,
-                    })
+                    .filter(|n2| is_terminal_for_id(n2, id))
                     .count();
                 assert!(
                     terminal_count == 1,
@@ -1927,11 +1829,176 @@ fn run_game_container_with_action_list_with_success_predicate(
         }
     }
 
+    // Invariant 5: on-chain statuses only for accepted games.
+    for (i, lui) in local_uis.iter().enumerate() {
+        let accepted_ids: HashSet<GameID> = lui
+            .notifications
+            .iter()
+            .filter_map(|n| {
+                if let GameNotification::GameProposalAccepted { id } = n {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for n in &lui.notifications {
+            if let GameNotification::GameStatus { id, status, .. } = n {
+                if !matches!(
+                    status,
+                    GameStatusKind::OnChainMyTurn
+                        | GameStatusKind::OnChainTheirTurn
+                        | GameStatusKind::Replaying
+                ) {
+                    continue;
+                }
+                assert!(
+                    accepted_ids.contains(id),
+                    "player {i}: on-chain status for {id:?} but no GameProposalAccepted for that game. \
+                     Accepted IDs: {accepted_ids:?}\nAll notifications: {:?}",
+                    lui.notifications,
+                );
+            }
+        }
+    }
+
+    // Invariant 6: for games that are still live when unrolling starts, the
+    // first post-unroll GameStatus classification is one of the allowed
+    // unroll-finish statuses.
+    fn is_allowed_unroll_finish_status(status: &GameStatusKind) -> bool {
+        matches!(
+            status,
+            GameStatusKind::OnChainMyTurn
+                | GameStatusKind::OnChainTheirTurn
+                | GameStatusKind::Replaying
+                | GameStatusKind::EndedCancelled
+                | GameStatusKind::EndedError
+                | GameStatusKind::EndedWeTimedOut
+        )
+    }
+    for (i, lui) in local_uis.iter().enumerate() {
+        let first_unrolling_idx = lui.notifications.iter().position(|n| {
+            matches!(
+                n,
+                GameNotification::ChannelStatus {
+                    state: ChannelState::Unrolling,
+                    ..
+                }
+            )
+        });
+        let Some(unroll_idx) = first_unrolling_idx else {
+            continue;
+        };
+
+        let accepted_before_unroll: HashSet<GameID> = lui.notifications[..unroll_idx]
+            .iter()
+            .filter_map(|n| {
+                if let GameNotification::GameProposalAccepted { id } = n {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let terminal_before_unroll: HashSet<GameID> = lui.notifications[..unroll_idx]
+            .iter()
+            .filter_map(|n| {
+                if let GameNotification::GameStatus { id, status, .. } = n {
+                    if is_terminal_game_status(status) {
+                        Some(*id)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let live_at_unroll: HashSet<GameID> = accepted_before_unroll
+            .difference(&terminal_before_unroll)
+            .copied()
+            .collect();
+
+        for gid in live_at_unroll {
+            let first_post_unroll = lui.notifications[unroll_idx..].iter().find_map(|n| {
+                if let GameNotification::GameStatus { id, status, .. } = n {
+                    if *id == gid {
+                        return Some(status);
+                    }
+                }
+                None
+            });
+            let Some(status) = first_post_unroll else {
+                panic!(
+                    "player {i}: game {gid:?} live at unroll but no post-unroll GameStatus found.\n\
+                     All notifications: {:?}",
+                    lui.notifications,
+                );
+            };
+            assert!(
+                is_allowed_unroll_finish_status(status),
+                "player {i}: first post-unroll status for game {gid:?} is {status:?}, expected one of \
+                 OnChainMyTurn/OnChainTheirTurn/Replaying/EndedCancelled/EndedError/EndedWeTimedOut.\n\
+                 All notifications: {:?}",
+                lui.notifications,
+            );
+        }
+    }
+
+    // Invariant 7: channel state monotonicity.
+    fn channel_state_ordinal(s: &ChannelState) -> u8 {
+        match s {
+            ChannelState::Handshaking
+            | ChannelState::WaitingForHeightToOffer
+            | ChannelState::WaitingForHeightToAccept => 0,
+            ChannelState::OfferSent => 1,
+            ChannelState::TransactionPending => 2,
+            ChannelState::Active => 3,
+            ChannelState::ShuttingDown => 4,
+            ChannelState::ShutdownTransactionPending => 5,
+            ChannelState::GoingOnChain => 4,
+            ChannelState::Unrolling => 5,
+            ChannelState::ResolvedClean
+            | ChannelState::ResolvedUnrolled
+            | ChannelState::ResolvedStale
+            | ChannelState::Failed => 6,
+        }
+    }
+    for (i, lui) in local_uis.iter().enumerate() {
+        let mut last_state: Option<ChannelState> = None;
+        for n in &lui.notifications {
+            if let GameNotification::ChannelStatus { state, .. } = n {
+                let ord = channel_state_ordinal(state);
+                if let Some(ref prev) = last_state {
+                    let prev_ord = channel_state_ordinal(prev);
+                    if ord < prev_ord {
+                        panic!(
+                            "player {i}: channel state went backwards: {prev:?}({prev_ord}) -> {state:?}({ord})\n\
+                             All notifications: {:?}",
+                            lui.notifications,
+                        );
+                    }
+                    if ord == prev_ord && ord != 2 && ord != 4 && ord != 5 {
+                        panic!(
+                            "player {i}: non-terminal same-ordinal repeat: {prev:?}({prev_ord}) -> {state:?}({ord})\n\
+                             All notifications: {:?}",
+                            lui.notifications,
+                        );
+                    }
+                }
+                last_state = Some(state.clone());
+            }
+        }
+    }
+
     Ok(GameRunOutcome {
         identities: [identities[0].clone(), identities[1].clone()],
         cradles,
         local_uis,
         simulator,
+        debug_logs,
     })
 }
 
@@ -2056,13 +2123,9 @@ fn check_calpoker_economic_result(
 ) {
     let (p1_balance, p2_balance) = get_balances_from_outcome(outcome).expect("should work");
 
-    for (pn, lui) in outcome.local_uis.iter().enumerate() {
-        for (mn, the_move) in lui.opponent_moves.iter().enumerate() {
-            let the_move_to_node = the_move.2.to_nodeptr(allocator).expect("should work");
-            debug!(
-                "player {pn} opponent move {mn} {the_move:?} {:?}",
-                Node(the_move_to_node).to_hex(allocator)
-            );
+    for (_pn, lui) in outcome.local_uis.iter().enumerate() {
+        for (_mn, the_move) in lui.opponent_moves.iter().enumerate() {
+            let _ = the_move.2.to_nodeptr(allocator).expect("should work");
         }
     }
 
@@ -2086,11 +2149,9 @@ fn check_calpoker_economic_result(
         .2
         .to_nodeptr(allocator)
         .expect("should work");
-    let alice_win_dir = parse_win_direction_from_readable(allocator, alice_outcome_node, true)
+    let _alice_win_dir = parse_win_direction_from_readable(allocator, alice_outcome_node, true)
         .expect("should parse alice win direction");
 
-    debug!("alice win_dir={alice_win_dir} bob win_dir={bob_win_dir}");
-    debug!("p1 balance {p1_balance:?} p2 {p2_balance:?}");
     if bob_win_dir == 1 {
         assert_eq!(p1_balance + 200, p2_balance);
     } else if bob_win_dir == -1 {
@@ -2203,12 +2264,8 @@ pub fn setup_debug_test(
         &debug_games[0].alice_identity.public_key,
         &debug_games[0].bob_identity.public_key,
     );
-    debug!("debug game curried data {args_curry:?}");
     let args = args_curry.expect("good").to_clvm(allocator).into_gen()?;
     let args_program = Rc::new(Program::from_nodeptr(allocator, args).expect("ok"));
-
-    debug!("alice mover puzzle hash is {:?}", identities[0].puzzle_hash);
-    debug!("bob   mover puzzle hash is {:?}", identities[0].puzzle_hash);
 
     Ok(DebugGameSimSetup {
         private_keys,
@@ -2226,9 +2283,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Play moves
         let mut moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(0)),
+            GameAction::AcceptProposal(1, GameID(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
         let outcome = run_calpoker_container_with_action_list_with_success_predicate(
             &mut allocator,
             &moves,
@@ -2282,9 +2339,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
             let mut moves = vec![
                 GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::AcceptProposal(1, GameID(0)),
+                GameAction::AcceptProposal(1, GameID(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
             if let GameAction::Move(player, game_id, readable, _) = moves[5].clone() {
                 moves.insert(
                     5,
@@ -2327,9 +2384,16 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::GoingOnChain,
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::GoingOnChain,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::Unrolling,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::ResolvedUnrolled,
+                    )),
                 ],
                 "piss_off_basic p0",
             );
@@ -2345,8 +2409,16 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::GoingOnChain,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::Unrolling,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::ResolvedUnrolled,
+                    )),
                 ],
                 "piss_off_basic p1",
             );
@@ -2358,10 +2430,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let mut moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(0)),
+            GameAction::AcceptProposal(1, GameID(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
-        moves.push(GameAction::AcceptTimeout(1, GameID(0)));
+        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
         moves.push(GameAction::CleanShutdown(1));
         let outcome =
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
@@ -2390,7 +2461,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ShutdownTransactionPending,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedClean,
+                )),
             ],
             "off_chain_complete p0",
         );
@@ -2409,10 +2486,89 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(200),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ShuttingDown,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ShutdownTransactionPending,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedClean,
+                )),
             ],
             "off_chain_complete p1",
         );
+        assert!(
+            outcome.local_uis[0].clean_shutdown_complete,
+            "p0 should reach ResolvedClean"
+        );
+        assert!(
+            outcome.local_uis[1].clean_shutdown_complete,
+            "p1 should reach ResolvedClean"
+        );
+    }));
+
+    res.push(("test_clean_shutdown_no_games_nerf_p0", &|| {
+        let mut allocator = AllocEncoder::new();
+        let moves = vec![
+            GameAction::NerfTransactions(0),
+            GameAction::CleanShutdown(1),
+        ];
+        let outcome =
+            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+
+        for i in 0..2 {
+            assert!(
+                outcome.local_uis[i].clean_shutdown_complete,
+                "player {i} should reach ResolvedClean"
+            );
+            let has_failed = outcome.local_uis[i].notifications.iter().any(|n| {
+                matches!(
+                    n,
+                    GameNotification::ChannelStatus {
+                        state: ChannelState::Failed,
+                        ..
+                    }
+                )
+            });
+            assert!(
+                !has_failed,
+                "player {i} should not hit ChannelState::Failed, got: {:?}",
+                outcome.local_uis[i].notifications
+            );
+        }
+    }));
+
+    res.push(("test_clean_shutdown_no_games_nerf_p1", &|| {
+        let mut allocator = AllocEncoder::new();
+        let moves = vec![
+            GameAction::NerfTransactions(1),
+            GameAction::CleanShutdown(1),
+        ];
+        let outcome =
+            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+
+        for i in 0..2 {
+            assert!(
+                outcome.local_uis[i].clean_shutdown_complete,
+                "player {i} should reach ResolvedClean"
+            );
+            let has_failed = outcome.local_uis[i].notifications.iter().any(|n| {
+                matches!(
+                    n,
+                    GameNotification::ChannelStatus {
+                        state: ChannelState::Failed,
+                        ..
+                    }
+                )
+            });
+            assert!(
+                !has_failed,
+                "player {i} should not hit ChannelState::Failed, got: {:?}",
+                outcome.local_uis[i].notifications
+            );
+        }
     }));
 
     res.push((
@@ -2422,9 +2578,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
             let mut moves = vec![
                 GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::AcceptProposal(1, GameID(0)),
+                GameAction::AcceptProposal(1, GameID(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
             if let GameAction::Move(player, game_id, readable, _) = moves[5].clone() {
                 moves.insert(
                     5,
@@ -2449,10 +2605,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
             let (p1_balance, p2_balance) =
                 get_balances_from_outcome(&outcome).expect("should get balances");
-            debug!(
-                "piss_off_peer_complete: p1_balance={} p2_balance={}",
-                p1_balance, p2_balance
-            );
             assert!(
                 p1_balance > 0 && p2_balance > 0,
                 "both players should have non-zero balance after game"
@@ -2465,13 +2617,25 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::GoingOnChain,
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::GoingOnChain,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::Unrolling,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::ResolvedUnrolled,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                    ExpectedEvent::Notification(
+                        ExpectedNotification::GameStatusEndedOpponentTimedOut,
+                    ),
                 ],
                 "piss_off_complete p0",
             );
@@ -2487,12 +2651,23 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::GoingOnChain,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::Unrolling,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::ResolvedUnrolled,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(200),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
                 ],
                 "piss_off_complete p1",
             );
@@ -2506,7 +2681,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
             let moves = vec![
                 GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::AcceptProposal(1, GameID(0)),
+                GameAction::AcceptProposal(1, GameID(1)),
                 GameAction::GoOnChain(1),
                 GameAction::WaitBlocks(20, 1),
             ];
@@ -2522,9 +2697,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 &outcome.local_uis[0].events,
                 &[
                     game_accepted(),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::GoingOnChain,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::Unrolling,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::ResolvedUnrolled,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
                 ],
                 "after_start p0",
             );
@@ -2533,9 +2716,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 &[
                     game_proposed(),
                     game_accepted(),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::GoingOnChain,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::Unrolling,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::ResolvedUnrolled,
+                    )),
+                    ExpectedEvent::Notification(
+                        ExpectedNotification::GameStatusEndedOpponentTimedOut,
+                    ),
                 ],
                 "after_start p1",
             );
@@ -2549,10 +2742,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
             let mut moves = vec![
                 GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::AcceptProposal(1, GameID(0)),
+                GameAction::AcceptProposal(1, GameID(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
-            moves.push(GameAction::AcceptTimeout(1, GameID(0)));
+            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
             moves.push(GameAction::GoOnChain(1));
             moves.push(GameAction::WaitBlocks(20, 1));
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
@@ -2582,9 +2774,18 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                    ExpectedEvent::Notification(
+                        ExpectedNotification::GameStatusEndedOpponentTimedOut,
+                    ),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::GoingOnChain,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::Unrolling,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::ResolvedUnrolled,
+                    )),
                 ],
                 "after_accept p0",
             );
@@ -2603,9 +2804,16 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(200),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::GoingOnChain,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::Unrolling,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::ResolvedUnrolled,
+                    )),
                 ],
                 "after_accept p1",
             );
@@ -2619,9 +2827,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
             let mut moves = vec![
                 GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::AcceptProposal(1, GameID(0)),
+                GameAction::AcceptProposal(1, GameID(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
             let moves_len = moves.len();
             moves.remove(moves_len - 2);
             moves.remove(moves_len - 2);
@@ -2642,9 +2850,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::GoingOnChain,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::Unrolling,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::ResolvedUnrolled,
+                    )),
+                    ExpectedEvent::Notification(
+                        ExpectedNotification::GameStatusEndedOpponentTimedOut,
+                    ),
                 ],
                 "timeout p0",
             );
@@ -2660,9 +2878,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                    ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::GoingOnChain,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::Unrolling,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                    ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                        ChannelState::ResolvedUnrolled,
+                    )),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
                 ],
                 "timeout p1",
             );
@@ -2679,12 +2905,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // then submits a move with invalid data that Alice detects.
         let mut moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(0)),
+            GameAction::AcceptProposal(1, GameID(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
         moves.truncate(5);
         moves.push(GameAction::GoOnChain(0));
-        moves.push(GameAction::Cheat(1, GameID(0), Amount::default()));
+        moves.push(GameAction::Cheat(1, GameID(1), Amount::default()));
         // Let both players process blocks so Alice detects & slashes.
         moves.push(GameAction::WaitBlocks(30, 0));
 
@@ -2703,10 +2929,18 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentPlayedIllegalMove),
-                ExpectedEvent::Notification(ExpectedNotification::WeSlashedOpponent),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusIllegalMoveDetected),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeSlashedOpponent),
             ],
             "piss_off_slash p0",
         );
@@ -2722,9 +2956,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentSlashedUs),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentSlashedUs),
             ],
             "piss_off_slash p1",
         );
@@ -2767,11 +3011,18 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::GoingOnChain,
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentPlayedIllegalMove),
-                ExpectedEvent::Notification(ExpectedNotification::WeSlashedOpponent),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusIllegalMoveDetected),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeSlashedOpponent),
             ],
             "alice_slash p0",
         );
@@ -2786,9 +3037,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(50),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentSlashedUs),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentSlashedUs),
             ],
             "alice_slash p1",
         );
@@ -2835,9 +3096,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(150),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentSlashedUs),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentSlashedUs),
             ],
             "bob_slash p0",
         );
@@ -2852,11 +3123,18 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(50),
                 },
-                ExpectedEvent::GoingOnChain,
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentPlayedIllegalMove),
-                ExpectedEvent::Notification(ExpectedNotification::WeSlashedOpponent),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusIllegalMoveDetected),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeSlashedOpponent),
             ],
             "bob_slash p1",
         );
@@ -2892,7 +3170,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
         // Alice assigned bob 49, so alice is greater.
         let amount_diff = 151 - 49;
-        debug!("p1_balance {p1_balance} p2_balance {p2_balance}");
         assert_eq!(p1_balance, p2_balance + amount_diff);
 
         assert_event_sequence(
@@ -2905,7 +3182,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(150),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ShutdownTransactionPending,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedClean,
+                )),
             ],
             "debug_alice p0",
         );
@@ -2923,9 +3206,26 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(49),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ShuttingDown,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ShutdownTransactionPending,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedClean,
+                )),
             ],
             "debug_alice p1",
+        );
+        assert!(
+            outcome.local_uis[0].clean_shutdown_complete,
+            "p0 should reach ResolvedClean"
+        );
+        assert!(
+            outcome.local_uis[1].clean_shutdown_complete,
+            "p1 should reach ResolvedClean"
         );
     }));
 
@@ -2960,7 +3260,6 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
         // Alice assigned bob 49, so alice is greater.
         let amount_diff = 151 - 49;
-        debug!("p1_balance {p1_balance} p2_balance {p2_balance}");
         assert_eq!(p1_balance + amount_diff, p2_balance);
 
         assert_event_sequence(
@@ -2976,7 +3275,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(49),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ShutdownTransactionPending,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedClean,
+                )),
             ],
             "debug_bob p0",
         );
@@ -2994,9 +3299,26 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(49),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ShuttingDown,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ShutdownTransactionPending,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedClean,
+                )),
             ],
             "debug_bob p1",
+        );
+        assert!(
+            outcome.local_uis[0].clean_shutdown_complete,
+            "p0 should reach ResolvedClean"
+        );
+        assert!(
+            outcome.local_uis[1].clean_shutdown_complete,
+            "p1 should reach ResolvedClean"
         );
     }));
 
@@ -3018,22 +3340,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             game_type,
             &sim_setup.args_program,
             &sim_setup.game_actions,
-            Some(&|_, cradles| {
-                cradles[0].handshake_finished()
-                    && cradles[1].handshake_finished()
-                    && cradles[0].channel_coin_detected()
-            }),
+            Some(&|_, cradles| cradles[0].handshake_finished() && cradles[1].handshake_finished()),
             None,
         )
         .expect("should finish");
 
-        let game_id = outcome.cradles[0].next_game_id().unwrap();
         let borrowed: &Program = sim_setup.args_program.borrow();
         let result1 = outcome.cradles[0].propose_game(
             &mut allocator,
-            &mut rng,
             &GameStart {
-                game_id: game_id.clone(),
                 amount: Amount::new(2000),
                 my_contribution: Amount::new(1000),
                 game_type: GameType(game_type.to_vec()),
@@ -3045,12 +3360,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         assert!(result1.is_ok());
 
-        let game_id2 = outcome.cradles[1].next_game_id().unwrap();
         let result2 = outcome.cradles[1].propose_game(
             &mut allocator,
-            &mut rng,
             &GameStart {
-                game_id: game_id2.clone(),
                 amount: Amount::new(2000),
                 my_contribution: Amount::new(1000),
                 game_type: GameType(game_type.to_vec()),
@@ -3063,13 +3375,18 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         for _i in 0..100 {
             for c in 0..2 {
                 let result = outcome.cradles[c]
-                    .drain_all(&mut allocator, &mut rng)
+                    .flush_and_collect(&mut allocator)
                     .unwrap();
-                for msg in result.outbound_messages.iter() {
-                    outcome.cradles[c ^ 1].deliver_message(msg).unwrap();
-                }
-                for n in result.notifications.iter() {
-                    outcome.local_uis[c].notification(n).unwrap();
+                for event in result.events.iter() {
+                    match event {
+                        CradleEvent::OutboundMessage(msg) => {
+                            outcome.cradles[c ^ 1].deliver_message(msg).unwrap();
+                        }
+                        CradleEvent::Notification(n) => {
+                            outcome.local_uis[c].notification(n).unwrap();
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
@@ -3082,10 +3399,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let mut moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(0)),
+            GameAction::AcceptProposal(1, GameID(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
-        moves.push(GameAction::AcceptTimeout(1, GameID(0)));
+        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
         moves.push(GameAction::NerfTransactions(0));
         moves.push(GameAction::CleanShutdown(1));
 
@@ -3105,7 +3421,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ShutdownTransactionPending,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedClean,
+                )),
             ],
             "shutdown_nerf_alice p0",
         );
@@ -3124,9 +3446,26 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(200),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ShuttingDown,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ShutdownTransactionPending,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedClean,
+                )),
             ],
             "shutdown_nerf_alice p1",
+        );
+        assert!(
+            outcome.local_uis[0].clean_shutdown_complete,
+            "p0 should reach ResolvedClean"
+        );
+        assert!(
+            outcome.local_uis[1].clean_shutdown_complete,
+            "p1 should reach ResolvedClean"
         );
     }));
 
@@ -3135,10 +3474,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let mut moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(0)),
+            GameAction::AcceptProposal(1, GameID(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
-        moves.push(GameAction::AcceptTimeout(1, GameID(0)));
+        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
         moves.push(GameAction::NerfTransactions(1));
         moves.push(GameAction::CleanShutdown(1));
 
@@ -3158,7 +3496,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ShutdownTransactionPending,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedClean,
+                )),
             ],
             "shutdown_nerf_bob p0",
         );
@@ -3177,9 +3521,26 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(200),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ShuttingDown,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ShutdownTransactionPending,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedClean,
+                )),
             ],
             "shutdown_nerf_bob p1",
+        );
+        assert!(
+            outcome.local_uis[0].clean_shutdown_complete,
+            "p0 should reach ResolvedClean"
+        );
+        assert!(
+            outcome.local_uis[1].clean_shutdown_complete,
+            "p1 should reach ResolvedClean"
         );
     }));
 
@@ -3188,10 +3549,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let mut moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(0)),
+            GameAction::AcceptProposal(1, GameID(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
-        moves.push(GameAction::AcceptTimeout(1, GameID(0)));
+        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
         // Nerf both so the clean shutdown tx is dropped for both sides.
         moves.push(GameAction::NerfTransactions(0));
         moves.push(GameAction::NerfTransactions(1));
@@ -3214,22 +3574,24 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let p0_notifs = &outcome.local_uis[0].notifications;
         let p1_notifs = &outcome.local_uis[1].notifications;
         assert!(
-            p1_notifs
-                .iter()
-                .any(|n| matches!(n, GameNotification::ChannelCoinSpent { .. })),
-            "player 1 should see ChannelCoinSpent, got: {p1_notifs:?}"
+            p1_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::ChannelStatus {
+                    state: ChannelState::Unrolling,
+                    ..
+                }
+            )),
+            "player 1 should see Unrolling channel status, got: {p1_notifs:?}"
         );
         assert!(
-            p1_notifs
-                .iter()
-                .any(|n| matches!(n, GameNotification::UnrollCoinSpent { .. })),
-            "player 1 should see UnrollCoinSpent, got: {p1_notifs:?}"
-        );
-        assert!(
-            p0_notifs
-                .iter()
-                .any(|n| matches!(n, GameNotification::ChannelCoinSpent { .. })),
-            "player 0 should see ChannelCoinSpent, got: {p0_notifs:?}"
+            p0_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::ChannelStatus {
+                    state: ChannelState::Unrolling,
+                    ..
+                }
+            )),
+            "player 0 should see Unrolling channel status, got: {p0_notifs:?}"
         );
     }));
 
@@ -3238,10 +3600,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let mut moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(0)),
+            GameAction::AcceptProposal(1, GameID(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
-        moves.push(GameAction::AcceptTimeout(1, GameID(0)));
+        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
         // Nerf all transactions so no clean shutdown tx lands.
         moves.push(GameAction::NerfTransactions(0));
         moves.push(GameAction::NerfTransactions(1));
@@ -3269,22 +3630,24 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let p0_notifs = &outcome.local_uis[0].notifications;
         let p1_notifs = &outcome.local_uis[1].notifications;
         assert!(
-            p1_notifs
-                .iter()
-                .any(|n| matches!(n, GameNotification::ChannelCoinSpent { .. })),
-            "player 1 should see ChannelCoinSpent, got: {p1_notifs:?}"
+            p1_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::ChannelStatus {
+                    state: ChannelState::GoingOnChain,
+                    ..
+                }
+            )),
+            "player 1 should see GoingOnChain channel status, got: {p1_notifs:?}"
         );
         assert!(
-            p1_notifs
-                .iter()
-                .any(|n| matches!(n, GameNotification::UnrollCoinSpent { .. })),
-            "player 1 should see UnrollCoinSpent, got: {p1_notifs:?}"
-        );
-        assert!(
-            p0_notifs
-                .iter()
-                .any(|n| matches!(n, GameNotification::ChannelCoinSpent { .. })),
-            "player 0 should see ChannelCoinSpent, got: {p0_notifs:?}"
+            p0_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::ChannelStatus {
+                    state: ChannelState::GoingOnChain,
+                    ..
+                }
+            )),
+            "player 0 should see GoingOnChain channel status, got: {p0_notifs:?}"
         );
     }));
 
@@ -3297,9 +3660,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // is cached for redo.  The unroll is NOT stale from Bob's view.
         let mut moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(0)),
+            GameAction::AcceptProposal(1, GameID(1)),
         ];
-        let game_moves = prefix_test_moves(&mut allocator, GameID(0));
+        let game_moves = prefix_test_moves(&mut allocator, GameID(1));
         moves.push(game_moves[0].clone()); // alice commit
         moves.push(game_moves[1].clone()); // bob seed
         moves.push(GameAction::NerfMessages(0));
@@ -3332,13 +3695,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedWeTimedOut)),
             "player 0 should get WeTimedOut (redo move couldn't land), got: {p0_notifs:?}"
         );
         assert!(
             p1_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::OpponentTimedOut { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedOpponentTimedOut)),
             "player 1 should get OpponentTimedOut, got: {p1_notifs:?}"
         );
 
@@ -3349,9 +3712,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
             ],
             "redo_timeout p0",
         );
@@ -3363,9 +3734,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
             ],
             "redo_timeout p1",
         );
@@ -3384,9 +3763,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // is nerfed so she can't play and times out.
             let mut moves = vec![
                 GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::AcceptProposal(1, GameID(0)),
+                GameAction::AcceptProposal(1, GameID(1)),
             ];
-            let game_moves = prefix_test_moves(&mut allocator, GameID(0));
+            let game_moves = prefix_test_moves(&mut allocator, GameID(1));
             moves.push(game_moves[0].clone()); // alice commit
             moves.push(game_moves[1].clone()); // bob seed
             moves.push(game_moves[2].clone()); // alice reveal
@@ -3412,30 +3791,41 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             assert_reward_coin_consistency(p0_notifs, "bob_redo_alice_timeout p0");
             assert_reward_coin_consistency(p1_notifs, "bob_redo_alice_timeout p1");
             assert!(
-                p0_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
+                p0_notifs
+                    .iter()
+                    .any(|n| has_status(n, GameStatusKind::EndedWeTimedOut)),
                 "player 0 (alice) should get WeTimedOut (nerfed, couldn't play move 4), got: {p0_notifs:?}"
             );
             assert!(
-                p1_notifs.iter().any(|n| matches!(n, GameNotification::OpponentTimedOut { .. })),
+                p1_notifs
+                    .iter()
+                    .any(|n| has_status(n, GameStatusKind::EndedOpponentTimedOut)),
                 "player 1 (bob) should get OpponentTimedOut (claimed timeout), got: {p1_notifs:?}"
             );
 
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 game_accepted(),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
             ], "bob_redo_alice_timeout p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 game_proposed(), game_accepted(),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::GameMessage,
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
             ], "bob_redo_alice_timeout p1");
         },
     ));
@@ -3450,9 +3840,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // so his clock runs out.
         let mut moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(0)),
+            GameAction::AcceptProposal(1, GameID(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
         moves.truncate(5);
         moves.push(GameAction::GoOnChain(1));
         // 120 blocks covers the unroll timeout (5) and
@@ -3469,13 +3859,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p1_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedWeTimedOut)),
             "player 1 should get WeTimedOut (it was our turn, no move queued), got: {p1_notifs:?}"
         );
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::OpponentTimedOut { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedOpponentTimedOut)),
             "player 0 should get OpponentTimedOut, got: {p0_notifs:?}"
         );
 
@@ -3486,9 +3876,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
             ],
             "our_turn_timeout p0",
         );
@@ -3504,9 +3902,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
             ],
             "our_turn_timeout p1",
         );
@@ -3519,12 +3925,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // turn, allowing Cheat(1) to fire.
         let mut on_chain_moves: Vec<GameAction> = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(0)),
+            GameAction::AcceptProposal(1, GameID(1)),
         ];
-        let game_moves = prefix_test_moves(&mut allocator, GameID(0));
+        let game_moves = prefix_test_moves(&mut allocator, GameID(1));
         on_chain_moves.extend(game_moves.into_iter().take(3));
         on_chain_moves.push(GameAction::GoOnChain(0));
-        on_chain_moves.push(GameAction::Cheat(1, GameID(0), Amount::default()));
+        on_chain_moves.push(GameAction::Cheat(1, GameID(1), Amount::default()));
         on_chain_moves.push(GameAction::WaitBlocks(30, 0));
 
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -3535,13 +3941,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::OpponentPlayedIllegalMove { .. })),
+                .any(|n| has_status(n, GameStatusKind::IllegalMoveDetected)),
             "player 0 should get OpponentPlayedIllegalMove, got: {p0_notifs:?}"
         );
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::WeSlashedOpponent { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedWeSlashedOpponent)),
             "player 0 should get WeSlashedOpponent, got: {p0_notifs:?}"
         );
 
@@ -3552,10 +3958,18 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentPlayedIllegalMove),
-                ExpectedEvent::Notification(ExpectedNotification::WeSlashedOpponent),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusIllegalMoveDetected),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeSlashedOpponent),
             ],
             "slash_illegal p0",
         );
@@ -3571,9 +3985,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentSlashedUs),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentSlashedUs),
             ],
             "slash_illegal p1",
         );
@@ -3586,12 +4010,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // turn, allowing Cheat(0) to fire.
         let mut on_chain_moves: Vec<GameAction> = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(0)),
+            GameAction::AcceptProposal(1, GameID(1)),
         ];
-        let game_moves = prefix_test_moves(&mut allocator, GameID(0));
+        let game_moves = prefix_test_moves(&mut allocator, GameID(1));
         on_chain_moves.extend(game_moves.into_iter().take(4));
         on_chain_moves.push(GameAction::GoOnChain(0));
-        on_chain_moves.push(GameAction::Cheat(0, GameID(0), Amount::default()));
+        on_chain_moves.push(GameAction::Cheat(0, GameID(1), Amount::default()));
         on_chain_moves.push(GameAction::WaitBlocks(30, 0));
 
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -3603,7 +4027,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::OpponentSlashedUs { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedOpponentSlashedUs)),
             "player 0 (cheater) should get OpponentSlashedUs, got: {p0_notifs:?}"
         );
 
@@ -3614,12 +4038,23 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::OpponentSlashedUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentSlashedUs),
             ],
             "opponent_slashed p0",
         );
@@ -3635,10 +4070,20 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentPlayedIllegalMove),
-                ExpectedEvent::Notification(ExpectedNotification::WeSlashedOpponent),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusIllegalMoveDetected),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeSlashedOpponent),
             ],
             "opponent_slashed p1",
         );
@@ -3655,12 +4100,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // rather than a hardcoded default.
         let mut moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(0)),
+            GameAction::AcceptProposal(1, GameID(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
         let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(5).collect();
         on_chain_moves.push(GameAction::GoOnChain(0));
-        on_chain_moves.push(GameAction::Cheat(1, GameID(0), Amount::new(137)));
+        on_chain_moves.push(GameAction::Cheat(1, GameID(1), Amount::new(137)));
         on_chain_moves.push(GameAction::WaitBlocks(30, 0));
 
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -3680,13 +4125,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::OpponentPlayedIllegalMove { .. })),
+                .any(|n| has_status(n, GameStatusKind::IllegalMoveDetected)),
             "player 0 should get OpponentPlayedIllegalMove, got: {p0_notifs:?}"
         );
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::WeSlashedOpponent { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedWeSlashedOpponent)),
             "player 0 should get WeSlashedOpponent, got: {p0_notifs:?}"
         );
 
@@ -3694,7 +4139,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p1_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::OpponentSlashedUs { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedOpponentSlashedUs)),
             "player 1 (cheater) should get OpponentSlashedUs, got: {p1_notifs:?}"
         );
 
@@ -3705,10 +4150,18 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentPlayedIllegalMove),
-                ExpectedEvent::Notification(ExpectedNotification::WeSlashedOpponent),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusIllegalMoveDetected),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeSlashedOpponent),
             ],
             "funny_share p0",
         );
@@ -3724,9 +4177,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentSlashedUs),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentSlashedUs),
             ],
             "funny_share p1",
         );
@@ -3749,13 +4212,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // the on-chain resolution.
             let mut moves = vec![
                 GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::AcceptProposal(1, GameID(0)),
+                GameAction::AcceptProposal(1, GameID(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
             let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(5).collect();
             on_chain_moves.push(GameAction::GoOnChain(0));
             on_chain_moves.push(GameAction::NerfTransactions(0));
-            on_chain_moves.push(GameAction::Cheat(1, GameID(0), Amount::new(137)));
+            on_chain_moves.push(GameAction::Cheat(1, GameID(1), Amount::new(137)));
             on_chain_moves.push(GameAction::WaitBlocks(120, 0));
             on_chain_moves.push(GameAction::UnNerfTransactions(false));
             on_chain_moves.push(GameAction::WaitBlocks(30, 0));
@@ -3779,30 +4242,47 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             assert_reward_coin_consistency(p0_notifs, "nerfed_cheat p0");
             assert_reward_coin_consistency(p1_notifs, "nerfed_cheat p1");
             assert!(
-                p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentPlayedIllegalMove { .. })),
+                p0_notifs
+                    .iter()
+                    .any(|n| has_status(n, GameStatusKind::IllegalMoveDetected)),
                 "player 0 should get OpponentPlayedIllegalMove, got: {p0_notifs:?}"
             );
             assert!(
-                p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentSuccessfullyCheated { reward_coin: Some(_), .. })),
+                p0_notifs.iter().any(|n| {
+                    matches!(
+                        n,
+                        GameNotification::GameStatus {
+                            status: GameStatusKind::EndedOpponentSuccessfullyCheated,
+                            coin_id: Some(_),
+                            ..
+                        }
+                    )
+                }),
                 "player 0 should get OpponentSuccessfullyCheated with reward_coin (mover_share=137), got: {p0_notifs:?}"
             );
 
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 game_accepted(),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentPlayedIllegalMove),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentSuccessfullyCheated),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusIllegalMoveDetected),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentSuccessfullyCheated),
             ], "nerfed_cheat p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 game_proposed(), game_accepted(),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::GameMessage,
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
             ], "nerfed_cheat p1");
         },
     ));
@@ -3816,12 +4296,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // handler (off-chain Accept immediately finishes the game).
         let mut moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(0)),
+            GameAction::AcceptProposal(1, GameID(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
         moves.pop();
         moves.push(GameAction::GoOnChain(0));
-        moves.push(GameAction::AcceptTimeout(0, GameID(0)));
+        moves.push(GameAction::AcceptTimeout(0, GameID(1)));
         moves.push(GameAction::WaitBlocks(120, 1));
         moves.push(GameAction::WaitBlocks(5, 0));
 
@@ -3835,7 +4315,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedWeTimedOut)),
             "player 0 (who accepted) should get WeTimedOut, got: {p0_notifs:?}"
         );
 
@@ -3846,9 +4326,18 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
             ],
             "accept_finished p0",
         );
@@ -3864,9 +4353,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
             ],
             "accept_finished p1",
         );
@@ -3883,11 +4382,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // game in pending_accept_timeouts.
         let mut moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(0)),
+            GameAction::AcceptProposal(1, GameID(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
         moves.push(GameAction::NerfMessages(1));
-        moves.push(GameAction::AcceptTimeout(1, GameID(0)));
         moves.push(GameAction::GoOnChain(1));
         moves.push(GameAction::WaitBlocks(120, 0));
         moves.push(GameAction::WaitBlocks(5, 1));
@@ -3899,7 +4397,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p1_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedWeTimedOut)),
             "player 1 should get WeTimedOut after nerfed accept + on-chain, got: {p1_notifs:?}"
         );
     }));
@@ -3942,7 +4440,16 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert_reward_coin_consistency(p0_notifs, "nerfed_accept p0");
         assert_reward_coin_consistency(p1_notifs, "nerfed_accept p1");
         assert!(
-            p1_notifs.iter().any(|n| matches!(n, GameNotification::WeTimedOut { reward_coin: Some(_), .. })),
+            p1_notifs.iter().any(|n| {
+                matches!(
+                    n,
+                    GameNotification::GameStatus {
+                        status: GameStatusKind::EndedWeTimedOut,
+                        coin_id: Some(_),
+                        ..
+                    }
+                )
+            }),
             "Bob (who accepted) should get WeTimedOut with a non-null reward_coin, got: {p1_notifs:?}"
         );
 
@@ -3958,16 +4465,20 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         assert_event_sequence(&outcome.local_uis[0].events, &[
             game_accepted(),
-            ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-            ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-            ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+            ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
+            ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
+            ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+            ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
+            ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
         ], "nerfed_accept p0");
         assert_event_sequence(&outcome.local_uis[1].events, &[
             game_proposed(), game_accepted(),
             ExpectedEvent::OpponentMoved { mover_share: Amount::new(100) },
-            ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-            ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-            ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+            ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
+            ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
+            ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+            ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
+            ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
         ], "nerfed_accept p1");
     }));
 
@@ -3990,7 +4501,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         //     pre_game_ids but not surviving_ids → GameCancelled.
         let moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(0)),
+            GameAction::AcceptProposal(1, GameID(1)),
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
             GameAction::GoOnChain(1),
             GameAction::WaitBlocks(120, 0),
@@ -4011,15 +4522,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             "Alice should get GameProposalCancelled for her proposed game, got: {p0_notifs:?}"
         );
 
-        assert_event_sequence(&outcome.local_uis[0].events[..4], &[
+        assert_event_sequence(&outcome.local_uis[0].events[..6], &[
             game_accepted(),
+            ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
             ExpectedEvent::Notification(ExpectedNotification::GameProposalCancelled),
-            ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-            ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+            ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
+            ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+            ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
         ], "cancellation_nerfed p0 prefix");
-        let p0_tail: Vec<String> = outcome.local_uis[0].events[4..].iter().map(event_shape).collect();
+        let p0_tail: Vec<String> = outcome.local_uis[0].events[6..].iter().map(event_shape).collect();
         let p0_terminal: Vec<&str> = p0_tail.iter().filter(|s| {
-            s.starts_with("Notif(WeTimedOut)") || s.starts_with("Notif(OpponentTimedOut)")
+            s.contains("EndedWeTimedOut") || s.contains("EndedOpponentTimedOut")
         }).map(|s| s.as_str()).collect();
         assert_eq!(p0_terminal.len(), 1,
             "cancellation_nerfed p0 should have exactly 1 terminal notification, got {:?}. All events: {:?}",
@@ -4027,17 +4540,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         // p1 also sees game B proposed+cancelled because Alice's proposal
         // arrives before Bob goes on-chain.
-        let p1_prefix = &outcome.local_uis[1].events[..6];
+        let p1_prefix = &outcome.local_uis[1].events[..8];
         assert_event_sequence(p1_prefix, &[
             game_proposed(), game_accepted(),
             ExpectedEvent::Notification(ExpectedNotification::GameProposed),
             ExpectedEvent::Notification(ExpectedNotification::GameProposalCancelled),
-            ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-            ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+            ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
+            ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
+            ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+            ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
         ], "cancellation_nerfed p1 prefix");
-        let p1_tail: Vec<String> = outcome.local_uis[1].events[6..].iter().map(event_shape).collect();
+        let p1_tail: Vec<String> = outcome.local_uis[1].events[7..].iter().map(event_shape).collect();
         let p1_terminal: Vec<&str> = p1_tail.iter().filter(|s| {
-            s.starts_with("Notif(WeTimedOut)") || s.starts_with("Notif(OpponentTimedOut)")
+            s.contains("EndedWeTimedOut") || s.contains("EndedOpponentTimedOut")
         }).map(|s| s.as_str()).collect();
         assert_eq!(p1_terminal.len(), 1,
             "cancellation_nerfed p1 should have exactly 1 terminal notification, got {:?}. All events: {:?}",
@@ -4053,7 +4568,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // committed (unroll reverts to before the game existed).
         let moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(0)),
+            GameAction::AcceptProposal(1, GameID(1)),
             GameAction::GoOnChain(1),
             GameAction::WaitBlocks(20, 1),
         ];
@@ -4068,13 +4583,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedWeTimedOut)),
             "player 0 should get WeTimedOut (it was their turn, no move made), got: {p0_notifs:?}"
         );
         assert!(
             p1_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::OpponentTimedOut { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedOpponentTimedOut)),
             "player 1 should get OpponentTimedOut (claimed timeout), got: {p1_notifs:?}"
         );
 
@@ -4082,9 +4597,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &outcome.local_uis[0].events,
             &[
                 game_accepted(),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
             ],
             "before_any_moves p0",
         );
@@ -4093,9 +4616,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &[
                 game_proposed(),
                 game_accepted(),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
             ],
             "before_any_moves p1",
         );
@@ -4110,13 +4641,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // turn, allowing Cheat(1) to fire.
             let mut moves = vec![
                 GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::AcceptProposal(1, GameID(0)),
+                GameAction::AcceptProposal(1, GameID(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
             let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(5).collect();
             on_chain_moves.push(GameAction::GoOnChain(0));
             on_chain_moves.push(GameAction::NerfTransactions(0));
-            on_chain_moves.push(GameAction::Cheat(1, GameID(0), Amount::default()));
+            on_chain_moves.push(GameAction::Cheat(1, GameID(1), Amount::default()));
             on_chain_moves.push(GameAction::WaitBlocks(120, 0));
             on_chain_moves.push(GameAction::UnNerfTransactions(false));
             on_chain_moves.push(GameAction::WaitBlocks(30, 0));
@@ -4129,30 +4660,47 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             assert_reward_coin_consistency(p0_notifs, "opp_cheated p0");
             assert_reward_coin_consistency(p1_notifs, "opp_cheated p1");
             assert!(
-                p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentPlayedIllegalMove { .. })),
+                p0_notifs
+                    .iter()
+                    .any(|n| has_status(n, GameStatusKind::IllegalMoveDetected)),
                 "player 0 should get OpponentPlayedIllegalMove, got: {p0_notifs:?}"
             );
             assert!(
-                p0_notifs.iter().any(|n| matches!(n, GameNotification::OpponentSuccessfullyCheated { reward_coin: None, .. })),
+                p0_notifs.iter().any(|n| {
+                    matches!(
+                        n,
+                        GameNotification::GameStatus {
+                            status: GameStatusKind::EndedOpponentSuccessfullyCheated,
+                            coin_id: None,
+                            ..
+                        }
+                    )
+                }),
                 "player 0 should get OpponentSuccessfullyCheated with no reward (cheat mover_share=0), got: {p0_notifs:?}"
             );
 
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 game_accepted(),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentPlayedIllegalMove),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentSuccessfullyCheated),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusIllegalMoveDetected),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentSuccessfullyCheated),
             ], "opp_cheated p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 game_proposed(), game_accepted(),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::GameMessage,
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
             ], "opp_cheated p1");
         },
     ));
@@ -4166,12 +4714,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             // from Alice's view gives a GameError or ChannelError.
             let mut moves = vec![
                 GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::AcceptProposal(1, GameID(0)),
+                GameAction::AcceptProposal(1, GameID(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
             let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(5).collect();
             on_chain_moves.push(GameAction::GoOnChain(0));
-            on_chain_moves.push(GameAction::ForceDestroyCoin(0, GameID(0)));
+            on_chain_moves.push(GameAction::ForceDestroyCoin(0, GameID(1)));
             on_chain_moves.push(GameAction::WaitBlocks(30, 0));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -4179,26 +4727,32 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
             let p0_notifs = &outcome.local_uis[0].notifications;
             assert!(
-                p0_notifs.iter().any(|n| matches!(n, GameNotification::GameError { .. }))
-                || p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelError { .. })),
+                p0_notifs
+                    .iter()
+                    .any(|n| has_status(n, GameStatusKind::EndedError))
+                || p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelStatus { state: ChannelState::Failed, .. })),
                 "player 0 should get GameError or ChannelError when coin is force-destroyed, got: {p0_notifs:?}"
             );
 
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 game_accepted(),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::GameError),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedError),
             ], "destroyed p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 game_proposed(), game_accepted(),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
                 ExpectedEvent::GameMessage,
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::GameError),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedError),
             ], "destroyed p1");
         },
     ));
@@ -4250,12 +4804,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             );
 
             assert_event_sequence(&outcome.local_uis[0].events, &[
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
             ], "alice_nerfed p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
             ], "alice_nerfed p1");
         },
     ));
@@ -4302,12 +4858,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             );
 
             assert_event_sequence(&outcome.local_uis[0].events, &[
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
             ], "bob_nerfed p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
             ], "bob_nerfed p1");
         },
     ));
@@ -4317,13 +4875,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let mut moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(0)),
+            GameAction::AcceptProposal(1, GameID(1)),
         ];
-        moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
         let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(4).collect();
         on_chain_moves.push(GameAction::GoOnChain(0));
         on_chain_moves.push(GameAction::WaitBlocks(5, 0));
-        on_chain_moves.push(GameAction::ForceDestroyCoin(1, GameID(0)));
+        on_chain_moves.push(GameAction::ForceDestroyCoin(1, GameID(1)));
         on_chain_moves.push(GameAction::WaitBlocks(30, 0));
 
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -4337,7 +4895,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             all_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::GameError { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedError)),
             "some player should get GameError when game coin force-destroyed, got: {all_notifs:?}"
         );
 
@@ -4345,12 +4903,21 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &outcome.local_uis[0].events,
             &[
                 game_accepted(),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::GameError),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedError),
             ],
             "impossible_spend p0",
         );
@@ -4362,9 +4929,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::GameError),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedError),
             ],
             "impossible_spend p1",
         );
@@ -4377,13 +4954,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
             let mut moves = vec![
                 GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-                GameAction::AcceptProposal(1, GameID(0)),
+                GameAction::AcceptProposal(1, GameID(1)),
             ];
-            moves.extend(prefix_test_moves(&mut allocator, GameID(0)));
+            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
             let mut on_chain_moves: Vec<GameAction> = moves.into_iter().take(4).collect();
             on_chain_moves.push(GameAction::GoOnChain(0));
             on_chain_moves.push(GameAction::WaitBlocks(5, 0));
-            on_chain_moves.push(GameAction::ForceDestroyCoin(0, GameID(0)));
+            on_chain_moves.push(GameAction::ForceDestroyCoin(0, GameID(1)));
             on_chain_moves.push(GameAction::WaitBlocks(30, 0));
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &on_chain_moves)
@@ -4393,23 +4970,32 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 .flat_map(|ui| ui.notifications.iter())
                 .collect();
             assert!(
-                all_notifs.iter().any(|n| matches!(n, GameNotification::GameError { .. })),
+                all_notifs
+                    .iter()
+                    .any(|n| has_status(n, GameStatusKind::EndedError)),
                 "some player should get GameError when own game coin force-destroyed, got: {all_notifs:?}"
             );
 
             assert_event_sequence(&outcome.local_uis[0].events, &[
                 game_accepted(),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
-                ExpectedEvent::Notification(ExpectedNotification::GameError),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedError),
             ], "our_turn_spent p0");
             assert_event_sequence(&outcome.local_uis[1].events, &[
                 game_proposed(), game_accepted(),
                 ExpectedEvent::OpponentMoved { mover_share: Amount::new(0) },
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::GameError),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::GoingOnChain)),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::Unrolling)),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(ChannelState::ResolvedUnrolled)),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedError),
             ], "our_turn_spent p1");
         },
     ));
@@ -4447,14 +5033,26 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         );
         let p1_notifs = &outcome.local_uis[1].notifications;
         assert!(
-            p1_notifs
-                .iter()
-                .any(|n| matches!(n, GameNotification::ChannelError { .. })),
+            p1_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::ChannelStatus {
+                    state: ChannelState::Failed,
+                    ..
+                }
+            )),
             "player 1 should get ChannelError for state-from-the-future, got: {p1_notifs:?}"
         );
         let channel_error_idx = p1_notifs
             .iter()
-            .position(|n| matches!(n, GameNotification::ChannelError { .. }))
+            .position(|n| {
+                matches!(
+                    n,
+                    GameNotification::ChannelStatus {
+                        state: ChannelState::Failed,
+                        ..
+                    }
+                )
+            })
             .unwrap();
         for n in &p1_notifs[channel_error_idx + 1..] {
             panic!("no notifications should arrive after ChannelError, but got {n:?}");
@@ -4464,8 +5062,16 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &outcome.local_uis[0].events,
             &[
                 game_accepted(),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
             ],
             "state_too_high p0",
         );
@@ -4474,9 +5080,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &[
                 game_proposed(),
                 game_accepted(),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::GameError),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelError),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedError),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Failed,
+                )),
             ],
             "state_too_high p1",
         );
@@ -4517,14 +5127,26 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         );
         let p1_notifs = &outcome.local_uis[1].notifications;
         assert!(
-            p1_notifs
-                .iter()
-                .any(|n| matches!(n, GameNotification::ChannelError { .. })),
+            p1_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::ChannelStatus {
+                    state: ChannelState::Failed,
+                    ..
+                }
+            )),
             "player 1 should get ChannelError for wrong-parity old state, got: {p1_notifs:?}"
         );
         let channel_error_idx = p1_notifs
             .iter()
-            .position(|n| matches!(n, GameNotification::ChannelError { .. }))
+            .position(|n| {
+                matches!(
+                    n,
+                    GameNotification::ChannelStatus {
+                        state: ChannelState::Failed,
+                        ..
+                    }
+                )
+            })
             .unwrap();
         for n in &p1_notifs[channel_error_idx + 1..] {
             panic!("no notifications should arrive after ChannelError, but got {n:?}");
@@ -4534,8 +5156,16 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &outcome.local_uis[0].events,
             &[
                 game_accepted(),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
             ],
             "wrong_parity p0",
         );
@@ -4544,9 +5174,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &[
                 game_proposed(),
                 game_accepted(),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::GameError),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelError),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedError),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Failed,
+                )),
             ],
             "wrong_parity p1",
         );
@@ -4591,7 +5225,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         for (i, notifs) in outcome.local_uis.iter().enumerate() {
             for n in &notifs.notifications {
                 assert!(
-                    !matches!(n, GameNotification::ChannelError { .. }),
+                    !matches!(
+                        n,
+                        GameNotification::ChannelStatus {
+                            state: ChannelState::Failed,
+                            ..
+                        }
+                    ),
                     "player {i} should not get ChannelError, got: {n:?}"
                 );
             }
@@ -4604,13 +5244,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::OpponentTimedOut { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedOpponentTimedOut)),
             "alice should get OpponentTimedOut (bob was nerfed), got: {p0_notifs:?}"
         );
         assert!(
             p1_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::WeTimedOut { .. })),
+                .any(|n| has_status(n, GameStatusKind::EndedWeTimedOut)),
             "bob should get WeTimedOut (nerfed, couldn't play), got: {p1_notifs:?}"
         );
 
@@ -4618,9 +5258,19 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &outcome.local_uis[0].events,
             &[
                 game_accepted(),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::OpponentTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedOpponentTimedOut),
             ],
             "go_on_chain_then_move p0",
         );
@@ -4629,12 +5279,21 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &[
                 game_proposed(),
                 game_accepted(),
-                ExpectedEvent::Notification(ExpectedNotification::ChannelCoinSpent),
-                ExpectedEvent::Notification(ExpectedNotification::UnrollCoinSpent),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::GoingOnChain,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::Unrolling,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::Notification(ExpectedNotification::ChannelState(
+                    ChannelState::ResolvedUnrolled,
+                )),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(0),
                 },
-                ExpectedEvent::Notification(ExpectedNotification::WeTimedOut),
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
             ],
             "go_on_chain_then_move p1",
         );
@@ -4652,7 +5311,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // potato and initiates clean shutdown (no live games to block it).
         let moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::CancelProposal(1, GameID(0)),
+            GameAction::CancelProposal(1, GameID(1)),
             GameAction::CleanShutdown(0),
         ];
 
@@ -4695,7 +5354,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // on-chain. Both sides should see GameProposed + GameProposalAccepted.
         let moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(0)),
+            GameAction::AcceptProposal(1, GameID(1)),
             GameAction::WaitBlocks(1, 2),
             GameAction::GoOnChain(0),
             GameAction::WaitBlocks(120, 0),
@@ -4783,7 +5442,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // queues the cancel and requests the potato back.
         let moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::CancelProposal(0, GameID(0)),
+            GameAction::CancelProposal(0, GameID(1)),
             GameAction::CleanShutdown(0),
         ];
 
@@ -4827,9 +5486,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // to resolve game A and cancel the pending proposal.
         let moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(0)),
+            GameAction::AcceptProposal(1, GameID(1)),
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(2)),
+            GameAction::AcceptProposal(1, GameID(3)),
             GameAction::GoOnChain(0),
             GameAction::WaitBlocks(120, 0),
             GameAction::WaitBlocks(5, 0),
@@ -4867,8 +5526,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // should be silently discarded. The game resolves on-chain.
         let moves = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::AcceptProposal(1, GameID(0)),
-            GameAction::CancelProposal(0, GameID(0)),
+            GameAction::AcceptProposal(1, GameID(1)),
+            GameAction::CancelProposal(0, GameID(1)),
             GameAction::GoOnChain(0),
             GameAction::WaitBlocks(120, 0),
             GameAction::WaitBlocks(5, 0),
@@ -4901,7 +5560,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
 
         sim_setup.game_actions.push(GameAction::SaveUnrollSnapshot(1));
-        // Proposal round-trip advances player 0's last_received_state past
+        // Proposal round-trip advances player 0's state_number past
         // the snapshot without changing the first game's referee PH.
         sim_setup.game_actions.push(GameAction::ProposeNewGame(0, ProposeTrigger::Channel));
         sim_setup.game_actions.push(GameAction::AcceptProposal(1, GameID(3)));
@@ -4938,18 +5597,21 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         assert!(
-            p0_notifs.iter().any(|n| matches!(n, GameNotification::StaleChannelUnroll { .. })),
-            "player 0 should get StaleChannelUnroll, got: {p0_notifs:?}"
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelStatus { state: ChannelState::ResolvedStale, .. })),
+            "player 0 should see ResolvedStale, got: {p0_notifs:?}"
         );
         // The accept round-tripped, so the second game is fully live (not a
         // pending accept). It's absent from the stale unroll → GameError.
-        let game_errors: Vec<_> = p0_notifs.iter().filter(|n| matches!(n, GameNotification::GameError { .. })).collect();
+        let game_errors: Vec<_> = p0_notifs
+            .iter()
+            .filter(|n| has_status(n, GameStatusKind::EndedError))
+            .collect();
         assert!(
             game_errors.len() == 1,
             "player 0 should get exactly one GameError for the fully-live second game, got: {game_errors:?}, all: {p0_notifs:?}"
         );
         assert!(
-            !p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelError { .. })),
+            !p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelStatus { state: ChannelState::Failed, .. })),
             "player 0 should NOT get ChannelError, got: {p0_notifs:?}"
         );
     }));
@@ -5014,18 +5676,21 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         assert!(
-            p0_notifs.iter().any(|n| matches!(n, GameNotification::StaleChannelUnroll { .. })),
-            "player 0 should get StaleChannelUnroll, got: {p0_notifs:?}"
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelStatus { state: ChannelState::ResolvedStale, .. })),
+            "player 0 should see ResolvedStale, got: {p0_notifs:?}"
         );
         // The redo recovers the first game, but the second game's accept
         // round-tripped (fully live), absent from the stale unroll → GameError.
-        let game_errors: Vec<_> = p0_notifs.iter().filter(|n| matches!(n, GameNotification::GameError { .. })).collect();
+        let game_errors: Vec<_> = p0_notifs
+            .iter()
+            .filter(|n| has_status(n, GameStatusKind::EndedError))
+            .collect();
         assert!(
             game_errors.len() == 1,
             "player 0 should get exactly one GameError for the fully-live second game, got: {game_errors:?}, all: {p0_notifs:?}"
         );
         assert!(
-            !p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelError { .. })),
+            !p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelStatus { state: ChannelState::Failed, .. })),
             "player 0 should NOT get ChannelError, got: {p0_notifs:?}"
         );
     }));
@@ -5047,7 +5712,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             .push(GameAction::SaveUnrollSnapshot(1));
         // Move 2 changes the game PH.
         sim_setup.game_actions.push(second_move);
-        // Proposal round-trip advances last_received_state past the snapshot
+        // Proposal round-trip advances state_number past the snapshot
         // so the stale detection triggers.
         sim_setup
             .game_actions
@@ -5087,25 +5752,33 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         assert!(
-            p0_notifs
-                .iter()
-                .any(|n| matches!(n, GameNotification::StaleChannelUnroll { .. })),
-            "player 0 should get StaleChannelUnroll, got: {p0_notifs:?}"
+            p0_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::ChannelStatus {
+                    state: ChannelState::ResolvedStale,
+                    ..
+                }
+            )),
+            "player 0 should see ResolvedStale, got: {p0_notifs:?}"
         );
         // First game: coin present but at an old PH → GameError.
         // Second game: accept round-tripped (fully live), absent from stale unroll → GameError.
         let game_errors: Vec<_> = p0_notifs
             .iter()
-            .filter(|n| matches!(n, GameNotification::GameError { .. }))
+            .filter(|n| has_status(n, GameStatusKind::EndedError))
             .collect();
         assert!(
             game_errors.len() >= 1,
             "player 0 should get at least one GameError, got: {game_errors:?}, all: {p0_notifs:?}"
         );
         assert!(
-            !p0_notifs
-                .iter()
-                .any(|n| matches!(n, GameNotification::ChannelError { .. })),
+            !p0_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::ChannelStatus {
+                    state: ChannelState::Failed,
+                    ..
+                }
+            )),
             "player 0 should NOT get ChannelError, got: {p0_notifs:?}"
         );
     }));
@@ -5120,7 +5793,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
 
         sim_setup.game_actions.push(GameAction::SaveUnrollSnapshot(1));
-        // Proposal round-trip advances player 0's last_received_state past
+        // Proposal round-trip advances player 0's state_number past
         // the snapshot so that the stale detection triggers.
         sim_setup.game_actions.push(GameAction::ProposeNewGame(0, ProposeTrigger::Channel));
         sim_setup.game_actions.push(GameAction::AcceptProposal(1, GameID(3)));
@@ -5166,23 +5839,29 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let p0_notifs = &outcome.local_uis[0].notifications;
         assert!(
-            p0_notifs.iter().any(|n| matches!(n, GameNotification::StaleChannelUnroll { .. })),
-            "player 0 should get StaleChannelUnroll, got: {p0_notifs:?}"
+            p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelStatus { state: ChannelState::ResolvedStale, .. })),
+            "player 0 should see ResolvedStale, got: {p0_notifs:?}"
         );
         // The second game (fully live, round-tripped) is absent → GameError.
-        let game_errors: Vec<_> = p0_notifs.iter().filter(|n| matches!(n, GameNotification::GameError { .. })).collect();
+        let game_errors: Vec<_> = p0_notifs
+            .iter()
+            .filter(|n| has_status(n, GameStatusKind::EndedError))
+            .collect();
         assert!(
             game_errors.len() == 1,
             "player 0 should get exactly one GameError for the fully-live second game, got: {game_errors:?}, all: {p0_notifs:?}"
         );
         // The third game (in-flight proposal accept) is absent → GameCancelled.
-        let game_cancels: Vec<_> = p0_notifs.iter().filter(|n| matches!(n, GameNotification::GameCancelled { .. })).collect();
+        let game_cancels: Vec<_> = p0_notifs
+            .iter()
+            .filter(|n| has_status(n, GameStatusKind::EndedCancelled))
+            .collect();
         assert!(
             game_cancels.len() == 1,
             "player 0 should get exactly one GameCancelled for the in-flight accept, got: {game_cancels:?}, all: {p0_notifs:?}"
         );
         assert!(
-            !p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelError { .. })),
+            !p0_notifs.iter().any(|n| matches!(n, GameNotification::ChannelStatus { state: ChannelState::Failed, .. })),
             "player 0 should NOT get ChannelError, got: {p0_notifs:?}"
         );
     }));
@@ -5234,8 +5913,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::WeTimedOut { our_reward, reward_coin: None, .. }
-                if *our_reward == Amount::default()
+                GameNotification::GameStatus {
+                    status: GameStatusKind::EndedWeTimedOut,
+                    my_reward: Some(our_reward),
+                    coin_id: None,
+                    ..
+                } if *our_reward == Amount::default()
             )),
             "Alice should get WeTimedOut with zero reward (redo skipped), got: {p0_notifs:?}"
         );
@@ -5282,8 +5965,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::WeTimedOut { our_reward, reward_coin: None, .. }
-                if *our_reward == Amount::default()
+                GameNotification::GameStatus {
+                    status: GameStatusKind::EndedWeTimedOut,
+                    my_reward: Some(our_reward),
+                    coin_id: None,
+                    ..
+                } if *our_reward == Amount::default()
             )),
             "Alice should get WeTimedOut with zero reward (accepted, unroll), got: {p0_notifs:?}"
         );
@@ -5324,8 +6011,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::WeTimedOut { our_reward, reward_coin: None, .. }
-                if *our_reward == Amount::default()
+                GameNotification::GameStatus {
+                    status: GameStatusKind::EndedWeTimedOut,
+                    my_reward: Some(our_reward),
+                    coin_id: None,
+                    ..
+                } if *our_reward == Amount::default()
             )),
             "Alice should get WeTimedOut with zero reward (opponent's turn, dead game), got: {p0_notifs:?}"
         );
@@ -5375,8 +6066,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::WeTimedOut { our_reward, reward_coin: None, .. }
-                if *our_reward == Amount::default()
+                GameNotification::GameStatus {
+                    status: GameStatusKind::EndedWeTimedOut,
+                    my_reward: Some(our_reward),
+                    coin_id: None,
+                    ..
+                } if *our_reward == Amount::default()
             )),
             "Alice should get WeTimedOut with zero reward (on-chain move skipped), got: {p0_notifs:?}"
         );
@@ -5422,12 +6117,133 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p0_notifs.iter().any(|n| matches!(
                 n,
-                GameNotification::WeTimedOut { our_reward, reward_coin: None, .. }
-                if *our_reward == Amount::default()
+                GameNotification::GameStatus {
+                    status: GameStatusKind::EndedWeTimedOut,
+                    my_reward: Some(our_reward),
+                    coin_id: None,
+                    ..
+                } if *our_reward == Amount::default()
             )),
             "Alice should get WeTimedOut with zero reward (on-chain AcceptTimeout), got: {p0_notifs:?}"
         );
     }));
+
+    res.push(("test_channel_handshake_timeout", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        let moves = vec![
+            GameAction::NerfTransactions(0),
+            GameAction::NerfTransactions(1),
+            GameAction::WaitBlocks(10, 0),
+        ];
+
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            Some(&|_move_number, _cradles| false),
+            None,
+        )
+        .expect("should finish");
+
+        for i in 0..2 {
+            let has_failed = outcome.local_uis[i].notifications.iter().any(|n| {
+                matches!(
+                    n,
+                    GameNotification::ChannelStatus {
+                        state: ChannelState::Failed,
+                        ..
+                    }
+                )
+            });
+            assert!(
+                has_failed,
+                "player {i} should have received ChannelState::Failed, got: {:?}",
+                outcome.local_uis[i].notifications
+            );
+        }
+    }));
+
+    res.push((
+        "test_channel_handshake_alice_nerfed_still_creates_channel",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+
+            let moves = vec![GameAction::NerfTransactions(0)];
+
+            let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &moves,
+                Some(&|_, cradles| {
+                    cradles[0].handshake_finished() && cradles[1].handshake_finished()
+                }),
+                None,
+            )
+            .expect("should finish");
+
+            for i in 0..2 {
+                assert!(
+                    outcome.local_uis[i].channel_created,
+                    "player {i} should have channel_created=true, notifications: {:?}",
+                    outcome.local_uis[i].notifications
+                );
+                let has_failed = outcome.local_uis[i].notifications.iter().any(|n| {
+                    matches!(
+                        n,
+                        GameNotification::ChannelStatus {
+                            state: ChannelState::Failed,
+                            ..
+                        }
+                    )
+                });
+                assert!(
+                    !has_failed,
+                    "player {i} should not have ChannelState::Failed, got: {:?}",
+                    outcome.local_uis[i].notifications
+                );
+            }
+        },
+    ));
+
+    res.push((
+        "test_channel_handshake_bob_nerfed_still_creates_channel",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+
+            let moves = vec![GameAction::NerfTransactions(1)];
+
+            let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &moves,
+                Some(&|_, cradles| {
+                    cradles[0].handshake_finished() && cradles[1].handshake_finished()
+                }),
+                None,
+            )
+            .expect("should finish");
+
+            for i in 0..2 {
+                assert!(
+                    outcome.local_uis[i].channel_created,
+                    "player {i} should have channel_created=true, notifications: {:?}",
+                    outcome.local_uis[i].notifications
+                );
+                let has_failed = outcome.local_uis[i].notifications.iter().any(|n| {
+                    matches!(
+                        n,
+                        GameNotification::ChannelStatus {
+                            state: ChannelState::Failed,
+                            ..
+                        }
+                    )
+                });
+                assert!(
+                    !has_failed,
+                    "player {i} should not have ChannelState::Failed, got: {:?}",
+                    outcome.local_uis[i].notifications
+                );
+            }
+        },
+    ));
 
     res
 }

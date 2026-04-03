@@ -59,16 +59,17 @@ mod sim_tests {
 
     impl ChannelHandlerGame {
         pub fn new<R: Rng>(
-            env: &mut ChannelHandlerEnv<R>,
+            rng: &mut R,
+            env: &mut ChannelHandlerEnv<'_>,
             game_id: GameID,
             launcher_coin_id: &CoinID,
             contributions: &[Amount; 2],
             unroll_advance_timeout: Timeout,
         ) -> Result<ChannelHandlerGame, Error> {
-            let private_keys: [ChannelHandlerPrivateKeys; 2] = env.rng.gen();
+            let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.gen();
 
             let make_ref_info =
-                |env: &mut ChannelHandlerEnv<R>,
+                |env: &mut ChannelHandlerEnv<'_>,
                  id: usize|
                  -> Result<(Rc<Puzzle>, PuzzleHash, PublicKey, Aggsig), Error> {
                     let ref_key = private_to_public_key(&private_keys[id].my_referee_private_key);
@@ -85,26 +86,27 @@ mod sim_tests {
             let ref2 = make_ref_info(env, 1)?;
             let referees = [ref1, ref2];
 
-            let make_party =
-                |env: &mut ChannelHandlerEnv<R>, id: usize| -> Result<ChannelHandlerParty, Error> {
-                    ChannelHandlerParty::new(
-                        env,
-                        private_keys[id].clone(),
-                        referees[id].0.clone(),
-                        referees[id].1.clone(),
-                        launcher_coin_id.clone(),
-                        id == 1,
-                        private_to_public_key(&private_keys[id ^ 1].my_channel_coin_private_key),
-                        private_to_public_key(&private_keys[id ^ 1].my_unroll_coin_private_key),
-                        referees[id ^ 1].2.clone(),
-                        referees[id ^ 1].1.clone(),
-                        referees[id ^ 1].3.clone(),
-                        contributions[id].clone(),
-                        contributions[id ^ 1].clone(),
-                        unroll_advance_timeout.clone(),
-                        referees[id].1.clone(),
-                    )
-                };
+            let make_party = |env: &mut ChannelHandlerEnv<'_>,
+                              id: usize|
+             -> Result<ChannelHandlerParty, Error> {
+                ChannelHandlerParty::new(
+                    env,
+                    private_keys[id].clone(),
+                    referees[id].0.clone(),
+                    referees[id].1.clone(),
+                    launcher_coin_id.clone(),
+                    id == 1,
+                    private_to_public_key(&private_keys[id ^ 1].my_channel_coin_private_key),
+                    private_to_public_key(&private_keys[id ^ 1].my_unroll_coin_private_key),
+                    referees[id ^ 1].2.clone(),
+                    referees[id ^ 1].1.clone(),
+                    referees[id ^ 1].3.clone(),
+                    contributions[id].clone(),
+                    contributions[id ^ 1].clone(),
+                    unroll_advance_timeout.clone(),
+                    referees[id].1.clone(),
+                )
+            };
 
             let player1 = make_party(env, 0)?;
             let player2 = make_party(env, 1)?;
@@ -120,9 +122,9 @@ mod sim_tests {
             &mut self.players[who]
         }
 
-        pub fn finish_handshake<R: Rng>(
+        pub fn finish_handshake(
             &mut self,
-            env: &mut ChannelHandlerEnv<R>,
+            env: &mut ChannelHandlerEnv<'_>,
             who: usize,
         ) -> Result<(), Error> {
             let channel_coin_0_aggsig = self.players[who ^ 1]
@@ -205,7 +207,7 @@ mod sim_tests {
         AcceptTimeout(usize, GameID),
         /// Shut down
         CleanShutdown(usize),
-        /// Corrupt a player's current_state_number for testing edge cases.
+        /// Corrupt a player's state_number for testing edge cases.
         /// (player, new_state_number)
         CorruptStateNumber(usize, usize),
         /// Force-submit an unroll transaction for a player, bypassing
@@ -300,7 +302,8 @@ mod sim_tests {
 
     pub fn new_channel_handler_game<R: Rng>(
         simulator: &Simulator,
-        env: &mut ChannelHandlerEnv<R>,
+        rng: &mut R,
+        env: &mut ChannelHandlerEnv<'_>,
         game_id: &GameID,
         alice_game: &Game,
         bob_game: &Game,
@@ -348,6 +351,7 @@ mod sim_tests {
         simulator.farm_block(&identities[0].puzzle_hash);
 
         let mut party = ChannelHandlerGame::new(
+            rng,
             env,
             game_id.clone(),
             &u2.to_coin_id(),

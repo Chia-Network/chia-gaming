@@ -1,6 +1,6 @@
 # Debugging & Testing Reference
 
-For architecture and design, see `ARCHITECTURE.MD`. This document covers how
+For architecture and design, see `OVERVIEW.md`. This document covers how
 to build, run tests, read output, and debug failures.
 
 ## Building and Running Tests
@@ -8,7 +8,7 @@ to build, run tests, read output, and debug failures.
 ### Use `./cb.sh` and `./ct.sh`
 
 **Always use `./ct.sh` to run tests. Never use `cargo test` directly.** The
-script handles feature flags (`--features sim-tests`), output capture
+script handles feature flags (`--features sim-server`), output capture
 (`--nocapture`), log rotation, and wraparound test ordering.
 
 - **`./cb.sh`** — Build the test binary without running tests. Passes extra
@@ -29,7 +29,7 @@ script handles feature flags (`--features sim-tests`), output capture
 If you must bypass the scripts, replicate what `ct.sh` does:
 
 ```bash
-cargo test --lib --features sim-tests -- --nocapture
+cargo test --lib --features sim-server -- --nocapture
 ```
 
 The `--lib` flag skips doc-test compilation (which adds ~14s even when there
@@ -37,13 +37,26 @@ are no doc-tests).
 
 To start from a specific test (wraparound):
 ```bash
-SIM_TEST_FROM=accept_finished cargo test --lib --features sim-tests -- --nocapture
+SIM_TEST_FROM=accept_finished cargo test --lib --features sim-server -- --nocapture
 ```
 
 To run only matching test(s):
 ```bash
-SIM_TEST_ONLY=accept_finished cargo test --lib --features sim-tests -- --nocapture
+SIM_TEST_ONLY=accept_finished cargo test --lib --features sim-server -- --nocapture
 ```
+
+### Test debugging workflow
+
+When a test fails, use this sequence:
+
+1. **Isolate**: `./ct.sh -o failing_test` — run only that test while debugging.
+   Individual tests are fast (1–5s), so iteration is quick.
+2. **Full suite from that test**: Once the test passes, switch to
+   `./ct.sh failing_test` (no `-o`). This runs all tests starting from the
+   one you just fixed, then wraps around. The tests *before* it in the
+   default order already passed on the run that discovered the failure, so
+   there's no reason to re-run them first — start from the fix and cover
+   the rest.
 
 ### Typical durations
 
@@ -73,31 +86,44 @@ comment out its `res.push(...)` call in the relevant `test_funs()` function.
 ## Reading Test Output
 
 The output from `./ct.sh` is designed to be read directly. A passing run ends
-with a line like `All 48 tests passed in 28.31s`. A failing run ends with the
-panic — the process exits immediately on panic, so the failure is always the
-last thing printed.
+with a line like `All 48 tests passed in 28.31s`. A failing run prints
+`PANIC IN TEST:` inline as each failure occurs, then ends with a summary:
+
+```
+--- 3 FAILED TEST(S) ---
+
+  FAIL: test_foo
+  some error message
+
+  FAIL: test_bar
+  another error message
+
+45 passed, 3 failed in 32.15s
+```
+
+All tests run to completion regardless of failures — a single panic does not
+abort the suite. This lets you see every broken test in one run.
 
 ### Pass/fail
 
-The exit code is reliable: nonzero means a test panicked. Each test prints
-`RUNNING TEST <name> ...` when it starts and `<name> ... ok (<time>)` when it
-finishes. A test that starts but doesn't print `ok` is the one that failed.
+The exit code is reliable: nonzero means at least one test panicked. Each test
+prints `RUNNING TEST <name> ...` when it starts and `<name> ... ok (<time>)`
+when it finishes. Failed tests print `PANIC IN TEST: <name>` inline instead.
 
 ### Panics
 
-The panic hook prints the test name first (via thread-local tracking), followed
-by the `panic payload:` line with the error message, then a backtrace, then
-exits immediately. Example:
+Each test body is wrapped in `catch_unwind`. When a test panics, the runner
+prints `PANIC IN TEST: <name>` and `panic payload:` with the error message
+inline, then continues running remaining tests. Example mid-run output:
 
 ```
-PANIC IN TEST: accept_finished_on_chain
+PANIC IN TEST: test_notification_accept_finished
 panic payload: tx include failed: move_number=10 tx_name=Some("false accept transaction") ...
-   2: std::panicking::panic_with_hook
-   ...
 ```
 
 The `PANIC IN TEST:` line identifies which test panicked (even when multiple
 tests run in parallel). The `panic payload:` line has the error details.
+All failures are collected and printed again in the summary at the end.
 
 ### Saving output
 
@@ -218,13 +244,15 @@ specifies when the action is ready to fire:
 Each iteration of the sim loop:
 
 1. **Farm a block** and build a `WatchReport` from the new coin set.
-2. **Drain/deliver** for each player (in order 0, then 1):
-   - Call `drain_all` to process inbound messages and collect outbound.
+2. **Flush and dispatch** for each player (in order 0, then 1):
+   - Call `flush_and_collect` to process inbound messages, settle channel
+     setup, retry pending messages, flush potato-gated actions, and collect
+     all outbound events.
    - Deliver outbound messages to the other player's inbound queue.
    - Dispatch notifications to `LocalTestUIReceiver`.
 3. **Process the next action** from the script if a trigger condition is met.
 
-Because draining happens in fixed order (player 0 first), a message sent by
+Because flushing happens in fixed order (player 0 first), a message sent by
 player 1 takes one extra iteration to reach player 0 compared to the reverse
 direction. This asymmetry is natural and expected — the event-driven triggers
 automatically wait for the right notifications before firing.
@@ -338,8 +366,9 @@ whether the trigger condition for the next action can ever be satisfied.
 
 - **Don't use `cargo test` directly.** Use `./ct.sh`. The script handles
   feature flags, output capture, and test ordering.
-- **Don't use `head` to read test output.** Early output is build noise. Just
-  read the end.
+- **Don't filter test output.** Don't use `head`, `tail`, `grep`, or any
+  truncation. Read the complete output — early output is build noise, but the
+  middle contains per-test diagnostics you'll need when something fails.
 - **Don't run tests in the background.** Run `./ct.sh` and `./cb.sh` in the
   foreground and wait for them to finish. Background execution with sleep-based
   polling wastes time and makes output harder to capture.
@@ -347,3 +376,27 @@ whether the trigger condition for the next action can ever be satisfied.
   high `block_until_ms` (120000 ms / 2 minutes). Never background these
   commands. The full test suite completes in ~30 seconds; builds are faster.
   Both scripts print overall elapsed time at completion.
+- **Diagnose before rebuilding.** If you change code and the test output
+  doesn't change, don't assume a stale build — add a temporary `eprintln!`
+  or `dbg!` at the change site to verify your code is actually being reached
+  before tearing apart the build cache.
+- **Don't use `sleep` to wait for processes.** When waiting for a command to
+  finish, set `block_until_ms` to a value higher than the expected runtime.
+  The tool returns as soon as the process exits or the timeout elapses,
+  whichever comes first. Using `sleep` wastes time and blocks interruption.
+- **On macOS/Linux, use `kill -0` instead of `sleep` for waiting.**
+  `sleep N` always waits the full N seconds even if the process finished
+  immediately. This alternative checks once per second whether the process
+  is still running and exits as soon as it isn't:
+
+  ```bash
+  # kill -0 sends no signal — it only checks whether the PID exists
+  for i in $(seq 60); do kill -0 <pid> 2>/dev/null || break; sleep 1; done
+  ```
+
+  This is strictly better than `sleep 60`: identical worst case (60s if
+  the process truly takes that long), but returns within 1 second of
+  process exit instead of wasting the remaining time. Use a higher count
+  when the expected runtime is longer.
+
+  `kill -0` is POSIX and works on macOS and Linux, not Windows.

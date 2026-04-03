@@ -6,11 +6,13 @@
 
 This service allows players to advertise that they are available for a game, or accept another player's game invitation.
 
-The lobby API helps bootstrap the peer-to-peer websocket used as an offchain message channel.
+The lobby API helps bootstrap peer connections and relay off-chain messages over WebSocket.
 
 The lobby is analogous to a tracker in a Bittorrent swarm - both allow finding metadata about potential peers.
 
-This service will expose API endpoints at <tt>/api/v[0-9][0-9]/</tt>
+This service exposes a tracker WebSocket endpoint at `/ws`, plus small HTTP
+helper endpoints used by deploy tooling (for example game advertisement beacons
+and lobby alias lookups).
 
 There will also be static web files implementing the user-facing website that queries the Lobby API, and displays the list of available games.
 
@@ -20,7 +22,7 @@ When should we retire old entries in the DB? A week?
 
 We expect more reads than writes.
 
-[Code](../src/lobby/)
+[Code](lobby/lobby-service/)
 
 This could be hosted at e.g. chia-gaming.net or gaming.chia.net
 

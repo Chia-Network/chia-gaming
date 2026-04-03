@@ -3,13 +3,13 @@ use rand_chacha::ChaCha8Rng;
 
 use clvm_traits::ToClvm;
 
-use log::debug;
-
-use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN};
+use crate::common::constants::{
+    AGG_SIG_ME_ADDITIONAL_DATA, ASSERT_COIN_ANNOUNCEMENT, CREATE_COIN, CREATE_COIN_ANNOUNCEMENT,
+};
 use crate::common::standard_coin::{sign_agg_sig_me, solution_for_conditions, ChiaIdentity};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, CoinSpend, CoinString, GetCoinStringParts, Hash, IntoErr,
-    PrivateKey, Program, PuzzleHash, Sha256tree, Spend, ToQuotedProgram,
+    PrivateKey, Program, PuzzleHash, Sha256Input, Sha256tree, Spend, ToQuotedProgram,
 };
 use crate::simulator::Simulator;
 
@@ -21,19 +21,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
         let s = Simulator::new_strict();
         let private_key: PrivateKey = rng.gen();
-        debug!("private_key: {private_key:?}");
-        let identity = ChiaIdentity::new(&mut allocator, private_key.clone())
-            .map_err(|err| {
-                debug!("{err:?}");
-                err
-            })
-            .expect("no");
-        debug!("identity public key {:?}", identity.public_key);
+        let identity = ChiaIdentity::new(&mut allocator, private_key.clone()).expect("no");
         s.farm_block(&identity.puzzle_hash);
 
         let coins = s.get_my_coins(&identity.puzzle_hash).expect("got coins");
-        debug!("coin 0 {:?}", coins[0].to_parts());
-        debug!("coin 0 id {:?}", coins[0].to_coin_id());
 
         let (_, _, amt) = coins[0].to_parts().unwrap();
         s.spend_coin_to_puzzle_hash(
@@ -291,7 +282,50 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let tx2 = spend_coin(&mut allocator);
         let r2 = s.push_tx(&mut allocator, &[tx2]).expect("ok");
-        assert_eq!(r2.code, 3, "second spend of same coin should be rejected");
+        assert_eq!(
+            r2.code, 1,
+            "re-submitting the exact same transaction should de-duplicate"
+        );
+
+        let altered_conditions = (
+            (
+                CREATE_COIN,
+                (
+                    identity.puzzle_hash.clone(),
+                    (Amount::new(amt.to_u64().saturating_sub(1)), ()),
+                ),
+            ),
+            (),
+        )
+            .to_clvm(&mut allocator)
+            .into_gen()
+            .unwrap();
+        let altered_solution = solution_for_conditions(&mut allocator, altered_conditions).unwrap();
+        let altered_quoted = altered_conditions
+            .to_quoted_program(&mut allocator)
+            .unwrap();
+        let altered_qhash = altered_quoted.sha256tree(&mut allocator);
+        let altered_sig = sign_agg_sig_me(
+            &identity.synthetic_private_key,
+            altered_qhash.bytes(),
+            &coin.to_coin_id(),
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+        );
+        let altered_tx = CoinSpend {
+            coin: coin.clone(),
+            bundle: Spend {
+                puzzle: identity.puzzle.clone(),
+                solution: Program::from_nodeptr(&mut allocator, altered_solution)
+                    .unwrap()
+                    .into(),
+                signature: altered_sig,
+            },
+        };
+        let r3 = s.push_tx(&mut allocator, &[altered_tx]).expect("ok");
+        assert_eq!(
+            r3.code, 3,
+            "re-submitting a different transaction for an already-spent coin should be rejected"
+        );
     }));
 
     res.push(("test_simulator_nonexistent_coin_rejected", &|| {
@@ -468,6 +502,165 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             "new coin should exist after farm_block"
         );
     }));
+
+    res.push(("test_simulator_assert_coin_announcement_enforced", &|| {
+        let seed: [u8; 32] = [9; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed);
+        let mut allocator = AllocEncoder::new();
+        let s = Simulator::new(false);
+        let pk: PrivateKey = rng.gen();
+        let identity = ChiaIdentity::new(&mut allocator, pk).expect("should create");
+
+        s.farm_block(&identity.puzzle_hash);
+        let coins = s.get_my_coins(&identity.puzzle_hash).expect("ok");
+        assert!(coins.len() >= 2, "expected at least two spendable coins");
+        let coin_a = coins[0].clone();
+        let coin_b = coins[1].clone();
+        let (_, _, amt_a) = coin_a.get_coin_string_parts().expect("parts");
+        let (_, _, amt_b) = coin_b.get_coin_string_parts().expect("parts");
+
+        let announcement_msg = Hash::from_bytes([0xAB; 32]);
+        let announcement_id = Sha256Input::Array(vec![
+            Sha256Input::Bytes(coin_a.to_coin_id().bytes()),
+            Sha256Input::Bytes(announcement_msg.bytes()),
+        ])
+        .hash();
+
+        let conds_a = (
+            (CREATE_COIN_ANNOUNCEMENT, (announcement_msg.clone(), ())),
+            (
+                (
+                    CREATE_COIN,
+                    (identity.puzzle_hash.clone(), (amt_a.clone(), ())),
+                ),
+                (),
+            ),
+        )
+            .to_clvm(&mut allocator)
+            .into_gen()
+            .expect("conds_a");
+        let sol_a = solution_for_conditions(&mut allocator, conds_a).expect("sol_a");
+        let quoted_a = conds_a.to_quoted_program(&mut allocator).expect("quoted_a");
+        let qhash_a = quoted_a.sha256tree(&mut allocator);
+        let sig_a = sign_agg_sig_me(
+            &identity.synthetic_private_key,
+            qhash_a.bytes(),
+            &coin_a.to_coin_id(),
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+        );
+
+        let conds_b = (
+            (ASSERT_COIN_ANNOUNCEMENT, (announcement_id.clone(), ())),
+            (
+                (
+                    CREATE_COIN,
+                    (identity.puzzle_hash.clone(), (amt_b.clone(), ())),
+                ),
+                (),
+            ),
+        )
+            .to_clvm(&mut allocator)
+            .into_gen()
+            .expect("conds_b");
+        let sol_b = solution_for_conditions(&mut allocator, conds_b).expect("sol_b");
+        let quoted_b = conds_b.to_quoted_program(&mut allocator).expect("quoted_b");
+        let qhash_b = quoted_b.sha256tree(&mut allocator);
+        let sig_b = sign_agg_sig_me(
+            &identity.synthetic_private_key,
+            qhash_b.bytes(),
+            &coin_b.to_coin_id(),
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+        );
+
+        let tx_a = CoinSpend {
+            coin: coin_a.clone(),
+            bundle: Spend {
+                puzzle: identity.puzzle.clone(),
+                solution: Program::from_nodeptr(&mut allocator, sol_a)
+                    .expect("prog_a")
+                    .into(),
+                signature: sig_a,
+            },
+        };
+        let tx_b = CoinSpend {
+            coin: coin_b.clone(),
+            bundle: Spend {
+                puzzle: identity.puzzle.clone(),
+                solution: Program::from_nodeptr(&mut allocator, sol_b)
+                    .expect("prog_b")
+                    .into(),
+                signature: sig_b,
+            },
+        };
+
+        let ok = s.push_tx(&mut allocator, &[tx_a, tx_b]).expect("push");
+        assert_eq!(
+            ok.code, 1,
+            "assertion should pass when announcement is created in same bundle"
+        );
+    }));
+
+    res.push((
+        "test_simulator_assert_coin_announcement_rejects_missing",
+        &|| {
+            let seed: [u8; 32] = [10; 32];
+            let mut rng = ChaCha8Rng::from_seed(seed);
+            let mut allocator = AllocEncoder::new();
+            let s = Simulator::new(false);
+            let pk: PrivateKey = rng.gen();
+            let identity = ChiaIdentity::new(&mut allocator, pk).expect("should create");
+
+            s.farm_block(&identity.puzzle_hash);
+            let coins = s.get_my_coins(&identity.puzzle_hash).expect("ok");
+            let coin = coins[0].clone();
+            let (_, _, amt) = coin.get_coin_string_parts().expect("parts");
+
+            let bogus_announcement_id = Hash::from_bytes([0x42; 32]);
+            let conds = (
+                (
+                    ASSERT_COIN_ANNOUNCEMENT,
+                    (bogus_announcement_id.clone(), ()),
+                ),
+                (
+                    (
+                        CREATE_COIN,
+                        (identity.puzzle_hash.clone(), (amt.clone(), ())),
+                    ),
+                    (),
+                ),
+            )
+                .to_clvm(&mut allocator)
+                .into_gen()
+                .expect("conds");
+            let solution = solution_for_conditions(&mut allocator, conds).expect("solution");
+            let quoted = conds.to_quoted_program(&mut allocator).expect("quoted");
+            let qhash = quoted.sha256tree(&mut allocator);
+            let sig = sign_agg_sig_me(
+                &identity.synthetic_private_key,
+                qhash.bytes(),
+                &coin.to_coin_id(),
+                &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+            );
+            let tx = CoinSpend {
+                coin,
+                bundle: Spend {
+                    puzzle: identity.puzzle.clone(),
+                    solution: Program::from_nodeptr(&mut allocator, solution)
+                        .expect("program")
+                        .into(),
+                    signature: sig,
+                },
+            };
+
+            let res = s.push_tx(&mut allocator, &[tx]).expect("push");
+            assert_eq!(res.code, 3, "missing announcement should be rejected");
+            assert!(
+                res.diagnostic.contains("ASSERT_COIN_ANNOUNCEMENT failed"),
+                "diagnostic should mention failed announcement assertion: {:?}",
+                res
+            );
+        },
+    ));
 
     res
 }

@@ -5,8 +5,6 @@ use clvmr::{run_program, ChiaDialect};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
-use log::debug;
-
 use crate::common::constants::{DEFAULT_HIDDEN_PUZZLE_HASH, ONE, TWO};
 use crate::common::load_clvm::hex_to_sexp;
 use crate::common::standard_coin::{
@@ -273,7 +271,6 @@ fn test_standard_puzzle_solution_maker() {
     let expected_full_conditions = (expected_added_condition, conditions_borrowed)
         .to_clvm(&mut allocator)
         .expect("should work");
-    debug!("solution {:?}", spend_info.solution);
     let puzzle_node = puzzle.to_clvm(&mut allocator).expect("should convert");
     let solution_node = spend_info
         .solution

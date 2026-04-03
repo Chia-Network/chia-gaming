@@ -3,8 +3,6 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
-use log::debug;
-
 use crate::channel_handler::game_handler::{
     GameHandler, MessageHandler, MyTurnInputs, MyTurnResult,
 };
@@ -184,7 +182,6 @@ impl MyTurnReferee {
         agg_sig_me_additional_data: &Hash,
         state_number: usize,
     ) -> Result<(Self, PuzzleHash), Error> {
-        debug!("referee maker: game start {:?}", game_start_info);
         let setup = referee_initial_setup(
             allocator,
             referee_coin_puzzle,
@@ -198,7 +195,6 @@ impl MyTurnReferee {
             nonce,
             agg_sig_me_additional_data,
         )?;
-        debug!("referee maker: my_turn {}", setup.my_turn);
 
         let state = Rc::new(MyTurnRefereeGameState::Initial {
             initial_state: game_start_info.initial_state.p(),
@@ -361,7 +357,6 @@ impl MyTurnReferee {
         };
 
         let result = if let Some((ref fake_move, ref cheat_share)) = self.enable_cheating {
-            debug!("my_turn_make_move: cheating - fake move, mover_share={cheat_share:?}");
             Rc::new(MyTurnResult {
                 name: "cheat".to_string(),
                 move_bytes: fake_move.clone(),
@@ -394,16 +389,6 @@ impl MyTurnReferee {
                 },
             )?)
         };
-
-        debug!(
-            "my turn result name={} move_len={} max_move_size={} mover_share={:?} waiting_handler_is_my_turn={} has_message_parser={}",
-            result.name,
-            result.move_bytes.len(),
-            result.max_move_size,
-            result.mover_share,
-            result.waiting_handler.as_ref().is_some_and(|h| h.is_my_turn()),
-            result.message_parser.is_some()
-        );
 
         let puzzle_args = self.spend_this_coin();
         let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
@@ -532,7 +517,6 @@ impl MyTurnReferee {
         match result {
             Err(e) => {
                 if self.enable_cheating.is_some() {
-                    debug!("cheating: validator raised error, using original state: {e:?}");
                     Ok(state.clone())
                 } else {
                     Err(e)

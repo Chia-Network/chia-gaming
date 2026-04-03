@@ -1,68 +1,95 @@
+use std::collections::VecDeque;
+
 use crate::channel_handler::types::PotatoSignatures;
 use crate::channel_handler::types::ReadableMove;
 use crate::common::types::{
-    Aggsig, Amount, CoinSpend, CoinString, GameID, ProgramRef, PuzzleHash, SpendBundle, Timeout,
+    Aggsig, Amount, CoinID, CoinSpend, CoinString, GameID, ProgramRef, PuzzleHash, SpendBundle,
+    Timeout,
 };
 use crate::potato_handler::handshake::{CoinSpendRequest, HandshakeB, HandshakeC, HandshakeD};
 use crate::potato_handler::types::{BatchAction, PeerMessage};
+
+pub fn format_coin(coin: &CoinString) -> String {
+    match coin.to_parts() {
+        Some((parent, ph, amt)) => {
+            format!("parent={} ph={} amt={}", parent, ph, amt)
+        }
+        None => format!("(unparseable {} bytes)", coin.to_bytes().len()),
+    }
+}
 
 pub struct ResyncInfo {
     pub state_number: usize,
     pub is_my_turn: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ChannelState {
+    Handshaking,
+    WaitingForHeightToOffer,
+    WaitingForHeightToAccept,
+    OfferSent,
+    TransactionPending,
+    Active,
+    ShuttingDown,
+    ShutdownTransactionPending,
+    GoingOnChain,
+    Unrolling,
+    ResolvedClean,
+    ResolvedUnrolled,
+    ResolvedStale,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelStatusSnapshot {
+    pub state: ChannelState,
+    pub advisory: Option<String>,
+    pub coin: Option<CoinString>,
+    pub our_balance: Option<Amount>,
+    pub their_balance: Option<Amount>,
+    pub game_allocated: Option<Amount>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum GameStatusKind {
+    MyTurn,
+    TheirTurn,
+    OnChainMyTurn,
+    OnChainTheirTurn,
+    Replaying,
+    IllegalMoveDetected,
+    EndedWeTimedOut,
+    EndedOpponentTimedOut,
+    EndedWeSlashedOpponent,
+    EndedOpponentSlashedUs,
+    EndedOpponentSuccessfullyCheated,
+    EndedCancelled,
+    EndedError,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct GameStatusOtherParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub readable: Option<ReadableMove>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mover_share: Option<Amount>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub illegal_move_detected: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub moved_by_us: Option<bool>,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum GameNotification {
-    GameCancelled {
+    GameStatus {
         id: GameID,
-    },
-    WeTimedOut {
-        id: GameID,
-        our_reward: Amount,
-        reward_coin: Option<CoinString>,
-    },
-    OpponentTimedOut {
-        id: GameID,
-        our_reward: Amount,
-        reward_coin: Option<CoinString>,
-    },
-    OpponentPlayedIllegalMove {
-        id: GameID,
-    },
-    WeSlashedOpponent {
-        id: GameID,
-        reward_coin: CoinString,
-    },
-    OpponentSlashedUs {
-        id: GameID,
-    },
-    OpponentSuccessfullyCheated {
-        id: GameID,
-        our_reward: Amount,
-        reward_coin: Option<CoinString>,
-    },
-
-    /// Our preemption lost the race and the opponent's stale unroll resolved.
-    /// Per-game outcomes follow as separate notifications.
-    StaleChannelUnroll {
-        our_reward: Amount,
-        reward_coin: Option<CoinString>,
-    },
-
-    /// The channel or unroll coin is in an unrecoverable state.
-    /// Everything is lost.
-    ChannelError {
-        reason: String,
-    },
-    /// A single game coin is in an unrecoverable state.
-    GameError {
-        id: GameID,
-        reason: String,
-    },
-
-    ChannelCoinSpent {},
-    UnrollCoinSpent {
-        reward_coin: Option<CoinString>,
+        status: GameStatusKind,
+        my_reward: Option<Amount>,
+        coin_id: Option<CoinString>,
+        reason: Option<String>,
+        other_params: Option<GameStatusOtherParams>,
     },
 
     GameProposed {
@@ -83,25 +110,50 @@ pub enum GameNotification {
         their_balance_short: bool,
     },
 
-    OpponentMoved {
-        id: GameID,
-        state_number: usize,
-        readable: ReadableMove,
-        mover_share: Amount,
-    },
-    GameMessage {
-        id: GameID,
-        readable: ReadableMove,
-    },
-    ChannelCreated {},
-    CleanShutdownStarted {},
-    CleanShutdownComplete {
-        reward_coin: Option<CoinString>,
-    },
-    GoingOnChain {
+    ActionFailed {
         reason: String,
     },
+    ChannelStatus {
+        state: ChannelState,
+        advisory: Option<String>,
+        coin: Option<CoinString>,
+        our_balance: Option<Amount>,
+        their_balance: Option<Amount>,
+        game_allocated: Option<Amount>,
+    },
 }
+
+impl GameNotification {
+    pub fn game_status(id: GameID, status: GameStatusKind) -> Self {
+        GameNotification::GameStatus {
+            id,
+            status,
+            my_reward: None,
+            coin_id: None,
+            reason: None,
+            other_params: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub enum CradleEvent {
+    OutboundMessage(Vec<u8>),
+    OutboundTransaction(SpendBundle),
+    Notification(GameNotification),
+    DebugLog(String),
+    CoinSolutionRequest(CoinString),
+    ReceiveError(String),
+    NeedCoinSpend(CoinSpendRequest),
+    NeedLauncherCoin,
+    WatchCoin {
+        coin_name: CoinID,
+        coin_string: CoinString,
+    },
+}
+
+/// Collect CradleEvents in insertion order.
+pub type CradleEventQueue = VecDeque<CradleEvent>;
 
 #[derive(Debug, Clone)]
 pub enum Effect {
@@ -144,6 +196,10 @@ pub enum Effect {
     // BootstrapTowardWallet
     ChannelPuzzleHash(PuzzleHash),
     ReceivedChannelOffer(SpendBundle),
+
+    // Debug logging — first-class effect so it lands in the FIFO event queue
+    // at the correct temporal position.
+    DebugLog(String),
 }
 
 pub fn apply_effects(
@@ -221,6 +277,9 @@ pub fn apply_effects(
             }
             Effect::ReceivedChannelOffer(bundle) => {
                 system.received_channel_offer(&bundle)?;
+            }
+            Effect::DebugLog(line) => {
+                system.debug_log(&line)?;
             }
         }
     }

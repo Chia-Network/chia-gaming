@@ -6,8 +6,8 @@ handlers produce moves, how validators enforce rules, and how the two systems
 connect through the referee puzzle.
 
 For the broader architecture (state channels, potato protocol, dispute
-resolution), see `ARCHITECTURE.MD`. For the raw calling conventions, see
-`clsp/handler_api.txt`.
+resolution), see `OVERVIEW.md`. For the raw calling conventions, see
+`clsp/handler_api.md`.
 
 ## Table of Contents
 
@@ -295,10 +295,10 @@ play).
 
 A validator takes the move and current state and returns a tagged result:
 
-### Validator Return: Valid Move (MAKE_MOVE)
+### Validator Return: Valid Move
 
 ```
-(0 new_validation_info_hash new_state max_move_size mover_share ...)
+(new_validation_info_hash new_state max_move_size mover_share ...)
 ```
 
 Tag `0` (`MAKE_MOVE`) means the move is legal. The returned values are used
@@ -312,14 +312,13 @@ in two places:
 ### Validator Return: Invalid Move (SLASH)
 
 ```
-(2)
+()
 ```
 
-Tag `2` (`SLASH`) means the move is illegal. The validator simply returns
-this tag with no payload. On-chain, the referee emits a reward coin giving
+Nil (`SLASH`) means the move is illegal. On-chain, the referee emits a reward coin giving
 the full game amount to the slasher. Off-chain, the Rust code represents
 validator results as `Option<Rc<Program>>` — `Some(new_state)` for
-MAKE_MOVE, `None` for SLASH — and initiates a slash when it gets `None`.
+valid payloads, `None` for slash — and initiates a slash when it gets `None`.
 
 ### How the On-Chain Referee Uses Validators
 
@@ -515,4 +514,4 @@ and nil for `incoming_validator_hash`, signaling the game is over.
 - Rust-side handler invocation: `src/channel_handler/game_handler.rs`
 - Rust-side referee state machine: `src/referee/my_turn.rs`,
   `src/referee/their_turn.rs`
-- Handler API reference: `clsp/handler_api.txt`
+- Handler API reference: `clsp/handler_api.md`

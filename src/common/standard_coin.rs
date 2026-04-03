@@ -59,7 +59,7 @@ pub fn calculate_synthetic_secret_key(
     let private_key_bytes_right = u8_from_number(synthetic_secret_exponent);
     let mut private_key_bytes: [u8; 32] = [0; 32];
     for (i, b) in private_key_bytes_right.iter().enumerate() {
-        private_key_bytes[i + 32 - private_key_bytes.len()] = *b;
+        private_key_bytes[i + 32 - private_key_bytes_right.len()] = *b;
     }
     PrivateKey::from_bytes(&private_key_bytes)
         .map(Ok)
@@ -79,7 +79,7 @@ pub fn calculate_synthetic_public_key(
     let (_, private_key_bytes_right) = private_key_int.to_bytes_be();
     let mut private_key_bytes: [u8; 32] = [0; 32];
     for (i, b) in private_key_bytes_right.iter().enumerate() {
-        private_key_bytes[i + 32 - private_key_bytes.len()] = *b;
+        private_key_bytes[i + 32 - private_key_bytes_right.len()] = *b;
     }
     let synthetic_offset = PrivateKey::from_bytes(&private_key_bytes)
         .map(Ok)

@@ -7,8 +7,6 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
 (cd wasm && cargo build)
-(cd ./resources/gaming-fe && yarn install)
-
-"$SCRIPT_DIR/build-docker-images.sh"
+(cd ./front-end && pnpm install --frozen-lockfile)
 
 

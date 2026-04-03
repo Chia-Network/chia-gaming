@@ -1,4 +1,3 @@
-use rand::Rng;
 use std::rc::Rc;
 
 use crate::channel_handler::{
@@ -16,8 +15,8 @@ pub struct ChannelHandlerParty {
 }
 
 impl ChannelHandlerParty {
-    pub fn new<R: Rng>(
-        env: &mut ChannelHandlerEnv<R>,
+    pub fn new(
+        env: &mut ChannelHandlerEnv<'_>,
         private_keys: ChannelHandlerPrivateKeys,
         referee: Rc<Puzzle>,
         ref_puzzle_hash: PuzzleHash,

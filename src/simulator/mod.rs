@@ -4,11 +4,10 @@ pub mod service;
 pub mod tests;
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use chia_bls::signature::aggregate_verify;
+use chia_bls::aggregate_verify;
 use clvm_traits::{ClvmEncoder, ToClvm};
-use log::debug;
 
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::constants::CREATE_COIN;
@@ -68,6 +67,7 @@ struct CoinRecord {
 }
 
 struct PendingSpend {
+    fingerprint: Hash,
     removals: Vec<CoinID>,
     additions: Vec<(CoinID, PuzzleHash, Amount)>,
     puzzle_solutions: Vec<(CoinID, Program, Program)>,
@@ -77,6 +77,7 @@ struct SimulatorState {
     coins: HashMap<CoinID, CoinRecord>,
     mempool: Vec<PendingSpend>,
     spent_puzzle_solutions: HashMap<CoinID, (Program, Program)>,
+    confirmed_spend_fingerprints: HashSet<Hash>,
     height: u32,
 }
 
@@ -91,6 +92,7 @@ impl SimulatorState {
             coins: HashMap::new(),
             mempool: Vec::new(),
             spent_puzzle_solutions: HashMap::new(),
+            confirmed_spend_fingerprints: HashSet::new(),
             height: 0,
         }
     }
@@ -150,6 +152,7 @@ impl SimulatorState {
 
         let pending: Vec<PendingSpend> = self.mempool.drain(..).collect();
         for spend in pending {
+            self.confirmed_spend_fingerprints.insert(spend.fingerprint);
             for removal in &spend.removals {
                 if let Some(record) = self.coins.get_mut(removal) {
                     record.spent_height = Some(next_height);
@@ -186,6 +189,21 @@ impl Default for Simulator {
 }
 
 impl Simulator {
+    fn fingerprint_spend_bundle(spends: &[CoinSpend]) -> Hash {
+        let mut chunks: Vec<Vec<u8>> = Vec::with_capacity(spends.len() * 4);
+        for spend in spends {
+            chunks.push(spend.coin.to_bytes().to_vec());
+            chunks.push(spend.bundle.puzzle.to_program().bytes().to_vec());
+            chunks.push(spend.bundle.solution.pref().bytes().to_vec());
+            chunks.push(spend.bundle.signature.0.to_vec());
+        }
+        let parts: Vec<Sha256Input<'_>> = chunks
+            .iter()
+            .map(|chunk| Sha256Input::Bytes(chunk))
+            .collect();
+        Sha256Input::Array(parts).hash()
+    }
+
     pub fn new(strict: bool) -> Self {
         let mut state = SimulatorState::new();
         let zero_ph = PuzzleHash::from_hash(Hash::from_bytes([0u8; 32]));
@@ -283,6 +301,19 @@ impl Simulator {
         }
     }
 
+    /// Coin state for a watched coin id (including spent coins still in the map).
+    /// Used by the gaming FE to mirror WalletConnect `getCoinRecordsByNames`.
+    pub fn get_watched_coin_snapshot(
+        &self,
+        coin_id: &CoinID,
+    ) -> Option<(CoinString, u32, Option<u32>)> {
+        let state = self.state.borrow();
+        state
+            .coins
+            .get(coin_id)
+            .map(|r| (r.coin.clone(), r.created_height, r.spent_height))
+    }
+
     pub fn push_tx(
         &self,
         allocator: &mut AllocEncoder,
@@ -296,7 +327,15 @@ impl Simulator {
             });
         }
 
+        let tx_fingerprint = Self::fingerprint_spend_bundle(txs);
         let state = self.state.borrow();
+        if state.confirmed_spend_fingerprints.contains(&tx_fingerprint) {
+            return Ok(IncludeTransactionResult {
+                code: 1,
+                e: None,
+                diagnostic: "duplicate confirmed transaction re-submitted".to_string(),
+            });
+        }
         let mut removals = Vec::new();
         let mut additions = Vec::new();
         let mut puzzle_solutions = Vec::new();
@@ -305,6 +344,8 @@ impl Simulator {
         let mut total_input = Amount::default();
         let mut total_output = Amount::default();
         let mut total_reserve_fee = Amount::default();
+        let mut created_coin_announcements: HashSet<Hash> = HashSet::new();
+        let mut asserted_coin_announcements: Vec<Vec<u8>> = Vec::new();
 
         // Track ephemeral coins (created and spent in the same transaction).
         let mut ephemeral_coins: HashMap<CoinID, PuzzleHash> = HashMap::new();
@@ -414,6 +455,17 @@ impl Simulator {
                     CoinCondition::ReserveFee(amt) => {
                         total_reserve_fee += amt.clone();
                     }
+                    CoinCondition::CreateCoinAnnouncement(msg) => {
+                        let ann = Sha256Input::Array(vec![
+                            Sha256Input::Bytes(coin_id.bytes()),
+                            Sha256Input::Bytes(msg),
+                        ])
+                        .hash();
+                        created_coin_announcements.insert(ann);
+                    }
+                    CoinCondition::AssertCoinAnnouncement(announcement_id) => {
+                        asserted_coin_announcements.push(announcement_id.clone());
+                    }
                     CoinCondition::AssertHeightRelative(blocks) => {
                         let elapsed = state.height.saturating_sub(record_created_height);
                         if (elapsed as u64) < *blocks {
@@ -446,6 +498,48 @@ impl Simulator {
                 aggregate_signature = tx.bundle.signature.clone();
             } else {
                 aggregate_signature += tx.bundle.signature.clone();
+            }
+        }
+
+        for expected in &asserted_coin_announcements {
+            let expected_hash = match Hash::from_slice(expected) {
+                Ok(h) => h,
+                Err(_) => {
+                    if self.strict {
+                        panic!(
+                            "Strict mode: ASSERT_COIN_ANNOUNCEMENT has invalid id length: {}",
+                            expected.len()
+                        );
+                    }
+                    return Ok(IncludeTransactionResult {
+                        code: 3,
+                        e: Some(23),
+                        diagnostic: format!(
+                            "ASSERT_COIN_ANNOUNCEMENT has invalid id length: {}",
+                            expected.len()
+                        ),
+                    });
+                }
+            };
+            if !created_coin_announcements.contains(&expected_hash) {
+                let created_hex: Vec<String> = created_coin_announcements
+                    .iter()
+                    .map(|h| format!("{:?}", h))
+                    .collect();
+                if self.strict {
+                    panic!(
+                        "Strict mode: ASSERT_COIN_ANNOUNCEMENT failed: announcement {:?} not created in spend bundle; created={:?}",
+                        expected_hash, created_hex
+                    );
+                }
+                return Ok(IncludeTransactionResult {
+                    code: 3,
+                    e: Some(24),
+                    diagnostic: format!(
+                        "ASSERT_COIN_ANNOUNCEMENT failed: announcement {:?} not created in spend bundle; created={:?}",
+                        expected_hash, created_hex
+                    ),
+                });
             }
         }
 
@@ -489,33 +583,28 @@ impl Simulator {
         }
 
         if self.strict && implicit_fee != total_reserve_fee {
-            return Ok(IncludeTransactionResult {
-                code: 3,
-                e: Some(22),
-                diagnostic: format!(
-                    "Strict mode: implicit fee ({}) != declared RESERVE_FEE ({}). \
-                     All fees must be explicitly declared.",
-                    implicit_fee.to_u64(),
-                    total_reserve_fee.to_u64()
-                ),
-            });
+            panic!(
+                "Strict mode: implicit fee ({}) != declared RESERVE_FEE ({}). \
+                 All fees must be explicitly declared.",
+                implicit_fee.to_u64(),
+                total_reserve_fee.to_u64()
+            );
         }
 
         // Check for duplicate or conflicting transactions already in the mempool.
         for existing in state.mempool.iter() {
+            if existing.fingerprint == tx_fingerprint {
+                return Ok(IncludeTransactionResult {
+                    code: 1,
+                    e: None,
+                    diagnostic: "duplicate transaction de-duplicated".to_string(),
+                });
+            }
             let overlap: Vec<&CoinID> = removals
                 .iter()
                 .filter(|r| existing.removals.contains(r))
                 .collect();
             if !overlap.is_empty() {
-                if existing.removals == removals && existing.additions == additions {
-                    // Identical transaction already in mempool -- de-duplicate.
-                    return Ok(IncludeTransactionResult {
-                        code: 1,
-                        e: None,
-                        diagnostic: "duplicate transaction de-duplicated".to_string(),
-                    });
-                }
                 if self.strict {
                     panic!(
                         "Strict mode: conflicting transactions in mempool: existing tx and new tx both \
@@ -559,6 +648,7 @@ impl Simulator {
         }
 
         self.state.borrow_mut().mempool.push(PendingSpend {
+            fingerprint: tx_fingerprint,
             removals,
             additions,
             puzzle_solutions,
@@ -615,7 +705,6 @@ impl Simulator {
             &coin.to_coin_id(),
             &agg_sig_me_additional_data,
         );
-        debug!("our message {agg_sig_me_message:?}");
         let signature2 = identity.synthetic_private_key.sign(&agg_sig_me_message);
         assert_eq!(coin_spend_info.signature, signature2);
 
@@ -771,7 +860,7 @@ pub fn run_simulation_tests() {
     use std::backtrace::Backtrace;
     std::panic::set_hook(Box::new(|panic_info| {
         let test_name = CURRENT_TEST_NAME.with(|cell| cell.borrow().clone());
-        if let Some(name) = test_name {
+        if let Some(name) = &test_name {
             eprintln!("PANIC IN TEST: {name}");
         }
         if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
@@ -783,7 +872,9 @@ pub fn run_simulation_tests() {
         }
         let trace = Backtrace::force_capture();
         eprintln!("{trace}");
-        std::process::exit(1);
+        if test_name.is_none() {
+            std::process::exit(1);
+        }
     }));
     let ref_lists: Vec<Vec<(&str, &(dyn Fn() + Send + Sync))>> = vec![
         divmod_tests(),
@@ -870,21 +961,37 @@ pub fn run_simulation_tests() {
     eprintln!("Running {} tests with {} threads", rotated.len(), n_threads);
 
     let queue = std::sync::Arc::new(std::sync::Mutex::new(rotated));
+    let failures: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let total_start = std::time::Instant::now();
 
     std::thread::scope(|s| {
         let handles: Vec<_> = (0..n_threads)
             .map(|_| {
                 let queue = std::sync::Arc::clone(&queue);
+                let failures = std::sync::Arc::clone(&failures);
                 s.spawn(move || loop {
                     let task = queue.lock().unwrap().pop();
                     let Some((name, f)) = task else { break };
                     CURRENT_TEST_NAME.with(|cell| *cell.borrow_mut() = Some(name.to_string()));
                     eprintln!("RUNNING TEST {name} ...");
                     let start = std::time::Instant::now();
-                    f();
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f()));
                     let elapsed = start.elapsed();
-                    eprintln!("{name} ... ok ({elapsed:.2?})");
+                    match result {
+                        Ok(()) => eprintln!("{name} ... ok ({elapsed:.2?})"),
+                        Err(payload) => {
+                            let msg = if let Some(s) = payload.downcast_ref::<String>() {
+                                s.clone()
+                            } else if let Some(s) = payload.downcast_ref::<&str>() {
+                                s.to_string()
+                            } else {
+                                "(non-string panic)".to_string()
+                            };
+                            eprintln!("PANIC IN TEST: {name}\npanic payload: {msg}");
+                            failures.lock().unwrap().push((name.to_string(), msg));
+                        }
+                    }
                 })
             })
             .collect();
@@ -893,11 +1000,26 @@ pub fn run_simulation_tests() {
         }
     });
 
-    eprintln!(
-        "All {} tests passed in {:.2?}",
-        all_tests.len(),
-        total_start.elapsed()
-    );
+    let failed = failures.lock().unwrap();
+    if failed.is_empty() {
+        eprintln!(
+            "All {} tests passed in {:.2?}",
+            all_tests.len(),
+            total_start.elapsed()
+        );
+    } else {
+        eprintln!("\n--- {} FAILED TEST(S) ---", failed.len());
+        for (name, msg) in failed.iter() {
+            eprintln!("\n  FAIL: {name}\n  {msg}");
+        }
+        eprintln!(
+            "\n{} passed, {} failed in {:.2?}",
+            all_tests.len() - failed.len(),
+            failed.len(),
+            total_start.elapsed()
+        );
+        panic!("{} test(s) failed", failed.len());
+    }
 }
 
 #[cfg(test)]

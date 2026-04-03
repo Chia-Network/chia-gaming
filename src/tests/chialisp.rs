@@ -6,8 +6,6 @@ use clvmr::{run_program, ChiaDialect};
 
 use crate::utils::first;
 
-use log::debug;
-
 fn test_prepend_count() {
     let mut allocator = AllocEncoder::new();
     let source_data = (
@@ -882,7 +880,7 @@ fn test_handcalc() {
     };
 
     let mut test_handcalc_with_example =
-        |(expected_relationship, explanation, ex_data_1, ex_data_2): (
+        |(expected_relationship, _explanation, ex_data_1, ex_data_2): (
             &str,
             Vec<&str>,
             Vec<(i32, i32)>,
@@ -913,7 +911,6 @@ fn test_handcalc() {
             )
             .expect("should run")
             .1;
-            debug!("{explanation:?}");
             let deep_compare_args = [
                 Node(first(allocator.allocator(), result_1).expect("ok")),
                 Node(first(allocator.allocator(), result_2).expect("ok")),
@@ -935,7 +932,6 @@ fn test_handcalc() {
         };
 
     for test in examples.into_iter() {
-        debug!("test {test:?}");
         test_handcalc_with_example(test);
     }
 }

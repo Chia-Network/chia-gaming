@@ -88,6 +88,12 @@ impl std::fmt::Debug for Hash {
     }
 }
 
+impl std::fmt::Display for Hash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(self.0))
+    }
+}
+
 impl Sha256Input<'_> {
     fn update(&self, hasher: &mut Sha256) {
         match self {

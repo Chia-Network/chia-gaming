@@ -1,16 +1,13 @@
 ---
-description: Read project docs at the start of every conversation
+description: Read project overview at the start of every conversation
 alwaysApply: true
 ---
 
-# Read Project Docs First
+# Read Project Overview First
 
-At the start of each conversation, read these project docs before diving into the task:
+At the start of each conversation, read `OVERVIEW.md` in full before diving
+into the task. It provides the conceptual foundation and links to detailed
+docs. Read the linked docs as they become relevant to the task at hand.
 
-1. `ARCHITECTURE.MD`
-2. `DEBUGGING_GUIDE.md`
-3. `HANDLER_GUIDE.md`
-
-This gives you the context you need to work effectively in this codebase.
-
-**Build/test commands:** Always use `./cb.sh` and `./ct.sh`. Never use `cargo test` directly.
+**Build/test commands:** Always use `./cb.sh` and `./ct.sh`. Never use
+`cargo test` directly.
