@@ -5,6 +5,7 @@ import { BLOCKCHAIN_WS_URL } from '../settings';
 import {
   InternalBlockchainInterface,
   BlockchainInboundAddressResult,
+  ConnectionSetup,
 } from '../types/ChiaGaming';
 
 import { debugLog } from '../services/debugLog';
@@ -48,6 +49,8 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   private uniqueId = '';
   private connectPromise: Promise<void> | null = null;
   private readonly retryBackoffMs = [0, 100, 250, 500, 1000];
+  private connectionListeners = new Set<(connected: boolean) => void>();
+  private lastConnectedState = false;
 
   constructor(wsUrl: string) {
     this.wsUrl = wsUrl;
@@ -68,17 +71,20 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       ws.onopen = () => {
         this.ws = ws;
         this.connectPromise = null;
+        this.fireConnectionChange(true);
         resolve();
       };
       ws.onerror = () => {
         this.ws = null;
         this.connectPromise = null;
+        this.fireConnectionChange(false);
         try { ws.close(); } catch { /* ignore */ }
         reject(new Error(`WebSocket connection to ${this.wsUrl} failed`));
       };
       ws.onclose = () => {
         this.ws = null;
         this.connectPromise = null;
+        this.fireConnectionChange(false);
         for (const [, p] of this.pending) {
           p.reject(new Error('WebSocket closed'));
         }
@@ -220,11 +226,13 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     await this.sendRequest('register_remote_coins', { coinIds: names });
   }
 
-  async registerUser(name: string): Promise<string> {
+  async registerUser(name: string, balance?: number): Promise<string> {
     this.uniqueId = name;
+    const params: any = { name };
+    if (balance !== undefined) params.balance = balance;
     return this.withTransientRetry(
       'registerUser',
-      () => this.sendRequest('register', { name }),
+      () => this.sendRequest('register', params),
     );
   }
 
@@ -235,10 +243,45 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       this.ws = null;
     }
     this.connectPromise = null;
+    this.fireConnectionChange(false);
     for (const [, p] of this.pending) {
       p.reject(new Error('closed'));
     }
     this.pending.clear();
+  }
+
+  private fireConnectionChange(connected: boolean) {
+    if (connected === this.lastConnectedState) return;
+    this.lastConnectedState = connected;
+    for (const cb of this.connectionListeners) {
+      try { cb(connected); } catch { /* ignore */ }
+    }
+  }
+
+  async beginConnect(uniqueId: string): Promise<ConnectionSetup> {
+    return {
+      qrUri: `sim://${this.wsUrl.replace('ws://', '')}/${uniqueId}`,
+      fields: {
+        balance: { label: 'Starting balance (mojos)', default: 1_000_000 },
+      },
+      finalize: async (values?: { balance?: number }) => {
+        await this.registerUser(uniqueId, values?.balance);
+        await this.startMonitoring();
+      },
+    };
+  }
+
+  async disconnect(): Promise<void> {
+    this.close();
+  }
+
+  isConnected(): boolean {
+    return this.ws !== null && this.ws.readyState === 1;
+  }
+
+  onConnectionChange(cb: (connected: boolean) => void): () => void {
+    this.connectionListeners.add(cb);
+    return () => { this.connectionListeners.delete(cb); };
   }
 }
 

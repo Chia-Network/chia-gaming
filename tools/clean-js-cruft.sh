@@ -41,14 +41,11 @@ TARGETS=(
     "front-end/node_modules"
     "lobby/lobby-frontend/node_modules"
     "lobby/lobby-service/node_modules"
-    "wc-stub/node_modules"
     "front-end/dist"
     "lobby/lobby-frontend/dist"
     "lobby/lobby-service/dist"
-    "wc-stub/dist"
     "front-end/serve"
     "lobby/lobby-frontend/serve"
-    "wc-stub/package-lock.json"
 )
 
 if [ "$INCLUDE_RUST" -eq 1 ]; then

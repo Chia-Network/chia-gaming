@@ -20,7 +20,7 @@ import {
   setInitStarted,
 } from './blobSingleton';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
-import { SessionSave, BlockchainType } from './save';
+import { SessionSave } from './save';
 import { toHexString } from '../util';
 import { debugLog } from '../services/debugLog';
 
@@ -252,7 +252,6 @@ export function useGameSession(
   registerMessageHandler: (handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, pingHandler: () => void) => void,
   appendGameLog: (line: string) => void,
   sessionSave?: SessionSave,
-  blockchainType?: BlockchainType,
 ): UseGameSessionResult {
   const { iStarted, amount, perGameAmount } = params;
   const playerNumber = iStarted ? 1 : 2;
@@ -311,7 +310,6 @@ export function useGameSession(
     sessionSave,
     params.pairingToken,
     perGameAmount,
-    blockchainType,
   );
 
   if (params.myAlias) gameObject.myAlias = params.myAlias;

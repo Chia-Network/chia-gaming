@@ -210,7 +210,7 @@ impl GameRunner {
         None
     }
 
-    fn register(&mut self, name: &str) -> StringWithError {
+    fn register(&mut self, name: &str, target_balance: Option<u64>) -> StringWithError {
         let public_key = if let Some(identity) = self.lookup_identity(name) {
             hex::encode(identity.puzzle_hash.bytes())
         } else {
@@ -223,6 +223,33 @@ impl GameRunner {
             self.pubkeys.insert(result.clone(), identity);
             result
         };
+
+        if let Some(desired) = target_balance {
+            if let Some(identity) = self.lookup_identity(&public_key).cloned() {
+                let coins = self.simulator.get_my_coins(&identity.puzzle_hash)?;
+                let total: u64 = coins
+                    .iter()
+                    .filter_map(|c| c.to_parts().map(|(_, _, amt)| amt.to_u64()))
+                    .sum();
+                if total > desired {
+                    for c in coins.iter() {
+                        if let Some((_, _, amt)) = c.to_parts() {
+                            if amt.to_u64() > desired {
+                                self.simulator.transfer_coin_amount(
+                                    &mut self.allocator,
+                                    &identity.puzzle_hash,
+                                    &identity,
+                                    c,
+                                    Amount::new(desired),
+                                )?;
+                                self.farm_and_chase()?;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         Ok(format!("\"{public_key}\"\n"))
     }
@@ -709,7 +736,8 @@ fn dispatch_ws_request(
     let result: Result<String, Error> = match req.method.as_str() {
         "register" => {
             let name = get_str_param(&req.params, "name");
-            name.and_then(|n| game_runner.register(n))
+            let balance = req.params.get("balance").and_then(|v| v.as_u64());
+            name.and_then(|n| game_runner.register(n, balance))
         }
         "get_peak" => {
             let h = game_runner.simulator.get_current_height();

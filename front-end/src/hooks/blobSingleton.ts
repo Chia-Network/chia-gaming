@@ -7,7 +7,6 @@ import { BlockchainPoller } from './BlockchainPoller';
 import {
   startNewSession,
   SessionSave,
-  BlockchainType,
 } from './save';
 import { debugLog } from '../services/debugLog';
 
@@ -88,7 +87,6 @@ export function getBlobSingleton(
   sessionSave?: SessionSave,
   pairingToken?: string,
   perGameAmount?: bigint,
-  blockchainType?: BlockchainType,
 ): { gameObject: WasmBlobWrapper } {
   if (blobSingleton) {
     return { gameObject: blobSingleton };
@@ -114,7 +112,6 @@ export function getBlobSingleton(
   blobSingleton.iStarted = iStarted;
   blobSingleton.pairingToken = pairingToken ?? '';
   blobSingleton.perGameAmount = perGameAmount ?? 0n;
-  blobSingleton.blockchainType = blockchainType ?? 'simulator';
   blobSingleton.setPeerPingAndClose(
     () => peerConn.sendPing(),
     () => peerConn.close(),

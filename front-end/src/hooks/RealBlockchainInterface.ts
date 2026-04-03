@@ -2,6 +2,7 @@ import { rpc } from '../hooks/JsonRpcContext';
 import {
   InternalBlockchainInterface,
   BlockchainInboundAddressResult,
+  ConnectionSetup,
 } from '../types/ChiaGaming';
 import { WalletType } from '../types/WalletType';
 import { CoinRecord } from '../types/rpc/CoinRecord';
@@ -9,6 +10,7 @@ import { CoinRecord } from '../types/rpc/CoinRecord';
 import { debugLog } from '../services/debugLog';
 import { normalizeHexString } from '../util';
 import { decodeBech32mPuzzleHash } from '../util/bech32m';
+import { walletConnectState } from './useWalletConnect';
 
 const PUSH_TX_RETRY_DELAY = 30000;
 const ASSERT_BEFORE_HEIGHT_ABSOLUTE = 87;
@@ -64,6 +66,9 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   private remoteWalletId: number | undefined;
   private remoteWalletPending = false;
+  private connectionListeners = new Set<(connected: boolean) => void>();
+  private lastConnectedState = false;
+  private wcSubscription: { unsubscribe: () => void } | null = null;
 
   constructor() {
     this.blockchainAddressData = { puzzleHash: '' };
@@ -356,6 +361,66 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     });
   }
 
+  private fireConnectionChange(connected: boolean) {
+    if (connected === this.lastConnectedState) return;
+    this.lastConnectedState = connected;
+    for (const cb of this.connectionListeners) {
+      try { cb(connected); } catch { /* ignore */ }
+    }
+  }
+
+  private subscribeToWcEvents() {
+    if (this.wcSubscription) return;
+    this.wcSubscription = walletConnectState.getObservable().subscribe({
+      next: (evt) => {
+        this.fireConnectionChange(evt.stateName === 'connected');
+      },
+    });
+  }
+
+  async beginConnect(_uniqueId: string): Promise<ConnectionSetup> {
+    await walletConnectState.init();
+    this.subscribeToWcEvents();
+
+    if (walletConnectState.getSession()) {
+      return {
+        qrUri: `wc-session://${walletConnectState.getSession()!.topic}`,
+        finalize: async () => {
+          await this.startMonitoring();
+          this.fireConnectionChange(true);
+        },
+      };
+    }
+
+    const { uri, approval } = await walletConnectState.startConnect();
+    return {
+      qrUri: uri,
+      finalize: async () => {
+        await walletConnectState.connect(approval);
+        await this.startMonitoring();
+        this.fireConnectionChange(true);
+      },
+    };
+  }
+
+  async disconnect(): Promise<void> {
+    if (this.wcSubscription) {
+      this.wcSubscription.unsubscribe();
+      this.wcSubscription = null;
+    }
+    await walletConnectState.disconnect();
+    this.fireConnectionChange(false);
+  }
+
+  isConnected(): boolean {
+    return walletConnectState.getSession() !== undefined;
+  }
+
+  onConnectionChange(cb: (connected: boolean) => void): () => void {
+    this.connectionListeners.add(cb);
+    this.subscribeToWcEvents();
+    return () => { this.connectionListeners.delete(cb); };
+  }
 }
 
 export const realBlockchainInfo: RealBlockchainInterface =

@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 
-import WalletConnectHeading from './WalletConnectHeading';
 import GameSession from './GameSession';
-import { GameSessionParams, PeerConnectionResult, ChatMessage } from '../types/ChiaGaming';
+import { SimulatorSetupModal } from './SimulatorSetupModal';
+import QRCode from 'qrcode';
+import { GameSessionParams, PeerConnectionResult, ChatMessage, InternalBlockchainInterface, ConnectionSetup } from '../types/ChiaGaming';
 import { TrackerConnection, MatchedParams, ConnectionStatus } from '../services/TrackerConnection';
 import { subscribeDebugLog } from '../services/debugLog';
 import {
@@ -10,6 +11,8 @@ import {
   getSessionId,
   setBlockchainType as persistBlockchainType,
   getBlockchainType,
+  getTheme,
+  setTheme as saveTheme,
   loadSession,
   clearSession,
   hardReset,
@@ -17,18 +20,19 @@ import {
   SessionSave,
 } from '../hooks/save';
 import { blobSingleton } from '../hooks/blobSingleton';
-import { walletConnectState } from '../hooks/useWalletConnect';
 import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
 import { realBlockchainInfo } from '../hooks/RealBlockchainInterface';
-import { activate, deactivate } from '../hooks/activeBlockchain';
+import { activate, deactivate, getActiveBlockchain } from '../hooks/activeBlockchain';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import { debugLog } from '../services/debugLog';
+import { Button } from './button';
 
 import ChatPanel from './ChatPanel';
 
-type TabId = 'tracker' | 'session' | 'chat' | 'game-log' | 'debug-log';
+type TabId = 'wallet' | 'tracker' | 'session' | 'chat' | 'game-log' | 'debug-log';
 
 const TAB_DEFS: { id: TabId; label: string }[] = [
+  { id: 'wallet', label: 'Wallet' },
   { id: 'tracker', label: 'Tracker' },
   { id: 'session', label: 'Game Session' },
   { id: 'chat', label: 'Chat' },
@@ -72,7 +76,7 @@ const Shell = () => {
   const uniqueId = getPlayerId();
   const sessionId = getSessionId();
 
-  const [activeTab, setActiveTab] = useState<TabId>('tracker');
+  const [activeTab, setActiveTab] = useState<TabId>('wallet');
   const [gameParams, setGameParams] = useState<GameSessionParams | null>(null);
   const [peerConn, setPeerConn] = useState<PeerConnectionResult | null>(null);
 
@@ -87,13 +91,45 @@ const Shell = () => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [unreadChat, setUnreadChat] = useState(false);
   const [unreadSession, setUnreadSession] = useState(false);
+  const [walletAlert, setWalletAlert] = useState(false);
   const [iframeUrl, setIframeUrl] = useState('about:blank');
+  const [balance, setBalance] = useState<number | undefined>();
+
+  const [blockchainType, setBlockchainType] = useState<'simulator' | 'walletconnect' | undefined>();
+  const activeBlockchainRef = useRef<InternalBlockchainInterface | null>(null);
+
+  // Connection state
+  const [showSimModal, setShowSimModal] = useState(false);
+  const [connectionSetup, setConnectionSetup] = useState<ConnectionSetup | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState('');
+  const wcAbortRef = useRef(false);
+
+  // Theme state
+  const [isDark, setIsDark] = useState<boolean>(() => {
+    const stored = getTheme();
+    if (stored === 'dark') return true;
+    if (stored === 'light') return false;
+    return document.documentElement.classList.contains('dark');
+  });
+
+  useEffect(() => {
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+      saveTheme('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      saveTheme('light');
+    }
+  }, [isDark]);
 
   const trackerConnRef = useRef<TrackerConnection | null>(null);
   const activeTabRef = useRef<TabId>(activeTab);
   activeTabRef.current = activeTab;
   const sessionSaveRef = useRef<SessionSave | null>(null);
   const activePairingTokenRef = useRef<string | null>(null);
+  const balanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const deferStateUpdate = useCallback((fn: () => void) => {
     if (typeof queueMicrotask === 'function') {
       queueMicrotask(fn);
@@ -122,12 +158,66 @@ const Shell = () => {
     });
   }, [deferStateUpdate]);
 
-  // Whether the user has clicked through the initial gate (wallet choice or
-  // restore decision).  Only then do we connect to the tracker.
   const [userReady, setUserReady] = useState(false);
 
-  // Fetch tracker URL, set up iframe and TrackerConnection.
-  // Runs once the app enters the full UI state.
+  // Balance polling
+  const requestBalance = useCallback(() => {
+    try {
+      getActiveBlockchain().rpc.getBalance()
+        .then((bal) => {
+          setBalance(bal);
+          if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
+          balanceTimerRef.current = setTimeout(requestBalance, 15000);
+        })
+        .catch(() => {
+          if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
+          balanceTimerRef.current = setTimeout(requestBalance, 15000);
+        });
+    } catch {
+      // blockchain not set yet
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (balanceTimerRef.current) clearTimeout(balanceTimerRef.current);
+    };
+  }, []);
+
+  // QR code generation (inline in wallet tab, type-agnostic)
+  useEffect(() => {
+    if (!connectionSetup?.qrUri) {
+      setQrDataUrl('');
+      return;
+    }
+    const darkNow = document.documentElement.classList.contains('dark');
+    QRCode.toDataURL(connectionSetup.qrUri, {
+      width: 250, margin: 2,
+      color: { dark: darkNow ? '#FFFFFF' : '#000000', light: darkNow ? '#121212' : '#FFFFFF' },
+      errorCorrectionLevel: 'M' as const,
+    })
+      .then(setQrDataUrl)
+      .catch((err: unknown) => console.error('[Shell] QR generation failed', err));
+  }, [connectionSetup?.qrUri]);
+
+  // Connection health monitoring
+  useEffect(() => {
+    const iface = activeBlockchainRef.current;
+    if (!iface) return;
+    return iface.onConnectionChange((connected) => {
+      if (!connected && activeTabRef.current !== 'wallet') {
+        setWalletAlert(true);
+      }
+      if (connected) {
+        setWalletAlert(false);
+        setWalletConnected(true);
+      } else {
+        setWalletConnected(false);
+      }
+    });
+  }, [blockchainType]);
+
+  // Tracker setup
   useEffect(() => {
     if (!userReady) return;
     let cancelled = false;
@@ -318,27 +408,79 @@ const Shell = () => {
     };
   }, [uniqueId, sessionId, userReady]);
 
-  const startSimulator = useCallback(() => {
+  // Shared connection completion
+  const completeConnection = useCallback((iface: InternalBlockchainInterface, bcType: 'simulator' | 'walletconnect', pollMs: number) => {
     deactivate();
-    void walletConnectState.disconnect().catch(() => {});
-    setWalletConnected(false);
-    fakeBlockchainInfo.registerUser(uniqueId)
-      .then(() => {
-        persistBlockchainType('simulator');
-        debugLog('Simulator wallet registered');
-        activate(fakeBlockchainInfo, 5000);
-        setWalletConnected(true);
-      })
-      .catch((err: unknown) => {
-        console.error('[blockchain] simulator startup failed', err);
-      });
+    activate(iface, pollMs);
+    persistBlockchainType(bcType);
+    activeBlockchainRef.current = iface;
+    setBlockchainType(bcType);
+    setWalletConnected(true);
+    setConnectionSetup(null);
+    setUserReady(true);
+    requestBalance();
+    debugLog(`${bcType} wallet connected`);
+    setActiveTab('tracker');
+  }, [requestBalance]);
+
+  // --- Simulator flow: modal overlay ---
+  const handleChooseSimulator = useCallback(async () => {
+    try {
+      const setup = await fakeBlockchainInfo.beginConnect(uniqueId);
+      setConnectionSetup(setup);
+      setShowSimModal(true);
+    } catch (err) {
+      console.error('[Shell] simulator beginConnect failed', err);
+    }
   }, [uniqueId]);
 
-  const startWalletConnect = useCallback(() => {
+  const handleSimConnect = useCallback(async (values: { balance?: number }) => {
+    if (!connectionSetup) return;
+    setConnecting(true);
+    try {
+      await connectionSetup.finalize(values);
+      setShowSimModal(false);
+      completeConnection(fakeBlockchainInfo, 'simulator', 5000);
+    } catch (err) {
+      console.error('[Shell] simulator connect failed', err);
+    } finally {
+      setConnecting(false);
+    }
+  }, [connectionSetup, completeConnection]);
+
+  // --- WalletConnect flow: inline QR in wallet tab ---
+  const handleChooseWalletConnect = useCallback(async () => {
+    wcAbortRef.current = false;
+    try {
+      const setup = await realBlockchainInfo.beginConnect(uniqueId);
+      if (wcAbortRef.current) return;
+      setConnectionSetup(setup);
+      setBlockchainType('walletconnect');
+      setConnecting(true);
+      await setup.finalize();
+      if (wcAbortRef.current) return;
+      completeConnection(realBlockchainInfo, 'walletconnect', 10000);
+    } catch (err) {
+      if (!wcAbortRef.current) {
+        console.error('[Shell] WC connect failed', err);
+      }
+      setBlockchainType(undefined);
+      setConnectionSetup(null);
+    } finally {
+      setConnecting(false);
+    }
+  }, [uniqueId, completeConnection]);
+
+  const handleCancelConnect = useCallback(async () => {
+    wcAbortRef.current = true;
+    try { await realBlockchainInfo.disconnect(); } catch { /* ignore */ }
     deactivate();
-    persistBlockchainType('walletconnect');
-    activate(realBlockchainInfo, 10000);
-    setWalletConnected(true);
+    activeBlockchainRef.current = null;
+    setConnectionSetup(null);
+    setBlockchainType(undefined);
+    setConnecting(false);
+    setWalletConnected(false);
+    setShowSimModal(false);
   }, []);
 
   const sendChat = useCallback((text: string) => {
@@ -359,11 +501,14 @@ const Shell = () => {
     setActiveTab(tabId);
     if (tabId === 'chat') setUnreadChat(false);
     if (tabId === 'session') setUnreadSession(false);
+    if (tabId === 'wallet') setWalletAlert(false);
   }, []);
 
   const handleReset = useCallback(async () => {
     activePairingTokenRef.current = null;
-    try { await walletConnectState.disconnect(); } catch (_) {}
+    if (activeBlockchainRef.current) {
+      try { await activeBlockchainRef.current.disconnect(); } catch (_) {}
+    }
     await hardReset();
     window.location.reload();
   }, []);
@@ -372,82 +517,83 @@ const Shell = () => {
 
   const [resuming, setResuming] = useState(false);
 
-  const handleResume = useCallback(() => {
+  const handleResume = useCallback(async () => {
     const bcType = getBlockchainType() ?? 'simulator';
     setResuming(true);
     setPendingRestore(null);
     setRestoreDecided(true);
-    setUserReady(true);
-    if (bcType === 'walletconnect') {
-      walletConnectState.init()
-        .then(() => {
-          if (walletConnectState.getSession()) {
-            startWalletConnect();
+
+    const iface = bcType === 'walletconnect' ? realBlockchainInfo : fakeBlockchainInfo;
+    const pollMs = bcType === 'walletconnect' ? 10000 : 5000;
+
+    try {
+      const setup = await iface.beginConnect(uniqueId);
+      if (iface.isConnected()) {
+        await setup.finalize();
+        completeConnection(iface, bcType, pollMs);
+      } else if (bcType === 'simulator') {
+        setConnectionSetup(setup);
+        setShowSimModal(true);
+        setUserReady(true);
+      } else {
+        // WC not connected: show QR inline, finalize in background
+        setConnectionSetup(setup);
+        setBlockchainType('walletconnect');
+        setConnecting(true);
+        setUserReady(true);
+        wcAbortRef.current = false;
+        try {
+          await setup.finalize();
+          if (!wcAbortRef.current) {
+            completeConnection(iface, bcType, pollMs);
           }
-        })
-        .catch((err: unknown) => {
-          console.warn('[blockchain] walletconnect init on resume failed', err);
-        });
-    } else {
-      startSimulator();
+        } catch (err2) {
+          if (!wcAbortRef.current) {
+            console.warn('[Shell] WC resume finalize failed', err2);
+          }
+          setBlockchainType(undefined);
+          setConnectionSetup(null);
+        } finally {
+          setConnecting(false);
+        }
+      }
+    } catch (err) {
+      console.warn('[Shell] resume connect failed, falling back', err);
+      setUserReady(true);
     }
     setResuming(false);
-  }, [startSimulator, startWalletConnect]);
+  }, [uniqueId, requestBalance, completeConnection]);
 
   const handleStartOver = useCallback(async () => {
-    try { await walletConnectState.disconnect(); } catch (_) {}
+    if (activeBlockchainRef.current) {
+      try { await activeBlockchainRef.current.disconnect(); } catch (_) {}
+    }
     await hardReset();
     window.location.reload();
   }, []);
 
-  // --- Three mutually exclusive UI states ---
-  // 1. Saved session exists, user hasn't decided yet → restore dialog only
-  // 2. No session and no wallet connected yet → wallet/simulator chooser only
-  // 3. User has clicked through → full app UI
-  const showRestoreDialog = !restoreDecided;
-  const showWalletChooser = !showRestoreDialog && !userReady;
+  const handleDisconnectWallet = useCallback(async () => {
+    if (activeBlockchainRef.current) {
+      try { await activeBlockchainRef.current.disconnect(); } catch (_) {}
+    }
+    deactivate();
+    activeBlockchainRef.current = null;
+    setWalletConnected(false);
+    setBlockchainType(undefined);
+    setBalance(undefined);
+  }, []);
 
-  const tabBar = (
-    <div style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-end', gap: '0.25rem', padding: '0.5rem 1rem 0', borderBottom: '1px solid var(--color-canvas-border)', background: 'var(--color-canvas-bg-subtle)' }}>
-      {TAB_DEFS.map((tab) => {
-        const active = activeTab === tab.id;
-        const showDot = !active && (
-          (tab.id === 'chat' && unreadChat) ||
-          (tab.id === 'session' && unreadSession)
-        );
-        return (
-          <button
-            key={tab.id}
-            onClick={() => handleTabChange(tab.id)}
-            className={
-              'relative px-3 py-1.5 text-sm font-medium rounded-t-md transition-colors ' +
-              (active
-                ? 'bg-canvas-bg text-canvas-text-contrast border border-b-0 border-canvas-border -mb-px'
-                : 'text-canvas-text hover:text-canvas-text-contrast hover:bg-canvas-bg-hover')
-            }
-          >
-            {tab.label}
-            {showDot && (
-              <span className='absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-alert-text' />
-            )}
-          </button>
-        );
-      })}
-      <div style={{ marginLeft: 'auto', paddingBottom: '0.25rem' }}>
-        <button
-          onClick={handleReset}
-          className='px-2.5 py-1 text-xs font-bold rounded-md bg-alert-bg text-alert-text border border-alert-border hover:bg-alert-bg-hover transition-colors inline-flex items-center gap-1'
-        >
-          Reset
-        </button>
-      </div>
-    </div>
-  );
+  const handleReconnect = useCallback(() => {
+    if (!blockchainType) return;
+    if (blockchainType === 'simulator') {
+      handleChooseSimulator();
+    } else {
+      handleChooseWalletConnect();
+    }
+  }, [blockchainType, handleChooseSimulator, handleChooseWalletConnect]);
 
-  const sessionReady = gameParams !== null && peerConn !== null && (walletConnected || gameParams.restoring);
-
-  // --- State 1: Restore dialog (nothing else) ---
-  if (showRestoreDialog) {
+  // --- Restore dialog ---
+  if (!restoreDecided) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', width: '100vw', height: '100vh' }}
            className='bg-canvas-bg-subtle text-canvas-text'>
@@ -472,7 +618,7 @@ const Shell = () => {
             disabled={resuming}
             className='w-full px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors disabled:opacity-50'
           >
-            {resuming ? 'Resuming…' : 'Resume Session'}
+            {resuming ? 'Resuming\u2026' : 'Resume Session'}
           </button>
           <button
             onClick={handleStartOver}
@@ -486,45 +632,160 @@ const Shell = () => {
     );
   }
 
-  // --- State 2: Wallet/simulator chooser (nothing else) ---
-  if (showWalletChooser) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', width: '100vw', height: '100vh' }}
-           className='bg-canvas-bg-subtle text-canvas-text'>
-        <WalletConnectHeading
-          onConnected={(bcType) => {
-            if (bcType === 'walletconnect') {
-              startWalletConnect();
-            } else {
-              startSimulator();
-            }
-            setUserReady(true);
-          }}
-          initialExpanded
-        />
-      </div>
-    );
-  }
+  const sessionReady = gameParams !== null && peerConn !== null && (walletConnected || gameParams.restoring);
 
-  // --- State 3: Full app UI (tracker + wallet connect in background) ---
+  // --- Main tabbed app ---
   return (
     <div style={{ display: 'flex', flexDirection: 'column', position: 'relative', width: '100vw', height: '100vh' }}
          className='bg-canvas-bg-subtle text-canvas-text'>
-      <div style={{ width: '100%', flexShrink: 0 }}>
-        <WalletConnectHeading
-          onConnected={(bcType) => {
-            if (bcType === 'walletconnect') {
-              startWalletConnect();
-            } else {
-              startSimulator();
-            }
-          }}
-          initialExpanded={false}
-        />
+
+      {/* Tab bar with branding */}
+      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-end', gap: '0.25rem', padding: '0.5rem 1rem 0', borderBottom: '1px solid var(--color-canvas-border)', background: 'var(--color-canvas-bg-subtle)' }}>
+        {/* Branding */}
+        <div className='flex items-end gap-1 pr-3 pb-0.5' style={{ flexShrink: 0 }}>
+          <img
+            src='/images/chia_logo.png'
+            alt='Chia Logo'
+            className='max-w-16 h-auto rounded-md'
+          />
+          <span className='font-semibold text-sm text-canvas-text whitespace-nowrap'>Gaming</span>
+        </div>
+
+        {/* Tabs */}
+        {TAB_DEFS.map((tab) => {
+          const active = activeTab === tab.id;
+          const showDot = !active && (
+            (tab.id === 'chat' && unreadChat) ||
+            (tab.id === 'session' && unreadSession) ||
+            (tab.id === 'wallet' && walletAlert)
+          );
+          return (
+            <button
+              key={tab.id}
+              onClick={() => handleTabChange(tab.id)}
+              className={
+                'relative px-3 py-1.5 text-sm font-medium rounded-t-md transition-colors ' +
+                (active
+                  ? 'bg-canvas-bg text-canvas-text-contrast border border-b-0 border-canvas-border -mb-px'
+                  : 'text-canvas-text hover:text-canvas-text-contrast hover:bg-canvas-bg-hover')
+              }
+            >
+              {tab.label}
+              {showDot && (
+                <span className='absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-alert-text' />
+              )}
+            </button>
+          );
+        })}
+
+        {/* Right side: Reset + Theme */}
+        <div style={{ marginLeft: 'auto', paddingBottom: '0.25rem' }} className='flex items-center gap-2'>
+          <button
+            onClick={() => setIsDark(d => !d)}
+            className={`p-1 border border-canvas-border rounded ${isDark ? 'text-warning-solid' : 'text-canvas-text'} hover:bg-canvas-bg-hover`}
+            aria-label='toggle theme'
+            title='Toggle theme'
+          >
+            <span className='text-sm leading-none'>{isDark ? '\u2600' : '\u263E'}</span>
+          </button>
+          <button
+            onClick={handleReset}
+            className='px-2.5 py-1 text-xs font-bold rounded-md bg-alert-bg text-alert-text border border-alert-border hover:bg-alert-bg-hover transition-colors inline-flex items-center gap-1'
+          >
+            Reset
+          </button>
+        </div>
       </div>
-      {tabBar}
+
+      {/* Tab content */}
       <div style={{ position: 'relative', flex: '1 1 0%', minHeight: 0, zIndex: 0 }}
            className='bg-canvas-bg-subtle'>
+
+        {/* Wallet tab */}
+        <div style={{ position: 'absolute', inset: 0, display: activeTab === 'wallet' ? 'flex' : 'none', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'auto' }}>
+          {walletConnected ? (
+            <div className='flex flex-col items-center gap-4 p-6 max-w-md w-full'>
+              <div className='flex items-center gap-2'>
+                <span className='inline-block w-3 h-3 rounded-full bg-success-solid' />
+                <span className='text-lg font-semibold text-canvas-text-contrast'>Connected</span>
+              </div>
+              {balance !== undefined && (
+                <p className='text-2xl font-bold text-canvas-text-contrast'>{balance.toLocaleString()} mojos</p>
+              )}
+              <Button variant='outline' onClick={handleDisconnectWallet}>
+                Disconnect
+              </Button>
+            </div>
+          ) : connectionSetup ? (
+            <div className='flex flex-col items-center gap-4 p-6 max-w-md w-full'>
+              <p className='text-lg font-semibold text-canvas-text-contrast'>Scan QR Code</p>
+              <p className='text-sm text-canvas-text text-center'>
+                Open your Chia wallet and scan this QR code to connect
+              </p>
+              <div className='p-4 rounded-xl border-2 border-canvas-border bg-white shadow-md'>
+                {qrDataUrl ? (
+                  <img src={qrDataUrl} alt='Connection QR' className='w-[200px] h-auto rounded-md' />
+                ) : (
+                  <div className='w-[200px] h-[200px] flex items-center justify-center text-canvas-text/50'>
+                    Generating…
+                  </div>
+                )}
+              </div>
+              <div className='w-full max-w-sm flex gap-2'>
+                <textarea
+                  readOnly
+                  value={connectionSetup.qrUri}
+                  rows={3}
+                  className='flex-1 text-xs font-mono rounded-md p-2 border border-canvas-border bg-canvas-bg-subtle text-canvas-text resize-none'
+                />
+                <button
+                  onClick={() => navigator.clipboard.writeText(connectionSetup.qrUri)}
+                  className='self-start px-2 py-2 text-xs font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors'
+                  title='Copy URI to clipboard'
+                >
+                  Copy
+                </button>
+              </div>
+              <p className='text-sm text-canvas-text animate-pulse'>Waiting for wallet to connect…</p>
+              <Button variant='outline' onClick={handleCancelConnect}>Cancel</Button>
+              <SimulatorSetupModal
+                open={showSimModal}
+                fields={connectionSetup?.fields}
+                onConnect={handleSimConnect}
+                connecting={connecting}
+              />
+            </div>
+          ) : !walletConnected && activeBlockchainRef.current ? (
+            <div className='flex flex-col items-center gap-4 p-6 max-w-md w-full'>
+              <div className='flex items-center gap-2'>
+                <span className='inline-block w-3 h-3 rounded-full bg-alert-solid' />
+                <span className='text-lg font-semibold text-alert-text'>Disconnected</span>
+              </div>
+              <p className='text-sm text-canvas-text'>
+                Connection was lost
+              </p>
+              <Button variant='solid' onClick={handleReconnect}>Reconnect</Button>
+            </div>
+          ) : (
+            <div className='flex flex-col justify-center items-center w-full px-4 py-6 gap-4'>
+              <p className='text-lg font-semibold text-canvas-text-contrast'>Choose Connection</p>
+              <div className='w-full max-w-sm flex flex-col gap-3'>
+                <Button variant='solid' fullWidth onClick={handleChooseSimulator}>
+                  Continue with Simulator
+                </Button>
+                <div className='flex items-center gap-2'>
+                  <div className='flex-1 border-t border-canvas-border' />
+                  <span className='text-canvas-text font-medium text-sm'>OR</span>
+                  <div className='flex-1 border-t border-canvas-border' />
+                </div>
+                <Button variant='solid' color='secondary' fullWidth onClick={handleChooseWalletConnect}>
+                  Link Wallet
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Tracker tab */}
         <div style={{ position: 'absolute', inset: 0, display: activeTab === 'tracker' ? 'block' : 'none' }}>
           <iframe
@@ -545,7 +806,6 @@ const Shell = () => {
               registerMessageHandler={registerMessageHandler}
               appendGameLog={appendGameLog}
               sessionSave={sessionSaveRef.current ?? undefined}
-              blockchainType={getBlockchainType()}
               onSessionActivity={onSessionActivity}
             />
           ) : gameParams && peerConn ? (
@@ -584,6 +844,7 @@ const Shell = () => {
           )}
         </div>
       </div>
+
     </div>
   );
 };

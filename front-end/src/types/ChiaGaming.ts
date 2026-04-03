@@ -702,6 +702,17 @@ export interface BlockchainInboundAddressResult {
   puzzleHash: string;
 }
 
+export interface ConnectionField {
+  label: string;
+  default: number;
+}
+
+export interface ConnectionSetup {
+  qrUri: string;
+  fields?: { balance?: ConnectionField };
+  finalize(values?: { balance?: number }): Promise<void>;
+}
+
 export interface InternalBlockchainInterface {
   spend(blob: string, spendBundle: unknown, source?: string): Promise<string>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
@@ -719,6 +730,11 @@ export interface InternalBlockchainInterface {
   getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]>;
   registerCoins(names: string[]): Promise<void>;
   startMonitoring(): Promise<void>;
+
+  beginConnect(uniqueId: string): Promise<ConnectionSetup>;
+  disconnect(): Promise<void>;
+  isConnected(): boolean;
+  onConnectionChange(cb: (connected: boolean) => void): () => void;
 }
 
 export interface OutcomeHandType {

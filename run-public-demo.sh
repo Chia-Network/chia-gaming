@@ -7,12 +7,10 @@ FE_DIR="$SCRIPT_DIR/front-end"
 WASM_DIR="$SCRIPT_DIR/wasm"
 LOBBY_SERVICE_DIR="$SCRIPT_DIR/lobby/lobby-service"
 LOBBY_FRONTEND_DIR="$SCRIPT_DIR/lobby/lobby-frontend"
-WC_DIR="$SCRIPT_DIR/wc-stub"
 CLSP_DIR="$SCRIPT_DIR/clsp"
 
 GAME_PORT=${GAME_PORT:-3002}
 TRACKER_PORT=${TRACKER_PORT:-3003}
-WC_PORT=${WC_PORT:-3004}
 SIM_PORT=${SIM_PORT:-5800}
 SIM_WS_PORT=${SIM_WS_PORT:-5801}
 
@@ -59,7 +57,7 @@ fi
 SIM_URL="http://$PUBLIC_HOST:$SIM_PORT"
 
 # Kill anything still listening on our ports from a previous run.
-for p in $GAME_PORT $TRACKER_PORT $WC_PORT $SIM_PORT $SIM_WS_PORT; do
+for p in $GAME_PORT $TRACKER_PORT $SIM_PORT $SIM_WS_PORT; do
     pids=$(lsof -ti:"$p" -sTCP:LISTEN 2>/dev/null || true)
     [ -n "$pids" ] && kill $pids 2>/dev/null || true
 done
@@ -71,7 +69,6 @@ cleanup() {
     for pid in "${PIDS[@]}"; do
         kill "$pid" 2>/dev/null || true
     done
-    kill $(lsof -i -n -P | grep LISTEN | grep :$WC_PORT | awk '{print $2}') 2>/dev/null || true
     for pid in "${PIDS[@]}"; do
         wait "$pid" 2>/dev/null || true
     done
@@ -109,8 +106,6 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     (cd "$LOBBY_FRONTEND_DIR" && pnpm run build)
     echo "=== Building lobby-service ==="
     (cd "$LOBBY_SERVICE_DIR" && pnpm run build)
-    echo "=== Building wc-stub ==="
-    (cd "$WC_DIR" && pnpm install --frozen-lockfile && pnpm run build)
 fi
 
 # ── Assemble staging directories ────────────────────────────────────
@@ -167,10 +162,6 @@ echo "=== Starting player app static server (port $GAME_PORT, binding 0.0.0.0) =
 node "$SCRIPT_DIR/local-static-test-server.js" "$GAME_SERVE" "$GAME_PORT" "0.0.0.0" &
 PIDS+=($!)
 
-echo "=== Starting wc-stub (port $WC_PORT) ==="
-(cd "$WC_DIR" && PORT=$WC_PORT SIM_URL="$SIM_URL" exec node --disable-warning=DEP0169 ./dist/index.js) &
-PIDS+=($!)
-
 echo "=== Starting tracker (lobby-service + lobby-frontend on port $TRACKER_PORT) ==="
 (cd "$LOBBY_SERVICE_DIR" && PORT=$TRACKER_PORT exec node ./dist/index-rollup.cjs \
     --self "http://$PUBLIC_HOST:$TRACKER_PORT" \
@@ -192,10 +183,9 @@ echo ""
 echo "════════════════════════════════════════════════════════"
 echo "  All services running (public mode):"
 echo ""
-echo "    Player app:  http://$PUBLIC_HOST:$GAME_PORT"
-echo "    Tracker:     http://$PUBLIC_HOST:$TRACKER_PORT"
-echo "    WC stub:     http://$PUBLIC_HOST:$WC_PORT"
-echo "    Simulator:   http://$PUBLIC_HOST:$SIM_PORT"
+echo "    Player app: http://$PUBLIC_HOST:$GAME_PORT"
+echo "    Tracker:    http://$PUBLIC_HOST:$TRACKER_PORT"
+echo "    Simulator:  http://$PUBLIC_HOST:$SIM_PORT"
 echo ""
 echo "  Share this URL with other players:"
 echo "    http://$PUBLIC_HOST:$GAME_PORT"

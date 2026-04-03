@@ -19,7 +19,7 @@ import {
   spend_bundle_to_clvm,
 } from '../util';
 import { debugLog } from '../services/debugLog';
-import { saveSession, SessionSave, CalpokerHandState, BlockchainType } from './save';
+import { saveSession, SessionSave, CalpokerHandState } from './save';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
 
 function clvmToBytes(value: Program | null): Uint8Array {
@@ -130,7 +130,6 @@ export class WasmBlobWrapper {
   private reorderQueue: Map<number, string> = new Map();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private restoredSession = false;
-  blockchainType: BlockchainType = 'simulator';
   activeGameId: string | null = null;
   handState: CalpokerHandState | null = null;
   lastChannelStatus: ChannelStatusPayload | null = null;

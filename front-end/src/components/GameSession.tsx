@@ -398,14 +398,13 @@ export interface GameSessionProps {
   registerMessageHandler: (handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, pingHandler: () => void) => void;
   appendGameLog: (line: string) => void;
   sessionSave?: import('../hooks/save').SessionSave;
-  blockchainType?: import('../hooks/save').BlockchainType;
   onSessionActivity?: () => void;
 }
 
-const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, peerConnected, registerMessageHandler, appendGameLog, sessionSave, blockchainType, onSessionActivity }) => {
+const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, peerConnected, registerMessageHandler, appendGameLog, sessionSave, onSessionActivity }) => {
   const uniqueId = getPlayerId();
 
-  const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, sessionSave, blockchainType);
+  const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, sessionSave);
 
   useEffect(() => {
     if (!onSessionActivity) return;
