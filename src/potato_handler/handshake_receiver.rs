@@ -701,7 +701,7 @@ impl PeerHandler for HandshakeReceiverHandler {
             let final_bundle = SpendBundle { name: None, spends };
             let completion_effect = self.channel_transaction_completion(env, &final_bundle)?;
             let mut effects = Vec::new();
-            effects.extend(completion_effect.into_iter());
+            effects.extend(completion_effect);
             effects.push(Effect::SpendTransaction(final_bundle));
             return Ok(effects);
         }

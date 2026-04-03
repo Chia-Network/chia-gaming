@@ -28,8 +28,7 @@ use crate::shutdown::get_conditions_with_channel_handler;
 use crate::peer_container::PeerHandler;
 use crate::potato_handler::types::{
     BatchAction, FromLocalUI, GameAction, GameFactory, PeerMessage, PotatoState,
-    SpendWalletReceiver,
-    WireProposeGame,
+    SpendWalletReceiver, WireProposeGame,
 };
 
 use crate::potato_handler::start::GameStart;
@@ -1358,7 +1357,10 @@ impl FromLocalUI for PotatoHandler {
 
         let game_id_list: Vec<GameID> = my_games.iter().map(|g| g.game_id).collect();
 
-        for (index, (mine, _theirs)) in my_games.into_iter().zip(their_games.into_iter()).enumerate()
+        for (index, (mine, _theirs)) in my_games
+            .into_iter()
+            .zip(their_games.into_iter())
+            .enumerate()
         {
             let wire = WireProposeGame {
                 start: game.clone(),

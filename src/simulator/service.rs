@@ -825,8 +825,7 @@ fn cors_headers() -> Vec<Header> {
 }
 
 fn respond_not_found(request: tiny_http::Request) {
-    let mut response =
-        Response::from_data(b"not found".to_vec()).with_status_code(StatusCode(404));
+    let mut response = Response::from_data(b"not found".to_vec()).with_status_code(StatusCode(404));
     for h in cors_headers() {
         response.add_header(h);
     }
@@ -858,8 +857,7 @@ fn run_health_server(height: Arc<AtomicUsize>) {
         match path {
             "/get_peak" => {
                 let h = height.load(Ordering::Relaxed);
-                let mut response =
-                    Response::from_data(format!("{h}\n").into_bytes());
+                let mut response = Response::from_data(format!("{h}\n").into_bytes());
                 for h in cors_headers() {
                     response.add_header(h);
                 }
