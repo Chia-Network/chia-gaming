@@ -434,7 +434,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, peerConnect
               <span className='text-canvas-text/80'>Channel size:</span>
               <span className='font-medium'>{formatMojos(session.amount * 2n)}</span>
               <span className='text-canvas-text/70'>·</span>
-              <span className='text-canvas-text/80'>My share:</span>
+              <span className='text-canvas-text/80'>My Stack:</span>
               <span className='font-medium'>{formatOptionalMojos(session.channelStatus.ourBalance)}</span>
             </div>
             <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
