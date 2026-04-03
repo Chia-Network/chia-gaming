@@ -1,9 +1,10 @@
 import { Subject } from 'rxjs';
+import { SIM_URL } from './config';
 
 export const blockFeed = new Subject();
 
 export function blockchainUpdate() {
-  return fetch('http://localhost:5800/wait_block', { method: 'POST' })
+  return fetch(`${SIM_URL}/wait_block`, { method: 'POST' })
     .then((res: Response) => res.json())
     .then((blockNumber: unknown) => {
       blockFeed.next({
@@ -23,7 +24,7 @@ export interface BlockSpends {
 
 export function get_block_spends(header_hash: string) {
   return fetch(
-    `http://localhost:5800/block_spends?header_hash=${header_hash}`,
+    `${SIM_URL}/block_spends?header_hash=${header_hash}`,
     { method: 'POST' },
   )
     .then((res: Response) => res.json())
@@ -42,7 +43,7 @@ interface PushTxResult {
 }
 
 export async function simulatorPushTx(body: PushTxBody): Promise<PushTxResult> {
-  const lower_result = await fetch(`http://localhost:5800/push_tx`, {
+  const lower_result = await fetch(`${SIM_URL}/push_tx`, {
     method: 'POST',
     body: JSON.stringify(body),
     headers: { 'Content-Type': 'application/json' },

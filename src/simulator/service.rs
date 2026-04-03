@@ -11,7 +11,7 @@ use rand_chacha::ChaCha8Rng;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{self, Value};
-use tiny_http::{Response, Server, StatusCode};
+use tiny_http::{Header, Response, Server, StatusCode};
 use tungstenite::{Message, WebSocket};
 
 use crate::channel_handler::types::ChannelHandlerEnv;
@@ -816,8 +816,20 @@ fn url_path(url: &str) -> &str {
     url.split('?').next().unwrap_or(url)
 }
 
+fn cors_headers() -> Vec<Header> {
+    vec![
+        Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap(),
+        Header::from_bytes("Access-Control-Allow-Methods", "GET, POST, OPTIONS").unwrap(),
+        Header::from_bytes("Access-Control-Allow-Headers", "Content-Type").unwrap(),
+    ]
+}
+
 fn respond_not_found(request: tiny_http::Request) {
-    let response = Response::from_data(b"not found".to_vec()).with_status_code(StatusCode(404));
+    let mut response =
+        Response::from_data(b"not found".to_vec()).with_status_code(StatusCode(404));
+    for h in cors_headers() {
+        response.add_header(h);
+    }
     let _ = request.respond(response);
 }
 
@@ -834,16 +846,24 @@ fn run_health_server(height: Arc<AtomicUsize>) {
         let url = request.url().to_string();
         let path = url_path(&url);
 
-        // CORS preflight
         if request.method() == &tiny_http::Method::Options {
-            let _ = request.respond(Response::from_data(Vec::new()));
+            let mut response = Response::from_data(Vec::new());
+            for h in cors_headers() {
+                response.add_header(h);
+            }
+            let _ = request.respond(response);
             continue;
         }
 
         match path {
             "/get_peak" => {
                 let h = height.load(Ordering::Relaxed);
-                let _ = request.respond(Response::from_data(format!("{h}\n").into_bytes()));
+                let mut response =
+                    Response::from_data(format!("{h}\n").into_bytes());
+                for h in cors_headers() {
+                    response.add_header(h);
+                }
+                let _ = request.respond(response);
             }
             _ => respond_not_found(request),
         }

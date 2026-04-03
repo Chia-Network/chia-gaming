@@ -27,6 +27,7 @@ import Daemon from './rpc/Daemon';
 import express, { Application } from 'express';
 import { blockchainUpdate, bindBlockchain } from './coinset';
 import cors from 'cors';
+import { SIM_URL } from './config';
 
 import 'fake-indexeddb/auto';
 
@@ -90,7 +91,7 @@ function processRequest(
 
   if (command === 'chia_getCurrentAddress') {
     result.endpointName = 'getCurrentAddress';
-    return fetch(`http://localhost:5800/register?name=${topic}`, {
+    return fetch(`${SIM_URL}/register?name=${topic}`, {
       method: 'POST',
     })
       .then((res: any) => res.json())
@@ -101,7 +102,7 @@ function processRequest(
   } else if (command === 'chia_sendTransaction') {
     const hexTarget = toHexString(bech32.decode(params.address).data as any);
     return fetch(
-      `http://localhost:5800/create_spendable?who=${topic}&target=${hexTarget}&amount=${params.amount}`,
+      `${SIM_URL}/create_spendable?who=${topic}&target=${hexTarget}&amount=${params.amount}`,
       {
         method: 'POST',
       },
@@ -113,7 +114,7 @@ function processRequest(
         return result;
       });
   } else if (command === 'chia_getBalance') {
-    return fetch(`http://localhost:5800/get_balance?user=${topic}`, {
+    return fetch(`${SIM_URL}/get_balance?user=${topic}`, {
       method: 'POST',
     })
       .then((res: any) => res.json())
@@ -153,7 +154,7 @@ async function doWalletConnect(in_pairs: Pair[]) {
   let this_client_id = client_id++;
 
   const address = await fetch(
-    `http://localhost:5800/register?name=${this_client_id}`,
+    `${SIM_URL}/register?name=${this_client_id}`,
     {
       method: 'POST',
     },

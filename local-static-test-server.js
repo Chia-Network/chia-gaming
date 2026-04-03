@@ -1,5 +1,5 @@
 // Zero-dependency static file server for the player app.
-// Usage: node static-server.js <serve-directory> [port]
+// Usage: node static-server.js <serve-directory> [port] [host]
 
 const http = require('http');
 const fs = require('fs');
@@ -7,6 +7,7 @@ const path = require('path');
 
 const SERVE_DIR = process.argv[2];
 const PORT = parseInt(process.argv[3] || '3002', 10);
+const HOST = process.argv[4] || '127.0.0.1';
 
 if (!SERVE_DIR) {
   console.error('Usage: node static-server.js <serve-directory> [port]');
@@ -67,8 +68,8 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(`Static server: http://localhost:${PORT} -> ${SERVE_DIR}`);
+server.listen(PORT, HOST, () => {
+  console.log(`Static server: http://${HOST}:${PORT} -> ${SERVE_DIR}`);
 });
 
 server.on('error', (e) => {

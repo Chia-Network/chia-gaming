@@ -1,4 +1,5 @@
 import { Subject } from 'rxjs';
+import { SIM_URL } from './config';
 
 const blockFeed = new Subject();
 
@@ -9,7 +10,7 @@ export function blockchainUpdate(): () => void {
     if (!active) return;
 
     try {
-      const res = await fetch('http://localhost:5800/wait_block', {
+      const res = await fetch(`${SIM_URL}/wait_block`, {
         method: 'POST',
       });
       const blockNumber = await res.json();
@@ -41,7 +42,7 @@ export function bindBlockchain(app: any) {
     // Really the height.
     let { header_hash } = req.body;
     const result = await fetch(
-      `http://localhost:5800/block_spends?header_hash=${header_hash}`,
+      `${SIM_URL}/block_spends?header_hash=${header_hash}`,
       { method: 'POST' },
     ).then((res) => res.json());
     res.set('Content-Type', 'application/json');
@@ -51,7 +52,7 @@ export function bindBlockchain(app: any) {
   app.post('/push_tx', async (req: any, res: any) => {
     const body = req.body;
     const lower_result: (number | undefined)[] = await fetch(
-      `http://localhost:5800/push_tx`,
+      `${SIM_URL}/push_tx`,
       {
         method: 'POST',
         body: JSON.stringify(body),

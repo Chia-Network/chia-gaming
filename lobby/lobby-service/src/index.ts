@@ -23,6 +23,8 @@ function parseArgs() {
 
 const args = parseArgs();
 const selfWs = String(args.self).replace(/^http/i, 'ws');
+const simUrl = String(args.sim || 'http://localhost:5800');
+const simWsUrl = simUrl.replace(/^http/i, 'ws').replace(/:5800\b/, ':5801');
 
 type RelayPayload =
   | { msgno: number; msg: string }
@@ -68,6 +70,7 @@ const peerLastSeenAt = new Map<string, number>(); // keyed by player_id
 app.use(
   helmet({
     frameguard: false,
+    crossOriginOpenerPolicy: false,
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'", 'https://explorer-api.walletconnect.com'],
@@ -79,13 +82,15 @@ app.use(
           'https://verify.walletconnect.org',
           'https://api.coinset.org',
           'wss://api.coinset.org',
-          'http://localhost:5800',
+          simUrl,
+          simWsUrl,
           'wss://relay.walletconnect.org',
           args.self,
           selfWs,
         ],
         frameSrc: ["'self'", 'https://verify.walletconnect.org', args.self],
         frameAncestors: ["'self'", '*'],
+        upgradeInsecureRequests: null,
       },
     },
   }),

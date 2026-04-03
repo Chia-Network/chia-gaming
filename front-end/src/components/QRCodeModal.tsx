@@ -1,6 +1,6 @@
 import QRCode from 'qrcode';
-import { useEffect, useState } from 'react';
-import { Dialog, DialogClose, DialogContent, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
+import { useEffect, useRef, useState } from 'react';
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
 import { Button } from './button';
 import { motion } from 'framer-motion';
@@ -15,7 +15,9 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [selectedForCopy, setSelectedForCopy] = useState(false);
   const [error, setError] = useState<string>('');
+  const uriRef = useRef<HTMLTextAreaElement>(null);
 
   const isDark = document.documentElement.classList.contains("dark");
 
@@ -50,14 +52,33 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
 
   const copyToClipboard = async () => {
     if (!uri) return;
+
     try {
-      await navigator.clipboard.writeText(uri);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(uri);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+        return;
+      }
+    } catch { /* fall through to legacy */ }
+
+    const ta = document.createElement('textarea');
+    ta.value = uri;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy URI:', err);
-      setError('Failed to copy to clipboard');
+      return;
     }
+
+    uriRef.current?.select();
+    setSelectedForCopy(true);
+    setTimeout(() => setSelectedForCopy(false), 4000);
   };
 
   const handleClose = () => {
@@ -90,6 +111,10 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
             </button>
           </DialogClose>
         </DialogHeader>
+
+        <DialogDescription className="sr-only">
+          Scan the QR code or copy the URI to connect your Chia wallet
+        </DialogDescription>
 
         {/* BODY */}
         <div className="p-6 text-center">
@@ -162,6 +187,7 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
             </p>
 
             <textarea
+              ref={uriRef}
               readOnly
               aria-label='wallet-connect-uri'
               value={uri || ""}
@@ -174,10 +200,17 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
             />
           </div>
 
-          {/* COPY SUCCESS */}
+          {/* COPY FEEDBACK */}
           {copied && (
             <Alert className="mb-2 bg-success-bg border-success-border">
               <AlertDescription>URI copied to clipboard!</AlertDescription>
+            </Alert>
+          )}
+          {selectedForCopy && (
+            <Alert className="mb-2 bg-info-bg border-info-border">
+              <AlertDescription>
+                URI selected &mdash; press {navigator.platform?.includes('Mac') ? '\u2318C' : 'Ctrl+C'} to copy
+              </AlertDescription>
             </Alert>
           )}
         </div>
