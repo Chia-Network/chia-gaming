@@ -879,6 +879,7 @@ struct ClientState {
     registered_coins: HashSet<CoinID>,
 }
 
+#[allow(clippy::result_large_err)]
 fn ws_send(ws: &mut WebSocket<TcpStream>, text: String) -> Result<(), tungstenite::Error> {
     ws.send(Message::Text(text))
 }
