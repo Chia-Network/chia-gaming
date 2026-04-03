@@ -58,5 +58,4 @@ dist/index-rollup.cjs
 
 Run this with node 20.18.1 or newer (from daemonize, systemd or similar).
 Provide the parameter '--self' with the public facing origin used to contact the
-lobby service.  This same origin will be used in the game service to contact its
-beacon and set permission headers allowing the services to cooperate.
+lobby service.

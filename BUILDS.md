@@ -11,8 +11,7 @@ The lobby API helps bootstrap peer connections and relay off-chain messages over
 The lobby is analogous to a tracker in a Bittorrent swarm - both allow finding metadata about potential peers.
 
 This service exposes a tracker WebSocket endpoint at `/ws`, plus small HTTP
-helper endpoints used by deploy tooling (for example game advertisement beacons
-and lobby alias lookups).
+helper endpoints (for example lobby alias lookups).
 
 There will also be static web files implementing the user-facing website that queries the Lobby API, and displays the list of available games.
 

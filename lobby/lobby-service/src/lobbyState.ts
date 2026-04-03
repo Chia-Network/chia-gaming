@@ -2,13 +2,11 @@ import crypto from 'node:crypto';
 
 import {
   Player,
-  GameDefinition,
   Challenge,
   Pairing,
 } from './types/lobby';
 
 const PLAYER_TTL = 10 * 60 * 1000;
-const GAME_TTL = 10 * 60 * 1000;
 
 function randomHex(): string {
   return crypto.randomBytes(16).toString('hex');
@@ -20,19 +18,12 @@ function listOfObject<T>(object: Record<string, T>): T[] {
 
 export class Lobby {
   players: Record<string, Player> = {};
-  games: Record<string, GameDefinition> = {};
   challenges: Map<string, Challenge> = new Map();
   pairings: Map<string, Pairing> = new Map();
   // Reverse lookup: player_id -> token for the pairing they're in
   playerToPairing: Map<string, string> = new Map();
 
   sweep(time: number) {
-    Object.keys(this.games).forEach((k) => {
-      if (time > this.games[k].expiration) {
-        delete this.games[k];
-      }
-    });
-
     Object.keys(this.players).forEach((k) => {
       const player = this.players[k];
       if (time > player.lastActive + PLAYER_TTL) {
@@ -51,21 +42,8 @@ export class Lobby {
     return existing;
   }
 
-  addGame(time: number, game: string, target: string) {
-    if (this.games[game]) return;
-    this.games[game] = {
-      expiration: time + GAME_TTL,
-      game,
-      target,
-    };
-  }
-
   getPlayers(): Player[] {
     return listOfObject(this.players);
-  }
-
-  getGames(): GameDefinition[] {
-    return listOfObject(this.games);
   }
 
   createChallenge(fromId: string, targetId: string, game: string, amount: string, perGame: string): Challenge {

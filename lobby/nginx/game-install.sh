@@ -94,16 +94,8 @@ TRACKER_WS="$(echo "${TRACKER}" | sed -e 's/http/ws/g')"
 
 sed -e "s@/app@${WEBROOT}@g" -e "s!http://localhost:3001!${TRACKER}!g" -e "s!ws://localhost:3001!${TRACKER_WS}!g" -e "s!@PORT@!${PORT}!g" < ./nginx/game.conf > "${NGINX}/game.conf"
 
-# Install beacon service if we're on a systemd system
-if [ -d /etc/systemd/system ] ; then
-	sed -e "s@/app@${SERVICE}@g" -e "s!@TRACKER@!${TRACKER}!g" -e "s!@SELF@!${SELF}!g" < ./beacon.service > /etc/systemd/system/beacon.service
-fi
-
 cp -r dist "${WEBROOT}"
 cp -r public "${WEBROOT}"
 cp -r clsp "${WEBROOT}"
 
 sed -e "s@http://localhost:3001@${TRACKER}@g" < dist/urls > "${WEBROOT}/dist/urls"
-
-# Install beacon
-cp -r beacon.sh "${SERVICE}"

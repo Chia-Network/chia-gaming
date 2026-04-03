@@ -220,6 +220,44 @@ function ChannelAttentionOverlay({
   );
 }
 
+function ErrorAttentionOverlay({
+  message,
+  onDismiss,
+  boundsRef,
+}: {
+  message: string;
+  onDismiss: () => void;
+  boundsRef: RefObject<HTMLElement | null>;
+}) {
+  const { cardRef, x, y, clampToViewport } = useViewportClampedDragWithInsets(boundsRef, { top: 8 });
+  return (
+    <motion.div
+      ref={cardRef}
+      drag
+      dragMomentum={false}
+      dragElastic={0}
+      initial={false}
+      style={{ x, y }}
+      onDrag={clampToViewport}
+      onDragEnd={clampToViewport}
+      className='absolute z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing'
+    >
+      <Card className='w-full max-w-md shadow-xl bg-canvas-bg border border-alert-border'>
+        <CardHeader className='text-center pb-2'>
+          <CardTitle className='text-xl text-alert-text'>Error</CardTitle>
+        </CardHeader>
+        <Separator />
+        <CardContent className='pt-4 flex flex-col gap-2'>
+          <p className='text-sm text-canvas-text/80'>{message}</p>
+          <Button variant="soft" onClick={onDismiss} className='w-full'>
+            Dismiss
+          </Button>
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+}
+
 function GameTerminalAttentionOverlay({
   label,
   myReward,
@@ -383,20 +421,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, peerConnect
   const gameAreaRef = useRef<HTMLDivElement | null>(null);
   const handOverlayDrag = useViewportClampedDrag(gameAreaRef);
 
-  if (session.error) {
-    return (
-      <div className='flex items-center justify-center h-full p-4'>
-        <Card className='w-full max-w-md border-destructive'>
-          <CardHeader>
-            <CardTitle className='text-destructive'>Error</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className='text-sm text-muted-foreground'>{session.error}</p>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+  const [dismissedError, setDismissedError] = useState(false);
 
   const handEverStarted = session.handKey > 0;
   const channelStateLabel = CHANNEL_STATE_LABELS[session.channelStatus.state] ?? session.channelStatus.state;
@@ -606,6 +631,13 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, peerConnect
         <ChannelAttentionOverlay
           info={session.channelAttention}
           onDismiss={session.dismissChannelAttention}
+          boundsRef={channelOverlayBoundsRef}
+        />
+      )}
+      {session.error && !dismissedError && (
+        <ErrorAttentionOverlay
+          message={session.error}
+          onDismiss={() => setDismissedError(true)}
           boundsRef={channelOverlayBoundsRef}
         />
       )}

@@ -158,7 +158,6 @@ jobs:
 
       #     (cd wc-stub && PORT=$WC_PORT node ./dist/index.js) &
       #     (cd lobby/lobby-service && PORT=$LOBBY_SERVICE_PORT node ./dist/index-rollup.cjs --self "http://localhost:${LOBBY_PORT}") &
-      #     lobby/nginx/beacon.sh "http://localhost:${GAME_PORT}" "http://localhost:${LOBBY_PORT}" &
 
       #     sleep 8
 
@@ -185,9 +184,7 @@ jobs:
           cp -r clsp/* "${GAME}/clsp/"
           cp lobby/nginx/urls "${GAME}/dist/"
           cp lobby/nginx/game.conf "${GAME}/nginx/"
-          cp lobby/nginx/beacon.sh "${GAME}/beacon.sh"
           cp lobby/nginx/game-install.sh "${GAME}/game-install.sh"
-          cp lobby/nginx/beacon.service "${GAME}/beacon.service"
           cp lobby/nginx/GAME.md "${GAME}/README.md"
 
           LOBBY="${TARGET}/l/chia-gaming-lobby"

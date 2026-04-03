@@ -9,12 +9,6 @@ export interface Player {
   parameters: any;
 }
 
-export interface GameDefinition {
-  game: string;
-  target: string;
-  expiration: number;
-}
-
 export interface Challenge {
   id: string;
   from_id: string;

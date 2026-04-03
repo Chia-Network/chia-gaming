@@ -70,11 +70,11 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         this.connectPromise = null;
         resolve();
       };
-      ws.onerror = (e: any) => {
+      ws.onerror = () => {
         this.ws = null;
         this.connectPromise = null;
         try { ws.close(); } catch { /* ignore */ }
-        reject(e);
+        reject(new Error(`WebSocket connection to ${this.wsUrl} failed`));
       };
       ws.onclose = () => {
         this.ws = null;

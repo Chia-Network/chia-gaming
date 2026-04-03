@@ -62,6 +62,7 @@ function extractErrorMessage(e: unknown): string {
   }
   if (e && typeof e === 'object') {
     if ('message' in e && typeof (e as any).message === 'string') return (e as any).message;
+    if (e instanceof Event) return e.type || 'unknown event';
     try { return JSON.stringify(e); } catch { /* fall through */ }
   }
   return String(e);
@@ -396,7 +397,6 @@ export class WasmBlobWrapper {
     const spendBundleNo0xJson = toSafeJson(strip0xDeep(spendBundle));
     debugLog(`[wasm tx] formed blobLen=${blob.length}`);
     debugLog(`[TX_COINSET_JSON_NO0X] ${spendBundleNo0xJson}`);
-    console.warn(`[DBG_TX] submitTransaction called ts=${new Date().toISOString()} pending=${this.pendingTransactions.length}`);
     this.blockchain.rpc.spend(blob, spendBundle, 'submitTransaction').then((result) => {
       if (result) {
         debugLog(`[wasm] submitTransaction: ${result}`);
@@ -420,7 +420,6 @@ export class WasmBlobWrapper {
 
   private resubmitPendingTransactions() {
     if (this.pendingTransactions.length === 0) return;
-    console.warn(`[DBG_TX] resubmitPendingTransactions called ts=${new Date().toISOString()} count=${this.pendingTransactions.length}`);
     debugLog(`[wasm] resubmitting ${this.pendingTransactions.length} pending transactions`);
     const blobs = [...this.pendingTransactions];
     for (const blob of blobs) {

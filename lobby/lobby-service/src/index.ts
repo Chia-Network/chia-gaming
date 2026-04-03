@@ -172,13 +172,6 @@ function broadcastLobbyUpdate(): void {
   }
 }
 
-function broadcastGameUpdate(): void {
-  const games = lobby.getGames();
-  for (const [playerId] of lobbyConnections) {
-    sendLobbyEvent(playerId, 'game_update', { games });
-  }
-}
-
 function cancelPendingLobbyLeave(playerId: string): void {
   const timer = pendingLobbyLeaves.get(playerId);
   if (timer) {
@@ -545,14 +538,6 @@ app.post('/lobby/set-alias', (req, res) => {
     player.alias = alias;
     broadcastLobbyUpdate();
   }
-  res.json({ ok: true });
-});
-
-app.post('/lobby/game', (req, res) => {
-  const { game, target } = req.body;
-  const time = Date.now();
-  lobby.addGame(time, game, target);
-  broadcastGameUpdate();
   res.json({ ok: true });
 });
 

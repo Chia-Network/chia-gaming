@@ -22,7 +22,6 @@ type InboundMessage =
   | { type: 'lobby_update'; players: Player[] }
   | { type: 'challenge_received'; challenge_id: string; from_id: string; from_alias: string; game: string; amount: string; per_game: string }
   | { type: 'challenge_resolved'; challenge_id: string; accepted: boolean }
-  | { type: 'game_update' }
   | { type: 'error'; error?: string };
 
 function toWsUrl(input: string): string {

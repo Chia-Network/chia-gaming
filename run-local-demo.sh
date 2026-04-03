@@ -164,10 +164,6 @@ for i in $(seq 1 10); do
     sleep 1
 done
 
-echo "=== Starting beacon ==="
-"$SCRIPT_DIR/lobby/nginx/beacon.sh" "http://localhost:$GAME_PORT" "http://localhost:$TRACKER_PORT" &
-PIDS+=($!)
-
 echo ""
 echo "════════════════════════════════════════════════════════"
 echo "  All services running:"

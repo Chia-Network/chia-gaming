@@ -91,7 +91,6 @@ game channel) and maps session → player internally.
 | Event | Payload | Purpose |
 |-------|---------|---------|
 | `lobby_update` | `Player[]` | Current list of players in the lobby (broadcast on changes) |
-| `game_update` | `GameDefinition[]` | Current list of games |
 | `challenge_received` | `{ challenge_id, from_id, from_alias, game, amount, per_game }` | Someone challenged you |
 | `challenge_resolved` | `{ challenge_id, accepted }` | Your outgoing challenge was accepted or declined |
 
