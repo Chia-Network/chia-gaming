@@ -37,6 +37,10 @@ for arg in "$@"; do
     esac
 done
 
+EXCLUDE_DIRS=(
+    "chia-blockchain"
+)
+
 TARGETS=(
     "front-end/node_modules"
     "lobby/lobby-frontend/node_modules"
@@ -57,10 +61,22 @@ if [ "$INCLUDE_RUST" -eq 1 ]; then
     )
 fi
 
+is_excluded() {
+    local p="$1"
+    for ex in "${EXCLUDE_DIRS[@]}"; do
+        case "$p" in "$ex"|"$ex/"*) return 0 ;; esac
+    done
+    return 1
+}
+
 echo "=== Candidate cleanup targets ==="
 TOTAL_BYTES=0
 PRESENT=0
 for path in "${TARGETS[@]}"; do
+    if is_excluded "$path"; then
+        echo "  $path  (SKIPPED — inside excluded dir)"
+        continue
+    fi
     if [ -e "$path" ]; then
         PRESENT=1
         SIZE_BYTES="$(du -sk "$path" 2>/dev/null | awk '{print $1 * 1024}')"
@@ -88,6 +104,7 @@ fi
 echo ""
 echo "=== Removing targets ==="
 for path in "${TARGETS[@]}"; do
+    if is_excluded "$path"; then continue; fi
     if [ -e "$path" ]; then
         rm -rf "$path"
         echo "  removed $path"
