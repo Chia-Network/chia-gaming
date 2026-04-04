@@ -21,15 +21,9 @@ import {
   handValueToDescription,
 } from '../../../types/ChiaGaming';
 import { SuitName } from '../../../types/californiaPoker/CardValueSuit';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '../../../components/ui/card';
-
+import { CalpokerDisplaySnapshot } from '../../../hooks/save';
 import GameBottomBar from './components/GameBottomBar';
-import { cn } from '../../../lib/utils';
+import { Button } from '../../../components/button';
 
 function translateTopline(topline: string | undefined): string | null {
   if (!topline) return null;
@@ -50,8 +44,13 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   myWinOutcome,
   onDisplayComplete,
   onGameLog,
+  onSnapshotChange,
+  initialSnapshot,
   myName,
   opponentName,
+  onPlayAgain,
+  onEndSession,
+  showBetweenHandActions,
 }) => {
   const [gameState, setGameState] = useState(GAME_STATES.INITIAL);
   // const [playerCards, setPlayerHand] = useState<CardValueSuit[]>([]);
@@ -82,6 +81,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     if (outcome) {
       setRememberedOutcome(outcome);
     }
+    if (restoredFromSnapshot.current) return;
     const inAnimation =
       gameState === GAME_STATES.AWAITING_SWAP ||
       gameState === GAME_STATES.SWAPPING ||
@@ -114,6 +114,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   >();
   const [aiBestHand, setAiBestHand] = useState<BestHandType | undefined>();
   const [showSwapAnimation, setShowSwapAnimation] = useState(false);
+  const [newHandWaiting, setNewHandWaiting] = useState(false);
   const [movingCards, setMovingCards] = useState<MovingCardData[]>([]);
   const [playerHaloCardIds, setPlayerHaloCardIds] = useState<number[]>([]);
   const [opponentHaloCardIds, setOpponentHaloCardIds] = useState<number[]>([]);
@@ -122,6 +123,9 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     setGameState(GAME_STATES.SELECTING);
     setCardSelections([]);
     setWinner(null);
+    saveSnapshot(
+      GAME_STATES.SELECTING, [], [], [], null, undefined, undefined, [], [], '', '',
+    );
   };
 
   const toggleCardSelection = (cardId: number) => {
@@ -130,10 +134,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     setCardSelections((prev: number[]) => {
       if (prev.includes(cardId)) {
         return prev.filter((id) => id !== cardId);
-      } else if (prev.length < 4) {
-        return [...prev, cardId];
       }
-      return prev;
+      return [...prev, cardId];
     });
   };
 
@@ -142,30 +144,60 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     rememberedCardsRef.current = [reordered, rememberedCardsRef.current[1]];
   }, []);
 
-  const isDisabled =
-    moveNumber !== 1 ||
-    !(gameState === GAME_STATES.SELECTING && cardSelections.length === 4);
+  // Keyboard: 1-8 toggles the card at that position
+  const playerCardsRef = useRef<CardValueSuit[]>(playerCards);
+  playerCardsRef.current = playerCards;
 
-  const showAnimationPhase =
-    gameState === GAME_STATES.SWAPPING || gameState === GAME_STATES.FINAL;
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (gameState !== GAME_STATES.SELECTING) return;
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key >= '1' && e.key <= '8') {
+        const index = parseInt(e.key) - 1;
+        const cards = playerCardsRef.current;
+        if (index < cards.length && cards[index].cardId !== undefined) {
+          setCardSelections((prev: number[]) => {
+            const cardId = cards[index].cardId!;
+            if (prev.includes(cardId)) {
+              return prev.filter((id) => id !== cardId);
+            }
+            return [...prev, cardId];
+          });
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [gameState, setCardSelections]);
+
+  const isDisabled =
+    cardSelections.length !== 4;
 
   const playerHalos = gameState === GAME_STATES.SELECTING
     ? cardSelections
     : playerHaloCardIds;
   const opponentHalos = opponentHaloCardIds;
 
-  const buttonText = showAnimationPhase
-    ? '\u00A0'
-    : moveNumber !== 1 || gameState !== GAME_STATES.SELECTING
-      ? 'Waiting…'
-      : cardSelections.length === 4
-        ? 'Play Selected Cards'
-        : `Select 4 cards (${cardSelections.length}/4)`;
+  const buttonText = cardSelections.length === 4
+    ? 'Play Selected Cards'
+    : `Select 4 cards (${cardSelections.length}/4)`;
+
+  const opponentLabel = opponentName ?? 'Opponent';
+  const myLabel = myName ?? 'You';
+  const showFinalHeader = !!winner && !showSwapAnimation;
+  const opponentResultVerb = winner === 'tie' ? 'ties' : winner === 'ai' ? 'wins' : 'loses';
+  const playerResultVerb = winner === 'tie' ? 'ties' : winner === 'player' ? 'wins' : 'loses';
 
   const doHandleMakeMove = () => {
     if (gameState === GAME_STATES.SELECTING && cardSelections.length > 0) {
-      setPlayerHaloCardIds([...cardSelections]);
+      const halos = [...cardSelections];
+      setPlayerHaloCardIds(halos);
       setGameState(GAME_STATES.AWAITING_SWAP);
+      saveSnapshot(
+        GAME_STATES.AWAITING_SWAP, playerCards, opponentCards, cardSelections,
+        null, undefined, undefined, halos, [], '', '',
+      );
     }
 
     handleMakeMove();
@@ -428,19 +460,89 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       setMovingCards([]);
       setShowSwapAnimation(false);
       setGameState(GAME_STATES.FINAL);
-      setPlayerDisplayText(makeDescription(handValueToDescription(myHandValue, myUsedCards)));
-      setOpponentDisplayText(makeDescription(handValueToDescription(oppHandValue, oppUsedCards)));
+      const pText = makeDescription(handValueToDescription(myHandValue, myUsedCards));
+      const oText = makeDescription(handValueToDescription(oppHandValue, oppUsedCards));
+      setPlayerDisplayText(pText);
+      setOpponentDisplayText(oText);
+      const pBest: BestHandType = {
+        cards: playerBestCards,
+        rank: { name: '', score: 0, tiebreakers: [] },
+      };
+      const oBest: BestHandType = {
+        cards: opponentBestCards,
+        rank: { name: '', score: 0, tiebreakers: [] },
+      };
+      saveSnapshot(
+        GAME_STATES.FINAL, newPlayer, newOpponent, cardSelections,
+        liveWinner, pBest, oBest, aiSwapCardIds, playerSwapCardIds, pText, oText,
+      );
       onDisplayComplete();
     }, SWAP_ANIMATION_DURATION);
   };
 
-  useEffect(() => {
-    dealCards();
-  }, []);
+  const saveSnapshot = useCallback((
+    gs: string,
+    pCards: CardValueSuit[],
+    oCards: CardValueSuit[],
+    sel: number[],
+    w: string | null,
+    pBest: BestHandType | undefined,
+    oBest: BestHandType | undefined,
+    pHalo: number[],
+    oHalo: number[],
+    pText: string,
+    oText: string,
+  ) => {
+    const snap: CalpokerDisplaySnapshot = {
+      gameState: gs,
+      playerCardIds: pCards.map(c => c.cardId!),
+      opponentCardIds: oCards.map(c => c.cardId!),
+      cardSelections: sel,
+      winner: w,
+      playerBestHandCardIds: pBest?.cards.map(c => c.cardId!) ?? [],
+      opponentBestHandCardIds: oBest?.cards.map(c => c.cardId!) ?? [],
+      playerHaloCardIds: pHalo,
+      opponentHaloCardIds: oHalo,
+      playerDisplayText: pText,
+      opponentDisplayText: oText,
+    };
+    onSnapshotChange(snap);
+  }, [onSnapshotChange]);
 
   useEffect(() => {
-    // Reset when moveNumber goes to 0 and no animation is in progress.
-    // With key-based remounting, this mostly fires on initial mount.
+    if (initialSnapshot) {
+      const snap = initialSnapshot;
+      const pCards = snap.playerCardIds.map(cvsFromCard);
+      const oCards = snap.opponentCardIds.map(cvsFromCard);
+      setPlayerCards(pCards);
+      setOpponentCards(oCards);
+      rememberedCardsRef.current = [pCards, oCards];
+      setGameState(snap.gameState);
+      setWinner(snap.winner);
+      setPlayerHaloCardIds(snap.playerHaloCardIds);
+      setOpponentHaloCardIds(snap.opponentHaloCardIds);
+      setPlayerDisplayText(snap.playerDisplayText);
+      setOpponentDisplayText(snap.opponentDisplayText);
+      if (snap.playerBestHandCardIds.length > 0) {
+        setPlayerBestHand({
+          cards: snap.playerBestHandCardIds.map(cvsFromCard),
+          rank: { name: '', score: 0, tiebreakers: [] },
+        });
+      }
+      if (snap.opponentBestHandCardIds.length > 0) {
+        setAiBestHand({
+          cards: snap.opponentBestHandCardIds.map(cvsFromCard),
+          rank: { name: '', score: 0, tiebreakers: [] },
+        });
+      }
+    } else {
+      dealCards();
+    }
+  }, []);
+
+  const restoredFromSnapshot = useRef(!!initialSnapshot);
+  useEffect(() => {
+    if (restoredFromSnapshot.current) return;
     if (
       moveNumber === 0 &&
       !showSwapAnimation &&
@@ -468,32 +570,13 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         <div className='flex flex-col gap-2'>
           {/* Hands region */}
           <div className='flex flex-col gap-2'>
-            <Card className='flex flex-col py-0 w-full border border-canvas-line shadow-md'>
-              <CardHeader className='flex-shrink-0 p-0 w-full flex-row flex justify-center items-center'>
-                <CardTitle className='w-full pl-4 py-1 text-base flex-col sm:flex-row flex items-start gap-2'>
-                  <span className='text-base font-semibold text-alert-text'>
-                    {opponentName ? `${opponentName}'s Hand` : 'Opponent Hand'}
-                  </span>
-                  {opponentDisplayText && (
-                    <span className='text-canvas-text'>
-                      ({opponentDisplayText})
-                    </span>
-                  )}
-                  {winner && !showSwapAnimation && (
-                    <span
-                      className={cn(
-                        'px-2 py-0.5 rounded-md text-xs font-medium',
-                        winner === 'ai'
-                          ? 'bg-success-solid text-success-on-success'
-                          : 'bg-alert-solid text-alert-on-alert',
-                      )}
-                    >
-                      {winner === 'ai' ? 'Winner' : 'Loser'}
-                    </span>
-                  )}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className='flex items-center justify-center p-2'>
+            <div className='flex flex-col py-0 w-full rounded-md'>
+              <div className='w-full py-1 text-base font-semibold text-canvas-text text-center'>
+                {showFinalHeader && opponentDisplayText
+                  ? `${opponentLabel} ${opponentResultVerb} (${opponentDisplayText})`
+                  : `${opponentLabel}'s Hand`}
+              </div>
+              <div className='flex items-center justify-center p-2'>
                 <HandDisplay
                   title=''
                   cards={
@@ -510,35 +593,16 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                   formatHandDescription={formatHandDescription}
                   selectedCards={[]}
                 />
-              </CardContent>
-            </Card>
+              </div>
+            </div>
 
-            <Card className='flex flex-col py-0 w-full border border-canvas-line shadow-md'>
-              <CardHeader className='flex-shrink-0 p-0 w-full flex-row flex justify-center items-center'>
-                <CardTitle className='w-full pl-4 py-1 text-base flex-col sm:flex-row flex items-start gap-2'>
-                  <span className='font-semibold text-success-text'>
-                    {myName ? `${myName}'s Hand` : 'Your Hand'}
-                  </span>
-                  {playerDisplayText && (
-                    <span className='text-canvas-text'>
-                      ({playerDisplayText})
-                    </span>
-                  )}
-                  {winner && !showSwapAnimation && (
-                    <span
-                      className={cn(
-                        'px-2 py-0.5 rounded-md text-xs font-medium',
-                        winner === 'player'
-                          ? 'bg-success-solid text-success-on-success'
-                          : 'bg-alert-solid text-alert-on-alert',
-                      )}
-                    >
-                      {winner === 'player' ? 'Winner' : 'Loser'}
-                    </span>
-                  )}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className='flex items-center justify-center p-2'>
+            <div className='flex flex-col py-0 w-full rounded-md'>
+              <div className='w-full py-1 text-base font-semibold text-canvas-text text-center'>
+                {showFinalHeader && playerDisplayText
+                  ? `${myLabel} ${playerResultVerb} (${playerDisplayText})`
+                  : `${myLabel}'s Hand`}
+              </div>
+              <div className='flex items-center justify-center p-2'>
                 <HandDisplay
                   title=''
                   cards={
@@ -557,16 +621,46 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                   onReorder={gameState === GAME_STATES.SELECTING ? handleReorder : undefined}
                   formatHandDescription={formatHandDescription}
                 />
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           </div>
 
           {/* Action bar at the bottom, natural height */}
-          <GameBottomBar
-            buttonText={buttonText}
-            isDisabled={isDisabled}
-            doHandleMakeMove={doHandleMakeMove}
-          />
+          {gameState === GAME_STATES.SELECTING && moveNumber === 1 && (
+            <GameBottomBar
+              buttonText={buttonText}
+              isDisabled={isDisabled}
+              doHandleMakeMove={doHandleMakeMove}
+            />
+          )}
+          {gameState === GAME_STATES.AWAITING_SWAP && (
+            <div className='flex-shrink-0 flex p-2 items-center justify-center'>
+              <div className='rounded-md bg-canvas-bg px-4 py-2 text-sm font-medium text-canvas-text shadow-md'>
+                Waiting for opponent
+              </div>
+            </div>
+          )}
+          {showBetweenHandActions && gameState === GAME_STATES.FINAL && (
+            <div className='flex-shrink-0 relative flex p-2 items-center justify-center'>
+              <Button
+                variant='destructive'
+                size='sm'
+                onClick={onEndSession}
+                className='absolute left-2 px-4 py-2'
+              >
+                End Session
+              </Button>
+              <Button
+                variant='solid'
+                color='primary'
+                onClick={() => { setNewHandWaiting(true); onPlayAgain?.(); }}
+                disabled={newHandWaiting}
+                className='px-4 py-2'
+              >
+                {newHandWaiting ? 'Waiting' : 'New Hand'}
+              </Button>
+            </div>
+          )}
         </div>
       ) : (
         <div className='flex flex-1 items-center justify-center'>

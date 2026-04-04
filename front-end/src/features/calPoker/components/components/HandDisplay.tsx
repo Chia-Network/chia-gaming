@@ -108,7 +108,6 @@ function HandDisplay(props: HandDisplayProps) {
   }, [cards, area]);
 
   const isWinner = winner === winnerType;
-  const isTie = winner === 'tie';
 
   const handleCardClick = (cardId: number) => {
     if (isDraggingRef.current) return;
@@ -156,19 +155,15 @@ function HandDisplay(props: HandDisplayProps) {
       data-area={area}
     >
       <div className='relative'>
-        {gameState === GAME_STATES.FINAL && (isWinner || isTie) && (
+        {gameState === GAME_STATES.FINAL && isWinner && (
           <div
-            className={`absolute z-20 -top-5 ${
-              isWinner
-                ? 'bg-success-solid text-success-on-success'
-                : 'bg-canvas-solid text-canvas-on-canvas'
-            } px-4 py-2 rounded-full font-bold text-base shadow-lg`}
+            className='absolute z-20 -top-5 bg-success-solid text-success-on-success px-4 py-2 rounded-full font-bold text-base shadow-lg'
             style={{
               left: '50%',
               transform: `translateX(calc(-50% + ${winnerIndicatorOffset}px))`,
             }}
           >
-            {isWinner ? 'Winner!' : 'Tie!'}
+            Winner!
           </div>
         )}
 

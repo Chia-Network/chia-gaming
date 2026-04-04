@@ -18,7 +18,7 @@ const GameBottomBar = ({
         color='primary'
         onClick={doHandleMakeMove}
         disabled={isDisabled}
-        className='w-full p-4'
+        className='w-auto px-4 py-2'
       >
         {buttonText}
       </Button>

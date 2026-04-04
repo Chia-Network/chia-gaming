@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { Observable } from 'rxjs';
 import { useGameSession, ChannelStatusInfo, GameTurnState, GameplayEvent, isWindingDown } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
-import { CalpokerHandState } from '../hooks/save';
+import { CalpokerHandState, CalpokerDisplaySnapshot } from '../hooks/save';
 import { formatMojos, formatAmount } from '../util';
 import { getPlayerId } from '../hooks/save';
 import { CalpokerOutcome, ChannelState } from '../types/ChiaGaming';
@@ -196,18 +196,18 @@ function ChannelAttentionOverlay({
             Channel: {label}
           </CardTitle>
           {info.advisory && (
-            <p className='text-sm text-canvas-text/70 mt-1'>{info.advisory}</p>
+            <p className='text-sm text-canvas-solid mt-1'>{info.advisory}</p>
           )}
         </CardHeader>
         <Separator />
         <CardContent className='pt-4 flex flex-col gap-2'>
           {info.coinHex && (
-            <p className="text-xs font-mono text-canvas-text/60 break-all">
+            <p className="text-xs font-mono text-canvas-solid break-all">
               Coin: 0x{info.coinHex}
             </p>
           )}
           {info.coinAmount && (
-            <p className='text-xs text-canvas-text/70'>
+            <p className='text-xs text-canvas-solid'>
               Coin amount: {formatOptionalMojos(info.coinAmount)} mojos
             </p>
           )}
@@ -248,7 +248,7 @@ function ErrorAttentionOverlay({
         </CardHeader>
         <Separator />
         <CardContent className='pt-4 flex flex-col gap-2'>
-          <p className='text-sm text-canvas-text/80'>{message}</p>
+          <p className='text-sm text-canvas-text'>{message}</p>
           <Button variant="soft" onClick={onDismiss} className='w-full'>
             Dismiss
           </Button>
@@ -293,13 +293,13 @@ function GameTerminalAttentionOverlay({
         <CardContent className='pt-4 flex flex-col gap-3'>
           <div className='rounded-md border border-canvas-line bg-canvas-bg-subtle p-3 text-sm space-y-2'>
             <p className='flex flex-wrap items-center gap-x-2 gap-y-1'>
-              <span className='text-canvas-text/80'>My reward:</span>
+              <span className='text-canvas-text'>My reward:</span>
               <span className='font-semibold text-canvas-text-contrast'>
                 {formatOptionalMojos(myReward)}
               </span>
             </p>
             <p className='flex flex-wrap items-center gap-x-2 gap-y-1'>
-              <span className='text-canvas-text/80'>Reward coin:</span>
+              <span className='text-canvas-text'>Reward coin:</span>
               {rewardCoinHex ? (
                 <ExpandableCoinId hex={rewardCoinHex} />
               ) : (
@@ -330,6 +330,9 @@ interface CalpokerHandProps {
   initialHandState?: CalpokerHandState;
   myName?: string;
   opponentName?: string;
+  onPlayAgain?: () => void;
+  onEndSession?: () => void;
+  showBetweenHandActions?: boolean;
 }
 
 function CalpokerHand({
@@ -346,6 +349,9 @@ function CalpokerHand({
   initialHandState,
   myName,
   opponentName,
+  onPlayAgain,
+  onEndSession,
+  showBetweenHandActions,
 }: CalpokerHandProps) {
   const {
     playerHand,
@@ -356,6 +362,8 @@ function CalpokerHand({
     outcome,
     handleMakeMove,
     handleCheat,
+    saveDisplaySnapshot,
+    initialDisplaySnapshot,
   } = useCalpokerHand(
     gameObject,
     gameId,
@@ -385,8 +393,13 @@ function CalpokerHand({
       handleCheat={handleCheat}
       onDisplayComplete={onDisplayComplete}
       onGameLog={handleGameLog}
+      onSnapshotChange={saveDisplaySnapshot}
+      initialSnapshot={initialDisplaySnapshot}
       myName={myName}
       opponentName={opponentName}
+      onPlayAgain={onPlayAgain}
+      onEndSession={onEndSession}
+      showBetweenHandActions={showBetweenHandActions}
     />
   );
 }
@@ -418,7 +431,6 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, peerConnect
 
   const channelOverlayBoundsRef = useRef<HTMLDivElement | null>(null);
   const gameAreaRef = useRef<HTMLDivElement | null>(null);
-  const handOverlayDrag = useViewportClampedDrag(gameAreaRef);
 
   const [dismissedError, setDismissedError] = useState(false);
 
@@ -428,17 +440,6 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, peerConnect
   const gameStateLabel = session.gameTerminal.label ?? GAME_TURN_LABELS[session.gameCoin.turnState];
   const gameCoinLabel = session.gameTerminal.type !== 'none' ? 'Game reward coin' : 'Game coin';
   const gameCoinOrRewardHex = session.gameTerminal.rewardCoinHex ?? session.gameCoin.coinHex;
-  const betweenHandTitle = session.lastOutcome
-    ? session.lastOutcome.my_win_outcome === 'win'
-      ? 'You Won!'
-      : session.lastOutcome.my_win_outcome === 'lose'
-        ? 'You Lost'
-        : 'Tie Game'
-    : session.gameTerminal.type === 'we-timed-out'
-      ? 'You Won!'
-      : session.gameTerminal.type === 'opponent-timed-out'
-        ? 'You Lost'
-        : 'Hand Finished';
   const peerBadge =
     peerConnected === null
       ? { label: 'Peer: Unknown', className: 'bg-canvas-bg-hover text-canvas-text' }
@@ -455,24 +456,24 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, peerConnect
         <div className='flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between'>
           <div className='flex flex-col gap-1 text-sm text-canvas-text'>
             <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
-              <span className='text-canvas-text/80'>Channel size:</span>
+              <span className='text-canvas-text'>Channel size:</span>
               <span className='font-medium'>{formatMojos(session.amount * 2n)}</span>
-              <span className='text-canvas-text/70'>·</span>
-              <span className='text-canvas-text/80'>My Stack:</span>
+              <span className='text-canvas-solid'>·</span>
+              <span className='text-canvas-text'>My Stack:</span>
               <span className='font-medium'>{formatOptionalMojos(session.channelStatus.ourBalance)}</span>
             </div>
             <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
-              <span className='text-canvas-text/80'>Game terms:</span>
+              <span className='text-canvas-text'>Game terms:</span>
               <span className='font-medium'>California Poker</span>
-              <span className='text-canvas-text/70'>·</span>
-              <span className='text-canvas-text/80'>Game size:</span>
+              <span className='text-canvas-solid'>·</span>
+              <span className='text-canvas-text'>Game size:</span>
               <span className='font-medium'>{formatMojos(session.perGameAmount * 2n)}</span>
             </div>
             <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
-              <span className='text-canvas-text/80'>Channel status:</span>
+              <span className='text-canvas-text'>Channel status:</span>
               <span className='font-medium'>{channelStateLabel}</span>
-              <span className='text-canvas-text/70'>·</span>
-              <span className='text-canvas-text/80'>{channelCoinLabel}:</span>
+              <span className='text-canvas-solid'>·</span>
+              <span className='text-canvas-text'>{channelCoinLabel}:</span>
               {session.channelStatus.coinHex ? (
                 <ExpandableCoinId hex={session.channelStatus.coinHex} />
               ) : (
@@ -480,24 +481,24 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, peerConnect
               )}
             </div>
             <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
-              <span className='text-canvas-text/80'>Peer connection:</span>
+              <span className='text-canvas-text'>Peer connection:</span>
               <span className='font-medium'>
                 {peerConnected === null ? 'Unknown' : peerConnected ? 'Active' : 'Inactive'}
               </span>
             </div>
             <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
-              <span className='text-canvas-text/80'>Game state:</span>
+              <span className='text-canvas-text'>Game state:</span>
               <span className='font-medium'>{gameStateLabel}</span>
             </div>
             <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
-              <span className='text-canvas-text/80'>{gameCoinLabel}:</span>
+              <span className='text-canvas-text'>{gameCoinLabel}:</span>
               {gameCoinOrRewardHex ? (
                 <ExpandableCoinId hex={gameCoinOrRewardHex} />
               ) : (
                 <span className='font-medium'>None</span>
               )}
-              <span className='text-canvas-text/70'>·</span>
-              <span className='text-canvas-text/80'>My reward:</span>
+              <span className='text-canvas-solid'>·</span>
+              <span className='text-canvas-text'>My reward:</span>
               <span className='font-medium'>{formatOptionalMojos(session.gameTerminal.myReward)}</span>
             </div>
           </div>
@@ -558,53 +559,10 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, peerConnect
               initialHandState={session.handKey === 1 && sessionSave?.handState ? sessionSave.handState : undefined}
               myName={params.myAlias}
               opponentName={params.opponentAlias}
+              onPlayAgain={session.playAgain}
+              onEndSession={session.stopPlaying}
+              showBetweenHandActions={session.showBetweenHandOverlay && !isWindingDown(session.channelStatus.state)}
             />
-          )}
-
-          {/* Between-hand overlay (draggable, no backdrop) */}
-          {session.showBetweenHandOverlay && !isWindingDown(session.channelStatus.state) && (
-            <motion.div
-              ref={handOverlayDrag.cardRef}
-              drag
-              dragMomentum={false}
-              dragElastic={0}
-              initial={false}
-              style={{ x: handOverlayDrag.x, y: handOverlayDrag.y }}
-              onDrag={handOverlayDrag.clampToViewport}
-              onDragEnd={handOverlayDrag.clampToViewport}
-              className='absolute z-30 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing'
-            >
-              <Card className='w-full max-w-md shadow-xl bg-canvas-bg border border-canvas-line'>
-                <CardHeader className='text-center pb-2'>
-                  <CardTitle className='text-xl'>
-                    {betweenHandTitle}
-                  </CardTitle>
-                </CardHeader>
-                <Separator />
-                <CardContent className='pt-4 flex flex-col gap-2'>
-                  {session.channelStatus.state !== 'Active' ? (
-                    <p className='text-sm text-center text-canvas-text'>Session ending…</p>
-                  ) : (
-                    <>
-                      <Button
-                        variant='soft'
-                        onClick={session.playAgain}
-                        className='w-full'
-                      >
-                        Play Another Hand
-                      </Button>
-                      <Button
-                        variant='destructive'
-                        onClick={session.stopPlaying}
-                        className='w-full'
-                      >
-                        End Session
-                      </Button>
-                    </>
-                  )}
-                </CardContent>
-              </Card>
-            </motion.div>
           )}
 
           {/* Waiting for first hand */}

@@ -13,11 +13,27 @@ interface SavedGame {
   [key: string]: unknown;
 }
 
+export interface CalpokerDisplaySnapshot {
+  gameState: string;
+  playerCardIds: number[];
+  opponentCardIds: number[];
+  cardSelections: number[];
+  winner: string | null;
+  playerBestHandCardIds: number[];
+  opponentBestHandCardIds: number[];
+  playerHaloCardIds: number[];
+  opponentHaloCardIds: number[];
+  playerDisplayText: string;
+  opponentDisplayText: string;
+}
+
 export interface CalpokerHandState {
   playerHand: number[];
   opponentHand: number[];
   moveNumber: number;
   isPlayerTurn: boolean;
+  cardSelections?: number[];
+  displaySnapshot?: CalpokerDisplaySnapshot;
 }
 
 type BlockchainType = 'simulator' | 'walletconnect';
@@ -40,6 +56,8 @@ export interface SessionSave {
   channelStatus?: ChannelStatusPayload | null;
   myAlias?: string;
   opponentAlias?: string;
+  showBetweenHandOverlay?: boolean;
+  lastOutcomeWin?: 'win' | 'lose' | 'tie';
 }
 
 interface AppState {

@@ -71,6 +71,8 @@ async function restoreSession(
   gameObject.lastChannelStatus = save.channelStatus ?? null;
   gameObject.myAlias = save.myAlias;
   gameObject.opponentAlias = save.opponentAlias;
+  gameObject.showBetweenHandOverlay = save.showBetweenHandOverlay ?? false;
+  gameObject.lastOutcomeWin = save.lastOutcomeWin;
   gameObject.restoreSavedWatchCoins(save.channelStatus);
   gameObject.markRestored();
 

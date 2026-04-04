@@ -5,7 +5,7 @@ import {
   CalpokerOutcome,
 } from '../types/ChiaGaming';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
-import { CalpokerHandState } from './save';
+import { CalpokerHandState, CalpokerDisplaySnapshot } from './save';
 import { GameplayEvent } from './useGameSession';
 
 function parseCards(readableBytes: number[], iStarted: boolean): { playerHand: number[], opponentHand: number[] } {
@@ -37,6 +37,8 @@ export interface UseCalpokerHandResult {
   outcome: CalpokerOutcome | undefined;
   handleMakeMove: () => void;
   handleCheat: () => void;
+  saveDisplaySnapshot: (snapshot: CalpokerDisplaySnapshot) => void;
+  initialDisplaySnapshot: CalpokerDisplaySnapshot | undefined;
 }
 
 export function useCalpokerHand(
@@ -50,14 +52,14 @@ export function useCalpokerHand(
 ): UseCalpokerHandResult {
   const [playerHand, setPlayerHand] = useState<number[]>(initialHandState?.playerHand ?? []);
   const [opponentHand, setOpponentHand] = useState<number[]>(initialHandState?.opponentHand ?? []);
-  const [cardSelections, setOurCardSelections] = useState<number[]>([]);
+  const [cardSelections, setOurCardSelections] = useState<number[]>(initialHandState?.cardSelections ?? []);
   const [moveNumber, setMoveNumber] = useState<number>(initialHandState?.moveNumber ?? 0);
   const [isPlayerTurn, setMyTurn] = useState<boolean>(initialHandState?.isPlayerTurn ?? !iStarted);
   const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(undefined);
 
   const playerHandRef = useRef<number[]>(initialHandState?.playerHand ?? []);
   const opponentHandRef = useRef<number[]>(initialHandState?.opponentHand ?? []);
-  const cardSelectionsRef = useRef<number[]>([]);
+  const cardSelectionsRef = useRef<number[]>(initialHandState?.cardSelections ?? []);
   const moveNumberRef = useRef<number>(initialHandState?.moveNumber ?? 0);
   const gameObjectRef = useRef(gameObject);
   const gameIdRef = useRef(gameId);
@@ -96,7 +98,6 @@ export function useCalpokerHand(
             }
           } else if (currentMove >= 2) {
             handFinishedRef.current = true;
-            gameObjectRef.current?.setHandState(null);
             const myDiscardsBitfield = selectedCardsToBitfield(
               cardSelectionsRef.current,
               playerHandRef.current,
@@ -132,7 +133,6 @@ export function useCalpokerHand(
           }
         } else if ('_terminal' in evt) {
           handFinishedRef.current = true;
-          gameObjectRef.current?.setHandState(null);
         }
       },
     });
@@ -201,9 +201,23 @@ export function useCalpokerHand(
 
   useEffect(() => {
     if (playerHand.length > 0) {
-      gameObject.setHandState({ playerHand, opponentHand, moveNumber, isPlayerTurn });
+      const existing = gameObject.handState;
+      gameObject.setHandState({
+        playerHand, opponentHand, moveNumber, isPlayerTurn,
+        cardSelections: cardSelectionsRef.current,
+        displaySnapshot: existing?.displaySnapshot,
+      });
     }
   }, [playerHand, opponentHand, moveNumber, isPlayerTurn, gameObject]);
+
+  useEffect(() => {
+    if (playerHand.length > 0) {
+      const existing = gameObject.handState;
+      if (existing) {
+        gameObject.setHandState({ ...existing, cardSelections });
+      }
+    }
+  }, [cardSelections, gameObject]);
 
   const handleCheat = useCallback(() => {
     const go = gameObjectRef.current;
@@ -225,6 +239,15 @@ export function useCalpokerHand(
     }
   }, []);
 
+  const saveDisplaySnapshot = useCallback((snapshot: CalpokerDisplaySnapshot) => {
+    const go = gameObjectRef.current;
+    if (!go) return;
+    const existing = go.handState;
+    if (existing) {
+      go.setHandState({ ...existing, displaySnapshot: snapshot });
+    }
+  }, []);
+
   return {
     playerHand,
     opponentHand,
@@ -234,5 +257,7 @@ export function useCalpokerHand(
     outcome,
     handleMakeMove,
     handleCheat,
+    saveDisplaySnapshot,
+    initialDisplaySnapshot: initialHandState?.displaySnapshot,
   };
 }

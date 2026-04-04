@@ -135,6 +135,8 @@ export class WasmBlobWrapper {
   lastChannelStatus: ChannelStatusPayload | null = null;
   myAlias: string | undefined = undefined;
   opponentAlias: string | undefined = undefined;
+  showBetweenHandOverlay = false;
+  lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined = undefined;
 
   constructor(
     blockchain: BlockchainPoller,
@@ -481,7 +483,6 @@ export class WasmBlobWrapper {
         const gs = (n as Record<string, Record<string, unknown>>).GameStatus;
         if (gs && typeof gs.status === 'string' && gs.status.startsWith('ended-')) {
           this.activeGameId = null;
-          this.handState = null;
         }
       }
       this.gameLog.push(JSON.stringify(n));
@@ -654,6 +655,8 @@ export class WasmBlobWrapper {
         channelStatus: this.lastChannelStatus,
         myAlias: this.myAlias,
         opponentAlias: this.opponentAlias,
+        showBetweenHandOverlay: this.showBetweenHandOverlay,
+        lastOutcomeWin: this.lastOutcomeWin,
       };
       saveSession(save);
     } catch (e) {
@@ -663,6 +666,12 @@ export class WasmBlobWrapper {
 
   setHandState(state: CalpokerHandState | null) {
     this.handState = state;
+    this.scheduleSave();
+  }
+
+  setBetweenHandOverlay(show: boolean, outcomeWin?: 'win' | 'lose' | 'tie') {
+    this.showBetweenHandOverlay = show;
+    this.lastOutcomeWin = outcomeWin;
     this.scheduleSave();
   }
 

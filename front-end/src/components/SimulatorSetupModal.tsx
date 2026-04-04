@@ -1,28 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { Button } from './button';
-import type { ConnectionField } from '../types/ChiaGaming';
 
 interface SimulatorSetupModalProps {
   open: boolean;
-  fields?: { balance?: ConnectionField };
-  onConnect: (values: { balance?: number }) => void;
+  onConnect: () => void;
   connecting: boolean;
 }
 
-export function SimulatorSetupModal({ open, fields, onConnect, connecting }: SimulatorSetupModalProps) {
-  const [balanceValue, setBalanceValue] = useState<number>(
-    fields?.balance?.default ?? 1_000_000,
-  );
-
+export function SimulatorSetupModal({ open, onConnect, connecting }: SimulatorSetupModalProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const dragState = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const offsetRef = useRef({ x: 0, y: 0 });
-
-  useEffect(() => {
-    if (fields?.balance) {
-      setBalanceValue(fields.balance.default);
-    }
-  }, [fields?.balance?.default]);
 
   useEffect(() => {
     if (open) {
@@ -90,15 +78,6 @@ export function SimulatorSetupModal({ open, fields, onConnect, connecting }: Sim
     };
   }, []);
 
-  const handleConnect = useCallback(() => {
-    if (connecting) return;
-    const values: { balance?: number } = {};
-    if (fields?.balance) {
-      values.balance = balanceValue;
-    }
-    onConnect(values);
-  }, [connecting, fields, balanceValue, onConnect]);
-
   if (!open) return null;
 
   return (
@@ -113,31 +92,16 @@ export function SimulatorSetupModal({ open, fields, onConnect, connecting }: Sim
         className='select-none w-full text-center'
       >
         <h2 className='text-lg font-semibold text-canvas-text-contrast leading-tight'>
-          Simulator Setup
+          Simulator
         </h2>
         <p className='text-sm text-canvas-text mt-0.5'>
-          Configure the simulated blockchain connection
+          Connect to the simulated blockchain
         </p>
       </div>
 
-      {fields?.balance && (
-        <div className='w-full'>
-          <label className='block text-sm font-semibold mb-1 text-canvas-text-contrast text-center'>
-            {fields.balance.label}
-          </label>
-          <input
-            type='number'
-            value={balanceValue}
-            onChange={(e) => setBalanceValue(Number(e.target.value) || 0)}
-            disabled={connecting}
-            className='w-full text-sm font-mono rounded-md p-2 border border-canvas-border bg-canvas-bg-subtle text-canvas-text text-center'
-          />
-        </div>
-      )}
-
       <Button
         variant='solid'
-        onClick={handleConnect}
+        onClick={onConnect}
         disabled={connecting}
         isLoading={connecting}
         loadingText='Connecting&#x2026;'

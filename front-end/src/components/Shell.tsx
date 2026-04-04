@@ -127,6 +127,7 @@ const Shell = () => {
   const activeTabRef = useRef<TabId>(activeTab);
   activeTabRef.current = activeTab;
   const sessionSaveRef = useRef<SessionSave | null>(null);
+  const sessionStartedRef = useRef(false);
   const activePairingTokenRef = useRef<string | null>(null);
   const balanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -418,12 +419,12 @@ const Shell = () => {
     setWalletConnected(true);
     setConnectionSetup(null);
     setUserReady(true);
+    setActiveTab('tracker');
     requestBalance();
     debugLog(`${bcType} wallet connected`);
-    setActiveTab('tracker');
   }, [requestBalance]);
 
-  // --- Simulator flow: modal overlay ---
+  // --- Simulator flow: show QR + modal overlay, connect on user action ---
   const handleChooseSimulator = useCallback(async () => {
     try {
       const setup = await fakeBlockchainInfo.beginConnect(uniqueId);
@@ -434,11 +435,11 @@ const Shell = () => {
     }
   }, [uniqueId]);
 
-  const handleSimConnect = useCallback(async (values: { balance?: number }) => {
+  const handleSimConnect = useCallback(async () => {
     if (!connectionSetup) return;
     setConnecting(true);
     try {
-      await connectionSetup.finalize(values);
+      await connectionSetup.finalize();
       setShowSimModal(false);
       completeConnection(fakeBlockchainInfo, 'simulator', 5000);
     } catch (err) {
@@ -532,11 +533,19 @@ const Shell = () => {
         await setup.finalize();
         completeConnection(iface, bcType, pollMs);
       } else if (bcType === 'simulator') {
+        deactivate();
+        activate(iface, pollMs);
+        activeBlockchainRef.current = iface;
+        setBlockchainType(bcType);
         setConnectionSetup(setup);
         setShowSimModal(true);
         setUserReady(true);
       } else {
         // WC not connected: show QR inline, finalize in background
+        // Keep restored sessions usable even before reconnect completes.
+        deactivate();
+        activate(iface, pollMs);
+        activeBlockchainRef.current = iface;
         setConnectionSetup(setup);
         setBlockchainType('walletconnect');
         setConnecting(true);
@@ -632,7 +641,14 @@ const Shell = () => {
     );
   }
 
-  const sessionReady = gameParams !== null && peerConn !== null && (walletConnected || gameParams.restoring);
+  const sessionCanMount = gameParams !== null && peerConn !== null;
+  const hasActiveBlockchain = activeBlockchainRef.current !== null;
+  const sessionReadyToStart =
+    sessionCanMount &&
+    hasActiveBlockchain &&
+    (walletConnected || !!gameParams?.restoring);
+  if (sessionReadyToStart) sessionStartedRef.current = true;
+  const keepSession = sessionCanMount && hasActiveBlockchain && sessionStartedRef.current;
 
   // --- Main tabbed app ---
   return (
@@ -640,7 +656,7 @@ const Shell = () => {
          className='bg-canvas-bg-subtle text-canvas-text'>
 
       {/* Tab bar with branding */}
-      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-end', gap: '0.25rem', padding: '0.5rem 1rem 0', borderBottom: '1px solid var(--color-canvas-border)', background: 'var(--color-canvas-bg-subtle)' }}>
+      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-end', gap: '0.25rem', padding: '0.5rem 1rem 0', borderBottom: '1px solid var(--color-canvas-border)', background: 'var(--color-canvas-bg-active)' }}>
         {/* Branding */}
         <div className='flex items-end gap-1 pr-3 pb-0.5' style={{ flexShrink: 0 }}>
           <img
@@ -663,10 +679,11 @@ const Shell = () => {
             <button
               key={tab.id}
               onClick={() => handleTabChange(tab.id)}
+              style={active ? { background: 'var(--canvas-bg-subtle)' } : undefined}
               className={
                 'relative px-3 py-1.5 text-sm font-medium rounded-t-md transition-colors ' +
                 (active
-                  ? 'bg-canvas-bg text-canvas-text-contrast border border-b-0 border-canvas-border -mb-px'
+                  ? 'text-canvas-text-contrast border border-b-0 border-canvas-border -mb-px'
                   : 'text-canvas-text hover:text-canvas-text-contrast hover:bg-canvas-bg-hover')
               }
             >
@@ -726,7 +743,7 @@ const Shell = () => {
                 {qrDataUrl ? (
                   <img src={qrDataUrl} alt='Connection QR' className='w-[200px] h-auto rounded-md' />
                 ) : (
-                  <div className='w-[200px] h-[200px] flex items-center justify-center text-canvas-text/50'>
+                    <div className='w-[200px] h-[200px] flex items-center justify-center text-canvas-solid'>
                     Generating…
                   </div>
                 )}
@@ -750,7 +767,6 @@ const Shell = () => {
               <Button variant='outline' onClick={handleCancelConnect}>Cancel</Button>
               <SimulatorSetupModal
                 open={showSimModal}
-                fields={connectionSetup?.fields}
                 onConnect={handleSimConnect}
                 connecting={connecting}
               />
@@ -798,7 +814,7 @@ const Shell = () => {
 
         {/* Game Session tab */}
         <div style={{ position: 'absolute', inset: 0, overflow: 'auto', visibility: activeTab === 'session' ? 'visible' : 'hidden' }}>
-          {sessionReady ? (
+          {keepSession ? (
             <GameSession
               params={gameParams}
               peerConn={peerConn}
@@ -808,12 +824,12 @@ const Shell = () => {
               sessionSave={sessionSaveRef.current ?? undefined}
               onSessionActivity={onSessionActivity}
             />
-          ) : gameParams && peerConn ? (
-            <div className='w-full h-full flex items-center justify-center text-canvas-text/70'>
-              Session restored locally. Waiting for wallet connection...
+          ) : sessionCanMount ? (
+            <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
+              Restoring session...
             </div>
           ) : (
-            <div className='w-full h-full flex items-center justify-center text-canvas-text/50'>
+            <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
               No active game session
             </div>
           )}
@@ -838,7 +854,7 @@ const Shell = () => {
           {debugLogLines.length > 0 ? (
             <LogPanel lines={debugLogLines} />
           ) : (
-            <div className='w-full h-full flex items-center justify-center text-canvas-text/50'>
+            <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
               No debug log entries yet
             </div>
           )}

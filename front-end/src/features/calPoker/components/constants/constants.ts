@@ -18,9 +18,9 @@ const GameColors = {
 const SUIT_COLORS = {
   Q: 'oklch(70% 0.3 90)', // Gold (90° hue, 70% lightness)
   '♠': 'oklch(0% 0 0)', // Black (0% lightness, 0 chroma for true black)
-  '♥': 'oklch(50% 0.3 25)', // Red (25° hue, 50% lightness)
-  '♦': 'oklch(50% 0.3 265)', // Blue (265° hue, 50% lightness)
-  '♣': 'oklch(50% 0.3 155)', // Green (155° hue, 50% lightness)
+  '♥': 'oklch(60% 0.3 25)', // Red (25° hue, 60% lightness)
+  '♦': 'oklch(60% 0.3 265)', // Blue (265° hue, 60% lightness)
+  '♣': 'oklch(60% 0.3 155)', // Green (155° hue, 60% lightness)
 };
 
 const HAND_RANKINGS = {

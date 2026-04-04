@@ -1,7 +1,7 @@
-import React from 'react';
-import { Button } from '../../components/button';
+import React, { useEffect, useRef } from 'react';
 
 import { CalpokerOutcome } from '../../types/ChiaGaming';
+import { CalpokerDisplaySnapshot } from '../../hooks/save';
 
 import { CaliforniaPoker } from './components';
 
@@ -17,8 +17,13 @@ export interface CalpokerProps {
   handleCheat: () => void;
   onDisplayComplete: () => void;
   onGameLog: (lines: string[]) => void;
+  onSnapshotChange: (snapshot: CalpokerDisplaySnapshot) => void;
+  initialSnapshot?: CalpokerDisplaySnapshot;
   myName?: string;
   opponentName?: string;
+  onPlayAgain?: () => void;
+  onEndSession?: () => void;
+  showBetweenHandActions?: boolean;
 }
 
 const Calpoker: React.FC<CalpokerProps> = ({
@@ -33,25 +38,40 @@ const Calpoker: React.FC<CalpokerProps> = ({
   handleCheat,
   onDisplayComplete,
   onGameLog,
+  onSnapshotChange,
+  initialSnapshot,
   myName,
   opponentName,
+  onPlayAgain,
+  onEndSession,
+  showBetweenHandActions,
 }) => {
   const myWinOutcome = outcome?.my_win_outcome;
 
+  const cheatBufRef = useRef('');
+  useEffect(() => {
+    const SEQUENCE = 'cheat^';
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key.length !== 1) return;
+      const buf = cheatBufRef.current + e.key;
+      if (SEQUENCE.startsWith(buf)) {
+        cheatBufRef.current = buf;
+        if (buf === SEQUENCE) {
+          cheatBufRef.current = '';
+          handleCheat();
+        }
+      } else {
+        cheatBufRef.current = SEQUENCE.startsWith(e.key) ? e.key : '';
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleCheat]);
+
   return (
     <div className='relative flex h-full w-full min-h-0 flex-col'>
-      {/* Toolbar row */}
-      <div className='flex-shrink-0 flex items-center justify-end gap-2 pb-2'>
-        <Button
-          onClick={handleCheat}
-          color='neutral'
-          variant='outline'
-          size='sm'
-        >
-          Cheat
-        </Button>
-      </div>
-
       {/* Game area */}
       <div className='flex-1 min-h-0 flex flex-col'>
         <CaliforniaPoker
@@ -66,8 +86,13 @@ const Calpoker: React.FC<CalpokerProps> = ({
           myWinOutcome={myWinOutcome}
           onDisplayComplete={onDisplayComplete}
           onGameLog={onGameLog}
+          onSnapshotChange={onSnapshotChange}
+          initialSnapshot={initialSnapshot}
           myName={myName}
           opponentName={opponentName}
+          onPlayAgain={onPlayAgain}
+          onEndSession={onEndSession}
+          showBetweenHandActions={showBetweenHandActions}
         />
       </div>
     </div>

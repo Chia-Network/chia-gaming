@@ -17,15 +17,9 @@ function Card(props: CardRenderProps) {
     area,
   } = props;
 
-  const cardBorder = isBeingSwapped && hasHalo
-    ? 'border-transparent'
-    : 'border-canvas-border';
-
-  const cardBg = isBeingSwapped && hasHalo
-    ? 'bg-transparent'
-    : isFinal && !isInBestHand
-      ? 'bg-gray-300'
-      : 'bg-white';
+  const suitColor = SUIT_COLORS[card.suit] || '#000000';
+  const isHidden = isBeingSwapped && hasHalo;
+  const dimmed = isFinal && !isInBestHand;
 
   const cursor = isBeingSwapped
     ? 'cursor-default'
@@ -33,19 +27,19 @@ function Card(props: CardRenderProps) {
       ? 'cursor-not-allowed'
       : 'cursor-pointer';
 
-  const colorClass = SUIT_COLORS[card.suit] || '#000000';
+  const stateClass = isHidden ? 'card-hidden' : dimmed ? 'card-dimmed' : '';
 
   return (
     <div className='w-full relative'>
       {hasHalo && (
-        <div className='absolute -inset-1.5 rounded-xl bg-blue-600 z-0' />
+        <div className='absolute -inset-2 rounded-xl z-0' style={{ backgroundColor: '#9E8A8E' }} />
       )}
       <div
         id={id}
         data-card-id={cardId}
-        className={`card-face relative z-10 w-full aspect-[5/7] border rounded-lg flex flex-col items-center justify-center font-bold
-           ${cardBorder} ${cardBg} ${cursor}`}
-        style={{ color: colorClass }}
+        className={`card-face ${stateClass} relative z-10 w-full aspect-[5/7] rounded-lg flex flex-col items-center justify-center font-bold
+           ${cursor}`}
+        style={{ '--suit-color': suitColor } as React.CSSProperties}
         onClick={onClick}
       >
         {!isBeingSwapped && <CardContent card={card} />}

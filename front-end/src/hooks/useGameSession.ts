@@ -238,6 +238,7 @@ export interface UseGameSessionResult {
   toggleTxPublishNerf: () => void;
   showBetweenHandOverlay: boolean;
   lastOutcome: CalpokerOutcome | undefined;
+  restoredOutcomeWin: 'win' | 'lose' | 'tie' | undefined;
   goOnChainPressed: boolean;
   gameTerminalAttention: GameTerminalAttentionInfo | null;
   dismissGameTerminalAttention: () => void;
@@ -275,14 +276,20 @@ export function useGameSession(
   );
   const [gameCoin, setGameCoin] = useState<GameCoinInfo>({ coinHex: null, turnState: 'my-turn' });
   const [gameTerminal, setGameTerminal] = useState<GameTerminalInfo>(INITIAL_GAME_TERMINAL);
-  const [handKey, setHandKey] = useState(() => sessionSave?.activeGameId ? 1 : 0);
+  const [handKey, setHandKey] = useState(() =>
+    (sessionSave?.activeGameId || sessionSave?.handState) ? 1 : 0
+  );
   const [gameIds, setGameIds] = useState<string[]>(() =>
     sessionSave?.activeGameId ? [sessionSave.activeGameId] : []
   );
-  const [showBetweenHandOverlay, setShowBetweenHandOverlay] = useState(false);
+  const [showBetweenHandOverlay, setShowBetweenHandOverlay] = useState(
+    () => sessionSave?.showBetweenHandOverlay ?? false
+  );
   const [lastOutcome, setLastOutcome] = useState<CalpokerOutcome | undefined>(undefined);
+  const restoredOutcomeWin = sessionSave?.lastOutcomeWin;
   const [gameTerminalAttention, setGameTerminalAttention] = useState<GameTerminalAttentionInfo | null>(null);
 
+  const lastOutcomeRef = useRef<CalpokerOutcome | undefined>(undefined);
   const gameIdsRef = useRef<string[]>(sessionSave?.activeGameId ? [sessionSave.activeGameId] : []);
   const pendingProposalIdRef = useRef<string | null>(null);
   const wantsNewGameRef = useRef<boolean>(false);
@@ -338,6 +345,7 @@ export function useGameSession(
 
   const onHandOutcome = useCallback((outcome: CalpokerOutcome) => {
     setLastOutcome(outcome);
+    lastOutcomeRef.current = outcome;
     setGameIds(prev => prev.slice(1));
     gameIdsRef.current = gameIdsRef.current.slice(1);
     setGameCoin({ coinHex: null, turnState: 'my-turn' });
@@ -362,6 +370,9 @@ export function useGameSession(
     }
     awaitingDisplayCompleteRef.current = false;
     setShowBetweenHandOverlay(true);
+    const go = gameObjectRef.current;
+    const win = lastOutcomeRef.current?.my_win_outcome;
+    go?.setBetweenHandOverlay(true, win);
   }, []);
 
   const dismissChannelAttention = useCallback(() => {
@@ -431,6 +442,8 @@ export function useGameSession(
       setGameIds(prev => [...prev, newId]);
       gameIdsRef.current = [...gameIdsRef.current, newId];
       setShowBetweenHandOverlay(false);
+      go?.setBetweenHandOverlay(false);
+      go?.setHandState(null);
       setHandKey(prev => prev + 1);
       setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
       setGameCoin({ coinHex: null, turnState: iStarted ? 'their-turn' : 'my-turn' });
@@ -641,6 +654,7 @@ export function useGameSession(
     toggleTxPublishNerf,
     showBetweenHandOverlay,
     lastOutcome,
+    restoredOutcomeWin,
     goOnChainPressed,
     gameTerminalAttention,
     dismissGameTerminalAttention,
