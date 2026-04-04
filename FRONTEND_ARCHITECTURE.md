@@ -197,12 +197,13 @@ session automatically. This is always-on — not a feature the user opts into.
 
 #### What is saved (`SessionSave`)
 
-A single `sessionSave` key in localStorage holds a JSON-serialized `SessionSave`
-object:
+An `appState` key in localStorage holds a JSON-serialized `AppState` object
+(version 2). The game session save lives at `appState.gameSave` as a
+`SessionSave`:
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `serializedCradle` | `unknown` | Full WASM cradle state via `cradle.serialize()` |
+| `serializedCradle` | `string` | Full WASM cradle state via `cradle.serialize()` |
 | `pairingToken` | `string` | Tracker pairing token, for reconciliation on reconnect |
 | `messageNumber` | `number` | Next outbound message sequence number |
 | `remoteNumber` | `number` | Last delivered inbound message sequence number |
@@ -210,11 +211,20 @@ object:
 | `iStarted` | `boolean` | Whether this player was the initiator |
 | `amount` | `string` | Channel buy-in (bigint as string) |
 | `perGameAmount` | `string` | Per-hand amount (bigint as string) |
-| `uniqueId` | `string` | Player unique ID |
 | `pendingTransactions` | `string[]` | CLVM blobs of transactions not yet confirmed |
 | `unackedMessages` | `Array<{ msgno, msg }>` | Outbound messages not yet acknowledged by the peer |
 | `gameLog` | `string[]` | Game notification log |
 | `debugLog` | `string[]` | Debug log history |
+| `activeGameId` | `string \| null?` | Current game ID |
+| `handState` | `CalpokerHandState?` | Card state snapshot for mid-hand restore |
+| `channelStatus` | `ChannelStatusPayload?` | Last channel status for coin watching |
+| `myAlias` | `string?` | Local player display name |
+| `opponentAlias` | `string?` | Opponent display name |
+| `showBetweenHandOverlay` | `boolean?` | Whether the between-hand overlay was showing |
+| `lastOutcomeWin` | `'win' \| 'lose' \| 'tie'?` | Last hand result |
+
+The surrounding `AppState` also holds `playerId`, `sessionId`, `blockchainType`,
+`alias`, `theme`, and `savedGames` — these persist across sessions.
 
 #### When saves happen
 
@@ -235,9 +245,11 @@ save's `pairingToken`, the restore path activates:
    `create_serialized_game` with a fresh RNG seed.
 3. Restore all counters and logs (`messageNumber`, `remoteNumber`,
    `channelReady`, `unackedMessages`, `pendingTransactions`, etc.).
-4. Skip `do_initial_spend` and `activateSpend` — the channel already exists.
-5. When `qualifyingEvents` reaches 15 (wasm loaded + matched + block data +
-   flush), re-send all un-acked messages and re-submit all pending transactions.
+4. Skip `activateSpend` (which calls `start_handshake`) — the channel already
+   exists.
+5. When `qualifyingEvents` reaches 7 (bitmask: wasm loaded + cradle set +
+   auto-flush), re-send all un-acked messages and re-submit all pending
+   transactions.
 
 #### Cleanup
 
@@ -378,6 +390,8 @@ but the MVP is limited to one game at a time.
 │  Shell (top-level React component)                              │
 │  Wallet, blockchain, tracker connection, tabs, logs             │
 │                                                                 │
+│  Wallet tab (initial landing — QR code / simulator setup)       │
+│                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │  Lobby iframe (UNTRUSTED — third-party tracker code)     │   │
 │  │  Matchmaking only; shown as the "Tracker" tab            │   │
@@ -395,6 +409,7 @@ but the MVP is limited to one game at a time.
 │  │  └────────────────────────────────────────────────────┘  │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                                                                 │
+│  Chat tab (ChatPanel — peer text messages)                      │
 │  Game Log tab (append-only text area)                           │
 │  Debug Log tab (append-only text area)                          │
 └─────────────────────────────────────────────────────────────────┘
@@ -404,12 +419,13 @@ but the MVP is limited to one game at a time.
 
 The Shell is the top-level React component. It owns:
 
-- **Wallet connection** (WalletConnect or simulator) via `WalletConnectHeading`
+- **Wallet connection** (WalletConnect or simulator) — the Wallet tab presents
+  a QR code for WalletConnect and a simulator option via `SimulatorSetupModal`
 - **Tracker connection** — fetches the tracker URL, creates the
   `TrackerConnection` client for the game channel, and sets up the lobby iframe
 - **Theme sync** — pushes CSS variables and dark-mode class into the lobby iframe
   (`useThemeSyncToIframe`)
-- **Tab navigation** — four tabs: Tracker, Game Session, Game Log, Debug Log
+- **Tab navigation** — six tabs: Wallet, Tracker, Game Session, Chat, Game Log, Debug Log
 - **Unique ID and session ID** — persisted in localStorage, stable across reloads
 
 The Shell does not know about game types or game protocol details. When the
