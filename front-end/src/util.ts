@@ -32,9 +32,7 @@ export function normalizeCoinStringHex(coinString: string) {
   return normalized;
 }
 
-export type FragmentData = Record<string, string>;
-
-export function getParamsFromString(paramString: string): Record<string, string> {
+function getParamsFromString(paramString: string): Record<string, string> {
   const fragmentParts = paramString.split('&');
   const params = Object.fromEntries(
     fragmentParts.map((part) => {
@@ -50,12 +48,6 @@ export function getParamsFromString(paramString: string): Record<string, string>
   return params;
 }
 
-// If we were given a token parameter in the fragment, parse it out here.
-export function getFragmentParams(): FragmentData {
-  const fragment = window.location.hash;
-  return getParamsFromString(fragment);
-}
-
 export function getSearchParams(): Record<string, string> {
   if (window.location.search === '') {
     return {};
@@ -63,14 +55,6 @@ export function getSearchParams(): Record<string, string> {
   const search = window.location.search.substring(1);
   return getParamsFromString(search);
 }
-
-export function randomHex(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-export { setAlias as updateAlias, getAlias as generateOrRetrieveAlias } from './hooks/save';
 
 
 function clvm_enlist(clvms: string[]): string {

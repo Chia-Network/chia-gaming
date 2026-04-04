@@ -1,4 +1,4 @@
-import { CoreTypes, ProposalTypes } from '@walletconnect/types';
+import { ProposalTypes } from '@walletconnect/types';
 
 import { CHAIN_ID } from './env';
 
@@ -21,11 +21,4 @@ export const REQUIRED_NAMESPACES: ProposalTypes.RequiredNamespaces = {
     chains: [CHAIN_ID],
     events: [],
   },
-};
-
-export const METADATA: CoreTypes.Metadata = {
-  name: 'Test App',
-  description: 'A test application for WalletConnect.',
-  url: '#',
-  icons: ['https://walletconnect.com/walletconnect-logo.png'],
 };

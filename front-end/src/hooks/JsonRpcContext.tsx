@@ -108,7 +108,6 @@ async function request<T, D extends object = object>(
   };
 
   const startedAt = Date.now();
-  console.warn(`[DBG_RPC] ${new Date(startedAt).toISOString()} >>> ${method}`);
 
   let raw: unknown;
   for (let attempt = 1; attempt <= 2; attempt += 1) {

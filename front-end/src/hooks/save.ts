@@ -6,7 +6,7 @@ function randomHex(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-export interface SavedGame {
+interface SavedGame {
   id: string;
   searchParams: Record<string, string>;
   url: string;
@@ -20,7 +20,7 @@ export interface CalpokerHandState {
   isPlayerTurn: boolean;
 }
 
-export type BlockchainType = 'simulator' | 'walletconnect';
+type BlockchainType = 'simulator' | 'walletconnect';
 
 export interface SessionSave {
   serializedCradle: string;
@@ -42,7 +42,7 @@ export interface SessionSave {
   opponentAlias?: string;
 }
 
-export interface AppState {
+interface AppState {
   version: number;
   playerId: string;
   sessionId?: string;
@@ -199,7 +199,7 @@ export function loadAppState(): AppState {
   return { version: CURRENT_VERSION, playerId: randomHex() };
 }
 
-export function saveAppState(state: AppState): void {
+function saveAppState(state: AppState): void {
   try {
     localStorage.setItem(APP_STATE_KEY, JSON.stringify(state));
   } catch (e) {
@@ -330,16 +330,8 @@ export function saveGame(g: SavedGame): [string, unknown] | undefined {
   }
 }
 
-export function findMatchingGame(peerSaves: string[]): string | undefined {
-  const peerSet = new Set(peerSaves);
-  return getSaveList().find(save => peerSet.has(save));
-}
-
 export function loadSave(saveId: string): SavedGame | undefined {
   const state = loadAppState();
   return (state.savedGames ?? []).find(g => g.id === saveId);
 }
 
-// Keep old name exported for back-compat during transition
-export { loadAppState as loadPersistedState };
-export type { AppState as PersistedState };

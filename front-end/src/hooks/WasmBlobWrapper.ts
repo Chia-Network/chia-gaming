@@ -282,18 +282,10 @@ export class WasmBlobWrapper {
         throw new Error('ASSERT_FAIL: selectCoins returned null for launcher parent coin');
       }
       this.lastSelectCoinsValue = coin;
-      console.log('[wasm diag] selectCoins returned value', {
-        value: coin,
-        hexLength: coin.length,
-      });
       debugLog(`[wasm diag] selectCoins value len=${coin.length} value=${coin}`);
       const { computeLauncherCoin } = await import('../util/launcher');
       const { launcherCoinHex, launcherCoinId } = await computeLauncherCoin(coin);
       this.lastLauncherCoinId = launcherCoinId;
-      console.log('[wasm diag] computed launcher coin', {
-        launcherCoinHexLength: launcherCoinHex.length,
-        launcherCoinId,
-      });
       debugLog(`[wasm diag] launcherCoinId=${launcherCoinId} launcherCoinHexLen=${launcherCoinHex.length}`);
       const result = this.cradle?.provide_launcher_coin(launcherCoinHex);
       this.processResult(result);
@@ -307,13 +299,6 @@ export class WasmBlobWrapper {
 
   private async handleNeedCoinSpend(request: any) {
     try {
-      console.log('[wasm diag] NeedCoinSpend request', {
-        coin_id: request.coin_id,
-        amount: request.amount,
-        max_height: request.max_height,
-        lastSelectCoinsValue: this.lastSelectCoinsValue,
-        lastLauncherCoinId: this.lastLauncherCoinId,
-      });
       debugLog(
         `[wasm diag] NeedCoinSpend coin_id=${String(request.coin_id)} lastSelect=${String(this.lastSelectCoinsValue)} lastLauncherId=${String(this.lastLauncherCoinId)}`,
       );
