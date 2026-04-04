@@ -2,6 +2,7 @@
 mod gaming_wasm {
 
     use std::cell::RefCell;
+    use std::convert::TryInto;
     use std::collections::{BTreeMap, HashMap};
     use std::sync::atomic::{AtomicI32, Ordering};
 
@@ -27,8 +28,6 @@ mod gaming_wasm {
         Puzzle, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
     };
 
-    use chia_protocol::SpendBundle as ProtocolSpendBundle;
-    use chia_traits::Streamable;
     use flate2::Decompress;
     use flate2::FlushDecompress;
     use chia_gaming::peer_container::{
@@ -583,6 +582,75 @@ mod gaming_wasm {
         }
     }
 
+    fn read_u32(data: &[u8], pos: &mut usize) -> Result<u32, String> {
+        if *pos + 4 > data.len() {
+            return Err(format!("unexpected EOF at offset {}", *pos));
+        }
+        let val = u32::from_be_bytes([data[*pos], data[*pos+1], data[*pos+2], data[*pos+3]]);
+        *pos += 4;
+        Ok(val)
+    }
+
+    fn read_u64(data: &[u8], pos: &mut usize) -> Result<u64, String> {
+        if *pos + 8 > data.len() {
+            return Err(format!("unexpected EOF at offset {}", *pos));
+        }
+        let val = u64::from_be_bytes(data[*pos..*pos+8].try_into().unwrap());
+        *pos += 8;
+        Ok(val)
+    }
+
+    fn read_bytes<'a>(data: &'a [u8], pos: &mut usize, len: usize) -> Result<&'a [u8], String> {
+        if *pos + len > data.len() {
+            return Err(format!("unexpected EOF at offset {} (need {} bytes)", *pos, len));
+        }
+        let slice = &data[*pos..*pos+len];
+        *pos += len;
+        Ok(slice)
+    }
+
+    fn parse_streamable_spend_bundle(data: &[u8]) -> Result<SpendBundle, String> {
+        let mut pos = 0usize;
+        let num_spends = read_u32(data, &mut pos)?;
+        let mut spends = Vec::with_capacity(num_spends as usize);
+
+        for _ in 0..num_spends {
+            let parent = read_bytes(data, &mut pos, 32)?;
+            let puzzle_hash = read_bytes(data, &mut pos, 32)?;
+            let amount = read_u64(data, &mut pos)?;
+
+            let reveal_len = read_u32(data, &mut pos)? as usize;
+            let puzzle_reveal = read_bytes(data, &mut pos, reveal_len)?;
+
+            let solution_len = read_u32(data, &mut pos)? as usize;
+            let solution = read_bytes(data, &mut pos, solution_len)?;
+
+            let coin_string = CoinString::from_parts(
+                &CoinID::new(Hash::from_slice(parent).expect("parent is 32 bytes")),
+                &PuzzleHash::from_hash(Hash::from_slice(puzzle_hash).expect("ph is 32 bytes")),
+                &Amount::new(amount),
+            );
+
+            spends.push(CoinSpend {
+                coin: coin_string,
+                bundle: Spend {
+                    puzzle: Puzzle::from_bytes(puzzle_reveal),
+                    solution: Program::from_bytes(solution).into(),
+                    signature: Aggsig::default(),
+                },
+            });
+        }
+
+        let agg_sig_bytes = read_bytes(data, &mut pos, 96)?;
+        let agg_sig = Aggsig::from_bytes(agg_sig_bytes.try_into().unwrap())
+            .map_err(|e| format!("bad aggregated signature: {e:?}"))?;
+        for s in spends.iter_mut() {
+            s.bundle.signature = agg_sig.clone();
+        }
+
+        Ok(SpendBundle { name: None, spends })
+    }
+
     fn decode_offer_to_spend_bundle(offer_bech32: &str) -> Result<SpendBundle, String> {
         let (_hrp, raw_bytes) = bech32::decode(offer_bech32)
             .map_err(|e| format!("bech32m decode error: {e}"))?;
@@ -601,29 +669,8 @@ mod gaming_wasm {
         let zdict = zdict_for_version(version)?;
         let decompressed = decompress_offer_with_zdict(&raw_bytes[2..], &zdict)?;
 
-        let proto_bundle = ProtocolSpendBundle::from_bytes(&decompressed)
-            .map_err(|e| format!("streamable parse: {e}"))?;
-
-        let agg_sig = Aggsig::from_bls(proto_bundle.aggregated_signature);
-        let spends = proto_bundle.coin_spends.into_iter().map(|cs| {
-            let coin_string = CoinString::from_parts(
-                &CoinID::new(Hash::from_slice(cs.coin.parent_coin_info.as_ref())
-                    .expect("parent_coin_info is 32 bytes")),
-                &PuzzleHash::from_hash(Hash::from_slice(cs.coin.puzzle_hash.as_ref())
-                    .expect("puzzle_hash is 32 bytes")),
-                &Amount::new(cs.coin.amount),
-            );
-            CoinSpend {
-                coin: coin_string,
-                bundle: Spend {
-                    puzzle: Puzzle::from_bytes(cs.puzzle_reveal.as_ref()),
-                    solution: Program::from_bytes(cs.solution.as_ref()).into(),
-                    signature: agg_sig.clone(),
-                },
-            }
-        }).collect();
-
-        Ok(SpendBundle { name: None, spends })
+        let spends = parse_streamable_spend_bundle(&decompressed)?;
+        Ok(spends)
     }
 
     #[wasm_bindgen]
