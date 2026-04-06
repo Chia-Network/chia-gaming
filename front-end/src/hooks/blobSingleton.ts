@@ -73,6 +73,16 @@ async function restoreSession(
   gameObject.opponentAlias = save.opponentAlias;
   gameObject.showBetweenHandOverlay = save.showBetweenHandOverlay ?? false;
   gameObject.lastOutcomeWin = save.lastOutcomeWin;
+  gameObject.chatMessages = save.chatMessages ?? [];
+  gameObject.gameCoinHex = save.gameCoinHex ?? null;
+  gameObject.gameTurnState = save.gameTurnState ?? 'my-turn';
+  gameObject.gameTerminalType = save.gameTerminalType ?? 'none';
+  gameObject.gameTerminalLabel = save.gameTerminalLabel ?? null;
+  gameObject.gameTerminalReward = save.gameTerminalReward ?? null;
+  gameObject.gameTerminalRewardCoin = save.gameTerminalRewardCoin ?? null;
+  gameObject.myRunningBalance = save.myRunningBalance ?? '0';
+  gameObject.channelAttentionActive = save.channelAttentionActive ?? false;
+  gameObject.gameTerminalAttentionActive = save.gameTerminalAttentionActive ?? false;
   gameObject.restoreSavedWatchCoins(save.channelStatus);
   gameObject.markRestored();
 
@@ -89,6 +99,7 @@ export function getBlobSingleton(
   sessionSave?: SessionSave,
   pairingToken?: string,
   perGameAmount?: bigint,
+  getFee?: () => number,
 ): { gameObject: WasmBlobWrapper } {
   if (blobSingleton) {
     return { gameObject: blobSingleton };
@@ -114,6 +125,7 @@ export function getBlobSingleton(
   blobSingleton.iStarted = iStarted;
   blobSingleton.pairingToken = pairingToken ?? '';
   blobSingleton.perGameAmount = perGameAmount ?? 0n;
+  if (getFee) blobSingleton.getFee = getFee;
   blobSingleton.setPeerPingAndClose(
     () => peerConn.sendPing(),
     () => peerConn.close(),

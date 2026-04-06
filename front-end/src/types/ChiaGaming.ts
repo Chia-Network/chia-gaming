@@ -560,7 +560,7 @@ export interface ConnectionSetup {
 }
 
 export interface InternalBlockchainInterface {
-  spend(blob: string, spendBundle: unknown, source?: string): Promise<string>;
+  spend(blob: string, spendBundle: unknown, source?: string, fee?: number): Promise<string>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
   getBalance(): Promise<number>;
   getPuzzleAndSolution(coin: string): Promise<string[] | null>;

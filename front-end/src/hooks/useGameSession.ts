@@ -20,7 +20,7 @@ import {
   setInitStarted,
 } from './blobSingleton';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
-import { SessionSave } from './save';
+import { SessionSave, getDefaultFee } from './save';
 import { toHexString } from '../util';
 import { debugLog } from '../services/debugLog';
 
@@ -108,6 +108,23 @@ const INITIAL_CHANNEL_STATUS: ChannelStatusInfo = {
   gameAllocated: null,
 };
 
+function channelStatusFromPayload(cs: ChannelStatusPayload): ChannelStatusInfo {
+  const parsedCoin = parseCoinPayload(cs.coin);
+  const isResolvedFromUnroll = cs.state === 'ResolvedUnrolled' || cs.state === 'ResolvedStale';
+  const resolvedShare = isResolvedFromUnroll
+    ? (parsedCoin?.amount ?? '0')
+    : parseAmount(cs.our_balance);
+  return {
+    state: cs.state,
+    advisory: cs.advisory ?? null,
+    coinHex: parsedCoin?.hex ?? null,
+    coinAmount: parsedCoin?.amount ?? null,
+    ourBalance: resolvedShare,
+    theirBalance: parseAmount(cs.their_balance),
+    gameAllocated: parseAmount(cs.game_allocated),
+  };
+}
+
 const INITIAL_GAME_TERMINAL: GameTerminalInfo = {
   type: 'none',
   label: null,
@@ -127,6 +144,7 @@ const WINDING_DOWN_STATES: ReadonlySet<ChannelState> = new Set<ChannelState>([
 const ON_CHAIN_FLOW_STATES: ReadonlySet<ChannelState> = new Set<ChannelState>([
   'GoingOnChain', 'Unrolling', 'ResolvedClean', 'ResolvedUnrolled', 'ResolvedStale',
 ]);
+
 
 export function isWindingDown(state: ChannelState): boolean {
   return WINDING_DOWN_STATES.has(state);
@@ -264,18 +282,47 @@ export function useGameSession(
         : { stateIdentifier: 'starting' as const, stateDetail: ['before handshake'] }
     );
   const [error, setRealError] = useState<string | undefined>(undefined);
-  const [myRunningBalance, setMyRunningBalance] = useState(0n);
+  const [myRunningBalance, setMyRunningBalance] = useState(() =>
+    sessionSave?.myRunningBalance ? BigInt(sessionSave.myRunningBalance) : 0n
+  );
   const [goOnChainPressed, setGoOnChainPressed] = useState(false);
   const [txPublishNerfed, setTxPublishNerfed] = useState(false);
-  const [channelStatus, setChannelStatus] = useState<ChannelStatusInfo>(() =>
-    sessionSave?.channelReady ? { ...INITIAL_CHANNEL_STATUS, state: 'Active' } : INITIAL_CHANNEL_STATUS
-  );
-  const [channelAttention, setChannelAttention] = useState<ChannelStatusInfo | null>(null);
+  const [channelStatus, setChannelStatus] = useState<ChannelStatusInfo>(() => {
+    if (!sessionSave?.channelReady) return INITIAL_CHANNEL_STATUS;
+    if (sessionSave.channelStatus) return channelStatusFromPayload(sessionSave.channelStatus);
+    return { ...INITIAL_CHANNEL_STATUS, state: 'Active' };
+  });
+  const [channelAttention, setChannelAttention] = useState<ChannelStatusInfo | null>(() => {
+    if (sessionSave?.channelAttentionActive && sessionSave.channelStatus) {
+      return channelStatusFromPayload(sessionSave.channelStatus);
+    }
+    return null;
+  });
   const channelStateRef = useRef<ChannelState>(
-    sessionSave?.channelReady ? 'Active' : INITIAL_CHANNEL_STATUS.state
+    sessionSave?.channelReady
+      ? (sessionSave.channelStatus?.state ?? 'Active')
+      : INITIAL_CHANNEL_STATUS.state
   );
-  const [gameCoin, setGameCoin] = useState<GameCoinInfo>({ coinHex: null, turnState: 'my-turn' });
-  const [gameTerminal, setGameTerminal] = useState<GameTerminalInfo>(INITIAL_GAME_TERMINAL);
+  const channelAttentionStateRef = useRef<ChannelState | null>(
+    sessionSave?.channelStatus && ATTENTION_STATES.includes(sessionSave.channelStatus.state)
+      ? sessionSave.channelStatus.state
+      : null
+  );
+  const [gameCoin, setGameCoin] = useState<GameCoinInfo>(() => ({
+    coinHex: sessionSave?.gameCoinHex ?? null,
+    turnState: (sessionSave?.gameTurnState as GameTurnState) ?? 'my-turn',
+  }));
+  const [gameTerminal, setGameTerminal] = useState<GameTerminalInfo>(() => {
+    if (sessionSave?.gameTerminalType && sessionSave.gameTerminalType !== 'none') {
+      return {
+        type: sessionSave.gameTerminalType as GameTerminalType,
+        label: sessionSave.gameTerminalLabel ?? null,
+        myReward: sessionSave.gameTerminalReward ?? null,
+        rewardCoinHex: sessionSave.gameTerminalRewardCoin ?? null,
+      };
+    }
+    return INITIAL_GAME_TERMINAL;
+  });
   const [handKey, setHandKey] = useState(() =>
     (sessionSave?.activeGameId || sessionSave?.handState) ? 1 : 0
   );
@@ -287,7 +334,16 @@ export function useGameSession(
   );
   const [lastOutcome, setLastOutcome] = useState<CalpokerOutcome | undefined>(undefined);
   const restoredOutcomeWin = sessionSave?.lastOutcomeWin;
-  const [gameTerminalAttention, setGameTerminalAttention] = useState<GameTerminalAttentionInfo | null>(null);
+  const [gameTerminalAttention, setGameTerminalAttention] = useState<GameTerminalAttentionInfo | null>(() => {
+    if (sessionSave?.gameTerminalAttentionActive && sessionSave.gameTerminalLabel) {
+      return {
+        label: sessionSave.gameTerminalLabel,
+        myReward: sessionSave.gameTerminalReward ?? null,
+        rewardCoinHex: sessionSave.gameTerminalRewardCoin ?? null,
+      };
+    }
+    return null;
+  });
 
   const lastOutcomeRef = useRef<CalpokerOutcome | undefined>(undefined);
   const gameIdsRef = useRef<string[]>(sessionSave?.activeGameId ? [sessionSave.activeGameId] : []);
@@ -317,6 +373,7 @@ export function useGameSession(
     sessionSave,
     params.pairingToken,
     perGameAmount,
+    getDefaultFee,
   );
 
   if (params.myAlias) gameObject.myAlias = params.myAlias;
@@ -324,6 +381,19 @@ export function useGameSession(
 
   const gameObjectRef = useRef<WasmBlobWrapper>(gameObject);
   gameObjectRef.current = gameObject;
+
+  useEffect(() => {
+    const go = gameObjectRef.current;
+    if (!go) return;
+    go.gameCoinHex = gameCoin.coinHex;
+    go.gameTurnState = gameCoin.turnState;
+    go.gameTerminalType = gameTerminal.type;
+    go.gameTerminalLabel = gameTerminal.label;
+    go.gameTerminalReward = gameTerminal.myReward;
+    go.gameTerminalRewardCoin = gameTerminal.rewardCoinHex;
+    go.myRunningBalance = myRunningBalance.toString();
+    go.scheduleSave();
+  }, [gameCoin, gameTerminal, myRunningBalance]);
 
   const proposeNewGame = useCallback(() => {
     const go = gameObjectRef.current;
@@ -377,10 +447,14 @@ export function useGameSession(
 
   const dismissChannelAttention = useCallback(() => {
     setChannelAttention(null);
+    const go = gameObjectRef.current;
+    if (go) { go.channelAttentionActive = false; go.scheduleSave(); }
   }, []);
 
   const dismissGameTerminalAttention = useCallback(() => {
     setGameTerminalAttention(null);
+    const go = gameObjectRef.current;
+    if (go) { go.gameTerminalAttentionActive = false; go.scheduleSave(); }
   }, []);
 
   const handleNotification = useCallback((n: WasmNotification) => {
@@ -391,25 +465,17 @@ export function useGameSession(
     if ('ChannelStatus' in n) {
       const cs = n.ChannelStatus as ChannelStatusPayload | undefined;
       if (!cs) return;
-      const parsedCoin = parseCoinPayload(cs.coin);
-      const isResolvedFromUnroll = cs.state === 'ResolvedUnrolled' || cs.state === 'ResolvedStale';
-      const resolvedShare = isResolvedFromUnroll
-        ? (parsedCoin?.amount ?? '0')
-        : parseAmount(cs.our_balance);
-      const info: ChannelStatusInfo = {
-        state: cs.state,
-        advisory: cs.advisory ?? null,
-        coinHex: parsedCoin?.hex ?? null,
-        coinAmount: parsedCoin?.amount ?? null,
-        ourBalance: resolvedShare,
-        theirBalance: parseAmount(cs.their_balance),
-        gameAllocated: parseAmount(cs.game_allocated),
-      };
+      const info = channelStatusFromPayload(cs);
       channelStateRef.current = info.state;
       setChannelStatus(info);
       if (ATTENTION_STATES.includes(cs.state)) {
         setShowBetweenHandOverlay(false);
-        setChannelAttention(info);
+        const go = gameObjectRef.current;
+        if (go && (go.channelAttentionActive || cs.state !== channelAttentionStateRef.current)) {
+          go.channelAttentionActive = true;
+          channelAttentionStateRef.current = cs.state;
+          setChannelAttention(info);
+        }
       }
       if (cs.state === 'Active' && gameConnectionState.stateIdentifier !== 'running') {
         setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
@@ -502,6 +568,8 @@ export function useGameSession(
           setGameIds(prev => prev.slice(1));
           gameIdsRef.current = gameIdsRef.current.slice(1);
           if (inOnChainFlow) {
+            const go2 = gameObjectRef.current;
+            if (go2) { go2.gameTerminalAttentionActive = true; }
             setGameTerminalAttention({
               label: terminalInfo.label ?? `Ended: ${status}`,
               myReward: terminalInfo.myReward,

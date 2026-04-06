@@ -96,12 +96,12 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   private spendSeq = 0;
 
-  async spend(_blob: string, spendBundle: unknown, _source?: string): Promise<string> {
+  async spend(_blob: string, spendBundle: unknown, _source?: string, fee?: number): Promise<string> {
     const seq = ++this.spendSeq;
     const src = _source ?? 'unknown';
-    debugLog(`[wc-blockchain] walletPushTx submitting #${seq} from=${src}`);
+    debugLog(`[wc-blockchain] walletPushTx submitting #${seq} from=${src} fee=${fee ?? 0}`);
     try {
-      const result = await rpc.walletPushTx({ spendBundle: spendBundle as object });
+      const result = await rpc.walletPushTx({ spendBundle: spendBundle as object, fee: fee || undefined });
       debugLog(`[wc-blockchain] walletPushTx submitted #${seq} result=${JSON.stringify(result)}`);
       return result as unknown as string;
     } catch (e: unknown) {
@@ -109,7 +109,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       if (isRetryablePushTxError(errStr)) {
         return new Promise((resolve, reject) => {
           setTimeout(() => {
-            this.spend(_blob, spendBundle, `retry-of-#${seq}`).then(resolve).catch(reject);
+            this.spend(_blob, spendBundle, `retry-of-#${seq}`, fee).then(resolve).catch(reject);
           }, PUSH_TX_RETRY_DELAY);
         });
       }

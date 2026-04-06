@@ -18,6 +18,20 @@ import {
   hardReset,
   hasAnySessionInfo,
   SessionSave,
+  getDefaultFee,
+  setDefaultFee as saveDefaultFee,
+  getFeeUnit,
+  setFeeUnit as saveFeeUnit,
+  getActiveTab as getSavedTab,
+  setActiveTab as saveActiveTab,
+  getConnecting as getSavedConnecting,
+  setConnecting as saveConnecting,
+  getUnreadChat as getSavedUnreadChat,
+  setUnreadChat as saveUnreadChat,
+  getUnreadSession as getSavedUnreadSession,
+  setUnreadSession as saveUnreadSession,
+  getWalletAlert as getSavedWalletAlert,
+  setWalletAlert as saveWalletAlert,
 } from '../hooks/save';
 import { blobSingleton } from '../hooks/blobSingleton';
 import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
@@ -30,6 +44,14 @@ import { Button } from './button';
 import ChatPanel from './ChatPanel';
 
 type TabId = 'wallet' | 'tracker' | 'session' | 'chat' | 'game-log' | 'debug-log';
+
+const MOJOS_PER_XCH = 1_000_000_000_000;
+
+function getInterface(bcType: 'simulator' | 'walletconnect') {
+  return bcType === 'walletconnect'
+    ? { iface: realBlockchainInfo, pollMs: 10000 }
+    : { iface: fakeBlockchainInfo, pollMs: 5000 };
+}
 
 const TAB_DEFS: { id: TabId; label: string }[] = [
   { id: 'wallet', label: 'Wallet' },
@@ -76,7 +98,15 @@ const Shell = () => {
   const uniqueId = getPlayerId();
   const sessionId = getSessionId();
 
-  const [activeTab, setActiveTab] = useState<TabId>('wallet');
+  const [activeTab, setActiveTabRaw] = useState<TabId>(() => {
+    const saved = getSavedTab();
+    const valid: TabId[] = ['wallet', 'tracker', 'session', 'chat', 'game-log', 'debug-log'];
+    return saved && valid.includes(saved as TabId) ? (saved as TabId) : 'wallet';
+  });
+  const setActiveTab = useCallback((tab: TabId) => {
+    setActiveTabRaw(tab);
+    saveActiveTab(tab);
+  }, []);
   const [gameParams, setGameParams] = useState<GameSessionParams | null>(null);
   const [peerConn, setPeerConn] = useState<PeerConnectionResult | null>(null);
 
@@ -84,26 +114,99 @@ const Shell = () => {
   const [, setTrackerConnected] = useState<boolean | null>(null);
   const [peerConnected, setPeerConnected] = useState<boolean | null>(null);
   const [pendingRestore, setPendingRestore] = useState<SessionSave | null>(() => loadSession());
-  const [restoreDecided, setRestoreDecided] = useState<boolean>(() => !hasAnySessionInfo());
+  const [restoreDecided, setRestoreDecided] = useState<boolean>(() => {
+    return !hasAnySessionInfo();
+  });
   const [gameLog, setGameLog] = useState<string[]>([]);
   const [debugLogLines, setDebugLogLines] = useState<string[]>([]);
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [unreadChat, setUnreadChat] = useState(false);
-  const [unreadSession, setUnreadSession] = useState(false);
-  const [walletAlert, setWalletAlert] = useState(false);
+  const [unreadChat, setUnreadChatRaw] = useState(() => getSavedUnreadChat());
+  const setUnreadChat = useCallback((v: boolean) => { setUnreadChatRaw(v); saveUnreadChat(v); }, []);
+  const [unreadSession, setUnreadSessionRaw] = useState(() => getSavedUnreadSession());
+  const setUnreadSession = useCallback((v: boolean) => { setUnreadSessionRaw(v); saveUnreadSession(v); }, []);
+  const [walletAlert, setWalletAlertRaw] = useState(() => getSavedWalletAlert());
+  const setWalletAlert = useCallback((v: boolean) => { setWalletAlertRaw(v); saveWalletAlert(v); }, []);
   const [iframeUrl, setIframeUrl] = useState('about:blank');
   const [balance, setBalance] = useState<number | undefined>();
 
-  const [blockchainType, setBlockchainType] = useState<'simulator' | 'walletconnect' | undefined>();
+  const [blockchainType, setBlockchainType] = useState<'simulator' | 'walletconnect' | undefined>(() => getBlockchainType());
   const activeBlockchainRef = useRef<InternalBlockchainInterface | null>(null);
 
   // Connection state
   const [showSimModal, setShowSimModal] = useState(false);
   const [connectionSetup, setConnectionSetup] = useState<ConnectionSetup | null>(null);
-  const [connecting, setConnecting] = useState(false);
+  const [connecting, setConnectingRaw] = useState(() => getSavedConnecting());
+  const setConnecting = useCallback((v: boolean) => { setConnectingRaw(v); saveConnecting(v); }, []);
   const [qrDataUrl, setQrDataUrl] = useState('');
   const wcAbortRef = useRef(false);
+  const [defaultFee, setDefaultFee] = useState<number>(() => getDefaultFee());
+  const [feeUnit, setFeeUnit] = useState<'mojo' | 'xch'>(() => getFeeUnit());
+  const [feeEditing, setFeeEditing] = useState(false);
+  const [feeInput, setFeeInput] = useState('');
+  const feeInputRef = useRef<HTMLInputElement>(null);
+  const [copied, setCopied] = useState(false);
+
+  const mojosToXchStr = (mojos: number): string => {
+    const s = String(mojos).padStart(13, '0');
+    const whole = s.slice(0, -12).replace(/^0+/, '') || '0';
+    const frac = s.slice(-12).replace(/0+$/, '');
+    return frac ? `${whole}.${frac}` : whole;
+  };
+
+  const feeDisplayText = useCallback(() => {
+    if (feeUnit === 'xch') return mojosToXchStr(defaultFee);
+    return String(defaultFee);
+  }, [defaultFee, feeUnit]);
+
+  const parseFeeInput = useCallback((raw: string): number | null => {
+    if (/^\s*$/.test(raw)) return 0;
+    const trimmed = raw.trim();
+    if (feeUnit === 'xch') {
+      if (!/^\d+(\.\d+)?$/.test(trimmed)) return null;
+      const [whole, frac = ''] = trimmed.split('.');
+      if (frac.length > 12) return null;
+      const mojoStr = whole + frac.padEnd(12, '0');
+      const mojos = Number(mojoStr);
+      if (!Number.isSafeInteger(mojos) || mojos < 0) return null;
+      return mojos;
+    }
+    if (!/^\d+$/.test(trimmed)) return null;
+    const n = Number(trimmed);
+    if (!Number.isSafeInteger(n) || n < 0) return null;
+    return n;
+  }, [feeUnit]);
+
+  const feeInputValid = parseFeeInput(feeInput) !== null;
+
+  const startEditingFee = useCallback(() => {
+    setFeeInput(feeDisplayText());
+    setFeeEditing(true);
+    setTimeout(() => feeInputRef.current?.select(), 0);
+  }, [feeDisplayText]);
+
+  const commitFee = useCallback(() => {
+    const mojos = parseFeeInput(feeInput);
+    if (mojos === null) return;
+    setDefaultFee(mojos);
+    saveDefaultFee(mojos);
+    setFeeEditing(false);
+  }, [feeInput, parseFeeInput]);
+
+  const cancelEditFee = useCallback(() => {
+    setFeeEditing(false);
+  }, []);
+
+  const handleFeeUnitChange = useCallback((unit: 'mojo' | 'xch') => {
+    setFeeUnit(unit);
+    saveFeeUnit(unit);
+    if (feeEditing) {
+      const currentMojos = parseFeeInput(feeInput);
+      if (currentMojos !== null) {
+        setFeeInput(unit === 'xch' ? mojosToXchStr(currentMojos) : String(currentMojos));
+      }
+    }
+  }, [feeEditing, feeInput, parseFeeInput]);
 
   // Theme state
   const [isDark, setIsDark] = useState<boolean>(() => {
@@ -250,10 +353,11 @@ const Shell = () => {
       if (save) {
         setGameLog(save.gameLog);
         setDebugLogLines(save.debugLog);
+        if (save.chatMessages) setChatMessages(save.chatMessages);
       } else {
         setGameLog([]);
+        setActiveTab('session');
       }
-      setActiveTab('session');
     };
 
     fetch('/urls')
@@ -328,7 +432,7 @@ const Shell = () => {
                   setPeerConn(conn.getPeerConnection());
                   setGameLog(save.gameLog);
                   setDebugLogLines(save.debugLog);
-                  setActiveTab('session');
+                  if (save.chatMessages) setChatMessages(save.chatMessages);
                 }
               } else {
                 if (save) {
@@ -350,7 +454,7 @@ const Shell = () => {
                   setPeerConn(conn.getPeerConnection());
                   setGameLog(save.gameLog);
                   setDebugLogLines(save.debugLog);
-                  setActiveTab('session');
+                  if (save.chatMessages) setChatMessages(save.chatMessages);
                 }
               }
             },
@@ -373,7 +477,11 @@ const Shell = () => {
               setTrackerConnected(true);
             },
             onChat: (msg: ChatMessage) => {
-              setChatMessages(prev => [...prev, msg]);
+              setChatMessages(prev => {
+                const next = [...prev, msg];
+                if (blobSingleton) { blobSingleton.chatMessages = next; blobSingleton.scheduleSave(); }
+                return next;
+              });
               if (activeTabRef.current !== 'chat') {
                 setUnreadChat(true);
               }
@@ -417,77 +525,86 @@ const Shell = () => {
     activeBlockchainRef.current = iface;
     setBlockchainType(bcType);
     setWalletConnected(true);
+    setConnecting(false);
     setConnectionSetup(null);
     setUserReady(true);
-    setActiveTab('tracker');
+    setActiveTabRaw(prev => prev === 'wallet' ? 'tracker' : prev);
     requestBalance();
     debugLog(`${bcType} wallet connected`);
-  }, [requestBalance]);
+  }, [requestBalance, setConnecting]);
 
-  // --- Simulator flow: show QR + modal overlay, connect on user action ---
-  const handleChooseSimulator = useCallback(async () => {
+  // --- Unified connection flow ---
+  // silent: skip the modal on reconnect (e.g. auto-reconnect after completed connection)
+  const handleConnect = useCallback(async (bcType: 'simulator' | 'walletconnect', silent = false) => {
+    wcAbortRef.current = false;
+    const { iface, pollMs } = getInterface(bcType);
     try {
-      const setup = await fakeBlockchainInfo.beginConnect(uniqueId);
+      persistBlockchainType(bcType);
+      setBlockchainType(bcType);
+      setConnecting(true);
+      const setup = await iface.beginConnect(uniqueId);
+      if (wcAbortRef.current) return;
       setConnectionSetup(setup);
-      setShowSimModal(true);
+      if (setup.fields && !silent) {
+        setShowSimModal(true);
+        setConnecting(false);
+        return;
+      }
+      await setup.finalize();
+      if (wcAbortRef.current) return;
+      completeConnection(iface, bcType, pollMs);
     } catch (err) {
-      console.error('[Shell] simulator beginConnect failed', err);
+      if (!wcAbortRef.current) {
+        console.error(`[Shell] ${bcType} connect failed`, err);
+      }
+      setBlockchainType(undefined);
+      clearSession();
+      setConnectionSetup(null);
+      setConnecting(false);
     }
-  }, [uniqueId]);
+  }, [uniqueId, completeConnection, setConnecting]);
 
-  const handleSimConnect = useCallback(async () => {
-    if (!connectionSetup) return;
+  const handleFinalize = useCallback(async () => {
+    if (!connectionSetup || !blockchainType) return;
+    const { iface, pollMs } = getInterface(blockchainType);
     setConnecting(true);
     try {
       await connectionSetup.finalize();
       setShowSimModal(false);
-      completeConnection(fakeBlockchainInfo, 'simulator', 5000);
+      completeConnection(iface, blockchainType, pollMs);
     } catch (err) {
-      console.error('[Shell] simulator connect failed', err);
+      console.error(`[Shell] ${blockchainType} finalize failed`, err);
     } finally {
       setConnecting(false);
     }
-  }, [connectionSetup, completeConnection]);
-
-  // --- WalletConnect flow: inline QR in wallet tab ---
-  const handleChooseWalletConnect = useCallback(async () => {
-    wcAbortRef.current = false;
-    try {
-      const setup = await realBlockchainInfo.beginConnect(uniqueId);
-      if (wcAbortRef.current) return;
-      setConnectionSetup(setup);
-      setBlockchainType('walletconnect');
-      setConnecting(true);
-      await setup.finalize();
-      if (wcAbortRef.current) return;
-      completeConnection(realBlockchainInfo, 'walletconnect', 10000);
-    } catch (err) {
-      if (!wcAbortRef.current) {
-        console.error('[Shell] WC connect failed', err);
-      }
-      setBlockchainType(undefined);
-      setConnectionSetup(null);
-    } finally {
-      setConnecting(false);
-    }
-  }, [uniqueId, completeConnection]);
+  }, [connectionSetup, blockchainType, completeConnection]);
 
   const handleCancelConnect = useCallback(async () => {
     wcAbortRef.current = true;
-    try { await realBlockchainInfo.disconnect(); } catch { /* ignore */ }
+    if (activeBlockchainRef.current) {
+      try { await activeBlockchainRef.current.disconnect(); } catch { /* ignore */ }
+    } else if (blockchainType) {
+      const { iface } = getInterface(blockchainType);
+      try { await iface.disconnect(); } catch { /* ignore */ }
+    }
     deactivate();
     activeBlockchainRef.current = null;
     setConnectionSetup(null);
     setBlockchainType(undefined);
+    clearSession();
     setConnecting(false);
     setWalletConnected(false);
     setShowSimModal(false);
-  }, []);
+  }, [blockchainType]);
 
   const sendChat = useCallback((text: string) => {
     const myAlias = gameParams?.myAlias ?? 'You';
     trackerConnRef.current?.sendChat(text);
-    setChatMessages(prev => [...prev, { text, fromAlias: myAlias, timestamp: Date.now(), isMine: true }]);
+    setChatMessages(prev => {
+      const next = [...prev, { text, fromAlias: myAlias, timestamp: Date.now(), isMine: true }];
+      if (blobSingleton) { blobSingleton.chatMessages = next; blobSingleton.scheduleSave(); }
+      return next;
+    });
   }, [gameParams?.myAlias]);
 
   const onSessionActivity = useCallback(() => {
@@ -505,15 +622,6 @@ const Shell = () => {
     if (tabId === 'wallet') setWalletAlert(false);
   }, []);
 
-  const handleReset = useCallback(async () => {
-    activePairingTokenRef.current = null;
-    if (activeBlockchainRef.current) {
-      try { await activeBlockchainRef.current.disconnect(); } catch (_) {}
-    }
-    await hardReset();
-    window.location.reload();
-  }, []);
-
   useThemeSyncToIframe('tracker-iframe', [iframeUrl]);
 
   const [resuming, setResuming] = useState(false);
@@ -524,30 +632,21 @@ const Shell = () => {
     setPendingRestore(null);
     setRestoreDecided(true);
 
-    const iface = bcType === 'walletconnect' ? realBlockchainInfo : fakeBlockchainInfo;
-    const pollMs = bcType === 'walletconnect' ? 10000 : 5000;
+    const { iface, pollMs } = getInterface(bcType);
 
     try {
       const setup = await iface.beginConnect(uniqueId);
-      if (iface.isConnected()) {
+      if (iface.isConnected() || !setup.fields) {
         await setup.finalize();
         completeConnection(iface, bcType, pollMs);
-      } else if (bcType === 'simulator') {
-        deactivate();
-        activate(iface, pollMs);
-        activeBlockchainRef.current = iface;
-        setBlockchainType(bcType);
-        setConnectionSetup(setup);
-        setShowSimModal(true);
-        setUserReady(true);
       } else {
-        // WC not connected: show QR inline, finalize in background
-        // Keep restored sessions usable even before reconnect completes.
+        // Not connected and has fields (e.g. WC needing QR scan):
+        // show connection UI, finalize in background.
         deactivate();
         activate(iface, pollMs);
         activeBlockchainRef.current = iface;
         setConnectionSetup(setup);
-        setBlockchainType('walletconnect');
+        setBlockchainType(bcType);
         setConnecting(true);
         setUserReady(true);
         wcAbortRef.current = false;
@@ -558,7 +657,7 @@ const Shell = () => {
           }
         } catch (err2) {
           if (!wcAbortRef.current) {
-            console.warn('[Shell] WC resume finalize failed', err2);
+            console.warn('[Shell] resume finalize failed', err2);
           }
           setBlockchainType(undefined);
           setConnectionSetup(null);
@@ -571,7 +670,7 @@ const Shell = () => {
       setUserReady(true);
     }
     setResuming(false);
-  }, [uniqueId, requestBalance, completeConnection]);
+  }, [uniqueId, completeConnection]);
 
   const handleStartOver = useCallback(async () => {
     if (activeBlockchainRef.current) {
@@ -589,17 +688,28 @@ const Shell = () => {
     activeBlockchainRef.current = null;
     setWalletConnected(false);
     setBlockchainType(undefined);
+    clearSession();
     setBalance(undefined);
   }, []);
 
   const handleReconnect = useCallback(() => {
     if (!blockchainType) return;
-    if (blockchainType === 'simulator') {
-      handleChooseSimulator();
-    } else {
-      handleChooseWalletConnect();
+    handleConnect(blockchainType);
+  }, [blockchainType, handleConnect]);
+
+  // Auto-reconnect on load when blockchainType is persisted but no game session.
+  // If `connecting` was persisted (mid-handshake reload), use non-silent mode so
+  // the QR code / modal reappears. Otherwise silently reconnect.
+  const autoReconnectRef = useRef(false);
+  useEffect(() => {
+    if (autoReconnectRef.current) return;
+    const bcType = getBlockchainType();
+    if (bcType && !loadSession()) {
+      autoReconnectRef.current = true;
+      const wasConnecting = getSavedConnecting();
+      handleConnect(bcType, !wasConnecting);
     }
-  }, [blockchainType, handleChooseSimulator, handleChooseWalletConnect]);
+  }, [handleConnect]);
 
   // --- Restore dialog ---
   if (!restoreDecided) {
@@ -657,16 +767,6 @@ const Shell = () => {
 
       {/* Tab bar with branding */}
       <div style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-end', gap: '0.25rem', padding: '0.5rem 1rem 0', borderBottom: '1px solid var(--color-canvas-border)', background: 'var(--color-canvas-bg-active)' }}>
-        {/* Branding */}
-        <div className='flex items-end gap-1 pr-3 pb-0.5' style={{ flexShrink: 0 }}>
-          <img
-            src='/images/chia_logo.png'
-            alt='Chia Logo'
-            className='max-w-16 h-auto rounded-md'
-          />
-          <span className='font-semibold text-sm text-canvas-text whitespace-nowrap'>Gaming</span>
-        </div>
-
         {/* Tabs */}
         {TAB_DEFS.map((tab) => {
           const active = activeTab === tab.id;
@@ -695,8 +795,13 @@ const Shell = () => {
           );
         })}
 
-        {/* Right side: Reset + Theme */}
+        {/* Right side: Branding + Theme */}
         <div style={{ marginLeft: 'auto', paddingBottom: '0.25rem' }} className='flex items-center gap-2'>
+          <img
+            src='/images/chia_logo.png'
+            alt='Chia Logo'
+            className='max-w-12 h-auto rounded-md'
+          />
           <button
             onClick={() => setIsDark(d => !d)}
             className={`p-1 border border-canvas-border rounded ${isDark ? 'text-warning-solid' : 'text-canvas-text'} hover:bg-canvas-bg-hover`}
@@ -704,12 +809,6 @@ const Shell = () => {
             title='Toggle theme'
           >
             <span className='text-sm leading-none'>{isDark ? '\u2600' : '\u263E'}</span>
-          </button>
-          <button
-            onClick={handleReset}
-            className='px-2.5 py-1 text-xs font-bold rounded-md bg-alert-bg text-alert-text border border-alert-border hover:bg-alert-bg-hover transition-colors inline-flex items-center gap-1'
-          >
-            Reset
           </button>
         </div>
       </div>
@@ -729,6 +828,61 @@ const Shell = () => {
               {balance !== undefined && (
                 <p className='text-2xl font-bold text-canvas-text-contrast'>{balance.toLocaleString()} mojos</p>
               )}
+              <div className='w-full max-w-xs text-sm text-canvas-text'>
+                <div className='flex items-center gap-2 mb-1'>
+                  <span>Transaction fee</span>
+                  <div className='flex rounded-md border border-canvas-border overflow-hidden text-xs'>
+                    <button
+                      onClick={() => handleFeeUnitChange('mojo')}
+                      className={`px-2 py-0.5 transition-colors ${feeUnit === 'mojo' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
+                    >
+                      mojo
+                    </button>
+                    <button
+                      onClick={() => handleFeeUnitChange('xch')}
+                      className={`px-2 py-0.5 transition-colors border-l border-canvas-border ${feeUnit === 'xch' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
+                    >
+                      XCH
+                    </button>
+                  </div>
+                </div>
+                {feeEditing ? (
+                  <div className='flex gap-2'>
+                    <input
+                      ref={feeInputRef}
+                      type='text'
+                      inputMode={feeUnit === 'xch' ? 'decimal' : 'numeric'}
+                      value={feeInput}
+                      onChange={(e) => setFeeInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && feeInputValid) commitFee();
+                        if (e.key === 'Escape') cancelEditFee();
+                      }}
+                      className='flex-1 px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none'
+                    />
+                    <button
+                      onClick={commitFee}
+                      disabled={!feeInputValid}
+                      className='px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-40 disabled:cursor-default'
+                    >
+                      Set
+                    </button>
+                    <button
+                      onClick={cancelEditFee}
+                      className='px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors'
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={startEditingFee}
+                    className='w-full text-left px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border hover:bg-canvas-bg-hover transition-colors cursor-pointer'
+                  >
+                    {feeDisplayText()} {feeUnit === 'xch' ? 'XCH' : 'mojos'}
+                  </button>
+                )}
+              </div>
               <Button variant='outline' onClick={handleDisconnectWallet}>
                 Disconnect
               </Button>
@@ -756,18 +910,77 @@ const Shell = () => {
                   className='flex-1 text-xs font-mono rounded-md p-2 border border-canvas-border bg-canvas-bg-subtle text-canvas-text resize-none'
                 />
                 <button
-                  onClick={() => navigator.clipboard.writeText(connectionSetup.qrUri)}
+                  onClick={() => {
+                    navigator.clipboard.writeText(connectionSetup.qrUri);
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1500);
+                  }}
                   className='self-start px-2 py-2 text-xs font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors'
                   title='Copy URI to clipboard'
                 >
-                  Copy
+                  {copied ? 'Copied!' : 'Copy'}
                 </button>
+              </div>
+              <div className='w-full max-w-sm text-sm text-canvas-text'>
+                <div className='flex items-center gap-2 mb-1'>
+                  <span>Transaction fee</span>
+                  <div className='flex rounded-md border border-canvas-border overflow-hidden text-xs'>
+                    <button
+                      onClick={() => handleFeeUnitChange('mojo')}
+                      className={`px-2 py-0.5 transition-colors ${feeUnit === 'mojo' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
+                    >
+                      mojo
+                    </button>
+                    <button
+                      onClick={() => handleFeeUnitChange('xch')}
+                      className={`px-2 py-0.5 transition-colors border-l border-canvas-border ${feeUnit === 'xch' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
+                    >
+                      XCH
+                    </button>
+                  </div>
+                </div>
+                {feeEditing ? (
+                  <div className='flex gap-2'>
+                    <input
+                      ref={feeInputRef}
+                      type='text'
+                      inputMode={feeUnit === 'xch' ? 'decimal' : 'numeric'}
+                      value={feeInput}
+                      onChange={(e) => setFeeInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && feeInputValid) commitFee();
+                        if (e.key === 'Escape') cancelEditFee();
+                      }}
+                      className='flex-1 px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none'
+                    />
+                    <button
+                      onClick={commitFee}
+                      disabled={!feeInputValid}
+                      className='px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-40 disabled:cursor-default'
+                    >
+                      Set
+                    </button>
+                    <button
+                      onClick={cancelEditFee}
+                      className='px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors'
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={startEditingFee}
+                    className='w-full text-left px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border hover:bg-canvas-bg-hover transition-colors cursor-pointer'
+                  >
+                    {feeDisplayText()} {feeUnit === 'xch' ? 'XCH' : 'mojos'}
+                  </button>
+                )}
               </div>
               <p className='text-sm text-canvas-text animate-pulse'>Waiting for wallet to connect…</p>
               <Button variant='outline' onClick={handleCancelConnect}>Cancel</Button>
               <SimulatorSetupModal
                 open={showSimModal}
-                onConnect={handleSimConnect}
+                onConnect={handleFinalize}
                 connecting={connecting}
               />
             </div>
@@ -782,11 +995,17 @@ const Shell = () => {
               </p>
               <Button variant='solid' onClick={handleReconnect}>Reconnect</Button>
             </div>
+          ) : connecting ? (
+            <div className='flex flex-col items-center gap-4 p-6 max-w-md w-full'>
+              <div className='w-6 h-6 border-2 border-canvas-border border-t-canvas-text-contrast rounded-full animate-spin' />
+              <p className='text-sm text-canvas-text animate-pulse'>Connecting…</p>
+              <Button variant='outline' onClick={handleCancelConnect}>Cancel</Button>
+            </div>
           ) : (
             <div className='flex flex-col justify-center items-center w-full px-4 py-6 gap-4'>
               <p className='text-lg font-semibold text-canvas-text-contrast'>Choose Connection</p>
               <div className='w-full max-w-sm flex flex-col gap-3'>
-                <Button variant='solid' fullWidth onClick={handleChooseSimulator}>
+                <Button variant='solid' fullWidth onClick={() => handleConnect('simulator')}>
                   Continue with Simulator
                 </Button>
                 <div className='flex items-center gap-2'>
@@ -794,7 +1013,7 @@ const Shell = () => {
                   <span className='text-canvas-text font-medium text-sm'>OR</span>
                   <div className='flex-1 border-t border-canvas-border' />
                 </div>
-                <Button variant='solid' color='secondary' fullWidth onClick={handleChooseWalletConnect}>
+                <Button variant='solid' color='secondary' fullWidth onClick={() => handleConnect('walletconnect')}>
                   Link Wallet
                 </Button>
               </div>

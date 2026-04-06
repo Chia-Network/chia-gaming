@@ -58,6 +58,16 @@ export interface SessionSave {
   opponentAlias?: string;
   showBetweenHandOverlay?: boolean;
   lastOutcomeWin?: 'win' | 'lose' | 'tie';
+  chatMessages?: Array<{ text: string; fromAlias: string; timestamp: number; isMine: boolean }>;
+  gameCoinHex?: string | null;
+  gameTurnState?: string;
+  gameTerminalType?: string;
+  gameTerminalLabel?: string | null;
+  gameTerminalReward?: string | null;
+  gameTerminalRewardCoin?: string | null;
+  myRunningBalance?: string;
+  channelAttentionActive?: boolean;
+  gameTerminalAttentionActive?: boolean;
 }
 
 interface AppState {
@@ -69,6 +79,13 @@ interface AppState {
   alias?: string;
   theme?: 'dark' | 'light';
   savedGames?: SavedGame[];
+  defaultFee?: number;
+  feeUnit?: 'mojo' | 'xch';
+  activeTab?: string;
+  connecting?: boolean;
+  unreadChat?: boolean;
+  unreadSession?: boolean;
+  walletAlert?: boolean;
 }
 
 const APP_STATE_KEY = 'appState';
@@ -275,6 +292,9 @@ export function clearSession(): void {
     playerId: state.playerId,
     alias: state.alias,
     theme: state.theme,
+    activeTab: state.activeTab,
+    defaultFee: state.defaultFee,
+    feeUnit: state.feeUnit,
   };
   saveAppState(cleared);
 }
@@ -316,6 +336,84 @@ export function getTheme(): 'dark' | 'light' | undefined {
 export function setTheme(theme: 'dark' | 'light'): void {
   const state = loadAppState();
   state.theme = theme;
+  saveAppState(state);
+}
+
+// --- Default fee ---
+
+export function getDefaultFee(): number {
+  return loadAppState().defaultFee ?? 0;
+}
+
+export function setDefaultFee(fee: number): void {
+  const state = loadAppState();
+  state.defaultFee = fee;
+  saveAppState(state);
+}
+
+export function getFeeUnit(): 'mojo' | 'xch' {
+  return loadAppState().feeUnit ?? 'mojo';
+}
+
+export function setFeeUnit(unit: 'mojo' | 'xch'): void {
+  const state = loadAppState();
+  state.feeUnit = unit;
+  saveAppState(state);
+}
+
+// --- Active tab ---
+
+export function getActiveTab(): string | undefined {
+  return loadAppState().activeTab;
+}
+
+export function setActiveTab(tab: string): void {
+  const state = loadAppState();
+  state.activeTab = tab;
+  saveAppState(state);
+}
+
+// --- Connecting flag ---
+
+export function getConnecting(): boolean {
+  return loadAppState().connecting ?? false;
+}
+
+export function setConnecting(v: boolean): void {
+  const state = loadAppState();
+  state.connecting = v || undefined;
+  saveAppState(state);
+}
+
+// --- Notification badges ---
+
+export function getUnreadChat(): boolean {
+  return loadAppState().unreadChat ?? false;
+}
+
+export function setUnreadChat(v: boolean): void {
+  const state = loadAppState();
+  state.unreadChat = v || undefined;
+  saveAppState(state);
+}
+
+export function getUnreadSession(): boolean {
+  return loadAppState().unreadSession ?? false;
+}
+
+export function setUnreadSession(v: boolean): void {
+  const state = loadAppState();
+  state.unreadSession = v || undefined;
+  saveAppState(state);
+}
+
+export function getWalletAlert(): boolean {
+  return loadAppState().walletAlert ?? false;
+}
+
+export function setWalletAlert(v: boolean): void {
+  const state = loadAppState();
+  state.walletAlert = v || undefined;
   saveAppState(state);
 }
 

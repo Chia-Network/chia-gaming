@@ -398,3 +398,12 @@ html, body {
   to { left: var(--end-x); top: var(--end-y); }
 }
 
+input.no-spinners::-webkit-outer-spin-button,
+input.no-spinners::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input.no-spinners[type=number] {
+  -moz-appearance: textfield;
+}
+

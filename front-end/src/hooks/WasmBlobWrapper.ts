@@ -137,6 +137,17 @@ export class WasmBlobWrapper {
   opponentAlias: string | undefined = undefined;
   showBetweenHandOverlay = false;
   lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined = undefined;
+  chatMessages: Array<{ text: string; fromAlias: string; timestamp: number; isMine: boolean }> = [];
+  gameCoinHex: string | null = null;
+  gameTurnState: string = 'my-turn';
+  gameTerminalType: string = 'none';
+  gameTerminalLabel: string | null = null;
+  gameTerminalReward: string | null = null;
+  gameTerminalRewardCoin: string | null = null;
+  myRunningBalance: string = '0';
+  channelAttentionActive = false;
+  gameTerminalAttentionActive = false;
+  getFee: () => number = () => 0;
 
   constructor(
     blockchain: BlockchainPoller,
@@ -202,7 +213,7 @@ export class WasmBlobWrapper {
       this.peerSendPing?.();
       if (
         Date.now() - this.lastPeerMessageTime > PEER_TIMEOUT_MS &&
-        this.channelReady && !this.cleanShutdownCalled
+        this.channelReady && this.lastChannelStatus?.state !== 'ShutdownTransactionPending'
       ) {
         debugLog('[wasm] peer liveness timeout, going on-chain');
         this.goOnChain();
@@ -383,7 +394,8 @@ export class WasmBlobWrapper {
     const spendBundleNo0xJson = toSafeJson(strip0xDeep(spendBundle));
     debugLog(`[wasm tx] formed blobLen=${blob.length}`);
     debugLog(`[TX_COINSET_JSON_NO0X] ${spendBundleNo0xJson}`);
-    this.blockchain.rpc.spend(blob, spendBundle, 'submitTransaction').then((result) => {
+    const fee = this.getFee();
+    this.blockchain.rpc.spend(blob, spendBundle, 'submitTransaction', fee || undefined).then((result) => {
       if (result) {
         debugLog(`[wasm] submitTransaction: ${result}`);
       }
@@ -414,7 +426,8 @@ export class WasmBlobWrapper {
         return;
       }
       const spendBundle = this.wc?.convert_spend_to_coinset_org(blob);
-      this.blockchain.rpc.spend(blob, spendBundle, 'resubmitPendingTransactions').then((result) => {
+      const fee = this.getFee();
+      this.blockchain.rpc.spend(blob, spendBundle, 'resubmitPendingTransactions', fee || undefined).then((result) => {
         if (result) {
           debugLog(`[wasm] resubmitTransaction: ${result}`);
         }
@@ -624,8 +637,8 @@ export class WasmBlobWrapper {
 
   // --- Persistence ---
 
-  private scheduleSave() {
-    if (this.cleanShutdownCalled || !this.cradle) return;
+  scheduleSave() {
+    if (!this.cradle) return;
     if (this.saveTimer) return;
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
@@ -634,7 +647,7 @@ export class WasmBlobWrapper {
   }
 
   private persistSession() {
-    if (this.cleanShutdownCalled || !this.cradle) return;
+    if (!this.cradle) return;
     try {
       const serializedCradle = this.cradle.serialize();
       const save: SessionSave = {
@@ -657,6 +670,16 @@ export class WasmBlobWrapper {
         opponentAlias: this.opponentAlias,
         showBetweenHandOverlay: this.showBetweenHandOverlay,
         lastOutcomeWin: this.lastOutcomeWin,
+        chatMessages: this.chatMessages.length > 0 ? [...this.chatMessages] : undefined,
+        gameCoinHex: this.gameCoinHex,
+        gameTurnState: this.gameTurnState,
+        gameTerminalType: this.gameTerminalType !== 'none' ? this.gameTerminalType : undefined,
+        gameTerminalLabel: this.gameTerminalLabel,
+        gameTerminalReward: this.gameTerminalReward,
+        gameTerminalRewardCoin: this.gameTerminalRewardCoin,
+        myRunningBalance: this.myRunningBalance !== '0' ? this.myRunningBalance : undefined,
+        channelAttentionActive: this.channelAttentionActive || undefined,
+        gameTerminalAttentionActive: this.gameTerminalAttentionActive || undefined,
       };
       saveSession(save);
     } catch (e) {

@@ -191,9 +191,19 @@ events, allowing multiple simultaneous sessions through one tracker.
 
 ### Session Persistence
 
-The player app survives accidental browser closes. Session state is continuously
-saved to localStorage so that reloading the page reconnects to the in-progress
-session automatically. This is always-on — not a feature the user opts into.
+**Design principle:** A page reload must be invisible to the user. The entire
+UX state — active tab, wallet connection, game session, form inputs — is
+continuously persisted so that after a reload the app returns to exactly where
+it was. The user should not be able to tell that a reload happened. Network
+connections (wallet backend, tracker) treat a reload the same as a remote drop
+and silently reconnect in the background.
+
+The one exception is the **restore / start over dialog**: when a saved game
+session exists, the app asks the user whether to resume or discard it before
+proceeding. This is intentional — silently resuming a stale or unwanted session
+could be worse than asking.
+
+This is always-on — not a feature the user opts into.
 
 #### What is saved (`SessionSave`)
 
@@ -224,7 +234,8 @@ An `appState` key in localStorage holds a JSON-serialized `AppState` object
 | `lastOutcomeWin` | `'win' \| 'lose' \| 'tie'?` | Last hand result |
 
 The surrounding `AppState` also holds `playerId`, `sessionId`, `blockchainType`,
-`alias`, `theme`, and `savedGames` — these persist across sessions.
+`alias`, `theme`, `activeTab`, `defaultFee`, `feeUnit`, and `savedGames` —
+these persist across sessions.
 
 #### When saves happen
 
@@ -432,6 +443,57 @@ The Shell does not know about game types or game protocol details. When the
 tracker emits `matched`, the Shell creates `GameSessionParams` and renders the
 `GameSession` component.
 
+### Blockchain Connection Flow
+
+Shell manages wallet connections through two abstractions defined in
+`ChiaGaming.ts`:
+
+- **`InternalBlockchainInterface`** — the backend-specific implementation
+  (`RealBlockchainInterface` for WalletConnect, `FakeBlockchainInterface` for
+  the simulator). Each exposes `beginConnect()`, `disconnect()`,
+  `isConnected()`, `spend()`, etc.
+- **`ConnectionSetup`** — returned by `beginConnect()`. Contains a `uri` for
+  the QR code and a `finalize()` promise that resolves when the wallet is
+  paired. Optionally contains `fields` (a map of input descriptors) indicating
+  the backend needs extra user input before connecting (e.g. the simulator's
+  initial balance).
+
+**Design principle:** Shell must not branch on `blockchainType` for connection
+logic. All differences between backends live behind the interface. A single
+`getInterface(bcType)` helper maps the type string to the concrete instance
+and poll interval; the rest of the flow is generic.
+
+**Connection lifecycle:**
+
+1. User picks "Simulator" or "Link Wallet" → `handleConnect(bcType)`.
+2. `handleConnect` calls `iface.beginConnect(uniqueId)`, which returns a
+   `ConnectionSetup`.
+3. If `setup.fields` is present, Shell shows the `SimulatorSetupModal` overlay
+   so the user can provide the required values, then `handleFinalize()` calls
+   `setup.finalize()`.
+4. If `setup.fields` is absent (WalletConnect), Shell renders the QR code and
+   immediately awaits `setup.finalize()`, which resolves when the wallet scans.
+5. After finalize resolves, `completeConnection()` activates polling and
+   switches to the Tracker tab.
+
+**Auto-reconnect:** Both backends implement their own WebSocket reconnect with
+exponential backoff. Shell's `onConnectionChange` callback handles UI state
+transitions (connected ↔ disconnected) generically. On page load, if
+`blockchainType` is persisted but no game session exists, Shell calls
+`handleConnect(bcType, true)` (silent mode) to re-establish the connection
+automatically — no modals or QR codes are shown, consistent with the principle
+that a reload should be invisible to the user.
+
+**Session persistence:** `blockchainType` is persisted to `localStorage`
+immediately when the user makes their choice, before the connection completes.
+`clearSession()` removes it on explicit disconnect, cancel, or unrecoverable
+error.
+
+**Intentional deviation:** The simulator returns `ConnectionSetup.fields`
+because there is no external wallet to scan the QR code. This triggers the
+`SimulatorSetupModal` overlay — the only place where Shell's UI differs between
+backends. All other connection logic is shared.
+
 ### Lobby Iframe (Tracker)
 
 The lobby iframe is **untrusted**. It is served by a tracker and provides
@@ -574,6 +636,8 @@ game.
 | `front-end/src/hooks/WasmStateInit.ts` | WASM initialization: load binary, deposit .hex files, create cradle |
 | `front-end/src/hooks/blobSingleton.ts` | Singleton management: create or retrieve the WasmBlobWrapper; restore path for session persistence |
 | `front-end/src/hooks/save.ts` | `SessionSave` interface and `saveSession`/`loadSession`/`clearSession` functions |
+| `front-end/src/hooks/FakeBlockchainInterface.ts` | Simulator blockchain backend: WebSocket to local sim, auto-reconnect |
+| `front-end/src/hooks/RealBlockchainInterface.ts` | WalletConnect blockchain backend: RPC via WalletConnect sessions |
 | `front-end/src/services/TrackerConnection.ts` | Game relay WebSocket client (`/ws`) |
 | `front-end/src/types/ChiaGaming.ts` | TypeScript types for WASM interface and game data |
 | `lobby/lobby-frontend/src/useLobbySocket.ts` | Lobby channel hook (`useLobbySocket`): lobby WebSocket join/challenge/alias messaging |
