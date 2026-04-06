@@ -110,6 +110,14 @@ const WalletConnectHeading = ({ onConnected, initialExpanded = true }: { onConne
       },
     });
 
+    if (walletConnectState.isConnected) {
+      setConnected(true);
+      setHaveSession(true);
+      setHaveClient(true);
+      setSessions(1);
+      setInitialized(true);
+    }
+
     return () => subscription.unsubscribe();
   }, []);
 
