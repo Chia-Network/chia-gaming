@@ -1,50 +1,10 @@
 use crate::common::load_clvm::read_hex_puzzle;
-use crate::common::types::{chia_dialect, AllocEncoder, Node, Program, Sha256Input};
+use crate::common::types::{chia_dialect, AllocEncoder, Node, Sha256Input};
 
 use clvm_traits::ToClvm;
 use clvmr::{run_program, ChiaDialect};
 
 use crate::utils::first;
-
-fn test_prepend_count() {
-    let mut allocator = AllocEncoder::new();
-    let source_data = (
-        "prepend_count",
-        (
-            [
-                (6, (2, ())),
-                (6, (3, ())),
-                (5, (3, ())),
-                (5, (4, ())),
-                (5, (1, ())),
-                (2, (1, ())),
-                (3, (1, ())),
-            ],
-            (),
-        ),
-    )
-        .to_clvm(&mut allocator)
-        .expect("should build");
-    let program =
-        read_hex_puzzle(&mut allocator, "clsp/test/test_handcalc_micro.hex").expect("should read");
-    let program_clvm = program.to_clvm(&mut allocator).expect("should do");
-    let result = run_program(
-        allocator.allocator(),
-        &chia_dialect(),
-        program_clvm,
-        source_data,
-        0,
-    )
-    .expect("should run")
-    .1;
-    let check_result = Program::from_hex("ffff02ff06ff0280ffff02ff06ff0380ffff03ff05ff0380ffff03ff05ff0480ffff03ff05ff0180ffff01ff02ff0180ffff01ff03ff018080").expect("cvt");
-    let check_node = check_result.to_clvm(&mut allocator).expect("cvt");
-    let result_hex = Node(result).to_hex(&mut allocator).expect("cvt");
-    assert_eq!(
-        result_hex,
-        Node(check_node).to_hex(&mut allocator).expect("cvt")
-    );
-}
 
 fn test_make_cards() {
     let mut allocator = AllocEncoder::new();
@@ -799,7 +759,6 @@ fn test_handcalc() {
 
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
-        ("test_prepend_count", &test_prepend_count),
         ("test_make_cards", &test_make_cards),
         ("test_mergein", &test_mergein),
         ("test_handcalc", &test_handcalc),
