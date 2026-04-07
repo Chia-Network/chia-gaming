@@ -125,7 +125,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   async getPuzzleAndSolution(coin: string): Promise<string[] | null> {
     try {
-      const height = await rpc.getHeightInfo({});
+      const height = (await rpc.getHeightInfo({})).height;
       const resp = await rpc.getCoinRecordsByNames({
         names: [coin],
         includeSpentCoins: true,
@@ -170,7 +170,8 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async getHeightInfo(): Promise<number> {
-    return rpc.getHeightInfo({});
+    const resp = await rpc.getHeightInfo({});
+    return resp.height;
   }
 
   async createOfferForIds(
