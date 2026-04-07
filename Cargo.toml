@@ -19,10 +19,10 @@ used_linker = []
 
 [dependencies]
 bson = "=2.14.0"
-chia-bls = "=0.35.2"
+chia-bls = "=0.36.1"
 chia-puzzles = "=0.20.2"
-clvm-traits = "=0.35.0"
-clvm-utils = "=0.35.0"
+clvm-traits = "=0.36.1"
+clvm-utils = "=0.36.1"
 clvmr = { version = "=0.16.2", features = ["pre-eval"] }
 hex = "=0.4.3"
 lazy_static = "=1.5.0"
@@ -42,7 +42,6 @@ typetag = "=0.2.21"
 bls12_381 = { version = "=0.8.0", features = ["experimental"] }
 [build-dependencies]
 chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "308eb9ca1ba27913c8c0ab033dfc922a10b0f3c4" }
-clvm_tools_rs = { git = "https://github.com/Chia-Network/chialisp.git", rev = "783b8bef4856928086865538fc3de34fe437e3a1" }
 clvmr = { version = "=0.16.2" }
 toml = "=0.8.23"
 
