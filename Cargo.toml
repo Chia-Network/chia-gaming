@@ -38,8 +38,6 @@ serde_json_any_key = "=2.0.0"
 sha2 = "=0.10.9"
 typetag = "=0.2.21"
 
-[dev-dependencies]
-bls12_381 = { version = "=0.8.0", features = ["experimental"] }
 [build-dependencies]
 chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "308eb9ca1ba27913c8c0ab033dfc922a10b0f3c4" }
 clvmr = { version = "=0.16.2" }
