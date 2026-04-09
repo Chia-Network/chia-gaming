@@ -22,9 +22,37 @@ type ActiveDrag = {
   lockLeft: number;
   lockTop: number;
 };
+type ShiftAnim = {
+  key: number;
+  card: CardValueSuit;
+  fromLeft: number;
+  fromTop: number;
+  toLeft: number;
+  toTop: number;
+  width: number;
+  height: number;
+  hideIndex: number;
+  started: boolean;
+};
+type DropAnim = {
+  key: number;
+  card: CardValueSuit;
+  originIndex: number;
+  fromLeft: number;
+  fromTop: number;
+  toLeft: number;
+  toTop: number;
+  width: number;
+  height: number;
+  finalOrder: CardValueSuit[];
+  started: boolean;
+};
 
 const DRAG_ACTIVATION_THRESHOLD_PX = 4;
 const SWITCH_EPSILON_SQ = 16;
+const SHIFT_ANIM_DURATION_MS = 240;
+const DROP_ANIM_DURATION_MS = 240;
+const ANIM_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
 
 function columnsForWidth(px: number, currentCols: number): number {
   const margin = 20;
@@ -74,6 +102,8 @@ function HandDisplay(props: HandDisplayProps) {
   const [anyDragging, setAnyDragging] = useState(false);
   const [holeSlots, setHoleSlots] = useState<HoleSlot[] | null>(null);
   const [activeDrag, setActiveDrag] = useState<ActiveDrag | null>(null);
+  const [shiftAnims, setShiftAnims] = useState<ShiftAnim[]>([]);
+  const [dropAnim, setDropAnim] = useState<DropAnim | null>(null);
   const [cols, setCols] = useState(8);
   const colsRef = useRef(8);
   const cardsRef = useRef(cards);
@@ -88,6 +118,15 @@ function HandDisplay(props: HandDisplayProps) {
   const activeDragRef = useRef<ActiveDrag | null>(null);
   const dragAxisRef = useRef<'x' | 'y' | true>(true);
   const bodyUserSelectBeforeDragRef = useRef<string | null>(null);
+  const shiftAnimKeyRef = useRef(0);
+  const shiftAnimsRef = useRef<ShiftAnim[]>([]);
+  const shiftTimeoutsRef = useRef<Map<number, number>>(new Map());
+  const shiftRafIdsRef = useRef<number[]>([]);
+  const dropAnimKeyRef = useRef(0);
+  const dropStartRafRef = useRef<number | null>(null);
+  const dropTimeoutRef = useRef<number | null>(null);
+  const dropAnimRef = useRef<DropAnim | null>(null);
+  const pendingDropAfterShiftsRef = useRef(false);
   const isDraggingRef = useRef(false);
 
   const lockBodyTextSelection = useCallback(() => {
@@ -150,6 +189,14 @@ function HandDisplay(props: HandDisplayProps) {
   }, [holeSlots]);
 
   useEffect(() => {
+    shiftAnimsRef.current = shiftAnims;
+  }, [shiftAnims]);
+
+  useEffect(() => {
+    dropAnimRef.current = dropAnim;
+  }, [dropAnim]);
+
+  useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const ro = new ResizeObserver(([entry]) => {
@@ -197,6 +244,8 @@ function HandDisplay(props: HandDisplayProps) {
         }
       }
       measureSlotCenters();
+      setShiftAnims([]);
+      setDropAnim(null);
     };
 
     const timer = setTimeout(updateWinnerPosition, 50);
@@ -212,7 +261,46 @@ function HandDisplay(props: HandDisplayProps) {
     itemRefs.current = itemRefs.current.slice(0, cards.length);
   }, [cards.length]);
 
+  const removeShiftAnimation = useCallback((key: number) => {
+    const timeoutId = shiftTimeoutsRef.current.get(key);
+    if (timeoutId != null) {
+      window.clearTimeout(timeoutId);
+      shiftTimeoutsRef.current.delete(key);
+    }
+    setShiftAnims((prev) => prev.filter((anim) => anim.key !== key));
+  }, []);
+
+  const clearShiftAnimations = useCallback(() => {
+    shiftRafIdsRef.current.forEach((id) => cancelAnimationFrame(id));
+    shiftRafIdsRef.current = [];
+    shiftTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+    shiftTimeoutsRef.current.clear();
+    setShiftAnims([]);
+  }, []);
+
+  const clearDropAnimation = useCallback((key?: number) => {
+    if (dropStartRafRef.current != null) {
+      cancelAnimationFrame(dropStartRafRef.current);
+      dropStartRafRef.current = null;
+    }
+    if (dropTimeoutRef.current != null) {
+      window.clearTimeout(dropTimeoutRef.current);
+      dropTimeoutRef.current = null;
+    }
+    if (key == null || (dropAnimRef.current && dropAnimRef.current.key === key)) {
+      dropAnimRef.current = null;
+    }
+    setDropAnim((prev) => {
+      if (key == null) return null;
+      if (!prev || prev.key !== key) return prev;
+      return null;
+    });
+  }, []);
+
   const clearDragSession = useCallback(() => {
+    clearShiftAnimations();
+    clearDropAnimation();
+    pendingDropAfterShiftsRef.current = false;
     pendingDragRef.current = null;
     activeDragRef.current = null;
     homeSlotRef.current = -1;
@@ -226,7 +314,23 @@ function HandDisplay(props: HandDisplayProps) {
     setTimeout(() => {
       isDraggingRef.current = false;
     }, 0);
-  }, [unlockBodyTextSelection]);
+  }, [clearDropAnimation, clearShiftAnimations, unlockBodyTextSelection]);
+
+  useEffect(() => {
+    return () => {
+      clearShiftAnimations();
+      clearDropAnimation();
+    };
+  }, [clearDropAnimation, clearShiftAnimations]);
+
+  useEffect(() => {
+    const onResizeClearAnimations = () => {
+      clearShiftAnimations();
+      clearDropAnimation();
+    };
+    window.addEventListener('resize', onResizeClearAnimations);
+    return () => window.removeEventListener('resize', onResizeClearAnimations);
+  }, [clearDropAnimation, clearShiftAnimations]);
 
   const beginDragSession = useCallback((index: number, pointerX: number, pointerY: number) => {
     const groupEl = groupRef.current;
@@ -324,26 +428,105 @@ function HandDisplay(props: HandDisplayProps) {
     if (!currentSlots) return;
 
     const nextSlots = currentSlots.slice();
+    const movingCard = nextSlots[nearest];
+    const oldDefaultSlot = defaultSlot;
+    const fromEl = itemRefs.current[nearest];
+    const fromRect = fromEl?.getBoundingClientRect();
     nextSlots[defaultSlot] = nextSlots[nearest];
     nextSlots[nearest] = null;
 
     homeSlotRef.current = nearest;
     holeSlotsRef.current = nextSlots;
     setHoleSlots(nextSlots);
-    requestAnimationFrame(measureSlotCenters);
-  }, [measureSlotCenters, nearestSlotIndex]);
 
-  const finalizeDrag = useCallback(() => {
+    if (movingCard && fromRect) {
+      const animKey = ++shiftAnimKeyRef.current;
+      const measureRaf = requestAnimationFrame(() => {
+        const latestGroup = groupRef.current;
+        const toEl = itemRefs.current[oldDefaultSlot];
+        if (!latestGroup || !toEl) return;
+        const latestGroupRect = latestGroup.getBoundingClientRect();
+        const toRect = toEl.getBoundingClientRect();
+        const nextShiftAnim: ShiftAnim = {
+          key: animKey,
+          card: movingCard,
+          fromLeft: fromRect.left - latestGroupRect.left,
+          fromTop: fromRect.top - latestGroupRect.top,
+          toLeft: toRect.left - latestGroupRect.left,
+          toTop: toRect.top - latestGroupRect.top,
+          width: fromRect.width,
+          height: fromRect.height,
+          hideIndex: oldDefaultSlot,
+          started: false,
+        };
+        setShiftAnims((prev) => [...prev, nextShiftAnim]);
+        const startRaf = requestAnimationFrame(() => {
+          setShiftAnims((prev) => prev.map((anim) => (
+            anim.key === animKey ? { ...anim, started: true } : anim
+          )));
+        });
+        shiftRafIdsRef.current.push(startRaf);
+        const timeoutId = window.setTimeout(() => {
+          removeShiftAnimation(animKey);
+        }, SHIFT_ANIM_DURATION_MS + 80);
+        shiftTimeoutsRef.current.set(animKey, timeoutId);
+      });
+      shiftRafIdsRef.current.push(measureRaf);
+    }
+
+    requestAnimationFrame(measureSlotCenters);
+  }, [measureSlotCenters, nearestSlotIndex, removeShiftAnimation]);
+
+  const commitDropAnimation = useCallback((dropKey: number) => {
+    const currentDrop = dropAnimRef.current;
+    if (!currentDrop || currentDrop.key !== dropKey) return;
+    dropAnimRef.current = null;
+    onReorder?.(currentDrop.finalOrder);
+    clearDragSession();
+  }, [clearDragSession, onReorder]);
+
+  const startDropAnimation = useCallback(() => {
     const dragging = activeDragRef.current;
     const currentSlots = holeSlotsRef.current;
     const defaultSlot = homeSlotRef.current;
-    if (dragging && currentSlots && defaultSlot >= 0 && defaultSlot < currentSlots.length) {
-      const next = currentSlots.slice();
-      next[defaultSlot] = dragging.card;
-      onReorder?.(next as CardValueSuit[]);
+    const groupEl = groupRef.current;
+    const toEl = defaultSlot >= 0 ? itemRefs.current[defaultSlot] : null;
+    if (dragging && currentSlots && defaultSlot >= 0 && defaultSlot < currentSlots.length && groupEl && toEl) {
+      const finalOrder = currentSlots.slice() as CardValueSuit[];
+      finalOrder[defaultSlot] = dragging.card;
+      const groupRect = groupEl.getBoundingClientRect();
+      const toRect = toEl.getBoundingClientRect();
+      const dropKey = ++dropAnimKeyRef.current;
+
+      clearDropAnimation();
+      const nextDrop: DropAnim = {
+        key: dropKey,
+        card: dragging.card,
+        originIndex: dragging.originIndex,
+        fromLeft: dragging.left,
+        fromTop: dragging.top,
+        toLeft: toRect.left - groupRect.left,
+        toTop: toRect.top - groupRect.top,
+        width: dragging.width,
+        height: dragging.height,
+        finalOrder,
+        started: false,
+      };
+
+      activeDragRef.current = null;
+      setActiveDrag(null);
+      setDropAnim(nextDrop);
+      dropStartRafRef.current = requestAnimationFrame(() => {
+        setDropAnim((prev) => (prev && prev.key === dropKey ? { ...prev, started: true } : prev));
+      });
+      dropTimeoutRef.current = window.setTimeout(() => {
+        commitDropAnimation(dropKey);
+      }, DROP_ANIM_DURATION_MS + 100);
+      return;
     }
+
     clearDragSession();
-  }, [clearDragSession, onReorder]);
+  }, [clearDragSession, clearDropAnimation, commitDropAnimation]);
 
   useEffect(() => {
     const onPointerMove = (event: PointerEvent) => {
@@ -367,8 +550,11 @@ function HandDisplay(props: HandDisplayProps) {
         return;
       }
       if (activeDragRef.current) {
-        finalizeDrag();
-        unlockBodyTextSelection();
+        if (shiftAnimsRef.current.length > 0) {
+          pendingDropAfterShiftsRef.current = true;
+          return;
+        }
+        startDropAnimation();
       }
     };
 
@@ -379,7 +565,15 @@ function HandDisplay(props: HandDisplayProps) {
       window.removeEventListener('pointerup', onPointerUp);
       unlockBodyTextSelection();
     };
-  }, [beginDragSession, finalizeDrag, updateActiveDragFromPointer, unlockBodyTextSelection]);
+  }, [beginDragSession, startDropAnimation, updateActiveDragFromPointer, unlockBodyTextSelection]);
+
+  useEffect(() => {
+    if (!pendingDropAfterShiftsRef.current) return;
+    if (shiftAnims.length > 0) return;
+    if (!activeDragRef.current) return;
+    pendingDropAfterShiftsRef.current = false;
+    startDropAnimation();
+  }, [shiftAnims, startDropAnimation]);
 
   const isWinner = winner === winnerType;
 
@@ -449,6 +643,18 @@ function HandDisplay(props: HandDisplayProps) {
           {visibleSlots.map((slotCard, idx) => {
             const slotCardId = slotCard?.cardId ?? idx;
             const isDragging = draggingCardId === slotCardId;
+            const hideForShift =
+              !!slotCard &&
+              shiftAnims.some((anim) =>
+                anim.hideIndex === idx &&
+                (
+                  slotCard === anim.card ||
+                  (
+                    slotCard.cardId != null &&
+                    anim.card.cardId != null &&
+                    slotCard.cardId === anim.card.cardId
+                  )
+                ));
             return (
               <div
                 key={`slot-${idx}`}
@@ -458,6 +664,7 @@ function HandDisplay(props: HandDisplayProps) {
                   if (!dragEnabled) return;
                   if (slotCard == null) return;
                   if (activeDragRef.current) return;
+                  if (dropAnimRef.current) return;
                   lockBodyTextSelection();
                   pendingDragRef.current = {
                     pointerId: event.pointerId,
@@ -471,8 +678,9 @@ function HandDisplay(props: HandDisplayProps) {
                   <div
                     style={{
                       width: '100%',
+                      opacity: hideForShift ? 0 : 1,
                       transform: isDragging ? 'scale(1.05)' : 'scale(1)',
-                      transition: isDragging ? 'none' : 'transform 0.2s ease',
+                      transition: isDragging ? 'none' : 'transform 0.2s ease, opacity 0s',
                     }}
                   >
                     {renderCard(slotCard, idx)}
@@ -485,6 +693,58 @@ function HandDisplay(props: HandDisplayProps) {
               </div>
             );
           })}
+          {shiftAnims.map((anim) => (
+            <div
+              key={anim.key}
+              className='absolute z-40 pointer-events-none'
+              style={{
+                left: anim.fromLeft,
+                top: anim.fromTop,
+                width: anim.width,
+                height: anim.height,
+                transform: anim.started
+                  ? `translate(${anim.toLeft - anim.fromLeft}px, ${anim.toTop - anim.fromTop}px)`
+                  : 'translate(0px, 0px)',
+                transition: `transform ${SHIFT_ANIM_DURATION_MS}ms ${ANIM_EASING}`,
+              }}
+              onTransitionEnd={() => {
+                removeShiftAnimation(anim.key);
+              }}
+            >
+              <div style={{ width: '100%' }}>
+                {renderCard(anim.card, anim.hideIndex)}
+              </div>
+            </div>
+          ))}
+          {dropAnim && (
+            <div
+              className='absolute z-50 pointer-events-none'
+              style={{
+                left: dropAnim.fromLeft,
+                top: dropAnim.fromTop,
+                width: dropAnim.width,
+                height: dropAnim.height,
+                transform: dropAnim.started
+                  ? `translate(${dropAnim.toLeft - dropAnim.fromLeft}px, ${dropAnim.toTop - dropAnim.fromTop}px)`
+                  : 'translate(0px, 0px)',
+                transition: `transform ${DROP_ANIM_DURATION_MS}ms ${ANIM_EASING}`,
+                touchAction: 'none',
+              }}
+              onTransitionEnd={() => {
+                commitDropAnimation(dropAnim.key);
+              }}
+            >
+              <div
+                style={{
+                  width: '100%',
+                  transform: 'scale(1.05)',
+                  transition: 'none',
+                }}
+              >
+                {renderCard(dropAnim.card, dropAnim.originIndex)}
+              </div>
+            </div>
+          )}
           {activeDrag && (
             <div
               className='absolute z-50 pointer-events-none'
