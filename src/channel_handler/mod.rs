@@ -407,11 +407,6 @@ impl ChannelHandler {
         })
     }
 
-    /// Return the right amount to use for a clean shutdown coin output.
-    pub fn clean_shutdown_amount(&self) -> Amount {
-        self.my_out_of_game_balance.clone()
-    }
-
     pub fn has_active_games(&self) -> bool {
         !self.live_games.is_empty()
     }

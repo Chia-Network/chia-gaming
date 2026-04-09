@@ -39,10 +39,9 @@ pub mod handshake;
 pub mod handshake_initiator;
 pub mod handshake_receiver;
 pub mod on_chain;
-pub mod shutdown_handler;
+pub mod spend_channel_coin_handler;
 pub mod start;
 pub mod types;
-pub mod unroll_watch_handler;
 
 pub type GameStartInfoPair = (Vec<Rc<GameStartInfo>>, Vec<Rc<GameStartInfo>>);
 
@@ -128,11 +127,8 @@ pub struct PotatoHandler {
     last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
 
     #[serde(skip)]
-    unroll_watch_replacement:
-        Option<Box<crate::potato_handler::unroll_watch_handler::UnrollWatchHandler>>,
-
-    #[serde(skip)]
-    shutdown_replacement: Option<Box<crate::potato_handler::shutdown_handler::ShutdownHandler>>,
+    channel_spend_replacement:
+        Option<Box<crate::potato_handler::spend_channel_coin_handler::SpendChannelCoinHandler>>,
 }
 
 fn format_batch_action(action: &BatchAction) -> String {
@@ -253,21 +249,14 @@ impl PotatoHandler {
             incoming_messages,
             peer_wants_potato: false,
             last_channel_coin_spend_info,
-            unroll_watch_replacement: None,
-            shutdown_replacement: None,
+            channel_spend_replacement: None,
         }
     }
 
-    pub fn take_unroll_watch_replacement(
+    pub fn take_channel_spend_replacement(
         &mut self,
-    ) -> Option<Box<crate::potato_handler::unroll_watch_handler::UnrollWatchHandler>> {
-        self.unroll_watch_replacement.take()
-    }
-
-    pub fn take_shutdown_replacement(
-        &mut self,
-    ) -> Option<Box<crate::potato_handler::shutdown_handler::ShutdownHandler>> {
-        self.shutdown_replacement.take()
+    ) -> Option<Box<crate::potato_handler::spend_channel_coin_handler::SpendChannelCoinHandler>> {
+        self.channel_spend_replacement.take()
     }
 
     pub fn amount(&self) -> Amount {
@@ -648,12 +637,12 @@ impl PotatoHandler {
                 }
             }
 
-            let (coin, my_reward, full_spend, channel_puzzle_public_key) = {
+            let (coin, want_puzzle_hash, want_amount, full_spend, channel_puzzle_public_key) = {
                 let ch = self.channel_handler_mut()?;
                 let coin = ch.state_channel_coin().clone();
                 let clvm_conditions = conditions.to_nodeptr(env.allocator)?;
                 let want_puzzle_hash = ch.get_reward_puzzle_hash(env)?;
-                let want_amount = ch.clean_shutdown_amount();
+                let want_amount = ch.my_out_of_game_balance();
                 if want_amount != Amount::default() {
                     let condition_list =
                         CoinCondition::from_nodeptr(env.allocator, clvm_conditions);
@@ -673,21 +662,9 @@ impl PotatoHandler {
                     }
                 }
 
-                let my_reward =
-                    CoinString::from_parts(&coin.to_coin_id(), &want_puzzle_hash, &want_amount);
                 let full_spend = ch.received_potato_clean_shutdown(env, sig, clvm_conditions)?;
                 let channel_puzzle_public_key = ch.get_aggregate_channel_public_key();
-                (coin, my_reward, full_spend, channel_puzzle_public_key)
-            };
-
-            let reward_coin_for_state = if my_reward
-                .to_parts()
-                .map(|(_, _, amt)| amt > Amount::default())
-                .unwrap_or(false)
-            {
-                Some(my_reward.clone())
-            } else {
-                None
+                (coin, want_puzzle_hash, want_amount, full_spend, channel_puzzle_public_key)
             };
 
             {
@@ -730,17 +707,18 @@ impl PotatoHandler {
 
             effects.push(Effect::PeerCleanShutdownComplete(coin_spend));
 
-            let sh = crate::potato_handler::shutdown_handler::ShutdownHandler::new(
+            let handler = crate::potato_handler::spend_channel_coin_handler::SpendChannelCoinHandler::new_for_clean_shutdown(
                 self.channel_handler.take(),
                 coin.clone(),
-                reward_coin_for_state,
+                want_puzzle_hash,
+                want_amount,
                 std::mem::take(&mut self.game_action_queue),
                 PotatoState::Present,
                 self.channel_timeout.clone(),
                 self.unroll_timeout.clone(),
                 self.last_channel_coin_spend_info.take(),
             );
-            self.shutdown_replacement = Some(Box::new(sh));
+            self.channel_spend_replacement = Some(Box::new(handler));
             return Ok(effects);
         }
 
@@ -812,7 +790,7 @@ impl PotatoHandler {
         let mut effects = Vec::new();
         let mut batch_actions: Vec<BatchAction> = Vec::new();
         let mut clean_shutdown_data: Option<Box<(Aggsig, ProgramRef)>> = None;
-        let mut pending_shutdown: Option<(CoinString, Option<CoinString>)> = None;
+        let mut pending_shutdown: Option<(CoinString, PuzzleHash, Amount)> = None;
         let mut deferred = VecDeque::new();
 
         while let Some(action) = self.game_action_queue.pop_front() {
@@ -936,25 +914,13 @@ impl PotatoHandler {
                         let ch = self.channel_handler_mut()?;
                         let spend = ch.send_potato_clean_shutdown(env, real_conditions)?;
                         let want_puzzle_hash = ch.get_reward_puzzle_hash(env)?;
-                        let want_amount = ch.clean_shutdown_amount();
+                        let want_amount = ch.my_out_of_game_balance();
                         (
                             ch.state_channel_coin().clone(),
                             spend,
                             want_puzzle_hash,
                             want_amount,
                         )
-                    };
-
-                    let my_reward = CoinString::from_parts(
-                        &state_channel_coin.to_coin_id(),
-                        &want_puzzle_hash,
-                        &want_amount,
-                    );
-
-                    let reward_coin_for_state = if want_amount > Amount::default() {
-                        Some(my_reward.clone())
-                    } else {
-                        None
                     };
 
                     let shutdown_condition_program =
@@ -964,7 +930,11 @@ impl PotatoHandler {
                         shutdown_condition_program.into(),
                     )));
 
-                    pending_shutdown = Some((state_channel_coin.clone(), reward_coin_for_state));
+                    pending_shutdown = Some((
+                        state_channel_coin.clone(),
+                        want_puzzle_hash,
+                        want_amount,
+                    ));
                 }
                 GameAction::SendPotato => {
                     unreachable!("SendPotato should not be queued");
@@ -999,18 +969,19 @@ impl PotatoHandler {
             clean_shutdown: clean_shutdown_data,
         });
 
-        if let Some((coin, reward)) = pending_shutdown {
-            let sh = crate::potato_handler::shutdown_handler::ShutdownHandler::new(
+        if let Some((coin, puzzle_hash, amount)) = pending_shutdown {
+            let handler = crate::potato_handler::spend_channel_coin_handler::SpendChannelCoinHandler::new_for_clean_shutdown(
                 self.channel_handler.take(),
                 coin,
-                reward,
+                puzzle_hash,
+                amount,
                 std::mem::take(&mut self.game_action_queue),
                 self.have_potato.clone(),
                 self.channel_timeout.clone(),
                 self.unroll_timeout.clone(),
                 self.last_channel_coin_spend_info.take(),
             );
-            self.shutdown_replacement = Some(Box::new(sh));
+            self.channel_spend_replacement = Some(Box::new(handler));
         }
 
         Ok((true, effects))
@@ -1229,7 +1200,7 @@ impl PotatoHandler {
             if *coin_id == channel_coin {
                 let debug_log =
                     Effect::DebugLog(format!("[channel-coin-spent] {}", format_coin(coin_id)));
-                let uw = crate::potato_handler::unroll_watch_handler::UnrollWatchHandler::new_at_channel_conditions(
+                let handler = crate::potato_handler::spend_channel_coin_handler::SpendChannelCoinHandler::new_at_channel_conditions(
                     self.channel_handler.take(),
                     channel_coin,
                     std::mem::take(&mut self.game_action_queue),
@@ -1237,7 +1208,7 @@ impl PotatoHandler {
                     self.channel_timeout.clone(),
                     self.unroll_timeout.clone(),
                 );
-                self.unroll_watch_replacement = Some(Box::new(uw));
+                self.channel_spend_replacement = Some(Box::new(handler));
 
                 return Ok((
                     true,
@@ -1291,7 +1262,7 @@ impl PotatoHandler {
             ch.state_channel_coin().clone()
         };
 
-        let mut uw = crate::potato_handler::unroll_watch_handler::UnrollWatchHandler::new(
+        let mut handler = crate::potato_handler::spend_channel_coin_handler::SpendChannelCoinHandler::new(
             self.channel_handler.take(),
             channel_coin,
             std::mem::take(&mut self.game_action_queue),
@@ -1300,9 +1271,9 @@ impl PotatoHandler {
             self.unroll_timeout.clone(),
         );
         if got_error {
-            uw.set_advisory(Some("error receiving peer message".to_string()));
+            handler.set_advisory(Some("error receiving peer message".to_string()));
         }
-        self.unroll_watch_replacement = Some(Box::new(uw));
+        self.channel_spend_replacement = Some(Box::new(handler));
 
         Ok(effects)
     }
@@ -1573,11 +1544,8 @@ impl PeerHandler for PotatoHandler {
         PotatoHandler::flush_pending_actions(self, env)
     }
     fn take_replacement(&mut self) -> Option<Box<dyn PeerHandler>> {
-        if let Some(sh) = self.take_shutdown_replacement() {
-            return Some(sh as Box<dyn PeerHandler>);
-        }
-        self.take_unroll_watch_replacement()
-            .map(|uw| uw as Box<dyn PeerHandler>)
+        self.take_channel_spend_replacement()
+            .map(|h| h as Box<dyn PeerHandler>)
     }
     fn handshake_finished(&self) -> bool {
         PotatoHandler::handshake_finished(self)
@@ -1615,11 +1583,10 @@ impl PeerHandler for PotatoHandler {
     }
     fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
         let ch = self.channel_handler.as_ref()?;
-        let shutting_down = self.shutdown_replacement.is_some()
-            || self
-                .game_action_queue
-                .iter()
-                .any(|a| matches!(a, GameAction::CleanShutdown));
+        let shutting_down = self
+            .game_action_queue
+            .iter()
+            .any(|a| matches!(a, GameAction::CleanShutdown));
         Some(ChannelStatusSnapshot {
             state: if shutting_down {
                 ChannelState::ShuttingDown

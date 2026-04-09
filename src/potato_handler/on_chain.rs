@@ -9,6 +9,7 @@ use crate::channel_handler::types::{
     AcceptTransactionState, ChannelHandlerPrivateKeys, CoinSpentInformation, LiveGame,
     OnChainGameState, ReadableMove,
 };
+use crate::common::types::PrivateKey;
 use crate::common::types::{
     AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, Program,
     PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
@@ -61,7 +62,9 @@ pub struct OnChainGameHandler {
     is_initial_potato: bool,
     state_number: usize,
     was_stale: bool,
+    resolved_clean: bool,
     terminal_reward_coin: Option<CoinString>,
+    advisory: Option<String>,
 }
 
 impl std::fmt::Debug for OnChainGameHandler {
@@ -89,6 +92,7 @@ pub struct OnChainGameHandlerArgs {
     pub is_initial_potato: bool,
     pub state_number: usize,
     pub was_stale: bool,
+    pub resolved_clean: bool,
     pub terminal_reward_coin: Option<CoinString>,
 }
 
@@ -113,7 +117,92 @@ impl OnChainGameHandler {
             is_initial_potato: args.is_initial_potato,
             state_number: args.state_number,
             was_stale: args.was_stale,
+            resolved_clean: args.resolved_clean,
             terminal_reward_coin: args.terminal_reward_coin,
+            advisory: None,
+        }
+    }
+
+    /// Create a terminal handler with an empty game map.  Used when
+    /// SpendChannelCoinHandler reaches a terminal state (completed or failed)
+    /// without any on-chain games to track.
+    pub fn new_terminal(
+        channel_handler: Option<&mut crate::channel_handler::ChannelHandler>,
+        was_stale: bool,
+        resolved_clean: bool,
+        terminal_reward_coin: Option<CoinString>,
+        advisory: Option<String>,
+    ) -> Self {
+        let (
+            private_keys,
+            reward_puzzle_hash,
+            their_reward_puzzle_hash,
+            my_out_of_game_balance,
+            their_out_of_game_balance,
+            my_allocated_balance,
+            their_allocated_balance,
+            live_games,
+            pending_accept_timeouts,
+            unroll_advance_timeout,
+            is_initial_potato,
+            state_number,
+        ) = if let Some(ch) = channel_handler {
+            (
+                ch.private_keys().clone(),
+                ch.my_reward_puzzle_hash().clone(),
+                ch.their_reward_puzzle_hash().clone(),
+                ch.my_out_of_game_balance(),
+                ch.their_out_of_game_balance(),
+                ch.my_allocated_balance(),
+                ch.their_allocated_balance(),
+                ch.take_live_games(),
+                ch.take_pending_accept_timeouts(),
+                ch.unroll_advance_timeout().clone(),
+                ch.is_initial_potato(),
+                ch.state_number(),
+            )
+        } else {
+            (
+                ChannelHandlerPrivateKeys {
+                    my_channel_coin_private_key: PrivateKey::default(),
+                    my_unroll_coin_private_key: PrivateKey::default(),
+                    my_referee_private_key: PrivateKey::default(),
+                },
+                PuzzleHash::default(),
+                PuzzleHash::default(),
+                Amount::default(),
+                Amount::default(),
+                Amount::default(),
+                Amount::default(),
+                vec![],
+                vec![],
+                Timeout::new(0),
+                false,
+                0,
+            )
+        };
+        OnChainGameHandler {
+            have_potato: PotatoState::Present,
+            channel_timeout: Timeout::new(0),
+            game_action_queue: VecDeque::new(),
+            game_map: HashMap::new(),
+            pending_moves: HashMap::new(),
+            private_keys,
+            reward_puzzle_hash,
+            their_reward_puzzle_hash,
+            my_out_of_game_balance,
+            their_out_of_game_balance,
+            my_allocated_balance,
+            their_allocated_balance,
+            live_games,
+            pending_accept_timeouts,
+            unroll_advance_timeout,
+            is_initial_potato,
+            state_number,
+            was_stale,
+            resolved_clean,
+            terminal_reward_coin,
+            advisory,
         }
     }
 
@@ -1659,13 +1748,18 @@ impl PeerHandler for OnChainGameHandler {
     }
 
     fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
+        let state = if self.advisory.is_some() {
+            ChannelState::Failed
+        } else if self.resolved_clean {
+            ChannelState::ResolvedClean
+        } else if self.was_stale {
+            ChannelState::ResolvedStale
+        } else {
+            ChannelState::ResolvedUnrolled
+        };
         Some(ChannelStatusSnapshot {
-            state: if self.was_stale {
-                ChannelState::ResolvedStale
-            } else {
-                ChannelState::ResolvedUnrolled
-            },
-            advisory: None,
+            state,
+            advisory: self.advisory.clone(),
             coin: self.terminal_reward_coin.clone(),
             our_balance: Some(self.my_out_of_game_balance.clone()),
             their_balance: Some(self.their_out_of_game_balance.clone()),

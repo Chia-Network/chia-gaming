@@ -21,7 +21,7 @@ pub enum UnrollOutcome {
 }
 
 /// Determine whether an unroll can be preempted, needs to wait for timeout, or
-/// is unrecoverable.  Shared by ShutdownHandler and UnrollWatchHandler.
+/// is unrecoverable.  Used by SpendChannelCoinHandler.
 pub fn classify_unroll(
     ch: &ChannelHandler,
     env: &mut ChannelHandlerEnv<'_>,

@@ -510,9 +510,8 @@ the channel lifecycle:
 
 ```
 HandshakeInitiator ─┐
-                     ├─→ PotatoHandler ─→ UnrollWatchHandler ─→ OnChainGameHandler
-HandshakeReceiver  ─┘         │                  ↑
-                              ├─→ ShutdownHandler─┘
+                     ├─→ PotatoHandler ─→ SpendChannelCoinHandler ─→ OnChainGameHandler
+HandshakeReceiver  ─┘
 ```
 
 ### Peer Handlers vs States
@@ -520,7 +519,7 @@ HandshakeReceiver  ─┘         │                  ↑
 Two related but distinct concepts appear throughout the docs:
 
 - **Peer handlers** are concrete Rust types implementing `PeerHandler` (for
-example `PotatoHandler`, `ShutdownHandler`, `UnrollWatchHandler`). They model
+example `PotatoHandler`, `SpendChannelCoinHandler`). They model
 which component currently owns protocol logic.
 - **States** are notification-level enums exposed to the UI and tests:
 `ChannelState` and `GameStatusKind` (inside `GameNotification::GameStatus`).
@@ -544,8 +543,7 @@ with same-level repeats for updates), even though they use different names.
 | `HandshakeInitiatorHandler` | `potato_handler/handshake_initiator.rs` | Initiator side of the handshake (sends A, C, E). Linear state machine; transitions to `PotatoHandler` when the channel coin appears on-chain. |
 | `HandshakeReceiverHandler` | `potato_handler/handshake_receiver.rs` | Receiver side of the handshake (sends B, D, F). Same transition trigger. |
 | `PotatoHandler` | `potato_handler/mod.rs` | Off-chain game play: batching actions, exchanging the potato, proposing/accepting/playing games. |
-| `ShutdownHandler` | `potato_handler/shutdown_handler.rs` | Clean cooperative shutdown. Watches the channel coin spend and inspects the on-chain conditions. Falls through to `UnrollWatchHandler` if an unroll landed instead of the clean shutdown transaction. |
-| `UnrollWatchHandler` | `potato_handler/unroll_watch_handler.rs` | Watches the unroll coin after the channel goes on-chain. Handles preemption, forward-aligns game state, creates `OnChainGameHandler`. |
+| `SpendChannelCoinHandler` | `potato_handler/spend_channel_coin_handler.rs` | Watches the channel coin spend and handles both clean shutdown (change coin observation) and unroll paths. Handles preemption, forward-aligns game state, always transitions to `OnChainGameHandler`. |
 | `OnChainGameHandler` | `potato_handler/on_chain.rs` | On-chain dispute resolution: submits moves, claims timeouts, detects slashes. Driven entirely by coin-watching events, not peer messages. |
 
 Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle`,
@@ -567,8 +565,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | **Channel Handler**       | `src/channel_handler/`                       | Channel/unroll/game coin management, balance tracking                        |
 | **Handshake Handlers**    | `src/potato_handler/handshake_initiator.rs`, `handshake_receiver.rs` | Handshake state machines (A-F), one per side              |
 | **Potato Handler**        | `src/potato_handler/mod.rs`                  | Off-chain game play: batching, potato exchange, proposals, moves             |
-| **Shutdown Handler**      | `src/potato_handler/shutdown_handler.rs`     | Clean cooperative shutdown; falls through to unroll if needed                |
-| **Unroll Watch Handler**  | `src/potato_handler/unroll_watch_handler.rs` | Watches unroll coin, handles preemption, creates OnChainGameHandler          |
+| **Spend Channel Coin Handler** | `src/potato_handler/spend_channel_coin_handler.rs` | Watches channel coin spend; handles clean shutdown and unroll paths, creates OnChainGameHandler |
 | **On-Chain Game Handler** | `src/potato_handler/on_chain.rs`             | Post-unroll dispute resolution: coin watching, timeouts, slashes (no potato) |
 | **Handler Base**          | `src/potato_handler/handler_base.rs`         | Shared utilities: `build_channel_to_unroll_bundle`, `emit_failure_cleanup`   |
 | **Peer Container**        | `src/peer_container.rs`                      | `PeerHandler` trait, `GameCradle` trait, `SynchronousGameCradle`             |
@@ -632,8 +629,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `PeerHandler`                   | `peer_container.rs`                            | Trait implemented by all handlers — uniform interface for messages, coin events, game actions                |
 | `HandshakeInitiatorHandler`     | `potato_handler/handshake_initiator.rs`        | Initiator handshake state machine (A → C → E → coin_created)                                                |
 | `HandshakeReceiverHandler`      | `potato_handler/handshake_receiver.rs`         | Receiver handshake state machine (B → D → F → coin_created)                                                 |
-| `ShutdownHandler`               | `potato_handler/shutdown_handler.rs`           | Clean shutdown flow; can fall through to `UnrollWatchHandler`                                                |
-| `UnrollWatchHandler`            | `potato_handler/unroll_watch_handler.rs`       | Watches unroll coin post-channel-spend, creates `OnChainGameHandler`                                        |
+| `SpendChannelCoinHandler`       | `potato_handler/spend_channel_coin_handler.rs` | Watches channel coin spend; clean shutdown detection + unroll handling, creates `OnChainGameHandler`         |
 | `ChannelCoinSpendInfo`          | `channel_handler/types/`                       | Solution, conditions, and aggregate signature for spending the channel coin                                  |
 | `PeerMessage`                   | `potato_handler/types.rs`                      | Wire message enum: `HandshakeA`–`HandshakeF`, `Batch`, `RequestPotato`, `Message`, etc.                     |
 

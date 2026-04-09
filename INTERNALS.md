@@ -67,12 +67,12 @@ disconnected peer's own unroll transaction is detected via the same
 
 Historically, `ChannelHandler` had an `initiated_on_chain` field intended for
 transition bookkeeping. In current code, the behavior above is enforced by
-peer disconnection and handler replacement (`PotatoHandler -> UnrollWatchHandler`)
+peer disconnection and handler replacement (`PotatoHandler -> SpendChannelCoinHandler`)
 rather than by checking `initiated_on_chain` at runtime.
 
 **Key code:** `src/peer_container.rs` — `go_on_chain`,
 `emit_channel_status_if_changed`, `send_message`, `deliver_message`;
-`src/potato_handler/mod.rs` — `go_on_chain`, `take_unroll_watch_replacement`
+`src/potato_handler/mod.rs` — `go_on_chain`, `take_channel_spend_replacement`
 
 ---
 
