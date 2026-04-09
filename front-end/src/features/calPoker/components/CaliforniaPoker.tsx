@@ -142,7 +142,36 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const handleReorder = useCallback((reordered: CardValueSuit[]) => {
     setPlayerCards(reordered);
     rememberedCardsRef.current = [reordered, rememberedCardsRef.current[1]];
-  }, []);
+    const snapshotPlayerHalos = gameState === GAME_STATES.SELECTING
+      ? cardSelections
+      : playerHaloCardIds;
+    const snap: CalpokerDisplaySnapshot = {
+      gameState,
+      playerCardIds: reordered.map(c => c.cardId!),
+      opponentCardIds: opponentCards.map(c => c.cardId!),
+      cardSelections,
+      winner,
+      playerBestHandCardIds: playerBestHand?.cards.map(c => c.cardId!) ?? [],
+      opponentBestHandCardIds: aiBestHand?.cards.map(c => c.cardId!) ?? [],
+      playerHaloCardIds: snapshotPlayerHalos,
+      opponentHaloCardIds: opponentHaloCardIds,
+      playerDisplayText,
+      opponentDisplayText,
+    };
+    onSnapshotChange(snap);
+  }, [
+    aiBestHand,
+    cardSelections,
+    gameState,
+    onSnapshotChange,
+    opponentCards,
+    opponentDisplayText,
+    opponentHaloCardIds,
+    playerBestHand,
+    playerDisplayText,
+    playerHaloCardIds,
+    winner,
+  ]);
 
   // Keyboard: 1-8 toggles the card at that position
   const playerCardsRef = useRef<CardValueSuit[]>(playerCards);
@@ -538,6 +567,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     } else {
       dealCards();
     }
+    restoredFromSnapshot.current = false;
   }, []);
 
   const restoredFromSnapshot = useRef(!!initialSnapshot);

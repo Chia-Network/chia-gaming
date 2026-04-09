@@ -49,10 +49,17 @@ type DropAnim = {
 };
 
 const DRAG_ACTIVATION_THRESHOLD_PX = 4;
-const SWITCH_EPSILON_SQ = 16;
-const SHIFT_ANIM_DURATION_MS = 240;
-const DROP_ANIM_DURATION_MS = 240;
-const ANIM_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
+const SWITCH_EPSILON_SQ = 20;
+const SHIFT_ANIM_DURATION_MS = 460;
+const DROP_ANIM_DURATION_MS = 460;
+const SHIFT_ANIM_EASING = 'cubic-bezier(0.22, 0.8, 0.22, 1)';
+const DROP_ANIM_EASING = 'cubic-bezier(0.22, 0.8, 0.22, 1)';
+
+function sameCard(a: CardValueSuit, b: CardValueSuit): boolean {
+  if (a === b) return true;
+  if (a.cardId != null && b.cardId != null) return a.cardId === b.cardId;
+  return a.rank === b.rank && a.suit === b.suit;
+}
 
 function columnsForWidth(px: number, currentCols: number): number {
   const margin = 20;
@@ -278,6 +285,21 @@ function HandDisplay(props: HandDisplayProps) {
     setShiftAnims([]);
   }, []);
 
+  const removeShiftAnimationsForCard = useCallback((card: CardValueSuit) => {
+    const keysToRemove = shiftAnimsRef.current
+      .filter((anim) => sameCard(anim.card, card))
+      .map((anim) => anim.key);
+    if (keysToRemove.length === 0) return;
+    keysToRemove.forEach((key) => {
+      const timeoutId = shiftTimeoutsRef.current.get(key);
+      if (timeoutId != null) {
+        window.clearTimeout(timeoutId);
+        shiftTimeoutsRef.current.delete(key);
+      }
+    });
+    setShiftAnims((prev) => prev.filter((anim) => !keysToRemove.includes(anim.key)));
+  }, []);
+
   const clearDropAnimation = useCallback((key?: number) => {
     if (dropStartRafRef.current != null) {
       cancelAnimationFrame(dropStartRafRef.current);
@@ -370,6 +392,7 @@ function HandDisplay(props: HandDisplayProps) {
     setDraggingCardId(card.cardId ?? index);
     setHoleSlots(nextHoleSlots);
     setActiveDrag(nextActiveDrag);
+    pendingDragRef.current = null;
   }, []);
 
   const updateActiveDragFromPointer = useCallback((pointerX: number, pointerY: number) => {
@@ -441,6 +464,7 @@ function HandDisplay(props: HandDisplayProps) {
 
     if (movingCard && fromRect) {
       const animKey = ++shiftAnimKeyRef.current;
+      removeShiftAnimationsForCard(movingCard);
       const measureRaf = requestAnimationFrame(() => {
         const latestGroup = groupRef.current;
         const toEl = itemRefs.current[oldDefaultSlot];
@@ -475,7 +499,7 @@ function HandDisplay(props: HandDisplayProps) {
     }
 
     requestAnimationFrame(measureSlotCenters);
-  }, [measureSlotCenters, nearestSlotIndex, removeShiftAnimation]);
+  }, [measureSlotCenters, nearestSlotIndex, removeShiftAnimation, removeShiftAnimationsForCard]);
 
   const commitDropAnimation = useCallback((dropKey: number) => {
     const currentDrop = dropAnimRef.current;
@@ -514,6 +538,7 @@ function HandDisplay(props: HandDisplayProps) {
       };
 
       activeDragRef.current = null;
+      dropAnimRef.current = nextDrop;
       setActiveDrag(null);
       setDropAnim(nextDrop);
       dropStartRafRef.current = requestAnimationFrame(() => {
@@ -529,9 +554,14 @@ function HandDisplay(props: HandDisplayProps) {
   }, [clearDragSession, clearDropAnimation, commitDropAnimation]);
 
   useEffect(() => {
+    const interactionLocked = () =>
+      !!dropAnimRef.current ||
+      pendingDropAfterShiftsRef.current ||
+      shiftAnimsRef.current.length > 0;
+
     const onPointerMove = (event: PointerEvent) => {
       const pending = pendingDragRef.current;
-      if (pending && event.pointerId === pending.pointerId && !activeDragRef.current) {
+      if (pending && event.pointerId === pending.pointerId && !activeDragRef.current && !interactionLocked()) {
         const dx = event.clientX - pending.startX;
         const dy = event.clientY - pending.startY;
         if ((dx * dx + dy * dy) < (DRAG_ACTIVATION_THRESHOLD_PX * DRAG_ACTIVATION_THRESHOLD_PX)) return;
@@ -639,7 +669,11 @@ function HandDisplay(props: HandDisplayProps) {
           </div>
         )}
 
-        <div ref={groupRef} className='hand-reorder-group' style={groupStyle}>
+        <div
+          ref={groupRef}
+          className='hand-reorder-group'
+          style={{ ...groupStyle, pointerEvents: dropAnim ? 'none' : 'auto' }}
+        >
           {visibleSlots.map((slotCard, idx) => {
             const slotCardId = slotCard?.cardId ?? idx;
             const isDragging = draggingCardId === slotCardId;
@@ -664,7 +698,9 @@ function HandDisplay(props: HandDisplayProps) {
                   if (!dragEnabled) return;
                   if (slotCard == null) return;
                   if (activeDragRef.current) return;
+                  if (shiftAnimsRef.current.length > 0) return;
                   if (dropAnimRef.current) return;
+                  if (pendingDropAfterShiftsRef.current) return;
                   lockBodyTextSelection();
                   pendingDragRef.current = {
                     pointerId: event.pointerId,
@@ -705,7 +741,7 @@ function HandDisplay(props: HandDisplayProps) {
                 transform: anim.started
                   ? `translate(${anim.toLeft - anim.fromLeft}px, ${anim.toTop - anim.fromTop}px)`
                   : 'translate(0px, 0px)',
-                transition: `transform ${SHIFT_ANIM_DURATION_MS}ms ${ANIM_EASING}`,
+                transition: `transform ${SHIFT_ANIM_DURATION_MS}ms ${SHIFT_ANIM_EASING}`,
               }}
               onTransitionEnd={() => {
                 removeShiftAnimation(anim.key);
@@ -727,7 +763,7 @@ function HandDisplay(props: HandDisplayProps) {
                 transform: dropAnim.started
                   ? `translate(${dropAnim.toLeft - dropAnim.fromLeft}px, ${dropAnim.toTop - dropAnim.fromTop}px)`
                   : 'translate(0px, 0px)',
-                transition: `transform ${DROP_ANIM_DURATION_MS}ms ${ANIM_EASING}`,
+                transition: `transform ${DROP_ANIM_DURATION_MS}ms ${DROP_ANIM_EASING}`,
                 touchAction: 'none',
               }}
               onTransitionEnd={() => {
@@ -737,7 +773,7 @@ function HandDisplay(props: HandDisplayProps) {
               <div
                 style={{
                   width: '100%',
-                  transform: 'scale(1.05)',
+                  transform: 'scale(1)',
                   transition: 'none',
                 }}
               >
