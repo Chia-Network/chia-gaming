@@ -133,7 +133,6 @@ function HandDisplay(props: HandDisplayProps) {
   const dropStartRafRef = useRef<number | null>(null);
   const dropTimeoutRef = useRef<number | null>(null);
   const dropAnimRef = useRef<DropAnim | null>(null);
-  const pendingDropAfterShiftsRef = useRef(false);
   const isDraggingRef = useRef(false);
 
   const lockBodyTextSelection = useCallback(() => {
@@ -322,7 +321,6 @@ function HandDisplay(props: HandDisplayProps) {
   const clearDragSession = useCallback(() => {
     clearShiftAnimations();
     clearDropAnimation();
-    pendingDropAfterShiftsRef.current = false;
     pendingDragRef.current = null;
     activeDragRef.current = null;
     homeSlotRef.current = -1;
@@ -556,7 +554,6 @@ function HandDisplay(props: HandDisplayProps) {
   useEffect(() => {
     const interactionLocked = () =>
       !!dropAnimRef.current ||
-      pendingDropAfterShiftsRef.current ||
       shiftAnimsRef.current.length > 0;
 
     const onPointerMove = (event: PointerEvent) => {
@@ -580,10 +577,7 @@ function HandDisplay(props: HandDisplayProps) {
         return;
       }
       if (activeDragRef.current) {
-        if (shiftAnimsRef.current.length > 0) {
-          pendingDropAfterShiftsRef.current = true;
-          return;
-        }
+        clearShiftAnimations();
         startDropAnimation();
       }
     };
@@ -595,15 +589,7 @@ function HandDisplay(props: HandDisplayProps) {
       window.removeEventListener('pointerup', onPointerUp);
       unlockBodyTextSelection();
     };
-  }, [beginDragSession, startDropAnimation, updateActiveDragFromPointer, unlockBodyTextSelection]);
-
-  useEffect(() => {
-    if (!pendingDropAfterShiftsRef.current) return;
-    if (shiftAnims.length > 0) return;
-    if (!activeDragRef.current) return;
-    pendingDropAfterShiftsRef.current = false;
-    startDropAnimation();
-  }, [shiftAnims, startDropAnimation]);
+  }, [beginDragSession, clearShiftAnimations, startDropAnimation, updateActiveDragFromPointer, unlockBodyTextSelection]);
 
   const isWinner = winner === winnerType;
 
@@ -701,7 +687,6 @@ function HandDisplay(props: HandDisplayProps) {
                   if (activeDragRef.current) return;
                   if (shiftAnimsRef.current.length > 0) return;
                   if (dropAnimRef.current) return;
-                  if (pendingDropAfterShiftsRef.current) return;
                   lockBodyTextSelection();
                   pendingDragRef.current = {
                     pointerId: event.pointerId,
