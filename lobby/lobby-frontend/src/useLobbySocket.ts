@@ -40,6 +40,7 @@ export function useLobbySocket(
   alias?: string,
 ) {
   const [players, setPlayers] = useState<Player[]>([]);
+  const [lobbyUpdateReceived, setLobbyUpdateReceived] = useState(false);
   const [pendingChallenge, setPendingChallenge] = useState<ChallengeReceived | null>(null);
   const [challengeSent, setChallengeSent] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
@@ -109,6 +110,7 @@ export function useLobbySocket(
         switch (msg.type) {
           case 'lobby_update':
             setPlayers(msg.players ?? []);
+            setLobbyUpdateReceived(true);
             break;
           case 'challenge_received':
             setPendingChallenge(msg);
@@ -210,6 +212,7 @@ export function useLobbySocket(
 
   return {
     players,
+    lobbyUpdateReceived,
     pendingChallenge,
     challengeSent,
     isConnected,

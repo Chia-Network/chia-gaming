@@ -28,6 +28,7 @@ pub enum ChannelState {
     Handshaking,
     WaitingForHeightToOffer,
     WaitingForHeightToAccept,
+    WaitingForOffer,
     OfferSent,
     TransactionPending,
     Active,

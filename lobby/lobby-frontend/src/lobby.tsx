@@ -30,6 +30,7 @@ const LobbyScreen = () => {
 
   const {
     players,
+    lobbyUpdateReceived,
     pendingChallenge,
     challengeSent,
     isConnected,
@@ -253,10 +254,21 @@ const LobbyScreen = () => {
             className="mx-auto mb-2"
             style={{ fontSize: 48, color: 'var(--color-canvas-solid)' }}
           />
-          <h6 className="text-lg font-medium text-canvas-text-contrast">
-            No Other Players Connected
-          </h6>
-          <p className="text-sm text-canvas-text">Waiting for others to join...</p>
+          {lobbyUpdateReceived ? (
+            <>
+              <h6 className="text-lg font-medium text-canvas-text-contrast">
+                No Other Players Connected
+              </h6>
+              <p className="text-sm text-canvas-text">Waiting for others to join...</p>
+            </>
+          ) : (
+            <>
+              <h6 className="text-lg font-medium text-canvas-text-contrast">
+                Waiting for Lobby
+              </h6>
+              <p className="text-sm text-canvas-text">No lobby update received yet...</p>
+            </>
+          )}
         </div>
       ) : (
         <div className="space-y-2">

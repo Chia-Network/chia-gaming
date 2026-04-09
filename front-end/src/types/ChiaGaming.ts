@@ -126,7 +126,7 @@ export interface GameStatusPayload {
 
 export type ChannelState =
   | 'Handshaking' | 'WaitingForHeightToOffer' | 'WaitingForHeightToAccept'
-  | 'OfferSent' | 'TransactionPending'
+  | 'WaitingForOffer' | 'OfferSent' | 'TransactionPending'
   | 'Active' | 'ShuttingDown' | 'ShutdownTransactionPending'
   | 'GoingOnChain' | 'Unrolling'
   | 'ResolvedClean' | 'ResolvedUnrolled' | 'ResolvedStale'

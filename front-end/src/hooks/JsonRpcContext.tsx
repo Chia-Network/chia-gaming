@@ -153,19 +153,6 @@ async function request<T, D extends object = object>(
   const result = raw as Record<string, unknown> | undefined;
   if (result?.error) {
     const errorText = toDebugJson(result.error);
-    if (method === ChiaMethod.CreateOfferForIds) {
-      console.error('[WC RPC protocol error] chia_createOfferForIds', {
-        params,
-        error: result.error,
-        raw,
-      });
-      console.error('[WC RPC protocol error] chia_createOfferForIds params(json)=', toDebugJson(params));
-      console.error('[WC RPC protocol error] chia_createOfferForIds error(json)=', errorText);
-      console.error('[WC RPC protocol error] chia_createOfferForIds raw(json)=', toDebugJson(raw));
-      debugLog(
-        `[WC RPC protocol error] ${method}: error=${errorText} params=${toDebugJson(params)}`,
-      );
-    }
     throw new Error(errorText);
   }
 

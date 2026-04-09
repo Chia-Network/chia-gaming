@@ -1953,17 +1953,18 @@ fn run_game_container_with_action_list_with_success_predicate(
             ChannelState::Handshaking
             | ChannelState::WaitingForHeightToOffer
             | ChannelState::WaitingForHeightToAccept => 0,
-            ChannelState::OfferSent => 1,
-            ChannelState::TransactionPending => 2,
-            ChannelState::Active => 3,
-            ChannelState::ShuttingDown => 4,
-            ChannelState::ShutdownTransactionPending => 5,
-            ChannelState::GoingOnChain => 4,
-            ChannelState::Unrolling => 5,
+            ChannelState::WaitingForOffer => 1,
+            ChannelState::OfferSent => 2,
+            ChannelState::TransactionPending => 3,
+            ChannelState::Active => 4,
+            ChannelState::ShuttingDown => 5,
+            ChannelState::ShutdownTransactionPending => 6,
+            ChannelState::GoingOnChain => 5,
+            ChannelState::Unrolling => 6,
             ChannelState::ResolvedClean
             | ChannelState::ResolvedUnrolled
             | ChannelState::ResolvedStale
-            | ChannelState::Failed => 6,
+            | ChannelState::Failed => 7,
         }
     }
     for (i, lui) in local_uis.iter().enumerate() {
@@ -1980,7 +1981,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                             lui.notifications,
                         );
                     }
-                    if ord == prev_ord && ord != 2 && ord != 4 && ord != 5 {
+                    if ord == prev_ord && ord != 3 && ord != 5 && ord != 6 {
                         panic!(
                             "player {i}: non-terminal same-ordinal repeat: {prev:?}({prev_ord}) -> {state:?}({ord})\n\
                              All notifications: {:?}",
