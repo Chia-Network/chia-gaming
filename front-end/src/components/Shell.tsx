@@ -800,7 +800,8 @@ const Shell = () => {
           <img
             src='/images/chia_logo.png'
             alt='Chia Logo'
-            className='max-w-12 h-auto rounded-md'
+            className='max-w-12 h-auto'
+            style={{ filter: isDark ? 'brightness(2.1) contrast(1.1)' : 'none' }}
           />
           <button
             onClick={() => setIsDark(d => !d)}
