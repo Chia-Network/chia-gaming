@@ -35,9 +35,13 @@ function Card(props: CardRenderProps) {
       {showDragOutline && !hasHalo && (
         <div className='absolute -inset-2 rounded-xl z-0 bg-canvas-bg' />
       )}
-      {hasHalo && (
-        <div className='absolute -inset-2 rounded-xl z-0' style={{ backgroundColor: '#9E8A8E' }} />
-      )}
+      <div
+        className='absolute -inset-2 rounded-xl z-0 transition-opacity duration-300 ease-in-out'
+        style={{
+          backgroundColor: '#9E8A8E',
+          opacity: hasHalo ? 1 : 0,
+        }}
+      />
       <div
         id={id}
         data-card-id={cardId}
