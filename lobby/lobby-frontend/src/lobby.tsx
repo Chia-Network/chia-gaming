@@ -39,6 +39,7 @@ const LobbyScreen = () => {
     sendChallenge,
     acceptChallenge,
     declineChallenge,
+    cancelChallenge,
     setLobbyAlias,
   } = useLobbySocket(
     window.location.origin,
@@ -230,8 +231,11 @@ const LobbyScreen = () => {
       )}
 
       {challengeSent && (
-        <div className="mb-4 p-3 rounded-lg bg-primary-bg border border-primary-border text-primary-text text-sm">
-          Waiting for opponent to respond to your challenge...
+        <div className="mb-4 p-3 rounded-lg bg-primary-bg border border-primary-border text-primary-text text-sm flex items-center justify-between">
+          <span>Waiting for opponent to respond to your challenge...</span>
+          <Button variant="outline" color="neutral" size="sm" onClick={cancelChallenge}>
+            Cancel
+          </Button>
         </div>
       )}
       {reconnectBlocked ? (

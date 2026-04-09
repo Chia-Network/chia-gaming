@@ -92,7 +92,7 @@ async function restoreSession(
 export function getBlobSingleton(
   blockchain: BlockchainPoller,
   peerConn: PeerConnectionResult,
-  registerMessageHandler: (handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, pingHandler: () => void) => void,
+  registerMessageHandler: (handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void,
   uniqueId: string,
   amount: bigint,
   iStarted: boolean,
@@ -126,10 +126,7 @@ export function getBlobSingleton(
   blobSingleton.pairingToken = pairingToken ?? '';
   blobSingleton.perGameAmount = perGameAmount ?? 0n;
   if (getFee) blobSingleton.getFee = getFee;
-  blobSingleton.setPeerPingAndClose(
-    () => peerConn.sendPing(),
-    () => peerConn.close(),
-  );
+  blobSingleton.setPeerKeepalive(() => peerConn.sendKeepalive());
 
   registerMessageHandler(
     (msgno: number, msg: string) => {
@@ -139,7 +136,7 @@ export function getBlobSingleton(
       blobSingleton?.receiveAck(ack);
     },
     () => {
-      blobSingleton?.receivePing();
+      blobSingleton?.receiveKeepalive();
     },
   );
 

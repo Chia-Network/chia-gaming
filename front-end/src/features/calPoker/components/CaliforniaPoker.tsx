@@ -9,6 +9,7 @@ import {
 // Constants
 import {
   GAME_STATES,
+  PRE_SWAP_REVEAL_DURATION,
   SWAP_ANIMATION_DURATION,
 } from './constants/constants';
 
@@ -84,6 +85,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     if (restoredFromSnapshot.current) return;
     const inAnimation =
       gameState === GAME_STATES.AWAITING_SWAP ||
+      gameState === GAME_STATES.REVEALING_SWAP ||
       gameState === GAME_STATES.SWAPPING ||
       gameState === GAME_STATES.FINAL;
     if (!inAnimation) {
@@ -118,6 +120,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const [movingCards, setMovingCards] = useState<MovingCardData[]>([]);
   const [playerHaloCardIds, setPlayerHaloCardIds] = useState<number[]>([]);
   const [opponentHaloCardIds, setOpponentHaloCardIds] = useState<number[]>([]);
+  const [playerSwapHiddenIds, setPlayerSwapHiddenIds] = useState<number[]>([]);
+  const [opponentSwapHiddenIds, setOpponentSwapHiddenIds] = useState<number[]>([]);
 
   const dealCards = () => {
     setGameState(GAME_STATES.SELECTING);
@@ -214,7 +218,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
 
   const opponentLabel = opponentName ?? 'Opponent';
   const myLabel = myName ?? 'You';
-  const showFinalHeader = !!winner && !showSwapAnimation;
+  const showFinalHeader = gameState === GAME_STATES.FINAL && !!winner && !showSwapAnimation;
   const opponentResultVerb = winner === 'tie' ? 'ties' : winner === 'ai' ? 'wins' : 'loses';
   const playerResultVerb = winner === 'tie' ? 'ties' : winner === 'player' ? 'wins' : 'loses';
 
@@ -402,7 +406,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const swapCards = (rememberedOutcome: CalpokerOutcome) => {
     const liveWinner = translateTopline(rememberedOutcome.my_win_outcome);
     setWinner(liveWinner);
-    setGameState(GAME_STATES.SWAPPING);
+    setGameState(GAME_STATES.REVEALING_SWAP);
 
     const playerOriginal = rememberedOutcome.my_cards;
     const opponentOriginal = rememberedOutcome.their_cards;
@@ -428,21 +432,55 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
 
     setPlayerHaloCardIds(playerDiscardIds);
     setOpponentHaloCardIds(opponentDiscardIds);
+    setPlayerSwapHiddenIds(playerDiscardIds);
+    setOpponentSwapHiddenIds(opponentDiscardIds);
+
+    const myUsedCards = rememberedOutcome.my_used_cards;
+    const oppUsedCards = rememberedOutcome.their_used_cards;
+    const myHandValue = rememberedOutcome.my_hand_value;
+    const oppHandValue = rememberedOutcome.their_hand_value;
+
+    const playerBestCards: CardValueSuit[] = myUsedCards.map(cvsFromCard);
+    const opponentBestCards: CardValueSuit[] = oppUsedCards.map(cvsFromCard);
+    const pBest: BestHandType = {
+      cards: playerBestCards,
+      rank: { name: '', score: 0, tiebreakers: [] },
+    };
+    const oBest: BestHandType = {
+      cards: opponentBestCards,
+      rank: { name: '', score: 0, tiebreakers: [] },
+    };
+
+    saveSnapshot(
+      GAME_STATES.REVEALING_SWAP,
+      rememberedCardsRef.current[0],
+      rememberedCardsRef.current[1],
+      cardSelections,
+      liveWinner,
+      undefined,
+      undefined,
+      playerDiscardIds,
+      opponentDiscardIds,
+      playerDisplayText,
+      opponentDisplayText,
+    );
 
     const playerSwapCardIds = playerDiscardIds;
     const aiSwapCardIds = opponentDiscardIds;
 
-    const remembered = rememberedCardsRef.current;
-    const movingCardData = calculateMovingCards(
-      playerSwapCardIds,
-      aiSwapCardIds,
-      remembered[0],
-      remembered[1],
-    );
-    setMovingCards(movingCardData);
-    setShowSwapAnimation(true);
-
     setTimeout(() => {
+      setGameState(GAME_STATES.SWAPPING);
+      const remembered = rememberedCardsRef.current;
+      const movingCardData = calculateMovingCards(
+        playerSwapCardIds,
+        aiSwapCardIds,
+        remembered[0],
+        remembered[1],
+      );
+      setMovingCards(movingCardData);
+      setShowSwapAnimation(true);
+
+      setTimeout(() => {
       const playerDiscardToIncoming = new Map<number, number>();
       for (let i = 0; i < playerSwapCardIds.length; i++) {
         playerDiscardToIncoming.set(playerSwapCardIds[i], aiSwapCardIds[i]);
@@ -468,23 +506,10 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
 
       setPlayerHaloCardIds(aiSwapCardIds);
       setOpponentHaloCardIds(playerSwapCardIds);
-
-      const myUsedCards = rememberedOutcome.my_used_cards;
-      const oppUsedCards = rememberedOutcome.their_used_cards;
-      const myHandValue = rememberedOutcome.my_hand_value;
-      const oppHandValue = rememberedOutcome.their_hand_value;
-
-      const playerBestCards: CardValueSuit[] = myUsedCards.map(cvsFromCard);
-      const opponentBestCards: CardValueSuit[] = oppUsedCards.map(cvsFromCard);
-
-      setPlayerBestHand({
-        cards: playerBestCards,
-        rank: { name: '', score: 0, tiebreakers: [] },
-      });
-      setAiBestHand({
-        cards: opponentBestCards,
-        rank: { name: '', score: 0, tiebreakers: [] },
-      });
+      setPlayerSwapHiddenIds([]);
+      setOpponentSwapHiddenIds([]);
+      setPlayerBestHand(pBest);
+      setAiBestHand(oBest);
 
       setMovingCards([]);
       setShowSwapAnimation(false);
@@ -493,20 +518,13 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       const oText = makeDescription(handValueToDescription(oppHandValue, oppUsedCards));
       setPlayerDisplayText(pText);
       setOpponentDisplayText(oText);
-      const pBest: BestHandType = {
-        cards: playerBestCards,
-        rank: { name: '', score: 0, tiebreakers: [] },
-      };
-      const oBest: BestHandType = {
-        cards: opponentBestCards,
-        rank: { name: '', score: 0, tiebreakers: [] },
-      };
       saveSnapshot(
         GAME_STATES.FINAL, newPlayer, newOpponent, cardSelections,
         liveWinner, pBest, oBest, aiSwapCardIds, playerSwapCardIds, pText, oText,
       );
       onDisplayComplete();
-    }, SWAP_ANIMATION_DURATION);
+      }, SWAP_ANIMATION_DURATION);
+    }, PRE_SWAP_REVEAL_DURATION);
   };
 
   const saveSnapshot = useCallback((
@@ -577,6 +595,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       moveNumber === 0 &&
       !showSwapAnimation &&
       gameState !== GAME_STATES.AWAITING_SWAP &&
+      gameState !== GAME_STATES.REVEALING_SWAP &&
       gameState !== GAME_STATES.SWAPPING &&
       gameState !== GAME_STATES.FINAL
     ) {
@@ -592,70 +611,78 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       setOpponentDisplayText('');
       setPlayerHaloCardIds([]);
       setOpponentHaloCardIds([]);
+      setPlayerSwapHiddenIds([]);
+      setOpponentSwapHiddenIds([]);
     }
   }, [moveNumber, showSwapAnimation, gameState]);
   return (
     <div ref={wrapperRef} className='relative flex flex-col w-full text-canvas-text'>
-      {gameState !== GAME_STATES.INITIAL ? (
+      <div className='flex flex-col gap-2'>
+        {/* Hands region */}
         <div className='flex flex-col gap-2'>
-          {/* Hands region */}
-          <div className='flex flex-col gap-2'>
-            <div className='flex flex-col py-0 w-full rounded-md'>
-              <div className='w-full py-1 text-base font-semibold text-canvas-text text-center'>
+          <div className='flex flex-col py-0 w-full rounded-md'>
+            <div className='w-full h-8 flex items-center justify-center text-base font-semibold text-canvas-text'>
+              <span className='truncate max-w-full'>
                 {showFinalHeader && opponentDisplayText
                   ? `${opponentLabel} ${opponentResultVerb} (${opponentDisplayText})`
                   : `${opponentLabel}'s Hand`}
-              </div>
-              <div className='flex items-center justify-center p-2'>
-                <HandDisplay
-                  title=''
-                  cards={
-                    opponentCards.length ? opponentCards : rememberedCardsRef.current[1]
-                  }
-                  playerNumber={playerNumber == 1 ? 2 : 1}
-                  area='ai'
-                  winner={winner}
-                  winnerType='ai'
-                  bestHand={aiBestHand}
-                  showSwapAnimation={showSwapAnimation}
-                  gameState={gameState}
-                  haloCardIds={opponentHalos}
-                  formatHandDescription={formatHandDescription}
-                  selectedCards={[]}
-                />
-              </div>
+              </span>
             </div>
-
-            <div className='flex flex-col py-0 w-full rounded-md'>
-              <div className='w-full py-1 text-base font-semibold text-canvas-text text-center'>
-                {showFinalHeader && playerDisplayText
-                  ? `${myLabel} ${playerResultVerb} (${playerDisplayText})`
-                  : `${myLabel}'s Hand`}
-              </div>
-              <div className='flex items-center justify-center p-2'>
-                <HandDisplay
-                  title=''
-                  cards={
-                    playerCards.length ? playerCards : rememberedCardsRef.current[0]
-                  }
-                  playerNumber={playerNumber}
-                  area='player'
-                  winner={winner}
-                  winnerType='player'
-                  bestHand={playerBestHand}
-                  onCardClick={toggleCardSelection}
-                  selectedCards={cardSelections}
-                  showSwapAnimation={showSwapAnimation}
-                  gameState={gameState}
-                  haloCardIds={playerHalos}
-                  onReorder={gameState === GAME_STATES.SELECTING ? handleReorder : undefined}
-                  formatHandDescription={formatHandDescription}
-                />
-              </div>
+            <div className='flex items-center justify-center p-2'>
+              <HandDisplay
+                title=''
+                cards={
+                  opponentCards.length ? opponentCards : rememberedCardsRef.current[1]
+                }
+                playerNumber={playerNumber == 1 ? 2 : 1}
+                area='ai'
+                winner={winner}
+                winnerType='ai'
+                bestHand={aiBestHand}
+                showSwapAnimation={showSwapAnimation}
+                gameState={gameState}
+                haloCardIds={opponentHalos}
+                swapHiddenCardIds={opponentSwapHiddenIds}
+                formatHandDescription={formatHandDescription}
+                selectedCards={[]}
+              />
             </div>
           </div>
 
-          {/* Action bar at the bottom, natural height */}
+          <div className='flex flex-col py-0 w-full rounded-md'>
+            <div className='w-full h-8 flex items-center justify-center text-base font-semibold text-canvas-text'>
+              <span className='truncate max-w-full'>
+                {showFinalHeader && playerDisplayText
+                  ? `${myLabel} ${playerResultVerb} (${playerDisplayText})`
+                  : `${myLabel}'s Hand`}
+              </span>
+            </div>
+            <div className='flex items-center justify-center p-2'>
+              <HandDisplay
+                title=''
+                cards={
+                  playerCards.length ? playerCards : rememberedCardsRef.current[0]
+                }
+                playerNumber={playerNumber}
+                area='player'
+                winner={winner}
+                winnerType='player'
+                bestHand={playerBestHand}
+                onCardClick={toggleCardSelection}
+                selectedCards={cardSelections}
+                showSwapAnimation={showSwapAnimation}
+                gameState={gameState}
+                haloCardIds={playerHalos}
+                swapHiddenCardIds={playerSwapHiddenIds}
+                onReorder={gameState === GAME_STATES.SELECTING ? handleReorder : undefined}
+                formatHandDescription={formatHandDescription}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Action bar — fixed height, always present */}
+        <div className='flex-shrink-0 w-full h-12 relative flex items-center justify-center'>
           {gameState === GAME_STATES.SELECTING && moveNumber === 1 && (
             <GameBottomBar
               buttonText={buttonText}
@@ -664,14 +691,12 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
             />
           )}
           {gameState === GAME_STATES.AWAITING_SWAP && (
-            <div className='flex-shrink-0 flex p-2 items-center justify-center'>
-              <div className='rounded-md bg-canvas-bg px-4 py-2 text-sm font-medium text-canvas-text shadow-md'>
-                Waiting for opponent
-              </div>
+            <div className='rounded-md bg-canvas-bg px-4 py-2 text-sm font-medium text-canvas-text shadow-md'>
+              Waiting for opponent
             </div>
           )}
           {showBetweenHandActions && gameState === GAME_STATES.FINAL && (
-            <div className='flex-shrink-0 relative flex p-2 items-center justify-center'>
+            <>
               <Button
                 variant='destructive'
                 size='sm'
@@ -689,14 +714,10 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
               >
                 {newHandWaiting ? 'Waiting' : 'New Hand'}
               </Button>
-            </div>
+            </>
           )}
         </div>
-      ) : (
-        <div className='flex flex-1 items-center justify-center'>
-          <span className='text-canvas-text'>Waiting…</span>
-        </div>
-      )}
+      </div>
 
       {/* Animations */}
       {movingCards.map((cardData) => (

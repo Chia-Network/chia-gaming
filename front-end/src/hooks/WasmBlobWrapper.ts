@@ -40,8 +40,7 @@ function combine_reports(old_report: WatchReport, new_report: WatchReport) {
 }
 
 const SAVE_DEBOUNCE_MS = 500;
-const PING_INTERVAL_MS = 15_000;
-const PEER_TIMEOUT_MS = 60_000;
+const KEEPALIVE_INTERVAL_MS = 15_000;
 
 function toSafeJson(value: unknown): string {
   try {
@@ -97,11 +96,10 @@ export class WasmBlobWrapper {
   wc: WasmConnection | undefined;
   sendMessage: (msgno: number, msg: string) => void;
   sendAck: (ackMsgno: number) => void;
-  private peerSendPing: (() => void) | null = null;
-  private peerClose: (() => void) | null = null;
+  private peerSendKeepalive: (() => void) | null = null;
   private transactionPublishNerfed = false;
   private lastPeerMessageTime: number = Date.now();
-  private pingTimer: ReturnType<typeof setInterval> | null = null;
+  private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
   messageNumber: number;
   remoteNumber: number;
   cradle: ChiaGame | undefined;
@@ -182,9 +180,8 @@ export class WasmBlobWrapper {
 
   setReloading() { this.reloading = true; }
 
-  setPeerPingAndClose(sendPing: () => void, close: () => void) {
-    this.peerSendPing = sendPing;
-    this.peerClose = close;
+  setPeerKeepalive(sendKeepalive: () => void) {
+    this.peerSendKeepalive = sendKeepalive;
   }
 
   cleanup() {
@@ -195,37 +192,28 @@ export class WasmBlobWrapper {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
     }
-    this.stopPingTimer();
+    this.stopKeepaliveTimer();
   }
 
   notePeerActivity() {
     this.lastPeerMessageTime = Date.now();
   }
 
-  receivePing() {
+  receiveKeepalive() {
     this.notePeerActivity();
   }
 
-  startPingTimer() {
-    this.stopPingTimer();
-    this.lastPeerMessageTime = Date.now();
-    this.pingTimer = setInterval(() => {
-      this.peerSendPing?.();
-      if (
-        Date.now() - this.lastPeerMessageTime > PEER_TIMEOUT_MS &&
-        this.channelReady && this.lastChannelStatus?.state !== 'ShutdownTransactionPending'
-      ) {
-        debugLog('[wasm] peer liveness timeout, going on-chain');
-        this.goOnChain();
-        this.stopPingTimer();
-      }
-    }, PING_INTERVAL_MS);
+  startKeepaliveTimer() {
+    this.stopKeepaliveTimer();
+    this.keepaliveTimer = setInterval(() => {
+      this.peerSendKeepalive?.();
+    }, KEEPALIVE_INTERVAL_MS);
   }
 
-  private stopPingTimer() {
-    if (this.pingTimer) {
-      clearInterval(this.pingTimer);
-      this.pingTimer = null;
+  private stopKeepaliveTimer() {
+    if (this.keepaliveTimer) {
+      clearInterval(this.keepaliveTimer);
+      this.keepaliveTimer = null;
     }
   }
 
@@ -254,7 +242,7 @@ export class WasmBlobWrapper {
       this.resendUnacked();
       this.resubmitPendingTransactions();
       if (this.channelReady) {
-        this.startPingTimer();
+        this.startKeepaliveTimer();
       }
     }
   }
@@ -485,7 +473,7 @@ export class WasmBlobWrapper {
           if (!this.channelReady && cs.state === 'Active') {
             debugLog('[wasm] channel creation transaction confirmed on-chain');
             this.channelReady = true;
-            this.startPingTimer();
+            this.startKeepaliveTimer();
           }
         }
       }
@@ -805,25 +793,8 @@ export class WasmBlobWrapper {
     }
   }
 
-  cutPeerConnection(): void {
-    debugLog('[wasm] cutting peer connection');
-    try {
-      this.peerClose?.();
-    } catch (e) {
-      console.error('[wasm] cutPeerConnection failed:', e);
-      debugLog(`[wasm] cutPeerConnection failed: ${String(e)}`);
-    }
-  }
-
-  setTransactionPublishNerfed(enabled: boolean): void {
-    this.transactionPublishNerfed = enabled;
-    debugLog(`[wasm] transaction publish nerf ${enabled ? 'enabled' : 'disabled'}`);
-    if (!enabled) {
-      this.resubmitPendingTransactions();
-    }
-  }
-
-  isTransactionPublishNerfed(): boolean {
-    return this.transactionPublishNerfed;
+  nerf(): void {
+    this.transactionPublishNerfed = true;
+    debugLog('[wasm] transaction publish nerfed');
   }
 }

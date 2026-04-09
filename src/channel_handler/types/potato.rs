@@ -20,11 +20,13 @@ pub struct PotatoAcceptTimeoutCachedData {
     pub live_game: LiveGame,
     pub at_stake_amount: Amount,
     pub our_share_amount: Amount,
+    #[serde(default)]
+    pub game_finished: bool,
 }
 
 impl std::fmt::Debug for PotatoAcceptTimeoutCachedData {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(formatter, "PotatoAcceptTimeoutCachedData {{ game_id: {:?}, puzzle_hash: {:?}, live_game: .., at_stake_amount: {:?}, our_share_amount: {:?} }}", self.game_id, self.puzzle_hash, self.at_stake_amount, self.our_share_amount)
+        write!(formatter, "PotatoAcceptTimeoutCachedData {{ game_id: {:?}, puzzle_hash: {:?}, live_game: .., at_stake_amount: {:?}, our_share_amount: {:?}, game_finished: {} }}", self.game_id, self.puzzle_hash, self.at_stake_amount, self.our_share_amount, self.game_finished)
     }
 }
 

@@ -33,4 +33,9 @@ pub struct OnChainGameState {
     /// The game-specific on-chain timeout (ASSERT_HEIGHT_RELATIVE) from the referee puzzle.
     #[serde(default = "default_game_timeout")]
     pub game_timeout: Timeout,
+    /// True when the referee's game handler is None (no further moves possible).
+    /// Used to distinguish "real timeout" from "timeout on a terminal game state"
+    /// so the UX can show "game ended cleanly" instead of a misleading timeout message.
+    #[serde(default)]
+    pub game_finished: bool,
 }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { HandDisplayProps } from '../../../../types/californiaPoker';
 import { CardValueSuit } from '../../../../types/californiaPoker/CardValueSuit';
-import { GAME_STATES } from '../constants/constants';
+import { GAME_STATES, HALO_FADE_DURATION_MS } from '../constants/constants';
 import Card from './Card';
 
 type SlotCenter = { x: number; y: number } | null;
@@ -101,6 +101,7 @@ function HandDisplay(props: HandDisplayProps) {
     showSwapAnimation,
     gameState,
     haloCardIds,
+    swapHiddenCardIds = [],
     onReorder,
     formatHandDescription,
   } = props;
@@ -600,14 +601,16 @@ function HandDisplay(props: HandDisplayProps) {
 
   const renderCard = (card: CardValueSuit, idx: number, showDragOutline = false) => {
     const cardId = card.cardId ?? idx;
+    const isPostRevealPhase = gameState === GAME_STATES.FINAL && !!bestHand?.cards?.length;
     const isInBestHand =
-      gameState === GAME_STATES.FINAL &&
+      isPostRevealPhase &&
       bestHand?.cards?.some(
         (bestCard) =>
           bestCard.cardId != null &&
           bestCard.cardId === card.cardId,
       );
     const hasHalo = haloCardIds.includes(card.cardId ?? -1);
+    const hideForSwap = swapHiddenCardIds.includes(card.cardId ?? -1);
 
     return (
       <Card
@@ -618,8 +621,9 @@ function HandDisplay(props: HandDisplayProps) {
         isSelected={selectedCards.includes(cardId)}
         onClick={() => handleCardClick(cardId)}
         isBeingSwapped={showSwapAnimation}
+        hideForSwap={hideForSwap}
         isInBestHand={isInBestHand}
-        isFinal={gameState === GAME_STATES.FINAL}
+        isFinal={isPostRevealPhase}
         hasHalo={hasHalo}
         showDragOutline={showDragOutline && !hasHalo}
         area={area}
@@ -627,15 +631,25 @@ function HandDisplay(props: HandDisplayProps) {
     );
   };
 
+  const EXPECTED_HAND_SIZE = 8;
   const dragEnabled = !!onReorder;
-  const rows = Math.ceil(cards.length / cols);
+  const effectiveCount = cards.length || EXPECTED_HAND_SIZE;
+  const rows = Math.ceil(effectiveCount / cols);
   const dragAxis: 'x' | 'y' | true = rows === 1 ? 'x' : cols === 1 ? 'y' : true;
   dragAxisRef.current = dragAxis;
   const gapPx = 8;
   const gapAdjust = cols > 1 ? `${(cols - 1) * gapPx / cols}px` : '0px';
   const itemWidth = `calc(${100 / cols}% - ${gapAdjust})`;
-  const groupStyle = { '--card-w': itemWidth, position: 'relative' } as React.CSSProperties;
-  const visibleSlots = holeSlots ?? cards;
+  const groupStyle = {
+    '--card-w': itemWidth,
+    position: 'relative',
+    opacity: cards.length > 0 ? 1 : 0,
+    transition: `opacity ${HALO_FADE_DURATION_MS}ms ease-in-out`,
+  } as React.CSSProperties;
+  const placeholderSlots: HoleSlot[] = cards.length === 0
+    ? new Array(EXPECTED_HAND_SIZE).fill(null)
+    : [];
+  const visibleSlots = holeSlots ?? (cards.length > 0 ? cards : placeholderSlots);
 
   return (
     <div

@@ -150,20 +150,31 @@ players. The lobby iframe re-`join`s on reconnect, refreshing `lastActive`.
 #### Tracker Liveness
 
 TCP closes are not always reliable (half-open connections, NAT timeouts, proxy
-buffering). Both the tracker server and clients maintain bidirectional
-application-level pings over the relay payloads.
+buffering). The tracker and clients maintain bidirectional application-level
+keepalives at two separate layers:
 
-**Events:** peer `ping` payloads travel inside relayed `message` events.
+1. **Tracker-level keepalives** — `{ type: 'keepalive' }` envelope frames sent
+   directly between the tracker server and each client, every 15 seconds in both
+   directions. These prove the WebSocket connection itself is alive.
+2. **Peer-level keepalives** — `{ keepalive: true }` relay payloads sent inside
+   `message` events, relayed through the tracker to the paired peer. These prove
+   the peer is alive end-to-end (see [Peer Liveness](#peer-liveness)).
 
 **Server side (`index.ts`):**
 
 - Maintains WebSocket clients for lobby and game channels.
-- Runs a 15-second sweep for lobby/game housekeeping.
+- Starts a 15-second keepalive interval per connection (`{ type: 'keepalive' }`).
+  The interval is cleared on `ws.close`.
+- Handles inbound `{ type: 'keepalive' }` as a no-op (the frame arriving is
+  sufficient proof of life).
 
 **Game channel client (`TrackerConnection`):**
 
 - Uses a WebSocket connection to `/ws` and re-sends `identify` on reconnect.
-- Sends periodic peer `{ "ping": true }` payloads through `message` events.
+- Starts a 15-second keepalive interval on `ws.onopen` that sends
+  `{ type: 'keepalive' }` to the tracker. Cleared on close/error/disconnect.
+- Fires `onTrackerActivity()` on every incoming `ws.onmessage` (any message
+  type proves the tracker is alive).
 
 **Lobby channel client (`useLobbySocket`):**
 
@@ -306,17 +317,39 @@ pruned from the log.
 
 #### Peer Liveness
 
-Both peers independently send periodic `{ "ping": true }` messages through the
-tracker relay (same `message` channel as data and acks). Pings are
-fire-and-forget — no pong is needed. Receiving any peer traffic (data, ack, or
-ping) counts as proof of life.
+Both peers independently send periodic `{ keepalive: true }` relay payloads
+through the tracker (same `message` channel as data and acks). Keepalives are
+fire-and-forget — no response is needed. Receiving any peer traffic (data, ack,
+or keepalive) counts as proof of life.
 
-- **Interval:** 15 seconds
-- **Timeout:** 60 seconds of silence → `goOnChain()` + `close()`
+- **Send interval:** 15 seconds (`KEEPALIVE_INTERVAL_MS`)
 
-The ping timer starts when `ChannelCreated` fires (or on restore when
+The keepalive timer starts when `ChannelCreated` fires (or on restore when
 `channelReady` is already true). `WasmBlobWrapper.notePeerActivity()` is called
-on every inbound message delivery, ack reception, and ping reception.
+on every inbound message delivery, ack reception, and keepalive reception.
+
+Peer liveness is **passive** — there is no automatic `goOnChain()` on timeout.
+Instead, `Shell.tsx` derives two liveness indicators using a 5-second polling
+interval and passes them to `GameSession` for display.
+
+**Tracker indicator** (`TrackerLiveness`) combines WebSocket connectivity with
+keepalive freshness into four states:
+
+| State | Meaning |
+|-------|---------|
+| Connected | WebSocket is open AND tracker activity within the last 45 seconds |
+| Reconnecting | WebSocket dropped, auto-reconnect in progress |
+| Inactive | WebSocket appears open but no tracker activity for 45+ seconds |
+| Disconnected | Permanently closed (session ended) |
+
+Transitions: `onTrackerDisconnected` → Reconnecting, `onTrackerReconnected` →
+Connected, keepalive timeout while WS is up → Inactive.
+
+**Peer indicator** is a boolean: any peer activity (data, ack, or keepalive)
+within the last 60 seconds (`PEER_LIVENESS_MS`) means Active, otherwise
+Inactive. The activity ref is updated by wrapped handlers in
+`registerMessageHandler`, ensuring it stays current even after
+`TrackerConnection.registerMessageHandler` replaces the initial callbacks.
 
 #### Reconnect
 

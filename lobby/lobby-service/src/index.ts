@@ -29,7 +29,7 @@ const simWsUrl = simUrl.replace(/^http/i, 'ws').replace(/:5800\b/, ':5801');
 type RelayPayload =
   | { msgno: number; msg: string }
   | { ack: number }
-  | { ping: true };
+  | { keepalive: true };
 
 type InboundMessage =
   | { type: 'join'; id: string; alias?: string; session_id?: string }
@@ -37,11 +37,13 @@ type InboundMessage =
   | { type: 'challenge'; from_id: string; target_id: string; game?: string; amount?: string; per_game?: string }
   | { type: 'challenge_accept'; challenge_id: string; accepter_id: string }
   | { type: 'challenge_decline'; challenge_id: string }
+  | { type: 'challenge_cancel'; from_id: string }
   | { type: 'change_alias'; id: string; newAlias: string }
   | { type: 'identify'; session_id: string }
   | { type: 'message'; session_id: string; data: RelayPayload }
   | { type: 'chat'; session_id: string; text: string }
-  | { type: 'close'; session_id: string };
+  | { type: 'close'; session_id: string }
+  | { type: 'keepalive' };
 
 interface LobbyConnMeta {
   playerId: string;
@@ -53,6 +55,7 @@ interface GameConnMeta {
 }
 
 const LOBBY_DISCONNECT_GRACE_MS = 3000;
+const CONNECTION_TTL_MS = 60_000;
 const wsServer = new WebSocketServer({ server: httpServer, path: '/ws' });
 
 const lobbyConnections = new Map<string, WebSocket>();
@@ -65,8 +68,9 @@ const pendingLobbyLeaves = new Map<string, ReturnType<typeof setTimeout>>();
 const sessionToPlayer = new Map<string, string>();
 const playerToSession = new Map<string, string>();
 const knownAliases = new Map<string, string>();
-const peerLastSeenAt = new Map<string, number>(); // keyed by player_id
+const wsLastActivity = new WeakMap<WebSocket, number>();
 const wsIds = new WeakMap<WebSocket, number>();
+const wsKeepaliveTimers = new WeakMap<WebSocket, ReturnType<typeof setInterval>>();
 let nextWsId = 1;
 
 function wsId(ws: WebSocket): number {
@@ -82,8 +86,8 @@ function logTracker(event: string, fields?: Record<string, unknown>): void {
   console.log(`[tracker] ${new Date().toISOString()} ${event}${payload}`);
 }
 
-function relayPayloadKind(data: RelayPayload): 'ping' | 'ack' | 'message' {
-  if ('ping' in data) return 'ping';
+function relayPayloadKind(data: RelayPayload): 'keepalive' | 'ack' | 'message' {
+  if ('keepalive' in data) return 'keepalive';
   if ('ack' in data) return 'ack';
   return 'message';
 }
@@ -141,7 +145,7 @@ if (args.dir) {
 
 function isRelayPayload(data: unknown): data is RelayPayload {
   if (!data || typeof data !== 'object') return false;
-  if ('ping' in data) return (data as { ping?: unknown }).ping === true;
+  if ('keepalive' in data) return (data as { keepalive?: unknown }).keepalive === true;
   if ('ack' in data) return typeof (data as { ack?: unknown }).ack === 'number';
   if ('msgno' in data || 'msg' in data) {
     return (
@@ -262,8 +266,36 @@ function bindSessionToPlayer(playerId: string, sessionId: string): boolean {
 function computePeerConnected(playerId: string): boolean {
   const peerId = lobby.getPairedPlayerId(playerId);
   if (!peerId) return false;
-  const seen = peerLastSeenAt.get(peerId) ?? 0;
-  return Date.now() - seen <= 60_000;
+  const sessionId = playerToSession.get(peerId);
+  if (!sessionId) return false;
+  const ws = gameConnections.get(sessionId);
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+  const lastSeen = wsLastActivity.get(ws) ?? 0;
+  return Date.now() - lastSeen <= CONNECTION_TTL_MS;
+}
+
+function hasActiveGameConnection(playerId: string): boolean {
+  const sessionId = playerToSession.get(playerId);
+  if (!sessionId) return false;
+  const ws = gameConnections.get(sessionId);
+  return !!ws && ws.readyState === WebSocket.OPEN;
+}
+
+function cancelPlayerChallenges(playerId: string): void {
+  const toCancel: string[] = [];
+  for (const [id, challenge] of lobby.challenges) {
+    if (challenge.from_id === playerId || challenge.target_id === playerId) {
+      toCancel.push(id);
+    }
+  }
+  for (const id of toCancel) {
+    const challenge = lobby.getChallenge(id);
+    if (!challenge) continue;
+    const otherId = challenge.from_id === playerId ? challenge.target_id : challenge.from_id;
+    lobby.removeChallenge(id);
+    sendLobbyEvent(otherId, 'challenge_resolved', { challenge_id: id, accepted: false });
+    logTracker('challenge_cancelled_on_sweep', { challenge_id: id, swept_player: playerId, notified_player: otherId });
+  }
 }
 
 function completeGameRegistration(playerId: string): void {
@@ -314,20 +346,16 @@ function onLobbyJoin(msg: Extract<InboundMessage, { type: 'join' }>): void {
 
   const resolvedAlias = alias || knownAliases.get(id) || id;
   if (!lobby.players[id]) {
-    const lastActive = Date.now();
     lobby.addPlayer({
       id,
       alias: resolvedAlias,
       session_id: session_id || '',
-      joinedAt: lastActive,
-      lastActive,
       status: 'waiting',
       parameters: {},
     });
   } else {
     lobby.players[id].alias = resolvedAlias;
     if (session_id) lobby.players[id].session_id = session_id;
-    lobby.players[id].lastActive = Date.now();
   }
   knownAliases.set(id, resolvedAlias);
   broadcastLobbyUpdate();
@@ -377,6 +405,12 @@ function onChallenge(ws: WebSocket, msg: Extract<InboundMessage, { type: 'challe
     sendWs(ws, 'error', { error: 'Unknown challenger. Rejoin lobby and retry.' });
     return;
   }
+  if (!hasActiveGameConnection(target_id)) {
+    logTracker('challenge_drop_target_no_game_conn', { sender_id: senderId, target_id });
+    sendWs(ws, 'error', { error: 'Peer is not connected.' });
+    sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
+    return;
+  }
 
   const challenge = lobby.createChallenge(
     fromPlayer.id,
@@ -408,6 +442,20 @@ function onChallengeAccept(ws: WebSocket, msg: Extract<InboundMessage, { type: '
       expected_target_id: challenge?.target_id ?? null,
     });
     console.warn('[tracker] challenge_accept dropped: invalid accepter', { challenge_id, accepter_id });
+    return;
+  }
+  if (!hasActiveGameConnection(challenge.from_id) || !hasActiveGameConnection(accepter_id)) {
+    logTracker('challenge_accept_drop_missing_game_conn', {
+      challenge_id,
+      challenger_connected: hasActiveGameConnection(challenge.from_id),
+      accepter_connected: hasActiveGameConnection(accepter_id),
+    });
+    lobby.removeChallenge(challenge_id);
+    const errorMsg = 'Game connection not available for both players.';
+    sendWs(ws, 'error', { error: errorMsg });
+    sendWs(ws, 'challenge_resolved', { challenge_id, accepted: false });
+    sendLobbyEvent(challenge.from_id, 'error', { error: errorMsg });
+    sendLobbyEvent(challenge.from_id, 'challenge_resolved', { challenge_id, accepted: false });
     return;
   }
 
@@ -475,6 +523,26 @@ function onChallengeDecline(msg: Extract<InboundMessage, { type: 'challenge_decl
   });
 }
 
+function onChallengeCancel(ws: WebSocket, msg: Extract<InboundMessage, { type: 'challenge_cancel' }>): void {
+  const senderId = getLobbySenderId(ws) ?? msg.from_id;
+  if (!senderId) return;
+  const toCancel: string[] = [];
+  for (const [id, challenge] of lobby.challenges) {
+    if (challenge.from_id === senderId) {
+      toCancel.push(id);
+    }
+  }
+  if (toCancel.length === 0) return;
+  for (const id of toCancel) {
+    const challenge = lobby.getChallenge(id);
+    if (!challenge) continue;
+    logTracker('challenge_cancelled', { challenge_id: id, challenger_id: senderId, target_id: challenge.target_id });
+    lobby.removeChallenge(id);
+    sendLobbyEvent(challenge.target_id, 'challenge_resolved', { challenge_id: id, accepted: false });
+  }
+  sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
+}
+
 function onChangeAlias(ws: WebSocket, msg: Extract<InboundMessage, { type: 'change_alias' }>): void {
   const playerId = getLobbySenderId(ws) ?? msg.id;
   if (!playerId) return;
@@ -494,6 +562,11 @@ function onIdentify(ws: WebSocket, msg: Extract<InboundMessage, { type: 'identif
     session_id: msg.session_id,
     player_id: playerId ?? null,
   });
+  const previousGameConn = gameConnections.get(msg.session_id);
+  if (previousGameConn && previousGameConn !== ws) {
+    logTracker('game_connection_replaced', { ws_id: wsId(previousGameConn), session_id: msg.session_id });
+    try { previousGameConn.close(4001, 'replaced_by_new_connection'); } catch {}
+  }
   wsGameMeta.set(ws, { sessionId: msg.session_id, playerId });
   gameConnections.set(msg.session_id, ws);
   if (!playerId) {
@@ -524,7 +597,6 @@ function onGameMessage(msg: Extract<InboundMessage, { type: 'message' }>): void 
     logTracker('game_message_drop_unpaired', { player_id: playerId, session_id: msg.session_id });
     return;
   }
-  peerLastSeenAt.set(playerId, Date.now());
   logTracker('game_message_relay', {
     from_player_id: playerId,
     to_player_id: peerId,
@@ -583,9 +655,18 @@ function parseInbound(raw: string): InboundMessage | null {
 
 wsServer.on('connection', (ws) => {
   const currentWsId = wsId(ws);
+  wsLastActivity.set(ws, Date.now());
   logTracker('ws_connected', { ws_id: currentWsId });
 
+  const kaTimer = setInterval(() => {
+    if (ws.readyState === ws.OPEN) {
+      ws.send(JSON.stringify({ type: 'keepalive' }));
+    }
+  }, 15_000);
+  wsKeepaliveTimers.set(ws, kaTimer);
+
   ws.on('message', (message) => {
+    wsLastActivity.set(ws, Date.now());
     const text = typeof message === 'string' ? message : message.toString();
     const parsed = parseInbound(text);
     if (!parsed) {
@@ -617,6 +698,9 @@ wsServer.on('connection', (ws) => {
       case 'challenge_decline':
         onChallengeDecline(parsed);
         break;
+      case 'challenge_cancel':
+        onChallengeCancel(ws, parsed);
+        break;
       case 'change_alias':
         onChangeAlias(ws, parsed);
         break;
@@ -632,6 +716,8 @@ wsServer.on('connection', (ws) => {
       case 'close':
         onGameClose(parsed);
         break;
+      case 'keepalive':
+        break;
       default:
         break;
     }
@@ -642,6 +728,11 @@ wsServer.on('connection', (ws) => {
   });
 
   ws.on('close', (code, reason) => {
+    const timer = wsKeepaliveTimers.get(ws);
+    if (timer) {
+      clearInterval(timer);
+      wsKeepaliveTimers.delete(ws);
+    }
     logTracker('ws_closed', {
       ws_id: currentWsId,
       code,
@@ -697,9 +788,81 @@ app.post('/lobby/set-alias', (req, res) => {
   res.json({ ok: true });
 });
 
+function sweepLobbyConnections(now: number): boolean {
+  let changed = false;
+  const expired: string[] = [];
+  for (const [playerId, ws] of lobbyConnections) {
+    const lastSeen = wsLastActivity.get(ws) ?? 0;
+    if (now - lastSeen > CONNECTION_TTL_MS) {
+      expired.push(playerId);
+    }
+  }
+  for (const playerId of expired) {
+    const ws = lobbyConnections.get(playerId);
+    if (ws) {
+      logTracker('lobby_sweep_expired', { player_id: playerId, ws_id: wsId(ws) });
+      try { ws.close(4002, 'idle_timeout'); } catch {}
+    }
+    lobbyConnections.delete(playerId);
+    cancelPendingLobbyLeave(playerId);
+    cancelPlayerChallenges(playerId);
+    if (lobby.removePlayer(playerId)) {
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function sweepGameConnections(now: number): void {
+  const expired: string[] = [];
+  for (const [sessionId, ws] of gameConnections) {
+    const lastSeen = wsLastActivity.get(ws) ?? 0;
+    if (now - lastSeen > CONNECTION_TTL_MS) {
+      expired.push(sessionId);
+    }
+  }
+  for (const sessionId of expired) {
+    const ws = gameConnections.get(sessionId);
+    const meta = ws ? wsGameMeta.get(ws) : undefined;
+    const playerId = meta?.playerId;
+    logTracker('game_sweep_expired', { session_id: sessionId, player_id: playerId ?? null, ws_id: ws ? wsId(ws) : null });
+    if (ws) {
+      try { ws.close(4002, 'idle_timeout'); } catch {}
+    }
+    gameConnections.delete(sessionId);
+    pendingGameIdentifies.delete(sessionId);
+    if (playerId) {
+      const pairing = lobby.getPairingForPlayer(playerId);
+      if (pairing) {
+        const peerId = pairing.playerA_id === playerId ? pairing.playerB_id : pairing.playerA_id;
+        sendGameEvent(peerId, 'closed', {});
+        lobby.removePairing(pairing.token);
+        logTracker('pairing_removed_on_sweep', { token: pairing.token, swept_player: playerId, peer_id: peerId });
+      }
+    }
+  }
+}
+
+function sweepSessionMaps(): void {
+  for (const [sessionId, playerId] of sessionToPlayer) {
+    const hasLobby = lobbyConnections.has(playerId);
+    const hasGame = gameConnections.has(sessionId);
+    if (!hasLobby && !hasGame) {
+      sessionToPlayer.delete(sessionId);
+      playerToSession.delete(playerId);
+      logTracker('session_map_swept', { session_id: sessionId, player_id: playerId });
+    }
+  }
+}
+
 setInterval(() => {
-  lobby.sweep(Date.now());
-  broadcastLobbyUpdate();
+  const now = Date.now();
+  const lobbyChanged = sweepLobbyConnections(now);
+  sweepGameConnections(now);
+  sweepSessionMaps();
+  if (lobbyChanged) {
+    broadcastLobbyUpdate();
+  }
   logTracker('state_snapshot', {
     players: Object.keys(lobby.players).length,
     challenges: lobby.challenges.size,

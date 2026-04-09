@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import GameSession from './GameSession';
 import { SimulatorSetupModal } from './SimulatorSetupModal';
 import QRCode from 'qrcode';
-import { GameSessionParams, PeerConnectionResult, ChatMessage, InternalBlockchainInterface, ConnectionSetup } from '../types/ChiaGaming';
+import { GameSessionParams, PeerConnectionResult, ChatMessage, InternalBlockchainInterface, ConnectionSetup, TrackerLiveness } from '../types/ChiaGaming';
 import { TrackerConnection, MatchedParams, ConnectionStatus } from '../services/TrackerConnection';
 import { subscribeDebugLog } from '../services/debugLog';
 import {
@@ -56,10 +56,10 @@ function getInterface(bcType: 'simulator' | 'walletconnect') {
 const TAB_DEFS: { id: TabId; label: string }[] = [
   { id: 'wallet', label: 'Wallet' },
   { id: 'tracker', label: 'Tracker' },
-  { id: 'session', label: 'Game Session' },
+  { id: 'session', label: 'Game' },
   { id: 'chat', label: 'Chat' },
-  { id: 'game-log', label: 'Game Log' },
-  { id: 'debug-log', label: 'Debug Log' },
+  { id: 'game-log', label: 'Log' },
+  { id: 'debug-log', label: 'Debug' },
 ];
 
 const FALLBACK_AMOUNT = 100n;
@@ -111,8 +111,11 @@ const Shell = () => {
   const [peerConn, setPeerConn] = useState<PeerConnectionResult | null>(null);
 
   const [walletConnected, setWalletConnected] = useState(false);
-  const [, setTrackerConnected] = useState<boolean | null>(null);
+  const [trackerLiveness, setTrackerLiveness] = useState<TrackerLiveness | null>(null);
   const [peerConnected, setPeerConnected] = useState<boolean | null>(null);
+  const trackerWsUpRef = useRef(false);
+  const lastTrackerActivityRef = useRef(0);
+  const lastPeerActivityRef = useRef(0);
   const [pendingRestore, setPendingRestore] = useState<SessionSave | null>(() => loadSession());
   const [restoreDecided, setRestoreDecided] = useState<boolean>(() => {
     return !hasAnySessionInfo();
@@ -248,9 +251,13 @@ const Shell = () => {
     });
   }, [deferStateUpdate]);
 
-  const registerMessageHandler = useCallback((handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, pingHandler: () => void) => {
+  const registerMessageHandler = useCallback((handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => {
     if (trackerConnRef.current) {
-      trackerConnRef.current.registerMessageHandler(handler, ackHandler, pingHandler);
+      trackerConnRef.current.registerMessageHandler(
+        (msgno, msg) => { lastPeerActivityRef.current = Date.now(); handler(msgno, msg); },
+        (ack) => { lastPeerActivityRef.current = Date.now(); ackHandler(ack); },
+        () => { lastPeerActivityRef.current = Date.now(); keepaliveHandler(); },
+      );
     }
   }, []);
 
@@ -261,6 +268,21 @@ const Shell = () => {
       });
     });
   }, [deferStateUpdate]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      const now = Date.now();
+      const activityFresh = lastTrackerActivityRef.current > 0 && now - lastTrackerActivityRef.current <= 45_000;
+      setTrackerLiveness((prev) => {
+        if (prev === 'disconnected') return prev;
+        if (!trackerWsUpRef.current) return 'reconnecting';
+        return activityFresh ? 'connected' : 'inactive';
+      });
+      const peerLive = lastPeerActivityRef.current > 0 && now - lastPeerActivityRef.current <= 60_000;
+      setPeerConnected(peerLive);
+    }, 5_000);
+    return () => clearInterval(id);
+  }, []);
 
   const [userReady, setUserReady] = useState(false);
 
@@ -373,8 +395,10 @@ const Shell = () => {
 
         const conn = new TrackerConnection(trackerOrigin, sessionId, {
             onMatched: (matched: MatchedParams) => {
-              setTrackerConnected(true);
-              setPeerConnected(false);
+              trackerWsUpRef.current = true;
+              lastTrackerActivityRef.current = Date.now();
+              setTrackerLiveness('connected');
+              lastPeerActivityRef.current = 0;
               let amount: bigint;
               let perGame: bigint;
               try { amount = BigInt(matched.amount); } catch { amount = FALLBACK_AMOUNT; }
@@ -382,19 +406,21 @@ const Shell = () => {
               startSession(conn, matched.i_am_initiator, amount, perGame, matched.token, null, matched.my_alias, matched.peer_alias);
             },
             onConnectionStatus: (status: ConnectionStatus) => {
-              setTrackerConnected(true);
-              setPeerConnected((prev) => {
-                if (!status.has_pairing) return false;
-                if (typeof status.peer_connected === 'boolean') return status.peer_connected;
-                return prev;
-              });
+              trackerWsUpRef.current = true;
+              lastTrackerActivityRef.current = Date.now();
+              setTrackerLiveness('connected');
+              if (!status.has_pairing || status.peer_connected === false) {
+                lastPeerActivityRef.current = 0;
+              } else if (status.peer_connected === true) {
+                lastPeerActivityRef.current = Date.now();
+              }
               if (activePairingTokenRef.current !== null) {
                 if (status.has_pairing && status.token === activePairingTokenRef.current) {
                   console.log('[Shell] mid-session reconnect: token matches, resending un-acked');
                   blobSingleton?.resendUnacked();
                 } else {
                   console.warn('[Shell] mid-session reconnect: pairing lost or mismatched, keeping local session active');
-                  setPeerConnected(false);
+                  lastPeerActivityRef.current = 0;
                 }
                 return;
               }
@@ -459,22 +485,31 @@ const Shell = () => {
               }
             },
             onPeerReconnected: () => {
+              lastPeerActivityRef.current = Date.now();
               blobSingleton?.resendUnacked();
             },
-            onMessage: (_data: unknown) => { setPeerConnected(true); },
-            onAck: (_ack: number) => { setPeerConnected(true); },
-            onPing: () => { setPeerConnected(true); },
+            onMessage: (_data: unknown) => { lastPeerActivityRef.current = Date.now(); },
+            onAck: (_ack: number) => { lastPeerActivityRef.current = Date.now(); },
+            onKeepalive: () => { lastPeerActivityRef.current = Date.now(); },
             onClosed: () => {
               console.log('[Shell] tracker connection closed');
-              setPeerConnected(false);
+              trackerWsUpRef.current = false;
+              lastTrackerActivityRef.current = 0;
+              lastPeerActivityRef.current = 0;
             },
             onTrackerDisconnected: () => {
               console.log('[Shell] tracker disconnected');
-              setTrackerConnected(false);
+              trackerWsUpRef.current = false;
+              setTrackerLiveness('reconnecting');
             },
             onTrackerReconnected: () => {
               console.log('[Shell] tracker reconnected');
-              setTrackerConnected(true);
+              trackerWsUpRef.current = true;
+              lastTrackerActivityRef.current = Date.now();
+              setTrackerLiveness('connected');
+            },
+            onTrackerActivity: () => {
+              lastTrackerActivityRef.current = Date.now();
             },
             onChat: (msg: ChatMessage) => {
               setChatMessages(prev => {
@@ -503,7 +538,7 @@ const Shell = () => {
             initialSave.pairingToken,
             initialSave,
           );
-          setPeerConnected(false);
+          lastPeerActivityRef.current = 0;
         }
       })
       .catch(e => {
@@ -1038,6 +1073,7 @@ const Shell = () => {
             <GameSession
               params={gameParams}
               peerConn={peerConn}
+              trackerLiveness={trackerLiveness}
               peerConnected={peerConnected}
               registerMessageHandler={registerMessageHandler}
               appendGameLog={appendGameLog}

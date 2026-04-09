@@ -80,6 +80,8 @@ pub struct GameStatusOtherParams {
     pub illegal_move_detected: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub moved_by_us: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub game_finished: Option<bool>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

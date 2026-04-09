@@ -951,7 +951,9 @@ fn service_main_inner() {
         match ws_listener.accept() {
             Ok((stream, addr)) => {
                 eprintln!("new TCP connection from {addr}");
-                // Accepted socket is blocking by default — handshake completes fast
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .expect("set_read_timeout failed");
                 match tungstenite::accept(stream) {
                     Ok(ws) => {
                         if let Err(e) = ws.get_ref().set_nonblocking(true) {

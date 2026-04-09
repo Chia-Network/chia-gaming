@@ -78,10 +78,11 @@ function makeCallbacks(): TrackerConnectionCallbacks {
     onPeerReconnected: jest.fn(),
     onMessage: jest.fn(),
     onAck: jest.fn(),
-    onPing: jest.fn(),
+    onKeepalive: jest.fn(),
     onClosed: jest.fn(),
     onTrackerDisconnected: jest.fn(() => { trackerDisconnectCount++; }),
     onTrackerReconnected: jest.fn(),
+    onTrackerActivity: jest.fn(),
     onChat: jest.fn(),
   };
 }
@@ -184,17 +185,17 @@ describe('event routing', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Message discrimination (ping vs ack vs data)
+// Message discrimination (keepalive vs ack vs data)
 // ---------------------------------------------------------------------------
 
 describe('message discrimination', () => {
-  it('routes ping messages to onPing, not onMessage', async () => {
+  it('routes keepalive messages to onKeepalive, not onMessage', async () => {
     const cb = makeCallbacks();
     new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
 
-    MockWebSocket.instance!._fire({ type: 'message', data: { ping: true } });
-    expect(cb.onPing).toHaveBeenCalled();
+    MockWebSocket.instance!._fire({ type: 'message', data: { keepalive: true } });
+    expect(cb.onKeepalive).toHaveBeenCalled();
     expect(cb.onMessage).not.toHaveBeenCalled();
   });
 
@@ -308,14 +309,14 @@ describe('outbound message format', () => {
     expect(ws.sent).toEqual([{ type: 'message', session_id: 's1', data: { ack: 5 } }]);
   });
 
-  it('sendPing posts ping payload', async () => {
+  it('sendKeepalive posts keepalive payload', async () => {
     const cb = makeCallbacks();
     const conn = new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
     const ws = MockWebSocket.instance!;
     ws.sent = [];
-    conn.sendPing();
-    expect(ws.sent).toEqual([{ type: 'message', session_id: 's1', data: { ping: true } }]);
+    conn.sendKeepalive();
+    expect(ws.sent).toEqual([{ type: 'message', session_id: 's1', data: { keepalive: true } }]);
   });
 });
 

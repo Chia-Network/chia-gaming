@@ -13,7 +13,7 @@ use crate::common::types::{
 use crate::peer_container::PeerHandler;
 use crate::potato_handler::effects::{
     format_coin, ChannelState, ChannelStatusSnapshot, Effect, GameNotification, GameStatusKind,
-    ResyncInfo,
+    GameStatusOtherParams, ResyncInfo,
 };
 use crate::potato_handler::handler_base::{classify_unroll, ChannelHandlerBase, UnrollOutcome};
 use crate::potato_handler::on_chain::{
@@ -728,7 +728,10 @@ impl UnrollWatchHandler {
 
         self.terminal_reward_coin = on_chain_reward_coin.clone();
 
-        for (game_id, our_share) in &preempt_resolved {
+        for (game_id, our_share, _game_finished) in &preempt_resolved {
+            // Preempt-resolved = our replay never made it on chain (opponent's turn
+            // perspective). Under the timeout rules this is never "clean", so we
+            // intentionally do not propagate game_finished here.
             effects.push(Effect::Notify(GameNotification::GameStatus {
                 id: *game_id,
                 status: GameStatusKind::EndedWeTimedOut,
@@ -763,18 +766,23 @@ impl UnrollWatchHandler {
                     player_ch.is_redo_zero_reward(coin, &state.game_id)
                 };
                 if dominated {
-                    zero_reward_games.push((coin.clone(), state.game_id));
+                    zero_reward_games.push((coin.clone(), state.game_id, state.game_finished));
                 }
             }
-            for (coin, game_id) in &zero_reward_games {
+            for (coin, game_id, game_finished) in &zero_reward_games {
                 game_map.remove(coin);
+                let finished_params = if *game_finished {
+                    Some(GameStatusOtherParams { game_finished: Some(true), ..Default::default() })
+                } else {
+                    None
+                };
                 effects.push(Effect::Notify(GameNotification::GameStatus {
                     id: *game_id,
                     status: GameStatusKind::EndedWeTimedOut,
                     my_reward: Some(Amount::default()),
                     coin_id: None,
                     reason: None,
-                    other_params: None,
+                    other_params: finished_params,
                 }));
             }
         }

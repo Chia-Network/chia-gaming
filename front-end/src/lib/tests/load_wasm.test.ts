@@ -300,7 +300,7 @@ it(
           cradle1.add_outbound_message(msgno, message);
         },
         sendAck: (_ackMsgno: number) => {},
-        sendPing: () => {},
+        sendKeepalive: () => {},
         hostLog: (msg: string) => process.stderr.write(msg + '\n'),
         close: () => {},
       };
@@ -320,7 +320,7 @@ it(
           cradle2.add_outbound_message(msgno, message);
         },
         sendAck: (_ackMsgno: number) => {},
-        sendPing: () => {},
+        sendKeepalive: () => {},
         hostLog: (msg: string) => process.stderr.write(msg + '\n'),
         close: () => {},
       };

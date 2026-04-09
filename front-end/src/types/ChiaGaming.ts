@@ -1,6 +1,8 @@
 import { CoinRecord } from './rpc/CoinRecord';
 import { Program } from 'clvm-lib';
 
+export type TrackerLiveness = 'connected' | 'reconnecting' | 'inactive' | 'disconnected';
+
 interface Amount {
   amt: bigint;
 }
@@ -113,6 +115,7 @@ interface GameStatusOtherParams {
   mover_share?: unknown;
   illegal_move_detected?: boolean;
   moved_by_us?: boolean;
+  game_finished?: boolean;
 }
 
 export interface GameStatusPayload {
@@ -427,7 +430,7 @@ function compare_card(a: number, b: number): number {
 export interface PeerConnectionResult {
   sendMessage: (msgno: number, input: string) => void;
   sendAck: (ackMsgno: number) => void;
-  sendPing: () => void;
+  sendKeepalive: () => void;
   hostLog: (msg: string) => void;
   close: () => void;
 }

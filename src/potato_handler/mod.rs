@@ -372,6 +372,7 @@ impl PotatoHandler {
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         spend: &ChannelCoinSpendInfo,
+        send_back: bool,
     ) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
         self.have_potato = PotatoState::Present;
@@ -380,14 +381,19 @@ impl PotatoHandler {
 
         {
             let ch = self.channel_handler_mut()?;
-            for (id, amount) in ch.drain_cached_accept_timeouts() {
+            for (id, amount, game_finished) in ch.drain_cached_accept_timeouts() {
+                let finished_params = if game_finished {
+                    Some(GameStatusOtherParams { game_finished: Some(true), ..Default::default() })
+                } else {
+                    None
+                };
                 effects.push(Effect::Notify(GameNotification::GameStatus {
                     id,
                     status: GameStatusKind::EndedWeTimedOut,
                     my_reward: Some(amount),
                     coin_id: None,
                     reason: None,
-                    other_params: None,
+                    other_params: finished_params,
                 }));
             }
         }
@@ -400,6 +406,24 @@ impl PotatoHandler {
 
         if self.peer_wants_potato {
             self.peer_wants_potato = false;
+            let sigs = {
+                let ch = self.channel_handler_mut()?;
+                ch.send_empty_potato(env)?
+            };
+            {
+                let ch = self.channel_handler()?;
+                effects.push(Effect::DebugLog(make_send_debug_log(ch, &[], false)));
+            }
+            effects.push(Effect::PeerBatch {
+                actions: vec![],
+                signatures: sigs,
+                clean_shutdown: None,
+            });
+            self.have_potato = PotatoState::Absent;
+            return Ok(effects);
+        }
+
+        if send_back {
             let sigs = {
                 let ch = self.channel_handler_mut()?;
                 ch.send_empty_potato(env)?
@@ -475,6 +499,7 @@ impl PotatoHandler {
                         mover_share: None,
                         illegal_move_detected: None,
                         moved_by_us: None,
+                        game_finished: None,
                     }),
                 }));
             }
@@ -539,6 +564,10 @@ impl PotatoHandler {
                         let ch = self.channel_handler_mut()?;
                         ch.apply_received_move(env, game_id, game_move)?
                     };
+                    let finished = {
+                        let ch = self.channel_handler()?;
+                        ch.is_game_finished(game_id)
+                    };
                     let opponent_readable =
                         ReadableMove::from_program(move_result.readable_their_move);
                     effects.push(Effect::Notify(GameNotification::GameStatus {
@@ -552,15 +581,12 @@ impl PotatoHandler {
                             mover_share: Some(move_result.mover_share),
                             illegal_move_detected: None,
                             moved_by_us: None,
+                            game_finished: if finished { Some(true) } else { None },
                         }),
                     }));
                     if !move_result.message.is_empty() {
                         effects.push(Effect::PeerGameMessage(*game_id, move_result.message));
                     }
-                    let finished = {
-                        let ch = self.channel_handler()?;
-                        ch.is_game_finished(game_id)
-                    };
                     if finished {
                         self.game_action_queue
                             .push_back(GameAction::AcceptTimeout(*game_id));
@@ -568,18 +594,26 @@ impl PotatoHandler {
                 }
                 BatchAction::AcceptTimeout(game_id, _peer_amount) => {
                     let ch = self.channel_handler_mut()?;
-                    let our_reward = ch.apply_received_accept_timeout(game_id)?;
+                    let (our_reward, game_finished) = ch.apply_received_accept_timeout(game_id)?;
+                    let finished_params = if game_finished {
+                        Some(GameStatusOtherParams { game_finished: Some(true), ..Default::default() })
+                    } else {
+                        None
+                    };
                     effects.push(Effect::Notify(GameNotification::GameStatus {
                         id: *game_id,
                         status: GameStatusKind::EndedOpponentTimedOut,
                         my_reward: Some(our_reward),
                         coin_id: None,
                         reason: None,
-                        other_params: None,
+                        other_params: finished_params,
                     }));
                 }
             }
         }
+
+        let received_accept_timeout =
+            actions.iter().any(|a| matches!(a, BatchAction::AcceptTimeout(..)));
 
         let has_new_game = actions.iter().any(|a| {
             matches!(
@@ -658,14 +692,19 @@ impl PotatoHandler {
 
             {
                 let ch = self.channel_handler_mut()?;
-                for (id, amount) in ch.drain_cached_accept_timeouts() {
+                for (id, amount, game_finished) in ch.drain_cached_accept_timeouts() {
+                    let finished_params = if game_finished {
+                        Some(GameStatusOtherParams { game_finished: Some(true), ..Default::default() })
+                    } else {
+                        None
+                    };
                     effects.push(Effect::Notify(GameNotification::GameStatus {
                         id,
                         status: GameStatusKind::EndedWeTimedOut,
                         my_reward: Some(amount),
                         coin_id: None,
                         reason: None,
-                        other_params: None,
+                        other_params: finished_params,
                     }));
                 }
             }
@@ -738,7 +777,7 @@ impl PotatoHandler {
             effects.push(Effect::DebugLog(parts.join("\n")));
         }
 
-        effects.extend(self.update_channel_coin_after_receive(env, &spend_info)?);
+        effects.extend(self.update_channel_coin_after_receive(env, &spend_info, received_accept_timeout)?);
 
         Ok(effects)
     }

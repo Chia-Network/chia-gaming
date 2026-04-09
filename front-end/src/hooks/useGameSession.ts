@@ -160,18 +160,20 @@ function parseAmount(v: unknown): string | null {
 
 function parseGameStatusTerminalInfo(gs: GameStatusPayload): GameTerminalInfo {
   if (gs.status === 'ended-we-timed-out') {
+    const clean = gs.other_params?.game_finished;
     return {
       type: 'we-timed-out',
-      label: 'Ended: we timed out',
+      label: clean ? 'Game ended cleanly' : 'Ended: we timed out',
       myReward: parseAmount(gs.my_reward),
       rewardCoinHex: coinPayloadToHex(gs.coin_id) ?? null,
     };
   }
 
   if (gs.status === 'ended-opponent-timed-out') {
+    const clean = gs.other_params?.game_finished;
     return {
       type: 'opponent-timed-out',
-      label: 'Ended: opponent timed out',
+      label: clean ? 'Game ended cleanly' : 'Ended: opponent timed out',
       myReward: parseAmount(gs.my_reward),
       rewardCoinHex: coinPayloadToHex(gs.coin_id) ?? null,
     };
@@ -251,9 +253,6 @@ export interface UseGameSessionResult {
   playAgain: () => void;
   stopPlaying: () => void;
   goOnChain: () => void;
-  cutPeerConnection: () => void;
-  txPublishNerfed: boolean;
-  toggleTxPublishNerf: () => void;
   showBetweenHandOverlay: boolean;
   lastOutcome: CalpokerOutcome | undefined;
   restoredOutcomeWin: 'win' | 'lose' | 'tie' | undefined;
@@ -268,7 +267,7 @@ export function useGameSession(
   params: GameSessionParams,
   uniqueId: string,
   peerConn: PeerConnectionResult,
-  registerMessageHandler: (handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, pingHandler: () => void) => void,
+  registerMessageHandler: (handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void,
   appendGameLog: (line: string) => void,
   sessionSave?: SessionSave,
 ): UseGameSessionResult {
@@ -286,7 +285,6 @@ export function useGameSession(
     sessionSave?.myRunningBalance ? BigInt(sessionSave.myRunningBalance) : 0n
   );
   const [goOnChainPressed, setGoOnChainPressed] = useState(false);
-  const [txPublishNerfed, setTxPublishNerfed] = useState(false);
   const [channelStatus, setChannelStatus] = useState<ChannelStatusInfo>(() => {
     if (!sessionSave?.channelReady) return INITIAL_CHANNEL_STATUS;
     if (sessionSave.channelStatus) return channelStatusFromPayload(sessionSave.channelStatus);
@@ -557,7 +555,7 @@ export function useGameSession(
 
         const terminalInfo = parseGameStatusTerminalInfo(gs);
         setGameTerminal(terminalInfo);
-        setGameCoin(prev => ({ ...prev, turnState: 'ended' }));
+        setGameCoin(prev => ({ ...prev, coinHex: null, turnState: 'ended' }));
         // On-chain terminal paths have their own dedicated dialogs/UX.
         // For normal off-chain hand completion we still want the between-hand overlay.
         if (inOnChainFlow) {
@@ -684,17 +682,6 @@ export function useGameSession(
     gameObject?.goOnChain();
   }, [gameObject]);
 
-  const cutPeerConnection = useCallback(() => {
-    debugLog('[game] cutting peer connection');
-    gameObject?.cutPeerConnection();
-  }, [gameObject]);
-
-  const toggleTxPublishNerf = useCallback(() => {
-    const next = !txPublishNerfed;
-    gameObject?.setTransactionPublishNerfed(next);
-    setTxPublishNerfed(next);
-  }, [gameObject, txPublishNerfed]);
-
   return {
     error,
     gameConnectionState,
@@ -717,9 +704,6 @@ export function useGameSession(
     playAgain,
     stopPlaying,
     goOnChain,
-    cutPeerConnection,
-    txPublishNerfed,
-    toggleTxPublishNerf,
     showBetweenHandOverlay,
     lastOutcome,
     restoredOutcomeWin,

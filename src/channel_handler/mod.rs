@@ -263,12 +263,12 @@ impl ChannelHandler {
         self.their_out_of_game_balance.clone()
     }
 
-    /// Drain all cached PotatoAcceptTimeout entries, returning (game_id, our_share_amount) for each.
-    pub fn drain_cached_accept_timeouts(&mut self) -> Vec<(GameID, Amount)> {
+    /// Drain all cached PotatoAcceptTimeout entries, returning (game_id, our_share_amount, game_finished) for each.
+    pub fn drain_cached_accept_timeouts(&mut self) -> Vec<(GameID, Amount, bool)> {
         let mut accepts = Vec::new();
         self.cached_last_actions.retain(|entry| {
             if let CachedPotatoRegenerateLastHop::PotatoAcceptTimeout(acc) = entry {
-                accepts.push((acc.game_id, acc.our_share_amount.clone()));
+                accepts.push((acc.game_id, acc.our_share_amount.clone(), acc.game_finished));
                 false
             } else {
                 true
@@ -1139,7 +1139,7 @@ impl ChannelHandler {
 
     /// Drain PotatoAcceptTimeout entries from cached_last_actions for games
     /// that are NOT in surviving_ids (i.e., preemption resolved them and no
-    /// game coin was created on-chain). Returns (game_id, our_share) pairs
+    /// game coin was created on-chain). Returns (game_id, our_share, game_finished) tuples
     /// that need WeTimedOut notifications.
     ///
     /// This only fires when the potato never came back — if it had,
@@ -1148,18 +1148,18 @@ impl ChannelHandler {
     pub fn drain_preempt_resolved_accept_timeouts(
         &mut self,
         surviving_ids: &HashSet<GameID>,
-    ) -> Vec<(GameID, Amount)> {
+    ) -> Vec<(GameID, Amount, bool)> {
         let mut resolved = Vec::new();
         self.cached_last_actions.retain(|entry| {
             if let CachedPotatoRegenerateLastHop::PotatoAcceptTimeout(acc) = entry {
                 if !surviving_ids.contains(&acc.game_id) {
-                    resolved.push((acc.game_id, acc.our_share_amount.clone()));
+                    resolved.push((acc.game_id, acc.our_share_amount.clone(), acc.game_finished));
                     return false;
                 }
             }
             true
         });
-        for (gid, _) in &resolved {
+        for (gid, _, _) in &resolved {
             self.pending_accept_timeouts.retain(|g| g.game_id != *gid);
         }
         resolved
@@ -1247,6 +1247,7 @@ impl ChannelHandler {
         Ok(MoveResult {
             state_number: self.state_number,
             game_move: referee_result.details.clone(),
+            is_finished: self.live_games[game_idx].is_game_over(),
         })
     }
 
@@ -1346,6 +1347,7 @@ impl ChannelHandler {
         self.my_out_of_game_balance += amount.clone();
         self.their_out_of_game_balance += at_stake.checked_sub(&amount)?;
 
+        let game_finished = live_game.is_game_over();
         self.push_cached_action(CachedPotatoRegenerateLastHop::PotatoAcceptTimeout(
             Box::new(PotatoAcceptTimeoutCachedData {
                 game_id: *game_id,
@@ -1353,6 +1355,7 @@ impl ChannelHandler {
                 live_game,
                 at_stake_amount: at_stake,
                 our_share_amount: amount.clone(),
+                game_finished,
             }),
         ));
 
@@ -1360,8 +1363,8 @@ impl ChannelHandler {
     }
 
     /// Apply a received accept (game finish) without verifying signatures.
-    /// Returns the locally computed reward amount for our side.
-    pub fn apply_received_accept_timeout(&mut self, game_id: &GameID) -> Result<Amount, Error> {
+    /// Returns (our_reward_amount, game_finished).
+    pub fn apply_received_accept_timeout(&mut self, game_id: &GameID) -> Result<(Amount, bool), Error> {
         let game_idx = self.get_game_by_id(game_id)?;
 
         if self.live_games[game_idx].is_my_turn() {
@@ -1370,6 +1373,7 @@ impl ChannelHandler {
             )));
         }
 
+        let game_finished = self.live_games[game_idx].is_game_over();
         let game_amount_for_me = self.live_games[game_idx].get_our_current_share()?;
         let game_amount_for_them = self.live_games[game_idx]
             .get_amount()
@@ -1386,7 +1390,7 @@ impl ChannelHandler {
 
         let removed = self.live_games.remove(game_idx);
         self.pending_accept_timeouts.push(removed);
-        Ok(game_amount_for_me)
+        Ok((game_amount_for_me, game_finished))
     }
 
     /// Uses the channel coin key to post standard format coin generation to the
@@ -1814,6 +1818,7 @@ impl ChannelHandler {
                         accepted: false,
                         notification_sent: false,
                         game_timeout: live_game.get_game_timeout(),
+                        game_finished: live_game.is_game_over(),
                     },
                 );
                 continue;
@@ -1834,6 +1839,7 @@ impl ChannelHandler {
                         accepted: false,
                         notification_sent: false,
                         game_timeout: live_game.get_game_timeout(),
+                        game_finished: live_game.is_game_over(),
                     },
                 );
                 continue;
@@ -1857,6 +1863,7 @@ impl ChannelHandler {
                         accepted: true,
                         notification_sent: false,
                         game_timeout: pending.get_game_timeout(),
+                        game_finished: false,
                     },
                 );
                 continue;

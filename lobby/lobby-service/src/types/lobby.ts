@@ -3,8 +3,6 @@ export interface Player {
   alias: string;
   session_id: string;
   walletAddress?: string;
-  joinedAt: number;
-  lastActive: number;
   status: string;
   parameters: any;
 }

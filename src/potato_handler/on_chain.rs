@@ -446,12 +446,16 @@ impl OnChainGameHandler {
                         post_move_last_ph,
                     )?;
 
+                    let game_over = self.get_game_by_id(&pending.game_id)
+                        .map(|idx| self.live_games[idx].is_game_over())
+                        .unwrap_or(false);
                     let gt = old_def.game_timeout.clone();
                     self.game_map.insert(
                         new_coin.clone(),
                         OnChainGameState {
                             puzzle_hash: create_ph,
                             our_turn: false,
+                            game_finished: game_over,
                             ..old_def
                         },
                     );
@@ -467,6 +471,7 @@ impl OnChainGameHandler {
                             mover_share: None,
                             illegal_move_detected: None,
                             moved_by_us: Some(true),
+                            game_finished: if game_over { Some(true) } else { None },
                         }),
                     }));
                     effects.push(Effect::RegisterCoin {
@@ -565,6 +570,11 @@ impl OnChainGameHandler {
                     } else {
                         None
                     };
+                    let finished_params = if old_definition.game_finished {
+                        Some(GameStatusOtherParams { game_finished: Some(true), ..Default::default() })
+                    } else {
+                        None
+                    };
                     if let Some(eff) = self.try_emit_terminal(
                         &old_definition.game_id,
                         GameNotification::GameStatus {
@@ -573,7 +583,7 @@ impl OnChainGameHandler {
                             my_reward: Some(amt),
                             coin_id: reward_coin,
                             reason: None,
-                            other_params: None,
+                            other_params: finished_params,
                         },
                     ) {
                         effects.push(eff);
@@ -586,6 +596,11 @@ impl OnChainGameHandler {
 
                 if is_timeout {
                     if !old_definition.notification_sent {
+                        let finished_params = if old_definition.game_finished {
+                            Some(GameStatusOtherParams { game_finished: Some(true), ..Default::default() })
+                        } else {
+                            None
+                        };
                         if let Some(eff) = self.try_emit_terminal(
                             &old_definition.game_id,
                             GameNotification::GameStatus {
@@ -594,7 +609,7 @@ impl OnChainGameHandler {
                                 my_reward: Some(Amount::default()),
                                 coin_id: None,
                                 reason: None,
-                                other_params: None,
+                                other_params: finished_params,
                             },
                         ) {
                             effects.push(eff);
@@ -735,6 +750,14 @@ impl OnChainGameHandler {
                     },
                 );
 
+                let finished = self.is_game_finished(&game_id);
+                if finished {
+                    if let Some(state) = self.game_map.get_mut(&new_coin_id) {
+                        state.game_finished = true;
+                    }
+                }
+                let finished_flag = if finished { Some(true) } else { None };
+
                 effects.push(Effect::Notify(GameNotification::GameStatus {
                     id: old_definition.game_id,
                     status: if is_my_turn {
@@ -745,10 +768,13 @@ impl OnChainGameHandler {
                     my_reward: None,
                     coin_id: Some(new_coin_id.clone()),
                     reason: None,
-                    other_params: None,
+                    other_params: Some(GameStatusOtherParams {
+                        game_finished: finished_flag,
+                        ..Default::default()
+                    }),
                 }));
                 effects.push(Effect::RegisterCoin {
-                    coin: new_coin_id,
+                    coin: new_coin_id.clone(),
                     timeout: gt,
                     name: Some(if is_my_turn {
                         "expected spend - my turn"
@@ -756,7 +782,7 @@ impl OnChainGameHandler {
                         "expected spend - their turn"
                     }),
                 });
-                if self.is_game_finished(&game_id) {
+                if finished {
                     self.game_action_queue
                         .push_back(GameAction::AcceptTimeout(game_id));
                 }
@@ -798,6 +824,11 @@ impl OnChainGameHandler {
                     )));
                 }
                 if !old_definition.notification_sent {
+                    let finished_params = if old_definition.game_finished {
+                        Some(GameStatusOtherParams { game_finished: Some(true), ..Default::default() })
+                    } else {
+                        None
+                    };
                     let notif = if old_definition.our_turn {
                         GameNotification::GameStatus {
                             id: old_definition.game_id,
@@ -805,7 +836,7 @@ impl OnChainGameHandler {
                             my_reward: Some(amount.clone()),
                             coin_id: my_reward_coin_string.clone(),
                             reason: None,
-                            other_params: None,
+                            other_params: finished_params.clone(),
                         }
                     } else if is_slash {
                         GameNotification::GameStatus {
@@ -823,7 +854,7 @@ impl OnChainGameHandler {
                             my_reward: Some(amount.clone()),
                             coin_id: my_reward_coin_string.clone(),
                             reason: None,
-                            other_params: None,
+                            other_params: finished_params,
                         }
                     };
                     if let Some(eff) = self.try_emit_terminal(&old_definition.game_id, notif) {
@@ -866,6 +897,13 @@ impl OnChainGameHandler {
                         ..old_definition
                     },
                 );
+                let finished = self.is_game_finished(&game_id);
+                if finished {
+                    if let Some(state) = self.game_map.get_mut(&new_coin_string) {
+                        state.game_finished = true;
+                    }
+                }
+                let finished_flag = if finished { Some(true) } else { None };
 
                 effects.push(Effect::Notify(GameNotification::GameStatus {
                     id: old_definition.game_id,
@@ -878,6 +916,7 @@ impl OnChainGameHandler {
                         mover_share: None,
                         illegal_move_detected: None,
                         moved_by_us: None,
+                        game_finished: finished_flag,
                     }),
                 }));
 
@@ -892,6 +931,7 @@ impl OnChainGameHandler {
                         mover_share: Some(mover_share),
                         illegal_move_detected: None,
                         moved_by_us: None,
+                        game_finished: finished_flag,
                     }),
                 }));
                 effects.push(Effect::RegisterCoin {
@@ -936,6 +976,7 @@ impl OnChainGameHandler {
                                 mover_share: Some(cheating_move_mover_share.clone()),
                                 illegal_move_detected: Some(true),
                                 moved_by_us: None,
+                                game_finished: None,
                             }),
                         }));
                         self.game_map.insert(
@@ -965,6 +1006,7 @@ impl OnChainGameHandler {
                                 mover_share: None,
                                 illegal_move_detected: Some(true),
                                 moved_by_us: None,
+                                game_finished: None,
                             }),
                         }));
                         if let Some(eff) = self.try_emit_terminal(
@@ -996,6 +1038,11 @@ impl OnChainGameHandler {
                     } else {
                         None
                     };
+                    let finished_params = if old_definition.game_finished {
+                        Some(GameStatusOtherParams { game_finished: Some(true), ..Default::default() })
+                    } else {
+                        None
+                    };
                     let notif = if old_definition.our_turn {
                         GameNotification::GameStatus {
                             id: old_definition.game_id,
@@ -1003,7 +1050,7 @@ impl OnChainGameHandler {
                             my_reward: Some(amt),
                             coin_id: reward_coin,
                             reason: None,
-                            other_params: None,
+                            other_params: finished_params,
                         }
                     } else {
                         GameNotification::GameStatus {
@@ -1012,7 +1059,7 @@ impl OnChainGameHandler {
                             my_reward: Some(amt),
                             coin_id: reward_coin,
                             reason: None,
-                            other_params: None,
+                            other_params: finished_params,
                         }
                     };
                     if let Some(eff) = self.try_emit_terminal(&old_definition.game_id, notif) {
@@ -1111,6 +1158,11 @@ impl OnChainGameHandler {
                     effects.push(Effect::SpendTransaction(spend_bundle));
                 }
 
+                let finished_params = if game_def.game_finished {
+                    Some(GameStatusOtherParams { game_finished: Some(true), ..Default::default() })
+                } else {
+                    None
+                };
                 let notif = if game_def.our_turn || game_def.accepted {
                     GameNotification::GameStatus {
                         id: game_id,
@@ -1118,7 +1170,7 @@ impl OnChainGameHandler {
                         my_reward: Some(our_reward),
                         coin_id: reward_coin,
                         reason: None,
-                        other_params: None,
+                        other_params: finished_params,
                     }
                 } else {
                     GameNotification::GameStatus {
@@ -1127,7 +1179,7 @@ impl OnChainGameHandler {
                         my_reward: Some(our_reward),
                         coin_id: reward_coin,
                         reason: None,
-                        other_params: None,
+                        other_params: finished_params,
                     }
                 };
                 if let Some(eff) = self.try_emit_terminal(&game_id, notif) {
@@ -1137,6 +1189,7 @@ impl OnChainGameHandler {
                 let our_turn = game_def.our_turn;
                 let accepted = game_def.accepted;
                 let already_notified = game_def.notification_sent;
+                let game_finished = game_def.game_finished;
                 self.game_map.insert(coin_id.clone(), game_def);
 
                 let result_transaction =
@@ -1186,6 +1239,11 @@ impl OnChainGameHandler {
                 };
 
                 if !already_notified {
+                    let finished_params = if game_finished {
+                        Some(GameStatusOtherParams { game_finished: Some(true), ..Default::default() })
+                    } else {
+                        None
+                    };
                     let notif = if our_turn || accepted {
                         GameNotification::GameStatus {
                             id: game_id,
@@ -1193,7 +1251,7 @@ impl OnChainGameHandler {
                             my_reward: Some(our_reward),
                             coin_id: reward_coin,
                             reason: None,
-                            other_params: None,
+                            other_params: finished_params,
                         }
                     } else {
                         GameNotification::GameStatus {
@@ -1202,7 +1260,7 @@ impl OnChainGameHandler {
                             my_reward: Some(our_reward),
                             coin_id: reward_coin,
                             reason: None,
-                            other_params: None,
+                            other_params: finished_params,
                         }
                     };
                     if let Some(eff) = self.try_emit_terminal(&game_id, notif) {
@@ -1250,15 +1308,21 @@ impl OnChainGameHandler {
             self.on_chain_our_move(env, &game_id, &readable_move, entropy.clone(), current_coin)?;
 
         if move_result.basic.mover_share == game_amount && move_result.basic.max_move_size > 0 {
+            let finished = self.is_game_finished(&game_id);
             self.restore_game_state(&game_id, pre_referee, pre_last_ph)?;
             self.game_map.retain(|_, def| def.game_id != game_id);
+            let finished_params = if finished {
+                Some(GameStatusOtherParams { game_finished: Some(true), ..Default::default() })
+            } else {
+                None
+            };
             return Ok(Some(Effect::Notify(GameNotification::GameStatus {
                 id: game_id,
                 status: GameStatusKind::EndedWeTimedOut,
                 my_reward: Some(Amount::default()),
                 coin_id: None,
                 reason: None,
-                other_params: None,
+                other_params: finished_params,
             })));
         }
 
@@ -1367,14 +1431,21 @@ impl OnChainGameHandler {
                 if my_turn == Some(true) {
                     let our_share = self.get_game_our_current_share(&game_id);
                     if matches!(our_share, Ok(ref s) if *s == Amount::default()) {
+                        let game_finished = self.game_map.get(&current_coin)
+                            .map(|d| d.game_finished).unwrap_or(false);
                         self.game_map.remove(&current_coin);
+                        let finished_params = if game_finished {
+                            Some(GameStatusOtherParams { game_finished: Some(true), ..Default::default() })
+                        } else {
+                            None
+                        };
                         return Ok(vec![Effect::Notify(GameNotification::GameStatus {
                             id: game_id,
                             status: GameStatusKind::EndedWeTimedOut,
                             my_reward: Some(Amount::default()),
                             coin_id: None,
                             reason: None,
-                            other_params: None,
+                            other_params: finished_params,
                         })]);
                     }
                 }

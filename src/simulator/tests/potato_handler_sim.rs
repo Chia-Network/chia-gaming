@@ -3227,10 +3227,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(49),
                 },
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ShuttingDown,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ShutdownTransactionPending,
                 )),
@@ -3467,10 +3467,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(200),
                 },
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ShuttingDown,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ShutdownTransactionPending,
                 )),
@@ -3542,10 +3542,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 ExpectedEvent::OpponentMoved {
                     mover_share: Amount::new(200),
                 },
+                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ShuttingDown,
                 )),
-                ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                     ChannelState::ShutdownTransactionPending,
                 )),
@@ -3654,21 +3654,21 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             p1_notifs.iter().any(|n| matches!(
                 n,
                 GameNotification::ChannelStatus {
-                    state: ChannelState::GoingOnChain,
+                    state: ChannelState::Unrolling,
                     ..
                 }
             )),
-            "player 1 should see GoingOnChain channel status, got: {p1_notifs:?}"
+            "player 1 should see Unrolling channel status, got: {p1_notifs:?}"
         );
         assert!(
             p0_notifs.iter().any(|n| matches!(
                 n,
                 GameNotification::ChannelStatus {
-                    state: ChannelState::GoingOnChain,
+                    state: ChannelState::Unrolling,
                     ..
                 }
             )),
-            "player 0 should see GoingOnChain channel status, got: {p0_notifs:?}"
+            "player 0 should see Unrolling channel status, got: {p0_notifs:?}"
         );
     }));
 

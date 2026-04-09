@@ -37,6 +37,7 @@ export interface UseCalpokerHandResult {
   outcome: CalpokerOutcome | undefined;
   handleMakeMove: () => void;
   handleCheat: () => void;
+  handleNerf: () => void;
   saveDisplaySnapshot: (snapshot: CalpokerDisplaySnapshot) => void;
   initialDisplaySnapshot: CalpokerDisplaySnapshot | undefined;
 }
@@ -226,6 +227,12 @@ export function useCalpokerHand(
     go.cheat(gid, 0);
   }, []);
 
+  const handleNerf = useCallback(() => {
+    const go = gameObjectRef.current;
+    if (!go) return;
+    go.nerf();
+  }, []);
+
   const setCardSelections = useCallback((selectionsOrFn: number[] | ((prev: number[]) => number[])) => {
     if (typeof selectionsOrFn === 'function') {
       setOurCardSelections(prev => {
@@ -257,6 +264,7 @@ export function useCalpokerHand(
     outcome,
     handleMakeMove,
     handleCheat,
+    handleNerf,
     saveDisplaySnapshot,
     initialDisplaySnapshot: initialHandState?.displaySnapshot,
   };

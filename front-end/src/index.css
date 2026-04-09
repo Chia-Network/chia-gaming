@@ -391,7 +391,7 @@ html, body {
 }
 
 .animate-move {
-  animation: moveCard 2s ease-in-out forwards;
+  animation: moveCard ease-in-out forwards;
 }
 @keyframes moveCard {
   from { left: var(--start-x); top: var(--start-y); }

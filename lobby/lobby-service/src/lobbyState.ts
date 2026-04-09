@@ -6,8 +6,6 @@ import {
   Pairing,
 } from './types/lobby';
 
-const PLAYER_TTL = 10 * 60 * 1000;
-
 function randomHex(): string {
   return crypto.randomBytes(16).toString('hex');
 }
@@ -22,15 +20,6 @@ export class Lobby {
   pairings: Map<string, Pairing> = new Map();
   // Reverse lookup: player_id -> token for the pairing they're in
   playerToPairing: Map<string, string> = new Map();
-
-  sweep(time: number) {
-    Object.keys(this.players).forEach((k) => {
-      const player = this.players[k];
-      if (time > player.lastActive + PLAYER_TTL) {
-        delete this.players[k];
-      }
-    });
-  }
 
   addPlayer(player: Player) {
     this.players[player.id] = player;

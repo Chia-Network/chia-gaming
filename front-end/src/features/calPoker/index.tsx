@@ -15,6 +15,7 @@ export interface CalpokerProps {
   setCardSelections: (n: number[] | ((prev: number[]) => number[])) => void;
   handleMakeMove: () => void;
   handleCheat: () => void;
+  handleNerf: () => void;
   onDisplayComplete: () => void;
   onGameLog: (lines: string[]) => void;
   onSnapshotChange: (snapshot: CalpokerDisplaySnapshot) => void;
@@ -36,6 +37,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
   setCardSelections,
   handleMakeMove,
   handleCheat,
+  handleNerf,
   onDisplayComplete,
   onGameLog,
   onSnapshotChange,
@@ -49,26 +51,40 @@ const Calpoker: React.FC<CalpokerProps> = ({
   const myWinOutcome = outcome?.my_win_outcome;
 
   const cheatBufRef = useRef('');
+  const nerfBufRef = useRef('');
   useEffect(() => {
-    const SEQUENCE = 'cheat^';
+    const CHEAT_SEQ = 'cheat^';
+    const NERF_SEQ = 'nerf^';
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.altKey || e.ctrlKey || e.metaKey) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (e.key.length !== 1) return;
-      const buf = cheatBufRef.current + e.key;
-      if (SEQUENCE.startsWith(buf)) {
-        cheatBufRef.current = buf;
-        if (buf === SEQUENCE) {
+
+      const cheatBuf = cheatBufRef.current + e.key;
+      if (CHEAT_SEQ.startsWith(cheatBuf)) {
+        cheatBufRef.current = cheatBuf;
+        if (cheatBuf === CHEAT_SEQ) {
           cheatBufRef.current = '';
           handleCheat();
         }
       } else {
-        cheatBufRef.current = SEQUENCE.startsWith(e.key) ? e.key : '';
+        cheatBufRef.current = CHEAT_SEQ.startsWith(e.key) ? e.key : '';
+      }
+
+      const nerfBuf = nerfBufRef.current + e.key;
+      if (NERF_SEQ.startsWith(nerfBuf)) {
+        nerfBufRef.current = nerfBuf;
+        if (nerfBuf === NERF_SEQ) {
+          nerfBufRef.current = '';
+          handleNerf();
+        }
+      } else {
+        nerfBufRef.current = NERF_SEQ.startsWith(e.key) ? e.key : '';
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleCheat]);
+  }, [handleCheat, handleNerf]);
 
   return (
     <div className='relative flex h-full w-full min-h-0 flex-col'>

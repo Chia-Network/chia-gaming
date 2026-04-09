@@ -363,6 +363,7 @@ function CalpokerHand({
     outcome,
     handleMakeMove,
     handleCheat,
+    handleNerf,
     saveDisplaySnapshot,
     initialDisplaySnapshot,
   } = useCalpokerHand(
@@ -392,6 +393,7 @@ function CalpokerHand({
       setCardSelections={setCardSelections}
       handleMakeMove={handleMakeMove}
       handleCheat={handleCheat}
+      handleNerf={handleNerf}
       onDisplayComplete={onDisplayComplete}
       onGameLog={handleGameLog}
       onSnapshotChange={saveDisplaySnapshot}
@@ -408,14 +410,22 @@ function CalpokerHand({
 export interface GameSessionProps {
   params: import('../types/ChiaGaming').GameSessionParams;
   peerConn: import('../types/ChiaGaming').PeerConnectionResult;
+  trackerLiveness?: import('../types/ChiaGaming').TrackerLiveness | null;
   peerConnected?: boolean | null;
-  registerMessageHandler: (handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, pingHandler: () => void) => void;
+  registerMessageHandler: (handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void;
   appendGameLog: (line: string) => void;
   sessionSave?: import('../hooks/save').SessionSave;
   onSessionActivity?: () => void;
 }
 
-const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, peerConnected, registerMessageHandler, appendGameLog, sessionSave, onSessionActivity }) => {
+const TRACKER_LIVENESS_LABELS: Record<string, string> = {
+  connected: 'Connected',
+  reconnecting: 'Reconnecting',
+  inactive: 'Inactive',
+  disconnected: 'Disconnected',
+};
+
+const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLiveness, peerConnected, registerMessageHandler, appendGameLog, sessionSave, onSessionActivity }) => {
   const uniqueId = getPlayerId();
 
   const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, sessionSave);
@@ -432,6 +442,17 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, peerConnect
 
   const channelOverlayBoundsRef = useRef<HTMLDivElement | null>(null);
   const gameAreaRef = useRef<HTMLDivElement | null>(null);
+  const [gameAreaMinHeight, setGameAreaMinHeight] = useState<number | undefined>(undefined);
+
+  useEffect(() => {
+    const el = gameAreaRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      setGameAreaMinHeight(entry.contentRect.height);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const [dismissedError, setDismissedError] = useState(false);
 
@@ -441,12 +462,6 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, peerConnect
   const gameStateLabel = session.gameTerminal.label ?? GAME_TURN_LABELS[session.gameCoin.turnState];
   const gameCoinLabel = session.gameTerminal.type !== 'none' ? 'Game reward coin' : 'Game coin';
   const gameCoinOrRewardHex = session.gameTerminal.rewardCoinHex ?? session.gameCoin.coinHex;
-  const peerBadge =
-    peerConnected === null
-      ? { label: 'Peer: Unknown', className: 'bg-canvas-bg-hover text-canvas-text' }
-      : peerConnected
-        ? { label: 'Peer: Active', className: 'bg-emerald-600 text-white' }
-        : { label: 'Peer: Inactive', className: 'bg-alert-bg text-alert-text' };
 
   return (
     <div className='relative w-full h-full min-h-0 flex flex-col bg-canvas-bg-subtle text-canvas-text pt-6'>
@@ -482,7 +497,12 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, peerConnect
               )}
             </div>
             <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
-              <span className='text-canvas-text'>Peer connection:</span>
+              <span className='text-canvas-text'>Tracker:</span>
+              <span className='font-medium'>
+                {trackerLiveness ? TRACKER_LIVENESS_LABELS[trackerLiveness] : 'Unknown'}
+              </span>
+              <span className='text-canvas-solid'>·</span>
+              <span className='text-canvas-text'>Peer:</span>
               <span className='font-medium'>
                 {peerConnected === null ? 'Unknown' : peerConnected ? 'Active' : 'Inactive'}
               </span>
@@ -504,11 +524,6 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, peerConnect
             </div>
           </div>
           <div className='flex flex-col items-stretch gap-2 mt-2 sm:mt-0'>
-            <div className='flex justify-center'>
-              <span className={`inline-flex items-center rounded-md px-2 py-1 text-xs font-semibold ${peerBadge.className}`}>
-                {peerBadge.label}
-              </span>
-            </div>
             <Button
               data-testid='go-on-chain'
               variant='destructive'
@@ -517,22 +532,6 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, peerConnect
               disabled={session.goOnChainPressed || isWindingDown(session.channelStatus.state)}
             >
               Go On-Chain
-            </Button>
-            <Button
-              data-testid='cut-peer-connection'
-              variant='outline'
-              onClick={session.cutPeerConnection}
-              size='sm'
-            >
-              Cut Peer Connection
-            </Button>
-            <Button
-              data-testid='toggle-tx-nerf'
-              variant={session.txPublishNerfed ? 'destructive' : 'outline'}
-              onClick={session.toggleTxPublishNerf}
-              size='sm'
-            >
-              {session.txPublishNerfed ? 'Unnerf Publish' : 'Nerf Publish'}
             </Button>
           </div>
         </div>
@@ -543,7 +542,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, peerConnect
       {/* Main content area */}
       <div className='flex flex-col gap-2 px-4 pb-2 sm:px-6 md:px-8'>
         {/* Game area */}
-          <div ref={gameAreaRef} className='relative overflow-hidden'>
+          <div ref={gameAreaRef} className='relative overflow-hidden' style={gameAreaMinHeight != null ? { minHeight: gameAreaMinHeight } : undefined}>
           {handEverStarted && (
             <CalpokerHand
               key={session.handKey}

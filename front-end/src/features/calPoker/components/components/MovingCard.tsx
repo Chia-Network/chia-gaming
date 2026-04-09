@@ -1,5 +1,5 @@
 import { MovingCardProps } from "../../../../types/californiaPoker";
-import { SUIT_COLORS } from "../constants/constants";
+import { SUIT_COLORS, SWAP_MOVE_DURATION_MS } from "../constants/constants";
 import CardContent from "./CardContent";
 
 function MovingCard(props: MovingCardProps) {
@@ -18,6 +18,7 @@ function MovingCard(props: MovingCardProps) {
     '--start-y': `${startY}px`,
     '--end-x': `${endX}px`,
     '--end-y': `${endY}px`,
+    animationDuration: `${SWAP_MOVE_DURATION_MS}ms`,
   } as React.CSSProperties;
 
   return (

@@ -7,6 +7,7 @@ interface CardRenderProps {
   onClick: () => void;
   isSelected: boolean;
   isBeingSwapped: boolean;
+  hideForSwap?: boolean;
   cardId: string;
   isInBestHand: boolean | undefined;
   isFinal: boolean;
