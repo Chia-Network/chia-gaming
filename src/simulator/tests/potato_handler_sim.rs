@@ -687,9 +687,7 @@ fn expected_shape(expected: &ExpectedEvent) -> String {
             ExpectedNotification::GameStatusEndedError => "Notif(GameStatusEndedError)".to_string(),
             ExpectedNotification::ProposalMade => "Notif(ProposalMade)".to_string(),
             ExpectedNotification::ProposalAccepted => "Notif(ProposalAccepted)".to_string(),
-            ExpectedNotification::ProposalCancelled => {
-                "Notif(ProposalCancelled)".to_string()
-            }
+            ExpectedNotification::ProposalCancelled => "Notif(ProposalCancelled)".to_string(),
             ExpectedNotification::InsufficientBalance => "Notif(InsufficientBalance)".to_string(),
             ExpectedNotification::ChannelState(s) => format!("Notif(ChannelStatus(state={s:?}))"),
         },
@@ -5527,9 +5525,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         let p1_notifs = &outcome.local_uis[1].notifications;
         assert!(
-            p1_notifs
-                .iter()
-                .any(|n| matches!(n, GameNotification::ProposalAccepted { id } if *id == GameID(3))),
+            p1_notifs.iter().any(
+                |n| matches!(n, GameNotification::ProposalAccepted { id } if *id == GameID(3))
+            ),
             "Bob should get ProposalAccepted for game 3, got: {p1_notifs:?}"
         );
         assert!(
