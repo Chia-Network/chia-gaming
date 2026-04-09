@@ -281,7 +281,7 @@ by puzzle hash **and** amount:
   state it's in).
 - Games not found in the unroll outputs receive one of two notifications
 depending on whether the game was fully established or still in-flight:
-  - `**GameCancelled`** — the game was a recently accepted proposal whose
+  - `**EndedCancelled`** — the game was a recently accepted proposal whose
   potato round-trip hadn't completed (tracked as a `ProposalAccepted`
   entry in `cached_last_actions`). The opponent hadn't acknowledged the
   accept when they published the stale unroll, so the game coin never
@@ -310,7 +310,7 @@ intentional for several reasons:
    player) are complex and error-prone.
 3. **One terminal condition.** The current approach guarantees exactly one
   terminal event per game — either the game was matched and continues
-   normally, or it gets a `GameError`/`GameCancelled`. There is no
+   normally, or it gets a `GameError`/`EndedCancelled`. There is no
    ambiguous middle state where a game is "maybe recoverable."
 
 ### Notifications
@@ -320,7 +320,7 @@ intentional for several reasons:
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------- |
 | `ChannelStatus { state: ResolvedStale, ... }`    | Always emitted when `is_stale` is true; balances reflect the actual unroll outcome       |
 | `GameError { id, reason }`                       | Per-game: coin present but unrecognizable, or established live game missing from outputs |
-| `GameCancelled { id }`                           | Per-game: pending accept (in-flight) absent from outputs — the accept was rolled back    |
+| `EndedCancelled { id }`                          | Per-game: pending accept (in-flight) absent from outputs — the accept was rolled back    |
 
 
 **Key code:** `src/potato_handler/unroll_watch_handler.rs` —

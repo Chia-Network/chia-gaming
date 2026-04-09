@@ -89,7 +89,7 @@ export interface ChatMessage {
 type WasmNotificationTag =
   | 'ChannelStatus'
   | 'GameStatus'
-  | 'GameProposed' | 'GameProposalAccepted' | 'GameProposalCancelled'
+  | 'ProposalMade' | 'ProposalAccepted' | 'ProposalCancelled'
   | 'InsufficientBalance'
   | 'ActionFailed';
 

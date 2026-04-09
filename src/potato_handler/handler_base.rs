@@ -166,7 +166,7 @@ impl ChannelHandlerBase {
         if let Ok(ch) = self.channel_handler_mut() {
             let cancelled_ids = ch.cancel_all_proposals();
             for id in cancelled_ids {
-                effects.push(Effect::Notify(GameNotification::GameProposalCancelled {
+                effects.push(Effect::Notify(GameNotification::ProposalCancelled {
                     id,
                     reason: "channel error".to_string(),
                 }));

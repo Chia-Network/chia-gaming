@@ -489,8 +489,8 @@ export class WasmBlobWrapper {
           }
         }
       }
-      if (tag === 'GameProposalAccepted' && n.GameProposalAccepted) {
-        this.activeGameId = String(n.GameProposalAccepted.id);
+      if (tag === 'ProposalAccepted' && n.ProposalAccepted) {
+        this.activeGameId = String(n.ProposalAccepted.id);
       }
       if (tag === 'GameStatus') {
         const gs = (n as Record<string, Record<string, unknown>>).GameStatus;

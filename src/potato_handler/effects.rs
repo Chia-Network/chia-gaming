@@ -93,15 +93,15 @@ pub enum GameNotification {
         other_params: Option<GameStatusOtherParams>,
     },
 
-    GameProposed {
+    ProposalMade {
         id: GameID,
         my_contribution: Amount,
         their_contribution: Amount,
     },
-    GameProposalAccepted {
+    ProposalAccepted {
         id: GameID,
     },
-    GameProposalCancelled {
+    ProposalCancelled {
         id: GameID,
         reason: String,
     },

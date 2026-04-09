@@ -25,7 +25,7 @@ import { toHexString } from '../util';
 import { debugLog } from '../services/debugLog';
 
 export type GameplayEvent =
-  | { GameProposalAccepted: { id: number | string } }
+  | { ProposalAccepted: { id: number | string } }
   | { OpponentMoved: { readable: number[] } }
   | { GameMessage: { readable: number[] } }
   | { _terminal: true; notification: WasmNotification };
@@ -72,7 +72,7 @@ export type GameTerminalType =
   | 'opponent-slashed-us'
   | 'opponent-successfully-cheated'
   | 'insufficient-balance'
-  | 'game-cancelled'
+  | 'ended-cancelled'
   | 'game-error';
 
 export interface GameTerminalInfo {
@@ -206,7 +206,7 @@ function parseGameStatusTerminalInfo(gs: GameStatusPayload): GameTerminalInfo {
 
   if (gs.status === 'ended-cancelled') {
     return {
-      type: 'game-cancelled',
+      type: 'ended-cancelled',
       label: 'Ended: cancelled',
       myReward: null,
       rewardCoinHex: null,
@@ -487,9 +487,9 @@ export function useGameSession(
     }
 
     // Session lifecycle and game flow
-    if ('GameProposed' in n) {
+    if ('ProposalMade' in n) {
       if (!iStarted) {
-        const proposalId = String(n.GameProposed!.id);
+        const proposalId = String(n.ProposalMade!.id);
         if (!firstGameAcceptedRef.current || wantsNewGameRef.current) {
           wantsNewGameRef.current = false;
           try {
@@ -501,9 +501,9 @@ export function useGameSession(
           pendingProposalIdRef.current = proposalId;
         }
       }
-    } else if ('GameProposalAccepted' in n) {
+    } else if ('ProposalAccepted' in n) {
       firstGameAcceptedRef.current = true;
-      const gpa = n.GameProposalAccepted!;
+      const gpa = n.ProposalAccepted!;
       const newId = String(gpa.id);
       setGameIds(prev => [...prev, newId]);
       gameIdsRef.current = [...gameIdsRef.current, newId];
@@ -514,7 +514,7 @@ export function useGameSession(
       setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
       setGameCoin({ coinHex: null, turnState: iStarted ? 'their-turn' : 'my-turn' });
       setGameTerminal(INITIAL_GAME_TERMINAL);
-      gameplayEventSubject.next({ GameProposalAccepted: { id: gpa.id as number | string } });
+      gameplayEventSubject.next({ ProposalAccepted: { id: gpa.id as number | string } });
     } else if ('GameStatus' in n) {
       const gs = n.GameStatus as GameStatusPayload | undefined;
       if (!gs) return;

@@ -423,7 +423,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, peerConnect
   useEffect(() => {
     if (!onSessionActivity) return;
     const sub = session.gameplayEvent$.subscribe((evt) => {
-      if ('OpponentMoved' in evt || 'GameProposalAccepted' in evt) {
+      if ('OpponentMoved' in evt || 'ProposalAccepted' in evt) {
         onSessionActivity();
       }
     });

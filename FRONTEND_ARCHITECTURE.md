@@ -580,8 +580,8 @@ handling (removing the game ID, showing the between-hand overlay):
 - `WeSlashedOpponent`
 - `OpponentSlashedUs`
 - `OpponentSuccessfullyCheated`
-- `GameCancelled`
-- `GameProposalCancelled`
+- `EndedCancelled`
+- `ProposalCancelled`
 - `InsufficientBalance`
 - `GameError`
 - `GameOnChain`
@@ -594,14 +594,14 @@ handling (removing the game ID, showing the between-hand overlay):
 These drive game proposal and acceptance flow. They are consumed by
 `handleNotification` and never forwarded to the game UI:
 
-- `GameProposed` — triggers auto-accept for the responder
+- `ProposalMade` — triggers auto-accept for the responder
 
 ### Gameplay events (forwarded to game UI via observable)
 
 These are the normal flow of play, forwarded to the active game UI component
 via the `gameplayEventSubject` RxJS stream:
 
-- `GameProposalAccepted` — a new game is starting
+- `ProposalAccepted` — a new game is starting
 - `OpponentMoved` — the opponent made a move (with readable data)
 - `GameMessage` — advisory data (e.g. Alice revealing cards to Bob early)
 

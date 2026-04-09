@@ -537,7 +537,7 @@ impl UnrollWatchHandler {
             let ch = self.base.channel_handler_mut()?;
             let cancelled_ids = ch.cancel_all_proposals();
             for id in cancelled_ids {
-                effects.push(Effect::Notify(GameNotification::GameProposalCancelled {
+                effects.push(Effect::Notify(GameNotification::ProposalCancelled {
                     id,
                     reason: "channel went on-chain".to_string(),
                 }));

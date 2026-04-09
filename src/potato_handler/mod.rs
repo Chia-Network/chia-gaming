@@ -513,7 +513,7 @@ impl PotatoHandler {
                     let game_id = gsi.game_id;
                     let my_contribution = gsi.my_contribution_this_game.clone();
                     let their_contribution = gsi.their_contribution_this_game.clone();
-                    effects.push(Effect::Notify(GameNotification::GameProposed {
+                    effects.push(Effect::Notify(GameNotification::ProposalMade {
                         id: game_id,
                         my_contribution,
                         their_contribution,
@@ -522,14 +522,14 @@ impl PotatoHandler {
                 BatchAction::AcceptProposal(game_id) => {
                     let ch = self.channel_handler_mut()?;
                     ch.apply_received_accept_proposal(game_id)?;
-                    effects.push(Effect::Notify(GameNotification::GameProposalAccepted {
+                    effects.push(Effect::Notify(GameNotification::ProposalAccepted {
                         id: *game_id,
                     }));
                 }
                 BatchAction::CancelProposal(game_id) => {
                     let ch = self.channel_handler_mut()?;
                     ch.received_cancel_proposal(game_id)?;
-                    effects.push(Effect::Notify(GameNotification::GameProposalCancelled {
+                    effects.push(Effect::Notify(GameNotification::ProposalCancelled {
                         id: *game_id,
                         reason: "cancelled by peer".to_string(),
                     }));
@@ -607,7 +607,7 @@ impl PotatoHandler {
                 let ch = self.channel_handler_mut()?;
                 let cancelled_ids = ch.cancel_all_proposals();
                 for id in cancelled_ids {
-                    effects.push(Effect::Notify(GameNotification::GameProposalCancelled {
+                    effects.push(Effect::Notify(GameNotification::ProposalCancelled {
                         id,
                         reason: "clean shutdown".to_string(),
                     }));
@@ -821,14 +821,6 @@ impl PotatoHandler {
                     {
                         let ch = self.channel_handler_mut()?;
                         let Some(proposal) = ch.find_proposal(&game_id) else {
-                            effects.push(Effect::Notify(GameNotification::GameStatus {
-                                id: game_id,
-                                status: GameStatusKind::EndedCancelled,
-                                my_reward: None,
-                                coin_id: None,
-                                reason: None,
-                                other_params: None,
-                            }));
                             continue;
                         };
                         if ch.is_our_nonce_parity(&game_id) {
@@ -838,22 +830,21 @@ impl PotatoHandler {
                         let their_short =
                             proposal.their_contribution > ch.their_out_of_game_balance();
                         if our_short || their_short {
+                            effects.push(Effect::Notify(GameNotification::ProposalAccepted {
+                                id: game_id,
+                            }));
                             effects.push(Effect::Notify(GameNotification::InsufficientBalance {
                                 id: game_id,
                                 our_balance_short: our_short,
                                 their_balance_short: their_short,
                             }));
                             ch.send_cancel_proposal(&game_id)?;
-                            effects.push(Effect::Notify(GameNotification::GameProposalCancelled {
-                                id: game_id,
-                                reason: "insufficient balance".to_string(),
-                            }));
                             batch_actions.push(BatchAction::CancelProposal(game_id));
                             continue;
                         }
                         ch.send_accept_proposal(&game_id)?;
                     }
-                    effects.push(Effect::Notify(GameNotification::GameProposalAccepted {
+                    effects.push(Effect::Notify(GameNotification::ProposalAccepted {
                         id: game_id,
                     }));
                     batch_actions.push(BatchAction::AcceptProposal(game_id));
@@ -866,7 +857,7 @@ impl PotatoHandler {
                         }
                         ch.send_cancel_proposal(&game_id)?;
                     }
-                    effects.push(Effect::Notify(GameNotification::GameProposalCancelled {
+                    effects.push(Effect::Notify(GameNotification::ProposalCancelled {
                         id: game_id,
                         reason: "cancelled by us".to_string(),
                     }));
@@ -891,7 +882,7 @@ impl PotatoHandler {
                         let ch = self.channel_handler_mut()?;
                         let cancelled_ids = ch.cancel_all_proposals();
                         for id in cancelled_ids {
-                            effects.push(Effect::Notify(GameNotification::GameProposalCancelled {
+                            effects.push(Effect::Notify(GameNotification::ProposalCancelled {
                                 id,
                                 reason: "clean shutdown".to_string(),
                             }));
@@ -1233,7 +1224,7 @@ impl PotatoHandler {
             let player_ch = self.channel_handler_mut()?;
             let cancelled_ids = player_ch.cancel_all_proposals();
             for id in cancelled_ids {
-                effects.push(Effect::Notify(GameNotification::GameProposalCancelled {
+                effects.push(Effect::Notify(GameNotification::ProposalCancelled {
                     id,
                     reason: "going on chain".to_string(),
                 }));
