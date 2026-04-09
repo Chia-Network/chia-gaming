@@ -14,6 +14,7 @@ function Card(props: CardRenderProps) {
     isInBestHand = false,
     isFinal = false,
     hasHalo = false,
+    showDragOutline = false,
     area,
   } = props;
 
@@ -31,6 +32,9 @@ function Card(props: CardRenderProps) {
 
   return (
     <div className='w-full relative'>
+      {showDragOutline && !hasHalo && (
+        <div className='absolute -inset-2 rounded-xl z-0 bg-canvas-bg' />
+      )}
       {hasHalo && (
         <div className='absolute -inset-2 rounded-xl z-0' style={{ backgroundColor: '#9E8A8E' }} />
       )}

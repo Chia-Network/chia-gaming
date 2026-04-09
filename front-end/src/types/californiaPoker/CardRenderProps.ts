@@ -11,6 +11,7 @@ interface CardRenderProps {
   isInBestHand: boolean | undefined;
   isFinal: boolean;
   hasHalo: boolean;
+  showDragOutline?: boolean;
   area: string;
 }
 

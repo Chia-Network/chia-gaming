@@ -612,7 +612,7 @@ function HandDisplay(props: HandDisplayProps) {
     onCardClick?.(cardId);
   };
 
-  const renderCard = (card: CardValueSuit, idx: number) => {
+  const renderCard = (card: CardValueSuit, idx: number, showDragOutline = false) => {
     const cardId = card.cardId ?? idx;
     const isInBestHand =
       gameState === GAME_STATES.FINAL &&
@@ -635,6 +635,7 @@ function HandDisplay(props: HandDisplayProps) {
         isInBestHand={isInBestHand}
         isFinal={gameState === GAME_STATES.FINAL}
         hasHalo={hasHalo}
+        showDragOutline={showDragOutline && !hasHalo}
         area={area}
       />
     );
@@ -719,7 +720,7 @@ function HandDisplay(props: HandDisplayProps) {
                       transition: isDragging ? 'none' : 'transform 0.2s ease, opacity 0s',
                     }}
                   >
-                    {renderCard(slotCard, idx)}
+                    {renderCard(slotCard, idx, false)}
                   </div>
                 ) : (
                   <div style={{ width: '100%' }}>
@@ -748,7 +749,7 @@ function HandDisplay(props: HandDisplayProps) {
               }}
             >
               <div style={{ width: '100%' }}>
-                {renderCard(anim.card, anim.hideIndex)}
+                {renderCard(anim.card, anim.hideIndex, false)}
               </div>
             </div>
           ))}
@@ -777,7 +778,7 @@ function HandDisplay(props: HandDisplayProps) {
                   transition: 'none',
                 }}
               >
-                {renderCard(dropAnim.card, dropAnim.originIndex)}
+                {renderCard(dropAnim.card, dropAnim.originIndex, true)}
               </div>
             </div>
           )}
@@ -798,7 +799,7 @@ function HandDisplay(props: HandDisplayProps) {
                   transition: 'none',
                 }}
               >
-                {renderCard(activeDrag.card, activeDrag.originIndex)}
+                {renderCard(activeDrag.card, activeDrag.originIndex, true)}
               </div>
             </div>
           )}
