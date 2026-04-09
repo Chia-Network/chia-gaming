@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::io::stdin;
 use std::mem::swap;
-use std::net::{TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -861,10 +861,19 @@ fn respond_not_found(request: tiny_http::Request) {
 }
 
 fn run_health_server(height: Arc<AtomicUsize>) {
-    let server = match Server::http("0.0.0.0:5800") {
+    let listener = {
+        let addr: SocketAddr = "0.0.0.0:5800".parse().unwrap();
+        let sock = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)
+            .expect("failed to create socket for health server");
+        sock.set_reuse_address(true).expect("set_reuse_address failed");
+        sock.bind(&addr.into()).expect("failed to bind port 5800");
+        sock.listen(128).expect("listen failed");
+        TcpListener::from(sock)
+    };
+    let server = match Server::from_listener(listener, None) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("failed to bind health server on port 5800: {e}");
+            eprintln!("failed to start health server: {e}");
             return;
         }
     };
@@ -934,11 +943,17 @@ fn service_main_inner() {
         }
     });
 
-    // WebSocket API on port 5801
-    let ws_listener = TcpListener::bind("0.0.0.0:5801").expect("failed to bind port 5801");
-    ws_listener
-        .set_nonblocking(true)
-        .expect("set_nonblocking failed");
+    // WebSocket API on port 5801 — SO_REUSEADDR lets us rebind immediately after restart.
+    let ws_listener = {
+        let addr: SocketAddr = "0.0.0.0:5801".parse().unwrap();
+        let sock = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)
+            .expect("failed to create socket");
+        sock.set_reuse_address(true).expect("set_reuse_address failed");
+        sock.set_nonblocking(true).expect("set_nonblocking failed");
+        sock.bind(&addr.into()).expect("failed to bind port 5801");
+        sock.listen(128).expect("listen failed");
+        TcpListener::from(sock)
+    };
 
     println!("Simulator: health on :5800, WebSocket API on :5801");
 
