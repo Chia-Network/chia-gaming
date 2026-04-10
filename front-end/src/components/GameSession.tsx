@@ -13,9 +13,12 @@ import { motion, useMotionValue } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
 import { Button } from './button';
-function truncateHex(hex: string, head = 8, tail = 6): string {
-  if (hex.length <= head + tail + 1) return hex;
-  return `${hex.slice(0, head)}…${hex.slice(-tail)}`;
+function CoinId({ hex }: { hex: string }) {
+  return (
+    <span className="font-mono text-[11px] select-all">
+      0x{hex}
+    </span>
+  );
 }
 
 const CHANNEL_STATE_LABELS: Record<ChannelState, string> = {
@@ -46,12 +49,12 @@ const GAME_TURN_LABELS: Record<GameTurnState, string> = {
 
 function channelCoinLabelForState(state: ChannelState): string {
   if (state === 'ResolvedUnrolled' || state === 'ResolvedStale') {
-    return 'Channel reward coin';
+    return 'Channel reward coin ID';
   }
   if (state === 'Unrolling') {
-    return 'Unroll coin';
+    return 'Unroll coin ID';
   }
-  return 'Channel coin';
+  return 'Channel coin ID';
 }
 
 function formatOptionalMojos(raw: string | null): string {
@@ -154,18 +157,6 @@ function useViewportClampedDragWithInsets(
   return { cardRef, x, y, clampToViewport };
 }
 
-function ExpandableCoinId({ hex }: { hex: string }) {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <span
-      onClick={() => setExpanded(e => !e)}
-      className="font-mono text-[11px] hover:text-canvas-text-contrast transition-colors cursor-pointer select-all"
-      title={expanded ? 'Click to collapse' : 'Click to expand full coin ID'}
-    >
-      0x{expanded ? hex : truncateHex(hex)}
-    </span>
-  );
-}
 
 function ChannelAttentionOverlay({
   info,
@@ -203,8 +194,8 @@ function ChannelAttentionOverlay({
         <Separator />
         <CardContent className='pt-4 flex flex-col gap-2'>
           {info.coinHex && (
-            <p className="text-xs font-mono text-canvas-solid break-all">
-              Coin: 0x{info.coinHex}
+            <p className="text-xs text-canvas-solid break-all">
+              Coin ID: <CoinId hex={info.coinHex} />
             </p>
           )}
           {info.coinAmount && (
@@ -300,9 +291,9 @@ function GameTerminalAttentionOverlay({
               </span>
             </p>
             <p className='flex flex-wrap items-center gap-x-2 gap-y-1'>
-              <span className='text-canvas-text'>Reward coin:</span>
+              <span className='text-canvas-text'>Reward coin ID:</span>
               {rewardCoinHex ? (
-                <ExpandableCoinId hex={rewardCoinHex} />
+                <CoinId hex={rewardCoinHex} />
               ) : (
                 <span className='font-semibold text-canvas-text-contrast'>None</span>
               )}
@@ -460,7 +451,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
   const channelStateLabel = CHANNEL_STATE_LABELS[session.channelStatus.state] ?? session.channelStatus.state;
   const channelCoinLabel = channelCoinLabelForState(session.channelStatus.state);
   const gameStateLabel = session.gameTerminal.label ?? GAME_TURN_LABELS[session.gameCoin.turnState];
-  const gameCoinLabel = session.gameTerminal.type !== 'none' ? 'Game reward coin' : 'Game coin';
+  const gameCoinLabel = session.gameTerminal.type !== 'none' ? 'Game reward coin ID' : 'Game coin ID';
   const gameCoinOrRewardHex = session.gameTerminal.rewardCoinHex ?? session.gameCoin.coinHex;
 
   return (
@@ -491,7 +482,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
               <span className='text-canvas-solid'>·</span>
               <span className='text-canvas-text'>{channelCoinLabel}:</span>
               {session.channelStatus.coinHex ? (
-                <ExpandableCoinId hex={session.channelStatus.coinHex} />
+                <CoinId hex={session.channelStatus.coinHex} />
               ) : (
                 <span className='font-medium'>None</span>
               )}
@@ -514,7 +505,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
             <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
               <span className='text-canvas-text'>{gameCoinLabel}:</span>
               {gameCoinOrRewardHex ? (
-                <ExpandableCoinId hex={gameCoinOrRewardHex} />
+                <CoinId hex={gameCoinOrRewardHex} />
               ) : (
                 <span className='font-medium'>None</span>
               )}

@@ -20,6 +20,11 @@ export function toHexString(byteArray: Uint8Array | number[]) {
   }).join('');
 }
 
+export async function coinIdFromBytes(coin: number[]): Promise<string> {
+  const hash = await crypto.subtle.digest('SHA-256', Uint8Array.from(coin));
+  return toHexString(new Uint8Array(hash));
+}
+
 export function normalizeHexString(hex: string) {
   return hex.trim().toLowerCase().replace(/^0x/, '');
 }

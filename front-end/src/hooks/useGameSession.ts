@@ -21,7 +21,7 @@ import {
 } from './blobSingleton';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
 import { SessionSave, getDefaultFee } from './save';
-import { toHexString } from '../util';
+import { coinIdFromBytes } from '../util';
 import { debugLog } from '../services/debugLog';
 
 export type GameplayEvent =
@@ -30,31 +30,27 @@ export type GameplayEvent =
   | { GameMessage: { readable: number[] } }
   | { _terminal: true; notification: WasmNotification };
 
-interface ParsedCoinPayload {
-  hex: string;
-  amount: string | null;
+function parseCoinAmount(coin: unknown): string | null {
+  if (!Array.isArray(coin) || coin.length < 64 || !coin.every((b): b is number => typeof b === 'number')) {
+    return null;
+  }
+  let value = 0n;
+  for (let i = 64; i < coin.length; i++) {
+    value = (value << 8n) + BigInt(coin[i] & 0xff);
+  }
+  return value.toString();
 }
 
-function parseCoinPayload(coin: unknown): ParsedCoinPayload | null {
+function asCoinBytes(coin: unknown): number[] | null {
   if (!Array.isArray(coin) || coin.length === 0 || !coin.every((b): b is number => typeof b === 'number')) {
     return null;
   }
-  let amount: string | null = null;
-  if (coin.length >= 64) {
-    let value = 0n;
-    for (let i = 64; i < coin.length; i++) {
-      value = (value << 8n) + BigInt(coin[i] & 0xff);
-    }
-    amount = value.toString();
-  }
-  return {
-    hex: toHexString(coin),
-    amount,
-  };
+  return coin;
 }
 
-function coinPayloadToHex(coin: unknown): string | undefined {
-  return parseCoinPayload(coin)?.hex;
+async function coinIdHex(coin: unknown): Promise<string | null> {
+  const bytes = asCoinBytes(coin);
+  return bytes ? coinIdFromBytes(bytes) : null;
 }
 
 export type GameTurnState = 'my-turn' | 'their-turn' | 'replaying' | 'opponent-illegal-move' | 'ended';
@@ -108,17 +104,17 @@ const INITIAL_CHANNEL_STATUS: ChannelStatusInfo = {
   gameAllocated: null,
 };
 
-function channelStatusFromPayload(cs: ChannelStatusPayload): ChannelStatusInfo {
-  const parsedCoin = parseCoinPayload(cs.coin);
+function channelStatusFromPayload(cs: ChannelStatusPayload, coinHex: string | null): ChannelStatusInfo {
+  const amount = parseCoinAmount(cs.coin);
   const isResolvedFromUnroll = cs.state === 'ResolvedUnrolled' || cs.state === 'ResolvedStale';
   const resolvedShare = isResolvedFromUnroll
-    ? (parsedCoin?.amount ?? '0')
+    ? (amount ?? '0')
     : parseAmount(cs.our_balance);
   return {
     state: cs.state,
     advisory: cs.advisory ?? null,
-    coinHex: parsedCoin?.hex ?? null,
-    coinAmount: parsedCoin?.amount ?? null,
+    coinHex,
+    coinAmount: amount,
     ourBalance: resolvedShare,
     theirBalance: parseAmount(cs.their_balance),
     gameAllocated: parseAmount(cs.game_allocated),
@@ -158,14 +154,14 @@ function parseAmount(v: unknown): string | null {
   return String(v);
 }
 
-function parseGameStatusTerminalInfo(gs: GameStatusPayload): GameTerminalInfo {
+function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex: string | null): GameTerminalInfo {
   if (gs.status === 'ended-we-timed-out') {
     const clean = gs.other_params?.game_finished;
     return {
       type: 'we-timed-out',
       label: clean ? 'Game ended cleanly' : 'Ended: we timed out',
       myReward: parseAmount(gs.my_reward),
-      rewardCoinHex: coinPayloadToHex(gs.coin_id) ?? null,
+      rewardCoinHex,
     };
   }
 
@@ -175,7 +171,7 @@ function parseGameStatusTerminalInfo(gs: GameStatusPayload): GameTerminalInfo {
       type: 'opponent-timed-out',
       label: clean ? 'Game ended cleanly' : 'Ended: opponent timed out',
       myReward: parseAmount(gs.my_reward),
-      rewardCoinHex: coinPayloadToHex(gs.coin_id) ?? null,
+      rewardCoinHex,
     };
   }
 
@@ -184,7 +180,7 @@ function parseGameStatusTerminalInfo(gs: GameStatusPayload): GameTerminalInfo {
       type: 'we-slashed-opponent',
       label: 'Ended: we slashed opponent',
       myReward: parseAmount(gs.my_reward),
-      rewardCoinHex: coinPayloadToHex(gs.coin_id) ?? null,
+      rewardCoinHex,
     };
   }
 
@@ -202,7 +198,7 @@ function parseGameStatusTerminalInfo(gs: GameStatusPayload): GameTerminalInfo {
       type: 'opponent-successfully-cheated',
       label: 'Ended: opponent successfully cheated',
       myReward: parseAmount(gs.my_reward),
-      rewardCoinHex: coinPayloadToHex(gs.coin_id) ?? null,
+      rewardCoinHex,
     };
   }
 
@@ -274,6 +270,24 @@ export function useGameSession(
   const { iStarted, amount, perGameAmount } = params;
   const playerNumber = iStarted ? 1 : 2;
 
+  const blockchain = getActiveBlockchain();
+
+  const { gameObject } = getBlobSingleton(
+    blockchain,
+    peerConn,
+    registerMessageHandler,
+    uniqueId,
+    amount,
+    iStarted,
+    sessionSave,
+    params.pairingToken,
+    perGameAmount,
+    getDefaultFee,
+  );
+
+  if (params.myAlias) gameObject.myAlias = params.myAlias;
+  if (params.opponentAlias) gameObject.opponentAlias = params.opponentAlias;
+
   const [gameConnectionState, setGameConnectionState] =
     useState<GameConnectionState>(() =>
       sessionSave?.channelReady
@@ -287,12 +301,12 @@ export function useGameSession(
   const [goOnChainPressed, setGoOnChainPressed] = useState(false);
   const [channelStatus, setChannelStatus] = useState<ChannelStatusInfo>(() => {
     if (!sessionSave?.channelReady) return INITIAL_CHANNEL_STATUS;
-    if (sessionSave.channelStatus) return channelStatusFromPayload(sessionSave.channelStatus);
+    if (sessionSave.channelStatus) return channelStatusFromPayload(sessionSave.channelStatus, null);
     return { ...INITIAL_CHANNEL_STATUS, state: 'Active' };
   });
   const [channelAttention, setChannelAttention] = useState<ChannelStatusInfo | null>(() => {
     if (sessionSave?.channelAttentionActive && sessionSave.channelStatus) {
-      return channelStatusFromPayload(sessionSave.channelStatus);
+      return channelStatusFromPayload(sessionSave.channelStatus, null);
     }
     return null;
   });
@@ -358,24 +372,6 @@ export function useGameSession(
       setRealError((prev) => prev === undefined ? e : prev);
     }
   }, []);
-
-  const blockchain = getActiveBlockchain();
-
-  const { gameObject } = getBlobSingleton(
-    blockchain,
-    peerConn,
-    registerMessageHandler,
-    uniqueId,
-    amount,
-    iStarted,
-    sessionSave,
-    params.pairingToken,
-    perGameAmount,
-    getDefaultFee,
-  );
-
-  if (params.myAlias) gameObject.myAlias = params.myAlias;
-  if (params.opponentAlias) gameObject.opponentAlias = params.opponentAlias;
 
   const gameObjectRef = useRef<WasmBlobWrapper>(gameObject);
   gameObjectRef.current = gameObject;
@@ -455,7 +451,7 @@ export function useGameSession(
     if (go) { go.gameTerminalAttentionActive = false; go.scheduleSave(); }
   }, []);
 
-  const handleNotification = useCallback((n: WasmNotification) => {
+  const handleNotification = useCallback(async (n: WasmNotification) => {
     const go = gameObjectRef.current;
     if (typeof n !== 'object' || n === null) return;
 
@@ -463,7 +459,8 @@ export function useGameSession(
     if ('ChannelStatus' in n) {
       const cs = n.ChannelStatus as ChannelStatusPayload | undefined;
       if (!cs) return;
-      const info = channelStatusFromPayload(cs);
+      const coinHex = await coinIdHex(cs.coin);
+      const info = channelStatusFromPayload(cs, coinHex);
       channelStateRef.current = info.state;
       setChannelStatus(info);
       if (ATTENTION_STATES.includes(cs.state)) {
@@ -518,7 +515,7 @@ export function useGameSession(
       if (!gs) return;
       const gid = String(gs.id);
       const status = gs.status;
-      const coinHex = coinPayloadToHex(gs.coin_id) ?? null;
+      const coinHex = await coinIdHex(gs.coin_id);
       const inOnChainFlow = ON_CHAIN_FLOW_STATES.has(channelStateRef.current);
       const isOnChainTurnStatus =
         status === 'on-chain-my-turn' || status === 'on-chain-their-turn' || status === 'replaying';
@@ -553,7 +550,8 @@ export function useGameSession(
           }
         }
 
-        const terminalInfo = parseGameStatusTerminalInfo(gs);
+        const rewardCoinHex = await coinIdHex(gs.coin_id);
+        const terminalInfo = parseGameStatusTerminalInfo(gs, rewardCoinHex);
         setGameTerminal(terminalInfo);
         setGameCoin(prev => ({ ...prev, coinHex: null, turnState: 'ended' }));
         // On-chain terminal paths have their own dedicated dialogs/UX.
