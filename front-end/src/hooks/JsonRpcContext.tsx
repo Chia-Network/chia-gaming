@@ -62,7 +62,15 @@ function serialized<T>(fn: () => Promise<T>): Promise<T> {
 function getErrorText(err: unknown): string {
   if (err instanceof Error) return err.message;
   if (err && typeof err === 'object') {
-    if ('message' in err && typeof (err as any).message === 'string') return (err as any).message;
+    const obj = err as Record<string, unknown>;
+    if (typeof obj.message === 'string') {
+      const parts = [obj.message];
+      if ('code' in obj) parts.push(`code=${String(obj.code)}`);
+      if ('data' in obj && obj.data !== undefined) {
+        try { parts.push(`data=${JSON.stringify(obj.data)}`); } catch { /* skip */ }
+      }
+      return parts.length > 1 ? `${parts[0]} (${parts.slice(1).join(', ')})` : parts[0];
+    }
     try { return JSON.stringify(err); } catch { /* fall through */ }
   }
   return String(err);

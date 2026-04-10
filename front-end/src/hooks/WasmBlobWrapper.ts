@@ -182,6 +182,7 @@ export class WasmBlobWrapper {
 
   setPeerKeepalive(sendKeepalive: () => void) {
     this.peerSendKeepalive = sendKeepalive;
+    this.startKeepaliveTimer();
   }
 
   cleanup() {
@@ -204,7 +205,9 @@ export class WasmBlobWrapper {
   }
 
   startKeepaliveTimer() {
-    this.stopKeepaliveTimer();
+    if (this.keepaliveTimer) {
+      throw new Error('ASSERT_FAIL: keepalive timer already running');
+    }
     this.keepaliveTimer = setInterval(() => {
       this.peerSendKeepalive?.();
     }, KEEPALIVE_INTERVAL_MS);
@@ -241,9 +244,6 @@ export class WasmBlobWrapper {
       this.restoredSession = false;
       this.resendUnacked();
       this.resubmitPendingTransactions();
-      if (this.channelReady) {
-        this.startKeepaliveTimer();
-      }
     }
   }
 
@@ -473,7 +473,6 @@ export class WasmBlobWrapper {
           if (!this.channelReady && cs.state === 'Active') {
             debugLog('[wasm] channel creation transaction confirmed on-chain');
             this.channelReady = true;
-            this.startKeepaliveTimer();
           }
         }
       }

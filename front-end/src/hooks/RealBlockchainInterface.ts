@@ -100,6 +100,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     const seq = ++this.spendSeq;
     const src = _source ?? 'unknown';
     debugLog(`[wc-blockchain] walletPushTx submitting #${seq} from=${src} fee=${fee ?? 0}`);
+
     try {
       const result = await rpc.walletPushTx({ spendBundle: spendBundle as object, fee: fee || undefined });
       debugLog(`[wc-blockchain] walletPushTx submitted #${seq} result=${JSON.stringify(result)}`);
