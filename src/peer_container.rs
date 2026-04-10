@@ -33,7 +33,7 @@ use crate::potato_handler::types::{
 };
 
 #[cfg(test)]
-use crate::potato_handler::shutdown_handler::ShutdownHandler;
+use crate::potato_handler::spend_channel_coin_handler::SpendChannelCoinHandler;
 #[cfg(test)]
 use crate::potato_handler::PotatoHandler;
 
@@ -718,8 +718,8 @@ impl SynchronousGameCradle {
         if let Some(ph) = self.peer.as_any().downcast_ref::<PotatoHandler>() {
             return ph.force_unroll_spend(&mut env);
         }
-        if let Some(sh) = self.peer.as_any().downcast_ref::<ShutdownHandler>() {
-            return sh.force_unroll_spend(&mut env);
+        if let Some(h) = self.peer.as_any().downcast_ref::<SpendChannelCoinHandler>() {
+            return h.force_unroll_spend(&mut env);
         }
         Err(Error::StrErr(
             "force_unroll_spend: not available in this phase".to_string(),
@@ -859,22 +859,16 @@ impl SynchronousGameCradle {
         }
         // Update phase metadata from current handler
         use crate::potato_handler::on_chain::OnChainGameHandler;
-        use crate::potato_handler::shutdown_handler::ShutdownHandler;
-        use crate::potato_handler::unroll_watch_handler::UnrollWatchHandler;
 
         self.state.is_on_chain = self
             .peer
             .as_any()
             .downcast_ref::<OnChainGameHandler>()
             .is_some();
-        self.state.is_failed =
-            if let Some(sh) = self.peer.as_any().downcast_ref::<ShutdownHandler>() {
-                sh.is_failed()
-            } else if let Some(uw) = self.peer.as_any().downcast_ref::<UnrollWatchHandler>() {
-                uw.is_failed()
-            } else {
-                false
-            };
+        self.state.is_failed = self
+            .peer
+            .channel_status_snapshot()
+            .map_or(false, |s| s.state == ChannelState::Failed);
 
         self.emit_channel_status_if_changed();
     }

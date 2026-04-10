@@ -17,6 +17,6 @@ elif [ -x /usr/local/opt/llvm/bin/clang ]; then
 fi
 
 echo "=== Building WASM (web target) ==="
-(cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/dist" --release --target=web)
+(cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/dist" --dev --target=web)
 touch "$FE_DIR/dist/.wasm-stamp"
 echo "=== Done ==="

@@ -86,11 +86,6 @@ jobs:
           cd lobby
           pnpm --filter chia-gaming-lobby-service run build
 
-      - name: Build wc-stub
-        run: |
-          cd wc-stub
-          pnpm install --frozen-lockfile && pnpm run build
-
       - name: Build simulator
         run: cargo build --features sim-tests,sim-server --bin chia-gaming-sim
 
@@ -137,7 +132,6 @@ jobs:
 
       #     GAME_PORT=3002
       #     LOBBY_PORT=3003
-      #     WC_PORT=3004
       #     SIM_PORT=5800
       #     LOBBY_SERVICE_PORT=5801
 
@@ -156,9 +150,7 @@ jobs:
       #     node local-static-test-server.js "$(pwd)" "$GAME_PORT" "$LOBBY_PORT" &
       #     SERVER_PID=$!
 
-      #     (cd wc-stub && PORT=$WC_PORT node ./dist/index.js) &
       #     (cd lobby/lobby-service && PORT=$LOBBY_SERVICE_PORT node ./dist/index-rollup.cjs --self "http://localhost:${LOBBY_PORT}") &
-      #     lobby/nginx/beacon.sh "http://localhost:${GAME_PORT}" "http://localhost:${LOBBY_PORT}" &
 
       #     sleep 8
 
@@ -176,30 +168,20 @@ jobs:
           TARGET="${GW}/chia-gaming-deploy"
 
           GAME="${TARGET}/g/chia-gaming-game"
-          mkdir -p "${GAME}/dist/js" "${GAME}/dist/css" "${GAME}/public" "${GAME}/clsp" "${GAME}/nginx"
+          mkdir -p "${GAME}/dist/js" "${GAME}/dist/css" "${GAME}/public" "${GAME}/clsp"
 
           cp -r front-end/dist/*.* "${GAME}/dist/" 2>/dev/null || true
           cp front-end/dist/js/index-rollup.js "${GAME}/dist/js/" 2>/dev/null || true
           cp front-end/dist/css/index.css "${GAME}/dist/css/" 2>/dev/null || true
           cp -r front-end/public/* "${GAME}/public/"
           cp -r clsp/* "${GAME}/clsp/"
-          cp lobby/nginx/urls "${GAME}/dist/"
-          cp lobby/nginx/game.conf "${GAME}/nginx/"
-          cp lobby/nginx/beacon.sh "${GAME}/beacon.sh"
-          cp lobby/nginx/game-install.sh "${GAME}/game-install.sh"
-          cp lobby/nginx/beacon.service "${GAME}/beacon.service"
-          cp lobby/nginx/GAME.md "${GAME}/README.md"
 
           LOBBY="${TARGET}/l/chia-gaming-lobby"
-          mkdir -p "${LOBBY}/public" "${LOBBY}/dist/css" "${LOBBY}/nginx"
+          mkdir -p "${LOBBY}/public" "${LOBBY}/dist/css"
 
           cp -r lobby/lobby-frontend/public/* "${LOBBY}/public/"
           cp lobby/lobby-frontend/dist/css/index.css "${LOBBY}/dist/css/" 2>/dev/null || true
           cp lobby/lobby-service/dist/index-rollup.cjs "${LOBBY}/service.js"
-          cp lobby/nginx/lobby-install.sh "${LOBBY}/lobby-install.sh"
-          cp lobby/nginx/lobby.service "${LOBBY}/lobby.service"
-          cp lobby/nginx/lobby.conf "${LOBBY}/nginx/"
-          cp lobby/nginx/LOBBY.md "${LOBBY}/README.md"
 
       - name: Archive chia-gaming-frontend
         uses: actions/upload-artifact@v4

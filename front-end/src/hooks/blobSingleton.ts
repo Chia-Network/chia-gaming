@@ -7,7 +7,6 @@ import { BlockchainPoller } from './BlockchainPoller';
 import {
   startNewSession,
   SessionSave,
-  BlockchainType,
 } from './save';
 import { debugLog } from '../services/debugLog';
 
@@ -72,6 +71,18 @@ async function restoreSession(
   gameObject.lastChannelStatus = save.channelStatus ?? null;
   gameObject.myAlias = save.myAlias;
   gameObject.opponentAlias = save.opponentAlias;
+  gameObject.showBetweenHandOverlay = save.showBetweenHandOverlay ?? false;
+  gameObject.lastOutcomeWin = save.lastOutcomeWin;
+  gameObject.chatMessages = save.chatMessages ?? [];
+  gameObject.gameCoinHex = save.gameCoinHex ?? null;
+  gameObject.gameTurnState = save.gameTurnState ?? 'my-turn';
+  gameObject.gameTerminalType = save.gameTerminalType ?? 'none';
+  gameObject.gameTerminalLabel = save.gameTerminalLabel ?? null;
+  gameObject.gameTerminalReward = save.gameTerminalReward ?? null;
+  gameObject.gameTerminalRewardCoin = save.gameTerminalRewardCoin ?? null;
+  gameObject.myRunningBalance = save.myRunningBalance ?? '0';
+  gameObject.channelAttentionActive = save.channelAttentionActive ?? false;
+  gameObject.gameTerminalAttentionActive = save.gameTerminalAttentionActive ?? false;
   gameObject.restoreSavedWatchCoins(save.channelStatus);
   gameObject.markRestored();
 
@@ -81,14 +92,14 @@ async function restoreSession(
 export function getBlobSingleton(
   blockchain: BlockchainPoller,
   peerConn: PeerConnectionResult,
-  registerMessageHandler: (handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, pingHandler: () => void) => void,
+  registerMessageHandler: (handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void,
   uniqueId: string,
   amount: bigint,
   iStarted: boolean,
   sessionSave?: SessionSave,
   pairingToken?: string,
   perGameAmount?: bigint,
-  blockchainType?: BlockchainType,
+  getFee?: () => number,
 ): { gameObject: WasmBlobWrapper } {
   if (blobSingleton) {
     return { gameObject: blobSingleton };
@@ -114,11 +125,8 @@ export function getBlobSingleton(
   blobSingleton.iStarted = iStarted;
   blobSingleton.pairingToken = pairingToken ?? '';
   blobSingleton.perGameAmount = perGameAmount ?? 0n;
-  blobSingleton.blockchainType = blockchainType ?? 'simulator';
-  blobSingleton.setPeerPingAndClose(
-    () => peerConn.sendPing(),
-    () => peerConn.close(),
-  );
+  if (getFee) blobSingleton.getFee = getFee;
+  blobSingleton.setPeerKeepalive(() => peerConn.sendKeepalive());
 
   registerMessageHandler(
     (msgno: number, msg: string) => {
@@ -128,7 +136,7 @@ export function getBlobSingleton(
       blobSingleton?.receiveAck(ack);
     },
     () => {
-      blobSingleton?.receivePing();
+      blobSingleton?.receiveKeepalive();
     },
   );
 

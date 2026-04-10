@@ -272,8 +272,8 @@ condition is satisfied. There are no polling loops or retry counters.
 
 `LocalTestUIReceiver` tracks the event state:
 
-- `received_proposal_ids: Vec<GameID>` — populated by `GameProposed`
-- `game_accepted_ids: HashSet<GameID>` — populated by `GameProposalAccepted`
+- `received_proposal_ids: Vec<GameID>` — populated by `ProposalMade`
+- `game_accepted_ids: HashSet<GameID>` — populated by `ProposalAccepted`
 - `opponent_moved_in_game: HashSet<GameID>` — populated by `OpponentMoved`
 - `game_finished_ids: HashSet<GameID>` — populated by terminal notifications
 - `accepted_proposal_ids: Vec<GameID>` — tracks which accepts have been called
@@ -293,9 +293,9 @@ The sim loop handles this with a two-phase approach:
   `move_number` is NOT advanced — the sim loop stays on the same action.
 - **Phase 2** (accept called, resolution observed): the trigger fires again
   once one of these notifications appears for the game ID:
-  `GameProposalAccepted`, `InsufficientBalance`, `GameCancelled`, or
-  `GameProposalCancelled`. The handler sees the accept was already called,
-  skips the call, and `move_number` advances past.
+  `ProposalAccepted`, `InsufficientBalance`, or `ProposalCancelled`.
+  The handler sees the accept was already called, skips the call, and
+  `move_number` advances past.
 
 This ensures that subsequent actions (e.g. `GoOnChain`) cannot fire before the
 accept's effects have been observed.
@@ -309,7 +309,7 @@ use `GoOnChain` followed by `WaitBlocks` for unroll and game timeouts.
 Tests should NOT make assumptions about which player holds the potato at any
 given time. Any action that requires the potato (proposing, accepting, moving)
 will automatically request it if needed and wait for the round-trip. Effects
-like `InsufficientBalance` or `GameProposalAccepted` only fire when the potato
+like `InsufficientBalance` or `ProposalAccepted` only fire when the potato
 arrives and the queued action is actually processed — this delay is normal and
 the event-driven triggers account for it.
 

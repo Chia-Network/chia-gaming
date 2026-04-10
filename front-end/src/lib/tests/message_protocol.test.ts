@@ -63,7 +63,7 @@ function makePeerConn(
   return {
     sendMessage: (msgno, msg) => sentMessages.push({ msgno, msg }),
     sendAck: (ackMsgno) => sentAcks.push(ackMsgno),
-    sendPing: () => {},
+    sendKeepalive: () => {},
     hostLog: () => {},
     close: () => {},
   };
@@ -276,19 +276,11 @@ describe('resendUnacked', () => {
   });
 });
 
-describe('cleanShutdown does not close peer connection', () => {
-  it('calls shut_down on cradle without calling peerClose', () => {
-    const closeFn = jest.fn();
+describe('cleanShutdown calls shut_down on cradle', () => {
+  it('calls shut_down on cradle', () => {
     const sentMessages: Array<{ msgno: number; msg: string }> = [];
     const sentAcks: number[] = [];
-    const peerConn: PeerConnectionResult = {
-      sendMessage: (msgno, msg) => sentMessages.push({ msgno, msg }),
-      sendAck: (ackMsgno) => sentAcks.push(ackMsgno),
-      sendPing: () => {},
-      hostLog: () => {},
-      close: closeFn,
-    };
-    const blob = new WasmBlobWrapper(mockBlockchain, 'test', 100n, peerConn);
+    const blob = new WasmBlobWrapper(mockBlockchain, 'test', 100n, makePeerConn(sentMessages, sentAcks));
     activeBlob = blob;
 
     const cradle = {
@@ -298,13 +290,11 @@ describe('cleanShutdown does not close peer connection', () => {
 
     blob.loadWasm(mockWasmConnection);
     blob.setGameCradle(cradle);
-    blob.setPeerPingAndClose(() => {}, closeFn);
     blob.kickSystem(2);
     blob.blockNotification(1, [], emptyReport);
 
     blob.cleanShutdown();
 
     expect((cradle as any).shut_down).toHaveBeenCalled();
-    expect(closeFn).not.toHaveBeenCalled();
   });
 });

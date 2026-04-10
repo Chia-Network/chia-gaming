@@ -6,11 +6,25 @@ function randomHex(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-export interface SavedGame {
+interface SavedGame {
   id: string;
   searchParams: Record<string, string>;
   url: string;
   [key: string]: unknown;
+}
+
+export interface CalpokerDisplaySnapshot {
+  gameState: string;
+  playerCardIds: number[];
+  opponentCardIds: number[];
+  cardSelections: number[];
+  winner: string | null;
+  playerBestHandCardIds: number[];
+  opponentBestHandCardIds: number[];
+  playerHaloCardIds: number[];
+  opponentHaloCardIds: number[];
+  playerDisplayText: string;
+  opponentDisplayText: string;
 }
 
 export interface CalpokerHandState {
@@ -18,9 +32,11 @@ export interface CalpokerHandState {
   opponentHand: number[];
   moveNumber: number;
   isPlayerTurn: boolean;
+  cardSelections?: number[];
+  displaySnapshot?: CalpokerDisplaySnapshot;
 }
 
-export type BlockchainType = 'simulator' | 'walletconnect';
+type BlockchainType = 'simulator' | 'walletconnect';
 
 export interface SessionSave {
   serializedCradle: string;
@@ -40,9 +56,21 @@ export interface SessionSave {
   channelStatus?: ChannelStatusPayload | null;
   myAlias?: string;
   opponentAlias?: string;
+  showBetweenHandOverlay?: boolean;
+  lastOutcomeWin?: 'win' | 'lose' | 'tie';
+  chatMessages?: Array<{ text: string; fromAlias: string; timestamp: number; isMine: boolean }>;
+  gameCoinHex?: string | null;
+  gameTurnState?: string;
+  gameTerminalType?: string;
+  gameTerminalLabel?: string | null;
+  gameTerminalReward?: string | null;
+  gameTerminalRewardCoin?: string | null;
+  myRunningBalance?: string;
+  channelAttentionActive?: boolean;
+  gameTerminalAttentionActive?: boolean;
 }
 
-export interface AppState {
+interface AppState {
   version: number;
   playerId: string;
   sessionId?: string;
@@ -51,6 +79,13 @@ export interface AppState {
   alias?: string;
   theme?: 'dark' | 'light';
   savedGames?: SavedGame[];
+  defaultFee?: number;
+  feeUnit?: 'mojo' | 'xch';
+  activeTab?: string;
+  connecting?: boolean;
+  unreadChat?: boolean;
+  unreadSession?: boolean;
+  walletAlert?: boolean;
 }
 
 const APP_STATE_KEY = 'appState';
@@ -199,7 +234,7 @@ export function loadAppState(): AppState {
   return { version: CURRENT_VERSION, playerId: randomHex() };
 }
 
-export function saveAppState(state: AppState): void {
+function saveAppState(state: AppState): void {
   try {
     localStorage.setItem(APP_STATE_KEY, JSON.stringify(state));
   } catch (e) {
@@ -257,6 +292,9 @@ export function clearSession(): void {
     playerId: state.playerId,
     alias: state.alias,
     theme: state.theme,
+    activeTab: state.activeTab,
+    defaultFee: state.defaultFee,
+    feeUnit: state.feeUnit,
   };
   saveAppState(cleared);
 }
@@ -301,6 +339,84 @@ export function setTheme(theme: 'dark' | 'light'): void {
   saveAppState(state);
 }
 
+// --- Default fee ---
+
+export function getDefaultFee(): number {
+  return loadAppState().defaultFee ?? 0;
+}
+
+export function setDefaultFee(fee: number): void {
+  const state = loadAppState();
+  state.defaultFee = fee;
+  saveAppState(state);
+}
+
+export function getFeeUnit(): 'mojo' | 'xch' {
+  return loadAppState().feeUnit ?? 'mojo';
+}
+
+export function setFeeUnit(unit: 'mojo' | 'xch'): void {
+  const state = loadAppState();
+  state.feeUnit = unit;
+  saveAppState(state);
+}
+
+// --- Active tab ---
+
+export function getActiveTab(): string | undefined {
+  return loadAppState().activeTab;
+}
+
+export function setActiveTab(tab: string): void {
+  const state = loadAppState();
+  state.activeTab = tab;
+  saveAppState(state);
+}
+
+// --- Connecting flag ---
+
+export function getConnecting(): boolean {
+  return loadAppState().connecting ?? false;
+}
+
+export function setConnecting(v: boolean): void {
+  const state = loadAppState();
+  state.connecting = v || undefined;
+  saveAppState(state);
+}
+
+// --- Notification badges ---
+
+export function getUnreadChat(): boolean {
+  return loadAppState().unreadChat ?? false;
+}
+
+export function setUnreadChat(v: boolean): void {
+  const state = loadAppState();
+  state.unreadChat = v || undefined;
+  saveAppState(state);
+}
+
+export function getUnreadSession(): boolean {
+  return loadAppState().unreadSession ?? false;
+}
+
+export function setUnreadSession(v: boolean): void {
+  const state = loadAppState();
+  state.unreadSession = v || undefined;
+  saveAppState(state);
+}
+
+export function getWalletAlert(): boolean {
+  return loadAppState().walletAlert ?? false;
+}
+
+export function setWalletAlert(v: boolean): void {
+  const state = loadAppState();
+  state.walletAlert = v || undefined;
+  saveAppState(state);
+}
+
 // --- Saved games ---
 
 export function getSaveList(): string[] {
@@ -330,16 +446,8 @@ export function saveGame(g: SavedGame): [string, unknown] | undefined {
   }
 }
 
-export function findMatchingGame(peerSaves: string[]): string | undefined {
-  const peerSet = new Set(peerSaves);
-  return getSaveList().find(save => peerSet.has(save));
-}
-
 export function loadSave(saveId: string): SavedGame | undefined {
   const state = loadAppState();
   return (state.savedGames ?? []).find(g => g.id === saveId);
 }
 
-// Keep old name exported for back-compat during transition
-export { loadAppState as loadPersistedState };
-export type { AppState as PersistedState };

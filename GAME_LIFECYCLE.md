@@ -18,14 +18,14 @@ Games are initiated through a propose/accept flow:
 1. **Propose:** The potato holder sends a `BatchAction::ProposeGame` containing
   the `GameStart` descriptor (game type, contributions, timeout, parameters).
    Both sides record the game in `proposed_games` as a pending proposal. The
-   receiver gets a `GameProposed` notification; the proposer does not (the
+   receiver gets a `ProposalMade` notification; the proposer does not (the
    proposer tracks the proposal via the `propose_game` API call itself).
 2. **Accept:** The receiver (or proposer on a subsequent potato) sends
   `BatchAction::AcceptProposal`. Both sides instantiate the referee and game
    handler, moving the game into `live_games`. Both receive
-   `GameProposalAccepted`.
+   `ProposalAccepted`.
 3. **Cancel:** Either side can send `BatchAction::CancelProposal` to withdraw.
-  Both receive `GameProposalCancelled`. If a channel goes on-chain while a
+  Both receive `ProposalCancelled`. If a channel goes on-chain while a
    proposal is still pending, proposals not reflected in the unroll are
    automatically cancelled.
 
@@ -67,18 +67,19 @@ The cancel is silently discarded — `drain_queue_into_batch` checks
 authoritative (they are the only one who can accept, so deciding to cancel
 resolves it). Cancellation by the **proposer** is best-effort: the receiver
 may have already accepted on a previous potato pass, in which case the
-proposer's cancel evaporates and a `GameProposalAccepted` arrives instead.
+proposer's cancel evaporates and a `ProposalAccepted` arrives instead.
 - **Stale accept:** A player queues `AcceptProposal` but the proposal was
-already cancelled by the peer before the accept is sent. A `GameCancelled`
-notification is emitted to inform the acceptor that the game will not happen.
+already cancelled by the peer before the accept is sent. The accept silently
+evaporates — the `ProposalCancelled` from the peer's cancel already resolved
+the proposal lifecycle (Rule A). Acceptance is advisory; no notification is
+emitted for the stale accept.
 - **Insufficient balance on accept:** When the potato arrives and
 `drain_queue_into_batch` processes a `QueuedAcceptProposal`, it pre-checks
 both players' available balances. If either player's contribution exceeds
-their `out_of_game_balance`, an `InsufficientBalance` notification is emitted,
-the proposal is automatically cancelled (`CancelProposal` is sent to the
-peer and `GameProposalCancelled` is emitted locally), and the accept is
-skipped. `InsufficientBalance` is a terminal condition for the accept-call
-invariant.
+their `out_of_game_balance`, `ProposalAccepted` is emitted followed
+immediately by `InsufficientBalance` (the terminal). `CancelProposal` is sent
+to the peer (who sees `ProposalCancelled`). The game satisfies both Rule A
+(accepted) and Rule B (terminal follows acceptance).
 
 ### WASM Accept-and-Move Convenience
 
@@ -105,7 +106,7 @@ A single game's lifecycle, independent of other concurrent games:
 
 2. Accept   (BatchAction::AcceptProposal)
    → referee + game handler instantiated, game moves to live_games
-   → both sides receive GameProposalAccepted
+   → both sides receive ProposalAccepted
 
 3. Play     (BatchAction::Move, alternating turns)
    → each move updates the referee state and mover_share

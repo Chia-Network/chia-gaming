@@ -5,6 +5,7 @@ import { BLOCKCHAIN_WS_URL } from '../settings';
 import {
   InternalBlockchainInterface,
   BlockchainInboundAddressResult,
+  ConnectionSetup,
 } from '../types/ChiaGaming';
 
 import { debugLog } from '../services/debugLog';
@@ -48,6 +49,12 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   private uniqueId = '';
   private connectPromise: Promise<void> | null = null;
   private readonly retryBackoffMs = [0, 100, 250, 500, 1000];
+  private connectionListeners = new Set<(connected: boolean) => void>();
+  private lastConnectedState = false;
+  private autoReconnect = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000];
+  private reconnectAttempt = 0;
 
   constructor(wsUrl: string) {
     this.wsUrl = wsUrl;
@@ -68,21 +75,25 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       ws.onopen = () => {
         this.ws = ws;
         this.connectPromise = null;
+        this.fireConnectionChange(true);
         resolve();
       };
-      ws.onerror = (e: any) => {
+      ws.onerror = () => {
         this.ws = null;
         this.connectPromise = null;
+        this.fireConnectionChange(false);
         try { ws.close(); } catch { /* ignore */ }
-        reject(e);
+        reject(new Error(`WebSocket connection to ${this.wsUrl} failed`));
       };
       ws.onclose = () => {
         this.ws = null;
         this.connectPromise = null;
+        this.fireConnectionChange(false);
         for (const [, p] of this.pending) {
           p.reject(new Error('WebSocket closed'));
         }
         this.pending.clear();
+        this.scheduleReconnect();
       };
       ws.onmessage = (evt: any) => {
         const raw = typeof evt === 'string' ? evt : evt.data;
@@ -159,10 +170,12 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     if (this.deleted) return;
     this.blockchainAddressData = { puzzleHash };
     await this.withTransientRetry('get_peak', () => this.getHeightInfo());
+    this.autoReconnect = true;
+    this.reconnectAttempt = 0;
     debugLog('[sim-blockchain] simulator probe succeeded');
   }
 
-  async spend(blob: string, _spendBundle: unknown): Promise<string> {
+  async spend(blob: string, _spendBundle: unknown, _source?: string, _fee?: number): Promise<string> {
     const status_array = await this.sendRequest('spend', { blob });
     if (!Array.isArray(status_array) || status_array.length < 1) {
       throw new Error('status result array was empty');
@@ -220,25 +233,91 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     await this.sendRequest('register_remote_coins', { coinIds: names });
   }
 
-  async registerUser(name: string): Promise<string> {
+  async registerUser(name: string, balance?: number): Promise<string> {
     this.uniqueId = name;
+    const params: any = { name };
+    if (balance !== undefined) params.balance = balance;
     return this.withTransientRetry(
       'registerUser',
-      () => this.sendRequest('register', { name }),
+      () => this.sendRequest('register', params),
     );
+  }
+
+  private scheduleReconnect() {
+    if (!this.autoReconnect || this.deleted) return;
+    if (this.reconnectTimer !== null) return;
+    const delay = FakeBlockchainInterface.RECONNECT_DELAYS[
+      Math.min(this.reconnectAttempt, FakeBlockchainInterface.RECONNECT_DELAYS.length - 1)
+    ];
+    this.reconnectAttempt++;
+    debugLog(`[sim-blockchain] scheduling reconnect in ${delay}ms (attempt ${this.reconnectAttempt})`);
+    this.reconnectTimer = setTimeout(async () => {
+      this.reconnectTimer = null;
+      if (!this.autoReconnect || this.deleted) return;
+      try {
+        await this.ensureConnected();
+        await this.getOrRequestToken();
+        await this.withTransientRetry('get_peak', () => this.getHeightInfo());
+        this.reconnectAttempt = 0;
+        debugLog('[sim-blockchain] reconnected successfully');
+      } catch (err) {
+        debugLog(`[sim-blockchain] reconnect failed: ${err}`);
+      }
+    }, delay);
   }
 
   close() {
     this.deleted = true;
+    this.autoReconnect = false;
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.ws) {
       try { this.ws.close(); } catch { /* ignore */ }
       this.ws = null;
     }
     this.connectPromise = null;
+    this.fireConnectionChange(false);
     for (const [, p] of this.pending) {
       p.reject(new Error('closed'));
     }
     this.pending.clear();
+  }
+
+  private fireConnectionChange(connected: boolean) {
+    if (connected === this.lastConnectedState) return;
+    this.lastConnectedState = connected;
+    for (const cb of this.connectionListeners) {
+      try { cb(connected); } catch { /* ignore */ }
+    }
+  }
+
+  async beginConnect(uniqueId: string): Promise<ConnectionSetup> {
+    return {
+      qrUri: `sim://${this.wsUrl.replace('ws://', '')}/${uniqueId}`,
+      fields: {
+        balance: { label: 'Starting balance (mojos)', default: 1_000_000 },
+      },
+      finalize: async (values?: { balance?: number }) => {
+        await this.registerUser(uniqueId, values?.balance);
+        await this.startMonitoring();
+      },
+    };
+  }
+
+  async disconnect(): Promise<void> {
+    this.autoReconnect = false;
+    this.close();
+  }
+
+  isConnected(): boolean {
+    return this.ws !== null && this.ws.readyState === 1;
+  }
+
+  onConnectionChange(cb: (connected: boolean) => void): () => void {
+    this.connectionListeners.add(cb);
+    return () => { this.connectionListeners.delete(cb); };
   }
 }
 

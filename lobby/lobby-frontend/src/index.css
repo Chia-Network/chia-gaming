@@ -5,18 +5,18 @@
 :root {
 
   /* CANVAS */
- --canvas-base: #FAFCFF;
-  --canvas-bg-subtle: #F5F9FF;
-  --canvas-bg: #EBF1FC;
-  --canvas-bg-hover: #E1E9F8;
-  --canvas-bg-active: #D8E2F4;
-  --canvas-line: #CFDAF1;
-  --canvas-border: #C1CFEB;
-  --canvas-border-hover: #A9BCE2;
-  --canvas-solid: #7C8EB3;
-  --canvas-solid-hover: #7183A6;
-  --canvas-text: #556481;
-  --canvas-text-contrast: #171F31;
+ --canvas-base: #F9FAF8;
+  --canvas-bg-subtle: #ECEEE9;
+  --canvas-bg: #E5E8E3;
+  --canvas-bg-hover: #DBDED8;
+  --canvas-bg-active: #D1D4CE;
+  --canvas-line: #C7CAC4;
+  --canvas-border: #BABDB7;
+  --canvas-border-hover: #A0A39D;
+  --canvas-solid: #828580;
+  --canvas-solid-hover: #757874;
+  --canvas-text: #4F524D;
+  --canvas-text-contrast: #191A18;
   --canvas-on-canvas: #fff;
 
  /* PRIMARY */
@@ -113,18 +113,18 @@
 .dark {
 
    /* CANVAS */
-  --canvas-base: #0D1119;
-  --canvas-bg-subtle: #151921;
-  --canvas-bg: #1D232E;
-  --canvas-bg-hover: #222A39;
-  --canvas-bg-active: #283143;
-  --canvas-line: #2F3A50;
-  --canvas-border: #3A4763;
-  --canvas-border-hover: #4E6086;
-  --canvas-solid: #5A6E97;
-  --canvas-solid-hover: #687BA3;
-  --canvas-text: #A4B4D5;
-  --canvas-text-contrast: #EAEEF7;
+  --canvas-base: #0D120F;
+  --canvas-bg-subtle: #151A17;
+  --canvas-bg: #1D2420;
+  --canvas-bg-hover: #222B25;
+  --canvas-bg-active: #28322C;
+  --canvas-line: #2F3B34;
+  --canvas-border: #3A4841;
+  --canvas-border-hover: #4E6157;
+  --canvas-solid: #5A6F62;
+  --canvas-solid-hover: #687C70;
+  --canvas-text: #A4B5AC;
+  --canvas-text-contrast: #EAEEE9;
   --canvas-on-canvas: #FFF;
 
   /* PRIMARY */
