@@ -29,6 +29,9 @@ importers:
       '@walletconnect/types':
         specifier: 2.23.9
         version: 2.23.9
+      bech32:
+        specifier: ^2.0.0
+        version: 2.0.0
       class-variance-authority:
         specifier: 0.7.1
         version: 0.7.1
@@ -1409,6 +1412,9 @@ packages:
     resolution: {integrity: sha512-BL2sTuHOdy0YT1lYieUxTw/QMtPBC3pmlJC6xk8BBYVv6vcw3SGdKemQ+Xsx9ik2F/lYDO9tqsFQH1r9PFuHKw==}
     engines: {node: '>=6.0.0'}
     hasBin: true
+
+  bech32@2.0.0:
+    resolution: {integrity: sha512-LcknSilhIGatDAsY1ak2I8VtGaHNhgMSYVxFrGLXv+xLHytaKZKcaUJJUE7qmBr7h33o5YQwP55pMI0xmkpJwg==}
 
   blakejs@1.2.1:
     resolution: {integrity: sha512-QXUSXI3QVc/gJME0dBpXrag1kbzOqCjCX8/b54ntNyW6sjtoqxqRk3LTmXzaJoh71zMsDCjM+47jS7XiwN/+fQ==}
@@ -4220,6 +4226,8 @@ snapshots:
   balanced-match@1.0.2: {}
 
   baseline-browser-mapping@2.10.13: {}
+
+  bech32@2.0.0: {}
 
   blakejs@1.2.1: {}
 

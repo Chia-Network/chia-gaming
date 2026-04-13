@@ -171,12 +171,12 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   async getHeightInfo(): Promise<number> {
     const resp = await rpc.getHeightInfo({});
-    if (resp.isTransactionBlock === undefined) {
+    if (resp.prevTransactionBlockHeight == null) {
       throw new Error(
-        'Wallet does not support transaction block height detection. Please upgrade your Chia wallet.',
+        `ASSERT_FAIL: getHeightInfo returned null prevTransactionBlockHeight: ${JSON.stringify(resp)}`,
       );
     }
-    return resp.isTransactionBlock ? resp.height : resp.latestTransactionBlockHeight;
+    return resp.prevTransactionBlockHeight;
   }
 
   async createOfferForIds(
