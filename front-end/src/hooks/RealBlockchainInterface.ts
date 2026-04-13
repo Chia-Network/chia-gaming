@@ -8,7 +8,7 @@ import { WalletType } from '../types/WalletType';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 
 import { debugLog } from '../services/debugLog';
-import { normalizeHexString } from '../util';
+import { normalizeHexString, toUint8, toHexString } from '../util';
 import { decodeBech32mPuzzleHash } from '../util/bech32m';
 import { walletConnectState } from './useWalletConnect';
 
@@ -126,13 +126,12 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   async getPuzzleAndSolution(coin: string): Promise<string[] | null> {
     try {
-      const resp = await rpc.getCoinRecordsByNames({
-        names: [coin],
-        includeSpentCoins: true,
-      });
-      const record = (resp.coinRecords ?? []).find((r: CoinRecord) => r.spent);
-      if (!record) return null;
-      return [record.coin.parentCoinInfo, record.coin.puzzleHash, String(record.coin.amount)];
+      const coinBytes = toUint8(coin);
+      const hashBuf = await crypto.subtle.digest('SHA-256', coinBytes);
+      const coinName = toHexString(new Uint8Array(hashBuf));
+      const resp = await rpc.getPuzzleAndSolution({ coinName });
+      if (!resp?.puzzleReveal || !resp?.solution) return null;
+      return [resp.puzzleReveal, resp.solution];
     } catch (e) {
       console.error('[wc-blockchain] getPuzzleAndSolution error', e);
       debugLog(`[wc-blockchain] getPuzzleAndSolution error: ${String(e)}`);
@@ -171,12 +170,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   async getHeightInfo(): Promise<number> {
     const resp = await rpc.getHeightInfo({});
-    if (resp.prevTransactionBlockHeight == null) {
-      throw new Error(
-        `ASSERT_FAIL: getHeightInfo returned null prevTransactionBlockHeight: ${JSON.stringify(resp)}`,
-      );
-    }
-    return resp.prevTransactionBlockHeight;
+    return resp.prevTransactionBlockHeight ?? 0;
   }
 
   async createOfferForIds(

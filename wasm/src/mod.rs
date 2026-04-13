@@ -605,6 +605,7 @@ mod gaming_wasm {
             .map_err(|e| format!("streamable parse: {e}"))?;
 
         let agg_sig = Aggsig::from_bls(proto_bundle.aggregated_signature);
+        let mut first = true;
         let spends = proto_bundle.coin_spends.into_iter().map(|cs| {
             let coin_string = CoinString::from_parts(
                 &CoinID::new(Hash::from_slice(cs.coin.parent_coin_info.as_ref())
@@ -613,12 +614,13 @@ mod gaming_wasm {
                     .expect("puzzle_hash is 32 bytes")),
                 &Amount::new(cs.coin.amount),
             );
+            let sig = if first { first = false; agg_sig.clone() } else { Aggsig::default() };
             CoinSpend {
                 coin: coin_string,
                 bundle: Spend {
                     puzzle: Puzzle::from_bytes(cs.puzzle_reveal.as_ref()),
                     solution: Program::from_bytes(cs.solution.as_ref()).into(),
-                    signature: agg_sig.clone(),
+                    signature: sig,
                 },
             }
         }).collect();

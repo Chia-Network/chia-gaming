@@ -28,6 +28,10 @@ import {
   GetCoinRecordsByNamesResponse,
 } from '../types/rpc/GetCoinRecordsByNames';
 import {
+  GetPuzzleAndSolutionRequest,
+  GetPuzzleAndSolutionResponse,
+} from '../types/rpc/GetPuzzleAndSolution';
+import {
   PushTxRequest,
   PushTxResponse,
 } from '../types/rpc/PushTx';
@@ -226,6 +230,13 @@ async function getCoinRecordsByNames(data: GetCoinRecordsByNamesRequest) {
   );
 }
 
+async function getPuzzleAndSolution(data: GetPuzzleAndSolutionRequest) {
+  return await request<GetPuzzleAndSolutionResponse>(
+    ChiaMethod.GetPuzzleAndSolution,
+    data,
+  );
+}
+
 export const rpc = {
   getWallets,
   getWalletBalance,
@@ -237,4 +248,5 @@ export const rpc = {
   createNewRemoteWallet,
   registerRemoteCoins,
   getCoinRecordsByNames,
+  getPuzzleAndSolution,
 };

@@ -868,7 +868,7 @@ impl SynchronousGameCradle {
         self.state.is_failed = self
             .peer
             .channel_status_snapshot()
-            .map_or(false, |s| s.state == ChannelState::Failed);
+            .is_some_and(|s| s.state == ChannelState::Failed);
 
         self.emit_channel_status_if_changed();
     }

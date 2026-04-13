@@ -25,22 +25,22 @@ use crate::potato_handler::types::{GameAction, PotatoState, SpendWalletReceiver}
 
 #[derive(Debug, Serialize, Deserialize)]
 enum SpendChannelCoinState {
-    WaitingForChannelSpend {
+    ChannelSpend {
         channel_coin: CoinString,
     },
-    WaitingForChannelConditions {
+    ChannelConditions {
         channel_coin: CoinString,
     },
-    WaitingForUnrollTimeoutOrSpend {
+    UnrollTimeoutOrSpend {
         unroll_coin: CoinString,
         state_number: usize,
     },
-    WaitingForUnrollSpend {
+    UnrollSpend {
         unroll_coin: CoinString,
         state_number: usize,
         reward_coin: Option<CoinString>,
     },
-    WaitingForUnrollConditions {
+    UnrollConditions {
         unroll_coin: CoinString,
         state_number: usize,
     },
@@ -84,7 +84,7 @@ impl SpendChannelCoinHandler {
         unroll_timeout: Timeout,
     ) -> Self {
         SpendChannelCoinHandler {
-            state: SpendChannelCoinState::WaitingForChannelSpend { channel_coin },
+            state: SpendChannelCoinState::ChannelSpend { channel_coin },
             base: ChannelHandlerBase::new(
                 channel_handler,
                 game_action_queue,
@@ -114,7 +114,7 @@ impl SpendChannelCoinHandler {
         unroll_timeout: Timeout,
     ) -> Self {
         SpendChannelCoinHandler {
-            state: SpendChannelCoinState::WaitingForChannelConditions { channel_coin },
+            state: SpendChannelCoinState::ChannelConditions { channel_coin },
             base: ChannelHandlerBase::new(
                 channel_handler,
                 game_action_queue,
@@ -146,7 +146,7 @@ impl SpendChannelCoinHandler {
         last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
     ) -> Self {
         SpendChannelCoinHandler {
-            state: SpendChannelCoinState::WaitingForChannelSpend { channel_coin },
+            state: SpendChannelCoinState::ChannelSpend { channel_coin },
             base: ChannelHandlerBase::new(
                 channel_handler,
                 game_action_queue,
@@ -254,17 +254,14 @@ impl SpendChannelCoinHandler {
     /// for the channel coin to be spent.  Only available when we have cached
     /// spend info (initiator-side clean shutdown that hasn't received a
     /// response yet).
-    pub fn go_on_chain(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
-    ) -> Result<Vec<Effect>, Error> {
+    pub fn go_on_chain(&mut self, env: &mut ChannelHandlerEnv<'_>) -> Result<Vec<Effect>, Error> {
         let saved = match self.last_channel_coin_spend_info.take() {
             Some(s) => s,
             None => return Ok(vec![]),
         };
         let channel_coin = match &self.state {
-            SpendChannelCoinState::WaitingForChannelSpend { channel_coin }
-            | SpendChannelCoinState::WaitingForChannelConditions { channel_coin } => {
+            SpendChannelCoinState::ChannelSpend { channel_coin }
+            | SpendChannelCoinState::ChannelConditions { channel_coin } => {
                 channel_coin.clone()
             }
             _ => return Ok(vec![]),
@@ -280,15 +277,12 @@ impl SpendChannelCoinHandler {
         &self,
         env: &mut ChannelHandlerEnv<'_>,
     ) -> Result<SpendBundle, Error> {
-        let saved = self
-            .last_channel_coin_spend_info
-            .as_ref()
-            .ok_or_else(|| {
-                Error::StrErr("force_unroll_spend: no channel coin spend info cached".to_string())
-            })?;
+        let saved = self.last_channel_coin_spend_info.as_ref().ok_or_else(|| {
+            Error::StrErr("force_unroll_spend: no channel coin spend info cached".to_string())
+        })?;
         let channel_coin = match &self.state {
-            SpendChannelCoinState::WaitingForChannelSpend { channel_coin }
-            | SpendChannelCoinState::WaitingForChannelConditions { channel_coin } => channel_coin,
+            SpendChannelCoinState::ChannelSpend { channel_coin }
+            | SpendChannelCoinState::ChannelConditions { channel_coin } => channel_coin,
             _ => {
                 return Err(Error::StrErr(
                     "force_unroll_spend: not in channel-watching state".to_string(),
@@ -309,10 +303,10 @@ impl SpendChannelCoinHandler {
         let mut effects = Vec::new();
 
         match &self.state {
-            SpendChannelCoinState::WaitingForChannelSpend { channel_coin }
+            SpendChannelCoinState::ChannelSpend { channel_coin }
                 if coin_id == channel_coin =>
             {
-                self.state = SpendChannelCoinState::WaitingForChannelConditions {
+                self.state = SpendChannelCoinState::ChannelConditions {
                     channel_coin: channel_coin.clone(),
                 };
                 effects.push(Effect::DebugLog(format!(
@@ -322,12 +316,12 @@ impl SpendChannelCoinHandler {
                 effects.push(Effect::RequestPuzzleAndSolution(coin_id.clone()));
                 return Ok(effects);
             }
-            SpendChannelCoinState::WaitingForUnrollSpend {
+            SpendChannelCoinState::UnrollSpend {
                 unroll_coin,
                 state_number,
                 ..
             } if coin_id == unroll_coin => {
-                self.state = SpendChannelCoinState::WaitingForUnrollConditions {
+                self.state = SpendChannelCoinState::UnrollConditions {
                     unroll_coin: unroll_coin.clone(),
                     state_number: *state_number,
                 };
@@ -338,11 +332,11 @@ impl SpendChannelCoinHandler {
                 effects.push(Effect::RequestPuzzleAndSolution(coin_id.clone()));
                 return Ok(effects);
             }
-            SpendChannelCoinState::WaitingForUnrollTimeoutOrSpend {
+            SpendChannelCoinState::UnrollTimeoutOrSpend {
                 unroll_coin,
                 state_number,
             } if coin_id == unroll_coin => {
-                self.state = SpendChannelCoinState::WaitingForUnrollConditions {
+                self.state = SpendChannelCoinState::UnrollConditions {
                     unroll_coin: unroll_coin.clone(),
                     state_number: *state_number,
                 };
@@ -371,11 +365,11 @@ impl SpendChannelCoinHandler {
         let mut effects = Vec::new();
 
         let unroll_timed_out = match &self.state {
-            SpendChannelCoinState::WaitingForUnrollTimeoutOrSpend {
+            SpendChannelCoinState::UnrollTimeoutOrSpend {
                 unroll_coin,
                 state_number,
             } if coin_id == unroll_coin => Some(*state_number),
-            SpendChannelCoinState::WaitingForUnrollSpend {
+            SpendChannelCoinState::UnrollSpend {
                 unroll_coin,
                 state_number,
                 ..
@@ -421,7 +415,7 @@ impl SpendChannelCoinHandler {
         let mut effects = Vec::new();
 
         match &self.state {
-            SpendChannelCoinState::WaitingForChannelConditions { channel_coin }
+            SpendChannelCoinState::ChannelConditions { channel_coin }
                 if *coin_id == *channel_coin =>
             {
                 match self.handle_channel_coin_spent(env, coin_id, puzzle_and_solution) {
@@ -436,7 +430,7 @@ impl SpendChannelCoinHandler {
                 }
                 return Ok((effects, None));
             }
-            SpendChannelCoinState::WaitingForUnrollSpend {
+            SpendChannelCoinState::UnrollSpend {
                 unroll_coin,
                 state_number,
                 ..
@@ -458,7 +452,7 @@ impl SpendChannelCoinHandler {
                 }
                 return Ok((effects, None));
             }
-            SpendChannelCoinState::WaitingForUnrollConditions {
+            SpendChannelCoinState::UnrollConditions {
                 unroll_coin,
                 state_number,
             } if *coin_id == *unroll_coin => {
@@ -539,7 +533,7 @@ impl SpendChannelCoinHandler {
             }
         };
 
-        self.state = SpendChannelCoinState::WaitingForUnrollSpend {
+        self.state = SpendChannelCoinState::UnrollSpend {
             unroll_coin: unroll_coin.clone(),
             state_number: on_chain_state,
             reward_coin: None,
@@ -588,7 +582,9 @@ impl SpendChannelCoinHandler {
             };
 
             if is_clean {
-                effects.push(Effect::DebugLog("[clean-end] clean shutdown landed".to_string()));
+                effects.push(Effect::DebugLog(
+                    "[clean-end] clean shutdown landed".to_string(),
+                ));
                 {
                     let ch = self.base.channel_handler_mut()?;
                     for (id, amount, game_finished) in ch.drain_cached_accept_timeouts() {
@@ -684,7 +680,7 @@ impl SpendChannelCoinHandler {
                 effects.push(Effect::DebugLog(format!(
                     "[unroll-preempt] state={on_chain_state}",
                 )));
-                self.state = SpendChannelCoinState::WaitingForUnrollSpend {
+                self.state = SpendChannelCoinState::UnrollSpend {
                     unroll_coin: unroll_coin.clone(),
                     state_number: on_chain_state,
                     reward_coin: None,
@@ -696,7 +692,7 @@ impl SpendChannelCoinHandler {
                 });
             }
             UnrollOutcome::WaitForTimeout => {
-                self.state = SpendChannelCoinState::WaitingForUnrollTimeoutOrSpend {
+                self.state = SpendChannelCoinState::UnrollTimeoutOrSpend {
                     unroll_coin: unroll_coin.clone(),
                     state_number: on_chain_state,
                 };
@@ -1148,8 +1144,8 @@ impl PeerHandler for SpendChannelCoinHandler {
     }
     fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
         let (state, coin) = match &self.state {
-            SpendChannelCoinState::WaitingForChannelSpend { channel_coin }
-            | SpendChannelCoinState::WaitingForChannelConditions { channel_coin } => {
+            SpendChannelCoinState::ChannelSpend { channel_coin }
+            | SpendChannelCoinState::ChannelConditions { channel_coin } => {
                 let s = if self.expected_clean_shutdown.is_some() {
                     ChannelState::ShutdownTransactionPending
                 } else {
@@ -1157,9 +1153,9 @@ impl PeerHandler for SpendChannelCoinHandler {
                 };
                 (s, Some(channel_coin.clone()))
             }
-            SpendChannelCoinState::WaitingForUnrollTimeoutOrSpend { unroll_coin, .. }
-            | SpendChannelCoinState::WaitingForUnrollSpend { unroll_coin, .. }
-            | SpendChannelCoinState::WaitingForUnrollConditions { unroll_coin, .. } => {
+            SpendChannelCoinState::UnrollTimeoutOrSpend { unroll_coin, .. }
+            | SpendChannelCoinState::UnrollSpend { unroll_coin, .. }
+            | SpendChannelCoinState::UnrollConditions { unroll_coin, .. } => {
                 (ChannelState::Unrolling, Some(unroll_coin.clone()))
             }
         };

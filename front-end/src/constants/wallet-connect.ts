@@ -13,6 +13,7 @@ export enum ChiaMethod {
   CreateNewRemoteWallet = 'chia_createNewRemoteWallet',
   RegisterRemoteCoins = 'chia_registerRemoteCoins',
   GetCoinRecordsByNames = 'chia_getCoinRecordsByNames',
+  GetPuzzleAndSolution = 'chia_getPuzzleAndSolution',
 }
 
 export const REQUIRED_NAMESPACES: ProposalTypes.RequiredNamespaces = {
