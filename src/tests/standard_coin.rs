@@ -278,7 +278,7 @@ fn test_standard_puzzle_solution_maker() {
         .expect("should convert");
     let res = run_program(
         allocator.allocator(),
-        &ChiaDialect::new(0),
+        &ChiaDialect::default(),
         puzzle_node,
         solution_node,
         0,

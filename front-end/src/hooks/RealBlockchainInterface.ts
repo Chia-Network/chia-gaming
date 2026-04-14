@@ -272,6 +272,12 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
           maxHeight,
         })}`,
       );
+      const errorMsg = (parsedError as any)?.data?.error
+        ?? (parsedError as any)?.data?.structuredError?.message
+        ?? '';
+      if (/insufficient funds/i.test(errorMsg)) {
+        throw new Error(errorMsg);
+      }
       return null;
     }
   }

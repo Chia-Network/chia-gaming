@@ -364,7 +364,11 @@ export class WasmBlobWrapper {
     } catch (e) {
       console.error('[wasm] handleNeedCoinSpend error:', e);
       debugLog(`[wasm] handleNeedCoinSpend error: ${String(e)}`);
-      this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
+      let msg = extractErrorMessage(e);
+      if (/insufficient funds/i.test(msg)) {
+        msg = 'Wallet reports insufficient funds. It may be that your wallet has enough balance but some coins are locked. Free up locked coins in your wallet and try again.';
+      }
+      this.rxjsEmitter?.next({ type: 'error', error: msg });
     }
   }
 

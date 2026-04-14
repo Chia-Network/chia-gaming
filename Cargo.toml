@@ -19,11 +19,11 @@ used_linker = []
 
 [dependencies]
 bson = "=2.14.0"
-chia-bls = "=0.36.1"
+chia-bls = "=0.38.2"
 chia-puzzles = "=0.20.2"
-clvm-traits = "=0.36.1"
-clvm-utils = "=0.36.1"
-clvmr = { version = "=0.16.2", features = ["pre-eval"] }
+clvm-traits = "=0.38.2"
+clvm-utils = "=0.38.2"
+clvmr = { version = "=0.17.5", features = ["pre-eval"] }
 hex = "=0.4.3"
 lazy_static = "=1.5.0"
 num-bigint = "=0.4.6"

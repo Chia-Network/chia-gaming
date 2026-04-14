@@ -1,5 +1,5 @@
 use clvmr::allocator::{NodePtr, SExp};
-use clvmr::{run_program, ChiaDialect, NO_UNKNOWN_OPS};
+use clvmr::{run_program, ChiaDialect};
 
 use crate::utils::proper_list;
 
@@ -14,7 +14,7 @@ use crate::common::types::{
 };
 
 pub fn chia_dialect() -> ChiaDialect {
-    ChiaDialect::new(NO_UNKNOWN_OPS)
+    ChiaDialect::default()
 }
 
 #[derive(Debug, Clone)]
