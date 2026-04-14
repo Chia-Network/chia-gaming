@@ -28,8 +28,11 @@ export const waitForReadyToInit = new Observable<boolean>((subscriber) => {
 });
 
 export async function fetchHex(fetchUrl: string): Promise<string> {
-  // TODO: check
-  return fetch(fetchUrl).then((wasm) => wasm.text());
+  const resp = await fetch(fetchUrl);
+  if (!resp.ok) {
+    throw new Error(`fetchHex ${fetchUrl}: HTTP ${resp.status} ${resp.statusText}`);
+  }
+  return resp.text();
 }
 
 //    gameStateInit.foo().then()

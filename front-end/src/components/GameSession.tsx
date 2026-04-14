@@ -262,7 +262,10 @@ function ErrorAttentionOverlay({
         </CardHeader>
         <Separator />
         <CardContent className='pt-4 flex flex-col gap-2'>
-          <pre className='text-sm text-canvas-text-contrast whitespace-pre-wrap break-all font-sans'>{message}</pre>
+          <pre
+            onPointerDownCapture={(e) => e.stopPropagation()}
+            className='text-sm text-canvas-text-contrast whitespace-pre-wrap break-all font-sans select-text cursor-text max-h-[60vh] overflow-auto'
+          >{message}</pre>
           <Button variant="solid" onClick={onDismiss} className='w-full'>
             Dismiss
           </Button>
