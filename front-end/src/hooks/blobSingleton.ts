@@ -158,7 +158,7 @@ export function getBlobSingleton(
           amount,
         );
       } catch (e) {
-        const msg = e instanceof Error ? e.message
+        const msg = e instanceof Error ? (e.stack || e.message)
           : typeof e === 'object' && e !== null && 'data' in e ? (e as any).data?.error ?? String(e)
           : String(e);
         console.error('[blobSingleton] newSession error:', e);

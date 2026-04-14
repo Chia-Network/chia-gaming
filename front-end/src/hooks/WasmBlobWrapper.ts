@@ -57,7 +57,7 @@ function extractErrorMessage(e: unknown): string {
       if (parsed?.data?.error) return parsed.data.error;
       if (parsed?.data?.structuredError?.message) return parsed.data.structuredError.message;
     } catch { /* not JSON */ }
-    return e.message;
+    return e.stack || e.message;
   }
   if (e && typeof e === 'object') {
     if ('message' in e && typeof (e as any).message === 'string') return (e as any).message;
@@ -798,7 +798,7 @@ export class WasmBlobWrapper {
       const result = this.cradle.shut_down();
       this.processResult(result);
     } catch (e) {
-      const msg = e instanceof Error ? e.message
+      const msg = e instanceof Error ? (e.stack || e.message)
         : typeof e === 'object' && e !== null && 'error' in e ? (e as { error: string }).error
         : String(e);
       console.error('[wasm] cleanShutdown failed:', msg);
@@ -812,7 +812,7 @@ export class WasmBlobWrapper {
       const result = this.cradle.go_on_chain();
       this.processResult(result);
     } catch (e) {
-      const msg = e instanceof Error ? e.message
+      const msg = e instanceof Error ? (e.stack || e.message)
         : typeof e === 'object' && e !== null && 'error' in e ? (e as { error: string }).error
         : String(e);
       console.error('[wasm] goOnChain failed:', msg);
