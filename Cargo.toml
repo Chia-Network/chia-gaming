@@ -41,7 +41,7 @@ typetag = "0.2.21"
 [dev-dependencies]
 bls12_381 = { version = "=0.8.0", features = ["experimental"] }
 [build-dependencies]
-chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "727a1123d17ad157ab15bb8a7076d341ec24166b" }
+chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "6eb5962181f176affc5d8bd84ee25de04fefa4b3" }
 clvmr = { version = "=0.17.5" }
 toml = "0.8.14"
 
