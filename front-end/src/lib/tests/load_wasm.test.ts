@@ -32,6 +32,7 @@ import {
   FakeBlockchainInterface,
   fakeBlockchainInfo,
 } from '../../hooks/FakeBlockchainInterface';
+import { _resetForTests as resetSaveState } from '../../hooks/save';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { configGameObject } from '../../hooks/blobSingleton';
 import { WasmBlobWrapper } from '../../hooks/WasmBlobWrapper';
@@ -105,6 +106,7 @@ function cleanupActiveResources() {
 
 afterEach(() => {
   cleanupActiveResources();
+  resetSaveState();
 });
 
 class WasmBlobWrapperAdapter {
@@ -244,9 +246,6 @@ async function initWasmBlobWrapper(
   return gameObject;
 }
 
-const doInternalLoadWasm = async () => {
-  return new ArrayBuffer(0);
-};
 
 function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -300,12 +299,12 @@ it(
           cradle1.add_outbound_message(msgno, message);
         },
         sendAck: (_ackMsgno: number) => {},
-        sendPing: () => {},
+        sendKeepalive: () => {},
         hostLog: (msg: string) => process.stderr.write(msg + '\n'),
         close: () => {},
       };
-      let wasm_init1 = new WasmStateInit(doInternalLoadWasm, fetchHex);
-      storeInitArgs(() => {}, WholeWasmObject);
+      let wasm_init1 = new WasmStateInit(fetchHex);
+      storeInitArgs(async () => {}, WholeWasmObject);
       let wasm_blob1 = await initWasmBlobWrapper(
         poller,
         'a11ce000',
@@ -320,11 +319,11 @@ it(
           cradle2.add_outbound_message(msgno, message);
         },
         sendAck: (_ackMsgno: number) => {},
-        sendPing: () => {},
+        sendKeepalive: () => {},
         hostLog: (msg: string) => process.stderr.write(msg + '\n'),
         close: () => {},
       };
-      let wasm_init2 = new WasmStateInit(doInternalLoadWasm, fetchHex);
+      let wasm_init2 = new WasmStateInit(fetchHex);
       let wasm_blob2 = await initWasmBlobWrapper(
         poller,
         'b0b77777',

@@ -28,6 +28,10 @@ import {
   GetCoinRecordsByNamesResponse,
 } from '../types/rpc/GetCoinRecordsByNames';
 import {
+  GetPuzzleAndSolutionRequest,
+  GetPuzzleAndSolutionResponse,
+} from '../types/rpc/GetPuzzleAndSolution';
+import {
   PushTxRequest,
   PushTxResponse,
 } from '../types/rpc/PushTx';
@@ -62,7 +66,15 @@ function serialized<T>(fn: () => Promise<T>): Promise<T> {
 function getErrorText(err: unknown): string {
   if (err instanceof Error) return err.message;
   if (err && typeof err === 'object') {
-    if ('message' in err && typeof (err as any).message === 'string') return (err as any).message;
+    const obj = err as Record<string, unknown>;
+    if (typeof obj.message === 'string') {
+      const parts = [obj.message];
+      if ('code' in obj) parts.push(`code=${String(obj.code)}`);
+      if ('data' in obj && obj.data !== undefined) {
+        try { parts.push(`data=${JSON.stringify(obj.data)}`); } catch { /* skip */ }
+      }
+      return parts.length > 1 ? `${parts[0]} (${parts.slice(1).join(', ')})` : parts[0];
+    }
     try { return JSON.stringify(err); } catch { /* fall through */ }
   }
   return String(err);
@@ -108,7 +120,6 @@ async function request<T, D extends object = object>(
   };
 
   const startedAt = Date.now();
-  console.warn(`[DBG_RPC] ${new Date(startedAt).toISOString()} >>> ${method}`);
 
   let raw: unknown;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -154,19 +165,6 @@ async function request<T, D extends object = object>(
   const result = raw as Record<string, unknown> | undefined;
   if (result?.error) {
     const errorText = toDebugJson(result.error);
-    if (method === ChiaMethod.CreateOfferForIds) {
-      console.error('[WC RPC protocol error] chia_createOfferForIds', {
-        params,
-        error: result.error,
-        raw,
-      });
-      console.error('[WC RPC protocol error] chia_createOfferForIds params(json)=', toDebugJson(params));
-      console.error('[WC RPC protocol error] chia_createOfferForIds error(json)=', errorText);
-      console.error('[WC RPC protocol error] chia_createOfferForIds raw(json)=', toDebugJson(raw));
-      debugLog(
-        `[WC RPC protocol error] ${method}: error=${errorText} params=${toDebugJson(params)}`,
-      );
-    }
     throw new Error(errorText);
   }
 
@@ -232,6 +230,13 @@ async function getCoinRecordsByNames(data: GetCoinRecordsByNamesRequest) {
   );
 }
 
+async function getPuzzleAndSolution(data: GetPuzzleAndSolutionRequest) {
+  return await request<GetPuzzleAndSolutionResponse>(
+    ChiaMethod.GetPuzzleAndSolution,
+    data,
+  );
+}
+
 export const rpc = {
   getWallets,
   getWalletBalance,
@@ -243,4 +248,5 @@ export const rpc = {
   createNewRemoteWallet,
   registerRemoteCoins,
   getCoinRecordsByNames,
+  getPuzzleAndSolution,
 };

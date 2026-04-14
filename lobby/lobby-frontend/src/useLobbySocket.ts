@@ -21,8 +21,8 @@ export interface ChallengeReceived {
 type InboundMessage =
   | { type: 'lobby_update'; players: Player[] }
   | { type: 'challenge_received'; challenge_id: string; from_id: string; from_alias: string; game: string; amount: string; per_game: string }
-  | { type: 'challenge_resolved'; challenge_id: string; accepted: boolean }
-  | { type: 'game_update' }
+  | { type: 'challenge_resolved'; challenge_id: string | null; accepted: boolean }
+  | { type: 'keepalive' }
   | { type: 'error'; error?: string };
 
 function toWsUrl(input: string): string {
@@ -41,6 +41,7 @@ export function useLobbySocket(
   alias?: string,
 ) {
   const [players, setPlayers] = useState<Player[]>([]);
+  const [lobbyUpdateReceived, setLobbyUpdateReceived] = useState(false);
   const [pendingChallenge, setPendingChallenge] = useState<ChallengeReceived | null>(null);
   const [challengeSent, setChallengeSent] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
@@ -50,6 +51,7 @@ export function useLobbySocket(
   const aliasRef = useRef(alias);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
+  const keepaliveTimerRef = useRef<number | null>(null);
   const closingRef = useRef(false);
   const pendingOutboundRef = useRef<Record<string, unknown>[]>([]);
 
@@ -96,6 +98,12 @@ export function useLobbySocket(
             ws.send(JSON.stringify(payload));
           }
         }
+        if (keepaliveTimerRef.current !== null) clearInterval(keepaliveTimerRef.current);
+        keepaliveTimerRef.current = window.setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'keepalive' }));
+          }
+        }, 15_000);
       };
 
       ws.onmessage = (event: MessageEvent<string>) => {
@@ -110,18 +118,21 @@ export function useLobbySocket(
         switch (msg.type) {
           case 'lobby_update':
             setPlayers(msg.players ?? []);
+            setLobbyUpdateReceived(true);
             break;
           case 'challenge_received':
             setPendingChallenge(msg);
             break;
           case 'challenge_resolved':
             setChallengeSent(false);
-            if (!msg.accepted) {
-              console.log('[lobby] challenge declined');
-            }
+            setPendingChallenge((prev) =>
+              prev && msg.challenge_id && prev.challenge_id === msg.challenge_id ? null : prev,
+            );
             break;
           case 'error':
             if (msg.error) console.warn('[lobby] tracker error:', msg.error);
+            break;
+          case 'keepalive':
             break;
           default:
             break;
@@ -129,6 +140,10 @@ export function useLobbySocket(
       };
 
       ws.onclose = (event: CloseEvent) => {
+        if (keepaliveTimerRef.current !== null) {
+          clearInterval(keepaliveTimerRef.current);
+          keepaliveTimerRef.current = null;
+        }
         if (wsRef.current !== ws) return;
         setIsConnected(false);
         wsRef.current = null;
@@ -154,6 +169,10 @@ export function useLobbySocket(
       if (reconnectTimerRef.current !== null) {
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
+      }
+      if (keepaliveTimerRef.current !== null) {
+        clearInterval(keepaliveTimerRef.current);
+        keepaliveTimerRef.current = null;
       }
       send({ type: 'leave', id: uniqueId }, false);
       try { wsRef.current?.close(); } catch {}
@@ -200,6 +219,11 @@ export function useLobbySocket(
     [send],
   );
 
+  const cancelChallenge = useCallback(() => {
+    send({ type: 'challenge_cancel', from_id: uniqueIdRef.current });
+    setChallengeSent(false);
+  }, [send]);
+
   const setLobbyAlias = useCallback(
     async (id: string, newAlias: string) => {
       send({ type: 'change_alias', id, newAlias });
@@ -211,6 +235,7 @@ export function useLobbySocket(
 
   return {
     players,
+    lobbyUpdateReceived,
     pendingChallenge,
     challengeSent,
     isConnected,
@@ -219,6 +244,7 @@ export function useLobbySocket(
     sendChallenge,
     acceptChallenge,
     declineChallenge,
+    cancelChallenge,
     setLobbyAlias,
   };
 }

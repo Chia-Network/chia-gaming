@@ -45,7 +45,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ messages, onSend, myAlias }) => {
         className='flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-2'
       >
         {messages.length === 0 && (
-          <p className='text-center text-canvas-text/40 text-sm pt-8'>
+          <p className='text-center text-canvas-solid text-sm pt-8'>
             No messages yet. Say hello!
           </p>
         )}
@@ -54,7 +54,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ messages, onSend, myAlias }) => {
             key={i}
             className={`flex flex-col ${msg.isMine ? 'items-end' : 'items-start'}`}
           >
-            <span className='text-[10px] text-canvas-text/40 mb-0.5 px-1'>
+            <span className='text-[10px] text-canvas-solid mb-0.5 px-1'>
               {msg.fromAlias} · {formatTime(msg.timestamp)}
             </span>
             <div
@@ -78,7 +78,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ messages, onSend, myAlias }) => {
           onKeyDown={handleKeyDown}
           placeholder='Type a message…'
           rows={1}
-          className='flex-1 resize-none rounded-md border border-canvas-border bg-canvas-bg px-3 py-1.5 text-sm text-canvas-text placeholder:text-canvas-text/40 focus:outline-none focus:ring-1 focus:ring-primary-border'
+          className='flex-1 resize-none rounded-md border border-canvas-border bg-canvas-bg px-3 py-1.5 text-sm text-canvas-text placeholder:text-canvas-solid focus:outline-none focus:ring-1 focus:ring-primary-border'
         />
         <button
           onClick={handleSend}

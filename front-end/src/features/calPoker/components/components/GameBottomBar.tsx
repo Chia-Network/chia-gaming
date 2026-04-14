@@ -12,17 +12,15 @@ const GameBottomBar = ({
   doHandleMakeMove,
 }: GameBottomBarProps) => {
   return (
-    <div className='flex-shrink-0 flex p-2 items-center justify-center'>
-      <Button
-        variant='solid'
-        color='primary'
-        onClick={doHandleMakeMove}
-        disabled={isDisabled}
-        className='w-full p-4'
-      >
-        {buttonText}
-      </Button>
-    </div>
+    <Button
+      variant='solid'
+      color='primary'
+      onClick={doHandleMakeMove}
+      disabled={isDisabled}
+      className='w-auto px-4 py-2'
+    >
+      {buttonText}
+    </Button>
   );
 };
 

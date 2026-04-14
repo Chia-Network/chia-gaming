@@ -2,6 +2,7 @@ import { ReplaySubject } from 'rxjs';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 import { BlockchainReport } from '../types/ChiaGaming';
 import { applyCoinRecordsWatchDiff } from '../util/coinWatch';
+import { debugLog } from '../services/debugLog';
 
 export interface CoinStateBackend {
   registerCoins(names: string[]): Promise<void>;
@@ -10,6 +11,7 @@ export interface CoinStateBackend {
 export class CoinStateMonitor {
   private coinNameToString = new Map<string, string>();
   private registeredCoinNames = new Set<string>();
+  private pendingRegistration = new Set<string>();
   private previousCoinStates = new Map<string, boolean>();
   private peak = 0;
   private lastEmittedPeak = -1;
@@ -33,12 +35,25 @@ export class CoinStateMonitor {
     this.coinNameToString.set(coinName, coinString);
     if (this.registeredCoinNames.has(coinName)) return;
     this.registeredCoinNames.add(coinName);
+    this.pendingRegistration.add(coinName);
 
+    await this.attemptRegistration(coinName);
+  }
+
+  async retryPendingRegistrations() {
+    if (this.pendingRegistration.size === 0) return;
+    const names = Array.from(this.pendingRegistration);
+    for (const name of names) {
+      await this.attemptRegistration(name);
+    }
+  }
+
+  private async attemptRegistration(coinName: string) {
     try {
       await this.backend.registerCoins([coinName]);
+      this.pendingRegistration.delete(coinName);
     } catch (e) {
-      console.error('[coin-monitor] registerCoins failed', e);
-      this.registeredCoinNames.delete(coinName);
+      debugLog(`[coin-monitor] registerCoins failed for ${coinName}, will retry: ${String(e)}`);
     }
   }
 

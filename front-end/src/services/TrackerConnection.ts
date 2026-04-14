@@ -29,17 +29,18 @@ export interface TrackerConnectionCallbacks {
   onPeerReconnected: () => void;
   onMessage: (data: MessagePayload) => void;
   onAck: (ack: number) => void;
-  onPing: () => void;
+  onKeepalive: () => void;
   onClosed: () => void;
   onTrackerDisconnected: () => void;
   onTrackerReconnected: () => void;
+  onTrackerActivity: () => void;
   onChat: (msg: ChatMessage) => void;
 }
 
 export type MessagePayload =
   | { msgno: number; msg: string }
   | { ack: number }
-  | { ping: true };
+  | { keepalive: true };
 
 type TrackerEnvelope =
   | { type: 'connection_status'; has_pairing: boolean; token?: string; game_type?: string; amount?: string; per_game?: string; i_am_initiator?: boolean; peer_connected?: boolean; my_alias?: string; peer_alias?: string }
@@ -47,12 +48,13 @@ type TrackerEnvelope =
   | { type: 'message'; data?: unknown }
   | { type: 'chat'; text: string; from_alias: string; timestamp: number }
   | { type: 'peer_reconnected' }
+  | { type: 'keepalive' }
   | { type: 'closed' }
   | { type: 'error'; error?: string };
 
 function isMessagePayload(data: unknown): data is MessagePayload {
   if (!data || typeof data !== 'object') return false;
-  if ('ping' in data) return (data as { ping?: unknown }).ping === true;
+  if ('keepalive' in data) return (data as { keepalive?: unknown }).keepalive === true;
   if ('ack' in data) return typeof (data as { ack?: unknown }).ack === 'number';
   if ('msgno' in data || 'msg' in data) {
     return (
@@ -63,8 +65,8 @@ function isMessagePayload(data: unknown): data is MessagePayload {
   return false;
 }
 
-function isPingPayload(data: MessagePayload): data is { ping: true } {
-  return 'ping' in data && data.ping === true;
+function isKeepalivePayload(data: MessagePayload): data is { keepalive: true } {
+  return 'keepalive' in data && data.keepalive === true;
 }
 
 function isAckPayload(data: MessagePayload): data is { ack: number } {
@@ -86,6 +88,7 @@ export class TrackerConnection {
   private closePending = false;
   private wasDisconnected = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(trackerUrl: string, sessionId: string, callbacks: TrackerConnectionCallbacks) {
     this.trackerUrl = trackerUrl;
@@ -125,9 +128,11 @@ export class TrackerConnection {
         clearTimeout(this.reconnectTimer);
         this.reconnectTimer = null;
       }
+      this.startKeepaliveTimer();
     };
 
     ws.onmessage = (evt: MessageEvent<string>) => {
+      this.callbacks.onTrackerActivity();
       let msg: TrackerEnvelope | null = null;
       try {
         msg = JSON.parse(evt.data) as TrackerEnvelope;
@@ -178,8 +183,8 @@ export class TrackerConnection {
             return;
           }
           const payload: MessagePayload = msg.data;
-          if (isPingPayload(payload)) {
-            this.callbacks.onPing();
+          if (isKeepalivePayload(payload)) {
+            this.callbacks.onKeepalive();
             return;
           }
           if (isAckPayload(payload)) {
@@ -206,6 +211,8 @@ export class TrackerConnection {
           debugLog('[tracker] peer_reconnected');
           this.callbacks.onPeerReconnected();
           break;
+        case 'keepalive':
+          break;
         case 'closed':
           this.closePending = false;
           this.callbacks.onClosed();
@@ -219,6 +226,7 @@ export class TrackerConnection {
     };
 
     ws.onerror = () => {
+      this.stopKeepaliveTimer();
       if (!this.closed && !this.wasDisconnected) {
         this.wasDisconnected = true;
         debugLog('[tracker] WS connection error, will auto-reconnect');
@@ -227,6 +235,7 @@ export class TrackerConnection {
     };
 
     ws.onclose = () => {
+      this.stopKeepaliveTimer();
       if (this.closed) return;
       if (!this.wasDisconnected) {
         this.wasDisconnected = true;
@@ -254,8 +263,8 @@ export class TrackerConnection {
     this.sendWs({ type: 'message', session_id: this.sessionId, data: payload });
   }
 
-  sendPing() {
-    const payload: MessagePayload = { ping: true };
+  sendKeepalive() {
+    const payload: MessagePayload = { keepalive: true };
     this.sendWs({ type: 'message', session_id: this.sessionId, data: payload });
   }
 
@@ -278,6 +287,7 @@ export class TrackerConnection {
     if (this.closed) return;
     this.closed = true;
     debugLog('[tracker] force disconnect');
+    this.stopKeepaliveTimer();
     this.ws?.close();
     this.ws = null;
   }
@@ -286,7 +296,7 @@ export class TrackerConnection {
     return {
       sendMessage: (msgno: number, input: string) => this.sendMessage(msgno, input),
       sendAck: (ackMsgno: number) => this.sendAck(ackMsgno),
-      sendPing: () => this.sendPing(),
+      sendKeepalive: () => this.sendKeepalive(),
       hostLog: (msg: string) => this.hostLog(msg),
       close: () => this.close(),
     };
@@ -295,12 +305,12 @@ export class TrackerConnection {
   registerMessageHandler(
     handler: (msgno: number, msg: string) => void,
     ackHandler: (ack: number) => void,
-    pingHandler: () => void,
+    keepaliveHandler: () => void,
   ) {
     this.callbacks.onMessage = (data: MessagePayload) => {
       try {
-        if (isPingPayload(data)) {
-          pingHandler();
+        if (isKeepalivePayload(data)) {
+          keepaliveHandler();
           return;
         }
         if (isAckPayload(data)) {
@@ -316,7 +326,7 @@ export class TrackerConnection {
       }
     };
     this.callbacks.onAck = ackHandler;
-    this.callbacks.onPing = pingHandler;
+    this.callbacks.onKeepalive = keepaliveHandler;
     this.handlerRegistered = true;
     const buffered = this.messageBuffer;
     this.messageBuffer = [];
@@ -327,11 +337,26 @@ export class TrackerConnection {
 
   disconnect() {
     this.closed = true;
+    this.stopKeepaliveTimer();
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
     this.ws?.close();
     this.ws = null;
+  }
+
+  private startKeepaliveTimer() {
+    this.stopKeepaliveTimer();
+    this.keepaliveTimer = setInterval(() => {
+      this.sendWs({ type: 'keepalive' });
+    }, 15_000);
+  }
+
+  private stopKeepaliveTimer() {
+    if (this.keepaliveTimer) {
+      clearInterval(this.keepaliveTimer);
+      this.keepaliveTimer = null;
+    }
   }
 }

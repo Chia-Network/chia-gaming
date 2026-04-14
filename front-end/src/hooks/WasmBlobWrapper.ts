@@ -19,7 +19,7 @@ import {
   spend_bundle_to_clvm,
 } from '../util';
 import { debugLog } from '../services/debugLog';
-import { saveSession, SessionSave, CalpokerHandState, BlockchainType } from './save';
+import { saveSession, SessionSave, CalpokerHandState } from './save';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
 
 function clvmToBytes(value: Program | null): Uint8Array {
@@ -40,8 +40,7 @@ function combine_reports(old_report: WatchReport, new_report: WatchReport) {
 }
 
 const SAVE_DEBOUNCE_MS = 500;
-const PING_INTERVAL_MS = 15_000;
-const PEER_TIMEOUT_MS = 60_000;
+const KEEPALIVE_INTERVAL_MS = 15_000;
 
 function toSafeJson(value: unknown): string {
   try {
@@ -58,10 +57,11 @@ function extractErrorMessage(e: unknown): string {
       if (parsed?.data?.error) return parsed.data.error;
       if (parsed?.data?.structuredError?.message) return parsed.data.structuredError.message;
     } catch { /* not JSON */ }
-    return e.message;
+    return e.stack || e.message;
   }
   if (e && typeof e === 'object') {
     if ('message' in e && typeof (e as any).message === 'string') return (e as any).message;
+    if (e instanceof Event) return e.type || 'unknown event';
     try { return JSON.stringify(e); } catch { /* fall through */ }
   }
   return String(e);
@@ -96,11 +96,10 @@ export class WasmBlobWrapper {
   wc: WasmConnection | undefined;
   sendMessage: (msgno: number, msg: string) => void;
   sendAck: (ackMsgno: number) => void;
-  private peerSendPing: (() => void) | null = null;
-  private peerClose: (() => void) | null = null;
+  private peerSendKeepalive: (() => void) | null = null;
   private transactionPublishNerfed = false;
   private lastPeerMessageTime: number = Date.now();
-  private pingTimer: ReturnType<typeof setInterval> | null = null;
+  private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
   messageNumber: number;
   remoteNumber: number;
   cradle: ChiaGame | undefined;
@@ -129,12 +128,25 @@ export class WasmBlobWrapper {
   private reorderQueue: Map<number, string> = new Map();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private restoredSession = false;
-  blockchainType: BlockchainType = 'simulator';
+  private beforeUnloadHandler: (() => void) | null = null;
   activeGameId: string | null = null;
   handState: CalpokerHandState | null = null;
   lastChannelStatus: ChannelStatusPayload | null = null;
   myAlias: string | undefined = undefined;
   opponentAlias: string | undefined = undefined;
+  showBetweenHandOverlay = false;
+  lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined = undefined;
+  chatMessages: Array<{ text: string; fromAlias: string; timestamp: number; isMine: boolean }> = [];
+  gameCoinHex: string | null = null;
+  gameTurnState: string = 'my-turn';
+  gameTerminalType: string = 'none';
+  gameTerminalLabel: string | null = null;
+  gameTerminalReward: string | null = null;
+  gameTerminalRewardCoin: string | null = null;
+  myRunningBalance: string = '0';
+  channelAttentionActive = false;
+  gameTerminalAttentionActive = false;
+  getFee: () => number = () => 0;
 
   constructor(
     blockchain: BlockchainPoller,
@@ -165,13 +177,23 @@ export class WasmBlobWrapper {
         this.rxjsMessageSingleton.next(evt);
       }
     };
+    this.beforeUnloadHandler = () => {
+      const hadPending = !!this.saveTimer;
+      this.flushPendingSave();
+      if (hadPending) {
+        console.log('[wasm] beforeunload: flushed pending save');
+      }
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('beforeunload', this.beforeUnloadHandler);
+    }
   }
 
   setReloading() { this.reloading = true; }
 
-  setPeerPingAndClose(sendPing: () => void, close: () => void) {
-    this.peerSendPing = sendPing;
-    this.peerClose = close;
+  setPeerKeepalive(sendKeepalive: () => void) {
+    this.peerSendKeepalive = sendKeepalive;
+    this.startKeepaliveTimer();
   }
 
   cleanup() {
@@ -182,37 +204,36 @@ export class WasmBlobWrapper {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
     }
-    this.stopPingTimer();
+    this.stopKeepaliveTimer();
+    if (this.beforeUnloadHandler && typeof window !== 'undefined') {
+      window.removeEventListener('beforeunload', this.beforeUnloadHandler);
+      this.beforeUnloadHandler = null;
+    }
   }
 
   notePeerActivity() {
     this.lastPeerMessageTime = Date.now();
   }
 
-  receivePing() {
+  receiveKeepalive() {
     this.notePeerActivity();
   }
 
-  startPingTimer() {
-    this.stopPingTimer();
-    this.lastPeerMessageTime = Date.now();
-    this.pingTimer = setInterval(() => {
-      this.peerSendPing?.();
-      if (
-        Date.now() - this.lastPeerMessageTime > PEER_TIMEOUT_MS &&
-        this.channelReady && !this.cleanShutdownCalled
-      ) {
-        debugLog('[wasm] peer liveness timeout, going on-chain');
-        this.goOnChain();
-        this.stopPingTimer();
-      }
-    }, PING_INTERVAL_MS);
+  startKeepaliveTimer() {
+    if (this.keepaliveTimer) {
+      throw new Error('ASSERT_FAIL: keepalive timer already running');
+    }
+    const timer = setInterval(() => {
+      this.peerSendKeepalive?.();
+    }, KEEPALIVE_INTERVAL_MS);
+    if (typeof timer === 'object' && 'unref' in timer) timer.unref();
+    this.keepaliveTimer = timer;
   }
 
-  private stopPingTimer() {
-    if (this.pingTimer) {
-      clearInterval(this.pingTimer);
-      this.pingTimer = null;
+  private stopKeepaliveTimer() {
+    if (this.keepaliveTimer) {
+      clearInterval(this.keepaliveTimer);
+      this.keepaliveTimer = null;
     }
   }
 
@@ -240,9 +261,6 @@ export class WasmBlobWrapper {
       this.restoredSession = false;
       this.resendUnacked();
       this.resubmitPendingTransactions();
-      if (this.channelReady) {
-        this.startPingTimer();
-      }
     }
   }
 
@@ -282,18 +300,10 @@ export class WasmBlobWrapper {
         throw new Error('ASSERT_FAIL: selectCoins returned null for launcher parent coin');
       }
       this.lastSelectCoinsValue = coin;
-      console.log('[wasm diag] selectCoins returned value', {
-        value: coin,
-        hexLength: coin.length,
-      });
       debugLog(`[wasm diag] selectCoins value len=${coin.length} value=${coin}`);
       const { computeLauncherCoin } = await import('../util/launcher');
       const { launcherCoinHex, launcherCoinId } = await computeLauncherCoin(coin);
       this.lastLauncherCoinId = launcherCoinId;
-      console.log('[wasm diag] computed launcher coin', {
-        launcherCoinHexLength: launcherCoinHex.length,
-        launcherCoinId,
-      });
       debugLog(`[wasm diag] launcherCoinId=${launcherCoinId} launcherCoinHexLen=${launcherCoinHex.length}`);
       const result = this.cradle?.provide_launcher_coin(launcherCoinHex);
       this.processResult(result);
@@ -307,13 +317,6 @@ export class WasmBlobWrapper {
 
   private async handleNeedCoinSpend(request: any) {
     try {
-      console.log('[wasm diag] NeedCoinSpend request', {
-        coin_id: request.coin_id,
-        amount: request.amount,
-        max_height: request.max_height,
-        lastSelectCoinsValue: this.lastSelectCoinsValue,
-        lastLauncherCoinId: this.lastLauncherCoinId,
-      });
       debugLog(
         `[wasm diag] NeedCoinSpend coin_id=${String(request.coin_id)} lastSelect=${String(this.lastSelectCoinsValue)} lastLauncherId=${String(this.lastLauncherCoinId)}`,
       );
@@ -396,8 +399,8 @@ export class WasmBlobWrapper {
     const spendBundleNo0xJson = toSafeJson(strip0xDeep(spendBundle));
     debugLog(`[wasm tx] formed blobLen=${blob.length}`);
     debugLog(`[TX_COINSET_JSON_NO0X] ${spendBundleNo0xJson}`);
-    console.warn(`[DBG_TX] submitTransaction called ts=${new Date().toISOString()} pending=${this.pendingTransactions.length}`);
-    this.blockchain.rpc.spend(blob, spendBundle, 'submitTransaction').then((result) => {
+    const fee = this.getFee();
+    this.blockchain.rpc.spend(blob, spendBundle, 'submitTransaction', fee || undefined).then((result) => {
       if (result) {
         debugLog(`[wasm] submitTransaction: ${result}`);
       }
@@ -420,7 +423,6 @@ export class WasmBlobWrapper {
 
   private resubmitPendingTransactions() {
     if (this.pendingTransactions.length === 0) return;
-    console.warn(`[DBG_TX] resubmitPendingTransactions called ts=${new Date().toISOString()} count=${this.pendingTransactions.length}`);
     debugLog(`[wasm] resubmitting ${this.pendingTransactions.length} pending transactions`);
     const blobs = [...this.pendingTransactions];
     for (const blob of blobs) {
@@ -429,7 +431,8 @@ export class WasmBlobWrapper {
         return;
       }
       const spendBundle = this.wc?.convert_spend_to_coinset_org(blob);
-      this.blockchain.rpc.spend(blob, spendBundle, 'resubmitPendingTransactions').then((result) => {
+      const fee = this.getFee();
+      this.blockchain.rpc.spend(blob, spendBundle, 'resubmitPendingTransactions', fee || undefined).then((result) => {
         if (result) {
           debugLog(`[wasm] resubmitTransaction: ${result}`);
         }
@@ -487,18 +490,16 @@ export class WasmBlobWrapper {
           if (!this.channelReady && cs.state === 'Active') {
             debugLog('[wasm] channel creation transaction confirmed on-chain');
             this.channelReady = true;
-            this.startPingTimer();
           }
         }
       }
-      if (tag === 'GameProposalAccepted' && n.GameProposalAccepted) {
-        this.activeGameId = String(n.GameProposalAccepted.id);
+      if (tag === 'ProposalAccepted' && n.ProposalAccepted) {
+        this.activeGameId = String(n.ProposalAccepted.id);
       }
       if (tag === 'GameStatus') {
         const gs = (n as Record<string, Record<string, unknown>>).GameStatus;
         if (gs && typeof gs.status === 'string' && gs.status.startsWith('ended-')) {
           this.activeGameId = null;
-          this.handState = null;
         }
       }
       this.gameLog.push(JSON.stringify(n));
@@ -640,18 +641,29 @@ export class WasmBlobWrapper {
 
   // --- Persistence ---
 
-  private scheduleSave() {
-    if (this.cleanShutdownCalled || !this.cradle) return;
+  scheduleSave() {
+    if (!this.cradle) return;
     if (this.saveTimer) return;
-    this.saveTimer = setTimeout(() => {
+    const timer = setTimeout(() => {
       this.saveTimer = null;
       this.persistSession();
     }, SAVE_DEBOUNCE_MS);
+    if (typeof timer === 'object' && 'unref' in timer) timer.unref();
+    this.saveTimer = timer;
+  }
+
+  flushPendingSave() {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+      this.persistSession();
+    }
   }
 
   private persistSession() {
-    if (this.cleanShutdownCalled || !this.cradle) return;
+    if (!this.cradle) return;
     try {
+      debugLog('[wasm] persistSession: writing to localStorage');
       const serializedCradle = this.cradle.serialize();
       const save: SessionSave = {
         serializedCradle,
@@ -671,6 +683,18 @@ export class WasmBlobWrapper {
         channelStatus: this.lastChannelStatus,
         myAlias: this.myAlias,
         opponentAlias: this.opponentAlias,
+        showBetweenHandOverlay: this.showBetweenHandOverlay,
+        lastOutcomeWin: this.lastOutcomeWin,
+        chatMessages: this.chatMessages.length > 0 ? [...this.chatMessages] : undefined,
+        gameCoinHex: this.gameCoinHex,
+        gameTurnState: this.gameTurnState,
+        gameTerminalType: this.gameTerminalType !== 'none' ? this.gameTerminalType : undefined,
+        gameTerminalLabel: this.gameTerminalLabel,
+        gameTerminalReward: this.gameTerminalReward,
+        gameTerminalRewardCoin: this.gameTerminalRewardCoin,
+        myRunningBalance: this.myRunningBalance !== '0' ? this.myRunningBalance : undefined,
+        channelAttentionActive: this.channelAttentionActive || undefined,
+        gameTerminalAttentionActive: this.gameTerminalAttentionActive || undefined,
       };
       saveSession(save);
     } catch (e) {
@@ -680,6 +704,12 @@ export class WasmBlobWrapper {
 
   setHandState(state: CalpokerHandState | null) {
     this.handState = state;
+    this.scheduleSave();
+  }
+
+  setBetweenHandOverlay(show: boolean, outcomeWin?: 'win' | 'lose' | 'tie') {
+    this.showBetweenHandOverlay = show;
+    this.lastOutcomeWin = outcomeWin;
     this.scheduleSave();
   }
 
@@ -768,7 +798,7 @@ export class WasmBlobWrapper {
       const result = this.cradle.shut_down();
       this.processResult(result);
     } catch (e) {
-      const msg = e instanceof Error ? e.message
+      const msg = e instanceof Error ? (e.stack || e.message)
         : typeof e === 'object' && e !== null && 'error' in e ? (e as { error: string }).error
         : String(e);
       console.error('[wasm] cleanShutdown failed:', msg);
@@ -782,7 +812,7 @@ export class WasmBlobWrapper {
       const result = this.cradle.go_on_chain();
       this.processResult(result);
     } catch (e) {
-      const msg = e instanceof Error ? e.message
+      const msg = e instanceof Error ? (e.stack || e.message)
         : typeof e === 'object' && e !== null && 'error' in e ? (e as { error: string }).error
         : String(e);
       console.error('[wasm] goOnChain failed:', msg);
@@ -790,25 +820,8 @@ export class WasmBlobWrapper {
     }
   }
 
-  cutPeerConnection(): void {
-    debugLog('[wasm] cutting peer connection');
-    try {
-      this.peerClose?.();
-    } catch (e) {
-      console.error('[wasm] cutPeerConnection failed:', e);
-      debugLog(`[wasm] cutPeerConnection failed: ${String(e)}`);
-    }
-  }
-
-  setTransactionPublishNerfed(enabled: boolean): void {
-    this.transactionPublishNerfed = enabled;
-    debugLog(`[wasm] transaction publish nerf ${enabled ? 'enabled' : 'disabled'}`);
-    if (!enabled) {
-      this.resubmitPendingTransactions();
-    }
-  }
-
-  isTransactionPublishNerfed(): boolean {
-    return this.transactionPublishNerfed;
+  nerf(): void {
+    this.transactionPublishNerfed = true;
+    debugLog('[wasm] transaction publish nerfed');
   }
 }

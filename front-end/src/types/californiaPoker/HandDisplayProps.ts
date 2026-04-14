@@ -15,6 +15,7 @@ interface HandDisplayProps {
   showSwapAnimation: boolean;
   gameState: string;
   haloCardIds: number[];
+  swapHiddenCardIds?: number[];
   onReorder?: (reorderedCards: CardValueSuit[]) => void;
   formatHandDescription: (f: FormatHandProps) => string;
 };

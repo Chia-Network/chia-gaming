@@ -72,8 +72,7 @@ clsp/
 
 wasm/               — WebAssembly bindings for browser use
 front-end/          — Player frontend (React + WASM bridge)
-lobby/              — Lobby frontend, tracker service, and nginx/deploy helpers
-wc-stub/            — WalletConnect stub service
+lobby/              — Lobby frontend and tracker service
 ```
 
 ## Key Concepts

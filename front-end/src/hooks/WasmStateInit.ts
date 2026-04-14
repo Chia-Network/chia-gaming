@@ -27,18 +27,12 @@ export const waitForReadyToInit = new Observable<boolean>((subscriber) => {
   readyToInit.subscribe(subscriber);
 });
 
-export const doInternalLoadWasm = async () => {
-  const fetchUrl = '/chia_gaming_wasm_bg.wasm';
-  return fetch(fetchUrl)
-    .then((wasm) => wasm.blob())
-    .then((blob) => {
-      return blob.arrayBuffer();
-    });
-};
-
 export async function fetchHex(fetchUrl: string): Promise<string> {
-  // TODO: check
-  return fetch(fetchUrl).then((wasm) => wasm.text());
+  const resp = await fetch(fetchUrl);
+  if (!resp.ok) {
+    throw new Error(`fetchHex ${fetchUrl}: HTTP ${resp.status} ${resp.statusText}`);
+  }
+  return resp.text();
 }
 
 //    gameStateInit.foo().then()
@@ -52,18 +46,16 @@ export async function storeInitArgs(
   readyToInit.next(true);
 }
 
+const WASM_URL = '/chia_gaming_wasm_bg.wasm';
+
 export class WasmStateInit {
-  // Make a wasm connection, and make a fully initialized Wasm blob
-  doInternalLoadWasm: () => Promise<ArrayBuffer>;
   wasmConnection: WasmConnection | undefined;
   fetchHex: (key: string) => Promise<string>;
   deferredWasmConnection: Subject<WasmConnection>;
 
   constructor(
-    doInternalLoadWasm: () => Promise<ArrayBuffer>,
     fetchHex: (key: string) => Promise<string>,
   ) {
-    this.doInternalLoadWasm = doInternalLoadWasm;
     this.fetchHex = fetchHex;
     this.deferredWasmConnection = new Subject<WasmConnection>();
   }
@@ -72,9 +64,7 @@ export class WasmStateInit {
     chia_gaming_init: WasmInitFn,
     cg: WasmConnection,
   ): Promise<WasmConnection> {
-    // Fill out WasmConnection object
-    const modData = await this.doInternalLoadWasm();
-    chia_gaming_init({ module: modData });
+    await chia_gaming_init({ module_or_path: WASM_URL });
     if (!logInitialized) {
       logInitialized = true;
       cg.init((msg: string) => console.warn('wasm', msg));

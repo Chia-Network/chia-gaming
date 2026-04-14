@@ -2,13 +2,15 @@ import { rpc } from '../hooks/JsonRpcContext';
 import {
   InternalBlockchainInterface,
   BlockchainInboundAddressResult,
+  ConnectionSetup,
 } from '../types/ChiaGaming';
 import { WalletType } from '../types/WalletType';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 
 import { debugLog } from '../services/debugLog';
-import { normalizeHexString } from '../util';
+import { normalizeHexString, toUint8, toHexString } from '../util';
 import { decodeBech32mPuzzleHash } from '../util/bech32m';
+import { walletConnectState } from './useWalletConnect';
 
 const PUSH_TX_RETRY_DELAY = 30000;
 const ASSERT_BEFORE_HEIGHT_ABSOLUTE = 87;
@@ -64,6 +66,9 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   private remoteWalletId: number | undefined;
   private remoteWalletPending = false;
+  private connectionListeners = new Set<(connected: boolean) => void>();
+  private lastConnectedState = false;
+  private wcSubscription: { unsubscribe: () => void } | null = null;
 
   constructor() {
     this.blockchainAddressData = { puzzleHash: '' };
@@ -91,27 +96,24 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   private spendSeq = 0;
 
-  async spend(_blob: string, spendBundle: unknown, _source?: string): Promise<string> {
+  async spend(_blob: string, spendBundle: unknown, _source?: string, fee?: number): Promise<string> {
     const seq = ++this.spendSeq;
     const src = _source ?? 'unknown';
-    console.warn(`[DBG_TX] spend #${seq} from=${src} ts=${new Date().toISOString()}`);
-    debugLog(`[wc-blockchain] walletPushTx submitting #${seq} from=${src}`);
+    debugLog(`[wc-blockchain] walletPushTx submitting #${seq} from=${src} fee=${fee ?? 0}`);
+
     try {
-      const result = await rpc.walletPushTx({ spendBundle: spendBundle as object });
-      console.warn(`[DBG_TX] spend #${seq} OK result=${JSON.stringify(result)}`);
+      const result = await rpc.walletPushTx({ spendBundle: spendBundle as object, fee: fee || undefined });
       debugLog(`[wc-blockchain] walletPushTx submitted #${seq} result=${JSON.stringify(result)}`);
       return result as unknown as string;
     } catch (e: unknown) {
       const errStr = typeof e === 'string' ? e : ((e as any)?.message || JSON.stringify(e));
       if (isRetryablePushTxError(errStr)) {
-        console.warn(`[DBG_TX] spend #${seq} retryable error, will retry: ${errStr}`);
         return new Promise((resolve, reject) => {
           setTimeout(() => {
-            this.spend(_blob, spendBundle, `retry-of-#${seq}`).then(resolve).catch(reject);
+            this.spend(_blob, spendBundle, `retry-of-#${seq}`, fee).then(resolve).catch(reject);
           }, PUSH_TX_RETRY_DELAY);
         });
       }
-      console.error(`[DBG_TX] spend #${seq} FAILED: ${errStr}`);
       debugLog(`[wc-blockchain] walletPushTx error #${seq}: ${String(e)}`);
       throw e;
     }
@@ -124,14 +126,12 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   async getPuzzleAndSolution(coin: string): Promise<string[] | null> {
     try {
-      const height = await rpc.getHeightInfo({});
-      const resp = await rpc.getCoinRecordsByNames({
-        names: [coin],
-        includeSpentCoins: true,
-      });
-      const record = (resp.coinRecords ?? []).find((r: CoinRecord) => r.spent);
-      if (!record) return null;
-      return [record.coin.parentCoinInfo, record.coin.puzzleHash, String(record.coin.amount)];
+      const coinBytes = toUint8(coin);
+      const hashBuf = await crypto.subtle.digest('SHA-256', coinBytes);
+      const coinName = toHexString(new Uint8Array(hashBuf));
+      const resp = await rpc.getPuzzleAndSolution({ coinName });
+      if (!resp?.puzzleReveal || !resp?.solution) return null;
+      return [resp.puzzleReveal, resp.solution];
     } catch (e) {
       console.error('[wc-blockchain] getPuzzleAndSolution error', e);
       debugLog(`[wc-blockchain] getPuzzleAndSolution error: ${String(e)}`);
@@ -169,7 +169,8 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async getHeightInfo(): Promise<number> {
-    return rpc.getHeightInfo({});
+    const resp = await rpc.getHeightInfo({});
+    return resp.prevTransactionBlockHeight ?? 0;
   }
 
   async createOfferForIds(
@@ -360,6 +361,66 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     });
   }
 
+  private fireConnectionChange(connected: boolean) {
+    if (connected === this.lastConnectedState) return;
+    this.lastConnectedState = connected;
+    for (const cb of this.connectionListeners) {
+      try { cb(connected); } catch { /* ignore */ }
+    }
+  }
+
+  private subscribeToWcEvents() {
+    if (this.wcSubscription) return;
+    this.wcSubscription = walletConnectState.getObservable().subscribe({
+      next: (evt) => {
+        this.fireConnectionChange(evt.stateName === 'connected');
+      },
+    });
+  }
+
+  async beginConnect(_uniqueId: string): Promise<ConnectionSetup> {
+    await walletConnectState.init();
+    this.subscribeToWcEvents();
+
+    if (walletConnectState.getSession()) {
+      return {
+        qrUri: `wc-session://${walletConnectState.getSession()!.topic}`,
+        finalize: async () => {
+          await this.startMonitoring();
+          this.fireConnectionChange(true);
+        },
+      };
+    }
+
+    const { uri, approval } = await walletConnectState.startConnect();
+    return {
+      qrUri: uri,
+      finalize: async () => {
+        await walletConnectState.connect(approval);
+        await this.startMonitoring();
+        this.fireConnectionChange(true);
+      },
+    };
+  }
+
+  async disconnect(): Promise<void> {
+    if (this.wcSubscription) {
+      this.wcSubscription.unsubscribe();
+      this.wcSubscription = null;
+    }
+    await walletConnectState.disconnect();
+    this.fireConnectionChange(false);
+  }
+
+  isConnected(): boolean {
+    return walletConnectState.getSession() !== undefined;
+  }
+
+  onConnectionChange(cb: (connected: boolean) => void): () => void {
+    this.connectionListeners.add(cb);
+    this.subscribeToWcEvents();
+    return () => { this.connectionListeners.delete(cb); };
+  }
 }
 
 export const realBlockchainInfo: RealBlockchainInterface =

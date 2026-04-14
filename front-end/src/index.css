@@ -1,38 +1,37 @@
-/* Generated with https://designrift.dev */
 @import "tailwindcss";
 @custom-variant dark (&:is(.dark *));
 /* LIGHT THEME */
 :root {
 
   /* CANVAS */
- --canvas-base: #FAFCFF;
-  --canvas-bg-subtle: #F5F9FF;
-  --canvas-bg: #EBF1FC;
-  --canvas-bg-hover: #E1E9F8;
-  --canvas-bg-active: #D8E2F4;
-  --canvas-line: #CFDAF1;
-  --canvas-border: #C1CFEB;
-  --canvas-border-hover: #A9BCE2;
-  --canvas-solid: #7C8EB3;
-  --canvas-solid-hover: #7183A6;
-  --canvas-text: #556481;
-  --canvas-text-contrast: #171F31;
+ --canvas-base: #F9FAF8;
+  --canvas-bg-subtle: #ECEEE9;
+  --canvas-bg: #E5E8E3;
+  --canvas-bg-hover: #DBDED8;
+  --canvas-bg-active: #D1D4CE;
+  --canvas-line: #C7CAC4;
+  --canvas-border: #BABDB7;
+  --canvas-border-hover: #A0A39D;
+  --canvas-solid: #828580;
+  --canvas-solid-hover: #757874;
+  --canvas-text: #4F524D;
+  --canvas-text-contrast: #191A18;
   --canvas-on-canvas: #fff;
 
  /* PRIMARY */
-  --primary-base: #FCFDF8;
-  --primary-bg-subtle: #F8FFE4;
-  --primary-bg: #EEFFA5;
-  --primary-bg-hover: #E5FE75;
-  --primary-bg-active: #DAF73B;
-  --primary-line: #CDE839;
-  --primary-border: #BFD740;
-  --primary-border-hover: #A8C200;
-  --primary-solid: #D7F600;
-  --primary-solid-hover: #CDEC00;
-  --primary-text: #718300;
-  --primary-text-contrast: #394116;
-  --primary-on-primary: #000;
+  --primary-base: #FDFBFB;
+  --primary-bg-subtle: #F5EDEF;
+  --primary-bg: #EBDFE2;
+  --primary-bg-hover: #E0D2D6;
+  --primary-bg-active: #D5C4CA;
+  --primary-line: #F59AB2;
+  --primary-border: #E6809C;
+  --primary-border-hover: #D05C80;
+  --primary-solid: #D93068;
+  --primary-solid-hover: #C82A5E;
+  --primary-text: #A82052;
+  --primary-text-contrast: #461028;
+  --primary-on-primary: #fff;
 
  /* SECONDARY */
   --secondary-base: #FCFCFE;
@@ -115,34 +114,34 @@
 .dark {
 
    /* CANVAS */
-  --canvas-base: #0D1119;
-  --canvas-bg-subtle: #151921;
-  --canvas-bg: #1D232E;
-  --canvas-bg-hover: #222A39;
-  --canvas-bg-active: #283143;
-  --canvas-line: #2F3A50;
-  --canvas-border: #3A4763;
-  --canvas-border-hover: #4E6086;
-  --canvas-solid: #5A6E97;
-  --canvas-solid-hover: #687BA3;
-  --canvas-text: #A4B4D5;
-  --canvas-text-contrast: #EAEEF7;
+  --canvas-base: #0D120F;
+  --canvas-bg-subtle: #151A17;
+  --canvas-bg: #1D2420;
+  --canvas-bg-hover: #222B25;
+  --canvas-bg-active: #28322C;
+  --canvas-line: #2F3B34;
+  --canvas-border: #3A4841;
+  --canvas-border-hover: #4E6157;
+  --canvas-solid: #5A6F62;
+  --canvas-solid-hover: #687C70;
+  --canvas-text: #A4B5AC;
+  --canvas-text-contrast: #EAEEE9;
   --canvas-on-canvas: #FFF;
 
   /* PRIMARY */
-  --primary-base: #10120A;
-  --primary-bg-subtle: #17190E;
-  --primary-bg: #232810;
-  --primary-bg-hover: #2D340E;
-  --primary-bg-active: #38400E;
-  --primary-line: #444E15;
-  --primary-border: #535F1E;
-  --primary-border-hover: #657323;
-  --primary-solid: #D7F600;
-  --primary-solid-hover: #CFEA49;
-  --primary-text: #CCE744;
-  --primary-text-contrast: #E6F6B1;
-  --primary-on-primary: #000;
+  --primary-base: #15100F;
+  --primary-bg-subtle: #1D1518;
+  --primary-bg: #281C20;
+  --primary-bg-hover: #322428;
+  --primary-bg-active: #3C2C32;
+  --primary-line: #52243C;
+  --primary-border: #64304A;
+  --primary-border-hover: #7A3E5C;
+  --primary-solid: #D93068;
+  --primary-solid-hover: #E8487C;
+  --primary-text: #F0608E;
+  --primary-text-contrast: #FCD0E0;
+  --primary-on-primary: #fff;
 
 /* SECONDARY */
   --secondary-base: #0E1117;
@@ -353,6 +352,28 @@ html, body {
 
 .card-face {
   container-type: inline-size;
+  background-color: var(--suit-color);
+  color: #fff;
+}
+
+.dark .card-face {
+  background-color: #fff;
+  color: var(--suit-color);
+}
+
+.card-face.card-dimmed {
+  background-color: #fff;
+  color: #B0B0B0;
+}
+
+.dark .card-face.card-dimmed {
+  background-color: #B0B0B0;
+  color: #888;
+}
+
+.card-face.card-hidden {
+  background-color: transparent;
+  color: transparent;
 }
 
 .hand-reorder-group {
@@ -369,10 +390,52 @@ html, body {
 }
 
 .animate-move {
-  animation: moveCard 2s ease-in-out forwards;
+  animation: moveCard ease-in-out forwards;
 }
 @keyframes moveCard {
   from { left: var(--start-x); top: var(--start-y); }
   to { left: var(--end-x); top: var(--end-y); }
+}
+
+input.no-spinners::-webkit-outer-spin-button,
+input.no-spinners::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input.no-spinners[type=number] {
+  -moz-appearance: textfield;
+}
+
+/* Softened opposite-theme canvas for dialog overlays */
+.theme-inverted {
+  --canvas-base: #222B25;
+  --canvas-bg-subtle: #28322C;
+  --canvas-bg: #2F3B34;
+  --canvas-bg-hover: #3A4841;
+  --canvas-bg-active: #4E6157;
+  --canvas-line: #4E6157;
+  --canvas-border: #5A6F62;
+  --canvas-border-hover: #687C70;
+  --canvas-solid: #A4B5AC;
+  --canvas-solid-hover: #EAEEE9;
+  --canvas-text: #A4B5AC;
+  --canvas-text-contrast: #EAEEE9;
+  --canvas-on-canvas: #FFF;
+}
+
+.dark .theme-inverted {
+  --canvas-base: #D1D4CE;
+  --canvas-bg-subtle: #DBDED8;
+  --canvas-bg: #D1D4CE;
+  --canvas-bg-hover: #C7CAC4;
+  --canvas-bg-active: #BABDB7;
+  --canvas-line: #BABDB7;
+  --canvas-border: #A0A39D;
+  --canvas-border-hover: #828580;
+  --canvas-solid: #4F524D;
+  --canvas-solid-hover: #191A18;
+  --canvas-text: #4F524D;
+  --canvas-text-contrast: #191A18;
+  --canvas-on-canvas: #fff;
 }
 

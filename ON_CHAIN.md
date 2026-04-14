@@ -29,7 +29,7 @@ protocol, peer messages, and batch exchanges — is effectively done. A
 fundamentally different component, `OnChainGameHandler`, takes over. It is
 driven entirely by blockchain coin-watching events (coin created, coin spent,
 timeout reached) rather than peer messages. The `PotatoHandler` creates an
-`UnrollWatchHandler` replacement, which in turn creates the
+`SpendChannelCoinHandler` replacement, which in turn creates the
 `OnChainGameHandler`. At that point all game actions
 (moves, accept-timeouts) are routed to the on-chain handler. It maintains its
 own `game_map` tracking each game coin's state. There is no potato, no
@@ -129,7 +129,7 @@ emitted and the channel can be closed.
 **Key code:**
 
 - `src/potato_handler/mod.rs` — `go_on_chain`
-- `src/potato_handler/unroll_watch_handler.rs` — `handle_channel_coin_spent`,
+- `src/potato_handler/spend_channel_coin_handler.rs` — `handle_channel_coin_spent`,
 `finish_on_chain_transition`
 - `src/potato_handler/on_chain.rs` — `OnChainGameHandler`
 - `src/channel_handler/mod.rs` — `set_state_for_coins`,
@@ -178,28 +178,26 @@ initiate an unroll (via `go_on_chain`) around the same time. Both spend the
 channel coin, so only one can land on-chain.
 
 Because of this, the system never blindly trusts that the clean shutdown
-landed. When the channel coin is detected as spent, the `ShutdownHandler`
+landed. When the channel coin is detected as spent, `SpendChannelCoinHandler`
 inspects the actual spend conditions:
 
 1. **Clean shutdown landed:** The conditions contain a `CreateCoin` matching
-  the expected reward coin (puzzle hash and amount). The handler transitions
-   to `Completed` and emits `ChannelStatus` with state `ResolvedClean`.
+   the expected change coin (puzzle hash and amount). The handler transitions
+   to an `OnChainGameHandler` with an empty game map and `resolved_clean: true`,
+   which emits `ChannelStatus` with state `ResolvedClean`.
 2. **An unroll landed instead:** The conditions do not match (or, when the
-  player's expected reward is zero, they contain a `Rem` — which clean
-   shutdown conditions never include). The `ShutdownHandler` falls through
-   to `UnrollWatchHandler`, which compares
-   the on-chain state number against the local state to decide preempt vs
-   timeout. Since no games are active, the unroll creates only reward coins;
-   `finish_on_chain_transition` finds an empty game map, skips the
-   `OnChainGameHandler`, and transitions directly to `Completed`. The
-   outcome is the same correct balances, just with more on-chain transactions.
+   player's expected reward is zero, they contain a `Rem` — which clean
+   shutdown conditions never include). The handler continues with unroll
+   logic, comparing the on-chain state number against the local state to
+   decide preempt vs timeout. Since no games are active, the unroll creates
+   only reward coins; `finish_on_chain_transition` finds an empty game map
+   and transitions to `OnChainGameHandler`. The outcome is the same correct
+   balances, just with more on-chain transactions.
 
 ### Key Code
 
-- `src/potato_handler/shutdown_handler.rs` — `ShutdownHandler`,
-`handle_clean_shutdown_conditions`
-- `src/potato_handler/unroll_watch_handler.rs` —
-`handle_unroll_from_channel_conditions`
+- `src/potato_handler/spend_channel_coin_handler.rs` —
+`handle_channel_coin_spent`, `handle_unroll_from_channel_conditions`
 
 ---
 
@@ -281,7 +279,7 @@ by puzzle hash **and** amount:
   state it's in).
 - Games not found in the unroll outputs receive one of two notifications
 depending on whether the game was fully established or still in-flight:
-  - `**GameCancelled`** — the game was a recently accepted proposal whose
+  - `**EndedCancelled`** — the game was a recently accepted proposal whose
   potato round-trip hadn't completed (tracked as a `ProposalAccepted`
   entry in `cached_last_actions`). The opponent hadn't acknowledged the
   accept when they published the stale unroll, so the game coin never
@@ -310,7 +308,7 @@ intentional for several reasons:
    player) are complex and error-prone.
 3. **One terminal condition.** The current approach guarantees exactly one
   terminal event per game — either the game was matched and continues
-   normally, or it gets a `GameError`/`GameCancelled`. There is no
+   normally, or it gets a `GameError`/`EndedCancelled`. There is no
    ambiguous middle state where a game is "maybe recoverable."
 
 ### Notifications
@@ -320,10 +318,10 @@ intentional for several reasons:
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------- |
 | `ChannelStatus { state: ResolvedStale, ... }`    | Always emitted when `is_stale` is true; balances reflect the actual unroll outcome       |
 | `GameError { id, reason }`                       | Per-game: coin present but unrecognizable, or established live game missing from outputs |
-| `GameCancelled { id }`                           | Per-game: pending accept (in-flight) absent from outputs — the accept was rolled back    |
+| `EndedCancelled { id }`                          | Per-game: pending accept (in-flight) absent from outputs — the accept was rolled back    |
 
 
-**Key code:** `src/potato_handler/unroll_watch_handler.rs` —
+**Key code:** `src/potato_handler/spend_channel_coin_handler.rs` —
 `finish_on_chain_transition`, `src/channel_handler/mod.rs` —
 `set_state_for_coins`
 
@@ -390,7 +388,7 @@ Off-chain `AcceptTimeout` with zero reward is already handled by
 `drain_cached_accept_timeouts` in `src/channel_handler/mod.rs`, which emits
 `WeTimedOut` with whatever `our_share_amount` is, including zero.
 
-**Key code:** `src/potato_handler/unroll_watch_handler.rs` —
+**Key code:** `src/potato_handler/spend_channel_coin_handler.rs` —
 `finish_on_chain_transition` (unroll scan),
 `src/potato_handler/on_chain.rs` — `do_on_chain_move` (scenario 4),
 `do_on_chain_action` (scenario 5), `src/channel_handler/mod.rs` —

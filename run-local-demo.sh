@@ -7,12 +7,10 @@ FE_DIR="$SCRIPT_DIR/front-end"
 WASM_DIR="$SCRIPT_DIR/wasm"
 LOBBY_SERVICE_DIR="$SCRIPT_DIR/lobby/lobby-service"
 LOBBY_FRONTEND_DIR="$SCRIPT_DIR/lobby/lobby-frontend"
-WC_DIR="$SCRIPT_DIR/wc-stub"
 CLSP_DIR="$SCRIPT_DIR/clsp"
 
 GAME_PORT=${GAME_PORT:-3002}
 TRACKER_PORT=${TRACKER_PORT:-3003}
-WC_PORT=${WC_PORT:-3004}
 SIM_PORT=${SIM_PORT:-5800}
 SIM_WS_PORT=${SIM_WS_PORT:-5801}
 
@@ -35,7 +33,7 @@ fi
 
 # Kill anything still listening on our ports from a previous run.
 # Use -sTCP:LISTEN to avoid killing browsers that have connections to these ports.
-for p in $GAME_PORT $TRACKER_PORT $WC_PORT $SIM_PORT $SIM_WS_PORT; do
+for p in $GAME_PORT $TRACKER_PORT $SIM_PORT $SIM_WS_PORT; do
     pids=$(lsof -ti:"$p" -sTCP:LISTEN 2>/dev/null || true)
     [ -n "$pids" ] && kill $pids 2>/dev/null || true
 done
@@ -47,7 +45,6 @@ cleanup() {
     for pid in "${PIDS[@]}"; do
         kill "$pid" 2>/dev/null || true
     done
-    kill $(lsof -i -n -P | grep LISTEN | grep :$WC_PORT | awk '{print $2}') 2>/dev/null || true
     for pid in "${PIDS[@]}"; do
         wait "$pid" 2>/dev/null || true
     done
@@ -77,7 +74,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     echo "=== Building simulator + chialisp (if needed) ==="
     cargo build --features sim-server --bin chia-gaming-sim
     echo "=== Building WASM (web target) ==="
-    (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/dist" --release --target=web)
+    (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/dist" --dev --target=web)
     echo "=== Building gaming frontend ==="
     (cd "$FE_DIR" && pnpm install --frozen-lockfile && pnpm run build)
     echo "=== Building lobby-frontend ==="
@@ -85,8 +82,6 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     (cd "$LOBBY_FRONTEND_DIR" && pnpm run build)
     echo "=== Building lobby-service ==="
     (cd "$LOBBY_SERVICE_DIR" && pnpm run build)
-    echo "=== Building wc-stub ==="
-    (cd "$WC_DIR" && pnpm install --frozen-lockfile && pnpm run build)
 fi
 
 # ── Assemble staging directories ────────────────────────────────────
@@ -146,10 +141,6 @@ echo "=== Starting player app static server (port $GAME_PORT) ==="
 node "$SCRIPT_DIR/local-static-test-server.js" "$GAME_SERVE" "$GAME_PORT" &
 PIDS+=($!)
 
-echo "=== Starting wc-stub (port $WC_PORT) ==="
-(cd "$WC_DIR" && PORT=$WC_PORT exec node --disable-warning=DEP0169 ./dist/index.js) &
-PIDS+=($!)
-
 echo "=== Starting tracker (lobby-service + lobby-frontend on port $TRACKER_PORT) ==="
 (cd "$LOBBY_SERVICE_DIR" && PORT=$TRACKER_PORT exec node ./dist/index-rollup.cjs --self "http://localhost:$TRACKER_PORT" --dir "$LOBBY_SERVE") &
 PIDS+=($!)
@@ -164,17 +155,12 @@ for i in $(seq 1 10); do
     sleep 1
 done
 
-echo "=== Starting beacon ==="
-"$SCRIPT_DIR/lobby/nginx/beacon.sh" "http://localhost:$GAME_PORT" "http://localhost:$TRACKER_PORT" &
-PIDS+=($!)
-
 echo ""
 echo "════════════════════════════════════════════════════════"
 echo "  All services running:"
-echo "    Player app (static): http://localhost:$GAME_PORT"
-echo "    Tracker:             http://localhost:$TRACKER_PORT"
-echo "    WC stub:             http://localhost:$WC_PORT"
-echo "    Simulator:           http://localhost:$SIM_PORT"
+echo "    Player app: http://localhost:$GAME_PORT"
+echo "    Tracker:    http://localhost:$TRACKER_PORT"
+echo "    Simulator:  http://localhost:$SIM_PORT"
 echo ""
 echo "  Press Ctrl-C to stop all services."
 echo "════════════════════════════════════════════════════════"

@@ -20,41 +20,37 @@ import {
   setInitStarted,
 } from './blobSingleton';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
-import { SessionSave, BlockchainType } from './save';
-import { toHexString } from '../util';
+import { SessionSave, getDefaultFee } from './save';
+import { coinIdFromBytes } from '../util';
 import { debugLog } from '../services/debugLog';
 
 export type GameplayEvent =
-  | { GameProposalAccepted: { id: number | string } }
+  | { ProposalAccepted: { id: number | string } }
   | { OpponentMoved: { readable: number[] } }
   | { GameMessage: { readable: number[] } }
   | { _terminal: true; notification: WasmNotification };
 
-interface ParsedCoinPayload {
-  hex: string;
-  amount: string | null;
+function parseCoinAmount(coin: unknown): string | null {
+  if (!Array.isArray(coin) || coin.length < 64 || !coin.every((b): b is number => typeof b === 'number')) {
+    return null;
+  }
+  let value = 0n;
+  for (let i = 64; i < coin.length; i++) {
+    value = (value << 8n) + BigInt(coin[i] & 0xff);
+  }
+  return value.toString();
 }
 
-function parseCoinPayload(coin: unknown): ParsedCoinPayload | null {
+function asCoinBytes(coin: unknown): number[] | null {
   if (!Array.isArray(coin) || coin.length === 0 || !coin.every((b): b is number => typeof b === 'number')) {
     return null;
   }
-  let amount: string | null = null;
-  if (coin.length >= 64) {
-    let value = 0n;
-    for (let i = 64; i < coin.length; i++) {
-      value = (value << 8n) + BigInt(coin[i] & 0xff);
-    }
-    amount = value.toString();
-  }
-  return {
-    hex: toHexString(coin),
-    amount,
-  };
+  return coin;
 }
 
-function coinPayloadToHex(coin: unknown): string | undefined {
-  return parseCoinPayload(coin)?.hex;
+async function coinIdHex(coin: unknown): Promise<string | null> {
+  const bytes = asCoinBytes(coin);
+  return bytes ? coinIdFromBytes(bytes) : null;
 }
 
 export type GameTurnState = 'my-turn' | 'their-turn' | 'replaying' | 'opponent-illegal-move' | 'ended';
@@ -72,7 +68,7 @@ export type GameTerminalType =
   | 'opponent-slashed-us'
   | 'opponent-successfully-cheated'
   | 'insufficient-balance'
-  | 'game-cancelled'
+  | 'ended-cancelled'
   | 'game-error';
 
 export interface GameTerminalInfo {
@@ -108,6 +104,23 @@ const INITIAL_CHANNEL_STATUS: ChannelStatusInfo = {
   gameAllocated: null,
 };
 
+function channelStatusFromPayload(cs: ChannelStatusPayload, coinHex: string | null): ChannelStatusInfo {
+  const amount = parseCoinAmount(cs.coin);
+  const isResolvedFromUnroll = cs.state === 'ResolvedUnrolled' || cs.state === 'ResolvedStale';
+  const resolvedShare = isResolvedFromUnroll
+    ? (amount ?? '0')
+    : parseAmount(cs.our_balance);
+  return {
+    state: cs.state,
+    advisory: cs.advisory ?? null,
+    coinHex,
+    coinAmount: amount,
+    ourBalance: resolvedShare,
+    theirBalance: parseAmount(cs.their_balance),
+    gameAllocated: parseAmount(cs.game_allocated),
+  };
+}
+
 const INITIAL_GAME_TERMINAL: GameTerminalInfo = {
   type: 'none',
   label: null,
@@ -128,6 +141,7 @@ const ON_CHAIN_FLOW_STATES: ReadonlySet<ChannelState> = new Set<ChannelState>([
   'GoingOnChain', 'Unrolling', 'ResolvedClean', 'ResolvedUnrolled', 'ResolvedStale',
 ]);
 
+
 export function isWindingDown(state: ChannelState): boolean {
   return WINDING_DOWN_STATES.has(state);
 }
@@ -140,22 +154,24 @@ function parseAmount(v: unknown): string | null {
   return String(v);
 }
 
-function parseGameStatusTerminalInfo(gs: GameStatusPayload): GameTerminalInfo {
+function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex: string | null): GameTerminalInfo {
   if (gs.status === 'ended-we-timed-out') {
+    const clean = gs.other_params?.game_finished;
     return {
       type: 'we-timed-out',
-      label: 'Ended: we timed out',
+      label: clean ? 'Game ended cleanly' : 'Ended: we timed out',
       myReward: parseAmount(gs.my_reward),
-      rewardCoinHex: coinPayloadToHex(gs.coin_id) ?? null,
+      rewardCoinHex,
     };
   }
 
   if (gs.status === 'ended-opponent-timed-out') {
+    const clean = gs.other_params?.game_finished;
     return {
       type: 'opponent-timed-out',
-      label: 'Ended: opponent timed out',
+      label: clean ? 'Game ended cleanly' : 'Ended: opponent timed out',
       myReward: parseAmount(gs.my_reward),
-      rewardCoinHex: coinPayloadToHex(gs.coin_id) ?? null,
+      rewardCoinHex,
     };
   }
 
@@ -164,7 +180,7 @@ function parseGameStatusTerminalInfo(gs: GameStatusPayload): GameTerminalInfo {
       type: 'we-slashed-opponent',
       label: 'Ended: we slashed opponent',
       myReward: parseAmount(gs.my_reward),
-      rewardCoinHex: coinPayloadToHex(gs.coin_id) ?? null,
+      rewardCoinHex,
     };
   }
 
@@ -182,13 +198,13 @@ function parseGameStatusTerminalInfo(gs: GameStatusPayload): GameTerminalInfo {
       type: 'opponent-successfully-cheated',
       label: 'Ended: opponent successfully cheated',
       myReward: parseAmount(gs.my_reward),
-      rewardCoinHex: coinPayloadToHex(gs.coin_id) ?? null,
+      rewardCoinHex,
     };
   }
 
   if (gs.status === 'ended-cancelled') {
     return {
-      type: 'game-cancelled',
+      type: 'ended-cancelled',
       label: 'Ended: cancelled',
       myReward: null,
       rewardCoinHex: null,
@@ -233,11 +249,9 @@ export interface UseGameSessionResult {
   playAgain: () => void;
   stopPlaying: () => void;
   goOnChain: () => void;
-  cutPeerConnection: () => void;
-  txPublishNerfed: boolean;
-  toggleTxPublishNerf: () => void;
   showBetweenHandOverlay: boolean;
   lastOutcome: CalpokerOutcome | undefined;
+  restoredOutcomeWin: 'win' | 'lose' | 'tie' | undefined;
   goOnChainPressed: boolean;
   gameTerminalAttention: GameTerminalAttentionInfo | null;
   dismissGameTerminalAttention: () => void;
@@ -249,13 +263,30 @@ export function useGameSession(
   params: GameSessionParams,
   uniqueId: string,
   peerConn: PeerConnectionResult,
-  registerMessageHandler: (handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, pingHandler: () => void) => void,
+  registerMessageHandler: (handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void,
   appendGameLog: (line: string) => void,
   sessionSave?: SessionSave,
-  blockchainType?: BlockchainType,
 ): UseGameSessionResult {
   const { iStarted, amount, perGameAmount } = params;
   const playerNumber = iStarted ? 1 : 2;
+
+  const blockchain = getActiveBlockchain();
+
+  const { gameObject } = getBlobSingleton(
+    blockchain,
+    peerConn,
+    registerMessageHandler,
+    uniqueId,
+    amount,
+    iStarted,
+    sessionSave,
+    params.pairingToken,
+    perGameAmount,
+    getDefaultFee,
+  );
+
+  if (params.myAlias) gameObject.myAlias = params.myAlias;
+  if (params.opponentAlias) gameObject.opponentAlias = params.opponentAlias;
 
   const [gameConnectionState, setGameConnectionState] =
     useState<GameConnectionState>(() =>
@@ -264,26 +295,69 @@ export function useGameSession(
         : { stateIdentifier: 'starting' as const, stateDetail: ['before handshake'] }
     );
   const [error, setRealError] = useState<string | undefined>(undefined);
-  const [myRunningBalance, setMyRunningBalance] = useState(0n);
+  const [myRunningBalance, setMyRunningBalance] = useState(() =>
+    sessionSave?.myRunningBalance ? BigInt(sessionSave.myRunningBalance) : 0n
+  );
   const [goOnChainPressed, setGoOnChainPressed] = useState(false);
-  const [txPublishNerfed, setTxPublishNerfed] = useState(false);
-  const [channelStatus, setChannelStatus] = useState<ChannelStatusInfo>(() =>
-    sessionSave?.channelReady ? { ...INITIAL_CHANNEL_STATUS, state: 'Active' } : INITIAL_CHANNEL_STATUS
-  );
-  const [channelAttention, setChannelAttention] = useState<ChannelStatusInfo | null>(null);
+  const [channelStatus, setChannelStatus] = useState<ChannelStatusInfo>(() => {
+    if (!sessionSave?.channelReady) return INITIAL_CHANNEL_STATUS;
+    if (sessionSave.channelStatus) return channelStatusFromPayload(sessionSave.channelStatus, null);
+    return { ...INITIAL_CHANNEL_STATUS, state: 'Active' };
+  });
+  const [channelAttention, setChannelAttention] = useState<ChannelStatusInfo | null>(() => {
+    if (sessionSave?.channelAttentionActive && sessionSave.channelStatus) {
+      return channelStatusFromPayload(sessionSave.channelStatus, null);
+    }
+    return null;
+  });
   const channelStateRef = useRef<ChannelState>(
-    sessionSave?.channelReady ? 'Active' : INITIAL_CHANNEL_STATUS.state
+    sessionSave?.channelReady
+      ? (sessionSave.channelStatus?.state ?? 'Active')
+      : INITIAL_CHANNEL_STATUS.state
   );
-  const [gameCoin, setGameCoin] = useState<GameCoinInfo>({ coinHex: null, turnState: 'my-turn' });
-  const [gameTerminal, setGameTerminal] = useState<GameTerminalInfo>(INITIAL_GAME_TERMINAL);
-  const [handKey, setHandKey] = useState(() => sessionSave?.activeGameId ? 1 : 0);
+  const channelAttentionStateRef = useRef<ChannelState | null>(
+    sessionSave?.channelStatus && ATTENTION_STATES.includes(sessionSave.channelStatus.state)
+      ? sessionSave.channelStatus.state
+      : null
+  );
+  const [gameCoin, setGameCoin] = useState<GameCoinInfo>(() => ({
+    coinHex: sessionSave?.gameCoinHex ?? null,
+    turnState: (sessionSave?.gameTurnState as GameTurnState) ?? 'my-turn',
+  }));
+  const [gameTerminal, setGameTerminal] = useState<GameTerminalInfo>(() => {
+    if (sessionSave?.gameTerminalType && sessionSave.gameTerminalType !== 'none') {
+      return {
+        type: sessionSave.gameTerminalType as GameTerminalType,
+        label: sessionSave.gameTerminalLabel ?? null,
+        myReward: sessionSave.gameTerminalReward ?? null,
+        rewardCoinHex: sessionSave.gameTerminalRewardCoin ?? null,
+      };
+    }
+    return INITIAL_GAME_TERMINAL;
+  });
+  const [handKey, setHandKey] = useState(() =>
+    (sessionSave?.activeGameId || sessionSave?.handState) ? 1 : 0
+  );
   const [gameIds, setGameIds] = useState<string[]>(() =>
     sessionSave?.activeGameId ? [sessionSave.activeGameId] : []
   );
-  const [showBetweenHandOverlay, setShowBetweenHandOverlay] = useState(false);
+  const [showBetweenHandOverlay, setShowBetweenHandOverlay] = useState(
+    () => sessionSave?.showBetweenHandOverlay ?? false
+  );
   const [lastOutcome, setLastOutcome] = useState<CalpokerOutcome | undefined>(undefined);
-  const [gameTerminalAttention, setGameTerminalAttention] = useState<GameTerminalAttentionInfo | null>(null);
+  const restoredOutcomeWin = sessionSave?.lastOutcomeWin;
+  const [gameTerminalAttention, setGameTerminalAttention] = useState<GameTerminalAttentionInfo | null>(() => {
+    if (sessionSave?.gameTerminalAttentionActive && sessionSave.gameTerminalLabel) {
+      return {
+        label: sessionSave.gameTerminalLabel,
+        myReward: sessionSave.gameTerminalReward ?? null,
+        rewardCoinHex: sessionSave.gameTerminalRewardCoin ?? null,
+      };
+    }
+    return null;
+  });
 
+  const lastOutcomeRef = useRef<CalpokerOutcome | undefined>(undefined);
   const gameIdsRef = useRef<string[]>(sessionSave?.activeGameId ? [sessionSave.activeGameId] : []);
   const pendingProposalIdRef = useRef<string | null>(null);
   const wantsNewGameRef = useRef<boolean>(false);
@@ -299,26 +373,21 @@ export function useGameSession(
     }
   }, []);
 
-  const blockchain = getActiveBlockchain();
-
-  const { gameObject } = getBlobSingleton(
-    blockchain,
-    peerConn,
-    registerMessageHandler,
-    uniqueId,
-    amount,
-    iStarted,
-    sessionSave,
-    params.pairingToken,
-    perGameAmount,
-    blockchainType,
-  );
-
-  if (params.myAlias) gameObject.myAlias = params.myAlias;
-  if (params.opponentAlias) gameObject.opponentAlias = params.opponentAlias;
-
   const gameObjectRef = useRef<WasmBlobWrapper>(gameObject);
   gameObjectRef.current = gameObject;
+
+  useEffect(() => {
+    const go = gameObjectRef.current;
+    if (!go) return;
+    go.gameCoinHex = gameCoin.coinHex;
+    go.gameTurnState = gameCoin.turnState;
+    go.gameTerminalType = gameTerminal.type;
+    go.gameTerminalLabel = gameTerminal.label;
+    go.gameTerminalReward = gameTerminal.myReward;
+    go.gameTerminalRewardCoin = gameTerminal.rewardCoinHex;
+    go.myRunningBalance = myRunningBalance.toString();
+    go.scheduleSave();
+  }, [gameCoin, gameTerminal, myRunningBalance]);
 
   const proposeNewGame = useCallback(() => {
     const go = gameObjectRef.current;
@@ -340,6 +409,7 @@ export function useGameSession(
 
   const onHandOutcome = useCallback((outcome: CalpokerOutcome) => {
     setLastOutcome(outcome);
+    lastOutcomeRef.current = outcome;
     setGameIds(prev => prev.slice(1));
     gameIdsRef.current = gameIdsRef.current.slice(1);
     setGameCoin({ coinHex: null, turnState: 'my-turn' });
@@ -364,17 +434,24 @@ export function useGameSession(
     }
     awaitingDisplayCompleteRef.current = false;
     setShowBetweenHandOverlay(true);
+    const go = gameObjectRef.current;
+    const win = lastOutcomeRef.current?.my_win_outcome;
+    go?.setBetweenHandOverlay(true, win);
   }, []);
 
   const dismissChannelAttention = useCallback(() => {
     setChannelAttention(null);
+    const go = gameObjectRef.current;
+    if (go) { go.channelAttentionActive = false; go.scheduleSave(); }
   }, []);
 
   const dismissGameTerminalAttention = useCallback(() => {
     setGameTerminalAttention(null);
+    const go = gameObjectRef.current;
+    if (go) { go.gameTerminalAttentionActive = false; go.scheduleSave(); }
   }, []);
 
-  const handleNotification = useCallback((n: WasmNotification) => {
+  const handleNotification = useCallback(async (n: WasmNotification) => {
     const go = gameObjectRef.current;
     if (typeof n !== 'object' || n === null) return;
 
@@ -382,25 +459,18 @@ export function useGameSession(
     if ('ChannelStatus' in n) {
       const cs = n.ChannelStatus as ChannelStatusPayload | undefined;
       if (!cs) return;
-      const parsedCoin = parseCoinPayload(cs.coin);
-      const isResolvedFromUnroll = cs.state === 'ResolvedUnrolled' || cs.state === 'ResolvedStale';
-      const resolvedShare = isResolvedFromUnroll
-        ? (parsedCoin?.amount ?? '0')
-        : parseAmount(cs.our_balance);
-      const info: ChannelStatusInfo = {
-        state: cs.state,
-        advisory: cs.advisory ?? null,
-        coinHex: parsedCoin?.hex ?? null,
-        coinAmount: parsedCoin?.amount ?? null,
-        ourBalance: resolvedShare,
-        theirBalance: parseAmount(cs.their_balance),
-        gameAllocated: parseAmount(cs.game_allocated),
-      };
+      const coinHex = await coinIdHex(cs.coin);
+      const info = channelStatusFromPayload(cs, coinHex);
       channelStateRef.current = info.state;
       setChannelStatus(info);
       if (ATTENTION_STATES.includes(cs.state)) {
         setShowBetweenHandOverlay(false);
-        setChannelAttention(info);
+        const go = gameObjectRef.current;
+        if (go && (go.channelAttentionActive || cs.state !== channelAttentionStateRef.current)) {
+          go.channelAttentionActive = true;
+          channelAttentionStateRef.current = cs.state;
+          setChannelAttention(info);
+        }
       }
       if (cs.state === 'Active' && gameConnectionState.stateIdentifier !== 'running') {
         setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
@@ -412,9 +482,9 @@ export function useGameSession(
     }
 
     // Session lifecycle and game flow
-    if ('GameProposed' in n) {
+    if ('ProposalMade' in n) {
       if (!iStarted) {
-        const proposalId = String(n.GameProposed!.id);
+        const proposalId = String(n.ProposalMade!.id);
         if (!firstGameAcceptedRef.current || wantsNewGameRef.current) {
           wantsNewGameRef.current = false;
           try {
@@ -426,24 +496,26 @@ export function useGameSession(
           pendingProposalIdRef.current = proposalId;
         }
       }
-    } else if ('GameProposalAccepted' in n) {
+    } else if ('ProposalAccepted' in n) {
       firstGameAcceptedRef.current = true;
-      const gpa = n.GameProposalAccepted!;
+      const gpa = n.ProposalAccepted!;
       const newId = String(gpa.id);
       setGameIds(prev => [...prev, newId]);
       gameIdsRef.current = [...gameIdsRef.current, newId];
       setShowBetweenHandOverlay(false);
+      go?.setBetweenHandOverlay(false);
+      go?.setHandState(null);
       setHandKey(prev => prev + 1);
       setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
       setGameCoin({ coinHex: null, turnState: iStarted ? 'their-turn' : 'my-turn' });
       setGameTerminal(INITIAL_GAME_TERMINAL);
-      gameplayEventSubject.next({ GameProposalAccepted: { id: gpa.id as number | string } });
+      gameplayEventSubject.next({ ProposalAccepted: { id: gpa.id as number | string } });
     } else if ('GameStatus' in n) {
       const gs = n.GameStatus as GameStatusPayload | undefined;
       if (!gs) return;
       const gid = String(gs.id);
       const status = gs.status;
-      const coinHex = coinPayloadToHex(gs.coin_id) ?? null;
+      const coinHex = await coinIdHex(gs.coin_id);
       const inOnChainFlow = ON_CHAIN_FLOW_STATES.has(channelStateRef.current);
       const isOnChainTurnStatus =
         status === 'on-chain-my-turn' || status === 'on-chain-their-turn' || status === 'replaying';
@@ -478,9 +550,10 @@ export function useGameSession(
           }
         }
 
-        const terminalInfo = parseGameStatusTerminalInfo(gs);
+        const rewardCoinHex = await coinIdHex(gs.coin_id);
+        const terminalInfo = parseGameStatusTerminalInfo(gs, rewardCoinHex);
         setGameTerminal(terminalInfo);
-        setGameCoin(prev => ({ ...prev, turnState: 'ended' }));
+        setGameCoin(prev => ({ ...prev, coinHex: null, turnState: 'ended' }));
         // On-chain terminal paths have their own dedicated dialogs/UX.
         // For normal off-chain hand completion we still want the between-hand overlay.
         if (inOnChainFlow) {
@@ -491,6 +564,8 @@ export function useGameSession(
           setGameIds(prev => prev.slice(1));
           gameIdsRef.current = gameIdsRef.current.slice(1);
           if (inOnChainFlow) {
+            const go2 = gameObjectRef.current;
+            if (go2) { go2.gameTerminalAttentionActive = true; }
             setGameTerminalAttention({
               label: terminalInfo.label ?? `Ended: ${status}`,
               myReward: terminalInfo.myReward,
@@ -605,17 +680,6 @@ export function useGameSession(
     gameObject?.goOnChain();
   }, [gameObject]);
 
-  const cutPeerConnection = useCallback(() => {
-    debugLog('[game] cutting peer connection');
-    gameObject?.cutPeerConnection();
-  }, [gameObject]);
-
-  const toggleTxPublishNerf = useCallback(() => {
-    const next = !txPublishNerfed;
-    gameObject?.setTransactionPublishNerfed(next);
-    setTxPublishNerfed(next);
-  }, [gameObject, txPublishNerfed]);
-
   return {
     error,
     gameConnectionState,
@@ -638,11 +702,9 @@ export function useGameSession(
     playAgain,
     stopPlaying,
     goOnChain,
-    cutPeerConnection,
-    txPublishNerfed,
-    toggleTxPublishNerf,
     showBetweenHandOverlay,
     lastOutcome,
+    restoredOutcomeWin,
     goOnChainPressed,
     gameTerminalAttention,
     dismissGameTerminalAttention,

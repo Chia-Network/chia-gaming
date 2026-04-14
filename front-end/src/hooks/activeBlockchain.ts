@@ -11,9 +11,6 @@ export function activate(
     active.stop();
   }
   active = new BlockchainPoller(blockchain, pollIntervalMs);
-  blockchain.startMonitoring().catch((err: unknown) => {
-    console.warn('[blockchain-core] startMonitoring failed', err);
-  });
   active.start();
   return active;
 }

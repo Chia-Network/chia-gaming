@@ -39,6 +39,7 @@ export class BlockchainPoller {
   private async tick(): Promise<void> {
     if (!this.running) return;
     try {
+      await this.monitor.retryPendingRegistrations();
       const height = await this.rpc.getHeightInfo();
       const names = this.monitor.getRegisteredCoinNames();
       const records = await this.rpc.getCoinRecordsByNames(names);
