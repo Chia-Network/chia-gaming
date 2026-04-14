@@ -919,7 +919,7 @@ const Shell = () => {
                   </button>
                 )}
               </div>
-              <Button variant='outline' onClick={handleDisconnectWallet}>
+              <Button variant='solid' onClick={handleDisconnectWallet}>
                 Disconnect
               </Button>
             </div>
@@ -1022,7 +1022,7 @@ const Shell = () => {
                 )}
               </div>
               <p className='text-sm text-canvas-text animate-pulse'>Waiting for wallet to connect…</p>
-              <Button variant='outline' onClick={handleCancelConnect}>Cancel</Button>
+              <Button variant='solid' onClick={handleCancelConnect}>Cancel</Button>
               <SimulatorSetupModal
                 open={showSimModal}
                 onConnect={handleFinalize}
@@ -1044,7 +1044,7 @@ const Shell = () => {
             <div className='flex flex-col items-center gap-4 p-6 max-w-md w-full'>
               <div className='w-6 h-6 border-2 border-canvas-border border-t-canvas-text-contrast rounded-full animate-spin' />
               <p className='text-sm text-canvas-text animate-pulse'>Connecting…</p>
-              <Button variant='outline' onClick={handleCancelConnect}>Cancel</Button>
+              <Button variant='solid' onClick={handleCancelConnect}>Cancel</Button>
             </div>
           ) : (
             <div className='flex flex-col justify-center items-center w-full px-4 py-6 gap-4'>
@@ -1058,7 +1058,7 @@ const Shell = () => {
                   <span className='text-canvas-text font-medium text-sm'>OR</span>
                   <div className='flex-1 border-t border-canvas-border' />
                 </div>
-                <Button variant='solid' color='secondary' fullWidth onClick={() => handleConnect('walletconnect')}>
+                <Button variant='solid' fullWidth onClick={() => handleConnect('walletconnect')}>
                   Link Wallet
                 </Button>
               </div>

@@ -1,4 +1,3 @@
-/* Generated with https://designrift.dev */
 @import "tailwindcss";
 @custom-variant dark (&:is(.dark *));
 /* LIGHT THEME */
@@ -20,19 +19,19 @@
   --canvas-on-canvas: #fff;
 
  /* PRIMARY */
-  --primary-base: #FCFDF8;
-  --primary-bg-subtle: #F8FFE4;
-  --primary-bg: #EEFFA5;
-  --primary-bg-hover: #E5FE75;
-  --primary-bg-active: #DAF73B;
-  --primary-line: #CDE839;
-  --primary-border: #BFD740;
-  --primary-border-hover: #A8C200;
-  --primary-solid: #D7F600;
-  --primary-solid-hover: #CDEC00;
-  --primary-text: #718300;
-  --primary-text-contrast: #394116;
-  --primary-on-primary: #000;
+  --primary-base: #FDFBFB;
+  --primary-bg-subtle: #F5EDEF;
+  --primary-bg: #EBDFE2;
+  --primary-bg-hover: #E0D2D6;
+  --primary-bg-active: #D5C4CA;
+  --primary-line: #F59AB2;
+  --primary-border: #E6809C;
+  --primary-border-hover: #D05C80;
+  --primary-solid: #D93068;
+  --primary-solid-hover: #C82A5E;
+  --primary-text: #A82052;
+  --primary-text-contrast: #461028;
+  --primary-on-primary: #fff;
 
  /* SECONDARY */
   --secondary-base: #FCFCFE;
@@ -128,19 +127,19 @@
   --canvas-on-canvas: #FFF;
 
   /* PRIMARY */
-  --primary-base: #10120A;
-  --primary-bg-subtle: #17190E;
-  --primary-bg: #232810;
-  --primary-bg-hover: #2D340E;
-  --primary-bg-active: #38400E;
-  --primary-line: #444E15;
-  --primary-border: #535F1E;
-  --primary-border-hover: #657323;
-  --primary-solid: #D7F600;
-  --primary-solid-hover: #CFEA49;
-  --primary-text: #CCE744;
-  --primary-text-contrast: #E6F6B1;
-  --primary-on-primary: #000;
+  --primary-base: #15100F;
+  --primary-bg-subtle: #1D1518;
+  --primary-bg: #281C20;
+  --primary-bg-hover: #322428;
+  --primary-bg-active: #3C2C32;
+  --primary-line: #52243C;
+  --primary-border: #64304A;
+  --primary-border-hover: #7A3E5C;
+  --primary-solid: #D93068;
+  --primary-solid-hover: #E8487C;
+  --primary-text: #F0608E;
+  --primary-text-contrast: #FCD0E0;
+  --primary-on-primary: #fff;
 
 /* SECONDARY */
   --secondary-base: #0E1117;
@@ -380,4 +379,10 @@ html, body {
 	}
 }
 
-
+/* Force light-mode canvas colors for elements on white backgrounds */
+.theme-force-light {
+  --canvas-border: #BABDB7;
+  --canvas-border-hover: #A0A39D;
+  --canvas-text: #4F524D;
+  --canvas-text-contrast: #191A18;
+}

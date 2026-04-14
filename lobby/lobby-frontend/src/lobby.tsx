@@ -144,13 +144,13 @@ const LobbyScreen = () => {
             <button
               onClick={commitEdit}
               aria-label="save-alias"
-              className="px-4 py-2 rounded bg-secondary text-white font-medium"
+              className="px-4 py-2 rounded bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover font-medium"
             >
               Save
             </button>
             <button
               onClick={() => setEditingAlias(false)}
-              className="w-8 h-8 flex items-center justify-center text-red-500"
+              className="w-8 h-8 flex items-center justify-center text-primary-solid hover:text-primary-solid-hover"
             >
               <Cross className="w-5 h-5" />
             </button>
@@ -223,7 +223,7 @@ const LobbyScreen = () => {
             <Button variant="solid" color="primary" size="sm" onClick={submitChallenge}>
               Send Challenge
             </Button>
-            <Button variant="outline" color="neutral" size="sm" onClick={() => setChallengeTarget(null)}>
+            <Button variant="solid" size="sm" onClick={() => setChallengeTarget(null)}>
               Cancel
             </Button>
           </div>
@@ -231,19 +231,19 @@ const LobbyScreen = () => {
       )}
 
       {challengeSent && (
-        <div className="mb-4 p-3 rounded-lg bg-primary-bg border border-primary-border text-primary-text text-sm flex items-center justify-between">
+        <div className="mb-4 p-3 rounded-lg theme-force-light bg-white border border-canvas-border text-canvas-text text-sm flex items-center justify-between">
           <span>Waiting for opponent to respond to your challenge...</span>
-          <Button variant="outline" color="neutral" size="sm" onClick={cancelChallenge}>
+          <Button variant="solid" size="sm" onClick={cancelChallenge}>
             Cancel
           </Button>
         </div>
       )}
       {reconnectBlocked ? (
-        <div className="mb-4 p-3 rounded-lg bg-warning-bg border border-warning-border text-warning-text text-sm">
+        <div className="mb-4 p-3 rounded-lg theme-force-light bg-white border border-canvas-border text-canvas-text text-sm">
           This player is active in another tab/window. Close the other tab or use a separate browser profile for Alice/Bob.
         </div>
       ) : isReconnecting && (
-        <div className="mb-4 p-3 rounded-lg bg-warning-bg border border-warning-border text-warning-text text-sm">
+        <div className="mb-4 p-3 rounded-lg theme-force-light bg-white border border-canvas-border text-canvas-text text-sm">
           Reconnecting to tracker...
         </div>
       )}
@@ -322,7 +322,7 @@ function IncomingChallengeDialog({
   onDecline: () => void;
 }) {
   return (
-    <div className="mb-4 p-4 rounded-lg bg-secondary-bg border border-secondary-border">
+    <div className="mb-4 p-4 rounded-lg theme-force-light bg-white border border-canvas-border">
       <p className="text-canvas-text-contrast font-medium mb-2">
         <strong>{challenge.from_alias}</strong> challenges you to{' '}
         <strong>{challenge.game}</strong>
@@ -334,7 +334,7 @@ function IncomingChallengeDialog({
         <Button variant="solid" color="primary" size="sm" onClick={onAccept}>
           Accept
         </Button>
-        <Button variant="outline" color="neutral" size="sm" onClick={onDecline}>
+        <Button variant="solid" size="sm" onClick={onDecline}>
           Decline
         </Button>
       </div>

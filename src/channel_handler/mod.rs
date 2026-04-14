@@ -1359,7 +1359,10 @@ impl ChannelHandler {
 
     /// Apply a received accept (game finish) without verifying signatures.
     /// Returns (our_reward_amount, game_finished).
-    pub fn apply_received_accept_timeout(&mut self, game_id: &GameID) -> Result<(Amount, bool), Error> {
+    pub fn apply_received_accept_timeout(
+        &mut self,
+        game_id: &GameID,
+    ) -> Result<(Amount, bool), Error> {
         let game_idx = self.get_game_by_id(game_id)?;
 
         if self.live_games[game_idx].is_my_turn() {

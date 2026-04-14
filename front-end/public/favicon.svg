@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <polygon points="16,10 48,10 63,25 32,56 1,25" fill="#000"/>
   <polygon points="32,12 47.2,12 32,25" fill="#fff"/>
-  <polygon points="47.2,12 60.2,25 32,25" fill="oklch(65% 0.25 265)"/>
+  <polygon points="47.2,12 60.2,25 32,25" fill="oklch(70% 0.25 235)"/>
   <polygon points="60.2,25 32,53.2 32,25" fill="#fff"/>
-  <polygon points="32,53.2 3.8,25 32,25" fill="oklch(65% 0.25 265)"/>
+  <polygon points="32,53.2 3.8,25 32,25" fill="oklch(70% 0.25 235)"/>
   <polygon points="3.8,25 16.8,12 32,25" fill="#fff"/>
-  <polygon points="16.8,12 32,12 32,25" fill="oklch(65% 0.25 265)"/>
+  <polygon points="16.8,12 32,12 32,25" fill="oklch(70% 0.25 235)"/>
 </svg>

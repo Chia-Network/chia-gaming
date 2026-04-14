@@ -535,7 +535,8 @@ impl OnChainGameHandler {
                         post_move_last_ph,
                     )?;
 
-                    let game_over = self.get_game_by_id(&pending.game_id)
+                    let game_over = self
+                        .get_game_by_id(&pending.game_id)
                         .map(|idx| self.live_games[idx].is_game_over())
                         .unwrap_or(false);
                     let gt = old_def.game_timeout.clone();
@@ -660,7 +661,10 @@ impl OnChainGameHandler {
                         None
                     };
                     let finished_params = if old_definition.game_finished {
-                        Some(GameStatusOtherParams { game_finished: Some(true), ..Default::default() })
+                        Some(GameStatusOtherParams {
+                            game_finished: Some(true),
+                            ..Default::default()
+                        })
                     } else {
                         None
                     };
@@ -686,7 +690,10 @@ impl OnChainGameHandler {
                 if is_timeout {
                     if !old_definition.notification_sent {
                         let finished_params = if old_definition.game_finished {
-                            Some(GameStatusOtherParams { game_finished: Some(true), ..Default::default() })
+                            Some(GameStatusOtherParams {
+                                game_finished: Some(true),
+                                ..Default::default()
+                            })
                         } else {
                             None
                         };
@@ -914,7 +921,10 @@ impl OnChainGameHandler {
                 }
                 if !old_definition.notification_sent {
                     let finished_params = if old_definition.game_finished {
-                        Some(GameStatusOtherParams { game_finished: Some(true), ..Default::default() })
+                        Some(GameStatusOtherParams {
+                            game_finished: Some(true),
+                            ..Default::default()
+                        })
                     } else {
                         None
                     };
@@ -1128,7 +1138,10 @@ impl OnChainGameHandler {
                         None
                     };
                     let finished_params = if old_definition.game_finished {
-                        Some(GameStatusOtherParams { game_finished: Some(true), ..Default::default() })
+                        Some(GameStatusOtherParams {
+                            game_finished: Some(true),
+                            ..Default::default()
+                        })
                     } else {
                         None
                     };
@@ -1248,7 +1261,10 @@ impl OnChainGameHandler {
                 }
 
                 let finished_params = if game_def.game_finished {
-                    Some(GameStatusOtherParams { game_finished: Some(true), ..Default::default() })
+                    Some(GameStatusOtherParams {
+                        game_finished: Some(true),
+                        ..Default::default()
+                    })
                 } else {
                     None
                 };
@@ -1329,7 +1345,10 @@ impl OnChainGameHandler {
 
                 if !already_notified {
                     let finished_params = if game_finished {
-                        Some(GameStatusOtherParams { game_finished: Some(true), ..Default::default() })
+                        Some(GameStatusOtherParams {
+                            game_finished: Some(true),
+                            ..Default::default()
+                        })
                     } else {
                         None
                     };
@@ -1401,7 +1420,10 @@ impl OnChainGameHandler {
             self.restore_game_state(&game_id, pre_referee, pre_last_ph)?;
             self.game_map.retain(|_, def| def.game_id != game_id);
             let finished_params = if finished {
-                Some(GameStatusOtherParams { game_finished: Some(true), ..Default::default() })
+                Some(GameStatusOtherParams {
+                    game_finished: Some(true),
+                    ..Default::default()
+                })
             } else {
                 None
             };
@@ -1520,11 +1542,17 @@ impl OnChainGameHandler {
                 if my_turn == Some(true) {
                     let our_share = self.get_game_our_current_share(&game_id);
                     if matches!(our_share, Ok(ref s) if *s == Amount::default()) {
-                        let game_finished = self.game_map.get(&current_coin)
-                            .map(|d| d.game_finished).unwrap_or(false);
+                        let game_finished = self
+                            .game_map
+                            .get(&current_coin)
+                            .map(|d| d.game_finished)
+                            .unwrap_or(false);
                         self.game_map.remove(&current_coin);
                         let finished_params = if game_finished {
-                            Some(GameStatusOtherParams { game_finished: Some(true), ..Default::default() })
+                            Some(GameStatusOtherParams {
+                                game_finished: Some(true),
+                                ..Default::default()
+                            })
                         } else {
                             None
                         };

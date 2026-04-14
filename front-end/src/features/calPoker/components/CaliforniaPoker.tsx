@@ -698,7 +698,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
           {showBetweenHandActions && gameState === GAME_STATES.FINAL && (
             <>
               <Button
-                variant='destructive'
+                variant='solid'
                 size='sm'
                 onClick={onEndSession}
                 className='absolute left-2 px-4 py-2'

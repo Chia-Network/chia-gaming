@@ -660,7 +660,7 @@ function HandDisplay(props: HandDisplayProps) {
       <div className='relative'>
         {gameState === GAME_STATES.FINAL && isWinner && (
           <div
-            className='absolute z-20 -top-5 bg-success-solid text-success-on-success px-4 py-2 rounded-full font-bold text-base shadow-lg'
+            className='absolute z-20 -top-5 bg-primary-solid text-primary-on-primary px-4 py-2 rounded-full font-bold text-base shadow-lg'
             style={{
               left: '50%',
               transform: `translateX(calc(-50% + ${winnerIndicatorOffset}px))`,

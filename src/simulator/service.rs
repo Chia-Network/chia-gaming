@@ -865,7 +865,8 @@ fn run_health_server(height: Arc<AtomicUsize>) {
         let addr: SocketAddr = "0.0.0.0:5800".parse().unwrap();
         let sock = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)
             .expect("failed to create socket for health server");
-        sock.set_reuse_address(true).expect("set_reuse_address failed");
+        sock.set_reuse_address(true)
+            .expect("set_reuse_address failed");
         sock.bind(&addr.into()).expect("failed to bind port 5800");
         sock.listen(128).expect("listen failed");
         TcpListener::from(sock)
@@ -948,7 +949,8 @@ fn service_main_inner() {
         let addr: SocketAddr = "0.0.0.0:5801".parse().unwrap();
         let sock = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)
             .expect("failed to create socket");
-        sock.set_reuse_address(true).expect("set_reuse_address failed");
+        sock.set_reuse_address(true)
+            .expect("set_reuse_address failed");
         sock.set_nonblocking(true).expect("set_nonblocking failed");
         sock.bind(&addr.into()).expect("failed to bind port 5801");
         sock.listen(128).expect("listen failed");

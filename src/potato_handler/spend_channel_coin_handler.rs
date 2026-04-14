@@ -261,9 +261,7 @@ impl SpendChannelCoinHandler {
         };
         let channel_coin = match &self.state {
             SpendChannelCoinState::ChannelSpend { channel_coin }
-            | SpendChannelCoinState::ChannelConditions { channel_coin } => {
-                channel_coin.clone()
-            }
+            | SpendChannelCoinState::ChannelConditions { channel_coin } => channel_coin.clone(),
             _ => return Ok(vec![]),
         };
         let ch = self.base.channel_handler()?;
@@ -303,9 +301,7 @@ impl SpendChannelCoinHandler {
         let mut effects = Vec::new();
 
         match &self.state {
-            SpendChannelCoinState::ChannelSpend { channel_coin }
-                if coin_id == channel_coin =>
-            {
+            SpendChannelCoinState::ChannelSpend { channel_coin } if coin_id == channel_coin => {
                 self.state = SpendChannelCoinState::ChannelConditions {
                     channel_coin: channel_coin.clone(),
                 };

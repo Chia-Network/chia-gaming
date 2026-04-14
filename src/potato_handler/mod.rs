@@ -255,7 +255,8 @@ impl PotatoHandler {
 
     pub fn take_channel_spend_replacement(
         &mut self,
-    ) -> Option<Box<crate::potato_handler::spend_channel_coin_handler::SpendChannelCoinHandler>> {
+    ) -> Option<Box<crate::potato_handler::spend_channel_coin_handler::SpendChannelCoinHandler>>
+    {
         self.channel_spend_replacement.take()
     }
 
@@ -372,7 +373,10 @@ impl PotatoHandler {
             let ch = self.channel_handler_mut()?;
             for (id, amount, game_finished) in ch.drain_cached_accept_timeouts() {
                 let finished_params = if game_finished {
-                    Some(GameStatusOtherParams { game_finished: Some(true), ..Default::default() })
+                    Some(GameStatusOtherParams {
+                        game_finished: Some(true),
+                        ..Default::default()
+                    })
                 } else {
                     None
                 };
@@ -585,7 +589,10 @@ impl PotatoHandler {
                     let ch = self.channel_handler_mut()?;
                     let (our_reward, game_finished) = ch.apply_received_accept_timeout(game_id)?;
                     let finished_params = if game_finished {
-                        Some(GameStatusOtherParams { game_finished: Some(true), ..Default::default() })
+                        Some(GameStatusOtherParams {
+                            game_finished: Some(true),
+                            ..Default::default()
+                        })
                     } else {
                         None
                     };
@@ -601,8 +608,9 @@ impl PotatoHandler {
             }
         }
 
-        let received_accept_timeout =
-            actions.iter().any(|a| matches!(a, BatchAction::AcceptTimeout(..)));
+        let received_accept_timeout = actions
+            .iter()
+            .any(|a| matches!(a, BatchAction::AcceptTimeout(..)));
 
         let has_new_game = actions.iter().any(|a| {
             matches!(
@@ -664,14 +672,23 @@ impl PotatoHandler {
 
                 let full_spend = ch.received_potato_clean_shutdown(env, sig, clvm_conditions)?;
                 let channel_puzzle_public_key = ch.get_aggregate_channel_public_key();
-                (coin, want_puzzle_hash, want_amount, full_spend, channel_puzzle_public_key)
+                (
+                    coin,
+                    want_puzzle_hash,
+                    want_amount,
+                    full_spend,
+                    channel_puzzle_public_key,
+                )
             };
 
             {
                 let ch = self.channel_handler_mut()?;
                 for (id, amount, game_finished) in ch.drain_cached_accept_timeouts() {
                     let finished_params = if game_finished {
-                        Some(GameStatusOtherParams { game_finished: Some(true), ..Default::default() })
+                        Some(GameStatusOtherParams {
+                            game_finished: Some(true),
+                            ..Default::default()
+                        })
                     } else {
                         None
                     };
@@ -755,7 +772,11 @@ impl PotatoHandler {
             effects.push(Effect::DebugLog(parts.join("\n")));
         }
 
-        effects.extend(self.update_channel_coin_after_receive(env, &spend_info, received_accept_timeout)?);
+        effects.extend(self.update_channel_coin_after_receive(
+            env,
+            &spend_info,
+            received_accept_timeout,
+        )?);
 
         Ok(effects)
     }
@@ -930,11 +951,8 @@ impl PotatoHandler {
                         shutdown_condition_program.into(),
                     )));
 
-                    pending_shutdown = Some((
-                        state_channel_coin.clone(),
-                        want_puzzle_hash,
-                        want_amount,
-                    ));
+                    pending_shutdown =
+                        Some((state_channel_coin.clone(), want_puzzle_hash, want_amount));
                 }
                 GameAction::SendPotato => {
                     unreachable!("SendPotato should not be queued");
@@ -1262,14 +1280,15 @@ impl PotatoHandler {
             ch.state_channel_coin().clone()
         };
 
-        let mut handler = crate::potato_handler::spend_channel_coin_handler::SpendChannelCoinHandler::new(
-            self.channel_handler.take(),
-            channel_coin,
-            std::mem::take(&mut self.game_action_queue),
-            self.have_potato.clone(),
-            self.channel_timeout.clone(),
-            self.unroll_timeout.clone(),
-        );
+        let mut handler =
+            crate::potato_handler::spend_channel_coin_handler::SpendChannelCoinHandler::new(
+                self.channel_handler.take(),
+                channel_coin,
+                std::mem::take(&mut self.game_action_queue),
+                self.have_potato.clone(),
+                self.channel_timeout.clone(),
+                self.unroll_timeout.clone(),
+            );
         if got_error {
             handler.set_advisory(Some("error receiving peer message".to_string()));
         }

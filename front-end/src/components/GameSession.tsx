@@ -22,7 +22,7 @@ function CoinId({ hex }: { hex: string }) {
   };
   return (
     <span className="inline-flex items-center gap-1">
-      <span className="font-mono text-[11px] select-all">0x{hex}</span>
+      <span className="font-mono text-[11px] select-all text-canvas-text-contrast">0x{hex}</span>
       <button
         onClick={copy}
         className="inline-flex items-center p-0.5 rounded hover:bg-canvas-bg-hover transition-colors text-canvas-solid hover:text-canvas-text-contrast"
@@ -204,28 +204,28 @@ function ChannelAttentionOverlay({
       onDragEnd={clampToViewport}
       className='absolute z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing'
     >
-      <Card className='w-full max-w-md shadow-xl bg-canvas-bg border border-canvas-line'>
+      <Card className='theme-inverted w-full max-w-md shadow-xl bg-canvas-bg-subtle border border-canvas-line'>
         <CardHeader className='text-center pb-2'>
-          <CardTitle className={`text-xl ${isBad ? 'text-alert-text' : ''}`}>
+          <CardTitle className={`text-xl ${isBad ? 'text-alert-text' : 'text-canvas-text-contrast'}`}>
             Channel: {label}
           </CardTitle>
           {info.advisory && (
-            <p className='text-sm text-canvas-solid mt-1'>{info.advisory}</p>
+            <p className='text-sm text-canvas-text mt-1'>{info.advisory}</p>
           )}
         </CardHeader>
         <Separator />
         <CardContent className='pt-4 flex flex-col gap-2'>
           {info.coinHex && (
-            <p className="text-xs text-canvas-solid break-all">
+            <p className="text-xs text-canvas-text break-all">
               Coin ID: <CoinId hex={info.coinHex} />
             </p>
           )}
           {info.coinAmount && (
-            <p className='text-xs text-canvas-solid'>
+            <p className='text-xs text-canvas-text'>
               Coin amount: {formatOptionalMojos(info.coinAmount)} mojos
             </p>
           )}
-          <Button variant="soft" onClick={onDismiss} className='w-full'>
+          <Button variant="solid" onClick={onDismiss} className='w-full'>
             Dismiss
           </Button>
         </CardContent>
@@ -256,14 +256,14 @@ function ErrorAttentionOverlay({
       onDragEnd={clampToViewport}
       className='absolute z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing'
     >
-      <Card className='w-full max-w-md shadow-xl bg-canvas-bg border border-alert-border'>
+      <Card className='theme-inverted w-full max-w-md shadow-xl bg-canvas-bg-subtle border border-canvas-line'>
         <CardHeader className='text-center pb-2'>
           <CardTitle className='text-xl text-alert-text'>Error</CardTitle>
         </CardHeader>
         <Separator />
         <CardContent className='pt-4 flex flex-col gap-2'>
-          <p className='text-sm text-canvas-text'>{message}</p>
-          <Button variant="soft" onClick={onDismiss} className='w-full'>
+          <p className='text-sm text-canvas-text-contrast'>{message}</p>
+          <Button variant="solid" onClick={onDismiss} className='w-full'>
             Dismiss
           </Button>
         </CardContent>
@@ -299,13 +299,13 @@ function GameTerminalAttentionOverlay({
       onDragEnd={clampToViewport}
       className='absolute z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing'
     >
-      <Card className='w-full max-w-md shadow-xl bg-canvas-bg border border-canvas-line'>
+      <Card className='theme-inverted w-full max-w-md shadow-xl bg-canvas-bg-subtle border border-canvas-line'>
         <CardHeader className='text-center pb-2'>
           <CardTitle className='text-xl text-canvas-text-contrast'>{title}</CardTitle>
         </CardHeader>
         <Separator />
         <CardContent className='pt-4 flex flex-col gap-3'>
-          <div className='rounded-md border border-canvas-line bg-canvas-bg-subtle p-3 text-sm space-y-2'>
+          <div className='rounded-md border border-canvas-line bg-canvas-bg p-3 text-sm space-y-2'>
             <p className='flex flex-wrap items-center gap-x-2 gap-y-1'>
               <span className='text-canvas-text'>My reward:</span>
               <span className='font-semibold text-canvas-text-contrast'>
@@ -321,7 +321,7 @@ function GameTerminalAttentionOverlay({
               )}
             </p>
           </div>
-          <Button variant='soft' size='sm' onClick={onDismiss} className='self-center min-w-[96px]'>
+          <Button variant='solid' size='sm' onClick={onDismiss} className='self-center min-w-[96px]'>
             OK
           </Button>
         </CardContent>
@@ -540,7 +540,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
           <div className='flex flex-col items-stretch gap-2 mt-2 sm:mt-0'>
             <Button
               data-testid='go-on-chain'
-              variant='destructive'
+              variant='solid'
               onClick={session.goOnChain}
               size='sm'
               disabled={session.goOnChainPressed || isWindingDown(session.channelStatus.state)}
