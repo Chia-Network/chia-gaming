@@ -42,6 +42,7 @@ import { debugLog } from '../services/debugLog';
 import { Button } from './button';
 
 import ChatPanel from './ChatPanel';
+import { TrackerPicker } from './TrackerPicker';
 
 type TabId = 'wallet' | 'tracker' | 'session' | 'chat' | 'game-log' | 'debug-log';
 
@@ -343,10 +344,16 @@ const Shell = () => {
     });
   }, [blockchainType]);
 
-  // Tracker setup
-  useEffect(() => {
-    if (!userReady) return;
-    let cancelled = false;
+  const [trackerOrigin, setTrackerOrigin] = useState<string | null>(null);
+
+  // Connect to a tracker by origin URL. Creates the lobby iframe + game relay WebSocket.
+  const connectToTracker = useCallback((origin: string) => {
+    trackerConnRef.current?.disconnect();
+    trackerConnRef.current = null;
+
+    setTrackerOrigin(origin);
+    const lobbyUrl = `${origin}/?lobby=true&session=${sessionId}&uniqueId=${uniqueId}`;
+    setIframeUrl(lobbyUrl);
 
     const startSession = (
       conn: TrackerConnection,
@@ -360,6 +367,7 @@ const Shell = () => {
     ) => {
       activePairingTokenRef.current = token;
       sessionSaveRef.current = save;
+      if (blobSingleton) { blobSingleton.trackerUrl = origin; }
       const resolvedMyAlias = myAlias ?? save?.myAlias;
       const resolvedOpponentAlias = opponentAlias ?? save?.opponentAlias;
       setGameParams({
@@ -382,175 +390,167 @@ const Shell = () => {
       }
     };
 
-    fetch('/urls')
-      .then((res) => res.json())
-      .then((urls: { tracker: string }) => {
-        if (cancelled) return;
-
-        const trackerURL = new URL(urls.tracker);
-        const trackerOrigin = trackerURL.origin;
-
-        const lobbyUrl = `${trackerOrigin}/?lobby=true&session=${sessionId}&uniqueId=${uniqueId}`;
-        setIframeUrl(lobbyUrl);
-
-        const conn = new TrackerConnection(trackerOrigin, sessionId, {
-            onMatched: (matched: MatchedParams) => {
-              trackerWsUpRef.current = true;
-              lastTrackerActivityRef.current = Date.now();
-              setTrackerLiveness('connected');
-              lastPeerActivityRef.current = 0;
-              let amount: bigint;
-              let perGame: bigint;
-              try { amount = BigInt(matched.amount); } catch { amount = FALLBACK_AMOUNT; }
-              try { perGame = BigInt(matched.per_game); } catch { perGame = FALLBACK_PER_GAME; }
-              startSession(conn, matched.i_am_initiator, amount, perGame, matched.token, null, matched.my_alias, matched.peer_alias);
-            },
-            onConnectionStatus: (status: ConnectionStatus) => {
-              trackerWsUpRef.current = true;
-              lastTrackerActivityRef.current = Date.now();
-              setTrackerLiveness('connected');
-              if (!status.has_pairing || status.peer_connected === false) {
-                lastPeerActivityRef.current = 0;
-              } else if (status.peer_connected === true) {
-                lastPeerActivityRef.current = Date.now();
-              }
-              if (activePairingTokenRef.current !== null) {
-                if (status.has_pairing && status.token === activePairingTokenRef.current) {
-                  console.log('[Shell] mid-session reconnect: token matches, resending un-acked');
-                  blobSingleton?.resendUnacked();
-                } else {
-                  console.warn('[Shell] mid-session reconnect: pairing lost or mismatched, keeping local session active');
-                  lastPeerActivityRef.current = 0;
-                }
-                return;
-              }
-
-              const save = loadSession();
-
-              if (status.has_pairing && status.token) {
-                if (save && save.pairingToken === status.token) {
-                  let amount: bigint;
-                  let perGame: bigint;
-                  try { amount = BigInt(save.amount); } catch { amount = FALLBACK_AMOUNT; }
-                  try { perGame = BigInt(save.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
-                  startSession(conn, status.i_am_initiator!, amount, perGame, status.token, save, status.my_alias, status.peer_alias);
-                } else if (!save) {
-                  console.warn('[Shell] connection_status: unrecognized pairing, requesting close');
-                  conn.close();
-                  clearSession();
-                } else {
-                  console.warn('[Shell] connection_status: token mismatch (tracker=%s, save=%s), closing unknown pairing', status.token, save.pairingToken);
-                  conn.close();
-                  let amount: bigint;
-                  let perGame: bigint;
-                  try { amount = BigInt(save.amount); } catch { amount = FALLBACK_AMOUNT; }
-                  try { perGame = BigInt(save.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
-                  sessionSaveRef.current = save;
-                  setGameParams({
-                    iStarted: save.iStarted,
-                    amount,
-                    perGameAmount: perGame,
-                    restoring: true,
-                    pairingToken: save.pairingToken,
-                    myAlias: save.myAlias,
-                    opponentAlias: save.opponentAlias,
-                  });
-                  setPeerConn(conn.getPeerConnection());
-                  setGameLog(save.gameLog);
-                  setDebugLogLines(save.debugLog);
-                  if (save.chatMessages) setChatMessages(save.chatMessages);
-                }
-              } else {
-                if (save) {
-                  console.warn('[Shell] connection_status: no pairing but have save, going on-chain');
-                  let amount: bigint;
-                  let perGame: bigint;
-                  try { amount = BigInt(save.amount); } catch { amount = FALLBACK_AMOUNT; }
-                  try { perGame = BigInt(save.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
-                  sessionSaveRef.current = save;
-                  setGameParams({
-                    iStarted: save.iStarted,
-                    amount,
-                    perGameAmount: perGame,
-                    restoring: true,
-                    pairingToken: save.pairingToken,
-                    myAlias: save.myAlias,
-                    opponentAlias: save.opponentAlias,
-                  });
-                  setPeerConn(conn.getPeerConnection());
-                  setGameLog(save.gameLog);
-                  setDebugLogLines(save.debugLog);
-                  if (save.chatMessages) setChatMessages(save.chatMessages);
-                }
-              }
-            },
-            onPeerReconnected: () => {
-              lastPeerActivityRef.current = Date.now();
-              blobSingleton?.resendUnacked();
-            },
-            onMessage: (_data: unknown) => { lastPeerActivityRef.current = Date.now(); },
-            onAck: (_ack: number) => { lastPeerActivityRef.current = Date.now(); },
-            onKeepalive: () => { lastPeerActivityRef.current = Date.now(); },
-            onClosed: () => {
-              console.log('[Shell] tracker connection closed');
-              trackerWsUpRef.current = false;
-              lastTrackerActivityRef.current = 0;
-              lastPeerActivityRef.current = 0;
-            },
-            onTrackerDisconnected: () => {
-              console.log('[Shell] tracker disconnected');
-              trackerWsUpRef.current = false;
-              setTrackerLiveness('reconnecting');
-            },
-            onTrackerReconnected: () => {
-              console.log('[Shell] tracker reconnected');
-              trackerWsUpRef.current = true;
-              lastTrackerActivityRef.current = Date.now();
-              setTrackerLiveness('connected');
-            },
-            onTrackerActivity: () => {
-              lastTrackerActivityRef.current = Date.now();
-            },
-            onChat: (msg: ChatMessage) => {
-              setChatMessages(prev => {
-                const next = [...prev, msg];
-                if (blobSingleton) { blobSingleton.chatMessages = next; blobSingleton.scheduleSave(); }
-                return next;
-              });
-              if (activeTabRef.current !== 'chat') {
-                setUnreadChat(true);
-              }
-            },
-          });
-        trackerConnRef.current = conn;
-
-        const initialSave = loadSession();
-        if (initialSave) {
+    const conn = new TrackerConnection(origin, sessionId, {
+        onMatched: (matched: MatchedParams) => {
+          trackerWsUpRef.current = true;
+          lastTrackerActivityRef.current = Date.now();
+          setTrackerLiveness('connected');
+          lastPeerActivityRef.current = 0;
           let amount: bigint;
           let perGame: bigint;
-          try { amount = BigInt(initialSave.amount); } catch { amount = FALLBACK_AMOUNT; }
-          try { perGame = BigInt(initialSave.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
-          startSession(
-            conn,
-            initialSave.iStarted,
-            amount,
-            perGame,
-            initialSave.pairingToken,
-            initialSave,
-          );
-          lastPeerActivityRef.current = 0;
-        }
-      })
-      .catch(e => {
-        if (!cancelled) console.error('[Shell] failed to fetch /urls:', e);
-      });
+          try { amount = BigInt(matched.amount); } catch { amount = FALLBACK_AMOUNT; }
+          try { perGame = BigInt(matched.per_game); } catch { perGame = FALLBACK_PER_GAME; }
+          startSession(conn, matched.i_am_initiator, amount, perGame, matched.token, null, matched.my_alias, matched.peer_alias);
+        },
+        onConnectionStatus: (status: ConnectionStatus) => {
+          trackerWsUpRef.current = true;
+          lastTrackerActivityRef.current = Date.now();
+          setTrackerLiveness('connected');
+          if (!status.has_pairing || status.peer_connected === false) {
+            lastPeerActivityRef.current = 0;
+          } else if (status.peer_connected === true) {
+            lastPeerActivityRef.current = Date.now();
+          }
+          if (activePairingTokenRef.current !== null) {
+            if (status.has_pairing && status.token === activePairingTokenRef.current) {
+              console.log('[Shell] mid-session reconnect: token matches, resending un-acked');
+              blobSingleton?.resendUnacked();
+            } else {
+              console.warn('[Shell] mid-session reconnect: pairing lost or mismatched, keeping local session active');
+              lastPeerActivityRef.current = 0;
+            }
+            return;
+          }
 
+          const save = loadSession();
+
+          if (status.has_pairing && status.token) {
+            if (save && save.pairingToken === status.token) {
+              let amount: bigint;
+              let perGame: bigint;
+              try { amount = BigInt(save.amount); } catch { amount = FALLBACK_AMOUNT; }
+              try { perGame = BigInt(save.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
+              startSession(conn, status.i_am_initiator!, amount, perGame, status.token, save, status.my_alias, status.peer_alias);
+            } else if (!save) {
+              console.warn('[Shell] connection_status: unrecognized pairing, requesting close');
+              conn.close();
+              clearSession();
+            } else {
+              console.warn('[Shell] connection_status: token mismatch (tracker=%s, save=%s), closing unknown pairing', status.token, save.pairingToken);
+              conn.close();
+              let amount: bigint;
+              let perGame: bigint;
+              try { amount = BigInt(save.amount); } catch { amount = FALLBACK_AMOUNT; }
+              try { perGame = BigInt(save.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
+              sessionSaveRef.current = save;
+              setGameParams({
+                iStarted: save.iStarted,
+                amount,
+                perGameAmount: perGame,
+                restoring: true,
+                pairingToken: save.pairingToken,
+                myAlias: save.myAlias,
+                opponentAlias: save.opponentAlias,
+              });
+              setPeerConn(conn.getPeerConnection());
+              setGameLog(save.gameLog);
+              setDebugLogLines(save.debugLog);
+              if (save.chatMessages) setChatMessages(save.chatMessages);
+            }
+          } else {
+            if (save) {
+              console.warn('[Shell] connection_status: no pairing but have save, going on-chain');
+              let amount: bigint;
+              let perGame: bigint;
+              try { amount = BigInt(save.amount); } catch { amount = FALLBACK_AMOUNT; }
+              try { perGame = BigInt(save.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
+              sessionSaveRef.current = save;
+              setGameParams({
+                iStarted: save.iStarted,
+                amount,
+                perGameAmount: perGame,
+                restoring: true,
+                pairingToken: save.pairingToken,
+                myAlias: save.myAlias,
+                opponentAlias: save.opponentAlias,
+              });
+              setPeerConn(conn.getPeerConnection());
+              setGameLog(save.gameLog);
+              setDebugLogLines(save.debugLog);
+              if (save.chatMessages) setChatMessages(save.chatMessages);
+            }
+          }
+        },
+        onPeerReconnected: () => {
+          lastPeerActivityRef.current = Date.now();
+          blobSingleton?.resendUnacked();
+        },
+        onMessage: (_data: unknown) => { lastPeerActivityRef.current = Date.now(); },
+        onAck: (_ack: number) => { lastPeerActivityRef.current = Date.now(); },
+        onKeepalive: () => { lastPeerActivityRef.current = Date.now(); },
+        onClosed: () => {
+          console.log('[Shell] tracker connection closed');
+          trackerWsUpRef.current = false;
+          lastTrackerActivityRef.current = 0;
+          lastPeerActivityRef.current = 0;
+        },
+        onTrackerDisconnected: () => {
+          console.log('[Shell] tracker disconnected');
+          trackerWsUpRef.current = false;
+          setTrackerLiveness('reconnecting');
+        },
+        onTrackerReconnected: () => {
+          console.log('[Shell] tracker reconnected');
+          trackerWsUpRef.current = true;
+          lastTrackerActivityRef.current = Date.now();
+          setTrackerLiveness('connected');
+        },
+        onTrackerActivity: () => {
+          lastTrackerActivityRef.current = Date.now();
+        },
+        onChat: (msg: ChatMessage) => {
+          setChatMessages(prev => {
+            const next = [...prev, msg];
+            if (blobSingleton) { blobSingleton.chatMessages = next; blobSingleton.scheduleSave(); }
+            return next;
+          });
+          if (activeTabRef.current !== 'chat') {
+            setUnreadChat(true);
+          }
+        },
+      });
+    trackerConnRef.current = conn;
+
+    const initialSave = loadSession();
+    if (initialSave) {
+      let amount: bigint;
+      let perGame: bigint;
+      try { amount = BigInt(initialSave.amount); } catch { amount = FALLBACK_AMOUNT; }
+      try { perGame = BigInt(initialSave.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
+      startSession(
+        conn,
+        initialSave.iStarted,
+        amount,
+        perGame,
+        initialSave.pairingToken,
+        initialSave,
+      );
+      lastPeerActivityRef.current = 0;
+    }
+  }, [uniqueId, sessionId]);
+
+  // Auto-connect to saved tracker on reload; otherwise wait for user selection
+  useEffect(() => {
+    if (!userReady) return;
+    const save = loadSession();
+    if (save?.trackerUrl) {
+      connectToTracker(save.trackerUrl);
+    }
     return () => {
-      cancelled = true;
       trackerConnRef.current?.disconnect();
       trackerConnRef.current = null;
     };
-  }, [uniqueId, sessionId, userReady]);
+  }, [userReady, connectToTracker]);
 
   // Shared connection completion
   const completeConnection = useCallback((iface: InternalBlockchainInterface, bcType: 'simulator' | 'walletconnect', pollMs: number) => {
@@ -1067,13 +1067,22 @@ const Shell = () => {
         </div>
 
         {/* Tracker tab */}
-        <div style={{ position: 'absolute', inset: 0, display: activeTab === 'tracker' ? 'block' : 'none' }}>
-          <iframe
-            id='tracker-iframe'
-            className='bg-canvas-bg-subtle'
-            style={{ width: '100%', height: '100%', border: 'none', margin: 0 }}
-            src={iframeUrl}
-          />
+        <div style={{ position: 'absolute', inset: 0, display: activeTab === 'tracker' ? 'flex' : 'none', flexDirection: 'column' }}>
+          {trackerOrigin ? (
+            <>
+              <div className='flex items-center px-3 py-1 border-b border-canvas-border bg-canvas-bg text-xs text-canvas-text-subtle shrink-0'>
+                Connected to {trackerOrigin}
+              </div>
+              <iframe
+                id='tracker-iframe'
+                className='bg-canvas-bg-subtle'
+                style={{ flex: '1 1 0%', width: '100%', border: 'none', margin: 0 }}
+                src={iframeUrl}
+              />
+            </>
+          ) : (
+            <TrackerPicker onConnect={connectToTracker} />
+          )}
         </div>
 
         {/* Game Session tab */}

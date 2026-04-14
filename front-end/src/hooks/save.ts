@@ -68,6 +68,7 @@ export interface SessionSave {
   myRunningBalance?: string;
   channelAttentionActive?: boolean;
   gameTerminalAttentionActive?: boolean;
+  trackerUrl?: string;
 }
 
 interface AppState {

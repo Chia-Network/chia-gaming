@@ -145,6 +145,7 @@ export class WasmBlobWrapper {
   myRunningBalance: string = '0';
   channelAttentionActive = false;
   gameTerminalAttentionActive = false;
+  trackerUrl: string = '';
   getFee: () => number = () => 0;
 
   constructor(
@@ -667,6 +668,7 @@ export class WasmBlobWrapper {
         myRunningBalance: this.myRunningBalance !== '0' ? this.myRunningBalance : undefined,
         channelAttentionActive: this.channelAttentionActive || undefined,
         gameTerminalAttentionActive: this.gameTerminalAttentionActive || undefined,
+        trackerUrl: this.trackerUrl || undefined,
       };
       saveSession(save);
     } catch (e) {
