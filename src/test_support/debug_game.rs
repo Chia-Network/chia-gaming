@@ -591,7 +591,7 @@ pub fn make_debug_games_with_contributions(
     their_contribution: u64,
     nonce: usize,
 ) -> Result<[BareDebugGameHandler; 2], Error> {
-    let rng_seq0: Vec<Hash> = (0..50).map(|_| rng.gen()).collect();
+    let rng_seq0: Vec<Hash> = (0..50).map(|_| rng.random()).collect();
     let gid = GameID(nonce as u64);
     let referee_coin = read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex")?;
     let ref_coin_hash = referee_coin.sha256tree(allocator);
@@ -612,8 +612,8 @@ pub fn test_debug_game_factory() {
     let mut allocator = AllocEncoder::new();
     let rng_seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(rng_seed);
-    let pk0: PrivateKey = rng.gen();
-    let pk1: PrivateKey = rng.gen();
+    let pk0: PrivateKey = rng.random();
+    let pk1: PrivateKey = rng.random();
     let id0 = ChiaIdentity::new(&mut allocator, pk0).expect("ok");
     let id1 = ChiaIdentity::new(&mut allocator, pk1).expect("ok");
     let identities: [ChiaIdentity; 2] = [id0, id1];
@@ -775,8 +775,8 @@ pub fn test_debug_game_validation_move() {
     let mut allocator = AllocEncoder::new();
     let rng_seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(rng_seed);
-    let pk0: PrivateKey = rng.gen();
-    let pk1: PrivateKey = rng.gen();
+    let pk0: PrivateKey = rng.random();
+    let pk1: PrivateKey = rng.random();
     let id0 = ChiaIdentity::new(&mut allocator, pk0).expect("ok");
     let id1 = ChiaIdentity::new(&mut allocator, pk1).expect("ok");
     let identities: [ChiaIdentity; 2] = [id0, id1];

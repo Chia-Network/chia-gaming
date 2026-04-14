@@ -93,7 +93,7 @@ impl GameRunner {
         let mut allocator = AllocEncoder::new();
         let mut rng = ChaCha8Rng::from_seed([0; 32]);
 
-        let neutral_pk: PrivateKey = rng.gen();
+        let neutral_pk: PrivateKey = rng.random();
         let neutral_identity = ChiaIdentity::new(&mut allocator, neutral_pk).expect("should work");
 
         simulator.farm_block(&neutral_identity.puzzle_hash);
@@ -214,7 +214,7 @@ impl GameRunner {
         let public_key = if let Some(identity) = self.lookup_identity(name) {
             hex::encode(identity.puzzle_hash.bytes())
         } else {
-            let pk1: PrivateKey = self.rng.gen();
+            let pk1: PrivateKey = self.rng.random();
             let identity = ChiaIdentity::new(&mut self.allocator, pk1)?;
             self.simulator.farm_block(&identity.puzzle_hash);
             self.chase_block()?;
@@ -919,7 +919,7 @@ struct ClientState {
 
 #[allow(clippy::result_large_err)]
 fn ws_send(ws: &mut WebSocket<TcpStream>, text: String) -> Result<(), tungstenite::Error> {
-    ws.send(Message::Text(text))
+    ws.send(Message::Text(text.into()))
 }
 
 fn service_main_inner() {

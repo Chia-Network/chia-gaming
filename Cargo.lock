@@ -126,7 +126,7 @@ dependencies = [
  "indexmap",
  "js-sys",
  "once_cell",
- "rand 0.9.2",
+ "rand 0.9.3",
  "serde",
  "serde_bytes",
  "serde_json",
@@ -139,12 +139,6 @@ name = "bumpalo"
 version = "3.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
-
-[[package]]
-name = "byteorder"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
 name = "bytes"
@@ -181,7 +175,7 @@ dependencies = [
  "hkdf",
  "linked-hash-map",
  "sha2",
- "thiserror",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -197,7 +191,7 @@ dependencies = [
  "hkdf",
  "linked-hash-map",
  "sha2",
- "thiserror",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -236,7 +230,7 @@ checksum = "52463c56cdf35aac55ecb35ffc0a615f0780f33f144503957e83f5b1ad92da3c"
 dependencies = [
  "chia-sha2 0.28.2",
  "chia_streamable_macro 0.28.2",
- "thiserror",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -247,7 +241,7 @@ checksum = "1f4922b447b2d8418213948af1a448c3ca7b84e149b51b2c87a2e00e80bb19b0"
 dependencies = [
  "chia-sha2 0.36.1",
  "chia_streamable_macro 0.36.1",
- "thiserror",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -265,8 +259,8 @@ dependencies = [
  "lazy_static",
  "num-bigint",
  "num-traits",
- "rand 0.8.5",
- "rand_chacha 0.3.1",
+ "rand 0.9.3",
+ "rand_chacha 0.9.0",
  "serde",
  "serde_json",
  "serde_json_any_key",
@@ -345,7 +339,7 @@ checksum = "96380e11b921106bd3d2e24f8b85b6de2f99a760a6d5f0bd6d68ec096695b34b"
 dependencies = [
  "clvmr",
  "num-bigint",
- "thiserror",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -382,7 +376,7 @@ dependencies = [
  "rand 0.8.5",
  "sha1",
  "sha3",
- "thiserror",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -1082,9 +1076,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.9.2"
+version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6db2770f06117d490610c7488547d543617b21bfa07796d7a12f6f1bd53850d1"
+checksum = "7ec095654a25171c2124e9e3393a930bddbffdc939556c914957a4c3e0a87166"
 dependencies = [
  "rand_chacha 0.9.0",
  "rand_core 0.9.5",
@@ -1401,7 +1395,16 @@ version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
 dependencies = [
- "thiserror-impl",
+ "thiserror-impl 1.0.69",
+]
+
+[[package]]
+name = "thiserror"
+version = "2.0.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4"
+dependencies = [
+ "thiserror-impl 2.0.18",
 ]
 
 [[package]]
@@ -1409,6 +1412,17 @@ name = "thiserror-impl"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "2.0.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ebc4ee7f67670e9b64d05fa4253e753e016c6c95ff35b89b7941d6b856dec1d5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1521,20 +1535,18 @@ checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 
 [[package]]
 name = "tungstenite"
-version = "0.24.0"
+version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18e5b8366ee7a95b16d32197d0b2604b43a0be89dc5fac9f8e96ccafbaedda8a"
+checksum = "6c01152af293afb9c7c2a57e4b559c5620b421f6d133261c60dd2d0cdb38e6b8"
 dependencies = [
- "byteorder",
  "bytes",
  "data-encoding",
  "http",
  "httparse",
  "log",
- "rand 0.8.5",
+ "rand 0.9.3",
  "sha1",
- "thiserror",
- "utf-8",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1590,12 +1602,6 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
-
-[[package]]
-name = "utf-8"
-version = "0.7.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09cc8ee72d2a9becf2f2febe0205bbed8fc6615b7cb429ad062dc7b7ddd036a9"
 
 [[package]]
 name = "uuid"

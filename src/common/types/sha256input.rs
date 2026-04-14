@@ -2,8 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 use clvmr::allocator::{NodePtr, SExp};
-use rand::distributions::Standard;
-use rand::prelude::Distribution;
+use rand::distr::{Distribution, StandardUniform};
 use rand::Rng;
 
 use crate::common::types::{AllocEncoder, Error};
@@ -64,11 +63,11 @@ pub enum Sha256Input<'a> {
     Array(Vec<Sha256Input<'a>>),
 }
 
-impl Distribution<Hash> for Standard {
+impl Distribution<Hash> for StandardUniform {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Hash {
         let mut pk = [0; 32];
         for item in &mut pk {
-            *item = rng.gen();
+            *item = rng.random();
         }
         Hash::from_bytes(pk)
     }

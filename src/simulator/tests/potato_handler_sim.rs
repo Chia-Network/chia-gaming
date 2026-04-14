@@ -1083,7 +1083,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     // Coinset adapter for each side.
     let game_type_map = poker_collection(allocator);
 
-    let neutral_pk: PrivateKey = rng.gen();
+    let neutral_pk: PrivateKey = rng.random();
     let neutral_identity = ChiaIdentity::new(allocator, neutral_pk)?;
 
     let mut coinset_adapter = FullCoinSetAdapter::default();
@@ -1484,7 +1484,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "Move", gid, gid);
                         }
-                        let entropy = rng.gen();
+                        let entropy = rng.random();
                         let t_mv = std::time::Instant::now();
                         cradles[*who].make_move(allocator, gid, readable.clone(), entropy)?;
                         if timing_enabled {
@@ -1571,7 +1571,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                                     gid,
                                 );
                             }
-                            let entropy = rng.gen();
+                            let entropy = rng.random();
                             cradles[*who].make_move(allocator, gid, readable.clone(), entropy)?;
                             move_number += 1;
                         } else {
@@ -1584,7 +1584,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                         if gid_diag_on {
                             gid_diag(&test_name, action_idx, "FakeMove", gid, gid);
                         }
-                        let entropy = rng.gen();
+                        let entropy = rng.random();
                         cradles[*who].make_move(allocator, gid, readable.clone(), entropy)?;
                         // Flush pending actions into the events queue
                         // (without draining) so replace_last_message can
@@ -2031,12 +2031,12 @@ pub fn run_calpoker_container_with_action_list_with_success_predicate(
 ) -> Result<GameRunOutcome, Error> {
     let seed_data: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed_data);
-    let pk1: PrivateKey = rng.gen();
+    let pk1: PrivateKey = rng.random();
     let id1 = ChiaIdentity::new(allocator, pk1).expect("ok");
-    let pk2: PrivateKey = rng.gen();
+    let pk2: PrivateKey = rng.random();
     let id2 = ChiaIdentity::new(allocator, pk2).expect("ok");
 
-    let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.gen();
+    let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.random();
     let identities: [ChiaIdentity; 2] = [id1.clone(), id2.clone()];
     run_game_container_with_action_list_with_success_predicate(
         allocator,
@@ -2227,12 +2227,12 @@ pub fn setup_debug_test(
     rng: &mut ChaCha8Rng,
     moves: &[DebugGameTestMove],
 ) -> Result<DebugGameSimSetup, Error> {
-    let pk1: PrivateKey = rng.gen();
+    let pk1: PrivateKey = rng.random();
     let id1 = ChiaIdentity::new(allocator, pk1)?;
-    let pk2: PrivateKey = rng.gen();
+    let pk2: PrivateKey = rng.random();
     let id2 = ChiaIdentity::new(allocator, pk2)?;
 
-    let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.gen();
+    let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.random();
     let identities: [ChiaIdentity; 2] = [id1.clone(), id2.clone()];
 
     let pid1 = ChiaIdentity::new(allocator, private_keys[0].my_referee_private_key.clone())?;
@@ -2350,12 +2350,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let mut allocator = AllocEncoder::new();
             let seed_data: [u8; 32] = [0; 32];
             let mut rng = ChaCha8Rng::from_seed(seed_data);
-            let pk1: PrivateKey = rng.gen();
+            let pk1: PrivateKey = rng.random();
             let id1 = ChiaIdentity::new(&mut allocator, pk1).expect("ok");
-            let pk2: PrivateKey = rng.gen();
+            let pk2: PrivateKey = rng.random();
             let id2 = ChiaIdentity::new(&mut allocator, pk2).expect("ok");
 
-            let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.gen();
+            let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.random();
             let identities: [ChiaIdentity; 2] = [id1.clone(), id2.clone()];
 
             let mut moves = vec![
@@ -4784,11 +4784,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let mut allocator = AllocEncoder::new();
             let seed_data: [u8; 32] = [0; 32];
             let mut rng = ChaCha8Rng::from_seed(seed_data);
-            let pk1: PrivateKey = rng.gen();
+            let pk1: PrivateKey = rng.random();
             let id1 = ChiaIdentity::new(&mut allocator, pk1).expect("ok");
-            let pk2: PrivateKey = rng.gen();
+            let pk2: PrivateKey = rng.random();
             let id2 = ChiaIdentity::new(&mut allocator, pk2).expect("ok");
-            let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.gen();
+            let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.random();
             let identities: [ChiaIdentity; 2] = [id1, id2];
 
             // WaitBlocks at the start lets the post-handshake empty potato
@@ -4843,11 +4843,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             let mut allocator = AllocEncoder::new();
             let seed_data: [u8; 32] = [0; 32];
             let mut rng = ChaCha8Rng::from_seed(seed_data);
-            let pk1: PrivateKey = rng.gen();
+            let pk1: PrivateKey = rng.random();
             let id1 = ChiaIdentity::new(&mut allocator, pk1).expect("ok");
-            let pk2: PrivateKey = rng.gen();
+            let pk2: PrivateKey = rng.random();
             let id2 = ChiaIdentity::new(&mut allocator, pk2).expect("ok");
-            let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.gen();
+            let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.random();
             let identities: [ChiaIdentity; 2] = [id1, id2];
 
             let moves = vec![

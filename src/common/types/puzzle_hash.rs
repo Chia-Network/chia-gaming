@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use rand::distributions::Standard;
+use rand::distr::StandardUniform;
 use rand::prelude::*;
 
 use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
@@ -33,9 +33,9 @@ impl std::fmt::Display for PuzzleHash {
     }
 }
 
-impl Distribution<PuzzleHash> for Standard {
+impl Distribution<PuzzleHash> for StandardUniform {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> PuzzleHash {
-        PuzzleHash::from_hash(rng.gen())
+        PuzzleHash::from_hash(rng.random())
     }
 }
 

@@ -9,7 +9,7 @@ import { CalpokerOutcome, ChannelState } from '../types/ChiaGaming';
 import { WasmBlobWrapper } from '../hooks/WasmBlobWrapper';
 import Calpoker from '../features/calPoker';
 
-import { motion, useMotionValue } from 'framer-motion';
+import { motion, useMotionValue, useDragControls } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
 import { Button } from './button';
@@ -244,31 +244,49 @@ function ErrorAttentionOverlay({
   boundsRef: RefObject<HTMLElement | null>;
 }) {
   const { cardRef, x, y, clampToViewport } = useViewportClampedDragWithInsets(boundsRef, { top: 8 });
+  const dragControls = useDragControls();
+  const [copied, setCopied] = useState(false);
   return (
     <motion.div
       ref={cardRef}
       drag
+      dragControls={dragControls}
+      dragListener={false}
       dragMomentum={false}
       dragElastic={0}
       initial={false}
       style={{ x, y }}
       onDrag={clampToViewport}
       onDragEnd={clampToViewport}
-      className='absolute z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing'
+      className='absolute z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2'
     >
       <Card className='theme-inverted w-full max-w-md shadow-xl bg-canvas-bg-subtle border border-canvas-line'>
-        <CardHeader className='text-center pb-2'>
+        <CardHeader
+          className='text-center pb-2 cursor-grab active:cursor-grabbing'
+          onPointerDown={(e) => dragControls.start(e)}
+        >
           <CardTitle className='text-xl text-alert-text'>Error</CardTitle>
         </CardHeader>
         <Separator />
         <CardContent className='pt-4 flex flex-col gap-2'>
-          <pre
-            onPointerDownCapture={(e) => e.stopPropagation()}
-            className='text-sm text-canvas-text-contrast whitespace-pre-wrap break-all font-sans select-text cursor-text max-h-[60vh] overflow-auto'
-          >{message}</pre>
-          <Button variant="solid" onClick={onDismiss} className='w-full'>
-            Dismiss
-          </Button>
+          <pre className='text-sm text-canvas-text-contrast whitespace-pre-wrap break-all font-sans select-text cursor-text max-h-[60vh] overflow-auto'>{message}</pre>
+          <div className='flex gap-2'>
+            <Button
+              variant="outline"
+              className='flex-1'
+              onClick={() => {
+                navigator.clipboard.writeText(message).then(() => {
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                });
+              }}
+            >
+              {copied ? 'Copied' : 'Copy'}
+            </Button>
+            <Button variant="solid" onClick={onDismiss} className='flex-1'>
+              Dismiss
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </motion.div>

@@ -367,7 +367,7 @@ mod gaming_wasm {
         let partial = parse_game_config(js_config)?;
         with_rng(partial.rng_id, move |rng: &mut ChaCha8Rng| {
             let mut allocator = AllocEncoder::new();
-            let private_key: PrivateKey = rng.gen();
+            let private_key: PrivateKey = rng.random();
             let identity = ChiaIdentity::new(&mut allocator, private_key)?;
             let puzzle_hash_hex = hex::encode(identity.puzzle_hash.bytes());
 
@@ -850,7 +850,7 @@ mod gaming_wasm {
             None
         };
         with_game_drain(cid, move |cradle: &mut JsCradle| {
-            let entropy: Hash = new_entropy.unwrap_or_else(|| cradle.rng.0.gen());
+            let entropy: Hash = new_entropy.unwrap_or_else(|| cradle.rng.0.random());
             cradle.cradle.make_move(
                 &mut cradle.allocator,
                 &game_id,
@@ -902,7 +902,7 @@ mod gaming_wasm {
         let readable_move =
             ReadableMove::from_program(std::rc::Rc::new(Program::from_bytes(readable)));
         with_game_drain(cid, move |cradle: &mut JsCradle| {
-            let entropy: Hash = cradle.rng.0.gen();
+            let entropy: Hash = cradle.rng.0.random();
             cradle.cradle.accept_proposal_and_move(
                 &mut cradle.allocator,
                 &game_id,
@@ -1339,7 +1339,7 @@ mod gaming_wasm {
     pub fn chia_identity(rng_id: i32) -> Result<JsValue, JsValue> {
         with_rng(rng_id, move |rng: &mut ChaCha8Rng| {
             let mut allocator = AllocEncoder::new();
-            let private_key = rng.gen();
+            let private_key = rng.random();
             let identity = ChiaIdentity::new(&mut allocator, private_key)?;
             let js_identity: JsChiaIdentity = identity.into();
             serde_wasm_bindgen::to_value(&js_identity)

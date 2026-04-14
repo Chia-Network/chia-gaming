@@ -1,7 +1,7 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::ops::{Add, AddAssign};
 
-use rand::distributions::Standard;
+use rand::distr::StandardUniform;
 use rand::prelude::*;
 
 use chia_bls;
@@ -9,9 +9,9 @@ use chia_bls::sign;
 
 use crate::common::types::{Aggsig, Error, Hash, IntoErr};
 
-impl Distribution<PrivateKey> for Standard {
+impl Distribution<PrivateKey> for StandardUniform {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> PrivateKey {
-        let hash: Hash = rng.gen();
+        let hash: Hash = rng.random();
         PrivateKey(chia_bls::SecretKey::from_seed(hash.bytes()))
     }
 }

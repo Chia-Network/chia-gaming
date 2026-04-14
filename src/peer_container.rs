@@ -647,7 +647,7 @@ impl SynchronousGameCradle {
         }
     }
     pub fn new<R: Rng>(rng: &mut R, config: SynchronousGameCradleConfig) -> Self {
-        let private_keys: ChannelHandlerPrivateKeys = rng.gen();
+        let private_keys: ChannelHandlerPrivateKeys = rng.random();
         SynchronousGameCradle::new_with_keys(config, private_keys)
     }
 }

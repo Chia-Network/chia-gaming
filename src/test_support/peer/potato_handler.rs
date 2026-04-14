@@ -480,8 +480,8 @@ pub fn test_peer_smoke() {
                        rng: &mut ChaCha8Rng,
                        have_potato: bool|
      -> Box<dyn PeerHandler> {
-        let private_keys1: ChannelHandlerPrivateKeys = rng.gen();
-        let reward_private_key1: PrivateKey = rng.gen();
+        let private_keys1: ChannelHandlerPrivateKeys = rng.random();
+        let reward_private_key1: PrivateKey = rng.random();
         let reward_public_key1 = private_to_public_key(&reward_private_key1);
         let reward_puzzle_hash1 =
             puzzle_hash_for_pk(allocator, &reward_public_key1).expect("should work");
@@ -504,7 +504,7 @@ pub fn test_peer_smoke() {
     };
 
     // Keep RNG draws stable for deterministic test vectors.
-    let _parent_private_key: PrivateKey = rng.gen();
+    let _parent_private_key: PrivateKey = rng.random();
     let _parent_public_key = private_to_public_key(&_parent_private_key);
     let _parent_puzzle_hash =
         puzzle_hash_for_pk(&mut allocator, &_parent_public_key).expect("should work");
@@ -632,7 +632,7 @@ pub fn test_peer_smoke() {
         };
 
         {
-            let entropy = rng.gen();
+            let entropy = rng.random();
             let mut env = ChannelHandlerEnv::new(&mut allocator).expect("should work");
             let effects =
                 FromLocalUI::make_move(&mut peers[who ^ 1], &mut env, &game_ids[0], &what, entropy)
