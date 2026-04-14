@@ -147,6 +147,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 
 [[package]]
+name = "bytemuck"
+version = "1.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8efb64bd706a16a1bdde310ae86b351e4d21550d98d056f22f8a7f7a2183fec"
+
+[[package]]
 name = "cc"
 version = "1.2.59"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -206,7 +212,7 @@ dependencies = [
  "chia_streamable_macro 0.36.1",
  "clvm-traits",
  "clvm-utils",
- "clvmr",
+ "clvmr 0.16.2",
  "hex",
 ]
 
@@ -270,7 +276,8 @@ dependencies = [
  "chialisp",
  "clvm-traits",
  "clvm-utils",
- "clvmr",
+ "clvmr 0.16.2",
+ "clvmr 0.17.5",
  "hex",
  "lazy_static",
  "num-bigint",
@@ -295,7 +302,7 @@ dependencies = [
  "chia-puzzles",
  "chia-traits 0.36.1",
  "chia_gaming",
- "clvmr",
+ "clvmr 0.16.2",
  "flate2",
  "getrandom 0.3.4",
  "hex",
@@ -336,11 +343,11 @@ dependencies = [
 [[package]]
 name = "chialisp"
 version = "0.4.1"
-source = "git+https://github.com/Chia-Network/chialisp.git?rev=308eb9ca1ba27913c8c0ab033dfc922a10b0f3c4#308eb9ca1ba27913c8c0ab033dfc922a10b0f3c4"
+source = "git+https://github.com/Chia-Network/chialisp.git?rev=6eb5962181f176affc5d8bd84ee25de04fefa4b3#6eb5962181f176affc5d8bd84ee25de04fefa4b3"
 dependencies = [
  "binascii",
  "chia-bls 0.36.1",
- "clvmr",
+ "clvmr 0.17.5",
  "do-notation",
  "getrandom 0.2.17",
  "hashlink",
@@ -380,7 +387,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96380e11b921106bd3d2e24f8b85b6de2f99a760a6d5f0bd6d68ec096695b34b"
 dependencies = [
  "clvm-derive",
- "clvmr",
+ "clvmr 0.16.2",
  "num-bigint",
  "thiserror",
 ]
@@ -393,7 +400,7 @@ checksum = "65adea81c7ab1659180a4ffb10a0df63eb049b5b8de2caa8bf2d762f55c7c4db"
 dependencies = [
  "chia-sha2 0.36.1",
  "clvm-traits",
- "clvmr",
+ "clvmr 0.16.2",
  "hex",
  "hex-literal",
 ]
@@ -412,6 +419,32 @@ dependencies = [
  "hex-literal",
  "k256",
  "lazy_static",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "p256",
+ "rand 0.8.5",
+ "sha1",
+ "sha3",
+ "thiserror",
+]
+
+[[package]]
+name = "clvmr"
+version = "0.17.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56b333963b083468df9a15602fcc3a24fa3f8c3964569fb9d2415ac70c0820e9"
+dependencies = [
+ "bitflags",
+ "bitvec",
+ "bumpalo",
+ "chia-bls 0.36.1",
+ "chia-sha2 0.36.1",
+ "hex",
+ "hex-literal",
+ "k256",
+ "lazy_static",
+ "malachite-bigint",
  "num-bigint",
  "num-integer",
  "num-traits",
@@ -519,6 +552,12 @@ dependencies = [
  "signature",
  "spki",
 ]
+
+[[package]]
+name = "either"
+version = "1.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
 name = "elliptic-curve"
@@ -801,6 +840,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "itertools"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -858,6 +906,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48f5d2a454e16a5ea0f4ced81bd44e4cfc7bd3a507b61887c99fd3538b28e4af"
 
 [[package]]
+name = "libm"
+version = "0.2.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
+
+[[package]]
 name = "libz-rs-sys"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -900,6 +954,43 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83e5106554cabc97552dcadf54f57560ae6af3276652f82ca2be06120dc4c5dc"
 dependencies = [
  "spin",
+]
+
+[[package]]
+name = "malachite-base"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8b6f86fdbb1eb9955946be91775239dfcb0acdb1a51bb07d5fc9b8c854f5ccd"
+dependencies = [
+ "hashbrown 0.16.1",
+ "itertools",
+ "libm",
+ "ryu",
+]
+
+[[package]]
+name = "malachite-bigint"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67fcd6e504ffc67db2b3c6d5e90e08054646e2b04f42115a5460bf1c1e37d3bc"
+dependencies = [
+ "malachite-base",
+ "malachite-nz",
+ "num-integer",
+ "num-traits",
+ "paste",
+]
+
+[[package]]
+name = "malachite-nz"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0197a2f5cfee19d59178e282985c6ca79a9233e26a2adcf40acb693896aa09f6"
+dependencies = [
+ "itertools",
+ "libm",
+ "malachite-base",
+ "wide",
 ]
 
 [[package]]
@@ -1024,6 +1115,12 @@ dependencies = [
  "primeorder",
  "sha2",
 ]
+
+[[package]]
+name = "paste"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "pem-rfc7468"
@@ -1256,6 +1353,15 @@ name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
+
+[[package]]
+name = "safe_arch"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f7caad094bd561859bcd467734a720c3c1f5d1f338995351fefe2190c45efed"
+dependencies = [
+ "bytemuck",
+]
 
 [[package]]
 name = "scopeguard"
@@ -1776,6 +1882,16 @@ dependencies = [
  "hashbrown 0.15.5",
  "indexmap",
  "semver",
+]
+
+[[package]]
+name = "wide"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9479f84a757f819cfab37295955906479181395de83add28f74975fde083141"
+dependencies = [
+ "bytemuck",
+ "safe_arch",
 ]
 
 [[package]]
