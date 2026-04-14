@@ -18,9 +18,9 @@ const GameColors = {
 const SUIT_COLORS = {
   Q: 'oklch(70% 0.3 90)', // Gold (90° hue, 70% lightness)
   '♠': 'oklch(0% 0 0)', // Black (0% lightness, 0 chroma for true black)
-  '♥': 'oklch(50% 0.3 25)', // Red (25° hue, 50% lightness)
-  '♦': 'oklch(50% 0.3 265)', // Blue (265° hue, 50% lightness)
-  '♣': 'oklch(50% 0.3 155)', // Green (155° hue, 50% lightness)
+  '♥': 'oklch(60% 0.3 25)', // Red (25° hue, 60% lightness)
+  '♦': 'oklch(60% 0.3 265)', // Blue (265° hue, 60% lightness)
+  '♣': 'oklch(60% 0.3 155)', // Green (155° hue, 60% lightness)
 };
 
 const HAND_RANKINGS = {
@@ -38,13 +38,17 @@ const HAND_RANKINGS = {
 const GAME_STATES = {
   INITIAL: 'initial',
   SELECTING: 'selecting',
+  REVEALING_SWAP: 'revealing_swap',
   SWAPPING: 'swapping',
   AWAITING_SWAP: 'awaiting_swap',
   FINAL: 'final',
 };
 
 const ANIMATION_DELAY = 100;
-const SWAP_ANIMATION_DURATION = 2500;
+const HALO_FADE_DURATION_MS = 300;
+const SWAP_MOVE_DURATION_MS = 2000;
+const PRE_SWAP_REVEAL_DURATION = HALO_FADE_DURATION_MS;
+const SWAP_ANIMATION_DURATION = SWAP_MOVE_DURATION_MS;
 const SORT_ANIMATION_DURATION = 600;
 
 // Button styling classes
@@ -58,6 +62,9 @@ export {
   HAND_RANKINGS,
   GAME_STATES,
   ANIMATION_DELAY,
+  HALO_FADE_DURATION_MS,
+  SWAP_MOVE_DURATION_MS,
+  PRE_SWAP_REVEAL_DURATION,
   SWAP_ANIMATION_DURATION,
   SORT_ANIMATION_DURATION,
   BUTTON_BASE,

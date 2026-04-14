@@ -91,6 +91,7 @@ pub struct HandshakeInitiatorHandler {
     pending_coin_spend: bool,
 
     waiting_to_start: bool,
+    transaction_pushed: bool,
     incoming_messages: VecDeque<Rc<PeerMessage>>,
 
     #[serde(skip)]
@@ -121,6 +122,7 @@ impl HandshakeInitiatorHandler {
             channel_deadline: None,
             pending_coin_spend: false,
             waiting_to_start: true,
+            transaction_pushed: false,
             incoming_messages: VecDeque::new(),
             last_channel_coin_spend_info: None,
             replacement: None,
@@ -470,6 +472,7 @@ impl HandshakeInitiatorHandler {
             InitiatorState::Finished(_) => {
                 if let PeerMessage::HandshakeF { bundle } = msg_envelope.borrow() {
                     effects.push(Effect::SpendTransaction(bundle.clone()));
+                    self.transaction_pushed = true;
                 } else {
                     self.incoming_messages.push_front(msg_envelope);
                 }
@@ -798,15 +801,9 @@ impl PeerHandler for HandshakeInitiatorHandler {
             InitiatorState::WaitingForLauncher(_) | InitiatorState::SentC(_) => {
                 ChannelState::Handshaking
             }
-            InitiatorState::WaitingForOffer(_, _) => {
-                if self.channel_handler.is_some() {
-                    ChannelState::TransactionPending
-                } else {
-                    ChannelState::OfferSent
-                }
-            }
+            InitiatorState::WaitingForOffer(_, _) => ChannelState::WaitingForOffer,
             InitiatorState::Finished(_) => {
-                if self.channel_handler.is_some() {
+                if self.transaction_pushed {
                     ChannelState::TransactionPending
                 } else {
                     ChannelState::OfferSent

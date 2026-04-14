@@ -21,7 +21,7 @@
     "@types/cors": "2.8.19",
     "@types/express": "5.0.5",
     "@types/minimist": "1.2.5",
-    "@types/node": "24.9.2",
+    "@types/node": "24.6.2",
     "@types/ws": "8.18.1",
     "esbuild": "0.25.11",
     "prettier": "3.5.3",

@@ -67,12 +67,12 @@ disconnected peer's own unroll transaction is detected via the same
 
 Historically, `ChannelHandler` had an `initiated_on_chain` field intended for
 transition bookkeeping. In current code, the behavior above is enforced by
-peer disconnection and handler replacement (`PotatoHandler -> UnrollWatchHandler`)
+peer disconnection and handler replacement (`PotatoHandler -> SpendChannelCoinHandler`)
 rather than by checking `initiated_on_chain` at runtime.
 
 **Key code:** `src/peer_container.rs` — `go_on_chain`,
 `emit_channel_status_if_changed`, `send_message`, `deliver_message`;
-`src/potato_handler/mod.rs` — `go_on_chain`, `take_unroll_watch_replacement`
+`src/potato_handler/mod.rs` — `go_on_chain`, `take_channel_spend_replacement`
 
 ---
 
@@ -105,7 +105,7 @@ hash, live game state, and reward amounts. When the potato returns
 accept.
 - `**ProposalAccepted**` — a proposal acceptance we sent. Stores the game ID.
 Used during stale unroll handling to distinguish in-flight proposal accepts
-(which get `GameCancelled`) from fully established games (which get
+(which get `EndedCancelled`) from fully established games (which get
 `GameError`).
 
 **Set** in `send_move_no_finalize` (moves) and
@@ -149,7 +149,7 @@ the handler's `pending_moves` map for each one.
 
 **In-flight proposal acceptances** (`ProposalAccepted` entries in
 `cached_last_actions`) don't trigger a redo — if the game coin never
-materialized on-chain, the game is cancelled (`GameCancelled`).
+materialized on-chain, the game is cancelled (`EndedCancelled`).
 
 ### When Redo Happens (and When It Doesn't)
 

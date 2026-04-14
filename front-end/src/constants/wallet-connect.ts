@@ -1,4 +1,4 @@
-import { CoreTypes, ProposalTypes } from '@walletconnect/types';
+import { ProposalTypes } from '@walletconnect/types';
 
 import { CHAIN_ID } from './env';
 
@@ -13,6 +13,7 @@ export enum ChiaMethod {
   CreateNewRemoteWallet = 'chia_createNewRemoteWallet',
   RegisterRemoteCoins = 'chia_registerRemoteCoins',
   GetCoinRecordsByNames = 'chia_getCoinRecordsByNames',
+  GetPuzzleAndSolution = 'chia_getPuzzleAndSolution',
 }
 
 export const REQUIRED_NAMESPACES: ProposalTypes.RequiredNamespaces = {
@@ -21,11 +22,4 @@ export const REQUIRED_NAMESPACES: ProposalTypes.RequiredNamespaces = {
     chains: [CHAIN_ID],
     events: [],
   },
-};
-
-export const METADATA: CoreTypes.Metadata = {
-  name: 'Test App',
-  description: 'A test application for WalletConnect.',
-  url: '#',
-  icons: ['https://walletconnect.com/walletconnect-logo.png'],
 };

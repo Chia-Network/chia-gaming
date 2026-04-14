@@ -4,7 +4,7 @@ use clvmr::{run_program, NodePtr};
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::types::{ChannelHandlerEnv, ReadableMove};
+use crate::channel_handler::types::{ChannelCoinSpendInfo, ChannelHandlerEnv, ReadableMove};
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
     chia_dialect, Aggsig, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash,
@@ -13,59 +13,64 @@ use crate::common::types::{
 use crate::peer_container::PeerHandler;
 use crate::potato_handler::effects::{
     format_coin, ChannelState, ChannelStatusSnapshot, Effect, GameNotification, GameStatusKind,
-    ResyncInfo,
+    GameStatusOtherParams, ResyncInfo,
 };
-use crate::potato_handler::handler_base::{classify_unroll, ChannelHandlerBase, UnrollOutcome};
+use crate::potato_handler::handler_base::{
+    build_channel_to_unroll_bundle, classify_unroll, ChannelHandlerBase, UnrollOutcome,
+};
 use crate::potato_handler::on_chain::{
     OnChainGameHandler, OnChainGameHandlerArgs, PendingMoveKind, PendingMoveSavedState,
 };
 use crate::potato_handler::types::{GameAction, PotatoState, SpendWalletReceiver};
 
 #[derive(Debug, Serialize, Deserialize)]
-enum UnrollState {
-    WaitingForChannelSpend {
+enum SpendChannelCoinState {
+    ChannelSpend {
         channel_coin: CoinString,
     },
-    WaitingForChannelConditions {
+    ChannelConditions {
         channel_coin: CoinString,
     },
-    WaitingForUnrollTimeoutOrSpend {
+    UnrollTimeoutOrSpend {
         unroll_coin: CoinString,
         state_number: usize,
     },
-    WaitingForUnrollSpend {
+    UnrollSpend {
         unroll_coin: CoinString,
         state_number: usize,
         reward_coin: Option<CoinString>,
     },
-    WaitingForUnrollConditions {
+    UnrollConditions {
         unroll_coin: CoinString,
         state_number: usize,
     },
-    Completed,
-    Failed,
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct UnrollWatchHandler {
-    state: UnrollState,
+pub struct SpendChannelCoinHandler {
+    state: SpendChannelCoinState,
     base: ChannelHandlerBase,
 
     advisory: Option<String>,
     was_stale: bool,
     terminal_reward_coin: Option<CoinString>,
 
+    expected_clean_shutdown: Option<(PuzzleHash, Amount)>,
+
+    #[serde(skip)]
+    last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
+
     #[serde(skip)]
     replacement: Option<Box<OnChainGameHandler>>,
 }
 
-impl std::fmt::Debug for UnrollWatchHandler {
+impl std::fmt::Debug for SpendChannelCoinHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "UnrollWatchHandler({:?})", self.state)
+        write!(f, "SpendChannelCoinHandler({:?})", self.state)
     }
 }
 
-impl UnrollWatchHandler {
+impl SpendChannelCoinHandler {
     pub fn set_advisory(&mut self, advisory: Option<String>) {
         self.advisory = advisory;
     }
@@ -78,8 +83,8 @@ impl UnrollWatchHandler {
         channel_timeout: Timeout,
         unroll_timeout: Timeout,
     ) -> Self {
-        UnrollWatchHandler {
-            state: UnrollState::WaitingForChannelSpend { channel_coin },
+        SpendChannelCoinHandler {
+            state: SpendChannelCoinState::ChannelSpend { channel_coin },
             base: ChannelHandlerBase::new(
                 channel_handler,
                 game_action_queue,
@@ -90,14 +95,16 @@ impl UnrollWatchHandler {
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,
+            expected_clean_shutdown: None,
+            last_channel_coin_spend_info: None,
             replacement: None,
         }
     }
 
-    /// Create an UnrollWatchHandler that enters at the point where the channel
-    /// coin has been detected as spent but we haven't yet received the
-    /// puzzle/solution.  Used when PotatoHandler passively detects the channel
-    /// coin spend (opponent went on-chain).
+    /// Create a handler that enters at the point where the channel coin has
+    /// been detected as spent but we haven't yet received the puzzle/solution.
+    /// Used when PotatoHandler passively detects the channel coin spend
+    /// (opponent went on-chain).
     pub fn new_at_channel_conditions(
         channel_handler: Option<ChannelHandler>,
         channel_coin: CoinString,
@@ -106,8 +113,8 @@ impl UnrollWatchHandler {
         channel_timeout: Timeout,
         unroll_timeout: Timeout,
     ) -> Self {
-        UnrollWatchHandler {
-            state: UnrollState::WaitingForChannelConditions { channel_coin },
+        SpendChannelCoinHandler {
+            state: SpendChannelCoinState::ChannelConditions { channel_coin },
             base: ChannelHandlerBase::new(
                 channel_handler,
                 game_action_queue,
@@ -118,29 +125,28 @@ impl UnrollWatchHandler {
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,
+            expected_clean_shutdown: None,
+            last_channel_coin_spend_info: None,
             replacement: None,
         }
     }
 
-    /// Create an UnrollWatchHandler that enters directly at 3b (unroll coin
-    /// already exists).  Used when entering Phase 3 from Phase 2a (shutdown
-    /// detected an unroll instead of clean shutdown).
-    pub fn new_at_unroll(
+    /// Create a handler for the clean shutdown path.  The handler watches the
+    /// channel coin spend and checks whether the clean shutdown transaction or
+    /// an unroll landed.
+    pub fn new_for_clean_shutdown(
         channel_handler: Option<ChannelHandler>,
-        unroll_coin: CoinString,
-        state_number: usize,
-        reward_coin: Option<CoinString>,
+        channel_coin: CoinString,
+        expected_puzzle_hash: PuzzleHash,
+        expected_amount: Amount,
         game_action_queue: VecDeque<GameAction>,
         have_potato: PotatoState,
         channel_timeout: Timeout,
         unroll_timeout: Timeout,
+        last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
     ) -> Self {
-        UnrollWatchHandler {
-            state: UnrollState::WaitingForUnrollSpend {
-                unroll_coin,
-                state_number,
-                reward_coin,
-            },
+        SpendChannelCoinHandler {
+            state: SpendChannelCoinState::ChannelSpend { channel_coin },
             base: ChannelHandlerBase::new(
                 channel_handler,
                 game_action_queue,
@@ -151,23 +157,9 @@ impl UnrollWatchHandler {
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,
+            expected_clean_shutdown: Some((expected_puzzle_hash, expected_amount)),
+            last_channel_coin_spend_info,
             replacement: None,
-        }
-    }
-
-    /// Switch from WaitingForUnrollSpend to WaitingForUnrollTimeoutOrSpend.
-    /// Used when entering Phase 3 from Phase 2a with timeout path.
-    pub fn set_waiting_for_timeout(&mut self) {
-        if let UnrollState::WaitingForUnrollSpend {
-            unroll_coin,
-            state_number,
-            ..
-        } = &self.state
-        {
-            self.state = UnrollState::WaitingForUnrollTimeoutOrSpend {
-                unroll_coin: unroll_coin.clone(),
-                state_number: *state_number,
-            };
         }
     }
 
@@ -184,12 +176,6 @@ impl UnrollWatchHandler {
     }
     pub fn has_potato(&self) -> bool {
         self.base.has_potato()
-    }
-    pub fn is_failed(&self) -> bool {
-        matches!(self.state, UnrollState::Failed)
-    }
-    pub fn is_completed(&self) -> bool {
-        matches!(self.state, UnrollState::Completed)
     }
 
     pub fn get_reward_puzzle_hash(
@@ -264,6 +250,47 @@ impl UnrollWatchHandler {
         Ok(vec![])
     }
 
+    /// Impatience signal: broadcast our latest unroll tx while still waiting
+    /// for the channel coin to be spent.  Only available when we have cached
+    /// spend info (initiator-side clean shutdown that hasn't received a
+    /// response yet).
+    pub fn go_on_chain(&mut self, env: &mut ChannelHandlerEnv<'_>) -> Result<Vec<Effect>, Error> {
+        let saved = match self.last_channel_coin_spend_info.take() {
+            Some(s) => s,
+            None => return Ok(vec![]),
+        };
+        let channel_coin = match &self.state {
+            SpendChannelCoinState::ChannelSpend { channel_coin }
+            | SpendChannelCoinState::ChannelConditions { channel_coin } => channel_coin.clone(),
+            _ => return Ok(vec![]),
+        };
+        let ch = self.base.channel_handler()?;
+        let bundle =
+            build_channel_to_unroll_bundle(env, ch, &channel_coin, &saved, "impatience unroll")?;
+        Ok(vec![Effect::SpendTransaction(bundle)])
+    }
+
+    #[cfg(test)]
+    pub fn force_unroll_spend(
+        &self,
+        env: &mut ChannelHandlerEnv<'_>,
+    ) -> Result<SpendBundle, Error> {
+        let saved = self.last_channel_coin_spend_info.as_ref().ok_or_else(|| {
+            Error::StrErr("force_unroll_spend: no channel coin spend info cached".to_string())
+        })?;
+        let channel_coin = match &self.state {
+            SpendChannelCoinState::ChannelSpend { channel_coin }
+            | SpendChannelCoinState::ChannelConditions { channel_coin } => channel_coin,
+            _ => {
+                return Err(Error::StrErr(
+                    "force_unroll_spend: not in channel-watching state".to_string(),
+                ))
+            }
+        };
+        let ch = self.base.channel_handler()?;
+        build_channel_to_unroll_bundle(env, ch, channel_coin, saved, "force unroll")
+    }
+
     // --- Coin event handlers ---
 
     pub fn coin_spent(
@@ -271,49 +298,46 @@ impl UnrollWatchHandler {
         _env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
-        if matches!(self.state, UnrollState::Failed) {
-            return Ok(vec![]);
-        }
         let mut effects = Vec::new();
 
         match &self.state {
-            UnrollState::WaitingForChannelSpend { channel_coin } if coin_id == channel_coin => {
-                self.state = UnrollState::WaitingForChannelConditions {
+            SpendChannelCoinState::ChannelSpend { channel_coin } if coin_id == channel_coin => {
+                self.state = SpendChannelCoinState::ChannelConditions {
                     channel_coin: channel_coin.clone(),
                 };
                 effects.push(Effect::DebugLog(format!(
-                    "[unroll-watch:channel-coin-spent] {}",
+                    "[spend-channel:channel-coin-spent] {}",
                     format_coin(coin_id)
                 )));
                 effects.push(Effect::RequestPuzzleAndSolution(coin_id.clone()));
                 return Ok(effects);
             }
-            UnrollState::WaitingForUnrollSpend {
+            SpendChannelCoinState::UnrollSpend {
                 unroll_coin,
                 state_number,
                 ..
             } if coin_id == unroll_coin => {
-                self.state = UnrollState::WaitingForUnrollConditions {
+                self.state = SpendChannelCoinState::UnrollConditions {
                     unroll_coin: unroll_coin.clone(),
                     state_number: *state_number,
                 };
                 effects.push(Effect::DebugLog(format!(
-                    "[unroll-watch:unroll-coin-spent] {}",
+                    "[spend-channel:unroll-coin-spent] {}",
                     format_coin(coin_id)
                 )));
                 effects.push(Effect::RequestPuzzleAndSolution(coin_id.clone()));
                 return Ok(effects);
             }
-            UnrollState::WaitingForUnrollTimeoutOrSpend {
+            SpendChannelCoinState::UnrollTimeoutOrSpend {
                 unroll_coin,
                 state_number,
             } if coin_id == unroll_coin => {
-                self.state = UnrollState::WaitingForUnrollConditions {
+                self.state = SpendChannelCoinState::UnrollConditions {
                     unroll_coin: unroll_coin.clone(),
                     state_number: *state_number,
                 };
                 effects.push(Effect::DebugLog(format!(
-                    "[unroll-watch:unroll-coin-spent] {}",
+                    "[spend-channel:unroll-coin-spent] {}",
                     format_coin(coin_id)
                 )));
                 effects.push(Effect::RequestPuzzleAndSolution(coin_id.clone()));
@@ -323,7 +347,7 @@ impl UnrollWatchHandler {
         }
 
         effects.push(Effect::DebugLog(format!(
-            "[unroll-watch:coin-spent] {}",
+            "[spend-channel:coin-spent] {}",
             format_coin(coin_id),
         )));
         Ok(effects)
@@ -334,17 +358,14 @@ impl UnrollWatchHandler {
         env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
-        if matches!(self.state, UnrollState::Failed) {
-            return Ok(vec![]);
-        }
         let mut effects = Vec::new();
 
         let unroll_timed_out = match &self.state {
-            UnrollState::WaitingForUnrollTimeoutOrSpend {
+            SpendChannelCoinState::UnrollTimeoutOrSpend {
                 unroll_coin,
                 state_number,
             } if coin_id == unroll_coin => Some(*state_number),
-            UnrollState::WaitingForUnrollSpend {
+            SpendChannelCoinState::UnrollSpend {
                 unroll_coin,
                 state_number,
                 ..
@@ -365,7 +386,7 @@ impl UnrollWatchHandler {
                     effects.push(Effect::DebugLog(format!("[unroll-error] {reason}")));
                     effects.extend(self.base.emit_failure_cleanup());
                     self.advisory = Some(reason);
-                    self.state = UnrollState::Failed;
+                    self.transition_to_failed_terminal();
                 }
             }
         }
@@ -387,13 +408,10 @@ impl UnrollWatchHandler {
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
-        if matches!(self.state, UnrollState::Failed) {
-            return Ok((vec![], None));
-        }
         let mut effects = Vec::new();
 
         match &self.state {
-            UnrollState::WaitingForChannelConditions { channel_coin }
+            SpendChannelCoinState::ChannelConditions { channel_coin }
                 if *coin_id == *channel_coin =>
             {
                 match self.handle_channel_coin_spent(env, coin_id, puzzle_and_solution) {
@@ -403,12 +421,12 @@ impl UnrollWatchHandler {
                         effects.push(Effect::DebugLog(format!("[channel-error] {reason}")));
                         effects.extend(self.base.emit_failure_cleanup());
                         self.advisory = Some(reason);
-                        self.state = UnrollState::Failed;
+                        self.transition_to_failed_terminal();
                     }
                 }
                 return Ok((effects, None));
             }
-            UnrollState::WaitingForUnrollSpend {
+            SpendChannelCoinState::UnrollSpend {
                 unroll_coin,
                 state_number,
                 ..
@@ -425,12 +443,12 @@ impl UnrollWatchHandler {
                         effects.push(Effect::DebugLog(format!("[unroll-error] {reason}")));
                         effects.extend(self.base.emit_failure_cleanup());
                         self.advisory = Some(reason);
-                        self.state = UnrollState::Failed;
+                        self.transition_to_failed_terminal();
                     }
                 }
                 return Ok((effects, None));
             }
-            UnrollState::WaitingForUnrollConditions {
+            SpendChannelCoinState::UnrollConditions {
                 unroll_coin,
                 state_number,
             } if *coin_id == *unroll_coin => {
@@ -442,7 +460,7 @@ impl UnrollWatchHandler {
                         effects.push(Effect::DebugLog(format!("[unroll-error] {reason}")));
                         effects.extend(self.base.emit_failure_cleanup());
                         self.advisory = Some(reason);
-                        self.state = UnrollState::Failed;
+                        self.transition_to_failed_terminal();
                     }
                 }
                 return Ok((effects, None));
@@ -454,6 +472,32 @@ impl UnrollWatchHandler {
     }
 
     // --- Internal methods ---
+
+    /// Create a terminal OnChainGameHandler replacement with an empty game map
+    /// to represent a failed channel.
+    fn transition_to_failed_terminal(&mut self) {
+        let on_chain = OnChainGameHandler::new_terminal(
+            self.base.channel_handler.as_mut(),
+            self.was_stale,
+            false,
+            self.terminal_reward_coin.clone(),
+            self.advisory.clone(),
+        );
+        self.replacement = Some(Box::new(on_chain));
+    }
+
+    /// Create a terminal OnChainGameHandler replacement with an empty game map
+    /// to represent a completed channel (clean shutdown or no-game unroll).
+    fn transition_to_completed_terminal(&mut self, resolved_clean: bool) {
+        let on_chain = OnChainGameHandler::new_terminal(
+            self.base.channel_handler.as_mut(),
+            self.was_stale,
+            resolved_clean,
+            self.terminal_reward_coin.clone(),
+            None,
+        );
+        self.replacement = Some(Box::new(on_chain));
+    }
 
     fn do_unroll_spend_to_games(
         &mut self,
@@ -485,7 +529,7 @@ impl UnrollWatchHandler {
             }
         };
 
-        self.state = UnrollState::WaitingForUnrollSpend {
+        self.state = SpendChannelCoinState::UnrollSpend {
             unroll_coin: unroll_coin.clone(),
             state_number: on_chain_state,
             reward_coin: None,
@@ -520,6 +564,50 @@ impl UnrollWatchHandler {
 
         let channel_conditions = CoinCondition::from_nodeptr(env.allocator, conditions_nodeptr);
 
+        // Check if clean shutdown transaction landed (change coin with expected
+        // puzzle hash and amount present in the conditions).
+        if let Some((ref expected_ph, ref expected_amt)) = self.expected_clean_shutdown {
+            let is_clean = if *expected_amt > Amount::default() {
+                channel_conditions.iter().any(|c| {
+                    matches!(c, CoinCondition::CreateCoin(ph, amt) if *ph == *expected_ph && *amt == *expected_amt)
+                })
+            } else {
+                !channel_conditions
+                    .iter()
+                    .any(|c| matches!(c, CoinCondition::Rem(_)))
+            };
+
+            if is_clean {
+                effects.push(Effect::DebugLog(
+                    "[clean-end] clean shutdown landed".to_string(),
+                ));
+                {
+                    let ch = self.base.channel_handler_mut()?;
+                    for (id, amount, game_finished) in ch.drain_cached_accept_timeouts() {
+                        let finished_params = if game_finished {
+                            Some(GameStatusOtherParams {
+                                game_finished: Some(true),
+                                ..Default::default()
+                            })
+                        } else {
+                            None
+                        };
+                        effects.push(Effect::Notify(GameNotification::GameStatus {
+                            id,
+                            status: GameStatusKind::EndedWeTimedOut,
+                            my_reward: Some(amount),
+                            coin_id: None,
+                            reason: None,
+                            other_params: finished_params,
+                        }));
+                    }
+                }
+                self.transition_to_completed_terminal(true);
+                return Ok(effects);
+            }
+        }
+
+        // Not a clean shutdown — an unroll landed.  Find the unroll coin.
         let unroll_coin = channel_conditions
             .iter()
             .find_map(|c| {
@@ -537,7 +625,7 @@ impl UnrollWatchHandler {
             let ch = self.base.channel_handler_mut()?;
             let cancelled_ids = ch.cancel_all_proposals();
             for id in cancelled_ids {
-                effects.push(Effect::Notify(GameNotification::GameProposalCancelled {
+                effects.push(Effect::Notify(GameNotification::ProposalCancelled {
                     id,
                     reason: "channel went on-chain".to_string(),
                 }));
@@ -588,7 +676,7 @@ impl UnrollWatchHandler {
                 effects.push(Effect::DebugLog(format!(
                     "[unroll-preempt] state={on_chain_state}",
                 )));
-                self.state = UnrollState::WaitingForUnrollSpend {
+                self.state = SpendChannelCoinState::UnrollSpend {
                     unroll_coin: unroll_coin.clone(),
                     state_number: on_chain_state,
                     reward_coin: None,
@@ -600,7 +688,7 @@ impl UnrollWatchHandler {
                 });
             }
             UnrollOutcome::WaitForTimeout => {
-                self.state = UnrollState::WaitingForUnrollTimeoutOrSpend {
+                self.state = SpendChannelCoinState::UnrollTimeoutOrSpend {
                     unroll_coin: unroll_coin.clone(),
                     state_number: on_chain_state,
                 };
@@ -614,7 +702,7 @@ impl UnrollWatchHandler {
                 effects.push(Effect::DebugLog(format!("[unroll-error] {reason}",)));
                 effects.extend(self.base.emit_failure_cleanup());
                 self.advisory = Some(reason);
-                self.state = UnrollState::Failed;
+                self.transition_to_failed_terminal();
             }
         }
 
@@ -656,17 +744,6 @@ impl UnrollWatchHandler {
                 }
                 None
             });
-            let _reward_amount = conditions
-                .iter()
-                .find_map(|c| {
-                    if let CoinCondition::CreateCoin(ph, amt) = c {
-                        if *ph == reward_puzzle_hash {
-                            return Some(amt.clone());
-                        }
-                    }
-                    None
-                })
-                .unwrap_or_default();
             let is_stale = player_ch
                 .timeout_state_number()
                 .is_some_and(|t| on_chain_state + 1 < t);
@@ -728,7 +805,7 @@ impl UnrollWatchHandler {
 
         self.terminal_reward_coin = on_chain_reward_coin.clone();
 
-        for (game_id, our_share) in &preempt_resolved {
+        for (game_id, our_share, _game_finished) in &preempt_resolved {
             effects.push(Effect::Notify(GameNotification::GameStatus {
                 id: *game_id,
                 status: GameStatusKind::EndedWeTimedOut,
@@ -740,7 +817,8 @@ impl UnrollWatchHandler {
         }
 
         if game_map.is_empty() {
-            self.state = UnrollState::Completed;
+            let resolved_clean = self.is_clean_shutdown_from_reward(&on_chain_reward_coin);
+            self.transition_to_completed_terminal(resolved_clean);
             return Ok(effects);
         }
 
@@ -763,24 +841,33 @@ impl UnrollWatchHandler {
                     player_ch.is_redo_zero_reward(coin, &state.game_id)
                 };
                 if dominated {
-                    zero_reward_games.push((coin.clone(), state.game_id));
+                    zero_reward_games.push((coin.clone(), state.game_id, state.game_finished));
                 }
             }
-            for (coin, game_id) in &zero_reward_games {
+            for (coin, game_id, game_finished) in &zero_reward_games {
                 game_map.remove(coin);
+                let finished_params = if *game_finished {
+                    Some(GameStatusOtherParams {
+                        game_finished: Some(true),
+                        ..Default::default()
+                    })
+                } else {
+                    None
+                };
                 effects.push(Effect::Notify(GameNotification::GameStatus {
                     id: *game_id,
                     status: GameStatusKind::EndedWeTimedOut,
                     my_reward: Some(Amount::default()),
                     coin_id: None,
                     reason: None,
-                    other_params: None,
+                    other_params: finished_params,
                 }));
             }
         }
 
         if game_map.is_empty() {
-            self.state = UnrollState::Completed;
+            let resolved_clean = self.is_clean_shutdown_from_reward(&on_chain_reward_coin);
+            self.transition_to_completed_terminal(resolved_clean);
             return Ok(effects);
         }
 
@@ -909,6 +996,7 @@ impl UnrollWatchHandler {
             is_initial_potato: player_ch.is_initial_potato(),
             state_number: player_ch.state_number(),
             was_stale: self.was_stale,
+            resolved_clean: false,
             terminal_reward_coin: self.terminal_reward_coin.clone(),
         });
         effects.extend(on_chain.next_action(env)?);
@@ -916,29 +1004,47 @@ impl UnrollWatchHandler {
 
         Ok(effects)
     }
+
+    /// Check whether the reward coin from a resolved unroll matches our
+    /// expected clean shutdown parameters.
+    fn is_clean_shutdown_from_reward(&self, reward_coin: &Option<CoinString>) -> bool {
+        let (expected_ph, expected_amt) = match &self.expected_clean_shutdown {
+            Some(pair) => pair,
+            None => return false,
+        };
+        if *expected_amt == Amount::default() {
+            return reward_coin.is_none();
+        }
+        if let Some(coin) = reward_coin {
+            if let Some((_, ph, amt)) = coin.to_parts() {
+                return ph == *expected_ph && amt == *expected_amt;
+            }
+        }
+        false
+    }
 }
 
-impl SpendWalletReceiver for UnrollWatchHandler {
+impl SpendWalletReceiver for SpendChannelCoinHandler {
     fn coin_created(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Option<Vec<Effect>>, Error> {
-        UnrollWatchHandler::coin_created(self, env, coin_id)
+        SpendChannelCoinHandler::coin_created(self, env, coin_id)
     }
     fn coin_spent(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
-        UnrollWatchHandler::coin_spent(self, env, coin_id)
+        SpendChannelCoinHandler::coin_spent(self, env, coin_id)
     }
     fn coin_timeout_reached(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
-        UnrollWatchHandler::coin_timeout_reached(self, env, coin_id)
+        SpendChannelCoinHandler::coin_timeout_reached(self, env, coin_id)
     }
     fn coin_puzzle_and_solution(
         &mut self,
@@ -946,48 +1052,48 @@ impl SpendWalletReceiver for UnrollWatchHandler {
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
-        UnrollWatchHandler::coin_puzzle_and_solution(self, env, coin_id, puzzle_and_solution)
+        SpendChannelCoinHandler::coin_puzzle_and_solution(self, env, coin_id, puzzle_and_solution)
     }
 }
 
 #[typetag::serde]
-impl PeerHandler for UnrollWatchHandler {
+impl PeerHandler for SpendChannelCoinHandler {
     fn has_pending_incoming(&self) -> bool {
-        UnrollWatchHandler::has_pending_incoming(self)
+        SpendChannelCoinHandler::has_pending_incoming(self)
     }
     fn process_incoming_message(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
     ) -> Result<Vec<Effect>, Error> {
-        UnrollWatchHandler::process_incoming_message(self, env)
+        SpendChannelCoinHandler::process_incoming_message(self, env)
     }
     fn received_message(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         msg: Vec<u8>,
     ) -> Result<Vec<Effect>, Error> {
-        UnrollWatchHandler::received_message(self, env, msg)
+        SpendChannelCoinHandler::received_message(self, env, msg)
     }
     fn coin_spent(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
-        UnrollWatchHandler::coin_spent(self, env, coin_id)
+        SpendChannelCoinHandler::coin_spent(self, env, coin_id)
     }
     fn coin_timeout_reached(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
-        UnrollWatchHandler::coin_timeout_reached(self, env, coin_id)
+        SpendChannelCoinHandler::coin_timeout_reached(self, env, coin_id)
     }
     fn coin_created(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Option<Vec<Effect>>, Error> {
-        UnrollWatchHandler::coin_created(self, env, coin_id)
+        SpendChannelCoinHandler::coin_created(self, env, coin_id)
     }
     fn coin_puzzle_and_solution(
         &mut self,
@@ -995,7 +1101,7 @@ impl PeerHandler for UnrollWatchHandler {
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
-        UnrollWatchHandler::coin_puzzle_and_solution(self, env, coin_id, puzzle_and_solution)
+        SpendChannelCoinHandler::coin_puzzle_and_solution(self, env, coin_id, puzzle_and_solution)
     }
     fn make_move(
         &mut self,
@@ -1004,14 +1110,14 @@ impl PeerHandler for UnrollWatchHandler {
         readable: &ReadableMove,
         new_entropy: Hash,
     ) -> Result<Vec<Effect>, Error> {
-        UnrollWatchHandler::make_move(self, env, id, readable, new_entropy)
+        SpendChannelCoinHandler::make_move(self, env, id, readable, new_entropy)
     }
     fn accept_timeout(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
-        UnrollWatchHandler::accept_timeout(self, env, id)
+        SpendChannelCoinHandler::accept_timeout(self, env, id)
     }
     fn cheat_game(
         &mut self,
@@ -1020,36 +1126,34 @@ impl PeerHandler for UnrollWatchHandler {
         mover_share: Amount,
         entropy: Hash,
     ) -> Result<Vec<Effect>, Error> {
-        UnrollWatchHandler::cheat_game(self, env, game_id, mover_share, entropy)
+        SpendChannelCoinHandler::cheat_game(self, env, game_id, mover_share, entropy)
     }
     fn take_replacement(&mut self) -> Option<Box<dyn PeerHandler>> {
-        UnrollWatchHandler::take_replacement(self).map(|oc| oc as Box<dyn PeerHandler>)
+        SpendChannelCoinHandler::take_replacement(self).map(|oc| oc as Box<dyn PeerHandler>)
+    }
+    fn go_on_chain(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_>,
+        _got_error: bool,
+    ) -> Result<Vec<Effect>, Error> {
+        SpendChannelCoinHandler::go_on_chain(self, env)
     }
     fn channel_status_snapshot(&self) -> Option<ChannelStatusSnapshot> {
         let (state, coin) = match &self.state {
-            UnrollState::WaitingForChannelSpend { channel_coin }
-            | UnrollState::WaitingForChannelConditions { channel_coin } => {
-                (ChannelState::GoingOnChain, Some(channel_coin.clone()))
+            SpendChannelCoinState::ChannelSpend { channel_coin }
+            | SpendChannelCoinState::ChannelConditions { channel_coin } => {
+                let s = if self.expected_clean_shutdown.is_some() {
+                    ChannelState::ShutdownTransactionPending
+                } else {
+                    ChannelState::GoingOnChain
+                };
+                (s, Some(channel_coin.clone()))
             }
-            UnrollState::WaitingForUnrollTimeoutOrSpend { unroll_coin, .. }
-            | UnrollState::WaitingForUnrollSpend { unroll_coin, .. }
-            | UnrollState::WaitingForUnrollConditions { unroll_coin, .. } => {
+            SpendChannelCoinState::UnrollTimeoutOrSpend { unroll_coin, .. }
+            | SpendChannelCoinState::UnrollSpend { unroll_coin, .. }
+            | SpendChannelCoinState::UnrollConditions { unroll_coin, .. } => {
                 (ChannelState::Unrolling, Some(unroll_coin.clone()))
             }
-            UnrollState::Completed => {
-                if self.was_stale {
-                    (
-                        ChannelState::ResolvedStale,
-                        self.terminal_reward_coin.clone(),
-                    )
-                } else {
-                    (
-                        ChannelState::ResolvedUnrolled,
-                        self.terminal_reward_coin.clone(),
-                    )
-                }
-            }
-            UnrollState::Failed => (ChannelState::Failed, None),
         };
         let (our_balance, their_balance, game_allocated) =
             if let Some(ch) = self.base.channel_handler.as_ref() {

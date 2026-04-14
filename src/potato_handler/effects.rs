@@ -28,6 +28,7 @@ pub enum ChannelState {
     Handshaking,
     WaitingForHeightToOffer,
     WaitingForHeightToAccept,
+    WaitingForOffer,
     OfferSent,
     TransactionPending,
     Active,
@@ -79,6 +80,8 @@ pub struct GameStatusOtherParams {
     pub illegal_move_detected: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub moved_by_us: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub game_finished: Option<bool>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -92,15 +95,15 @@ pub enum GameNotification {
         other_params: Option<GameStatusOtherParams>,
     },
 
-    GameProposed {
+    ProposalMade {
         id: GameID,
         my_contribution: Amount,
         their_contribution: Amount,
     },
-    GameProposalAccepted {
+    ProposalAccepted {
         id: GameID,
     },
-    GameProposalCancelled {
+    ProposalCancelled {
         id: GameID,
         reason: String,
     },

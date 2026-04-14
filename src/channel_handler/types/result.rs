@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 pub struct MoveResult {
     pub game_move: GameMoveDetails,
     pub state_number: usize,
+    #[serde(default)]
+    pub is_finished: bool,
 }
 
 pub struct DispositionResult {

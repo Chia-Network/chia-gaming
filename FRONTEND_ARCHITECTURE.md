@@ -91,7 +91,6 @@ game channel) and maps session → player internally.
 | Event | Payload | Purpose |
 |-------|---------|---------|
 | `lobby_update` | `Player[]` | Current list of players in the lobby (broadcast on changes) |
-| `game_update` | `GameDefinition[]` | Current list of games |
 | `challenge_received` | `{ challenge_id, from_id, from_alias, game, amount, per_game }` | Someone challenged you |
 | `challenge_resolved` | `{ challenge_id, accepted }` | Your outgoing challenge was accepted or declined |
 
@@ -151,20 +150,31 @@ players. The lobby iframe re-`join`s on reconnect, refreshing `lastActive`.
 #### Tracker Liveness
 
 TCP closes are not always reliable (half-open connections, NAT timeouts, proxy
-buffering). Both the tracker server and clients maintain bidirectional
-application-level pings over the relay payloads.
+buffering). The tracker and clients maintain bidirectional application-level
+keepalives at two separate layers:
 
-**Events:** peer `ping` payloads travel inside relayed `message` events.
+1. **Tracker-level keepalives** — `{ type: 'keepalive' }` envelope frames sent
+   directly between the tracker server and each client, every 15 seconds in both
+   directions. These prove the WebSocket connection itself is alive.
+2. **Peer-level keepalives** — `{ keepalive: true }` relay payloads sent inside
+   `message` events, relayed through the tracker to the paired peer. These prove
+   the peer is alive end-to-end (see [Peer Liveness](#peer-liveness)).
 
 **Server side (`index.ts`):**
 
 - Maintains WebSocket clients for lobby and game channels.
-- Runs a 15-second sweep for lobby/game housekeeping.
+- Starts a 15-second keepalive interval per connection (`{ type: 'keepalive' }`).
+  The interval is cleared on `ws.close`.
+- Handles inbound `{ type: 'keepalive' }` as a no-op (the frame arriving is
+  sufficient proof of life).
 
 **Game channel client (`TrackerConnection`):**
 
 - Uses a WebSocket connection to `/ws` and re-sends `identify` on reconnect.
-- Sends periodic peer `{ "ping": true }` payloads through `message` events.
+- Starts a 15-second keepalive interval on `ws.onopen` that sends
+  `{ type: 'keepalive' }` to the tracker. Cleared on close/error/disconnect.
+- Fires `onTrackerActivity()` on every incoming `ws.onmessage` (any message
+  type proves the tracker is alive).
 
 **Lobby channel client (`useLobbySocket`):**
 
@@ -192,18 +202,29 @@ events, allowing multiple simultaneous sessions through one tracker.
 
 ### Session Persistence
 
-The player app survives accidental browser closes. Session state is continuously
-saved to localStorage so that reloading the page reconnects to the in-progress
-session automatically. This is always-on — not a feature the user opts into.
+**Design principle:** A page reload must be invisible to the user. The entire
+UX state — active tab, wallet connection, game session, form inputs — is
+continuously persisted so that after a reload the app returns to exactly where
+it was. The user should not be able to tell that a reload happened. Network
+connections (wallet backend, tracker) treat a reload the same as a remote drop
+and silently reconnect in the background.
+
+The one exception is the **restore / start over dialog**: when a saved game
+session exists, the app asks the user whether to resume or discard it before
+proceeding. This is intentional — silently resuming a stale or unwanted session
+could be worse than asking.
+
+This is always-on — not a feature the user opts into.
 
 #### What is saved (`SessionSave`)
 
-A single `sessionSave` key in localStorage holds a JSON-serialized `SessionSave`
-object:
+An `appState` key in localStorage holds a JSON-serialized `AppState` object
+(version 2). The game session save lives at `appState.gameSave` as a
+`SessionSave`:
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `serializedCradle` | `unknown` | Full WASM cradle state via `cradle.serialize()` |
+| `serializedCradle` | `string` | Full WASM cradle state via `cradle.serialize()` |
 | `pairingToken` | `string` | Tracker pairing token, for reconciliation on reconnect |
 | `messageNumber` | `number` | Next outbound message sequence number |
 | `remoteNumber` | `number` | Last delivered inbound message sequence number |
@@ -211,11 +232,21 @@ object:
 | `iStarted` | `boolean` | Whether this player was the initiator |
 | `amount` | `string` | Channel buy-in (bigint as string) |
 | `perGameAmount` | `string` | Per-hand amount (bigint as string) |
-| `uniqueId` | `string` | Player unique ID |
 | `pendingTransactions` | `string[]` | CLVM blobs of transactions not yet confirmed |
 | `unackedMessages` | `Array<{ msgno, msg }>` | Outbound messages not yet acknowledged by the peer |
 | `gameLog` | `string[]` | Game notification log |
 | `debugLog` | `string[]` | Debug log history |
+| `activeGameId` | `string \| null?` | Current game ID |
+| `handState` | `CalpokerHandState?` | Card state snapshot for mid-hand restore |
+| `channelStatus` | `ChannelStatusPayload?` | Last channel status for coin watching |
+| `myAlias` | `string?` | Local player display name |
+| `opponentAlias` | `string?` | Opponent display name |
+| `showBetweenHandOverlay` | `boolean?` | Whether the between-hand overlay was showing |
+| `lastOutcomeWin` | `'win' \| 'lose' \| 'tie'?` | Last hand result |
+
+The surrounding `AppState` also holds `playerId`, `sessionId`, `blockchainType`,
+`alias`, `theme`, `activeTab`, `defaultFee`, `feeUnit`, and `savedGames` —
+these persist across sessions.
 
 #### When saves happen
 
@@ -236,9 +267,11 @@ save's `pairingToken`, the restore path activates:
    `create_serialized_game` with a fresh RNG seed.
 3. Restore all counters and logs (`messageNumber`, `remoteNumber`,
    `channelReady`, `unackedMessages`, `pendingTransactions`, etc.).
-4. Skip `do_initial_spend` and `activateSpend` — the channel already exists.
-5. When `qualifyingEvents` reaches 15 (wasm loaded + matched + block data +
-   flush), re-send all un-acked messages and re-submit all pending transactions.
+4. Skip `activateSpend` (which calls `start_handshake`) — the channel already
+   exists.
+5. When `qualifyingEvents` reaches 7 (bitmask: wasm loaded + cradle set +
+   auto-flush), re-send all un-acked messages and re-submit all pending
+   transactions.
 
 #### Cleanup
 
@@ -284,17 +317,39 @@ pruned from the log.
 
 #### Peer Liveness
 
-Both peers independently send periodic `{ "ping": true }` messages through the
-tracker relay (same `message` channel as data and acks). Pings are
-fire-and-forget — no pong is needed. Receiving any peer traffic (data, ack, or
-ping) counts as proof of life.
+Both peers independently send periodic `{ keepalive: true }` relay payloads
+through the tracker (same `message` channel as data and acks). Keepalives are
+fire-and-forget — no response is needed. Receiving any peer traffic (data, ack,
+or keepalive) counts as proof of life.
 
-- **Interval:** 15 seconds
-- **Timeout:** 60 seconds of silence → `goOnChain()` + `close()`
+- **Send interval:** 15 seconds (`KEEPALIVE_INTERVAL_MS`)
 
-The ping timer starts when `ChannelCreated` fires (or on restore when
+The keepalive timer starts when `ChannelCreated` fires (or on restore when
 `channelReady` is already true). `WasmBlobWrapper.notePeerActivity()` is called
-on every inbound message delivery, ack reception, and ping reception.
+on every inbound message delivery, ack reception, and keepalive reception.
+
+Peer liveness is **passive** — there is no automatic `goOnChain()` on timeout.
+Instead, `Shell.tsx` derives two liveness indicators using a 5-second polling
+interval and passes them to `GameSession` for display.
+
+**Tracker indicator** (`TrackerLiveness`) combines WebSocket connectivity with
+keepalive freshness into four states:
+
+| State | Meaning |
+|-------|---------|
+| Connected | WebSocket is open AND tracker activity within the last 45 seconds |
+| Reconnecting | WebSocket dropped, auto-reconnect in progress |
+| Inactive | WebSocket appears open but no tracker activity for 45+ seconds |
+| Disconnected | Permanently closed (session ended) |
+
+Transitions: `onTrackerDisconnected` → Reconnecting, `onTrackerReconnected` →
+Connected, keepalive timeout while WS is up → Inactive.
+
+**Peer indicator** is a boolean: any peer activity (data, ack, or keepalive)
+within the last 60 seconds (`PEER_LIVENESS_MS`) means Active, otherwise
+Inactive. The activity ref is updated by wrapped handlers in
+`registerMessageHandler`, ensuring it stays current even after
+`TrackerConnection.registerMessageHandler` replaces the initial callbacks.
 
 #### Reconnect
 
@@ -379,6 +434,8 @@ but the MVP is limited to one game at a time.
 │  Shell (top-level React component)                              │
 │  Wallet, blockchain, tracker connection, tabs, logs             │
 │                                                                 │
+│  Wallet tab (initial landing — QR code / simulator setup)       │
+│                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │  Lobby iframe (UNTRUSTED — third-party tracker code)     │   │
 │  │  Matchmaking only; shown as the "Tracker" tab            │   │
@@ -396,6 +453,7 @@ but the MVP is limited to one game at a time.
 │  │  └────────────────────────────────────────────────────┘  │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                                                                 │
+│  Chat tab (ChatPanel — peer text messages)                      │
 │  Game Log tab (append-only text area)                           │
 │  Debug Log tab (append-only text area)                          │
 └─────────────────────────────────────────────────────────────────┘
@@ -405,17 +463,69 @@ but the MVP is limited to one game at a time.
 
 The Shell is the top-level React component. It owns:
 
-- **Wallet connection** (WalletConnect or simulator) via `WalletConnectHeading`
+- **Wallet connection** (WalletConnect or simulator) — the Wallet tab presents
+  a QR code for WalletConnect and a simulator option via `SimulatorSetupModal`
 - **Tracker connection** — fetches the tracker URL, creates the
   `TrackerConnection` client for the game channel, and sets up the lobby iframe
 - **Theme sync** — pushes CSS variables and dark-mode class into the lobby iframe
   (`useThemeSyncToIframe`)
-- **Tab navigation** — four tabs: Tracker, Game Session, Game Log, Debug Log
+- **Tab navigation** — six tabs: Wallet, Tracker, Game Session, Chat, Game Log, Debug Log
 - **Unique ID and session ID** — persisted in localStorage, stable across reloads
 
 The Shell does not know about game types or game protocol details. When the
 tracker emits `matched`, the Shell creates `GameSessionParams` and renders the
 `GameSession` component.
+
+### Blockchain Connection Flow
+
+Shell manages wallet connections through two abstractions defined in
+`ChiaGaming.ts`:
+
+- **`InternalBlockchainInterface`** — the backend-specific implementation
+  (`RealBlockchainInterface` for WalletConnect, `FakeBlockchainInterface` for
+  the simulator). Each exposes `beginConnect()`, `disconnect()`,
+  `isConnected()`, `spend()`, etc.
+- **`ConnectionSetup`** — returned by `beginConnect()`. Contains a `uri` for
+  the QR code and a `finalize()` promise that resolves when the wallet is
+  paired. Optionally contains `fields` (a map of input descriptors) indicating
+  the backend needs extra user input before connecting (e.g. the simulator's
+  initial balance).
+
+**Design principle:** Shell must not branch on `blockchainType` for connection
+logic. All differences between backends live behind the interface. A single
+`getInterface(bcType)` helper maps the type string to the concrete instance
+and poll interval; the rest of the flow is generic.
+
+**Connection lifecycle:**
+
+1. User picks "Simulator" or "Link Wallet" → `handleConnect(bcType)`.
+2. `handleConnect` calls `iface.beginConnect(uniqueId)`, which returns a
+   `ConnectionSetup`.
+3. If `setup.fields` is present, Shell shows the `SimulatorSetupModal` overlay
+   so the user can provide the required values, then `handleFinalize()` calls
+   `setup.finalize()`.
+4. If `setup.fields` is absent (WalletConnect), Shell renders the QR code and
+   immediately awaits `setup.finalize()`, which resolves when the wallet scans.
+5. After finalize resolves, `completeConnection()` activates polling and
+   switches to the Tracker tab.
+
+**Auto-reconnect:** Both backends implement their own WebSocket reconnect with
+exponential backoff. Shell's `onConnectionChange` callback handles UI state
+transitions (connected ↔ disconnected) generically. On page load, if
+`blockchainType` is persisted but no game session exists, Shell calls
+`handleConnect(bcType, true)` (silent mode) to re-establish the connection
+automatically — no modals or QR codes are shown, consistent with the principle
+that a reload should be invisible to the user.
+
+**Session persistence:** `blockchainType` is persisted to `localStorage`
+immediately when the user makes their choice, before the connection completes.
+`clearSession()` removes it on explicit disconnect, cancel, or unrecoverable
+error.
+
+**Intentional deviation:** The simulator returns `ConnectionSetup.fields`
+because there is no external wallet to scan the QR code. This triggers the
+`SimulatorSetupModal` overlay — the only place where Shell's UI differs between
+backends. All other connection logic is shared.
 
 ### Lobby Iframe (Tracker)
 
@@ -503,8 +613,8 @@ handling (removing the game ID, showing the between-hand overlay):
 - `WeSlashedOpponent`
 - `OpponentSlashedUs`
 - `OpponentSuccessfullyCheated`
-- `GameCancelled`
-- `GameProposalCancelled`
+- `EndedCancelled`
+- `ProposalCancelled`
 - `InsufficientBalance`
 - `GameError`
 - `GameOnChain`
@@ -517,14 +627,14 @@ handling (removing the game ID, showing the between-hand overlay):
 These drive game proposal and acceptance flow. They are consumed by
 `handleNotification` and never forwarded to the game UI:
 
-- `GameProposed` — triggers auto-accept for the responder
+- `ProposalMade` — triggers auto-accept for the responder
 
 ### Gameplay events (forwarded to game UI via observable)
 
 These are the normal flow of play, forwarded to the active game UI component
 via the `gameplayEventSubject` RxJS stream:
 
-- `GameProposalAccepted` — a new game is starting
+- `ProposalAccepted` — a new game is starting
 - `OpponentMoved` — the opponent made a move (with readable data)
 - `GameMessage` — advisory data (e.g. Alice revealing cards to Bob early)
 
@@ -559,6 +669,8 @@ game.
 | `front-end/src/hooks/WasmStateInit.ts` | WASM initialization: load binary, deposit .hex files, create cradle |
 | `front-end/src/hooks/blobSingleton.ts` | Singleton management: create or retrieve the WasmBlobWrapper; restore path for session persistence |
 | `front-end/src/hooks/save.ts` | `SessionSave` interface and `saveSession`/`loadSession`/`clearSession` functions |
+| `front-end/src/hooks/FakeBlockchainInterface.ts` | Simulator blockchain backend: WebSocket to local sim, auto-reconnect |
+| `front-end/src/hooks/RealBlockchainInterface.ts` | WalletConnect blockchain backend: RPC via WalletConnect sessions |
 | `front-end/src/services/TrackerConnection.ts` | Game relay WebSocket client (`/ws`) |
 | `front-end/src/types/ChiaGaming.ts` | TypeScript types for WASM interface and game data |
 | `lobby/lobby-frontend/src/useLobbySocket.ts` | Lobby channel hook (`useLobbySocket`): lobby WebSocket join/challenge/alias messaging |

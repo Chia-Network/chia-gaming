@@ -1,4 +1,5 @@
 import { CalpokerOutcome } from '../ChiaGaming';
+import { CalpokerDisplaySnapshot } from '../../hooks/save';
 
 export interface CaliforniapokerProps {
   outcome: CalpokerOutcome | undefined;
@@ -12,6 +13,11 @@ export interface CaliforniapokerProps {
   myWinOutcome: 'win' | 'lose' | 'tie' | undefined;
   onDisplayComplete: () => void;
   onGameLog: (lines: string[]) => void;
+  onSnapshotChange: (snapshot: CalpokerDisplaySnapshot) => void;
+  initialSnapshot?: CalpokerDisplaySnapshot;
   myName?: string;
   opponentName?: string;
+  onPlayAgain?: () => void;
+  onEndSession?: () => void;
+  showBetweenHandActions?: boolean;
 }

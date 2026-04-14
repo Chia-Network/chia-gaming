@@ -14,8 +14,8 @@ The UI layer receives events via the `ToLocalUI` trait callbacks and
 like "OpponentMoved" or "WeTimedOut" for readability. The canonical wire model
 in Rust is `GameNotification` plus `GameStatusKind`:
 
-- dedicated variants: `GameProposed`, `GameProposalAccepted`,
-  `GameProposalCancelled`, `InsufficientBalance`, `ActionFailed`, `ChannelStatus`
+- dedicated variants: `ProposalMade`, `ProposalAccepted`,
+  `ProposalCancelled`, `InsufficientBalance`, `ActionFailed`, `ChannelStatus`
 - gameplay/terminal lifecycle: `GameNotification::GameStatus { status:
   GameStatusKind, ... }`
 
@@ -149,9 +149,9 @@ These fire during active gameplay (after a game proposal has been accepted).
 
 | Notification                                               | When                                 | Meaning                                                                                                              |
 | ---------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| `GameProposed { id, my_contribution, their_contribution }` | Game proposal received from opponent | A new game has been proposed by the peer. Only fires for the receiver — the proposer does not get this notification. |
-| `GameProposalAccepted { id }`                              | Proposal accepted by either side     | The game is now live and play can begin                                                                              |
-| `GameProposalCancelled { id, reason }`                     | Proposal cancelled or invalidated    | The proposal was cancelled explicitly, or automatically due to going on-chain                                        |
+| `ProposalMade { id, my_contribution, their_contribution }` | Game proposal received from opponent | A new game has been proposed by the peer. Only fires for the receiver — the proposer does not get this notification. |
+| `ProposalAccepted { id }`                                  | Proposal accepted by either side     | The game is now live and play can begin                                                                              |
+| `ProposalCancelled { id, reason }`                         | Proposal cancelled or invalidated    | The proposal was cancelled explicitly, or automatically due to going on-chain                                        |
 
 ---
 
@@ -163,10 +163,10 @@ The frontend should treat any of these as the "game ended" signal.
 
 | Conceptual UX label | Actual wire shape | When | Meaning |
 | --- | --- | --- | --- |
-| InsufficientBalance | `InsufficientBalance { id, our_balance_short, their_balance_short }` | Accept attempted with insufficient funds | Proposal auto-cancels and accept fails terminally |
+| InsufficientBalance | `InsufficientBalance { id, our_balance_short, their_balance_short }` | Accept attempted with insufficient funds | Preceded by `ProposalAccepted`; the game is immediately terminated. The peer sees `ProposalCancelled`. |
 | WeTimedOut | `GameStatus { status: EndedWeTimedOut, my_reward, coin_id }` | Game resolved in our favor | Off-chain accept-timeout completion or on-chain timeout/slash resolution path |
 | OpponentTimedOut | `GameStatus { status: EndedOpponentTimedOut, my_reward, coin_id }` | Game resolved in opponent's favor | Includes receiving opponent accept-timeout and on-chain opponent-favor outcomes |
-| GameCancelled | `GameStatus { status: EndedCancelled, ... }` | Stale accept of already-cancelled proposal | Queued `AcceptProposal` found proposal already gone |
+| EndedCancelled | `GameStatus { status: EndedCancelled, ... }` | In-flight accept lost during stale unroll | The game was accepted but no moves were made; the unroll predates the acceptance |
 | WeSlashedOpponent | `GameStatus { status: EndedWeSlashedOpponent, my_reward, coin_id }` | Slash confirmed in our favor | Opponent's illegal move was proven on-chain |
 | OpponentSlashedUs | `GameStatus { status: EndedOpponentSlashedUs, ... }` | Opponent slashed us | Our move was proven illegal on-chain |
 | OpponentSuccessfullyCheated | `GameStatus { status: EndedOpponentSuccessfullyCheated, my_reward, coin_id }` | Illegal move timed out before slash | Opponent kept timeout path before we slashed |
@@ -186,46 +186,55 @@ appropriate), never an `assert!` or `unwrap()`.
 
 ## Key Invariants
 
-The system enforces seven notification lifecycle invariants. All seven hold even
-through `Failed` — when the channel enters `Failed` state, cleanup
-notifications (`GameProposalCancelled` for pending proposals, `GameError` for
+The system enforces notification lifecycle invariants, checked per-player
+independently (the two sides may see slightly different views). All invariants
+hold even through `Failed` — when the channel enters `Failed` state, cleanup
+notifications (`ProposalCancelled` for pending proposals, `GameError` for
 live games) are emitted before the terminal `ChannelStatus`, ensuring every
 open item is explicitly resolved.
 
-1. `**propose_game` invariant.** Every `propose_game` call yields exactly one
-  `GameProposalAccepted` or `GameProposalCancelled` for the proposer. The
-   `cancel_all_proposals()` call on every exit path (go-on-chain, clean
-   shutdown, channel error) is the catch-all that ensures no proposal is left
-   unresolved. Enforced by the simulation loop's post-test assertion.
-2. `**GameProposed` invariant.** Every `GameProposed` notification (received
-  from the opponent) yields exactly one `GameProposalAccepted` or
-   `GameProposalCancelled` for the receiver. Enforced by the simulation loop's
-   post-test assertion.
-3. `**accept_proposal` invariant.** Every `AcceptProposal` call yields exactly one
-  terminal game notification: `InsufficientBalance`, `GameCancelled` (stale
-   accept where the proposal was already cancelled), `WeTimedOut`,
-   `OpponentTimedOut`, `WeSlashedOpponent`, `OpponentSlashedUs`,
-   `OpponentSuccessfullyCheated`, or `GameError`. Note:
-   `InsufficientBalance` is terminal (it auto-cancels the proposal).
-   Enforced by the simulation loop's post-test assertion.
-4. `**GameProposalAccepted` invariant.** Every `GameProposalAccepted` notification
-  yields exactly one terminal game notification: `WeTimedOut`,
-   `OpponentTimedOut`, `WeSlashedOpponent`, `OpponentSlashedUs`,
-   `OpponentSuccessfullyCheated`, or `GameError`. Note: `GameCancelled` is
-   **not** in this list — once a proposal is accepted, it cannot be cancelled;
-   any disappearance is a `GameError`. Enforced by the simulation loop's
-   post-test assertion.
-5. **`GameOnChain` invariant.** Every `GameOnChain` notification references a
-   game that has a preceding `GameProposalAccepted` in the same player's
+### Local actions are advisory
+
+Calling `propose_game`, `accept_proposal`, or `cancel_proposal` queues an
+intent. The potato protocol resolves it when the potato is held and the queue
+is drained. The notification stream — not the API call — is the source of
+truth. Proposing comes with a liveness guarantee (every game ID will resolve);
+accepting and cancelling do not (the intent may silently evaporate if the
+proposal was already resolved by the time the queue is drained).
+
+### Rule A — Proposal lifecycle
+
+Every proposal-start event — a `propose_game` call (proposer side) or a
+`ProposalMade` notification (receiver side) — yields exactly one
+`ProposalAccepted` or `ProposalCancelled` for that game ID on that player's
+side. The `cancel_all_proposals()` call on every exit path (go-on-chain, clean
+shutdown, channel error) is the catch-all that ensures no proposal is left
+unresolved. Enforced by the simulation loop's post-test assertion.
+
+### Rule B — Game lifecycle (bijection)
+
+There is a one-to-one correspondence between `ProposalAccepted` notifications
+and terminal game notifications per player per game ID. Every
+`ProposalAccepted` has exactly one terminal (`InsufficientBalance`,
+`EndedWeTimedOut`, `EndedOpponentTimedOut`, `EndedCancelled`,
+`EndedWeSlashedOpponent`, `EndedOpponentSlashedUs`,
+`EndedOpponentSuccessfullyCheated`, or `EndedError`), and every terminal has a
+preceding `ProposalAccepted`. Enforced by the simulation loop's post-test
+assertion.
+
+### Additional invariants
+
+3. **`GameOnChain` invariant.** Every `GameOnChain` notification references a
+   game that has a preceding `ProposalAccepted` in the same player's
    notification stream. A cancelled or never-accepted game must never produce
    `GameOnChain`. Enforced by the simulation loop's post-test assertion.
-6. **First post-unroll status classification.** For each game that is still
+4. **First post-unroll status classification.** For each game that is still
    live when `ChannelState::Unrolling` is first observed, the first subsequent
    `GameStatus` for that game must be one of:
    `OnChainMyTurn`, `OnChainTheirTurn`, `Replaying`, `EndedCancelled`,
    `EndedError`, or `EndedWeTimedOut`. This ensures every live game is
    immediately classified into a valid unroll-resolution bucket.
-7. **Channel state monotonicity.** `ChannelState` ordinals must never
+5. **Channel state monotonicity.** `ChannelState` ordinals must never
    decrease: `Handshaking/WaitingForHeightToOffer/WaitingForHeightToAccept(0) <
    OfferSent(1) < TransactionPending(2) < Active(3) <
    ShuttingDown/GoingOnChain(4) < ShutdownTransactionPending/Unrolling(5) <

@@ -3,16 +3,8 @@ export interface Player {
   alias: string;
   session_id: string;
   walletAddress?: string;
-  joinedAt: number;
-  lastActive: number;
   status: string;
   parameters: any;
-}
-
-export interface GameDefinition {
-  game: string;
-  target: string;
-  expiration: number;
 }
 
 export interface Challenge {

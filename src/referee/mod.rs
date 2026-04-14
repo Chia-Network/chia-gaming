@@ -365,16 +365,20 @@ impl Referee {
         let mover_share = self.get_our_current_share()?;
 
         if rem_conditions.is_empty() {
-            let my_reward_coin_string = CoinString::from_parts(
-                &referee_coin_string.to_coin_id(),
-                &self.fixed().reward_puzzle_hash,
-                &mover_share,
-            );
+            let my_reward_coin_string = if mover_share > Amount::default() {
+                Some(CoinString::from_parts(
+                    &referee_coin_string.to_coin_id(),
+                    &self.fixed().reward_puzzle_hash,
+                    &mover_share,
+                ))
+            } else {
+                None
+            };
 
             return Ok((
                 Some(Rc::new(self.clone())),
                 TheirTurnCoinSpentResult::Timedout {
-                    my_reward_coin_string: Some(my_reward_coin_string),
+                    my_reward_coin_string,
                 },
             ));
         }

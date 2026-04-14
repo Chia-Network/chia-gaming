@@ -1,7 +1,9 @@
 import { CoinRecord } from './rpc/CoinRecord';
 import { Program } from 'clvm-lib';
 
-export interface Amount {
+export type TrackerLiveness = 'connected' | 'reconnecting' | 'inactive' | 'disconnected';
+
+interface Amount {
   amt: bigint;
 }
 
@@ -36,18 +38,12 @@ export interface WasmResult {
   ids?: string[];
 }
 
-export type WasmInitFn = (opts: { module: ArrayBuffer }) => void;
+export type WasmInitFn = (opts?: { module_or_path?: string | URL | Request | Response | Promise<Response> }) => Promise<any>;
 
 export interface CoinsetOrgBlockSpend {
   coin: { parent_coin_info: string; puzzle_hash: string; amount: bigint };
   puzzle_reveal: string;
   solution: string;
-}
-
-export interface CoinsetCoin {
-  parentCoinInfo: string;
-  puzzleHash: string;
-  amount: bigint;
 }
 
 export interface ProposeGameParams {
@@ -59,7 +55,7 @@ export interface ProposeGameParams {
   parameters: Program | null;
 }
 
-export interface IChiaIdentity {
+interface IChiaIdentity {
   private_key: string;
   synthetic_private_key: string;
   public_key: string;
@@ -73,37 +69,7 @@ export interface GameConnectionState {
   stateDetail: string[];
 }
 
-export interface SaveData {
-  ourTurn: boolean;
-  turnNumber: number;
-  unrollPuzzleHash: string;
-  gameCradle: unknown;
-}
-
-export type StateIdentifier = 'starting' | 'running' | 'clean_shutdown' | 'end';
-
-export interface GameCradleConfig {
-  seed: string | undefined;
-  game_types: Map<string, string>;
-  identity: string | undefined;
-  have_potato: boolean;
-  my_contribution: Amount;
-  their_contribution: Amount;
-  channel_timeout: number;
-  reward_puzzle_hash: string;
-  receive_error: string | undefined;
-}
-
-export interface GameInitParams {
-  env: WasmConnection;
-  rng: RngId;
-  chiaIdentity: IChiaIdentity;
-  iStarted: boolean;
-  myContribution: bigint;
-  theirContribution: bigint;
-}
-
-export type IChiaIdentityFun = (seed: string) => IChiaIdentity;
+type StateIdentifier = 'starting' | 'running' | 'clean_shutdown' | 'end';
 
 export interface GameSessionParams {
   iStarted: boolean;
@@ -122,15 +88,10 @@ export interface ChatMessage {
   isMine: boolean;
 }
 
-export interface PeerIdentity {
-  token: string;
-  iStarted: boolean;
-}
-
-export type WasmNotificationTag =
+type WasmNotificationTag =
   | 'ChannelStatus'
   | 'GameStatus'
-  | 'GameProposed' | 'GameProposalAccepted' | 'GameProposalCancelled'
+  | 'ProposalMade' | 'ProposalAccepted' | 'ProposalCancelled'
   | 'InsufficientBalance'
   | 'ActionFailed';
 
@@ -149,11 +110,12 @@ export type GameStatusState =
   | 'ended-cancelled'
   | 'ended-error';
 
-export interface GameStatusOtherParams {
+interface GameStatusOtherParams {
   readable?: unknown;
   mover_share?: unknown;
   illegal_move_detected?: boolean;
   moved_by_us?: boolean;
+  game_finished?: boolean;
 }
 
 export interface GameStatusPayload {
@@ -167,7 +129,7 @@ export interface GameStatusPayload {
 
 export type ChannelState =
   | 'Handshaking' | 'WaitingForHeightToOffer' | 'WaitingForHeightToAccept'
-  | 'OfferSent' | 'TransactionPending'
+  | 'WaitingForOffer' | 'OfferSent' | 'TransactionPending'
   | 'Active' | 'ShuttingDown' | 'ShutdownTransactionPending'
   | 'GoingOnChain' | 'Unrolling'
   | 'ResolvedClean' | 'ResolvedUnrolled' | 'ResolvedStale'
@@ -192,7 +154,7 @@ export type WasmEvent =
   | { type: 'address'; data: BlockchainInboundAddressResult }
   | { type: 'debug_log'; message: string };
 
-export interface GameCradleCreateConfig {
+interface GameCradleCreateConfig {
   rng_id: number;
   game_types: Record<string, { version: number; hex: string; parser_hex: string }>;
   have_potato: boolean;
@@ -273,16 +235,6 @@ export interface WasmConnection {
 
   // Misc
   sha256bytes: (hex: string) => string;
-}
-
-export interface CoinOutput {
-  puzzle_hash: string;
-  amount: bigint;
-}
-
-export interface CreateStartCoinReturn {
-  coinString: string;
-  blockchainInboundAddressResult: BlockchainInboundAddressResult;
 }
 
 export class ChiaGame {
@@ -452,109 +404,6 @@ export interface WatchReport {
   timed_out: string[];
 }
 
-export interface BlockchainConnection {
-  getToken: () => string;
-
-  // Blockchain
-  get_peak: () => Promise<number>;
-  get_block_data: (block: number) => Promise<WatchReport | null>;
-  get_puzzle_and_solution: (coin: string) => Promise<string[] | null>;
-  spend: (clvm_hex_spend_blob: string) => Promise<(number | null)[]>;
-  create_spendable: (
-    target_ph: string,
-    amount: bigint,
-  ) => Promise<string | null>;
-}
-
-export class ExternalBlockchainInterface {
-  baseUrl: string;
-  token: string;
-
-  constructor(baseUrl: string) {
-    this.baseUrl = baseUrl;
-    this.token = '';
-  }
-
-  getOrRequestToken(uniqueId: string): Promise<string> {
-    if (this.token) {
-      return new Promise((resolve, _reject) => resolve(this.token));
-    }
-
-    return fetch(`${this.baseUrl}/register?name=${uniqueId}`, {
-      body: '',
-      method: 'POST',
-    })
-      .then((f) => f.json())
-      .then((token) => {
-        this.token = token;
-        return token;
-      });
-  }
-
-  getToken(): string {
-    return this.token;
-  }
-
-  getPeak(): Promise<number> {
-    return fetch(`${this.baseUrl}/get_peak`, {
-      body: '',
-      method: 'POST',
-    }).then((f) => f.json());
-  }
-
-  getBlockData(block: number): Promise<WatchReport | null> {
-    return fetch(`${this.baseUrl}/get_block_data?block=${block}`, {
-      body: '',
-      method: 'POST',
-    }).then((f) => f.json());
-  }
-
-  getPuzzleAndSolution(coin: string): Promise<string[] | null> {
-    return fetch(`${this.baseUrl}/get_puzzle_and_solution?coin=${coin}`, {
-      body: '',
-      method: 'POST',
-    }).then((f) => f.json());
-  }
-
-  spend(spend_data_clvm_hex: string): Promise<(number | string | null)[]> {
-    return fetch(`${this.baseUrl}/spend?blob=${spend_data_clvm_hex}`, {
-      body: '',
-      method: 'POST',
-    }).then((f) => f.json());
-  }
-
-  createSpendable(target_ph: string, amt: bigint): Promise<string | null> {
-    return fetch(
-      `${this.baseUrl}/create_spendable?who=${this.token}&target=${target_ph}&amount=${amt}`,
-      {
-        body: '',
-        method: 'POST',
-      },
-    ).then((f) => f.json());
-  }
-
-  getBalance(): Promise<number> {
-    return fetch(
-      `${this.baseUrl}/get_balance?user=${this.token}`,
-      {
-        body: '',
-        method: 'POST'
-      },
-    ).then((f) => f.json());
-  }
-
-  selectCoins(amount: number): Promise<string | null> {
-    return fetch(
-      `${this.baseUrl}/select_coins?who=${this.token}&amount=${amount}`,
-      {
-        body: '',
-        method: 'POST',
-      },
-    ).then((f) => f.json());
-  }
-
-}
-
 function select_cards_using_bits<T>(card: T[], mask: number): T[][] {
   const result0: T[] = [];
   const result1: T[] = [];
@@ -581,7 +430,7 @@ function compare_card(a: number, b: number): number {
 export interface PeerConnectionResult {
   sendMessage: (msgno: number, input: string) => void;
   sendAck: (ackMsgno: number) => void;
-  sendPing: () => void;
+  sendKeepalive: () => void;
   hostLog: (msg: string) => void;
   close: () => void;
 }
@@ -702,8 +551,19 @@ export interface BlockchainInboundAddressResult {
   puzzleHash: string;
 }
 
+export interface ConnectionField {
+  label: string;
+  default: number;
+}
+
+export interface ConnectionSetup {
+  qrUri: string;
+  fields?: { balance?: ConnectionField };
+  finalize(values?: { balance?: number }): Promise<void>;
+}
+
 export interface InternalBlockchainInterface {
-  spend(blob: string, spendBundle: unknown, source?: string): Promise<string>;
+  spend(blob: string, spendBundle: unknown, source?: string, fee?: number): Promise<string>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
   getBalance(): Promise<number>;
   getPuzzleAndSolution(coin: string): Promise<string[] | null>;
@@ -719,31 +579,17 @@ export interface InternalBlockchainInterface {
   getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]>;
   registerCoins(names: string[]): Promise<void>;
   startMonitoring(): Promise<void>;
+
+  beginConnect(uniqueId: string): Promise<ConnectionSetup>;
+  disconnect(): Promise<void>;
+  isConnected(): boolean;
+  onConnectionChange(cb: (connected: boolean) => void): () => void;
 }
 
 export interface OutcomeHandType {
   name: string;
   values: number[];
 }
-
-export interface OutcomeLogLine {
-  topLineOutcome: 'win' | 'lose' | 'tie';
-  myStartHand: number[];
-  opponentStartHand: number[];
-  myFinalHand: number[];
-  opponentFinalHand: number[];
-  myPicks: number;
-  opponentPicks: number;
-  mySelects: number;
-  opponentSelects: number;
-  myHandDescription: OutcomeHandType;
-  opponentHandDescription: OutcomeHandType;
-  myHand: number[];
-  opponentHand: number[];
-}
-
-// Must match features/californiaPoker/constants/constants.ts:SUITS
-export const suitNames = ['Q', '♠', '♥', '♦', '♣'];
 
 export function cardIdToRankSuit(cardId: number): { rank: number; suit: number } {
   const rank = Math.floor(cardId / 4) + 2;

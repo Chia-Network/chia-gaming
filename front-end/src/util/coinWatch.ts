@@ -54,15 +54,17 @@ export async function applyCoinRecordsWatchDiff(
     const coinString = coinNameToString.get(coinName);
     if (!coinString) continue;
 
+    const isSpent = rec.spent ?? rec.spentBlockIndex > 0;
+
     const wasSpent = previousCoinStates.get(coinName);
     const wasSeen = wasSpent !== undefined;
 
     if (!wasSeen) {
       created_watched.push(coinString);
-      previousCoinStates.set(coinName, rec.spent);
+      previousCoinStates.set(coinName, isSpent);
     }
 
-    if (rec.spent && !wasSpent) {
+    if (isSpent && !wasSpent) {
       deleted_watched.push(coinString);
       previousCoinStates.set(coinName, true);
     }

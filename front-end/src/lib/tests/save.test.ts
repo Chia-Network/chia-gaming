@@ -16,6 +16,7 @@ import {
   getTheme,
   setTheme,
   SessionSave,
+  _resetForTests,
 } from '../../hooks/save';
 
 function makeStorage(): Storage {
@@ -46,6 +47,7 @@ const sampleSession: SessionSave = {
 };
 
 beforeEach(() => {
+  _resetForTests();
   (global as any).localStorage = makeStorage();
 });
 
