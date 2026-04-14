@@ -68,7 +68,6 @@ export interface SessionSave {
   myRunningBalance?: string;
   channelAttentionActive?: boolean;
   gameTerminalAttentionActive?: boolean;
-  trackerUrl?: string;
 }
 
 interface AppState {
@@ -87,6 +86,7 @@ interface AppState {
   unreadChat?: boolean;
   unreadSession?: boolean;
   walletAlert?: boolean;
+  trackerUrl?: string;
 }
 
 const APP_STATE_KEY = 'appState';
@@ -220,36 +220,78 @@ function migrateToV2(): AppState | null {
   return state;
 }
 
-export function loadAppState(): AppState {
-  try {
-    const raw = localStorage.getItem(APP_STATE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed.version === CURRENT_VERSION) return parsed as AppState;
-    }
-  } catch (e) {
-    console.error('[save] failed to load app state:', e);
-  }
-  const migrated = migrateToV2();
-  if (migrated) return migrated;
-  return { version: CURRENT_VERSION, playerId: randomHex() };
-}
+// --- In-memory cache + debounced persistence ---
 
-function saveAppState(state: AppState): void {
+let cached: AppState | null = null;
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+const PERSIST_DEBOUNCE_MS = 300;
+
+function flushToLocalStorage(): void {
+  if (!cached) return;
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
   try {
-    localStorage.setItem(APP_STATE_KEY, JSON.stringify(state));
+    localStorage.setItem(APP_STATE_KEY, JSON.stringify(cached));
   } catch (e) {
     console.error('[save] failed to persist app state:', e);
   }
 }
 
-// --- Convenience accessors (all route through AppState) ---
+function schedulePersist(): void {
+  if (persistTimer) return;
+  const timer = setTimeout(() => {
+    persistTimer = null;
+    flushToLocalStorage();
+  }, PERSIST_DEBOUNCE_MS);
+  if (typeof timer === 'object' && 'unref' in timer) timer.unref();
+  persistTimer = timer;
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', flushToLocalStorage);
+}
+
+/** @internal — reset module state between test cases */
+export function _resetForTests(): void {
+  if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
+  cached = null;
+}
+
+export function loadAppState(): AppState {
+  if (cached) return cached;
+  try {
+    const raw = localStorage.getItem(APP_STATE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed.version === CURRENT_VERSION) {
+        console.log('[save] loadAppState: hasGameSave=%s bcType=%s', !!parsed.gameSave, parsed.blockchainType ?? 'none');
+        cached = parsed as AppState;
+        return cached;
+      }
+    }
+  } catch (e) {
+    console.error('[save] failed to load app state:', e);
+  }
+  const migrated = migrateToV2();
+  if (migrated) { cached = migrated; return cached; }
+  console.log('[save] loadAppState: fresh state (nothing persisted)');
+  cached = { version: CURRENT_VERSION, playerId: randomHex() };
+  return cached;
+}
+
+function mutate(fn: (state: AppState) => void): void {
+  const state = loadAppState();
+  fn(state);
+  schedulePersist();
+}
+
+// --- Convenience accessors ---
 
 export function getPlayerId(): string {
   const state = loadAppState();
-  if (!localStorage.getItem(APP_STATE_KEY)) {
-    saveAppState(state);
-  }
+  if (!cached) schedulePersist();
   return state.playerId;
 }
 
@@ -257,14 +299,12 @@ export function getSessionId(): string {
   const state = loadAppState();
   if (state.sessionId) return state.sessionId;
   state.sessionId = randomHex();
-  saveAppState(state);
+  schedulePersist();
   return state.sessionId;
 }
 
 export function setBlockchainType(bcType: BlockchainType): void {
-  const state = loadAppState();
-  state.blockchainType = bcType;
-  saveAppState(state);
+  mutate(s => { s.blockchainType = bcType; });
 }
 
 export function getBlockchainType(): BlockchainType | undefined {
@@ -272,13 +312,13 @@ export function getBlockchainType(): BlockchainType | undefined {
 }
 
 export function saveSession(save: SessionSave): void {
-  const state = loadAppState();
-  state.gameSave = save;
-  saveAppState(state);
+  mutate(s => { s.gameSave = save; });
 }
 
 export function loadSession(): SessionSave | null {
-  return loadAppState().gameSave ?? null;
+  const save = loadAppState().gameSave ?? null;
+  console.log('[save] loadSession: %s (token=%s)', save ? 'found' : 'null', save?.pairingToken ?? 'n/a');
+  return save;
 }
 
 export function hasAnySessionInfo(): boolean {
@@ -288,7 +328,7 @@ export function hasAnySessionInfo(): boolean {
 
 export function clearSession(): void {
   const state = loadAppState();
-  const cleared: AppState = {
+  cached = {
     version: CURRENT_VERSION,
     playerId: state.playerId,
     alias: state.alias,
@@ -297,17 +337,18 @@ export function clearSession(): void {
     defaultFee: state.defaultFee,
     feeUnit: state.feeUnit,
   };
-  saveAppState(cleared);
+  flushToLocalStorage();
 }
 
 export async function hardReset(): Promise<void> {
+  cached = null;
+  if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
   try {
     localStorage.clear();
     sessionStorage.clear();
   } catch (e) {
     console.error('[save] failed to clear browser storage during hard reset:', e);
   }
-
   await clearWalletConnectIndexedDb();
 }
 
@@ -318,14 +359,12 @@ export function getAlias(): string {
   if (state.alias) return state.alias;
   const generated = `Player_${randomHex().substring(0, 8)}`;
   state.alias = generated;
-  saveAppState(state);
+  schedulePersist();
   return generated;
 }
 
 export function setAlias(alias: string): void {
-  const state = loadAppState();
-  state.alias = alias;
-  saveAppState(state);
+  mutate(s => { s.alias = alias; });
 }
 
 // --- Theme ---
@@ -335,9 +374,7 @@ export function getTheme(): 'dark' | 'light' | undefined {
 }
 
 export function setTheme(theme: 'dark' | 'light'): void {
-  const state = loadAppState();
-  state.theme = theme;
-  saveAppState(state);
+  mutate(s => { s.theme = theme; });
 }
 
 // --- Default fee ---
@@ -347,9 +384,7 @@ export function getDefaultFee(): number {
 }
 
 export function setDefaultFee(fee: number): void {
-  const state = loadAppState();
-  state.defaultFee = fee;
-  saveAppState(state);
+  mutate(s => { s.defaultFee = fee; });
 }
 
 export function getFeeUnit(): 'mojo' | 'xch' {
@@ -357,9 +392,7 @@ export function getFeeUnit(): 'mojo' | 'xch' {
 }
 
 export function setFeeUnit(unit: 'mojo' | 'xch'): void {
-  const state = loadAppState();
-  state.feeUnit = unit;
-  saveAppState(state);
+  mutate(s => { s.feeUnit = unit; });
 }
 
 // --- Active tab ---
@@ -369,9 +402,7 @@ export function getActiveTab(): string | undefined {
 }
 
 export function setActiveTab(tab: string): void {
-  const state = loadAppState();
-  state.activeTab = tab;
-  saveAppState(state);
+  mutate(s => { s.activeTab = tab; });
 }
 
 // --- Connecting flag ---
@@ -381,9 +412,7 @@ export function getConnecting(): boolean {
 }
 
 export function setConnecting(v: boolean): void {
-  const state = loadAppState();
-  state.connecting = v || undefined;
-  saveAppState(state);
+  mutate(s => { s.connecting = v || undefined; });
 }
 
 // --- Notification badges ---
@@ -393,9 +422,7 @@ export function getUnreadChat(): boolean {
 }
 
 export function setUnreadChat(v: boolean): void {
-  const state = loadAppState();
-  state.unreadChat = v || undefined;
-  saveAppState(state);
+  mutate(s => { s.unreadChat = v || undefined; });
 }
 
 export function getUnreadSession(): boolean {
@@ -403,9 +430,7 @@ export function getUnreadSession(): boolean {
 }
 
 export function setUnreadSession(v: boolean): void {
-  const state = loadAppState();
-  state.unreadSession = v || undefined;
-  saveAppState(state);
+  mutate(s => { s.unreadSession = v || undefined; });
 }
 
 export function getWalletAlert(): boolean {
@@ -413,34 +438,37 @@ export function getWalletAlert(): boolean {
 }
 
 export function setWalletAlert(v: boolean): void {
-  const state = loadAppState();
-  state.walletAlert = v || undefined;
-  saveAppState(state);
+  mutate(s => { s.walletAlert = v || undefined; });
+}
+
+// --- Tracker URL ---
+
+export function getTrackerUrl(): string | undefined {
+  return loadAppState().trackerUrl;
+}
+
+export function setTrackerUrl(url: string | undefined): void {
+  mutate(s => { s.trackerUrl = url || undefined; });
 }
 
 // --- Saved games ---
 
 export function getSaveList(): string[] {
-  const state = loadAppState();
-  return (state.savedGames ?? []).map(g => g.id);
+  return (loadAppState().savedGames ?? []).map(g => g.id);
 }
 
 export function startNewSession() {
-  const state = loadAppState();
-  state.savedGames = [];
-  saveAppState(state);
+  mutate(s => { s.savedGames = []; });
 }
 
 export function saveGame(g: SavedGame): [string, unknown] | undefined {
   try {
-    const state = loadAppState();
-    const games = state.savedGames ?? [];
-    if (games.length > 2) {
-      games.pop();
-    }
-    games.unshift(g);
-    state.savedGames = games;
-    saveAppState(state);
+    mutate(s => {
+      const games = s.savedGames ?? [];
+      if (games.length > 2) games.pop();
+      games.unshift(g);
+      s.savedGames = games;
+    });
     return undefined;
   } catch (e) {
     return ["Error saving game turn", e];
@@ -448,7 +476,6 @@ export function saveGame(g: SavedGame): [string, unknown] | undefined {
 }
 
 export function loadSave(saveId: string): SavedGame | undefined {
-  const state = loadAppState();
-  return (state.savedGames ?? []).find(g => g.id === saveId);
+  return (loadAppState().savedGames ?? []).find(g => g.id === saveId);
 }
 

@@ -710,7 +710,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 color='primary'
                 onClick={() => { setNewHandWaiting(true); onPlayAgain?.(); }}
                 disabled={newHandWaiting}
-                className='px-4 py-2'
+                className='z-10 px-4 py-2'
               >
                 {newHandWaiting ? 'Waiting' : 'New Hand'}
               </Button>

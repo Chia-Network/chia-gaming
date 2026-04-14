@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 
 import GameSession from './GameSession';
 import { SimulatorSetupModal } from './SimulatorSetupModal';
@@ -32,6 +32,8 @@ import {
   setUnreadSession as saveUnreadSession,
   getWalletAlert as getSavedWalletAlert,
   setWalletAlert as saveWalletAlert,
+  getTrackerUrl,
+  setTrackerUrl as saveTrackerUrl,
 } from '../hooks/save';
 import { blobSingleton } from '../hooks/blobSingleton';
 import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
@@ -111,6 +113,21 @@ const Shell = () => {
   const [gameParams, setGameParams] = useState<GameSessionParams | null>(null);
   const [peerConn, setPeerConn] = useState<PeerConnectionResult | null>(null);
 
+  const peerConnTargetRef = useRef<PeerConnectionResult>({
+    sendMessage: () => {},
+    sendAck: () => {},
+    sendKeepalive: () => {},
+    hostLog: (msg) => console.log('[peer-stub]', msg),
+    close: () => {},
+  });
+  const stablePeerConn: PeerConnectionResult = useMemo(() => ({
+    sendMessage: (n, m) => peerConnTargetRef.current.sendMessage(n, m),
+    sendAck: (n) => peerConnTargetRef.current.sendAck(n),
+    sendKeepalive: () => peerConnTargetRef.current.sendKeepalive(),
+    hostLog: (m) => peerConnTargetRef.current.hostLog(m),
+    close: () => peerConnTargetRef.current.close(),
+  }), []);
+
   const [walletConnected, setWalletConnected] = useState(false);
   const [trackerLiveness, setTrackerLiveness] = useState<TrackerLiveness | null>(null);
   const [peerConnected, setPeerConnected] = useState<boolean | null>(null);
@@ -119,7 +136,9 @@ const Shell = () => {
   const lastPeerActivityRef = useRef(0);
   const [pendingRestore, setPendingRestore] = useState<SessionSave | null>(() => loadSession());
   const [restoreDecided, setRestoreDecided] = useState<boolean>(() => {
-    return !hasAnySessionInfo();
+    const hasInfo = hasAnySessionInfo();
+    console.log('[Shell] restoreDecided init: hasAnySessionInfo=%s → restoreDecided=%s', hasInfo, !hasInfo);
+    return !hasInfo;
   });
   const [gameLog, setGameLog] = useState<string[]>([]);
   const [debugLogLines, setDebugLogLines] = useState<string[]>([]);
@@ -252,7 +271,14 @@ const Shell = () => {
     });
   }, [deferStateUpdate]);
 
+  const pendingMsgHandlerRef = useRef<{
+    handler: (msgno: number, msg: string) => void;
+    ackHandler: (ack: number) => void;
+    keepaliveHandler: () => void;
+  } | null>(null);
+
   const registerMessageHandler = useCallback((handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => {
+    pendingMsgHandlerRef.current = { handler, ackHandler, keepaliveHandler };
     if (trackerConnRef.current) {
       trackerConnRef.current.registerMessageHandler(
         (msgno, msg) => { lastPeerActivityRef.current = Date.now(); handler(msgno, msg); },
@@ -352,6 +378,7 @@ const Shell = () => {
     trackerConnRef.current = null;
 
     setTrackerOrigin(origin);
+    saveTrackerUrl(origin);
     const lobbyUrl = `${origin}/?lobby=true&session=${sessionId}&uniqueId=${uniqueId}`;
     setIframeUrl(lobbyUrl);
 
@@ -365,28 +392,36 @@ const Shell = () => {
       myAlias?: string,
       opponentAlias?: string,
     ) => {
+      console.log('[Shell] startSession: iStarted=%s amount=%s token=%s hasSave=%s', iStarted, amount, token, !!save);
       activePairingTokenRef.current = token;
-      sessionSaveRef.current = save;
-      if (blobSingleton) { blobSingleton.trackerUrl = origin; }
-      const resolvedMyAlias = myAlias ?? save?.myAlias;
-      const resolvedOpponentAlias = opponentAlias ?? save?.opponentAlias;
-      setGameParams({
-        iStarted,
-        amount,
-        perGameAmount: perGame,
-        restoring: save !== null,
-        pairingToken: token,
-        myAlias: resolvedMyAlias,
-        opponentAlias: resolvedOpponentAlias,
-      });
-      setPeerConn(conn.getPeerConnection());
-      if (save) {
-        setGameLog(save.gameLog);
-        setDebugLogLines(save.debugLog);
-        if (save.chatMessages) setChatMessages(save.chatMessages);
+      peerConnTargetRef.current = conn.getPeerConnection();
+
+      const alreadyHydrated = !!sessionSaveRef.current;
+      if (!alreadyHydrated) {
+        sessionSaveRef.current = save;
+        const resolvedMyAlias = myAlias ?? save?.myAlias;
+        const resolvedOpponentAlias = opponentAlias ?? save?.opponentAlias;
+        setGameParams({
+          iStarted,
+          amount,
+          perGameAmount: perGame,
+          restoring: save !== null,
+          pairingToken: token,
+          myAlias: resolvedMyAlias,
+          opponentAlias: resolvedOpponentAlias,
+        });
+        setPeerConn(stablePeerConn);
+        if (save) {
+          setGameLog(save.gameLog);
+          setDebugLogLines(save.debugLog);
+          if (save.chatMessages) setChatMessages(save.chatMessages);
+        } else {
+          setGameLog([]);
+          setActiveTab('session');
+        }
       } else {
-        setGameLog([]);
-        setActiveTab('session');
+        console.log('[Shell] startSession: state already hydrated by handleResume, upgrading peer connection only');
+        setPeerConn(stablePeerConn);
       }
     };
 
@@ -403,6 +438,8 @@ const Shell = () => {
           startSession(conn, matched.i_am_initiator, amount, perGame, matched.token, null, matched.my_alias, matched.peer_alias);
         },
         onConnectionStatus: (status: ConnectionStatus) => {
+          console.log('[Shell] onConnectionStatus: has_pairing=%s token=%s peer_connected=%s activeToken=%s',
+            status.has_pairing, status.token ?? 'none', status.peer_connected, activePairingTokenRef.current ?? 'null');
           trackerWsUpRef.current = true;
           lastTrackerActivityRef.current = Date.now();
           setTrackerLiveness('connected');
@@ -521,6 +558,15 @@ const Shell = () => {
       });
     trackerConnRef.current = conn;
 
+    if (pendingMsgHandlerRef.current) {
+      const { handler, ackHandler, keepaliveHandler } = pendingMsgHandlerRef.current;
+      conn.registerMessageHandler(
+        (msgno, msg) => { lastPeerActivityRef.current = Date.now(); handler(msgno, msg); },
+        (ack) => { lastPeerActivityRef.current = Date.now(); ackHandler(ack); },
+        () => { lastPeerActivityRef.current = Date.now(); keepaliveHandler(); },
+      );
+    }
+
     const initialSave = loadSession();
     if (initialSave) {
       let amount: bigint;
@@ -541,10 +587,11 @@ const Shell = () => {
 
   // Auto-connect to saved tracker on reload; otherwise wait for user selection
   useEffect(() => {
-    if (!userReady) return;
-    const save = loadSession();
-    if (save?.trackerUrl) {
-      connectToTracker(save.trackerUrl);
+    if (!userReady) { console.log('[Shell] tracker-reconnect effect: userReady=false, skipping'); return; }
+    const url = getTrackerUrl();
+    console.log('[Shell] tracker-reconnect effect: userReady=true trackerUrl=%s', url ?? 'none');
+    if (url) {
+      connectToTracker(url);
     }
     return () => {
       trackerConnRef.current?.disconnect();
@@ -554,6 +601,7 @@ const Shell = () => {
 
   // Shared connection completion
   const completeConnection = useCallback((iface: InternalBlockchainInterface, bcType: 'simulator' | 'walletconnect', pollMs: number) => {
+    console.log('[Shell] completeConnection: bcType=%s', bcType);
     deactivate();
     activate(iface, pollMs);
     persistBlockchainType(bcType);
@@ -663,20 +711,46 @@ const Shell = () => {
 
   const handleResume = useCallback(async () => {
     const bcType = getBlockchainType() ?? 'simulator';
+    console.log('[Shell] handleResume: bcType=%s', bcType);
     setResuming(true);
     setPendingRestore(null);
     setRestoreDecided(true);
+
+    const save = loadSession();
+    if (save) {
+      console.log('[Shell] handleResume: hydrating from local save (token=%s)', save.pairingToken);
+      sessionSaveRef.current = save;
+      let amount: bigint;
+      let perGame: bigint;
+      try { amount = BigInt(save.amount); } catch { amount = FALLBACK_AMOUNT; }
+      try { perGame = BigInt(save.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
+      setGameParams({
+        iStarted: save.iStarted,
+        amount,
+        perGameAmount: perGame,
+        restoring: true,
+        pairingToken: save.pairingToken,
+        myAlias: save.myAlias,
+        opponentAlias: save.opponentAlias,
+      });
+      setPeerConn(stablePeerConn);
+      setGameLog(save.gameLog);
+      setDebugLogLines(save.debugLog);
+      if (save.chatMessages) setChatMessages(save.chatMessages);
+    }
 
     const { iface, pollMs } = getInterface(bcType);
 
     try {
       const setup = await iface.beginConnect(uniqueId);
-      if (iface.isConnected() || !setup.fields) {
+      const connected = iface.isConnected();
+      console.log('[Shell] handleResume: isConnected=%s hasFields=%s', connected, !!setup.fields);
+      if (connected || !setup.fields) {
+        console.log('[Shell] handleResume: fast path (finalize + completeConnection)');
         await setup.finalize();
         completeConnection(iface, bcType, pollMs);
       } else {
-        // Not connected and has fields (e.g. WC needing QR scan):
-        // show connection UI, finalize in background.
+        console.log('[Shell] handleResume: slow path (fields present, finalize in background)');
         deactivate();
         activate(iface, pollMs);
         activeBlockchainRef.current = iface;
@@ -686,7 +760,9 @@ const Shell = () => {
         setUserReady(true);
         wcAbortRef.current = false;
         try {
+          console.log('[Shell] handleResume: awaiting setup.finalize()');
           await setup.finalize();
+          console.log('[Shell] handleResume: finalize complete, wcAbort=%s', wcAbortRef.current);
           if (!wcAbortRef.current) {
             completeConnection(iface, bcType, pollMs);
           }
@@ -704,6 +780,7 @@ const Shell = () => {
       console.warn('[Shell] resume connect failed, falling back', err);
       setUserReady(true);
     }
+    console.log('[Shell] handleResume: done');
     setResuming(false);
   }, [uniqueId, completeConnection]);
 
@@ -739,9 +816,12 @@ const Shell = () => {
   useEffect(() => {
     if (autoReconnectRef.current) return;
     const bcType = getBlockchainType();
-    if (bcType && !loadSession()) {
+    const session = loadSession();
+    console.log('[Shell] auto-reconnect effect: bcType=%s hasSession=%s', bcType ?? 'none', !!session);
+    if (bcType && !session) {
       autoReconnectRef.current = true;
       const wasConnecting = getSavedConnecting();
+      console.log('[Shell] auto-reconnect: firing handleConnect (wasConnecting=%s)', wasConnecting);
       handleConnect(bcType, !wasConnecting);
     }
   }, [handleConnect]);
@@ -794,6 +874,8 @@ const Shell = () => {
     (walletConnected || !!gameParams?.restoring);
   if (sessionReadyToStart) sessionStartedRef.current = true;
   const keepSession = sessionCanMount && hasActiveBlockchain && sessionStartedRef.current;
+  console.log('[Shell] render: gameParams=%s peerConn=%s activeBlockchain=%s walletConnected=%s restoring=%s → keepSession=%s',
+    !!gameParams, !!peerConn, hasActiveBlockchain, walletConnected, !!gameParams?.restoring, keepSession);
 
   // --- Main tabbed app ---
   return (

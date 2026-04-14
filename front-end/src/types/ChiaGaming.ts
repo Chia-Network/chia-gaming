@@ -38,7 +38,7 @@ export interface WasmResult {
   ids?: string[];
 }
 
-export type WasmInitFn = (opts: { module: ArrayBuffer }) => void;
+export type WasmInitFn = (opts?: { module_or_path?: string | URL | Request | Response | Promise<Response> }) => Promise<any>;
 
 export interface CoinsetOrgBlockSpend {
   coin: { parent_coin_info: string; puzzle_hash: string; amount: bigint };

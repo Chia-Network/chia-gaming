@@ -359,6 +359,7 @@ function HandDisplay(props: HandDisplayProps) {
     const cardsNow = cardsRef.current;
     if (!groupEl || !itemEl || !cardsNow[index]) return;
 
+    measureSlotCenters();
     const groupRect = groupEl.getBoundingClientRect();
     const itemRect = itemEl.getBoundingClientRect();
     const card = cardsNow[index];
@@ -392,7 +393,7 @@ function HandDisplay(props: HandDisplayProps) {
     setHoleSlots(nextHoleSlots);
     setActiveDrag(nextActiveDrag);
     pendingDragRef.current = null;
-  }, []);
+  }, [measureSlotCenters]);
 
   const updateActiveDragFromPointer = useCallback((pointerX: number, pointerY: number) => {
     const dragging = activeDragRef.current;
@@ -459,33 +460,45 @@ function HandDisplay(props: HandDisplayProps) {
 
     homeSlotRef.current = nearest;
     holeSlotsRef.current = nextSlots;
-    setHoleSlots(nextSlots);
 
     if (movingCard && fromRect) {
       const animKey = ++shiftAnimKeyRef.current;
       removeShiftAnimationsForCard(movingCard);
+      const groupRect = groupRef.current?.getBoundingClientRect();
+      const fromLeft = fromRect.left - (groupRect?.left ?? 0);
+      const fromTop = fromRect.top - (groupRect?.top ?? 0);
+      const prelimShift: ShiftAnim = {
+        key: animKey,
+        card: movingCard,
+        fromLeft,
+        fromTop,
+        toLeft: fromLeft,
+        toTop: fromTop,
+        width: fromRect.width,
+        height: fromRect.height,
+        hideIndex: oldDefaultSlot,
+        started: false,
+      };
+      // Batch with setHoleSlots so hideForShift is true on the same render
+      // as the slot reorder — prevents a one-frame flicker in Chrome.
+      setHoleSlots(nextSlots);
+      setShiftAnims((prev) => [...prev, prelimShift]);
       const measureRaf = requestAnimationFrame(() => {
         const latestGroup = groupRef.current;
         const toEl = itemRefs.current[oldDefaultSlot];
         if (!latestGroup || !toEl) return;
         const latestGroupRect = latestGroup.getBoundingClientRect();
         const toRect = toEl.getBoundingClientRect();
-        const nextShiftAnim: ShiftAnim = {
-          key: animKey,
-          card: movingCard,
-          fromLeft: fromRect.left - latestGroupRect.left,
-          fromTop: fromRect.top - latestGroupRect.top,
-          toLeft: toRect.left - latestGroupRect.left,
-          toTop: toRect.top - latestGroupRect.top,
-          width: fromRect.width,
-          height: fromRect.height,
-          hideIndex: oldDefaultSlot,
-          started: false,
-        };
-        setShiftAnims((prev) => [...prev, nextShiftAnim]);
+        const measuredToLeft = toRect.left - latestGroupRect.left;
+        const measuredToTop = toRect.top - latestGroupRect.top;
+        // Second rAF: the browser has now painted the overlay at translate(0,0).
+        // Setting started + real destination in the next frame triggers the
+        // CSS transition from the painted initial position.
         const startRaf = requestAnimationFrame(() => {
           setShiftAnims((prev) => prev.map((anim) => (
-            anim.key === animKey ? { ...anim, started: true } : anim
+            anim.key === animKey
+              ? { ...anim, toLeft: measuredToLeft, toTop: measuredToTop, started: true }
+              : anim
           )));
         });
         shiftRafIdsRef.current.push(startRaf);
@@ -495,6 +508,8 @@ function HandDisplay(props: HandDisplayProps) {
         shiftTimeoutsRef.current.set(animKey, timeoutId);
       });
       shiftRafIdsRef.current.push(measureRaf);
+    } else {
+      setHoleSlots(nextSlots);
     }
 
     requestAnimationFrame(measureSlotCenters);

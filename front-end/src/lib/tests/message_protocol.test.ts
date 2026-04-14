@@ -8,6 +8,7 @@ import {
   PeerConnectionResult,
 } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
+import { _resetForTests as resetSaveState } from '../../hooks/save';
 
 const emptyReport: WatchReport = {
   created_watched: [],
@@ -135,6 +136,7 @@ beforeEach(() => {
 afterEach(() => {
   activeBlob?.cleanup();
   activeBlob = null;
+  resetSaveState();
   delete (global as any).localStorage;
 });
 

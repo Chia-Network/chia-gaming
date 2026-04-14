@@ -105,16 +105,7 @@ export function getBlobSingleton(
     return { gameObject: blobSingleton };
   }
 
-  const doInternalLoadWasm = async () => {
-    const fetchUrl = '/chia_gaming_wasm_bg.wasm';
-    return fetch(fetchUrl)
-      .then((wasm) => wasm.blob())
-      .then((blob) => {
-        return blob.arrayBuffer();
-      });
-  };
-
-  const wasmStateInit = new WasmStateInit(doInternalLoadWasm, fetchHex);
+  const wasmStateInit = new WasmStateInit(fetchHex);
 
   blobSingleton = new WasmBlobWrapper(
     blockchain,

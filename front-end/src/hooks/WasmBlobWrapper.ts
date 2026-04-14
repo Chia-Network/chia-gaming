@@ -128,6 +128,7 @@ export class WasmBlobWrapper {
   private reorderQueue: Map<number, string> = new Map();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private restoredSession = false;
+  private beforeUnloadHandler: (() => void) | null = null;
   activeGameId: string | null = null;
   handState: CalpokerHandState | null = null;
   lastChannelStatus: ChannelStatusPayload | null = null;
@@ -145,7 +146,6 @@ export class WasmBlobWrapper {
   myRunningBalance: string = '0';
   channelAttentionActive = false;
   gameTerminalAttentionActive = false;
-  trackerUrl: string = '';
   getFee: () => number = () => 0;
 
   constructor(
@@ -177,6 +177,16 @@ export class WasmBlobWrapper {
         this.rxjsMessageSingleton.next(evt);
       }
     };
+    this.beforeUnloadHandler = () => {
+      const hadPending = !!this.saveTimer;
+      this.flushPendingSave();
+      if (hadPending) {
+        console.log('[wasm] beforeunload: flushed pending save');
+      }
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('beforeunload', this.beforeUnloadHandler);
+    }
   }
 
   setReloading() { this.reloading = true; }
@@ -195,6 +205,10 @@ export class WasmBlobWrapper {
       this.saveTimer = null;
     }
     this.stopKeepaliveTimer();
+    if (this.beforeUnloadHandler && typeof window !== 'undefined') {
+      window.removeEventListener('beforeunload', this.beforeUnloadHandler);
+      this.beforeUnloadHandler = null;
+    }
   }
 
   notePeerActivity() {
@@ -209,9 +223,11 @@ export class WasmBlobWrapper {
     if (this.keepaliveTimer) {
       throw new Error('ASSERT_FAIL: keepalive timer already running');
     }
-    this.keepaliveTimer = setInterval(() => {
+    const timer = setInterval(() => {
       this.peerSendKeepalive?.();
     }, KEEPALIVE_INTERVAL_MS);
+    if (typeof timer === 'object' && 'unref' in timer) timer.unref();
+    this.keepaliveTimer = timer;
   }
 
   private stopKeepaliveTimer() {
@@ -628,15 +644,26 @@ export class WasmBlobWrapper {
   scheduleSave() {
     if (!this.cradle) return;
     if (this.saveTimer) return;
-    this.saveTimer = setTimeout(() => {
+    const timer = setTimeout(() => {
       this.saveTimer = null;
       this.persistSession();
     }, SAVE_DEBOUNCE_MS);
+    if (typeof timer === 'object' && 'unref' in timer) timer.unref();
+    this.saveTimer = timer;
+  }
+
+  flushPendingSave() {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+      this.persistSession();
+    }
   }
 
   private persistSession() {
     if (!this.cradle) return;
     try {
+      debugLog('[wasm] persistSession: writing to localStorage');
       const serializedCradle = this.cradle.serialize();
       const save: SessionSave = {
         serializedCradle,
@@ -668,7 +695,6 @@ export class WasmBlobWrapper {
         myRunningBalance: this.myRunningBalance !== '0' ? this.myRunningBalance : undefined,
         channelAttentionActive: this.channelAttentionActive || undefined,
         gameTerminalAttentionActive: this.gameTerminalAttentionActive || undefined,
-        trackerUrl: this.trackerUrl || undefined,
       };
       saveSession(save);
     } catch (e) {
