@@ -18,6 +18,18 @@ commit-reveal randomness.
   tracker: React components, WASM bridge, WebSocket relay protocol.
 ## Quick Start
 
+### Install prerequisites - Linux & macos
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+### Install prerequisites - Windows & others
+
+Install `rustup` by visiting [rustup.rs](https://rustup.rs)
+
+### Build and Test
+
 ```bash
 # Build test binaries (no test execution)
 ./cb.sh
