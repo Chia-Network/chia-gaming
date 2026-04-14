@@ -220,9 +220,19 @@ mod gaming_wasm {
         js_factory: &JsGameFactory,
     ) -> Result<(GameType, GameFactory), JsValue> {
         let name_data = GameType(name.bytes().collect());
-        let byte_data = hex::decode(&js_factory.hex).into_js()?;
+        let byte_data = hex::decode(&js_factory.hex).map_err(|e| {
+            js_error(&format!(
+                "game factory '{name}' hex decode: {e:?} (length={})",
+                js_factory.hex.len(),
+            ))
+        })?;
         let parser_program = if let Some(ref parser_hex) = js_factory.parser_hex {
-            let parser_bytes = hex::decode(parser_hex).into_js()?;
+            let parser_bytes = hex::decode(parser_hex).map_err(|e| {
+                js_error(&format!(
+                    "game factory '{name}' parser_hex decode: {e:?} (length={})",
+                    parser_hex.len(),
+                ))
+            })?;
             Some(Program::from_bytes(&parser_bytes).into())
         } else {
             None
@@ -261,7 +271,12 @@ mod gaming_wasm {
     fn parse_game_config(js_config: JsValue) -> Result<GameConfigPartial, JsValue> {
         let jsconfig: JsGameCradleConfig = serde_wasm_bindgen::from_value(js_config).into_js()?;
         let game_types = convert_game_types(&jsconfig.game_types)?;
-        let reward_puzzle_hash_bytes = hex::decode(&jsconfig.reward_puzzle_hash).into_js()?;
+        let reward_puzzle_hash_bytes = hex::decode(&jsconfig.reward_puzzle_hash).map_err(|e| {
+            js_error(&format!(
+                "reward_puzzle_hash hex decode: {e:?} (length={})",
+                jsconfig.reward_puzzle_hash.len(),
+            ))
+        })?;
 
         Ok(GameConfigPartial {
             game_types,
@@ -282,25 +297,28 @@ mod gaming_wasm {
         fn into_js(self) -> Self::EResult;
     }
 
+    fn js_error(msg: &str) -> JsValue {
+        js_sys::Error::new(msg).into()
+    }
+
     impl ErrIntoJs for types::Error {
         type EResult = JsValue;
         fn into_js(self) -> Self::EResult {
-            serde_wasm_bindgen::to_value(&self)
-                .unwrap_or_else(|e| JsValue::from_str(&format!("{:?}", e)))
+            js_error(&format!("{self:?}"))
         }
     }
 
     impl ErrIntoJs for FromHexError {
         type EResult = JsValue;
         fn into_js(self) -> Self::EResult {
-            JsValue::from_str(&format!("{self:?}"))
+            js_error(&format!("{self:?}"))
         }
     }
 
     impl ErrIntoJs for serde_wasm_bindgen::Error {
         type EResult = JsValue;
         fn into_js(self) -> Self::EResult {
-            JsValue::from_str(&format!("{self:?}"))
+            js_error(&format!("{self:?}"))
         }
     }
 

@@ -299,6 +299,7 @@ dependencies = [
  "flate2",
  "getrandom 0.3.4",
  "hex",
+ "js-sys",
  "lol_alloc",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
