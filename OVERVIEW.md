@@ -374,8 +374,8 @@ they map to WalletConnect RPCs:
   conditions and amount. The `extraConditions` parameter carries the
   channel-specific assertions; `coinIds` optionally pins the spend to a
   specific coin.
-- `chia_pushTx` — broadcast the final combined `SpendBundle` to the network
-  (both players submit it).
+- `chia_pushTransactions` — broadcast the final combined `SpendBundle` to the
+  network, wrapped in a `TransactionRecord` (both players submit it).
 
 #### Channel coin funding
 

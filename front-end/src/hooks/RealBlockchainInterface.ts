@@ -9,7 +9,8 @@ import { CoinRecord } from '../types/rpc/CoinRecord';
 
 import { debugLog } from '../services/debugLog';
 import { normalizeHexString, toUint8, toHexString } from '../util';
-import { decodeBech32mPuzzleHash } from '../util/bech32m';
+import { decodeBech32mPuzzleHash, encodePuzzleHashToBech32m } from '../util/bech32m';
+import { TransactionRecord, WalletSpendBundle } from '../types/rpc/PushTransactions';
 import { walletConnectState } from './useWalletConnect';
 
 const PUSH_TX_RETRY_DELAY = 30000;
@@ -96,14 +97,53 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   private spendSeq = 0;
 
+  private async buildTransactionRecord(
+    spendBundle: WalletSpendBundle,
+    fee: number,
+  ): Promise<TransactionRecord> {
+    const puzzleHash = this.blockchainAddressData.puzzleHash || '0'.repeat(64);
+    const toAddress = encodePuzzleHashToBech32m(puzzleHash);
+
+    const nameBytes = new TextEncoder().encode(JSON.stringify(spendBundle));
+    const hashBuf = await crypto.subtle.digest('SHA-256', nameBytes);
+    const name = Array.from(new Uint8Array(hashBuf), (b) => b.toString(16).padStart(2, '0')).join('');
+
+    return {
+      confirmed_at_height: 0,
+      created_at_time: Math.floor(Date.now() / 1000),
+      to_puzzle_hash: puzzleHash,
+      amount: 0,
+      fee_amount: fee,
+      confirmed: false,
+      sent: 0,
+      spend_bundle: spendBundle,
+      additions: [],
+      removals: [],
+      wallet_id: 0,
+      sent_to: [],
+      trade_id: null,
+      type: 1,
+      name,
+      memos: {},
+      valid_times: {},
+      to_address: toAddress,
+    };
+  }
+
   async spend(_blob: string, spendBundle: unknown, _source?: string, fee?: number): Promise<string> {
     const seq = ++this.spendSeq;
     const src = _source ?? 'unknown';
-    debugLog(`[wc-blockchain] walletPushTx submitting #${seq} from=${src} fee=${fee ?? 0}`);
+    const feeValue = fee || 0;
+    debugLog(`[wc-blockchain] pushTransactions submitting #${seq} from=${src} fee=${feeValue}`);
 
     try {
-      const result = await rpc.walletPushTx({ spendBundle: spendBundle as object, fee: fee || undefined });
-      debugLog(`[wc-blockchain] walletPushTx submitted #${seq} result=${JSON.stringify(result)}`);
+      const txRecord = await this.buildTransactionRecord(spendBundle as WalletSpendBundle, feeValue);
+      const result = await rpc.pushTransactions({
+        transactions: [txRecord],
+        push: true,
+        fee: feeValue || undefined,
+      });
+      debugLog(`[wc-blockchain] pushTransactions submitted #${seq} result=${JSON.stringify(result)}`);
       return result as unknown as string;
     } catch (e: unknown) {
       const errStr = typeof e === 'string' ? e : ((e as any)?.message || JSON.stringify(e));
@@ -114,7 +154,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
           }, PUSH_TX_RETRY_DELAY);
         });
       }
-      debugLog(`[wc-blockchain] walletPushTx error #${seq}: ${String(e)}`);
+      debugLog(`[wc-blockchain] pushTransactions error #${seq}: ${String(e)}`);
       throw e;
     }
   }
