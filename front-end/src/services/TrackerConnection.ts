@@ -114,7 +114,16 @@ export class TrackerConnection {
 
   private connectWs(): void {
     if (this.closed) return;
-    const ws = new WebSocket(this.getWsUrl());
+    let wsUrl: string;
+    try {
+      wsUrl = this.getWsUrl();
+    } catch {
+      this.closed = true;
+      const msg = `Invalid tracker URL: ${this.trackerUrl}`;
+      debugLog(`[tracker] ${msg}`);
+      throw new Error(msg);
+    }
+    const ws = new WebSocket(wsUrl);
     this.ws = ws;
 
     ws.onopen = () => {

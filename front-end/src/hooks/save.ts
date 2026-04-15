@@ -226,8 +226,53 @@ let cached: AppState | null = null;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 const PERSIST_DEBOUNCE_MS = 300;
 
+// --- Tab lease ---
+
+const LEASE_KEY = 'appState_activeTab';
+const tabId: string = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+  ? crypto.randomUUID()
+  : randomHex();
+let fenced = false;
+const fencedListeners = new Set<() => void>();
+
+function fireFenced(): void {
+  for (const cb of fencedListeners) {
+    try { cb(); } catch { /* ignore */ }
+  }
+}
+
+export function onFenced(cb: () => void): void { fencedListeners.add(cb); }
+export function offFenced(cb: () => void): void { fencedListeners.delete(cb); }
+
+export function isLeaseConflict(): boolean {
+  try {
+    const current = localStorage.getItem(LEASE_KEY);
+    return current !== null && current !== tabId;
+  } catch { return false; }
+}
+
+export function checkLease(): boolean {
+  try {
+    const current = localStorage.getItem(LEASE_KEY);
+    return current === null || current === tabId;
+  } catch { return true; }
+}
+
+export function claimLease(): void {
+  fenced = false;
+  try { localStorage.setItem(LEASE_KEY, tabId); } catch { /* ignore */ }
+}
+
+export function reclaimLease(): void {
+  claimLease();
+}
+
+export function isFenced(): boolean {
+  return fenced;
+}
+
 function flushToLocalStorage(): void {
-  if (!cached) return;
+  if (!cached || fenced) return;
   if (persistTimer) {
     clearTimeout(persistTimer);
     persistTimer = null;
@@ -240,7 +285,7 @@ function flushToLocalStorage(): void {
 }
 
 function schedulePersist(): void {
-  if (persistTimer) return;
+  if (persistTimer || fenced) return;
   const timer = setTimeout(() => {
     persistTimer = null;
     flushToLocalStorage();
@@ -250,13 +295,33 @@ function schedulePersist(): void {
 }
 
 if (typeof window !== 'undefined') {
-  window.addEventListener('beforeunload', flushToLocalStorage);
+  window.addEventListener('beforeunload', () => {
+    if (!fenced) flushToLocalStorage();
+  });
+
+  window.addEventListener('storage', (e: StorageEvent) => {
+    if (e.key === LEASE_KEY && e.newValue !== tabId && !fenced) {
+      fenced = true;
+      fireFenced();
+    }
+  });
+
+  setInterval(() => {
+    if (fenced) return;
+    if (!checkLease()) {
+      fenced = true;
+      fireFenced();
+    }
+  }, 3000);
 }
 
 /** @internal — reset module state between test cases */
 export function _resetForTests(): void {
   if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
   cached = null;
+  fenced = false;
+  fencedListeners.clear();
+  try { localStorage.removeItem(LEASE_KEY); } catch { /* ignore */ }
 }
 
 export function loadAppState(): AppState {
@@ -336,12 +401,14 @@ export function clearSession(): void {
     activeTab: state.activeTab,
     defaultFee: state.defaultFee,
     feeUnit: state.feeUnit,
+    trackerUrl: state.trackerUrl,
   };
   flushToLocalStorage();
 }
 
 export async function hardReset(): Promise<void> {
   cached = null;
+  fenced = false;
   if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
   try {
     localStorage.clear();

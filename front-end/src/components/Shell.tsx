@@ -34,6 +34,11 @@ import {
   setWalletAlert as saveWalletAlert,
   getTrackerUrl,
   setTrackerUrl as saveTrackerUrl,
+  isLeaseConflict,
+  claimLease,
+  reclaimLease,
+  onFenced,
+  offFenced,
 } from '../hooks/save';
 import { blobSingleton } from '../hooks/blobSingleton';
 import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
@@ -140,6 +145,24 @@ const Shell = () => {
     console.log('[Shell] restoreDecided init: hasAnySessionInfo=%s → restoreDecided=%s', hasInfo, !hasInfo);
     return !hasInfo;
   });
+  const [tabConflict, setTabConflict] = useState<'none' | 'startup' | 'midSession'>(() =>
+    isLeaseConflict() ? 'startup' : 'none',
+  );
+  const [tabDead, setTabDead] = useState(false);
+
+  // Claim the lease on mount if no conflict was detected at startup
+  useEffect(() => {
+    if (tabConflict === 'none') claimLease();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Subscribe to mid-session lease loss
+  useEffect(() => {
+    const handler = () => setTabConflict(prev => prev === 'none' ? 'midSession' : prev);
+    onFenced(handler);
+    return () => { offFenced(handler); };
+  }, []);
+
+
   const [gameLog, setGameLog] = useState<string[]>([]);
   const [debugLogLines, setDebugLogLines] = useState<string[]>([]);
 
@@ -425,7 +448,9 @@ const Shell = () => {
       }
     };
 
-    const conn = new TrackerConnection(origin, sessionId, {
+    let conn: TrackerConnection;
+    try {
+      conn = new TrackerConnection(origin, sessionId, {
         onMatched: (matched: MatchedParams) => {
           trackerWsUpRef.current = true;
           lastTrackerActivityRef.current = Date.now();
@@ -556,6 +581,13 @@ const Shell = () => {
           }
         },
       });
+    } catch (err) {
+      console.error('[Shell] TrackerConnection failed for origin=%s', origin, err);
+      saveTrackerUrl(undefined);
+      setTrackerOrigin(null);
+      setIframeUrl('about:blank');
+      return;
+    }
     trackerConnRef.current = conn;
 
     if (pendingMsgHandlerRef.current) {
@@ -598,6 +630,19 @@ const Shell = () => {
       trackerConnRef.current = null;
     };
   }, [userReady, connectToTracker]);
+
+  // Disconnect tracker when fenced; reconnect when reclaimed
+  useEffect(() => {
+    if (tabConflict !== 'none') {
+      trackerConnRef.current?.disconnect();
+      trackerConnRef.current = null;
+    } else if (userReady) {
+      const url = getTrackerUrl();
+      if (url && !trackerConnRef.current) {
+        connectToTracker(url);
+      }
+    }
+  }, [tabConflict, userReady, connectToTracker]);
 
   // Shared connection completion
   const completeConnection = useCallback((iface: InternalBlockchainInterface, bcType: 'simulator' | 'walletconnect', pollMs: number) => {
@@ -825,6 +870,74 @@ const Shell = () => {
       handleConnect(bcType, !wasConnecting);
     }
   }, [handleConnect]);
+
+  // --- Tab dead (user chose to yield to another tab) ---
+  if (tabDead) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', width: '100vw', height: '100vh' }}
+           className='bg-canvas-bg-subtle text-canvas-text'>
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '0.75rem',
+          padding: '1.5rem',
+          borderRadius: '0.5rem',
+          border: '1px solid var(--color-canvas-border)',
+          background: 'var(--color-canvas-bg)',
+          maxWidth: '24rem',
+          width: '90%',
+        }}>
+          <p className='text-canvas-text-contrast font-semibold text-lg'>Tab inactive</p>
+          <p className='text-canvas-text text-sm text-center'>
+            This tab is no longer active. You can close it.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // --- Tab conflict dialog (another tab holds the lease) ---
+  if (tabConflict !== 'none') {
+    const isMidSession = tabConflict === 'midSession';
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', width: '100vw', height: '100vh', ...(isMidSession ? { position: 'fixed', inset: 0, zIndex: 9999 } : {}) }}
+           className='bg-canvas-bg-subtle text-canvas-text'>
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '0.75rem',
+          padding: '1.5rem',
+          borderRadius: '0.5rem',
+          border: '1px solid var(--color-canvas-border)',
+          background: 'var(--color-canvas-bg)',
+          maxWidth: '24rem',
+          width: '90%',
+        }}>
+          <p className='text-canvas-text-contrast font-semibold text-lg'>Another tab is active</p>
+          <p className='text-canvas-text text-sm text-center'>
+            {isMidSession
+              ? 'Another tab has taken over this session.'
+              : 'It looks like another tab is already running.'}
+            {' '}Would you like this tab to take over, or close it?
+          </p>
+          <button
+            onClick={() => { reclaimLease(); setTabConflict('none'); }}
+            className='w-full px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors'
+          >
+            {isMidSession ? 'Take back control' : 'Take over'}
+          </button>
+          <button
+            onClick={() => setTabDead(true)}
+            className='w-full px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors'
+          >
+            Close this tab
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // --- Restore dialog ---
   if (!restoreDecided) {

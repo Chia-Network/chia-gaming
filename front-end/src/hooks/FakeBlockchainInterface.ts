@@ -185,7 +185,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       const diagnostic = status_array[2] ?? '';
       const msg = `spend rejected: status=[${status_array[0]},${detail}]${diagnostic ? ' ' + diagnostic : ''}`;
       console.warn('[blockchain]', msg);
-      return msg;
+      throw new Error(msg);
     }
     return '';
   }
