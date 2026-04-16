@@ -650,7 +650,7 @@ export function useGameSession(
     return () => {
       subscription.unsubscribe();
     };
-  }, [gameObject]);
+  }, [gameObject, blockchain]);
 
   const playAgain = useCallback(() => {
     if (iStarted) {

@@ -232,6 +232,7 @@ export interface WasmConnection {
   get_identity: (cid: number) => IChiaIdentity;
   get_game_state_id: (cid: number) => string | undefined;
   serialize_cradle: (cid: number) => string;
+  get_watching_coins: (cid: number) => Array<{ coin_name: string; coin_string: string }>;
 
   // Misc
   sha256bytes: (hex: string) => string;
@@ -285,6 +286,10 @@ export class ChiaGame {
 
   serialize(): string {
     return this.wasm.serialize_cradle(this.cradle);
+  }
+
+  get_watching_coins(): Array<{ coin_name: string; coin_string: string }> {
+    return this.wasm.get_watching_coins(this.cradle);
   }
 
   accept(id: string): WasmResult | undefined {

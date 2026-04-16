@@ -54,12 +54,19 @@ async function restoreSession(
   gameObject: WasmBlobWrapper,
   save: SessionSave,
   wasmStateInit: WasmStateInit,
+  blockchain: BlockchainPoller,
 ): Promise<void> {
   const wasmConnection = await wasmStateInit.getWasmConnection();
   gameObject.loadWasm(wasmConnection);
 
   const cradle = wasmStateInit.deserializeGame(wasmConnection, save.serializedCradle);
   gameObject.setGameCradle(cradle);
+
+  const watchedCoins = cradle.get_watching_coins();
+  for (const { coin_name, coin_string } of watchedCoins) {
+    blockchain.registerCoin(coin_name, coin_string);
+  }
+  debugLog(`[restore] re-registered ${watchedCoins.length} watched coins`);
 
   gameObject.messageNumber = save.messageNumber;
   gameObject.remoteNumber = save.remoteNumber;
@@ -87,7 +94,6 @@ async function restoreSession(
   gameObject.myRunningBalance = save.myRunningBalance ?? '0';
   gameObject.channelAttentionActive = save.channelAttentionActive ?? false;
   gameObject.gameTerminalAttentionActive = save.gameTerminalAttentionActive ?? false;
-  gameObject.restoreSavedWatchCoins(save.channelStatus);
   gameObject.markRestored();
 
   debugLog('[restore] session restored');
@@ -140,7 +146,7 @@ export function getBlobSingleton(
   if (sessionSave) {
     const doRestore = async () => {
       try {
-        await restoreSession(blobSingleton!, sessionSave, wasmStateInit);
+        await restoreSession(blobSingleton!, sessionSave, wasmStateInit, blockchain);
       } catch (e) {
         console.error('[blobSingleton] restoreSession error:', e);
         debugLog(`[blobSingleton] restoreSession error: ${String(e)}`);

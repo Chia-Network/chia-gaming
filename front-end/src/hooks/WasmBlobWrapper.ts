@@ -717,44 +717,6 @@ export class WasmBlobWrapper {
     this.scheduleSave();
   }
 
-  private coinPayloadToHex(coin: unknown): string | null {
-    if (!Array.isArray(coin) || coin.length === 0) return null;
-    if (!coin.every((b) => typeof b === 'number')) return null;
-    try {
-      const bytes = Uint8Array.from(coin as number[]);
-      return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-    } catch {
-      return null;
-    }
-  }
-
-  private async coinStringHexToName(coinStringHex: string): Promise<string> {
-    const normalized = coinStringHex.startsWith('0x') ? coinStringHex.slice(2) : coinStringHex;
-    if (normalized.length % 2 !== 0) {
-      throw new Error(`invalid coin string hex length=${normalized.length}`);
-    }
-    const bytes = new Uint8Array(normalized.length / 2);
-    for (let i = 0; i < normalized.length; i += 2) {
-      bytes[i / 2] = Number.parseInt(normalized.slice(i, i + 2), 16);
-    }
-    const hash = await crypto.subtle.digest('SHA-256', bytes);
-    const out = new Uint8Array(hash);
-    return Array.from(out, (b) => b.toString(16).padStart(2, '0')).join('');
-  }
-
-  restoreSavedWatchCoins(channelStatus: ChannelStatusPayload | null | undefined): void {
-    if (!channelStatus) return;
-    const coinStringHex = this.coinPayloadToHex(channelStatus.coin);
-    if (!coinStringHex) return;
-    void this.coinStringHexToName(coinStringHex)
-      .then((coinName) => {
-        this.blockchain.registerCoin(coinName, coinStringHex);
-      })
-      .catch((e) => {
-        console.warn('[restore] re-register watch coin failed:', e);
-      });
-  }
-
   markRestored() {
     this.restoredSession = true;
   }

@@ -147,6 +147,12 @@ mod gaming_wasm {
         timed_out: Vec<String>,
     }
 
+    #[derive(Serialize)]
+    struct JsWatchCoinEntry {
+        coin_name: String,
+        coin_string: String,
+    }
+
     thread_local! {
         static NEXT_ID: AtomicI32 = const {
             AtomicI32::new(0)
@@ -447,6 +453,22 @@ mod gaming_wasm {
                 .map_err(|e| types::Error::StrErr(e.to_string()))?;
             Ok(hex::encode(bytes))
         })
+    }
+
+    #[wasm_bindgen]
+    pub fn get_watching_coins(cid: i32) -> Result<JsValue, JsValue> {
+        let result = with_game(cid, move |cradle: &mut JsCradle| {
+            let coins = cradle.cradle.get_watching_coins();
+            let entries: Vec<JsWatchCoinEntry> = coins
+                .iter()
+                .map(|cs| JsWatchCoinEntry {
+                    coin_name: hex::encode(cs.to_coin_id().bytes()),
+                    coin_string: coin_string_to_hex(cs),
+                })
+                .collect();
+            Ok(entries)
+        })?;
+        serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     fn hex_to_coinstring(hex: &str) -> Result<CoinString, types::Error> {

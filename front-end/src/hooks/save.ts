@@ -229,9 +229,18 @@ const PERSIST_DEBOUNCE_MS = 300;
 // --- Tab lease ---
 
 const LEASE_KEY = 'appState_activeTab';
-const tabId: string = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
-  ? crypto.randomUUID()
-  : randomHex();
+const TAB_ID_SESSION_KEY = 'appState_tabId';
+const tabId: string = (() => {
+  if (typeof sessionStorage !== 'undefined') {
+    const existing = sessionStorage.getItem(TAB_ID_SESSION_KEY);
+    if (existing) return existing;
+  }
+  const id = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+    ? crypto.randomUUID()
+    : randomHex();
+  try { sessionStorage.setItem(TAB_ID_SESSION_KEY, id); } catch { /* ignore */ }
+  return id;
+})();
 let fenced = false;
 const fencedListeners = new Set<() => void>();
 

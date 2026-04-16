@@ -788,39 +788,8 @@ const Shell = () => {
 
     try {
       const setup = await iface.beginConnect(uniqueId);
-      const connected = iface.isConnected();
-      console.log('[Shell] handleResume: isConnected=%s hasFields=%s', connected, !!setup.fields);
-      if (connected || !setup.fields) {
-        console.log('[Shell] handleResume: fast path (finalize + completeConnection)');
-        await setup.finalize();
-        completeConnection(iface, bcType, pollMs);
-      } else {
-        console.log('[Shell] handleResume: slow path (fields present, finalize in background)');
-        deactivate();
-        activate(iface, pollMs);
-        activeBlockchainRef.current = iface;
-        setConnectionSetup(setup);
-        setBlockchainType(bcType);
-        setConnecting(true);
-        setUserReady(true);
-        wcAbortRef.current = false;
-        try {
-          console.log('[Shell] handleResume: awaiting setup.finalize()');
-          await setup.finalize();
-          console.log('[Shell] handleResume: finalize complete, wcAbort=%s', wcAbortRef.current);
-          if (!wcAbortRef.current) {
-            completeConnection(iface, bcType, pollMs);
-          }
-        } catch (err2) {
-          if (!wcAbortRef.current) {
-            console.warn('[Shell] resume finalize failed', err2);
-          }
-          setBlockchainType(undefined);
-          setConnectionSetup(null);
-        } finally {
-          setConnecting(false);
-        }
-      }
+      await setup.finalize();
+      completeConnection(iface, bcType, pollMs);
     } catch (err) {
       console.warn('[Shell] resume connect failed, falling back', err);
       setUserReady(true);
