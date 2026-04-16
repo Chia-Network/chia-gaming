@@ -6,7 +6,10 @@ pub mod tests;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
-use chia_bls::aggregate_verify;
+use chia_consensus::consensus_constants::ConsensusConstants;
+use chia_consensus::spendbundle_validation::{get_flags_for_height_and_constants, validate_clvm_and_signature};
+use chia_consensus::flags::MEMPOOL_MODE;
+use chia_consensus::validation_error::ErrorCode;
 use clvm_traits::{ClvmEncoder, ToClvm};
 
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
@@ -15,7 +18,6 @@ use crate::common::standard_coin::{
     agg_sig_me_message, sign_agg_sig_me, solution_for_conditions, standard_solution_partial,
     ChiaIdentity,
 };
-use crate::common::types::CoinCondition;
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Error, GetCoinStringParts, Hash,
     IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, ToQuotedProgram,
@@ -188,6 +190,134 @@ impl Default for Simulator {
     }
 }
 
+fn make_sim_consensus_constants() -> ConsensusConstants {
+    let agg_sig_data = chia_protocol::Bytes32::from(AGG_SIG_ME_ADDITIONAL_DATA);
+    let zero32 = chia_protocol::Bytes32::from([0u8; 32]);
+    ConsensusConstants {
+        slot_blocks_target: 32,
+        min_blocks_per_challenge_block: 16,
+        max_sub_slot_blocks: 128,
+        num_sps_sub_slot: 64,
+        sub_slot_iters_starting: 1 << 27,
+        difficulty_constant_factor: 1 << 67,
+        difficulty_starting: 7,
+        difficulty_change_max_factor: 3,
+        sub_epoch_blocks: 384,
+        epoch_blocks: 4608,
+        significant_bits: 8,
+        discriminant_size_bits: 1024,
+        number_zero_bits_plot_filter_v1: 9,
+        number_zero_bits_plot_filter_v2: 9,
+        min_plot_size_v1: 32,
+        max_plot_size_v1: 59,
+        plot_size_v2: 30,
+        sub_slot_time_target: 600,
+        num_sp_intervals_extra: 3,
+        max_future_time2: 120,
+        number_of_timestamps: 11,
+        genesis_challenge: zero32,
+        agg_sig_me_additional_data: agg_sig_data,
+        agg_sig_parent_additional_data: zero32,
+        agg_sig_puzzle_additional_data: zero32,
+        agg_sig_amount_additional_data: zero32,
+        agg_sig_puzzle_amount_additional_data: zero32,
+        agg_sig_parent_amount_additional_data: zero32,
+        agg_sig_parent_puzzle_additional_data: zero32,
+        genesis_pre_farm_pool_puzzle_hash: zero32,
+        genesis_pre_farm_farmer_puzzle_hash: zero32,
+        max_vdf_witness_size: 8,
+        mempool_block_buffer: 10,
+        max_coin_amount: u64::MAX,
+        max_block_cost_clvm: 11_000_000_000,
+        cost_per_byte: 12000,
+        weight_proof_threshold: 2,
+        weight_proof_recent_blocks: 1000,
+        max_block_count_per_requests: 32,
+        blocks_cache_size: 4608 + 128 * 4,
+        max_generator_ref_list_size: 512,
+        pool_sub_slot_iters: 37_600_000_000,
+        hard_fork_height: 0,
+        hard_fork2_height: 0,
+        soft_fork8_height: 0,
+        plot_v1_phase_out_epoch_bits: 0,
+        plot_filter_128_height: u32::MAX,
+        plot_filter_64_height: u32::MAX,
+        plot_filter_32_height: u32::MAX,
+        min_plot_strength: 0,
+        max_plot_strength: 0,
+        plot_filter_v2_first_adjustment_height: 0,
+        plot_filter_v2_second_adjustment_height: 0,
+        plot_filter_v2_third_adjustment_height: 0,
+    }
+}
+
+fn to_protocol_spend_bundle(
+    allocator: &mut AllocEncoder,
+    txs: &[CoinSpend],
+) -> Result<chia_protocol::SpendBundle, Error> {
+    let mut protocol_spends = Vec::with_capacity(txs.len());
+    let mut agg_sig = Aggsig::default();
+
+    for (i, tx) in txs.iter().enumerate() {
+        let (parent, ph, amount) = tx.coin.get_coin_string_parts()?;
+        let parent_arr: [u8; 32] = parent.bytes().try_into().map_err(|_| Error::StrErr("bad parent".into()))?;
+        let ph_arr: [u8; 32] = ph.bytes().try_into().map_err(|_| Error::StrErr("bad ph".into()))?;
+        let coin = chia_protocol::Coin {
+            parent_coin_info: chia_protocol::Bytes32::from(parent_arr),
+            puzzle_hash: chia_protocol::Bytes32::from(ph_arr),
+            amount: amount.to_u64(),
+        };
+        let puzzle_bytes = tx.bundle.puzzle.to_program().bytes().to_vec();
+        let solution_node = tx.bundle.solution.to_clvm(allocator).into_gen()?;
+        let solution_bytes = Program::from_nodeptr(allocator, solution_node)?.bytes().to_vec();
+        protocol_spends.push(chia_protocol::CoinSpend {
+            coin,
+            puzzle_reveal: chia_protocol::Bytes::from(puzzle_bytes).into(),
+            solution: chia_protocol::Bytes::from(solution_bytes).into(),
+        });
+        if i == 0 {
+            agg_sig = tx.bundle.signature.clone();
+        } else {
+            agg_sig += tx.bundle.signature.clone();
+        }
+    }
+
+    Ok(chia_protocol::SpendBundle {
+        coin_spends: protocol_spends,
+        aggregated_signature: agg_sig.to_bls().into(),
+    })
+}
+
+fn format_validation_error(code: ErrorCode) -> String {
+    let desc = match code {
+        ErrorCode::DuplicateOutput => "duplicate output (two CREATE_COINs with same puzzle_hash and amount)",
+        ErrorCode::BadAggregateSignature => "bad aggregate signature",
+        ErrorCode::InvalidCoinSolution => "invalid coin solution",
+        ErrorCode::InvalidBlockSolution => "invalid puzzle reveal",
+        ErrorCode::WrongPuzzleHash => "wrong puzzle hash",
+        ErrorCode::MintingCoin => "minting coin (outputs exceed input amount)",
+        ErrorCode::CostExceeded => "cost exceeded",
+        ErrorCode::InvalidCondition => "invalid condition",
+        ErrorCode::InvalidPublicKey => "invalid public key in condition",
+        ErrorCode::InvalidMessage => "invalid message in condition",
+        ErrorCode::InvalidCoinAmount => "invalid coin amount",
+        ErrorCode::ReserveFeeConditionFailed => "RESERVE_FEE condition failed",
+        ErrorCode::AssertCoinAnnouncementFailed => "ASSERT_COIN_ANNOUNCEMENT failed",
+        ErrorCode::AssertPuzzleAnnouncementFailed => "ASSERT_PUZZLE_ANNOUNCEMENT failed",
+        ErrorCode::AssertHeightRelativeFailed => "ASSERT_HEIGHT_RELATIVE failed",
+        ErrorCode::AssertHeightAbsoluteFailed => "ASSERT_HEIGHT_ABSOLUTE failed",
+        ErrorCode::AssertSecondsAbsoluteFailed => "ASSERT_SECONDS_ABSOLUTE failed",
+        ErrorCode::AssertSecondsRelativeFailed => "ASSERT_SECONDS_RELATIVE failed",
+        ErrorCode::AssertMyCoinIdFailed => "ASSERT_MY_COIN_ID failed",
+        ErrorCode::AssertMyPuzzleHashFailed => "ASSERT_MY_PUZZLEHASH failed",
+        ErrorCode::AssertMyAmountFailed => "ASSERT_MY_AMOUNT failed",
+        ErrorCode::GeneratorRuntimeError => "CLVM runtime error",
+        ErrorCode::DoubleSpend => "double spend",
+        _ => "validation error",
+    };
+    format!("{desc} ({code:?})")
+}
+
 impl Simulator {
     fn fingerprint_spend_bundle(spends: &[CoinSpend]) -> Hash {
         let mut chunks: Vec<Vec<u8>> = Vec::with_capacity(spends.len() * 4);
@@ -336,29 +466,47 @@ impl Simulator {
                 diagnostic: "duplicate confirmed transaction re-submitted".to_string(),
             });
         }
+
+        // --- Intrinsic validation via chia-consensus ---
+        // This catches: CLVM errors, bad puzzle hashes, duplicate outputs,
+        // invalid conditions, bad aggregate signature, overspend, etc.
+        let protocol_bundle = to_protocol_spend_bundle(allocator, txs)?;
+        let constants = make_sim_consensus_constants();
+        let flags = get_flags_for_height_and_constants(state.height, &constants) | MEMPOOL_MODE;
+        let validated = match validate_clvm_and_signature(
+            &protocol_bundle,
+            constants.max_block_cost_clvm,
+            &constants,
+            flags,
+        ) {
+            Ok(v) => v.0,
+            Err(err) => {
+                let msg = format_validation_error(err.1);
+                if self.strict {
+                    panic!("Strict mode: spend bundle rejected: {msg}");
+                }
+                let code_num: u32 = err.1.into();
+                return Ok(IncludeTransactionResult {
+                    code: 3,
+                    e: Some(code_num),
+                    diagnostic: msg,
+                });
+            }
+        };
+
+        // --- State-dependent checks (need coin store / mempool) ---
         let mut removals = Vec::new();
         let mut additions = Vec::new();
         let mut puzzle_solutions = Vec::new();
-        let mut agg_sig_pairs: Vec<(chia_bls::PublicKey, Vec<u8>)> = Vec::new();
-        let mut aggregate_signature = Aggsig::default();
-        let mut total_input = Amount::default();
-        let mut total_output = Amount::default();
-        let mut total_reserve_fee = Amount::default();
-        let mut created_coin_announcements: HashSet<Hash> = HashSet::new();
-        let mut asserted_coin_announcements: Vec<Vec<u8>> = Vec::new();
-
-        // Track ephemeral coins (created and spent in the same transaction).
         let mut ephemeral_coins: HashMap<CoinID, PuzzleHash> = HashMap::new();
 
         for (i, tx) in txs.iter().enumerate() {
             let coin_id = tx.coin.to_coin_id();
 
-            // Check persistent state first, then ephemeral coins from this tx.
-            let (record_ph, record_created_height) = if let Some(record) = state.coins.get(&coin_id)
-            {
+            let record_created_height = if let Some(record) = state.coins.get(&coin_id) {
                 if record.spent_height.is_some() {
                     if self.strict {
-                        panic!("Strict mode: Coin already spent: {coin_id:?}",);
+                        panic!("Strict mode: Coin already spent: {coin_id:?}");
                     }
                     return Ok(IncludeTransactionResult {
                         code: 3,
@@ -366,12 +514,12 @@ impl Simulator {
                         diagnostic: format!("Coin already spent: {:?}", coin_id),
                     });
                 }
-                (record.puzzle_hash.clone(), record.created_height)
-            } else if let Some(ph) = ephemeral_coins.remove(&coin_id) {
-                (ph, state.height)
+                record.created_height
+            } else if ephemeral_coins.remove(&coin_id).is_some() {
+                state.height
             } else {
                 if self.strict {
-                    panic!("Strict mode: Coin not found: {coin_id:?}",);
+                    panic!("Strict mode: Coin not found: {coin_id:?}");
                 }
                 return Ok(IncludeTransactionResult {
                     code: 3,
@@ -380,215 +528,58 @@ impl Simulator {
                 });
             };
 
-            let (_, _, coin_amount) = tx.coin.get_coin_string_parts()?;
-            total_input += coin_amount;
-
-            let puzzle_program: Program = (*tx.bundle.puzzle.to_program()).clone();
-            let computed_ph = puzzle_program.sha256tree(allocator);
-            if computed_ph != record_ph {
-                if self.strict {
-                    panic!(
-                        "Strict mode: puzzle hash MISMATCH for coin {i}: coin_id={coin_id:?} coin_ph={record_ph:?} computed_ph={computed_ph:?}",
-                    );
+            // Use validated conditions for state tracking.
+            if let Some(spend_conds) = validated.spends.get(i) {
+                for (ph_bytes, amt, _memo) in &spend_conds.create_coin {
+                    let ph = PuzzleHash::from_hash(Hash::from_bytes(ph_bytes.to_bytes()));
+                    let amount = Amount::new(*amt);
+                    let child = CoinString::from_parts(&coin_id, &ph, &amount);
+                    ephemeral_coins.insert(child.to_coin_id(), ph.clone());
+                    additions.push((coin_id.clone(), ph, amount));
                 }
-                return Ok(IncludeTransactionResult {
-                    code: 3,
-                    e: Some(6),
-                    diagnostic: format!(
-                        "Puzzle hash mismatch for coin {}: expected {:?}, got {computed_ph:?}",
-                        i, record_ph,
-                    ),
-                });
-            }
-            let solution_bytes = tx.bundle.solution.to_clvm(allocator).into_gen()?;
-            let solution_program = Program::from_nodeptr(allocator, solution_bytes)?;
 
-            let conditions = match CoinCondition::from_puzzle_and_solution(
-                allocator,
-                &puzzle_program,
-                &solution_program,
-            ) {
-                Ok(c) => c,
-                Err(e) => {
-                    let puzzle_hex = puzzle_program.to_hex();
-                    let sol_hex = solution_program.to_hex();
-                    if self.strict {
-                        panic!(
-                            "Strict mode: CLVM execution error for coin {i}: \
-                             coin_id={coin_id:?} coin_ph={record_ph:?} computed_ph={computed_ph:?}\n  \
-                             puzzle_len={} solution_len={}\n  err={e:?}",
-                            puzzle_hex.len() / 2,
-                            sol_hex.len() / 2,
-                        );
-                    }
-                    eprintln!(
-                        "PUSH_TX: CLVM error for coin {i}: coin_id={coin_id:?} coin_ph={record_ph:?} computed_ph={computed_ph:?}\n  puzzle_len={} solution_len={}\n  err={e:?}",
-                        puzzle_hex.len() / 2, sol_hex.len() / 2,
-                    );
-                    return Ok(IncludeTransactionResult {
-                        code: 3,
-                        e: Some(7),
-                        diagnostic: format!("CLVM execution error for coin {}: {:?}", i, e),
-                    });
-                }
-            };
-
-            for cond in &conditions {
-                match cond {
-                    CoinCondition::CreateCoin(ph, amt) => {
-                        total_output += amt.clone();
-                        let child = CoinString::from_parts(&coin_id, ph, amt);
-                        ephemeral_coins.insert(child.to_coin_id(), ph.clone());
-                        additions.push((coin_id.clone(), ph.clone(), amt.clone()));
-                    }
-                    CoinCondition::AggSigMe(pk, msg) => {
-                        let full_msg = agg_sig_me_message(
-                            msg,
-                            &coin_id,
-                            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
-                        );
-                        agg_sig_pairs.push((pk.to_bls(), full_msg));
-                    }
-                    CoinCondition::AggSigUnsafe(pk, msg) => {
-                        agg_sig_pairs.push((pk.to_bls(), msg.clone()));
-                    }
-                    CoinCondition::ReserveFee(amt) => {
-                        total_reserve_fee += amt.clone();
-                    }
-                    CoinCondition::CreateCoinAnnouncement(msg) => {
-                        let ann = Sha256Input::Array(vec![
-                            Sha256Input::Bytes(coin_id.bytes()),
-                            Sha256Input::Bytes(msg),
-                        ])
-                        .hash();
-                        created_coin_announcements.insert(ann);
-                    }
-                    CoinCondition::AssertCoinAnnouncement(announcement_id) => {
-                        asserted_coin_announcements.push(announcement_id.clone());
-                    }
-                    CoinCondition::AssertHeightRelative(blocks) => {
-                        let elapsed = state.height.saturating_sub(record_created_height);
-                        if (elapsed as u64) < *blocks {
-                            if self.strict {
-                                panic!(
-                                    "Strict mode: ASSERT_HEIGHT_RELATIVE violated: \
-                                     coin {:?} created at height {}, current height {}, \
-                                     elapsed {} but required {}",
-                                    coin_id, record_created_height, state.height, elapsed, blocks,
-                                );
-                            }
-                            return Ok(IncludeTransactionResult {
-                                code: 3,
-                                e: Some(8),
-                                diagnostic: format!(
-                                    "Relative timelock not satisfied: elapsed {} < required {}",
-                                    elapsed, blocks,
-                                ),
-                            });
+                // ASSERT_HEIGHT_RELATIVE needs the actual creation height.
+                if let Some(required) = spend_conds.height_relative {
+                    let elapsed = state.height.saturating_sub(record_created_height);
+                    if elapsed < required {
+                        if self.strict {
+                            panic!(
+                                "Strict mode: ASSERT_HEIGHT_RELATIVE violated: \
+                                 coin {:?} created at height {}, current height {}, \
+                                 elapsed {} but required {}",
+                                coin_id, record_created_height, state.height, elapsed, required,
+                            );
                         }
+                        return Ok(IncludeTransactionResult {
+                            code: 3,
+                            e: Some(8),
+                            diagnostic: format!(
+                                "Relative timelock not satisfied: elapsed {} < required {}",
+                                elapsed, required,
+                            ),
+                        });
                     }
-                    _ => {}
                 }
             }
 
             removals.push(coin_id.clone());
+            let puzzle_program: Program = (*tx.bundle.puzzle.to_program()).clone();
+            let solution_node = tx.bundle.solution.to_clvm(allocator).into_gen()?;
+            let solution_program = Program::from_nodeptr(allocator, solution_node)?;
             puzzle_solutions.push((coin_id, puzzle_program, solution_program));
-
-            if i == 0 {
-                aggregate_signature = tx.bundle.signature.clone();
-            } else {
-                aggregate_signature += tx.bundle.signature.clone();
-            }
         }
 
-        for expected in &asserted_coin_announcements {
-            let expected_hash = match Hash::from_slice(expected) {
-                Ok(h) => h,
-                Err(_) => {
-                    if self.strict {
-                        panic!(
-                            "Strict mode: ASSERT_COIN_ANNOUNCEMENT has invalid id length: {}",
-                            expected.len()
-                        );
-                    }
-                    return Ok(IncludeTransactionResult {
-                        code: 3,
-                        e: Some(23),
-                        diagnostic: format!(
-                            "ASSERT_COIN_ANNOUNCEMENT has invalid id length: {}",
-                            expected.len()
-                        ),
-                    });
-                }
-            };
-            if !created_coin_announcements.contains(&expected_hash) {
-                let created_hex: Vec<String> = created_coin_announcements
-                    .iter()
-                    .map(|h| format!("{:?}", h))
-                    .collect();
-                if self.strict {
-                    panic!(
-                        "Strict mode: ASSERT_COIN_ANNOUNCEMENT failed: announcement {:?} not created in spend bundle; created={:?}",
-                        expected_hash, created_hex
-                    );
-                }
-                return Ok(IncludeTransactionResult {
-                    code: 3,
-                    e: Some(24),
-                    diagnostic: format!(
-                        "ASSERT_COIN_ANNOUNCEMENT failed: announcement {:?} not created in spend bundle; created={:?}",
-                        expected_hash, created_hex
-                    ),
-                });
-            }
-        }
-
-        if total_output > total_input {
-            if self.strict {
+        if self.strict {
+            let total_input = validated.removal_amount;
+            let total_output = validated.addition_amount;
+            let implicit_fee = total_input - total_output;
+            if implicit_fee != validated.reserve_fee as u128 {
                 panic!(
-                    "Strict mode: Minting coins: outputs ({}) exceed inputs ({})",
-                    total_output.to_u64(),
-                    total_input.to_u64(),
+                    "Strict mode: implicit fee ({}) != declared RESERVE_FEE ({}). \
+                     All fees must be explicitly declared.",
+                    implicit_fee, validated.reserve_fee,
                 );
             }
-            return Ok(IncludeTransactionResult {
-                code: 3,
-                e: Some(20),
-                diagnostic: format!(
-                    "Minting coins: outputs ({}) exceed inputs ({})",
-                    total_output.to_u64(),
-                    total_input.to_u64()
-                ),
-            });
-        }
-
-        let implicit_fee = Amount::new(total_input.to_u64() - total_output.to_u64());
-        if total_reserve_fee > implicit_fee {
-            if self.strict {
-                panic!(
-                    "Strict mode: RESERVE_FEE not satisfied: declared {} but only {} available",
-                    total_reserve_fee.to_u64(),
-                    implicit_fee.to_u64(),
-                );
-            }
-            return Ok(IncludeTransactionResult {
-                code: 3,
-                e: Some(21),
-                diagnostic: format!(
-                    "RESERVE_FEE not satisfied: declared {} but only {} available",
-                    total_reserve_fee.to_u64(),
-                    implicit_fee.to_u64()
-                ),
-            });
-        }
-
-        if self.strict && implicit_fee != total_reserve_fee {
-            panic!(
-                "Strict mode: implicit fee ({}) != declared RESERVE_FEE ({}). \
-                 All fees must be explicitly declared.",
-                implicit_fee.to_u64(),
-                total_reserve_fee.to_u64()
-            );
         }
 
         // Check for duplicate or conflicting transactions already in the mempool.
@@ -624,28 +615,6 @@ impl Simulator {
         }
 
         drop(state);
-
-        if !agg_sig_pairs.is_empty() {
-            let pairs: Vec<(&chia_bls::PublicKey, &[u8])> = agg_sig_pairs
-                .iter()
-                .map(|(pk, msg)| (pk, msg.as_slice()))
-                .collect();
-            if !aggregate_verify(&aggregate_signature.to_bls(), pairs.clone()) {
-                if self.strict {
-                    panic!(
-                        "Strict mode: Aggregate signature verification failed \
-                         ({} sig pairs, {} coin spends)",
-                        agg_sig_pairs.len(),
-                        txs.len(),
-                    );
-                }
-                return Ok(IncludeTransactionResult {
-                    code: 3,
-                    e: Some(10),
-                    diagnostic: "Aggregate signature verification failed".to_string(),
-                });
-            }
-        }
 
         self.state.borrow_mut().mempool.push(PendingSpend {
             fingerprint: tx_fingerprint,

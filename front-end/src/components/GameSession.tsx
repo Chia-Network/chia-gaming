@@ -245,7 +245,6 @@ function ErrorAttentionOverlay({
 }) {
   const { cardRef, x, y, clampToViewport } = useViewportClampedDragWithInsets(boundsRef, { top: 8 });
   const dragControls = useDragControls();
-  const [copied, setCopied] = useState(false);
   return (
     <motion.div
       ref={cardRef}
@@ -270,23 +269,9 @@ function ErrorAttentionOverlay({
         <Separator />
         <CardContent className='pt-4 flex flex-col gap-2'>
           <pre className='text-sm text-canvas-text-contrast whitespace-pre-wrap break-all font-sans select-text cursor-text max-h-[60vh] overflow-auto'>{message}</pre>
-          <div className='flex gap-2'>
-            <Button
-              variant="outline"
-              className='flex-1'
-              onClick={() => {
-                navigator.clipboard.writeText(message).then(() => {
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 2000);
-                });
-              }}
-            >
-              {copied ? 'Copied' : 'Copy'}
-            </Button>
-            <Button variant="solid" onClick={onDismiss} className='flex-1'>
-              Dismiss
-            </Button>
-          </div>
+          <Button variant="solid" onClick={onDismiss}>
+            Dismiss
+          </Button>
         </CardContent>
       </Card>
     </motion.div>

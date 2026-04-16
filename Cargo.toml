@@ -20,6 +20,8 @@ used_linker = []
 [dependencies]
 bson = "=2.14.0"
 chia-bls = "=0.38.2"
+chia-consensus = "=0.38.2"
+chia-protocol = "=0.38.2"
 chia-puzzles = "=0.20.2"
 clvm-traits = "=0.38.2"
 clvm-utils = "=0.38.2"

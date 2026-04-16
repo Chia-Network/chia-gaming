@@ -294,20 +294,6 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async beginConnect(uniqueId: string): Promise<ConnectionSetup> {
-    try {
-      await this.ensureConnected();
-      await this.sendRequest('register', { name: uniqueId });
-      this.uniqueId = uniqueId;
-      return {
-        qrUri: `sim://${this.wsUrl.replace('ws://', '')}/${uniqueId}`,
-        finalize: async () => {
-          await this.startMonitoring();
-        },
-      };
-    } catch {
-      // Server unreachable or user not registered — fresh connection needed
-    }
-
     return {
       qrUri: `sim://${this.wsUrl.replace('ws://', '')}/${uniqueId}`,
       fields: {

@@ -159,6 +159,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "43c5703da9466b66a946814e1adf53ea2c90f10063b86290cc9eb67ce3478a20"
 dependencies = [
  "find-msvc-tools",
+ "jobserver",
+ "libc",
  "shlex",
 ]
 
@@ -198,6 +200,73 @@ dependencies = [
  "linked-hash-map",
  "sha2",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "chia-consensus"
+version = "0.38.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a12ae0570d4476bd77c607bcb0cb1bc7a2c97339c71a631001ad469b391ded35"
+dependencies = [
+ "bitflags",
+ "chia-bls 0.38.2",
+ "chia-protocol",
+ "chia-puzzle-types",
+ "chia-puzzles",
+ "chia-sha2 0.38.2",
+ "chia-traits 0.38.2",
+ "chia_streamable_macro 0.38.2",
+ "clvm-traits",
+ "clvm-utils",
+ "clvmr",
+ "hex",
+ "hex-literal",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "chia-pos2"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aa3b1e899706eb86eb8d3d6d5e0f6f59259a3603d2a32aaae8c405f3814efc3"
+dependencies = [
+ "cc",
+ "serde",
+ "serde-big-array",
+]
+
+[[package]]
+name = "chia-protocol"
+version = "0.38.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5792ec5c6fc7f4ba0569cf5298ccf5366995b406545e244f34cf6b913df4574f"
+dependencies = [
+ "chia-bls 0.38.2",
+ "chia-pos2",
+ "chia-sha2 0.38.2",
+ "chia-traits 0.38.2",
+ "chia_streamable_macro 0.38.2",
+ "clvm-traits",
+ "clvm-utils",
+ "clvmr",
+ "hex",
+]
+
+[[package]]
+name = "chia-puzzle-types"
+version = "0.38.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "444c9f7a69b4781f42a4ab76b2147f545f154cb15d0dc77a64badab7f565c62e"
+dependencies = [
+ "chia-bls 0.38.2",
+ "chia-protocol",
+ "chia-puzzles",
+ "chia-sha2 0.38.2",
+ "clvm-traits",
+ "clvm-utils",
+ "clvmr",
+ "hex-literal",
+ "num-bigint",
 ]
 
 [[package]]
@@ -256,6 +325,8 @@ version = "0.1.0"
 dependencies = [
  "bson",
  "chia-bls 0.38.2",
+ "chia-consensus",
+ "chia-protocol",
  "chia-puzzles",
  "chialisp",
  "clvm-traits",
@@ -338,11 +409,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e4de3bc4ea267985becf712dc6d9eed8b04c953b3fcfb339ebc87acd9804901"
 
 [[package]]
+name = "clvm-derive"
+version = "0.38.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75d458221596ef49edbf3b7d0de6d87fc1d0632f1fc3e9e54373e5f58a7c123e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "clvm-traits"
 version = "0.38.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "58153aa0d651ad8c28957b92bb27f54951e1f535bc43ffd4b5cdaeec53ff537b"
 dependencies = [
+ "chia-bls 0.38.2",
+ "clvm-derive",
  "clvmr",
  "num-bigint",
  "thiserror 1.0.69",
@@ -799,6 +883,16 @@ name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
+
+[[package]]
+name = "jobserver"
+version = "0.1.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9afb3de4395d6b3e67a780b6de64b51c978ecf11cb9a462c66be7d4ca9039d33"
+dependencies = [
+ "getrandom 0.3.4",
+ "libc",
+]
 
 [[package]]
 name = "js-sys"
@@ -1301,6 +1395,15 @@ checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
 dependencies = [
  "serde_core",
  "serde_derive",
+]
+
+[[package]]
+name = "serde-big-array"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11fc7cc2c76d73e0f27ee52abbd64eec84d46f370c88371120433196934e4b7f"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

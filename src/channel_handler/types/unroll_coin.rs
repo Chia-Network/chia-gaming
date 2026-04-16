@@ -266,6 +266,15 @@ impl UnrollCoin {
         let unroll_aggregate_key = unroll_public_key.clone() + their_unroll_coin_public_key.clone();
         let unroll_signature =
             unsafe_sign_partial(unroll_private_key, &unroll_aggregate_key, base_hash.bytes());
+
+        eprintln!(
+            "[sig-diag] UnrollCoin::update state={} base_hash={} agg_key={} half_sig={}",
+            self.state_number,
+            hex::encode(base_hash.bytes()),
+            hex::encode(unroll_aggregate_key.bytes()),
+            hex::encode(unroll_signature.bytes()),
+        );
+
         self.outcome = Some(UnrollCoinOutcome {
             conditions: timeout_conditions,
             conditions_without_hash: base_conditions,
@@ -283,16 +292,29 @@ impl UnrollCoin {
         aggregate_unroll_public_key: &PublicKey,
         signature: &Aggsig,
     ) -> Result<bool, Error> {
-        // Check the signature of the unroll coin spend.
         let unroll_puzzle_solution = self.get_internal_conditions_for_unroll_coin_spend()?;
         let unroll_puzzle_solution_hash = unroll_puzzle_solution.sha256tree(env.allocator);
 
-        let aggregate_unroll_signature = signature.clone() + self.get_unroll_coin_signature()?;
+        let our_half = self.get_unroll_coin_signature()?;
+        let aggregate_unroll_signature = signature.clone() + our_half.clone();
 
-        Ok(aggregate_unroll_signature.verify(
+        let result = aggregate_unroll_signature.verify(
             aggregate_unroll_public_key,
             unroll_puzzle_solution_hash.bytes(),
-        ))
+        );
+
+        eprintln!(
+            "[sig-diag] UnrollCoin::verify state={} hash={} agg_key={} peer_half={} our_half={} agg_sig={} ok={}",
+            self.state_number,
+            hex::encode(unroll_puzzle_solution_hash.bytes()),
+            hex::encode(aggregate_unroll_public_key.bytes()),
+            hex::encode(signature.bytes()),
+            hex::encode(our_half.bytes()),
+            hex::encode(aggregate_unroll_signature.bytes()),
+            result,
+        );
+
+        Ok(result)
     }
 }
 
