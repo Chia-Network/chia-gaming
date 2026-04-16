@@ -53,7 +53,7 @@ async function coinIdHex(coin: unknown): Promise<string | null> {
   return bytes ? coinIdFromBytes(bytes) : null;
 }
 
-export type GameTurnState = 'my-turn' | 'their-turn' | 'replaying' | 'opponent-illegal-move' | 'ended';
+export type GameTurnState = 'my-turn' | 'their-turn' | 'playing-on-chain' | 'replaying' | 'opponent-illegal-move' | 'ended';
 
 export interface GameCoinInfo {
   coinHex: string | null;
@@ -423,7 +423,11 @@ export function useGameSession(
   const onTurnChanged = useCallback((isMyTurn: boolean) => {
     setGameCoin(prev => ({
       coinHex: prev.coinHex,
-      turnState: isMyTurn ? 'my-turn' : 'their-turn',
+      turnState: isMyTurn
+        ? 'my-turn'
+        : ON_CHAIN_FLOW_STATES.has(channelStateRef.current)
+          ? 'playing-on-chain'
+          : 'their-turn',
     }));
   }, []);
 

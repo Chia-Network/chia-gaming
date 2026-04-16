@@ -1896,6 +1896,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 | GameStatusKind::EndedCancelled
                 | GameStatusKind::EndedError
                 | GameStatusKind::EndedWeTimedOut
+                | GameStatusKind::EndedOpponentTimedOut
         )
     }
     for (i, lui) in local_uis.iter().enumerate() {
@@ -1960,7 +1961,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             assert!(
                 is_allowed_unroll_finish_status(status),
                 "player {i}: first post-unroll status for game {gid:?} is {status:?}, expected one of \
-                 OnChainMyTurn/OnChainTheirTurn/Replaying/EndedCancelled/EndedError/EndedWeTimedOut.\n\
+                 OnChainMyTurn/OnChainTheirTurn/Replaying/EndedCancelled/EndedError/EndedWeTimedOut/EndedOpponentTimedOut.\n\
                  All notifications: {:?}",
                 lui.notifications,
             );
@@ -2652,11 +2653,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::OpponentMoved {
                         mover_share: Amount::new(0),
                     },
-                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-                    ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
-                    ExpectedEvent::Notification(
-                        ExpectedNotification::GameStatusEndedOpponentTimedOut,
-                    ),
+                    // Alice reaches step e but lost — skip heuristic fires,
+                    // she doesn't submit her losing final move.
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
                 ],
                 "piss_off_complete p0",
             );
@@ -2682,13 +2681,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ExpectedEvent::Notification(ExpectedNotification::ChannelState(
                         ChannelState::ResolvedUnrolled,
                     )),
-                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                    // Bob replays his moves on-chain; Alice skips her losing
+                    // step e so Bob never sees her final move.  Alice times out.
                     ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
-                    ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-                    ExpectedEvent::OpponentMoved {
-                        mover_share: Amount::new(200),
-                    },
-                    ExpectedEvent::Notification(ExpectedNotification::GameStatusEndedWeTimedOut),
+                    ExpectedEvent::Notification(ExpectedNotification::GameStatusMovedByUs),
+                    ExpectedEvent::Notification(
+                        ExpectedNotification::GameStatusEndedOpponentTimedOut,
+                    ),
                 ],
                 "piss_off_complete p1",
             );
@@ -6005,8 +6004,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Alice makes a move with mover_share = 200 (full pot to Bob).
         // The potato comes back (move is acknowledged).  Go on-chain.
         // After unroll it's Bob's turn with mover_share = 200 — Alice as
-        // waiter gets 0.  The opponent has no incentive to move.  Alice
-        // should get immediate WeTimedOut(0).
+        // waiter gets 0.  Bob has no incentive to move (he gets everything
+        // on timeout).  Alice gets immediate OpponentTimedOut(0) because
+        // it's the opponent's turn and our share is zero.
         let moves = [DebugGameTestMove::new(200, 0)];
         let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
 
@@ -6033,13 +6033,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             p0_notifs.iter().any(|n| matches!(
                 n,
                 GameNotification::GameStatus {
-                    status: GameStatusKind::EndedWeTimedOut,
+                    status: GameStatusKind::EndedOpponentTimedOut,
                     my_reward: Some(our_reward),
                     coin_id: None,
                     ..
                 } if *our_reward == Amount::default()
             )),
-            "Alice should get WeTimedOut with zero reward (opponent's turn, dead game), got: {p0_notifs:?}"
+            "Alice should get OpponentTimedOut with zero reward (opponent's turn, dead game), got: {p0_notifs:?}"
         );
     }));
 
@@ -6095,6 +6095,44 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 } if *our_reward == Amount::default()
             )),
             "Alice should get WeTimedOut with zero reward (on-chain move skipped), got: {p0_notifs:?}"
+        );
+    }));
+
+    res.push(("test_calpoker_losing_step_e_skipped", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        // With the deterministic prefix_test_moves seed, Alice loses.
+        // Play steps a–d off-chain, then go on-chain and queue step e.
+        // The on-chain handler should detect mover_share == game_amount
+        // at step e and skip the move instead of submitting it.
+        let mut moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(1)),
+        ];
+        moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+
+        // Pop step e (Alice's final move) and pair it with GoOnChainThenMove.
+        let step_e = moves.pop().unwrap();
+        moves.push(GameAction::GoOnChainThenMove(0));
+        moves.push(step_e);
+        moves.push(GameAction::WaitBlocks(120, 1));
+        moves.push(GameAction::WaitBlocks(5, 0));
+
+        let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
+            .expect("should finish");
+
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        assert!(
+            p0_notifs.iter().any(|n| matches!(
+                n,
+                GameNotification::GameStatus {
+                    status: GameStatusKind::EndedWeTimedOut,
+                    my_reward: Some(our_reward),
+                    coin_id: None,
+                    ..
+                } if *our_reward == Amount::default()
+            )),
+            "Alice should get WeTimedOut with zero reward (losing step e skipped), got: {p0_notifs:?}"
         );
     }));
 

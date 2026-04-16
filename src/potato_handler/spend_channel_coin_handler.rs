@@ -825,7 +825,7 @@ impl SpendChannelCoinHandler {
                 status: GameStatusKind::EndedWeTimedOut,
                 my_reward: Some(our_share.clone()),
                 coin_id: on_chain_reward_coin.clone(),
-                reason: None,
+                reason: Some("preempt resolved: game accepted off-chain before unroll".to_string()),
                 other_params: None,
             }));
         }
@@ -855,10 +855,16 @@ impl SpendChannelCoinHandler {
                     player_ch.is_redo_zero_reward(coin, &state.game_id)
                 };
                 if dominated {
-                    zero_reward_games.push((coin.clone(), state.game_id, state.game_finished));
+                    zero_reward_games.push((
+                        coin.clone(),
+                        state.game_id,
+                        state.game_finished,
+                        state.our_turn,
+                        state.accepted,
+                    ));
                 }
             }
-            for (coin, game_id, game_finished) in &zero_reward_games {
+            for (coin, game_id, game_finished, our_turn, accepted) in &zero_reward_games {
                 game_map.remove(coin);
                 let finished_params = if *game_finished {
                     Some(GameStatusOtherParams {
@@ -868,12 +874,27 @@ impl SpendChannelCoinHandler {
                 } else {
                     None
                 };
+                let (status, reason) = if *our_turn || *accepted {
+                    (
+                        GameStatusKind::EndedWeTimedOut,
+                        if *accepted {
+                            "zero reward: game was accepted but our share is zero"
+                        } else {
+                            "zero reward: our replayed move yields nothing"
+                        },
+                    )
+                } else {
+                    (
+                        GameStatusKind::EndedOpponentTimedOut,
+                        "zero reward: opponent's turn and our share is zero",
+                    )
+                };
                 effects.push(Effect::Notify(GameNotification::GameStatus {
                     id: *game_id,
-                    status: GameStatusKind::EndedWeTimedOut,
+                    status,
                     my_reward: Some(Amount::default()),
                     coin_id: None,
-                    reason: None,
+                    reason: Some(reason.to_string()),
                     other_params: finished_params,
                 }));
             }

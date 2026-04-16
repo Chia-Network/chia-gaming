@@ -1410,12 +1410,18 @@ impl OnChainGameHandler {
         }
 
         let game_amount = self.get_game_amount(&game_id)?;
+
+        let has_pending_slash = self
+            .game_map
+            .values()
+            .any(|g| g.game_id == game_id && g.pending_slash_amount.is_some());
+
         let (pre_referee, pre_last_ph) = self.save_game_state(&game_id)?;
 
         let (old_ph, new_ph, _state_number, move_result, transaction) =
             self.on_chain_our_move(env, &game_id, &readable_move, entropy.clone(), current_coin)?;
 
-        if move_result.basic.mover_share == game_amount && move_result.basic.max_move_size > 0 {
+        if !has_pending_slash && move_result.basic.mover_share == game_amount {
             let finished = self.is_game_finished(&game_id);
             self.restore_game_state(&game_id, pre_referee, pre_last_ph)?;
             self.game_map.retain(|_, def| def.game_id != game_id);
@@ -1432,7 +1438,7 @@ impl OnChainGameHandler {
                 status: GameStatusKind::EndedWeTimedOut,
                 my_reward: Some(Amount::default()),
                 coin_id: None,
-                reason: None,
+                reason: Some("abandoned: opponent gets everything after our move".to_string()),
                 other_params: finished_params,
             })));
         }
@@ -1561,7 +1567,7 @@ impl OnChainGameHandler {
                             status: GameStatusKind::EndedWeTimedOut,
                             my_reward: Some(Amount::default()),
                             coin_id: None,
-                            reason: None,
+                            reason: Some("zero reward: our turn to accept timeout but our share is zero".to_string()),
                             other_params: finished_params,
                         })]);
                     }

@@ -64,13 +64,14 @@ const CHANNEL_STATE_LABELS: Record<ChannelState, string> = {
 const GAME_TURN_LABELS: Record<GameTurnState, string> = {
   'my-turn': 'Your turn',
   'their-turn': 'Their turn',
+  'playing-on-chain': 'Playing our move on-chain',
   'replaying': 'Replaying our move on-chain',
   'opponent-illegal-move': 'Your turn (opponent attempted illegal move)',
   'ended': 'Ended',
 };
 
 function channelCoinLabelForState(state: ChannelState): string {
-  if (state === 'ResolvedUnrolled' || state === 'ResolvedStale') {
+  if (state === 'ResolvedClean' || state === 'ResolvedUnrolled' || state === 'ResolvedStale') {
     return 'Channel reward coin ID';
   }
   if (state === 'Unrolling') {
