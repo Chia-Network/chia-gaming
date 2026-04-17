@@ -1207,6 +1207,7 @@ impl PeerHandler for SpendChannelCoinHandler {
             our_balance,
             their_balance,
             game_allocated,
+            have_potato: None,
         })
     }
     fn channel_handler(&self) -> Result<&ChannelHandler, Error> {

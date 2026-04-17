@@ -1617,6 +1617,7 @@ impl PeerHandler for PotatoHandler {
             our_balance: Some(ch.my_out_of_game_balance()),
             their_balance: Some(ch.their_out_of_game_balance()),
             game_allocated: Some(ch.total_game_allocated()),
+            have_potato: Some(matches!(self.have_potato, PotatoState::Present)),
         })
     }
     fn channel_handler(&self) -> Result<&ChannelHandler, Error> {

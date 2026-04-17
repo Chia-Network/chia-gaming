@@ -142,6 +142,7 @@ export interface ChannelStatusPayload {
   our_balance: unknown;
   their_balance: unknown;
   game_allocated: unknown;
+  have_potato?: boolean | null;
 }
 
 export type WasmNotification = {

@@ -92,6 +92,7 @@ export interface ChannelStatusInfo {
   ourBalance: string | null;
   theirBalance: string | null;
   gameAllocated: string | null;
+  havePotato: boolean | null;
 }
 
 const INITIAL_CHANNEL_STATUS: ChannelStatusInfo = {
@@ -102,6 +103,7 @@ const INITIAL_CHANNEL_STATUS: ChannelStatusInfo = {
   ourBalance: null,
   theirBalance: null,
   gameAllocated: null,
+  havePotato: null,
 };
 
 function channelStatusFromPayload(cs: ChannelStatusPayload, coinHex: string | null): ChannelStatusInfo {
@@ -118,6 +120,7 @@ function channelStatusFromPayload(cs: ChannelStatusPayload, coinHex: string | nu
     ourBalance: resolvedShare,
     theirBalance: parseAmount(cs.their_balance),
     gameAllocated: parseAmount(cs.game_allocated),
+    havePotato: cs.have_potato ?? null,
   };
 }
 

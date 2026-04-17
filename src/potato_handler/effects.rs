@@ -50,6 +50,7 @@ pub struct ChannelStatusSnapshot {
     pub our_balance: Option<Amount>,
     pub their_balance: Option<Amount>,
     pub game_allocated: Option<Amount>,
+    pub have_potato: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -123,6 +124,8 @@ pub enum GameNotification {
         our_balance: Option<Amount>,
         their_balance: Option<Amount>,
         game_allocated: Option<Amount>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        have_potato: Option<bool>,
     },
 }
 

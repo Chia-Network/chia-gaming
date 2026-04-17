@@ -477,7 +477,9 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
   const [dismissedError, setDismissedError] = useState(false);
 
   const handEverStarted = session.handKey > 0;
-  const channelStateLabel = CHANNEL_STATE_LABELS[session.channelStatus.state] ?? session.channelStatus.state;
+  const channelStateLabel = session.channelStatus.state === 'Active' && session.channelStatus.havePotato
+    ? 'Active \u{1F954}'
+    : CHANNEL_STATE_LABELS[session.channelStatus.state] ?? session.channelStatus.state;
   const channelCoinLabel = channelCoinLabelForState(session.channelStatus.state);
   const gameStateLabel = session.gameTerminal.label ?? GAME_TURN_LABELS[session.gameCoin.turnState];
   const gameCoinLabel = session.gameTerminal.type !== 'none' ? 'Game reward coin ID' : 'Game coin ID';

@@ -771,6 +771,7 @@ impl PeerHandler for HandshakeInitiatorHandler {
                     our_balance: None,
                     their_balance: None,
                     game_allocated: None,
+                    have_potato: None,
                 });
             }
         }
@@ -794,6 +795,7 @@ impl PeerHandler for HandshakeInitiatorHandler {
                     .channel_handler
                     .as_ref()
                     .map(|ch| ch.total_game_allocated()),
+                have_potato: None,
             });
         }
         let state = match &self.state {
@@ -832,6 +834,7 @@ impl PeerHandler for HandshakeInitiatorHandler {
             our_balance,
             their_balance,
             game_allocated,
+            have_potato: None,
         })
     }
     fn channel_handler(&self) -> Result<&ChannelHandler, Error> {

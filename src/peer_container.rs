@@ -899,6 +899,7 @@ impl SynchronousGameCradle {
             our_balance: snap.our_balance.clone(),
             their_balance: snap.their_balance.clone(),
             game_allocated: snap.game_allocated.clone(),
+            have_potato: snap.have_potato,
         }
     }
 

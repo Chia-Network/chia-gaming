@@ -1374,6 +1374,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                                     our_balance: None,
                                     their_balance: None,
                                     game_allocated: None,
+                                    have_potato: None,
                                 })?;
                             }
                             CradleEvent::CoinSolutionRequest(coin) => {

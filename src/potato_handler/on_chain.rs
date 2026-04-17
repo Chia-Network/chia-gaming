@@ -1798,6 +1798,7 @@ impl PeerHandler for OnChainGameHandler {
             our_balance: Some(self.my_out_of_game_balance.clone()),
             their_balance: Some(self.their_out_of_game_balance.clone()),
             game_allocated: None,
+            have_potato: None,
         })
     }
 
