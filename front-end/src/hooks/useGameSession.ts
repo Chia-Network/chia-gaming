@@ -493,6 +493,8 @@ export function useGameSession(
       if (!iStarted) {
         const proposalId = String(n.ProposalMade!.id);
         if (!firstGameAcceptedRef.current || wantsNewGameRef.current) {
+          debugLog(`[notify] ProposalMade id=${proposalId} auto-accepting`);
+          firstGameAcceptedRef.current = true;
           wantsNewGameRef.current = false;
           try {
             go?.acceptProposal(proposalId);
@@ -500,6 +502,7 @@ export function useGameSession(
             console.error('acceptProposal failed:', e);
           }
         } else {
+          debugLog(`[notify] ProposalMade id=${proposalId} deferred (firstAccepted=${firstGameAcceptedRef.current} wantsNew=${wantsNewGameRef.current})`);
           pendingProposalIdRef.current = proposalId;
         }
       }
@@ -507,6 +510,7 @@ export function useGameSession(
       firstGameAcceptedRef.current = true;
       const gpa = n.ProposalAccepted!;
       const newId = String(gpa.id);
+      debugLog(`[notify] ProposalAccepted id=${newId} handKey will increment`);
       setGameIds(prev => [...prev, newId]);
       gameIdsRef.current = [...gameIdsRef.current, newId];
       setShowBetweenHandOverlay(false);

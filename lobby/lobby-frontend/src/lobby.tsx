@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useLobbySocket, ChallengeReceived } from './useLobbySocket';
 import { getSearchParams } from './util';
 import { Edit, Cross, User, Crown, Swords } from 'lucide-react';
@@ -11,22 +11,7 @@ const LobbyScreen = () => {
 
   const [myAlias, setMyAlias] = useState('');
   const [aliasConfirmed, setAliasConfirmed] = useState(false);
-  const [aliasLoading, setAliasLoading] = useState(true);
   const [editingAlias, setEditingAlias] = useState(false);
-
-  useEffect(() => {
-    if (!uniqueId) return;
-    fetch(`${window.location.origin}/lobby/alias?id=${encodeURIComponent(uniqueId)}`)
-      .then((r) => r.json())
-      .then(({ alias }) => {
-        if (alias) {
-          setMyAlias(alias);
-          setAliasConfirmed(true);
-        }
-        setAliasLoading(false);
-      })
-      .catch(() => setAliasLoading(false));
-  }, [uniqueId]);
 
   const {
     players,
@@ -36,6 +21,10 @@ const LobbyScreen = () => {
     isConnected,
     isReconnecting,
     reconnectBlocked,
+    savedAlias,
+    aliasLoaded,
+    joinLobby,
+    setAlias,
     sendChallenge,
     acceptChallenge,
     declineChallenge,
@@ -43,22 +32,28 @@ const LobbyScreen = () => {
     setLobbyAlias,
   } = useLobbySocket(
     window.location.origin,
-    aliasConfirmed ? uniqueId : '',
+    uniqueId,
     sessionId,
-    aliasConfirmed ? myAlias : undefined,
   );
+
+  const autoJoinedRef = useRef(false);
+  useEffect(() => {
+    if (!aliasLoaded || autoJoinedRef.current) return;
+    if (savedAlias) {
+      autoJoinedRef.current = true;
+      setMyAlias(savedAlias);
+      setAliasConfirmed(true);
+      joinLobby(savedAlias);
+    }
+  }, [aliasLoaded, savedAlias, joinLobby]);
 
   function confirmAlias() {
     const trimmed = myAlias.trim();
     if (!trimmed) return;
-    fetch(`${window.location.origin}/lobby/set-alias`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: uniqueId, alias: trimmed }),
-    }).then(() => {
-      setMyAlias(trimmed);
-      setAliasConfirmed(true);
-    });
+    setAlias(trimmed);
+    setMyAlias(trimmed);
+    setAliasConfirmed(true);
+    joinLobby(trimmed);
   }
 
   function commitEdit(e: any) {
@@ -83,7 +78,7 @@ const LobbyScreen = () => {
     setChallengeTarget(null);
   }
 
-  if (aliasLoading) {
+  if (!aliasLoaded) {
     return (
       <div className="p-4 sm:p-6 min-h-screen bg-canvas-bg-subtle flex items-center justify-center">
         <p className="text-canvas-text">Loading...</p>
@@ -99,7 +94,7 @@ const LobbyScreen = () => {
             Choose a Display Name
           </h2>
           <p className="text-sm text-canvas-text text-center">
-            Pick a name other players will see in the lobby.
+            Pick a name other players will see in the tracker.
           </p>
           <input
             autoFocus
@@ -116,17 +111,19 @@ const LobbyScreen = () => {
             onClick={confirmAlias}
             fullWidth
           >
-            Join Lobby
+            Join Tracker
           </Button>
         </div>
       </div>
     );
   }
 
+  const iAmPlaying = players.find((p) => p.id === uniqueId)?.status === 'playing';
+
   return (
     <div className="p-4 sm:p-6 min-h-screen bg-canvas-bg-subtle">
       <div className="mb-4">
-        <h2 className="text-xl font-bold text-canvas-text-contrast">Game Lobby</h2>
+        <h2 className="text-xl font-bold text-canvas-text-contrast">Game Tracker</h2>
       </div>
 
       <div className="mb-4">
@@ -268,44 +265,53 @@ const LobbyScreen = () => {
           ) : (
             <>
               <h6 className="text-lg font-medium text-canvas-text-contrast">
-                Waiting for Lobby
+                Waiting for Tracker
               </h6>
-              <p className="text-sm text-canvas-text">No lobby update received yet...</p>
+              <p className="text-sm text-canvas-text">No tracker update received yet...</p>
             </>
           )}
         </div>
       ) : (
         <div className="space-y-2">
-          {players.map((player) => (
-            <div
-              key={player.id}
-              className="flex items-center justify-between p-3 rounded-lg bg-canvas-bg border border-canvas-border"
-            >
-              <div className="flex items-center gap-2">
-                {player.id === uniqueId ? (
-                  <span className="inline-flex items-center gap-1 text-canvas-text-contrast font-medium">
-                    <Crown className="w-4 h-4" style={{ color: 'var(--color-warning-solid)' }} />
-                    {player.alias} (You)
+          {players.map((player) => {
+            const isMe = player.id === uniqueId;
+            const isPlaying = player.status === 'playing';
+
+            return (
+              <div
+                key={player.id}
+                className="flex items-center justify-between p-3 rounded-lg bg-canvas-bg border border-canvas-border"
+              >
+                <div className="flex items-center gap-2">
+                  {isMe ? (
+                    <span className="inline-flex items-center gap-1 text-canvas-text-contrast font-medium">
+                      <Crown className="w-4 h-4" style={{ color: 'var(--color-warning-solid)' }} />
+                      {player.alias} (You)
+                    </span>
+                  ) : (
+                    <span className="text-canvas-text">{player.alias}</span>
+                  )}
+                </div>
+
+                {isPlaying ? (
+                  <span className="text-sm text-canvas-text italic">
+                    Playing vs {player.opponent_alias}
                   </span>
-                ) : (
-                  <span className="text-canvas-text">{player.alias}</span>
+                ) : !isMe && (
+                  <Button
+                    variant="solid"
+                    color="primary"
+                    size="sm"
+                    disabled={reconnectBlocked || !isConnected || challengeSent || !!challengeTarget || iAmPlaying}
+                    onClick={() => openChallengeDialog(player.id, player.alias)}
+                    leadingIcon={<Swords className="w-4 h-4" />}
+                  >
+                    Challenge
+                  </Button>
                 )}
               </div>
-
-              {player.id !== uniqueId && (
-                <Button
-                  variant="solid"
-                  color="primary"
-                  size="sm"
-                  disabled={reconnectBlocked || !isConnected || challengeSent || !!challengeTarget}
-                  onClick={() => openChallengeDialog(player.id, player.alias)}
-                  leadingIcon={<Swords className="w-4 h-4" />}
-                >
-                  Challenge
-                </Button>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

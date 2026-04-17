@@ -100,7 +100,7 @@ export class TrackerConnection {
   private getWsUrl(): string {
     const url = new URL(this.trackerUrl);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-    url.pathname = '/ws';
+    url.pathname = '/ws/game';
     url.search = '';
     url.hash = '';
     return url.toString();

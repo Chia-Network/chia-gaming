@@ -8,6 +8,7 @@ import { WasmBlobWrapper } from './WasmBlobWrapper';
 import { CalpokerHandState, CalpokerDisplaySnapshot } from './save';
 import { GameplayEvent } from './useGameSession';
 
+
 function parseCards(readableBytes: number[], iStarted: boolean): { playerHand: number[], opponentHand: number[] } {
   const program = Program.deserialize(Uint8Array.from(readableBytes));
   const card_lists = program.toList().map(l => l.toList().map(v => v.toInt()));

@@ -108,7 +108,7 @@ describe('connection setup', () => {
     await Promise.resolve(); // flush microtasks
 
     const ws = MockWebSocket.instance!;
-    expect(ws.url).toBe('ws://t/ws');
+    expect(ws.url).toBe('ws://t/ws/game');
     expect(ws.sent).toEqual([{ type: 'identify', session_id: 's1' }]);
   });
 });

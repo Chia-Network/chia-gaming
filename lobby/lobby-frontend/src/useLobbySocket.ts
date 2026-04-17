@@ -6,6 +6,8 @@ export interface Player {
   session_id: string;
   game: string;
   walletAddress?: string;
+  status: 'waiting' | 'playing';
+  opponent_alias?: string;
   parameters: any;
 }
 
@@ -22,13 +24,14 @@ type InboundMessage =
   | { type: 'lobby_update'; players: Player[] }
   | { type: 'challenge_received'; challenge_id: string; from_id: string; from_alias: string; game: string; amount: string; per_game: string }
   | { type: 'challenge_resolved'; challenge_id: string | null; accepted: boolean }
+  | { type: 'alias_result'; alias: string | null }
   | { type: 'keepalive' }
   | { type: 'error'; error?: string };
 
 function toWsUrl(input: string): string {
   const url = new URL(input);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  url.pathname = '/ws';
+  url.pathname = '/ws/lobby';
   url.search = '';
   url.hash = '';
   return url.toString();
@@ -38,7 +41,6 @@ export function useLobbySocket(
   lobbyUrl: string,
   uniqueId: string,
   sessionId: string,
-  alias?: string,
 ) {
   const [players, setPlayers] = useState<Player[]>([]);
   const [lobbyUpdateReceived, setLobbyUpdateReceived] = useState(false);
@@ -47,8 +49,9 @@ export function useLobbySocket(
   const [isConnected, setIsConnected] = useState(false);
   const [hasConnected, setHasConnected] = useState(false);
   const [reconnectBlocked, setReconnectBlocked] = useState(false);
+  const [savedAlias, setSavedAlias] = useState<string | null>(null);
+  const [aliasLoaded, setAliasLoaded] = useState(false);
   const uniqueIdRef = useRef(uniqueId);
-  const aliasRef = useRef(alias);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const keepaliveTimerRef = useRef<number | null>(null);
@@ -56,7 +59,6 @@ export function useLobbySocket(
   const pendingOutboundRef = useRef<Record<string, unknown>[]>([]);
 
   useEffect(() => { uniqueIdRef.current = uniqueId; }, [uniqueId]);
-  useEffect(() => { aliasRef.current = alias; }, [alias]);
 
   const send = useCallback((payload: Record<string, unknown>, queueIfClosed = true) => {
     const ws = wsRef.current;
@@ -72,12 +74,6 @@ export function useLobbySocket(
     if (!uniqueId) return;
 
     const wsUrl = toWsUrl(lobbyUrl);
-    const joinPayload: Record<string, unknown> = {
-      type: 'join',
-      id: uniqueId,
-      session_id: sessionId,
-      ...(aliasRef.current?.trim() ? { alias: aliasRef.current.trim() } : {}),
-    };
 
     closingRef.current = false;
     setReconnectBlocked(false);
@@ -91,7 +87,7 @@ export function useLobbySocket(
         if (wsRef.current !== ws) return;
         setIsConnected(true);
         setHasConnected(true);
-        ws.send(JSON.stringify(joinPayload));
+        ws.send(JSON.stringify({ type: 'get_alias', id: uniqueIdRef.current }));
         if (pendingOutboundRef.current.length > 0) {
           const queued = pendingOutboundRef.current.splice(0, pendingOutboundRef.current.length);
           for (const payload of queued) {
@@ -128,6 +124,10 @@ export function useLobbySocket(
             setPendingChallenge((prev) =>
               prev && msg.challenge_id && prev.challenge_id === msg.challenge_id ? null : prev,
             );
+            break;
+          case 'alias_result':
+            setSavedAlias(msg.alias);
+            setAliasLoaded(true);
             break;
           case 'error':
             if (msg.error) console.warn('[lobby] tracker error:', msg.error);
@@ -181,6 +181,25 @@ export function useLobbySocket(
     };
   }, [uniqueId, lobbyUrl, sessionId, send]);
 
+  const joinLobby = useCallback(
+    (alias: string) => {
+      send({
+        type: 'join',
+        id: uniqueIdRef.current,
+        session_id: sessionId,
+        alias: alias.trim(),
+      });
+    },
+    [send, sessionId],
+  );
+
+  const setAlias = useCallback(
+    (alias: string) => {
+      send({ type: 'set_alias', id: uniqueIdRef.current, alias });
+    },
+    [send],
+  );
+
   const sendChallenge = useCallback(
     (targetId: string, game: string, amount: string, perGame: string) => {
       send({
@@ -231,7 +250,7 @@ export function useLobbySocket(
     [send],
   );
 
-    const isReconnecting = hasConnected && !isConnected;
+  const isReconnecting = hasConnected && !isConnected;
 
   return {
     players,
@@ -241,6 +260,10 @@ export function useLobbySocket(
     isConnected,
     isReconnecting,
     reconnectBlocked,
+    savedAlias,
+    aliasLoaded,
+    joinLobby,
+    setAlias,
     sendChallenge,
     acceptChallenge,
     declineChallenge,

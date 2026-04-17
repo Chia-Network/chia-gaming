@@ -49,7 +49,7 @@ a session token:
    matchmaking UX. The player app sends `postMessage` to the iframe only for
    **theme syncing** (CSS variables and dark-mode class), never for game data.
    The lobby iframe may request a theme sync via `postMessage` as well.
-2. A **game relay WebSocket** to the tracker (`/ws`). This carries match
+2. A **game relay WebSocket** to the tracker (`/ws/game`). This carries match
    notifications and game messages. The protocol is defined in
    [Tracker Relay Protocol](#tracker-relay-protocol) below.
 
@@ -69,9 +69,10 @@ The tracker has two communication channels per player:
 2. **Game channel** — used by the player app's `TrackerConnection` for game
    message relay.
 
-Both channels connect to the same tracker WebSocket endpoint (`/ws`). The
-tracker links them by `session_id` (`join` from lobby iframe, `identify` from
-game channel) and maps session → player internally.
+Each channel uses a dedicated WebSocket endpoint: the lobby channel connects to
+`/ws/lobby` and the game channel connects to `/ws/game`. The tracker links them
+by `session_id` (`join` from lobby iframe, `identify` from game channel) and
+maps session → player internally.
 
 #### Lobby channel events
 
@@ -79,23 +80,32 @@ game channel) and maps session → player internally.
 
 | Event | Payload | Purpose |
 |-------|---------|---------|
+| `get_alias` | `{ id }` | Look up a previously saved alias (sent on connect, before joining) |
+| `set_alias` | `{ id, alias }` | Save a new alias on the tracker |
 | `join` | `{ id, alias, session_id }` | Register in the lobby with a player ID and display alias |
 | `leave` | `{ id }` | Leave the lobby |
 | `challenge` | `{ from_id, target_id, game, amount, per_game }` | Challenge another player to a game |
 | `challenge_accept` | `{ challenge_id, accepter_id }` | Accept a pending challenge |
 | `challenge_decline` | `{ challenge_id }` | Decline a pending challenge |
-| `change_alias` | `{ id, newAlias }` | Update lobby display alias |
+| `challenge_cancel` | `{ from_id }` | Cancel an outgoing challenge |
+| `change_alias` | `{ id, newAlias }` | Update lobby display alias mid-session |
 
 **Tracker → Lobby iframe:**
 
 | Event | Payload | Purpose |
 |-------|---------|---------|
-| `lobby_update` | `Player[]` | Current list of players in the lobby (broadcast on changes) |
+| `alias_result` | `{ alias }` | Response to `get_alias` or `set_alias` (`alias` is `null` if no alias is saved) |
+| `lobby_update` | `Player[]` | Current list of players in the lobby (broadcast on changes). Each `Player` includes `status` (`'waiting'` or `'playing'`) and, when playing, `opponent_alias`. |
 | `challenge_received` | `{ challenge_id, from_id, from_alias, game, amount, per_game }` | Someone challenged you |
 | `challenge_resolved` | `{ challenge_id, accepted }` | Your outgoing challenge was accepted or declined |
 
 When a challenge is accepted, the tracker creates a **pairing** (two player IDs
 linked by a random token) and emits `matched` to both players' game channels.
+Both players' status is set to `'playing'` with the opponent's alias, and any
+pending challenges involving either player are cancelled. The tracker rejects
+new challenges sent to or from a player whose status is `'playing'`. When the
+pairing ends (game close or connection sweep), both players revert to
+`'waiting'`.
 
 #### Game channel events
 
@@ -170,7 +180,7 @@ keepalives at two separate layers:
 
 **Game channel client (`TrackerConnection`):**
 
-- Uses a WebSocket connection to `/ws` and re-sends `identify` on reconnect.
+- Uses a WebSocket connection to `/ws/game` and re-sends `identify` on reconnect.
 - Starts a 15-second keepalive interval on `ws.onopen` that sends
   `{ type: 'keepalive' }` to the tracker. Cleared on close/error/disconnect.
 - Fires `onTrackerActivity()` on every incoming `ws.onmessage` (any message
@@ -178,8 +188,11 @@ keepalives at two separate layers:
 
 **Lobby channel client (`useLobbySocket`):**
 
-- Uses a WebSocket connection to `/ws`.
-- On reconnect, re-emits `join` to re-register the lobby channel.
+- Uses a WebSocket connection to `/ws/lobby`.
+- Connects immediately and sends `get_alias` to retrieve a saved alias. Once
+  the alias is confirmed (either from a saved alias or after the user picks
+  one), sends `join` to register in the lobby.
+- On reconnect, re-emits `get_alias` followed by `join` to re-register.
 
 #### Tracker Reconnection
 
@@ -671,7 +684,7 @@ game.
 | `front-end/src/hooks/save.ts` | `SessionSave` interface and `saveSession`/`loadSession`/`clearSession` functions |
 | `front-end/src/hooks/FakeBlockchainInterface.ts` | Simulator blockchain backend: WebSocket to local sim, auto-reconnect |
 | `front-end/src/hooks/RealBlockchainInterface.ts` | WalletConnect blockchain backend: RPC via WalletConnect sessions |
-| `front-end/src/services/TrackerConnection.ts` | Game relay WebSocket client (`/ws`) |
+| `front-end/src/services/TrackerConnection.ts` | Game relay WebSocket client (`/ws/game`) |
 | `front-end/src/types/ChiaGaming.ts` | TypeScript types for WASM interface and game data |
 | `lobby/lobby-frontend/src/useLobbySocket.ts` | Lobby channel hook (`useLobbySocket`): lobby WebSocket join/challenge/alias messaging |
 | `lobby/lobby-service/src/index.ts` | Tracker server: lobby, challenges, pairing, message relay, liveness sweep |
