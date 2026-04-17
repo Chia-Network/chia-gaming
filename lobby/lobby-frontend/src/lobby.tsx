@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useLobbySocket, ChallengeReceived } from './useLobbySocket';
+import { useLobbySocket, ChallengeReceived, lobbyHsLog } from './useLobbySocket';
 import { getSearchParams } from './util';
 import { Edit, Cross, User, Crown, Swords } from 'lucide-react';
 import { Button } from './button';
@@ -40,16 +40,31 @@ const LobbyScreen = () => {
   useEffect(() => {
     if (!aliasLoaded || autoJoinedRef.current) return;
     if (savedAlias) {
+      lobbyHsLog('alias_autojoin', {
+        session_id: sessionId,
+        unique_id: uniqueId,
+        alias_len: savedAlias.length,
+      });
       autoJoinedRef.current = true;
       setMyAlias(savedAlias);
       setAliasConfirmed(true);
       joinLobby(savedAlias);
+    } else {
+      lobbyHsLog('alias_missing_waiting_for_user', {
+        session_id: sessionId,
+        unique_id: uniqueId,
+      });
     }
   }, [aliasLoaded, savedAlias, joinLobby]);
 
   function confirmAlias() {
     const trimmed = myAlias.trim();
     if (!trimmed) return;
+    lobbyHsLog('alias_confirm', {
+      session_id: sessionId,
+      unique_id: uniqueId,
+      alias_len: trimmed.length,
+    });
     setAlias(trimmed);
     setMyAlias(trimmed);
     setAliasConfirmed(true);

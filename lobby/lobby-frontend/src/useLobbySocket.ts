@@ -30,7 +30,7 @@ type InboundMessage =
 
 let nextLobbyConnId = 1;
 
-function lobbyHsLog(event: string, fields?: Record<string, unknown>) {
+export function lobbyHsLog(event: string, fields?: Record<string, unknown>) {
   const parts = [
     '[lobby-hs]',
     `ev=${event}`,
@@ -123,14 +123,33 @@ export function useLobbySocket(
         ws_url: wsUrl,
       });
       const ws = new WebSocket(wsUrl);
+      const connectStartedAt = Date.now();
+      const waitThresholdsMs = [2_000, 5_000, 10_000, 20_000, 30_000];
+      let waitThresholdIdx = 0;
+      const openWaitTimer = window.setInterval(() => {
+        if (ws.readyState !== WebSocket.CONNECTING) return;
+        const elapsedMs = Date.now() - connectStartedAt;
+        while (waitThresholdIdx < waitThresholdsMs.length && elapsedMs >= waitThresholdsMs[waitThresholdIdx]) {
+          lobbyHsLog('ws_open_wait', {
+            conn_id: connIdRef.current,
+            session_id: sessionId,
+            elapsed_ms: elapsedMs,
+            threshold_ms: waitThresholdsMs[waitThresholdIdx],
+            ready_state: ws.readyState,
+          });
+          waitThresholdIdx += 1;
+        }
+      }, 250);
       wsRef.current = ws;
 
       ws.onopen = () => {
+        clearInterval(openWaitTimer);
         if (wsRef.current !== ws) return;
         lobbyHsLog('ws_open', {
           conn_id: connIdRef.current,
           session_id: sessionId,
           ready_state: ws.readyState,
+          connect_elapsed_ms: Date.now() - connectStartedAt,
         });
         setIsConnected(true);
         setHasConnected(true);
@@ -207,6 +226,7 @@ export function useLobbySocket(
       };
 
       ws.onclose = (event: CloseEvent) => {
+        clearInterval(openWaitTimer);
         if (keepaliveTimerRef.current !== null) {
           clearInterval(keepaliveTimerRef.current);
           keepaliveTimerRef.current = null;
@@ -219,6 +239,7 @@ export function useLobbySocket(
           reason: event.reason || '',
           clean: event.wasClean,
           closing: closingRef.current,
+          connect_elapsed_ms: Date.now() - connectStartedAt,
         });
         setIsConnected(false);
         wsRef.current = null;
@@ -242,10 +263,12 @@ export function useLobbySocket(
       };
 
       ws.onerror = () => {
+        clearInterval(openWaitTimer);
         if (wsRef.current !== ws) return;
         lobbyHsLog('ws_error', {
           conn_id: connIdRef.current,
           session_id: sessionId,
+          connect_elapsed_ms: Date.now() - connectStartedAt,
         });
         try { ws.close(); } catch {}
       };

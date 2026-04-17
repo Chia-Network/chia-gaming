@@ -78,34 +78,55 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     }
     this.connectPromise = new Promise<void>((resolve, reject) => {
       const WS = getWebSocketClass();
+      const connectStartedAt = Date.now();
+      const waitThresholdsMs = [2_000, 5_000, 10_000, 20_000, 30_000];
+      let waitThresholdIdx = 0;
       debugEvent('sim-hs', 'connect_start', {
         conn_id: this.connectionId,
         ws_url: this.wsUrl,
         reconnect_attempt: this.reconnectAttempt,
       });
       const ws = new WS(this.wsUrl);
+      const openWaitTimer = setInterval(() => {
+        if (ws.readyState !== WS.CONNECTING) return;
+        const elapsedMs = Date.now() - connectStartedAt;
+        while (waitThresholdIdx < waitThresholdsMs.length && elapsedMs >= waitThresholdsMs[waitThresholdIdx]) {
+          debugEvent('sim-hs', 'ws_open_wait', {
+            conn_id: this.connectionId,
+            elapsed_ms: elapsedMs,
+            threshold_ms: waitThresholdsMs[waitThresholdIdx],
+            ready_state: ws.readyState,
+          });
+          waitThresholdIdx += 1;
+        }
+      }, 250);
       ws.onopen = () => {
+        clearInterval(openWaitTimer);
         this.ws = ws;
         this.connectPromise = null;
         debugEvent('sim-hs', 'ws_open', {
           conn_id: this.connectionId,
           ready_state: ws.readyState,
+          connect_elapsed_ms: Date.now() - connectStartedAt,
         });
         this.fireConnectionChange(true);
         resolve();
       };
       ws.onerror = () => {
+        clearInterval(openWaitTimer);
         this.ws = null;
         this.connectPromise = null;
         debugEvent('sim-hs', 'ws_error', {
           conn_id: this.connectionId,
           during_connect: true,
+          connect_elapsed_ms: Date.now() - connectStartedAt,
         });
         this.fireConnectionChange(false);
         try { ws.close(); } catch { /* ignore */ }
         reject(new Error(`WebSocket connection to ${this.wsUrl} failed`));
       };
       ws.onclose = (evt: CloseEvent) => {
+        clearInterval(openWaitTimer);
         this.ws = null;
         this.connectPromise = null;
         debugEvent('sim-hs', 'ws_close', {
@@ -114,6 +135,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
           reason: evt.reason || '',
           clean: evt.wasClean,
           pending_count: this.pending.size,
+          connect_elapsed_ms: Date.now() - connectStartedAt,
         });
         this.fireConnectionChange(false);
         for (const [, p] of this.pending) {

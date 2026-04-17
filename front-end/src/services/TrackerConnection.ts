@@ -138,14 +138,33 @@ export class TrackerConnection {
       was_disconnected: this.wasDisconnected,
     });
     const ws = new WebSocket(wsUrl);
+    const connectStartedAt = Date.now();
+    const waitThresholdsMs = [2_000, 5_000, 10_000, 20_000, 30_000];
+    let waitThresholdIdx = 0;
+    const openWaitTimer = globalThis.setInterval(() => {
+      if (ws.readyState !== WebSocket.CONNECTING || this.closed || this.ws !== ws) return;
+      const elapsedMs = Date.now() - connectStartedAt;
+      while (waitThresholdIdx < waitThresholdsMs.length && elapsedMs >= waitThresholdsMs[waitThresholdIdx]) {
+        debugEvent('tracker-hs', 'ws_open_wait', {
+          conn_id: this.connectionId,
+          session_id: this.sessionId,
+          elapsed_ms: elapsedMs,
+          threshold_ms: waitThresholdsMs[waitThresholdIdx],
+          ready_state: ws.readyState,
+        });
+        waitThresholdIdx += 1;
+      }
+    }, 250);
     this.ws = ws;
 
     ws.onopen = () => {
+      clearInterval(openWaitTimer);
       debugEvent('tracker-hs', 'ws_open', {
         conn_id: this.connectionId,
         session_id: this.sessionId,
         ready_state: ws.readyState,
         was_disconnected: this.wasDisconnected,
+        connect_elapsed_ms: Date.now() - connectStartedAt,
       });
       this.sendWs({ type: 'identify', session_id: this.sessionId });
       debugEvent('tracker-hs', 'identify_send', {
@@ -281,11 +300,13 @@ export class TrackerConnection {
     };
 
     ws.onerror = () => {
+      clearInterval(openWaitTimer);
       debugEvent('tracker-hs', 'ws_error', {
         conn_id: this.connectionId,
         session_id: this.sessionId,
         closed: this.closed,
         was_disconnected: this.wasDisconnected,
+        connect_elapsed_ms: Date.now() - connectStartedAt,
       });
       this.stopKeepaliveTimer();
       if (!this.closed && !this.wasDisconnected) {
@@ -296,6 +317,7 @@ export class TrackerConnection {
     };
 
     ws.onclose = (evt: CloseEvent) => {
+      clearInterval(openWaitTimer);
       debugEvent('tracker-hs', 'ws_close', {
         conn_id: this.connectionId,
         session_id: this.sessionId,
@@ -305,6 +327,7 @@ export class TrackerConnection {
         closed: this.closed,
         close_pending: this.closePending,
         was_disconnected: this.wasDisconnected,
+        connect_elapsed_ms: Date.now() - connectStartedAt,
       });
       this.stopKeepaliveTimer();
       if (this.closed) return;
