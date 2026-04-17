@@ -1113,6 +1113,14 @@ impl ChannelHandler {
         self.proposed_games.iter().find(|p| p.game_id == *game_id)
     }
 
+    pub fn pending_peer_proposal_ids(&self) -> Vec<GameID> {
+        self.proposed_games
+            .iter()
+            .filter(|p| !self.is_our_nonce_parity(&p.game_id))
+            .map(|p| p.game_id)
+            .collect()
+    }
+
     pub fn my_out_of_game_balance(&self) -> Amount {
         self.my_out_of_game_balance.clone()
     }

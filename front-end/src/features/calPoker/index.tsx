@@ -16,15 +16,11 @@ export interface CalpokerProps {
   handleMakeMove: () => void;
   handleCheat: () => void;
   handleNerf: () => void;
-  onDisplayComplete: () => void;
   onGameLog: (lines: string[]) => void;
   onSnapshotChange: (snapshot: CalpokerDisplaySnapshot) => void;
   initialSnapshot?: CalpokerDisplaySnapshot;
   myName?: string;
   opponentName?: string;
-  onPlayAgain?: () => void;
-  onEndSession?: () => void;
-  showBetweenHandActions?: boolean;
 }
 
 const Calpoker: React.FC<CalpokerProps> = ({
@@ -38,15 +34,11 @@ const Calpoker: React.FC<CalpokerProps> = ({
   handleMakeMove,
   handleCheat,
   handleNerf,
-  onDisplayComplete,
   onGameLog,
   onSnapshotChange,
   initialSnapshot,
   myName,
   opponentName,
-  onPlayAgain,
-  onEndSession,
-  showBetweenHandActions,
 }) => {
   const myWinOutcome = outcome?.my_win_outcome;
 
@@ -100,15 +92,11 @@ const Calpoker: React.FC<CalpokerProps> = ({
           handleMakeMove={handleMakeMove}
           outcome={outcome}
           myWinOutcome={myWinOutcome}
-          onDisplayComplete={onDisplayComplete}
           onGameLog={onGameLog}
           onSnapshotChange={onSnapshotChange}
           initialSnapshot={initialSnapshot}
           myName={myName}
           opponentName={opponentName}
-          onPlayAgain={onPlayAgain}
-          onEndSession={onEndSession}
-          showBetweenHandActions={showBetweenHandActions}
         />
       </div>
     </div>

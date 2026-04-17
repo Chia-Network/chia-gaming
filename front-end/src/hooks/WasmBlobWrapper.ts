@@ -134,7 +134,6 @@ export class WasmBlobWrapper {
   lastChannelStatus: ChannelStatusPayload | null = null;
   myAlias: string | undefined = undefined;
   opponentAlias: string | undefined = undefined;
-  showBetweenHandOverlay = false;
   lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined = undefined;
   chatMessages: Array<{ text: string; fromAlias: string; timestamp: number; isMine: boolean }> = [];
   gameCoinHex: string | null = null;
@@ -687,7 +686,6 @@ export class WasmBlobWrapper {
         channelStatus: this.lastChannelStatus,
         myAlias: this.myAlias,
         opponentAlias: this.opponentAlias,
-        showBetweenHandOverlay: this.showBetweenHandOverlay,
         lastOutcomeWin: this.lastOutcomeWin,
         chatMessages: this.chatMessages.length > 0 ? [...this.chatMessages] : undefined,
         gameCoinHex: this.gameCoinHex,
@@ -711,12 +709,6 @@ export class WasmBlobWrapper {
     this.scheduleSave();
   }
 
-  setBetweenHandOverlay(show: boolean, outcomeWin?: 'win' | 'lose' | 'tie') {
-    this.showBetweenHandOverlay = show;
-    this.lastOutcomeWin = outcomeWin;
-    this.scheduleSave();
-  }
-
   markRestored() {
     this.restoredSession = true;
   }
@@ -735,6 +727,12 @@ export class WasmBlobWrapper {
   acceptProposal(gameId: string): void {
     if (!this.cradle) throw new Error('no cradle');
     const result = this.cradle.accept_proposal(gameId);
+    this.processResult(result);
+  }
+
+  cancel_proposal(gameId: string): void {
+    if (!this.cradle) throw new Error('no cradle');
+    const result = this.cradle.cancel_proposal(gameId);
     this.processResult(result);
   }
 

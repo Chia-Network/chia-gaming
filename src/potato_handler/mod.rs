@@ -525,6 +525,23 @@ impl PotatoHandler {
         for action in actions.iter() {
             match action {
                 BatchAction::ProposeGame(wire) => {
+                    let cancelled: Vec<GameID> = self
+                        .game_action_queue
+                        .iter()
+                        .filter_map(|a| match a {
+                            GameAction::QueuedProposal(gsi, _) => Some(gsi.game_id),
+                            _ => None,
+                        })
+                        .collect();
+                    self.game_action_queue
+                        .retain(|a| !matches!(a, GameAction::QueuedProposal(..)));
+                    for id in cancelled {
+                        effects.push(Effect::Notify(GameNotification::ProposalCancelled {
+                            id,
+                            reason: "superseded by incoming proposal".to_string(),
+                        }));
+                    }
+
                     let gsi = self.hydrate_wire_proposal(env, wire)?;
                     let ch = self.channel_handler_mut()?;
                     ch.apply_received_proposal(env, &gsi)?;
@@ -907,12 +924,6 @@ impl PotatoHandler {
                         if ch.has_active_games() {
                             return Err(Error::StrErr(
                                 "cannot clean shutdown while games are active".to_string(),
-                            ));
-                        }
-                        if ch.has_our_outstanding_proposals() {
-                            return Err(Error::StrErr(
-                                "cannot clean shutdown while we have outstanding proposals"
-                                    .to_string(),
                             ));
                         }
                     }
@@ -1361,6 +1372,16 @@ impl FromLocalUI for PotatoHandler {
     ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
         self.game_action_queue
             .retain(|a| !matches!(a, GameAction::CleanShutdown));
+
+        // If a peer proposal is already pending, queue cancels first so our
+        // outgoing proposal does not coexist with an older pending peer proposal.
+        let pending_peer_ids = {
+            let ch = self.channel_handler()?;
+            ch.pending_peer_proposal_ids()
+        };
+        for pending_id in pending_peer_ids {
+            self.push_action(GameAction::QueuedCancelProposal(pending_id));
+        }
 
         let game_id = {
             let ch = self.channel_handler_mut()?;

@@ -248,11 +248,10 @@ export interface UseGameSessionResult {
   appendGameLog: (line: string) => void;
   onHandOutcome: (outcome: CalpokerOutcome) => void;
   onTurnChanged: (isMyTurn: boolean) => void;
-  onDisplayComplete: () => void;
   playAgain: () => void;
   stopPlaying: () => void;
   goOnChain: () => void;
-  showBetweenHandOverlay: boolean;
+  betweenHands: boolean;
   lastOutcome: CalpokerOutcome | undefined;
   restoredOutcomeWin: 'win' | 'lose' | 'tie' | undefined;
   goOnChainPressed: boolean;
@@ -344,9 +343,6 @@ export function useGameSession(
   const [gameIds, setGameIds] = useState<string[]>(() =>
     sessionSave?.activeGameId ? [sessionSave.activeGameId] : []
   );
-  const [showBetweenHandOverlay, setShowBetweenHandOverlay] = useState(
-    () => sessionSave?.showBetweenHandOverlay ?? false
-  );
   const [lastOutcome, setLastOutcome] = useState<CalpokerOutcome | undefined>(undefined);
   const restoredOutcomeWin = sessionSave?.lastOutcomeWin;
   const [gameTerminalAttention, setGameTerminalAttention] = useState<GameTerminalAttentionInfo | null>(() => {
@@ -365,7 +361,7 @@ export function useGameSession(
   const pendingProposalIdRef = useRef<string | null>(null);
   const wantsNewGameRef = useRef<boolean>(false);
   const firstGameAcceptedRef = useRef<boolean>(!!sessionSave?.channelReady);
-  const awaitingDisplayCompleteRef = useRef<boolean>(false);
+  const proposalOutstandingRef = useRef<boolean>(false);
   const gameplayEventSubject = useRef(new Subject<GameplayEvent>()).current;
 
   gameIdsRef.current = gameIds;
@@ -405,6 +401,7 @@ export function useGameSession(
         my_turn: !iStarted,
         parameters: null,
       });
+      proposalOutstandingRef.current = true;
     } catch (_) {
       // proposal can fail if channel isn't ready yet; user can retry
     }
@@ -420,7 +417,11 @@ export function useGameSession(
                 : outcome.my_win_outcome === 'lose' ? -perGameAmount
                 : 0n;
     setMyRunningBalance(prev => prev + delta);
-    awaitingDisplayCompleteRef.current = true;
+    const go = gameObjectRef.current;
+    if (go) {
+      go.lastOutcomeWin = outcome.my_win_outcome;
+      go.scheduleSave();
+    }
   }, [perGameAmount]);
 
   const onTurnChanged = useCallback((isMyTurn: boolean) => {
@@ -432,18 +433,6 @@ export function useGameSession(
           ? 'playing-on-chain'
           : 'their-turn',
     }));
-  }, []);
-
-  const onDisplayComplete = useCallback(() => {
-    if (!awaitingDisplayCompleteRef.current) {
-      console.error('[session] onDisplayComplete called but no hand outcome is pending');
-      return;
-    }
-    awaitingDisplayCompleteRef.current = false;
-    setShowBetweenHandOverlay(true);
-    const go = gameObjectRef.current;
-    const win = lastOutcomeRef.current?.my_win_outcome;
-    go?.setBetweenHandOverlay(true, win);
   }, []);
 
   const dismissChannelAttention = useCallback(() => {
@@ -471,7 +460,6 @@ export function useGameSession(
       channelStateRef.current = info.state;
       setChannelStatus(info);
       if (ATTENTION_STATES.includes(cs.state)) {
-        setShowBetweenHandOverlay(false);
         const go = gameObjectRef.current;
         if (go && (go.channelAttentionActive || cs.state !== channelAttentionStateRef.current)) {
           go.channelAttentionActive = true;
@@ -492,7 +480,14 @@ export function useGameSession(
     if ('ProposalMade' in n) {
       if (!iStarted) {
         const proposalId = String(n.ProposalMade!.id);
-        if (!firstGameAcceptedRef.current || wantsNewGameRef.current) {
+        if (proposalOutstandingRef.current) {
+          debugLog(`[notify] ProposalMade id=${proposalId} rejecting (we have outstanding proposal)`);
+          try {
+            go?.cancel_proposal(proposalId);
+          } catch (e) {
+            console.error('cancel_proposal failed:', e);
+          }
+        } else if (!firstGameAcceptedRef.current || wantsNewGameRef.current) {
           debugLog(`[notify] ProposalMade id=${proposalId} auto-accepting`);
           firstGameAcceptedRef.current = true;
           wantsNewGameRef.current = false;
@@ -502,19 +497,18 @@ export function useGameSession(
             console.error('acceptProposal failed:', e);
           }
         } else {
-          debugLog(`[notify] ProposalMade id=${proposalId} deferred (firstAccepted=${firstGameAcceptedRef.current} wantsNew=${wantsNewGameRef.current})`);
+          debugLog(`[notify] ProposalMade id=${proposalId} deferred (waiting for user)`);
           pendingProposalIdRef.current = proposalId;
         }
       }
     } else if ('ProposalAccepted' in n) {
       firstGameAcceptedRef.current = true;
+      proposalOutstandingRef.current = false;
       const gpa = n.ProposalAccepted!;
       const newId = String(gpa.id);
       debugLog(`[notify] ProposalAccepted id=${newId} handKey will increment`);
       setGameIds(prev => [...prev, newId]);
       gameIdsRef.current = [...gameIdsRef.current, newId];
-      setShowBetweenHandOverlay(false);
-      go?.setBetweenHandOverlay(false);
       go?.setHandState(null);
       setHandKey(prev => prev + 1);
       setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
@@ -565,11 +559,6 @@ export function useGameSession(
         const terminalInfo = parseGameStatusTerminalInfo(gs, rewardCoinHex);
         setGameTerminal(terminalInfo);
         setGameCoin(prev => ({ ...prev, coinHex: null, turnState: 'ended' }));
-        // On-chain terminal paths have their own dedicated dialogs/UX.
-        // For normal off-chain hand completion we still want the between-hand overlay.
-        if (inOnChainFlow) {
-          setShowBetweenHandOverlay(false);
-        }
         const hadActiveGame = gameIdsRef.current.length > 0;
         if (hadActiveGame) {
           setGameIds(prev => prev.slice(1));
@@ -610,6 +599,9 @@ export function useGameSession(
       });
       setGameCoin(prev => ({ ...prev, turnState: 'ended' }));
       gameplayEventSubject.next({ _terminal: true, notification: n });
+    } else if ('ProposalCancelled' in n) {
+      proposalOutstandingRef.current = false;
+      debugLog(`[notify] ProposalCancelled id=${n.ProposalCancelled?.id}`);
     } else if ('ActionFailed' in n) {
       const reason = String(n.ActionFailed?.reason ?? 'Unknown error');
       debugLog(`[game] action failed: ${reason}`);
@@ -709,11 +701,10 @@ export function useGameSession(
     appendGameLog,
     onHandOutcome,
     onTurnChanged,
-    onDisplayComplete,
     playAgain,
     stopPlaying,
     goOnChain,
-    showBetweenHandOverlay,
+    betweenHands: handKey > 0 && gameIds.length === 0,
     lastOutcome,
     restoredOutcomeWin,
     goOnChainPressed,

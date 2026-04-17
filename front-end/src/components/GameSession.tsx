@@ -347,13 +347,9 @@ interface CalpokerHandProps {
   onTurnChanged: (isMyTurn: boolean) => void;
   appendGameLog: (line: string) => void;
   perGameAmount: bigint;
-  onDisplayComplete: () => void;
   initialHandState?: CalpokerHandState;
   myName?: string;
   opponentName?: string;
-  onPlayAgain?: () => void;
-  onEndSession?: () => void;
-  showBetweenHandActions?: boolean;
 }
 
 function CalpokerHand({
@@ -366,13 +362,9 @@ function CalpokerHand({
   onTurnChanged,
   appendGameLog,
   perGameAmount,
-  onDisplayComplete,
   initialHandState,
   myName,
   opponentName,
-  onPlayAgain,
-  onEndSession,
-  showBetweenHandActions,
 }: CalpokerHandProps) {
   const {
     playerHand,
@@ -414,15 +406,11 @@ function CalpokerHand({
       handleMakeMove={handleMakeMove}
       handleCheat={handleCheat}
       handleNerf={handleNerf}
-      onDisplayComplete={onDisplayComplete}
       onGameLog={handleGameLog}
       onSnapshotChange={saveDisplaySnapshot}
       initialSnapshot={initialDisplaySnapshot}
       myName={myName}
       opponentName={opponentName}
-      onPlayAgain={onPlayAgain}
-      onEndSession={onEndSession}
-      showBetweenHandActions={showBetweenHandActions}
     />
   );
 }
@@ -462,19 +450,12 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
 
   const channelOverlayBoundsRef = useRef<HTMLDivElement | null>(null);
   const gameAreaRef = useRef<HTMLDivElement | null>(null);
-  const [gameAreaMinHeight, setGameAreaMinHeight] = useState<number | undefined>(undefined);
-
-  useEffect(() => {
-    const el = gameAreaRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(([entry]) => {
-      setGameAreaMinHeight(entry.contentRect.height);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
 
   const [dismissedError, setDismissedError] = useState(false);
+  const [newHandWaiting, setNewHandWaiting] = useState(false);
+
+  const handKey = session.handKey;
+  useEffect(() => { setNewHandWaiting(false); }, [handKey]);
 
   const handEverStarted = session.handKey > 0;
   const channelStateLabel = session.channelStatus.state === 'Active' && session.channelStatus.havePotato
@@ -565,7 +546,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
       {/* Main content area */}
       <div className='flex flex-col gap-2 px-4 pb-2 sm:px-6 md:px-8'>
         {/* Game area */}
-          <div ref={gameAreaRef} className='relative overflow-hidden' style={gameAreaMinHeight != null ? { minHeight: gameAreaMinHeight } : undefined}>
+          <div ref={gameAreaRef} className='relative overflow-hidden'>
           {handEverStarted && (
             <CalpokerHand
               key={session.handKey}
@@ -578,13 +559,9 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
               onTurnChanged={session.onTurnChanged}
               appendGameLog={session.appendGameLog}
               perGameAmount={session.perGameAmount}
-              onDisplayComplete={session.onDisplayComplete}
               initialHandState={session.handKey === 1 && sessionSave?.handState ? sessionSave.handState : undefined}
               myName={params.myAlias}
               opponentName={params.opponentAlias}
-              onPlayAgain={session.playAgain}
-              onEndSession={session.stopPlaying}
-              showBetweenHandActions={session.showBetweenHandOverlay && !isWindingDown(session.channelStatus.state)}
             />
           )}
 
@@ -605,6 +582,28 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
             />
           )}
         </div>
+
+        {/* Between-hand session controls */}
+        {session.betweenHands && !isWindingDown(session.channelStatus.state) && (
+          <div className='flex items-center justify-center gap-4 py-2'>
+            <Button
+              variant='solid'
+              size='sm'
+              onClick={session.stopPlaying}
+            >
+              End Session
+            </Button>
+            <Button
+              variant='solid'
+              color='primary'
+              size='sm'
+              onClick={() => { setNewHandWaiting(true); session.playAgain(); }}
+              disabled={newHandWaiting}
+            >
+              {newHandWaiting ? 'Waiting' : 'New Hand'}
+            </Button>
+          </div>
+        )}
       </div>
 
       {session.channelAttention && (

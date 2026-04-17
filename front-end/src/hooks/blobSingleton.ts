@@ -82,7 +82,6 @@ async function restoreSession(
   gameObject.lastChannelStatus = save.channelStatus ?? null;
   gameObject.myAlias = save.myAlias;
   gameObject.opponentAlias = save.opponentAlias;
-  gameObject.showBetweenHandOverlay = save.showBetweenHandOverlay ?? false;
   gameObject.lastOutcomeWin = save.lastOutcomeWin;
   gameObject.chatMessages = save.chatMessages ?? [];
   gameObject.gameCoinHex = save.gameCoinHex ?? null;

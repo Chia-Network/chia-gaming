@@ -56,7 +56,6 @@ export interface SessionSave {
   channelStatus?: ChannelStatusPayload | null;
   myAlias?: string;
   opponentAlias?: string;
-  showBetweenHandOverlay?: boolean;
   lastOutcomeWin?: 'win' | 'lose' | 'tie';
   chatMessages?: Array<{ text: string; fromAlias: string; timestamp: number; isMine: boolean }>;
   gameCoinHex?: string | null;
