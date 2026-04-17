@@ -28,6 +28,23 @@ type InboundMessage =
   | { type: 'keepalive' }
   | { type: 'error'; error?: string };
 
+let nextLobbyConnId = 1;
+
+function lobbyHsLog(event: string, fields?: Record<string, unknown>) {
+  const parts = [
+    '[lobby-hs]',
+    `ev=${event}`,
+    `iso=${new Date().toISOString()}`,
+    `mono_ms=${(typeof performance !== 'undefined' ? performance.now() : 0).toFixed(1)}`,
+  ];
+  if (fields) {
+    for (const [k, v] of Object.entries(fields)) {
+      parts.push(`${k}=${String(v)}`);
+    }
+  }
+  console.log(parts.join(' '));
+}
+
 function toWsUrl(input: string): string {
   const url = new URL(input);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -42,6 +59,7 @@ export function useLobbySocket(
   uniqueId: string,
   sessionId: string,
 ) {
+  const connIdRef = useRef<number>(nextLobbyConnId++);
   const [players, setPlayers] = useState<Player[]>([]);
   const [lobbyUpdateReceived, setLobbyUpdateReceived] = useState(false);
   const [pendingChallenge, setPendingChallenge] = useState<ChallengeReceived | null>(null);
@@ -63,33 +81,72 @@ export function useLobbySocket(
   const send = useCallback((payload: Record<string, unknown>, queueIfClosed = true) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      if (queueIfClosed) pendingOutboundRef.current.push(payload);
+      if (queueIfClosed) {
+        pendingOutboundRef.current.push(payload);
+        lobbyHsLog('outbound_buffered', {
+          conn_id: connIdRef.current,
+          session_id: sessionId,
+          type: String(payload.type ?? 'unknown'),
+          buffered_len: pendingOutboundRef.current.length,
+        });
+      }
       return false;
     }
+    lobbyHsLog('outbound_sent', {
+      conn_id: connIdRef.current,
+      session_id: sessionId,
+      type: String(payload.type ?? 'unknown'),
+    });
     ws.send(JSON.stringify(payload));
     return true;
-  }, []);
+  }, [sessionId]);
 
   useEffect(() => {
     if (!uniqueId) return;
 
     const wsUrl = toWsUrl(lobbyUrl);
+    lobbyHsLog('connection_init', {
+      conn_id: connIdRef.current,
+      session_id: sessionId,
+      unique_id: uniqueId,
+      ws_url: wsUrl,
+    });
 
     closingRef.current = false;
     setReconnectBlocked(false);
 
     const connect = () => {
       if (closingRef.current) return;
+      lobbyHsLog('connect_start', {
+        conn_id: connIdRef.current,
+        session_id: sessionId,
+        ws_url: wsUrl,
+      });
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
         if (wsRef.current !== ws) return;
+        lobbyHsLog('ws_open', {
+          conn_id: connIdRef.current,
+          session_id: sessionId,
+          ready_state: ws.readyState,
+        });
         setIsConnected(true);
         setHasConnected(true);
         ws.send(JSON.stringify({ type: 'get_alias', id: uniqueIdRef.current }));
+        lobbyHsLog('get_alias_send', {
+          conn_id: connIdRef.current,
+          session_id: sessionId,
+          unique_id: uniqueIdRef.current,
+        });
         if (pendingOutboundRef.current.length > 0) {
           const queued = pendingOutboundRef.current.splice(0, pendingOutboundRef.current.length);
+          lobbyHsLog('flush_buffered_outbound', {
+            conn_id: connIdRef.current,
+            session_id: sessionId,
+            count: queued.length,
+          });
           for (const payload of queued) {
             ws.send(JSON.stringify(payload));
           }
@@ -113,6 +170,11 @@ export function useLobbySocket(
         if (!msg || typeof msg !== 'object' || !('type' in msg)) return;
         switch (msg.type) {
           case 'lobby_update':
+            lobbyHsLog('lobby_update_recv', {
+              conn_id: connIdRef.current,
+              session_id: sessionId,
+              players: (msg.players ?? []).length,
+            });
             setPlayers(msg.players ?? []);
             setLobbyUpdateReceived(true);
             break;
@@ -126,6 +188,11 @@ export function useLobbySocket(
             );
             break;
           case 'alias_result':
+            lobbyHsLog('alias_result_recv', {
+              conn_id: connIdRef.current,
+              session_id: sessionId,
+              has_alias: msg.alias !== null,
+            });
             setSavedAlias(msg.alias);
             setAliasLoaded(true);
             break;
@@ -145,6 +212,14 @@ export function useLobbySocket(
           keepaliveTimerRef.current = null;
         }
         if (wsRef.current !== ws) return;
+        lobbyHsLog('ws_close', {
+          conn_id: connIdRef.current,
+          session_id: sessionId,
+          code: event.code,
+          reason: event.reason || '',
+          clean: event.wasClean,
+          closing: closingRef.current,
+        });
         setIsConnected(false);
         wsRef.current = null;
         if (closingRef.current) return;
@@ -152,11 +227,26 @@ export function useLobbySocket(
           setReconnectBlocked(true);
           return;
         }
-        reconnectTimerRef.current = window.setTimeout(connect, 1000);
+        lobbyHsLog('reconnect_timer_set', {
+          conn_id: connIdRef.current,
+          session_id: sessionId,
+          delay_ms: 1000,
+        });
+        reconnectTimerRef.current = window.setTimeout(() => {
+          lobbyHsLog('reconnect_timer_fire', {
+            conn_id: connIdRef.current,
+            session_id: sessionId,
+          });
+          connect();
+        }, 1000);
       };
 
       ws.onerror = () => {
         if (wsRef.current !== ws) return;
+        lobbyHsLog('ws_error', {
+          conn_id: connIdRef.current,
+          session_id: sessionId,
+        });
         try { ws.close(); } catch {}
       };
     };
@@ -165,6 +255,10 @@ export function useLobbySocket(
 
     return () => {
       closingRef.current = true;
+      lobbyHsLog('connection_cleanup', {
+        conn_id: connIdRef.current,
+        session_id: sessionId,
+      });
       setIsConnected(false);
       if (reconnectTimerRef.current !== null) {
         clearTimeout(reconnectTimerRef.current);
@@ -183,6 +277,11 @@ export function useLobbySocket(
 
   const joinLobby = useCallback(
     (alias: string) => {
+      lobbyHsLog('join_call', {
+        conn_id: connIdRef.current,
+        session_id: sessionId,
+        alias_len: alias.trim().length,
+      });
       send({
         type: 'join',
         id: uniqueIdRef.current,

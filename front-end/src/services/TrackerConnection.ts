@@ -1,5 +1,5 @@
 import { PeerConnectionResult, ChatMessage } from '../types/ChiaGaming';
-import { debugLog } from './debugLog';
+import { debugEvent, debugLog } from './debugLog';
 
 export interface MatchedParams {
   token: string;
@@ -78,9 +78,11 @@ function isDataPayload(data: MessagePayload): data is { msgno: number; msg: stri
 }
 
 export class TrackerConnection {
+  private static nextConnectionId = 1;
   private trackerUrl: string;
   private sessionId: string;
   private callbacks: TrackerConnectionCallbacks;
+  private connectionId: number;
   private ws: WebSocket | null = null;
   private messageBuffer: MessagePayload[] = [];
   private handlerRegistered = false;
@@ -94,6 +96,12 @@ export class TrackerConnection {
     this.trackerUrl = trackerUrl;
     this.sessionId = sessionId;
     this.callbacks = callbacks;
+    this.connectionId = TrackerConnection.nextConnectionId++;
+    debugEvent('tracker-hs', 'connection_init', {
+      conn_id: this.connectionId,
+      session_id: this.sessionId,
+      tracker_url: this.trackerUrl,
+    });
     this.connectWs();
   }
 
@@ -123,11 +131,27 @@ export class TrackerConnection {
       debugLog(`[tracker] ${msg}`);
       throw new Error(msg);
     }
+    debugEvent('tracker-hs', 'connect_start', {
+      conn_id: this.connectionId,
+      session_id: this.sessionId,
+      ws_url: wsUrl,
+      was_disconnected: this.wasDisconnected,
+    });
     const ws = new WebSocket(wsUrl);
     this.ws = ws;
 
     ws.onopen = () => {
+      debugEvent('tracker-hs', 'ws_open', {
+        conn_id: this.connectionId,
+        session_id: this.sessionId,
+        ready_state: ws.readyState,
+        was_disconnected: this.wasDisconnected,
+      });
       this.sendWs({ type: 'identify', session_id: this.sessionId });
+      debugEvent('tracker-hs', 'identify_send', {
+        conn_id: this.connectionId,
+        session_id: this.sessionId,
+      });
       if (this.wasDisconnected) {
         debugLog('[tracker] reconnected to tracker');
         this.callbacks.onTrackerReconnected();
@@ -167,6 +191,14 @@ export class TrackerConnection {
             my_alias: msg.my_alias,
             peer_alias: msg.peer_alias,
           };
+          debugEvent('tracker-hs', 'connection_status_recv', {
+            conn_id: this.connectionId,
+            session_id: this.sessionId,
+            has_pairing: status.has_pairing,
+            token: status.token ?? 'none',
+            peer_connected: status.peer_connected ?? 'n/a',
+            i_am_initiator: status.i_am_initiator ?? 'n/a',
+          });
           debugLog(`[tracker] connection_status has_pairing=${status.has_pairing} token=${status.token ?? 'none'} peer=${status.peer_connected ?? 'n/a'}`);
           this.callbacks.onConnectionStatus(status);
           break;
@@ -181,6 +213,14 @@ export class TrackerConnection {
             my_alias: msg.my_alias,
             peer_alias: msg.peer_alias,
           };
+          debugEvent('tracker-hs', 'matched_recv', {
+            conn_id: this.connectionId,
+            session_id: this.sessionId,
+            token: params.token,
+            i_am_initiator: params.i_am_initiator,
+            amount: params.amount,
+            per_game: params.per_game,
+          });
           debugLog(`[tracker] matched initiator=${params.i_am_initiator} amount=${params.amount}`);
           this.callbacks.onMatched(params);
           break;
@@ -208,6 +248,12 @@ export class TrackerConnection {
           debugLog(`[tracker] recv msgno=${payload.msgno} len=${payload.msg.length}`);
           if (!this.handlerRegistered) {
             this.messageBuffer.push(payload);
+            debugEvent('tracker-hs', 'message_buffered_prehandler', {
+              conn_id: this.connectionId,
+              session_id: this.sessionId,
+              msgno: payload.msgno,
+              pending_buffer_len: this.messageBuffer.length,
+            });
             return;
           }
           this.callbacks.onMessage(payload);
@@ -235,6 +281,12 @@ export class TrackerConnection {
     };
 
     ws.onerror = () => {
+      debugEvent('tracker-hs', 'ws_error', {
+        conn_id: this.connectionId,
+        session_id: this.sessionId,
+        closed: this.closed,
+        was_disconnected: this.wasDisconnected,
+      });
       this.stopKeepaliveTimer();
       if (!this.closed && !this.wasDisconnected) {
         this.wasDisconnected = true;
@@ -243,7 +295,17 @@ export class TrackerConnection {
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (evt: CloseEvent) => {
+      debugEvent('tracker-hs', 'ws_close', {
+        conn_id: this.connectionId,
+        session_id: this.sessionId,
+        code: evt.code,
+        reason: evt.reason || '',
+        clean: evt.wasClean,
+        closed: this.closed,
+        close_pending: this.closePending,
+        was_disconnected: this.wasDisconnected,
+      });
       this.stopKeepaliveTimer();
       if (this.closed) return;
       if (!this.wasDisconnected) {
@@ -252,7 +314,16 @@ export class TrackerConnection {
       }
       this.ws = null;
       if (this.reconnectTimer === null) {
+        debugEvent('tracker-hs', 'reconnect_timer_set', {
+          conn_id: this.connectionId,
+          session_id: this.sessionId,
+          delay_ms: 1000,
+        });
         this.reconnectTimer = globalThis.setTimeout(() => {
+          debugEvent('tracker-hs', 'reconnect_timer_fire', {
+            conn_id: this.connectionId,
+            session_id: this.sessionId,
+          });
           this.reconnectTimer = null;
           this.connectWs();
         }, 1000);
@@ -316,6 +387,11 @@ export class TrackerConnection {
     ackHandler: (ack: number) => void,
     keepaliveHandler: () => void,
   ) {
+    debugEvent('tracker-hs', 'register_message_handler', {
+      conn_id: this.connectionId,
+      session_id: this.sessionId,
+      buffered_len: this.messageBuffer.length,
+    });
     this.callbacks.onMessage = (data: MessagePayload) => {
       try {
         if (isKeepalivePayload(data)) {
@@ -339,6 +415,13 @@ export class TrackerConnection {
     this.handlerRegistered = true;
     const buffered = this.messageBuffer;
     this.messageBuffer = [];
+    if (buffered.length > 0) {
+      debugEvent('tracker-hs', 'flush_buffered_messages', {
+        conn_id: this.connectionId,
+        session_id: this.sessionId,
+        count: buffered.length,
+      });
+    }
     for (const payload of buffered) {
       this.callbacks.onMessage(payload);
     }

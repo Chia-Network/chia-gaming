@@ -1373,14 +1373,25 @@ impl FromLocalUI for PotatoHandler {
         self.game_action_queue
             .retain(|a| !matches!(a, GameAction::CleanShutdown));
 
-        // If a peer proposal is already pending, queue cancels first so our
-        // outgoing proposal does not coexist with an older pending peer proposal.
-        let pending_peer_ids = {
+        // If a peer proposal is already pending, reject our local attempt
+        // immediately. We should not cancel peer proposals as a side effect
+        // of trying to propose while one is already pending.
+        let has_pending_peer = {
             let ch = self.channel_handler()?;
-            ch.pending_peer_proposal_ids()
+            !ch.pending_peer_proposal_ids().is_empty()
         };
-        for pending_id in pending_peer_ids {
-            self.push_action(GameAction::QueuedCancelProposal(pending_id));
+        if has_pending_peer {
+            let cancelled_id = {
+                let ch = self.channel_handler_mut()?;
+                GameID(ch.allocate_my_nonce() as u64)
+            };
+            return Ok((
+                vec![cancelled_id],
+                vec![Effect::Notify(GameNotification::ProposalCancelled {
+                    id: cancelled_id,
+                    reason: "local propose rejected: peer proposal already pending".to_string(),
+                })],
+            ));
         }
 
         let game_id = {

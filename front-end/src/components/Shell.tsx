@@ -304,12 +304,12 @@ const Shell = () => {
     pendingMsgHandlerRef.current = { handler, ackHandler, keepaliveHandler };
     if (trackerConnRef.current) {
       trackerConnRef.current.registerMessageHandler(
-        (msgno, msg) => { lastPeerActivityRef.current = Date.now(); handler(msgno, msg); },
-        (ack) => { lastPeerActivityRef.current = Date.now(); ackHandler(ack); },
-        () => { lastPeerActivityRef.current = Date.now(); keepaliveHandler(); },
+        (msgno, msg) => { markPeerActive(); handler(msgno, msg); },
+        (ack) => { markPeerActive(); ackHandler(ack); },
+        () => { markPeerActive(); keepaliveHandler(); },
       );
     }
-  }, []);
+  }, [markPeerActive]);
 
   useEffect(() => {
     return subscribeDebugLog((line) => {
@@ -335,6 +335,16 @@ const Shell = () => {
   }, []);
 
   const [userReady, setUserReady] = useState(false);
+
+  const markPeerActive = useCallback(() => {
+    lastPeerActivityRef.current = Date.now();
+    setPeerConnected(true);
+  }, []);
+
+  const markPeerInactive = useCallback(() => {
+    lastPeerActivityRef.current = 0;
+    setPeerConnected(false);
+  }, []);
 
   // Balance polling
   const requestBalance = useCallback(() => {
@@ -455,7 +465,8 @@ const Shell = () => {
           trackerWsUpRef.current = true;
           lastTrackerActivityRef.current = Date.now();
           setTrackerLiveness('connected');
-          lastPeerActivityRef.current = 0;
+          // Treat successful tracker match as immediate peer activity for UX.
+          markPeerActive();
           let amount: bigint;
           let perGame: bigint;
           try { amount = BigInt(matched.amount); } catch { amount = FALLBACK_AMOUNT; }
@@ -469,9 +480,11 @@ const Shell = () => {
           lastTrackerActivityRef.current = Date.now();
           setTrackerLiveness('connected');
           if (!status.has_pairing || status.peer_connected === false) {
-            lastPeerActivityRef.current = 0;
+            markPeerInactive();
           } else if (status.peer_connected === true) {
-            lastPeerActivityRef.current = Date.now();
+            markPeerActive();
+          } else {
+            setPeerConnected(null);
           }
           if (activePairingTokenRef.current !== null) {
             if (status.has_pairing && status.token === activePairingTokenRef.current) {
@@ -479,7 +492,7 @@ const Shell = () => {
               blobSingleton?.resendUnacked();
             } else {
               console.warn('[Shell] mid-session reconnect: pairing lost or mismatched, keeping local session active');
-              lastPeerActivityRef.current = 0;
+              markPeerInactive();
             }
             return;
           }
@@ -544,17 +557,17 @@ const Shell = () => {
           }
         },
         onPeerReconnected: () => {
-          lastPeerActivityRef.current = Date.now();
+          markPeerActive();
           blobSingleton?.resendUnacked();
         },
-        onMessage: (_data: unknown) => { lastPeerActivityRef.current = Date.now(); },
-        onAck: (_ack: number) => { lastPeerActivityRef.current = Date.now(); },
-        onKeepalive: () => { lastPeerActivityRef.current = Date.now(); },
+        onMessage: (_data: unknown) => { markPeerActive(); },
+        onAck: (_ack: number) => { markPeerActive(); },
+        onKeepalive: () => { markPeerActive(); },
         onClosed: () => {
           console.log('[Shell] tracker connection closed');
           trackerWsUpRef.current = false;
           lastTrackerActivityRef.current = 0;
-          lastPeerActivityRef.current = 0;
+          markPeerInactive();
         },
         onTrackerDisconnected: () => {
           console.log('[Shell] tracker disconnected');
@@ -593,9 +606,9 @@ const Shell = () => {
     if (pendingMsgHandlerRef.current) {
       const { handler, ackHandler, keepaliveHandler } = pendingMsgHandlerRef.current;
       conn.registerMessageHandler(
-        (msgno, msg) => { lastPeerActivityRef.current = Date.now(); handler(msgno, msg); },
-        (ack) => { lastPeerActivityRef.current = Date.now(); ackHandler(ack); },
-        () => { lastPeerActivityRef.current = Date.now(); keepaliveHandler(); },
+        (msgno, msg) => { markPeerActive(); handler(msgno, msg); },
+        (ack) => { markPeerActive(); ackHandler(ack); },
+        () => { markPeerActive(); keepaliveHandler(); },
       );
     }
 
@@ -613,9 +626,9 @@ const Shell = () => {
         initialSave.pairingToken,
         initialSave,
       );
-      lastPeerActivityRef.current = 0;
+      markPeerInactive();
     }
-  }, [uniqueId, sessionId]);
+  }, [uniqueId, sessionId, markPeerActive, markPeerInactive]);
 
   // Auto-connect to saved tracker on reload; otherwise wait for user selection
   useEffect(() => {

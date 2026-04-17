@@ -5367,6 +5367,47 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         );
     }));
 
+    res.push(("propose_attempt_rejected_when_peer_proposal_pending", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        // Alice proposes first. Bob then tries to propose while Alice's
+        // proposal is still pending. Bob's local attempt should be rejected
+        // (self-cancelled) and must not cancel Alice's proposal remotely.
+        let moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::ProposeNewGame(1, ProposeTrigger::Channel),
+            GameAction::CancelProposal(0, GameID(1)),
+            GameAction::CleanShutdown(0),
+        ];
+
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
+
+        let p0_notifs = &outcome.local_uis[0].notifications;
+        let p0_proposal_made = p0_notifs
+            .iter()
+            .filter(|n| matches!(n, GameNotification::ProposalMade { .. }))
+            .count();
+        assert_eq!(
+            p0_proposal_made,
+            0,
+            "Alice should not receive a peer ProposalMade from Bob's rejected attempt, got: {p0_notifs:?}"
+        );
+
+        let p1_notifs = &outcome.local_uis[1].notifications;
+        assert!(
+            p1_notifs
+                .iter()
+                .any(|n| matches!(n, GameNotification::ProposalCancelled { reason, .. } if reason.contains("peer proposal already pending"))),
+            "Bob should see local self-cancel when proposing over pending peer proposal, got: {p1_notifs:?}"
+        );
+    }));
+
     res.push(("test_proposal_accept_then_on_chain", &|| {
         let mut allocator = AllocEncoder::new();
 
