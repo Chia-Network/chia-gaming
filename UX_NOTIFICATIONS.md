@@ -34,7 +34,7 @@ Those are conceptual progression models; the concrete emitted values are still
 
 ## Table of Contents
 
-- [WASM Event FIFO and Reentrancy Safety](#wasm-event-fifo-and-reentrancy-safety)
+- [WASM Event FIFO and Async Drain](#wasm-event-fifo-and-async-drain)
 - [Channel Lifecycle Notifications](#channel-lifecycle-notifications)
 - [Gameplay Notifications](#gameplay-notifications)
 - [Proposal Notifications](#proposal-notifications)
@@ -44,7 +44,7 @@ Those are conceptual progression models; the concrete emitted values are still
 
 ---
 
-## WASM Event FIFO and Reentrancy Safety
+## WASM Event FIFO and Async Drain
 
 Every communication from the WASM cradle to the JS frontend is a `CradleEvent`
 delivered through a single FIFO queue. There are no side-channel flags or polled
@@ -54,14 +54,14 @@ through the same event stream.
 
 Flow:
 
-1. `processResult()` appends `result.events` to `eventQueue`.
-2. If a drain is already in progress (`draining == true`), it returns
-   immediately — the new events will be picked up by the active loop.
-3. Otherwise it sets `draining = true` and processes events in order with
-   `shift()` until the queue is empty, then clears `draining`.
+1. `processResult()` appends `result.events` to `eventQueue` and calls
+   `scheduleDrain()`.
+2. `scheduleDrain()` is a no-op if a drain is already scheduled or the queue
+   is empty. Otherwise it schedules a `setTimeout(0)` callback that dispatches
+   **one** event, saves state, and calls `scheduleDrain()` again for the next.
 
-Each event is dispatched exactly once by `dispatchEvent()`. Event types and
-their handlers:
+Each event is dispatched exactly once by `dispatchEvent()`, in a separate
+macrotask. Event types and their handlers:
 
 - `OutboundMessage` — send to peer via tracker
 - `OutboundTransaction` — submit spend bundle to blockchain
@@ -73,19 +73,28 @@ their handlers:
 - `NeedCoinSpend` — request the wallet to create and sign a spend bundle
 - `WatchCoin` — register a coin for wallet/watch tracking
 
-Why this exists:
+Why async (one event per macrotask):
 
 - Some event handlers trigger additional WASM calls that produce more
-  `CradleEvent`s (for example puzzle/solution fulfillment calls
-  `report_puzzle_and_solution`, which returns a new drain result).
-- Without a single FIFO and the `draining` guard, those nested results could
-  re-enter dispatch while the current event list is mid-iteration, leading to
-  out-of-order effects, dropped work, or duplicated processing.
-- With the current design, nested or concurrent `processResult()` calls only
-  enqueue more events; one active drain loop owns dispatch order.
+  `CradleEvent`s (for example, a notification handler that calls
+  `proposeGame`, which returns new events). Those events are appended to
+  the queue and drained in subsequent macrotasks.
+- Notification handlers in React check React state (e.g.
+  `gameConnectionState`). React `setState` calls don't flush until the
+  call stack unwinds. If multiple notifications were dispatched in a single
+  synchronous loop, handlers for events 2..N would see stale React state
+  from before event 1's `setState` took effect.
+- By yielding to the macrotask queue between events, React flushes state
+  updates before the next event handler runs. This means notification
+  handlers can rely on React state being current — no special rules about
+  using refs instead of state for guards.
+- Ordering is preserved: events from the first WASM call are queued first;
+  events produced re-entrantly (from a WASM call inside a handler) are
+  appended after. The queue drains in FIFO order.
 
-This makes frontend event processing deterministic and avoids JS-side
-reentrancy bugs during handshake and normal gameplay.
+This makes frontend event processing deterministic and allows notification
+handlers to use ordinary React state without worrying about synchronous
+batching artifacts.
 
 ---
 
@@ -152,6 +161,28 @@ These fire during active gameplay (after a game proposal has been accepted).
 | `ProposalMade { id, my_contribution, their_contribution }` | Game proposal received from opponent | A new game has been proposed by the peer. Only fires for the receiver — the proposer does not get this notification. |
 | `ProposalAccepted { id }`                                  | Proposal accepted by either side     | The game is now live and play can begin                                                                              |
 | `ProposalCancelled { id, reason }`                         | Proposal cancelled or invalidated    | The proposal was cancelled explicitly, or automatically due to going on-chain                                        |
+
+### Cancellation Reasons (`CancelReason`)
+
+`ProposalCancelled` carries a `reason` field indicating why the cancellation
+happened. The reason determines both the frontend's behavior and whether the
+user is notified.
+
+| `CancelReason` | Emitted when | Frontend behavior |
+|---|---|---|
+| `SupersededByIncoming` | A peer proposal arrived in a batch while our own proposal was queued locally. WASM removes our queued proposal because the state it was built against is now stale. | **Local/silent.** Terms stashed in `pendingRetryTermsRef` for automatic re-submission (see [Proposal Collision Handling](GAME_LIFECYCLE.md#proposal-collision-handling)). |
+| `PeerProposalPending` | JS called `propose_game` while an unresolved peer proposal already exists in `proposed_games`. WASM rejects immediately to avoid silently cancelling the peer's proposal as a side effect. | **Local/silent.** Same retry stash as `SupersededByIncoming`. |
+| `GameActive` | Reserved for future use. The JS-side guard prevents this from occurring in practice. | **Local/silent.** Clears retry state. |
+| `CancelledByPeer` | The peer explicitly sent `BatchAction::CancelProposal` for our proposal. | **User-facing popup:** "Your proposal was rejected by the other side." |
+| `CancelledByUs` | We explicitly cancelled the peer's proposal (via `cancel_proposal`). | **Silent.** We initiated the cancellation; nothing to tell the user. |
+| `CleanShutdown` | The channel is shutting down cooperatively. All outstanding proposals are cancelled. | **Silent.** The shutdown UI handles this. |
+| `WentOnChain` | The channel transitioned to on-chain resolution. Proposals not reflected in the unroll are cancelled. | **Silent.** The on-chain UI handles this. |
+| `ChannelError` | An unrecoverable channel error occurred. All proposals are cancelled as cleanup. | **Silent.** The error UI handles this. |
+
+The `is_local()` method on `CancelReason` returns `true` for
+`SupersededByIncoming`, `PeerProposalPending`, and `GameActive`. The frontend
+uses this to decide whether to stash terms for retry (local + terms available)
+or show a user-facing notification (only `CancelledByPeer`).
 
 ---
 

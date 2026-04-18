@@ -654,21 +654,65 @@ via the `gameplayEventSubject` RxJS stream:
 Terminal notifications are also forwarded as `{ _terminal: true, notification }`
 so the game UI can stop processing.
 
-## MVP Simplifications
+## Single-Hand Enforcement
 
 The WASM layer supports multiple simultaneous games (games are tracked by
-`GameID`), but the MVP frontend supports only **one game at a time**. This means:
+`GameID`), but the frontend currently enforces **one game at a time**. This is
+a deliberate architectural choice: single-hand enforcement lives almost entirely
+in JavaScript, keeping the WASM/Rust layer multi-hand-ready for future use. The
+game UI component contract does not change — each game instance behaves as if
+it is the only game. When multi-handing is added, the session component gains
+a multiplexer (game ID → component mapping) and the JS-side guards are relaxed.
 
-- The session component manages a single game UI component
-- The between-game flow is strictly sequential: hand ends → overlay → propose
-  next → accept → new hand starts
-- Notification routing is trivial: gameplay events go to the one game component
+### JS-side guards
 
-This is a UI simplification, not an architectural limitation. When multiple
-simultaneous games are added, the session component gains a multiplexer (game
-ID → component mapping) and UI for switching between games. The game UI component
-contract does not change — each game instance still behaves as if it is the only
-game.
+**Send guard** — `proposeNewGame` in `useGameSession` bails immediately if
+`gameIdsRef.current.length > 0` (a game is active). This prevents the user
+from proposing a new hand while one is in progress.
+
+**Receive guard** — When a `ProposalMade` notification arrives while a game is
+active (`handKeyRef.current > 0 && gameIdsRef.current.length === 0` is false),
+the handler calls `cancel_proposal` to reject it outright, rather than caching
+it.
+
+**First-game proposal** — The initiator proposes the first game exactly once,
+triggered by `ChannelStatus { state: Active }` with the guard
+`!firstGameAcceptedRef.current && iStarted`. `firstGameAcceptedRef` is set
+to `true` immediately, making it structurally impossible to fire twice. The
+receiver auto-accepts the first `ProposalMade` with a symmetric guard
+(`!firstGameAcceptedRef.current && !iStarted`).
+
+### WASM-side constraints
+
+Two proposal constraints live in WASM because they arise from the potato
+protocol's asynchronous nature and cannot be deferred to JS:
+
+1. **`SupersededByIncoming`** — When a batch arrives containing a
+   `ProposeGame` from the peer, any locally queued `QueuedProposal` actions
+   are removed from the `game_action_queue`. The queued proposals were built
+   against a now-stale state (the incoming batch carries the potato and the
+   definitive state). WASM emits `ProposalCancelled { reason:
+   SupersededByIncoming }` for each removed proposal.
+
+2. **`PeerProposalPending`** — When JS calls `propose_game` while an
+   unresolved peer proposal exists in `proposed_games`, WASM rejects
+   immediately with `ProposalCancelled { reason: PeerProposalPending }`.
+   This prevents silently cancelling the peer's proposal as a side effect
+   of proposing our own.
+
+Both represent the same fundamental situation — a collision between our
+proposal intent and the peer's — hitting at different points in the potato
+cycle. In case 1, our proposal was queued but unsent when the peer's batch
+arrived. In case 2, the peer's proposal was already recorded when JS tried to
+propose. The frontend handles both identically: stash the cancelled terms in
+`pendingRetryTermsRef` and wait for the incoming peer proposal to surface
+before deciding what to do (see
+[Proposal Collision Handling](GAME_LIFECYCLE.md#proposal-collision-handling)).
+
+Everything else in WASM — `MAX_PROPOSALS` (100), nonce parity/monotonicity,
+amount consistency, timeout caps — are validation/safety checks, not
+single-hand enforcement. They exist to prevent protocol violations, not to
+limit concurrency.
 
 ## Key Files
 

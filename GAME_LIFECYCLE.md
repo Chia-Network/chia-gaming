@@ -81,6 +81,32 @@ immediately by `InsufficientBalance` (the terminal). `CancelProposal` is sent
 to the peer (who sees `ProposalCancelled`). The game satisfies both Rule A
 (accepted) and Rule B (terminal follows acceptance).
 
+### Proposal Collision Handling
+
+When both players try to propose simultaneously, the proposals collide. Because
+the potato protocol serializes all state updates, these collisions are always
+resolved deterministically by WASM — but the frontend needs to handle the
+resulting cancellations gracefully so the user's intent is preserved.
+
+**How collisions manifest:** Both `SupersededByIncoming` and
+`PeerProposalPending` cancel the local proposal and emit
+`ProposalCancelled`. The frontend stashes the cancelled proposal's terms in
+`pendingRetryTermsRef`. When the peer's `ProposalMade` notification arrives
+(which it will, since the peer successfully proposed), the handler checks
+`pendingRetryTermsRef` and takes one of two paths:
+
+- **Terms match the previous hand** — auto-reject the peer's proposal and
+  re-send ours. The user never sees the collision.
+- **Terms differ** — surface the peer's proposal in the review UI so the user
+  can decide. The stashed retry terms are discarded.
+
+This means a simple "play again at the same stakes" interaction is seamless
+even when both players click "New Hand" at the same moment. Only genuinely
+conflicting terms (different amounts) require user intervention.
+
+See `UX_NOTIFICATIONS.md` for the full `CancelReason` table and frontend
+behavior for each variant.
+
 ### WASM Accept-and-Move Convenience
 
 The WASM layer exposes an `accept_proposal_and_move` function that atomically accepts
