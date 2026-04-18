@@ -20,8 +20,8 @@ use crate::common::types::{
     Program, ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::potato_handler::effects::{
-    format_coin, ChannelState, ChannelStatusSnapshot, Effect, GameNotification, GameStatusKind,
-    GameStatusOtherParams, ResyncInfo,
+    format_coin, CancelReason, ChannelState, ChannelStatusSnapshot, Effect, GameNotification,
+    GameStatusKind, GameStatusOtherParams, ResyncInfo,
 };
 use crate::shutdown::get_conditions_with_channel_handler;
 
@@ -538,7 +538,7 @@ impl PotatoHandler {
                     for id in cancelled {
                         effects.push(Effect::Notify(GameNotification::ProposalCancelled {
                             id,
-                            reason: "superseded by incoming proposal".to_string(),
+                            reason: CancelReason::SupersededByIncoming,
                         }));
                     }
 
@@ -566,7 +566,7 @@ impl PotatoHandler {
                     ch.received_cancel_proposal(game_id)?;
                     effects.push(Effect::Notify(GameNotification::ProposalCancelled {
                         id: *game_id,
-                        reason: "cancelled by peer".to_string(),
+                        reason: CancelReason::CancelledByPeer,
                     }));
                 }
                 BatchAction::Move(game_id, game_move) => {
@@ -657,7 +657,7 @@ impl PotatoHandler {
                 for id in cancelled_ids {
                     effects.push(Effect::Notify(GameNotification::ProposalCancelled {
                         id,
-                        reason: "clean shutdown".to_string(),
+                        reason: CancelReason::CleanShutdown,
                     }));
                 }
             }
@@ -914,7 +914,7 @@ impl PotatoHandler {
                     }
                     effects.push(Effect::Notify(GameNotification::ProposalCancelled {
                         id: game_id,
-                        reason: "cancelled by us".to_string(),
+                        reason: CancelReason::CancelledByUs,
                     }));
                     batch_actions.push(BatchAction::CancelProposal(game_id));
                 }
@@ -933,7 +933,7 @@ impl PotatoHandler {
                         for id in cancelled_ids {
                             effects.push(Effect::Notify(GameNotification::ProposalCancelled {
                                 id,
-                                reason: "clean shutdown".to_string(),
+                                reason: CancelReason::CleanShutdown,
                             }));
                         }
                     }
@@ -1265,7 +1265,7 @@ impl PotatoHandler {
             for id in cancelled_ids {
                 effects.push(Effect::Notify(GameNotification::ProposalCancelled {
                     id,
-                    reason: "going on chain".to_string(),
+                    reason: CancelReason::WentOnChain,
                 }));
             }
         }
@@ -1389,7 +1389,7 @@ impl FromLocalUI for PotatoHandler {
                 vec![cancelled_id],
                 vec![Effect::Notify(GameNotification::ProposalCancelled {
                     id: cancelled_id,
-                    reason: "local propose rejected: peer proposal already pending".to_string(),
+                    reason: CancelReason::PeerProposalPending,
                 })],
             ));
         }

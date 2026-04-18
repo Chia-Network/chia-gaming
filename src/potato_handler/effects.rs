@@ -85,6 +85,23 @@ pub struct GameStatusOtherParams {
     pub game_finished: Option<bool>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum CancelReason {
+    SupersededByIncoming,
+    PeerProposalPending,
+    CancelledByPeer,
+    CancelledByUs,
+    ChannelError,
+    WentOnChain,
+    CleanShutdown,
+}
+
+impl CancelReason {
+    pub fn is_local(self) -> bool {
+        matches!(self, Self::SupersededByIncoming | Self::PeerProposalPending)
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum GameNotification {
     GameStatus {
@@ -106,7 +123,7 @@ pub enum GameNotification {
     },
     ProposalCancelled {
         id: GameID,
-        reason: String,
+        reason: CancelReason,
     },
     InsufficientBalance {
         id: GameID,

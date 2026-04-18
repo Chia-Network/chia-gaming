@@ -11,7 +11,7 @@ use crate::common::types::{
     Amount, CoinSpend, CoinString, Error, GameID, Hash, PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::potato_handler::effects::GameStatusKind;
-use crate::potato_handler::effects::{Effect, GameNotification};
+use crate::potato_handler::effects::{CancelReason, Effect, GameNotification};
 use crate::potato_handler::types::{GameAction, PeerMessage, PotatoState};
 
 pub enum UnrollOutcome {
@@ -168,7 +168,7 @@ impl ChannelHandlerBase {
             for id in cancelled_ids {
                 effects.push(Effect::Notify(GameNotification::ProposalCancelled {
                     id,
-                    reason: "channel error".to_string(),
+                    reason: CancelReason::ChannelError,
                 }));
             }
             let game_ids = ch.all_game_ids();

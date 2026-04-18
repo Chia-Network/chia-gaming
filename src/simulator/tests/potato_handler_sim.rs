@@ -644,7 +644,7 @@ fn event_shape(actual: &TestEvent) -> String {
             }
             GameNotification::ProposalMade { id, .. } => format!("Notif(ProposalMade(id={id:?}))"),
             GameNotification::ProposalAccepted { id } => format!("Notif(ProposalAccepted(id={id:?}))"),
-            GameNotification::ProposalCancelled { id, reason } => format!("Notif(ProposalCancelled(id={id:?},reason={reason}))"),
+            GameNotification::ProposalCancelled { id, reason } => format!("Notif(ProposalCancelled(id={id:?},reason={reason:?}))"),
             GameNotification::InsufficientBalance { id, our_balance_short, their_balance_short } => format!("Notif(InsufficientBalance(id={id:?},ours={our_balance_short},theirs={their_balance_short}))"),
             GameNotification::ActionFailed { reason } => format!("Notif(ActionFailed(reason={reason}))"),
             GameNotification::ChannelStatus { state, .. } => format!("Notif(ChannelStatus(state={state:?}))"),
@@ -5403,7 +5403,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert!(
             p1_notifs
                 .iter()
-                .any(|n| matches!(n, GameNotification::ProposalCancelled { reason, .. } if reason.contains("peer proposal already pending"))),
+                .any(|n| matches!(n, GameNotification::ProposalCancelled { reason, .. } if reason.is_local())),
             "Bob should see local self-cancel when proposing over pending peer proposal, got: {p1_notifs:?}"
         );
     }));

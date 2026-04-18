@@ -12,8 +12,8 @@ use crate::common::types::{
 };
 use crate::peer_container::PeerHandler;
 use crate::potato_handler::effects::{
-    format_coin, ChannelState, ChannelStatusSnapshot, Effect, GameNotification, GameStatusKind,
-    GameStatusOtherParams, ResyncInfo,
+    format_coin, CancelReason, ChannelState, ChannelStatusSnapshot, Effect, GameNotification,
+    GameStatusKind, GameStatusOtherParams, ResyncInfo,
 };
 use crate::potato_handler::handler_base::{
     build_channel_to_unroll_bundle, classify_unroll, ChannelHandlerBase, UnrollOutcome,
@@ -637,7 +637,7 @@ impl SpendChannelCoinHandler {
             for id in cancelled_ids {
                 effects.push(Effect::Notify(GameNotification::ProposalCancelled {
                     id,
-                    reason: "channel went on-chain".to_string(),
+                    reason: CancelReason::WentOnChain,
                 }));
             }
         }

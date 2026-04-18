@@ -67,6 +67,12 @@ export interface SessionSave {
   myRunningBalance?: string;
   channelAttentionActive?: boolean;
   gameTerminalAttentionActive?: boolean;
+  betweenHandMode?: string;
+  betweenHandComposePerHand?: string;
+  betweenHandLastTerms?: { my_contribution: string; their_contribution: string } | null;
+  betweenHandRejectedOnceTerms?: { my_contribution: string; their_contribution: string } | null;
+  betweenHandCachedPeerProposal?: { id: string; my_contribution: string; their_contribution: string } | null;
+  betweenHandReviewPeerProposal?: { id: string; my_contribution: string; their_contribution: string } | null;
 }
 
 interface AppState {

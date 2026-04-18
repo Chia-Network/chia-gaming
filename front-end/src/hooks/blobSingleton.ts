@@ -93,6 +93,12 @@ async function restoreSession(
   gameObject.myRunningBalance = save.myRunningBalance ?? '0';
   gameObject.channelAttentionActive = save.channelAttentionActive ?? false;
   gameObject.gameTerminalAttentionActive = save.gameTerminalAttentionActive ?? false;
+  gameObject.betweenHandMode = save.betweenHandMode ?? null;
+  gameObject.betweenHandComposePerHand = save.betweenHandComposePerHand ?? null;
+  gameObject.betweenHandLastTerms = save.betweenHandLastTerms ?? null;
+  gameObject.betweenHandRejectedOnceTerms = save.betweenHandRejectedOnceTerms ?? null;
+  gameObject.betweenHandCachedPeerProposal = save.betweenHandCachedPeerProposal ?? null;
+  gameObject.betweenHandReviewPeerProposal = save.betweenHandReviewPeerProposal ?? null;
   gameObject.markRestored();
 
   debugLog('[restore] session restored');

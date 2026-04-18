@@ -145,6 +145,12 @@ export class WasmBlobWrapper {
   myRunningBalance: string = '0';
   channelAttentionActive = false;
   gameTerminalAttentionActive = false;
+  betweenHandMode: string | null = null;
+  betweenHandComposePerHand: string | null = null;
+  betweenHandLastTerms: { my_contribution: string; their_contribution: string } | null = null;
+  betweenHandRejectedOnceTerms: { my_contribution: string; their_contribution: string } | null = null;
+  betweenHandCachedPeerProposal: { id: string; my_contribution: string; their_contribution: string } | null = null;
+  betweenHandReviewPeerProposal: { id: string; my_contribution: string; their_contribution: string } | null = null;
   getFee: () => number = () => 0;
 
   constructor(
@@ -697,6 +703,12 @@ export class WasmBlobWrapper {
         myRunningBalance: this.myRunningBalance !== '0' ? this.myRunningBalance : undefined,
         channelAttentionActive: this.channelAttentionActive || undefined,
         gameTerminalAttentionActive: this.gameTerminalAttentionActive || undefined,
+        betweenHandMode: this.betweenHandMode ?? undefined,
+        betweenHandComposePerHand: this.betweenHandComposePerHand ?? undefined,
+        betweenHandLastTerms: this.betweenHandLastTerms ?? undefined,
+        betweenHandRejectedOnceTerms: this.betweenHandRejectedOnceTerms ?? undefined,
+        betweenHandCachedPeerProposal: this.betweenHandCachedPeerProposal ?? undefined,
+        betweenHandReviewPeerProposal: this.betweenHandReviewPeerProposal ?? undefined,
       };
       saveSession(save);
     } catch (e) {

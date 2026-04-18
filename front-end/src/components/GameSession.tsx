@@ -13,6 +13,7 @@ import { motion, useMotionValue, useDragControls } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
 import { Button } from './button';
+import { AmountInput } from './AmountInput';
 function CoinId({ hex }: { hex: string }) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
@@ -337,6 +338,44 @@ function GameTerminalAttentionOverlay({
   );
 }
 
+function BetweenHandErrorOverlay({
+  message,
+  onDismiss,
+  boundsRef,
+}: {
+  message: string;
+  onDismiss: () => void;
+  boundsRef: RefObject<HTMLElement | null>;
+}) {
+  const { cardRef, x, y, clampToViewport } = useViewportClampedDrag(boundsRef);
+  return (
+    <motion.div
+      ref={cardRef}
+      drag
+      dragMomentum={false}
+      dragElastic={0}
+      initial={false}
+      style={{ x, y }}
+      onDrag={clampToViewport}
+      onDragEnd={clampToViewport}
+      className='absolute z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing'
+    >
+      <Card className='theme-inverted w-full max-w-md shadow-xl bg-canvas-bg-subtle border border-canvas-line'>
+        <CardHeader className='text-center pb-2'>
+          <CardTitle className='text-lg text-canvas-text-contrast'>Notice</CardTitle>
+        </CardHeader>
+        <Separator />
+        <CardContent className='pt-4 flex flex-col gap-3'>
+          <p className='text-sm text-canvas-text-contrast text-center'>{message}</p>
+          <Button variant='solid' size='sm' onClick={onDismiss} className='self-center min-w-[96px]'>
+            OK
+          </Button>
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+}
+
 interface CalpokerHandProps {
   gameObject: WasmBlobWrapper;
   gameId: string;
@@ -452,12 +491,25 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
   const gameAreaRef = useRef<HTMLDivElement | null>(null);
 
   const [dismissedError, setDismissedError] = useState(false);
-  const [newHandWaiting, setNewHandWaiting] = useState(false);
 
-  const handKey = session.handKey;
-  useEffect(() => { setNewHandWaiting(false); }, [handKey]);
+  const maxPerHandMojos = (() => {
+    const ours = session.channelStatus.ourBalance;
+    const theirs = session.channelStatus.theirBalance;
+    if (ours == null || theirs == null) return null;
+    try {
+      const a = BigInt(ours);
+      const b = BigInt(theirs);
+      return a < b ? a : b;
+    } catch {
+      return null;
+    }
+  })();
 
   const handEverStarted = session.handKey > 0;
+  const hideGameInterfaceForBetweenHandDialog =
+    session.betweenHands &&
+    (session.betweenHandMode === 'compose-proposal' || session.betweenHandMode === 'review-incoming-proposal');
+  const showGameInterface = handEverStarted && !!session.displayGameId && !hideGameInterfaceForBetweenHandDialog;
   const channelStateLabel = session.channelStatus.state === 'Active' && session.channelStatus.havePotato
     ? 'Active \u{1F954}'
     : CHANNEL_STATE_LABELS[session.channelStatus.state] ?? session.channelStatus.state;
@@ -547,11 +599,11 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
       <div className='flex flex-col gap-2 px-4 pb-2 sm:px-6 md:px-8'>
         {/* Game area */}
           <div ref={gameAreaRef} className='relative overflow-hidden'>
-          {handEverStarted && (
+          {showGameInterface && (
             <CalpokerHand
               key={session.handKey}
               gameObject={session.gameObject}
-              gameId={session.activeGameId ?? ''}
+              gameId={session.activeGameId ?? session.displayGameId ?? ''}
               iStarted={session.iStarted}
               playerNumber={session.playerNumber}
               gameplayEvent$={session.gameplayEvent$}
@@ -571,6 +623,11 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
               <p className='text-canvas-text'>Waiting for game to start…</p>
             </div>
           )}
+          {handEverStarted && !session.displayGameId && !session.betweenHands && (
+            <div className='flex items-center justify-center py-20'>
+              <p className='text-canvas-text'>Waiting for game to start…</p>
+            </div>
+          )}
 
           {session.gameTerminalAttention && (
             <GameTerminalAttentionOverlay
@@ -581,28 +638,92 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
               boundsRef={gameAreaRef}
             />
           )}
+
+          {session.betweenHandError && (
+            <BetweenHandErrorOverlay
+              message={session.betweenHandError}
+              onDismiss={session.dismissBetweenHandError}
+              boundsRef={gameAreaRef}
+            />
+          )}
         </div>
 
         {/* Between-hand session controls */}
         {session.betweenHands && !isWindingDown(session.channelStatus.state) && (
-          <div className='flex items-center justify-center gap-4 py-2'>
-            <Button
-              variant='solid'
-              size='sm'
-              onClick={session.stopPlaying}
-            >
-              End Session
-            </Button>
-            <Button
-              variant='solid'
-              color='primary'
-              size='sm'
-              onClick={() => { setNewHandWaiting(true); session.playAgain(); }}
-              disabled={newHandWaiting}
-            >
-              {newHandWaiting ? 'Waiting' : 'New Hand'}
-            </Button>
-          </div>
+          <>
+            {session.betweenHandMode === 'decision' && (
+              <div className='relative flex w-full items-center justify-center py-2'>
+                <Button
+                  variant='solid'
+                  color='primary'
+                  size='sm'
+                  onClick={session.chooseNewHandSameTerms}
+                  disabled={session.newHandRequested}
+                >
+                  {session.newHandRequested ? 'Waiting\u2026' : 'New Hand'}
+                </Button>
+                <Button
+                  variant='ghost'
+                  color='neutral'
+                  size='sm'
+                  className='absolute right-2'
+                  onClick={session.chooseDoNotUseCurrentProposal}
+                  leadingIcon={<span className='text-base leading-none'>&times;</span>}
+                  iconOnly
+                />
+              </div>
+            )}
+
+            {session.betweenHandMode === 'compose-proposal' && (
+              <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4'>
+                <div className='flex flex-col gap-3'>
+                  <p className='text-sm text-canvas-text-contrast'>Propose terms for the next hand.</p>
+                  <AmountInput
+                    valueMojos={session.composePerHandAmount}
+                    onChange={session.setComposePerHandAmount}
+                    maxMojos={maxPerHandMojos}
+                    onUseMax={maxPerHandMojos != null ? () => session.setComposePerHandAmount(maxPerHandMojos) : undefined}
+                    disabled={session.composeProposalSent}
+                    label='Per-player stake'
+                    exceedsLabel='Exceeds available reserve.'
+                  />
+                  <div className='flex flex-wrap items-center gap-3'>
+                    <Button
+                      variant='solid'
+                      color='primary'
+                      size='sm'
+                      disabled={session.composeProposalSent || session.composePerHandAmount <= 0n}
+                      onClick={() => session.submitComposedProposal(session.composePerHandAmount)}
+                    >
+                      {session.composeProposalSent ? 'Proposal Sent' : 'Send Proposal'}
+                    </Button>
+                    <Button variant='solid' size='sm' onClick={session.startCleanShutdown}>
+                      Start Clean Shutdown
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {session.betweenHandMode === 'review-incoming-proposal' && session.reviewPeerProposal && (
+              <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4'>
+                <div className='flex flex-col gap-3'>
+                  <p className='text-sm text-canvas-text-contrast'>Do you want to accept this hand?</p>
+                  <p className='text-xs text-canvas-text'>
+                    Per-player stake: {formatMojos(session.reviewPeerProposal.terms.myContribution)}
+                  </p>
+                  <div className='flex flex-wrap items-center gap-3'>
+                    <Button variant='solid' color='primary' size='sm' onClick={session.acceptReviewedProposal}>
+                      Yes
+                    </Button>
+                    <Button variant='solid' size='sm' onClick={session.rejectReviewedProposal}>
+                      No
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 
