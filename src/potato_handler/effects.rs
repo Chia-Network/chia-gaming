@@ -89,6 +89,7 @@ pub struct GameStatusOtherParams {
 pub enum CancelReason {
     SupersededByIncoming,
     PeerProposalPending,
+    GameActive,
     CancelledByPeer,
     CancelledByUs,
     ChannelError,
@@ -98,7 +99,10 @@ pub enum CancelReason {
 
 impl CancelReason {
     pub fn is_local(self) -> bool {
-        matches!(self, Self::SupersededByIncoming | Self::PeerProposalPending)
+        matches!(
+            self,
+            Self::SupersededByIncoming | Self::PeerProposalPending | Self::GameActive
+        )
     }
 }
 

@@ -242,6 +242,9 @@ describe('ACK pruning', () => {
 });
 
 describe('outbound message numbering', () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
   it('assigns sequential numbers and tracks in unackedMessages', () => {
     const { blob, sentMessages } = createReadyBlob(() => ({
       events: [{ OutboundMessage: 'hello' }],
@@ -249,11 +252,13 @@ describe('outbound message numbering', () => {
     activeBlob = blob;
 
     blob.deliverMessage(1, 'trigger');
+    jest.runAllTimers();
 
     expect(sentMessages).toEqual([{ msgno: 1, msg: 'hello' }]);
     expect(blob.unackedMessages).toContainEqual({ msgno: 1, msg: 'hello' });
 
     blob.deliverMessage(2, 'trigger2');
+    jest.runAllTimers();
 
     expect(sentMessages[1]).toEqual({ msgno: 2, msg: 'hello' });
     expect(blob.messageNumber).toBe(3);

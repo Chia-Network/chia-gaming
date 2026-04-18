@@ -147,6 +147,7 @@ const ON_CHAIN_FLOW_STATES: ReadonlySet<ChannelState> = new Set<ChannelState>([
 const LOCAL_CANCEL_REASONS: ReadonlySet<string> = new Set([
   'SupersededByIncoming',
   'PeerProposalPending',
+  'GameActive',
 ]);
 
 export function isWindingDown(state: ChannelState): boolean {
@@ -595,6 +596,11 @@ export function useGameSession(
   const proposeNewGame = useCallback((terms: HandTerms) => {
     const go = gameObjectRef.current;
     if (!go || !go.isChannelReady()) return;
+    if (gameIdsRef.current.length > 0) {
+      debugLog('[notify] proposeNewGame blocked — game active');
+      return;
+    }
+    debugLog(`[notify] proposeNewGame sending proposal myContrib=${terms.myContribution} theirContrib=${terms.theirContribution}`);
     try {
       const ids = go.proposeGame({
         game_type: '63616c706f6b6572',
@@ -698,9 +704,10 @@ export function useGameSession(
       }
       if (cs.state === 'Active' && gameConnectionState.stateIdentifier !== 'running') {
         setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
-        if (iStarted && !firstGameAcceptedRef.current) {
-          proposeNewGame(lastHandTermsRef.current);
-        }
+      }
+      if (cs.state === 'Active' && !firstGameAcceptedRef.current && iStarted) {
+        firstGameAcceptedRef.current = true;
+        proposeNewGame(lastHandTermsRef.current);
       }
       return;
     }
@@ -728,7 +735,8 @@ export function useGameSession(
 
       const betweenHandsNow = handKeyRef.current > 0 && gameIdsRef.current.length === 0;
       if (!betweenHandsNow) {
-        setCachedPeerProposal(incoming);
+        debugLog(`[notify] rejecting proposal id=${incoming.id} — game active`);
+        try { go?.cancel_proposal(incoming.id); } catch (_) { /* already gone */ }
         return;
       }
 
@@ -817,6 +825,7 @@ export function useGameSession(
       setCachedPeerProposal(null);
       setReviewPeerProposal(null);
       setRejectedOnceTerms(null);
+      setBetweenHandError(null);
       setBetweenHandMode('decision');
       gameplayEventSubject.next({ ProposalAccepted: { id: gpa.id as number | string } });
     } else if ('GameStatus' in n) {
@@ -931,7 +940,7 @@ export function useGameSession(
 
       if (isLocal && cancelledTerms) {
         pendingRetryTermsRef.current = cancelledTerms;
-      } else {
+      } else if (reason === 'CancelledByPeer') {
         pendingRetryTermsRef.current = null;
         setComposeProposalSent(false);
         sameTermsRequestedRef.current = false;
@@ -939,6 +948,8 @@ export function useGameSession(
         if (!betweenHandErrorRef.current) {
           setBetweenHandError('Your proposal was rejected by the other side.');
         }
+      } else {
+        pendingRetryTermsRef.current = null;
       }
     } else if ('ActionFailed' in n) {
       const reason = String(n.ActionFailed?.reason ?? 'Unknown error');
@@ -960,6 +971,7 @@ export function useGameSession(
           case 'address':
             break;
           case 'debug_log':
+            debugLog(`[wasm] ${evt.message}`);
             break;
           default: {
             const _exhaustive: never = evt;

@@ -8,7 +8,7 @@ import {
   ConnectionSetup,
 } from '../types/ChiaGaming';
 
-import { debugEvent, debugLog } from '../services/debugLog';
+import { debugLog } from '../services/debugLog';
 
 function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -38,7 +38,6 @@ function getWebSocketClass(): any {
 }
 
 export class FakeBlockchainInterface implements InternalBlockchainInterface {
-  private static nextConnectionId = 1;
   blockchainAddressData: BlockchainInboundAddressResult;
   deleted: boolean;
 
@@ -56,17 +55,11 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private static readonly RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000];
   private reconnectAttempt = 0;
-  private connectionId: number;
 
   constructor(wsUrl: string) {
     this.wsUrl = wsUrl;
     this.blockchainAddressData = { puzzleHash: '' };
     this.deleted = false;
-    this.connectionId = FakeBlockchainInterface.nextConnectionId++;
-    debugEvent('sim-hs', 'connection_init', {
-      conn_id: this.connectionId,
-      ws_url: this.wsUrl,
-    });
   }
 
   private ensureConnected(): Promise<void> {
@@ -78,65 +71,23 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     }
     this.connectPromise = new Promise<void>((resolve, reject) => {
       const WS = getWebSocketClass();
-      const connectStartedAt = Date.now();
-      const waitThresholdsMs = [2_000, 5_000, 10_000, 20_000, 30_000];
-      let waitThresholdIdx = 0;
-      debugEvent('sim-hs', 'connect_start', {
-        conn_id: this.connectionId,
-        ws_url: this.wsUrl,
-        reconnect_attempt: this.reconnectAttempt,
-      });
       const ws = new WS(this.wsUrl);
-      const openWaitTimer = setInterval(() => {
-        if (ws.readyState !== WS.CONNECTING) return;
-        const elapsedMs = Date.now() - connectStartedAt;
-        while (waitThresholdIdx < waitThresholdsMs.length && elapsedMs >= waitThresholdsMs[waitThresholdIdx]) {
-          debugEvent('sim-hs', 'ws_open_wait', {
-            conn_id: this.connectionId,
-            elapsed_ms: elapsedMs,
-            threshold_ms: waitThresholdsMs[waitThresholdIdx],
-            ready_state: ws.readyState,
-          });
-          waitThresholdIdx += 1;
-        }
-      }, 250);
       ws.onopen = () => {
-        clearInterval(openWaitTimer);
         this.ws = ws;
         this.connectPromise = null;
-        debugEvent('sim-hs', 'ws_open', {
-          conn_id: this.connectionId,
-          ready_state: ws.readyState,
-          connect_elapsed_ms: Date.now() - connectStartedAt,
-        });
         this.fireConnectionChange(true);
         resolve();
       };
       ws.onerror = () => {
-        clearInterval(openWaitTimer);
         this.ws = null;
         this.connectPromise = null;
-        debugEvent('sim-hs', 'ws_error', {
-          conn_id: this.connectionId,
-          during_connect: true,
-          connect_elapsed_ms: Date.now() - connectStartedAt,
-        });
         this.fireConnectionChange(false);
         try { ws.close(); } catch { /* ignore */ }
         reject(new Error(`WebSocket connection to ${this.wsUrl} failed`));
       };
-      ws.onclose = (evt: CloseEvent) => {
-        clearInterval(openWaitTimer);
+      ws.onclose = () => {
         this.ws = null;
         this.connectPromise = null;
-        debugEvent('sim-hs', 'ws_close', {
-          conn_id: this.connectionId,
-          code: evt.code,
-          reason: evt.reason || '',
-          clean: evt.wasClean,
-          pending_count: this.pending.size,
-          connect_elapsed_ms: Date.now() - connectStartedAt,
-        });
         this.fireConnectionChange(false);
         for (const [, p] of this.pending) {
           p.reject(new Error('WebSocket closed'));
@@ -157,12 +108,6 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
           const p = this.pending.get(data.id);
           if (p) {
             this.pending.delete(data.id);
-            debugEvent('sim-hs', 'rpc_response_recv', {
-              conn_id: this.connectionId,
-              rpc_id: data.id,
-              ok: !data.error,
-              pending_count: this.pending.size,
-            });
             if (data.error) {
               p.reject(new Error(data.error));
             } else {
@@ -198,37 +143,8 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     await this.ensureConnected();
     const id = this.nextId++;
     const msg = JSON.stringify({ id, method, params: params ?? {} });
-    const startedAt = Date.now();
-    debugEvent('sim-hs', 'rpc_request_send', {
-      conn_id: this.connectionId,
-      rpc_id: id,
-      method,
-      pending_count: this.pending.size,
-    });
     return new Promise((resolve, reject) => {
-      this.pending.set(id, {
-        resolve: (v: any) => {
-          debugEvent('sim-hs', 'rpc_request_done', {
-            conn_id: this.connectionId,
-            rpc_id: id,
-            method,
-            ok: true,
-            elapsed_ms: Date.now() - startedAt,
-          });
-          resolve(v);
-        },
-        reject: (e: any) => {
-          debugEvent('sim-hs', 'rpc_request_done', {
-            conn_id: this.connectionId,
-            rpc_id: id,
-            method,
-            ok: false,
-            elapsed_ms: Date.now() - startedAt,
-            error: String(e),
-          });
-          reject(e);
-        },
-      });
+      this.pending.set(id, { resolve, reject });
       this.ws!.send(msg);
     });
   }
@@ -236,20 +152,11 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   private async getOrRequestToken(): Promise<string> {
     if (this.token) return this.token;
     if (!this.uniqueId) throw new Error('registerUser must be called before startMonitoring');
-    debugEvent('sim-hs', 'register_request_start', {
-      conn_id: this.connectionId,
-      user: this.uniqueId,
-    });
     const result = await this.withTransientRetry(
       'register',
       () => this.sendRequest('register', { name: this.uniqueId }),
     );
     this.token = result;
-    debugEvent('sim-hs', 'register_request_done', {
-      conn_id: this.connectionId,
-      user: this.uniqueId,
-      token: this.token,
-    });
     return this.token;
   }
 
@@ -265,10 +172,6 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     await this.withTransientRetry('get_peak', () => this.getHeightInfo());
     this.autoReconnect = true;
     this.reconnectAttempt = 0;
-    debugEvent('sim-hs', 'monitoring_ready', {
-      conn_id: this.connectionId,
-      puzzle_hash: puzzleHash,
-    });
     debugLog('[sim-blockchain] simulator probe succeeded');
   }
 
@@ -347,33 +250,17 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       Math.min(this.reconnectAttempt, FakeBlockchainInterface.RECONNECT_DELAYS.length - 1)
     ];
     this.reconnectAttempt++;
-    debugEvent('sim-hs', 'reconnect_timer_set', {
-      conn_id: this.connectionId,
-      attempt: this.reconnectAttempt,
-      delay_ms: delay,
-    });
     debugLog(`[sim-blockchain] scheduling reconnect in ${delay}ms (attempt ${this.reconnectAttempt})`);
     this.reconnectTimer = setTimeout(async () => {
       this.reconnectTimer = null;
       if (!this.autoReconnect || this.deleted) return;
-      debugEvent('sim-hs', 'reconnect_timer_fire', {
-        conn_id: this.connectionId,
-        attempt: this.reconnectAttempt,
-      });
       try {
         await this.ensureConnected();
         await this.getOrRequestToken();
         await this.withTransientRetry('get_peak', () => this.getHeightInfo());
         this.reconnectAttempt = 0;
-        debugEvent('sim-hs', 'reconnect_success', {
-          conn_id: this.connectionId,
-        });
         debugLog('[sim-blockchain] reconnected successfully');
       } catch (err) {
-        debugEvent('sim-hs', 'reconnect_failure', {
-          conn_id: this.connectionId,
-          error: String(err),
-        });
         debugLog(`[sim-blockchain] reconnect failed: ${err}`);
       }
     }, delay);

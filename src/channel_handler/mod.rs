@@ -1121,6 +1121,26 @@ impl ChannelHandler {
             .collect()
     }
 
+    pub fn dbg_proposed_games_summary(&self) -> String {
+        if self.proposed_games.is_empty() {
+            return "proposed_games=[]".to_string();
+        }
+        let entries: Vec<String> = self
+            .proposed_games
+            .iter()
+            .map(|p| {
+                format!(
+                    "id={} ours={} my={} their={}",
+                    p.game_id,
+                    self.is_our_nonce_parity(&p.game_id),
+                    p.my_contribution.to_u64(),
+                    p.their_contribution.to_u64(),
+                )
+            })
+            .collect();
+        format!("proposed_games=[{}]", entries.join("; "))
+    }
+
     pub fn my_out_of_game_balance(&self) -> Amount {
         self.my_out_of_game_balance.clone()
     }

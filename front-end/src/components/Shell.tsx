@@ -45,7 +45,7 @@ import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
 import { realBlockchainInfo } from '../hooks/RealBlockchainInterface';
 import { activate, deactivate, getActiveBlockchain } from '../hooks/activeBlockchain';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
-import { debugEvent, debugLog } from '../services/debugLog';
+import { debugLog } from '../services/debugLog';
 import { Button } from './button';
 
 import ChatPanel from './ChatPanel';
@@ -328,42 +328,6 @@ const Shell = () => {
       });
     });
   }, [deferStateUpdate]);
-
-  useEffect(() => {
-    // Interval-based event loop watchdog: catches long main-thread stalls.
-    let lastTick = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-    const id = setInterval(() => {
-      const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-      const deltaMs = now - lastTick;
-      if (deltaMs > 1500) {
-        debugEvent('ui-loop', 'interval_gap', {
-          gap_ms: Number(deltaMs.toFixed(1)),
-          threshold_ms: 1500,
-        });
-      }
-      lastTick = now;
-    }, 250);
-    return () => clearInterval(id);
-  }, []);
-
-  useEffect(() => {
-    // rAF watchdog: catches render/pain loop starvation.
-    let rafId = 0;
-    let lastFrame = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-    const onFrame = (now: number) => {
-      const deltaMs = now - lastFrame;
-      if (deltaMs > 1500) {
-        debugEvent('ui-loop', 'raf_gap', {
-          gap_ms: Number(deltaMs.toFixed(1)),
-          threshold_ms: 1500,
-        });
-      }
-      lastFrame = now;
-      rafId = requestAnimationFrame(onFrame);
-    };
-    rafId = requestAnimationFrame(onFrame);
-    return () => cancelAnimationFrame(rafId);
-  }, []);
 
   useEffect(() => {
     const id = setInterval(() => {
