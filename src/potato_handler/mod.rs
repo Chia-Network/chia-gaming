@@ -1377,11 +1377,7 @@ impl FromLocalUI for PotatoHandler {
 
         let game_id_list: Vec<GameID> = my_games.iter().map(|g| g.game_id).collect();
 
-        for (index, (mine, _theirs)) in my_games
-            .into_iter()
-            .zip(their_games)
-            .enumerate()
-        {
+        for (index, (mine, _theirs)) in my_games.into_iter().zip(their_games).enumerate() {
             let wire = WireProposeGame {
                 start: game.clone(),
                 game_id,
