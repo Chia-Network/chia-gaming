@@ -247,8 +247,8 @@ An `appState` key in localStorage holds a JSON-serialized `AppState` object
 | `perGameAmount` | `string` | Per-hand amount (bigint as string) |
 | `pendingTransactions` | `string[]` | CLVM blobs of transactions not yet confirmed |
 | `unackedMessages` | `Array<{ msgno, msg }>` | Outbound messages not yet acknowledged by the peer |
-| `gameLog` | `string[]` | Game notification log |
-| `debugLog` | `string[]` | Debug log history |
+| `history` | `string[]` | Game notification log |
+| `log` | `string[]` | Log history |
 | `activeGameId` | `string \| null?` | Current game ID |
 | `handState` | `CalpokerHandState?` | Card state snapshot for mid-hand restore |
 | `channelStatus` | `ChannelStatusPayload?` | Last channel status for coin watching |
@@ -467,8 +467,8 @@ but the MVP is limited to one game at a time.
 │  └──────────────────────────────────────────────────────────┘   │
 │                                                                 │
 │  Chat tab (ChatPanel — peer text messages)                      │
-│  Game Log tab (append-only text area)                           │
-│  Debug Log tab (append-only text area)                          │
+│  History tab (append-only text area)                            │
+│  Log tab (append-only text area)                                │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -482,7 +482,7 @@ The Shell is the top-level React component. It owns:
   `TrackerConnection` client for the game channel, and sets up the lobby iframe
 - **Theme sync** — pushes CSS variables and dark-mode class into the lobby iframe
   (`useThemeSyncToIframe`)
-- **Tab navigation** — six tabs: Wallet, Tracker, Game Session, Chat, Game Log, Debug Log
+- **Tab navigation** — six tabs: Wallet, Tracker, Game Session, Chat, History, Log
 - **Unique ID and session ID** — persisted in localStorage, stable across reloads
 
 The Shell does not know about game types or game protocol details. When the
@@ -570,7 +570,7 @@ individual hands). The `useGameSession` hook owns:
   "play again".
 - **Between-game UX** — an overlay showing the final result of each hand, with
   "Play Another Hand" and "End Session" buttons.
-- **Game log** and **debug log** — append-only text areas managed by the Shell,
+- **History** and **Log** — append-only text areas managed by the Shell,
   with callbacks passed down.
 
 ### CalpokerHand Component (`CalpokerHand` + `useCalpokerHand`)

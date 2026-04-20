@@ -7,7 +7,7 @@ import {
 import { WalletType } from '../types/WalletType';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 
-import { debugLog } from '../services/debugLog';
+import { log } from '../services/log';
 import { normalizeHexString, toUint8, toHexString } from '../util';
 import { decodeBech32mPuzzleHash } from '../util/bech32m';
 import { walletConnectState } from './useWalletConnect';
@@ -84,7 +84,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       const puzzleHash = decodeBech32mPuzzleHash(addr);
       if (puzzleHash) {
         this.blockchainAddressData = { puzzleHash };
-        debugLog(`[wc-blockchain] address resolved: ${addr} → ${puzzleHash}`);
+        log(`[wc-blockchain] address resolved: ${addr} → ${puzzleHash}`);
       } else {
         console.warn('[wc-blockchain] failed to decode address:', addr);
       }
@@ -99,11 +99,11 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   async spend(_blob: string, spendBundle: unknown, _source?: string, fee?: number): Promise<string> {
     const seq = ++this.spendSeq;
     const src = _source ?? 'unknown';
-    debugLog(`[wc-blockchain] walletPushTx submitting #${seq} from=${src} fee=${fee ?? 0}`);
+    log(`[wc-blockchain] walletPushTx submitting #${seq} from=${src} fee=${fee ?? 0}`);
 
     try {
       const result = await rpc.walletPushTx({ spendBundle: spendBundle as object, fee: fee || undefined });
-      debugLog(`[wc-blockchain] walletPushTx submitted #${seq} result=${JSON.stringify(result)}`);
+      log(`[wc-blockchain] walletPushTx submitted #${seq} result=${JSON.stringify(result)}`);
       return result as unknown as string;
     } catch (e: unknown) {
       const errStr = typeof e === 'string' ? e : ((e as any)?.message || JSON.stringify(e));
@@ -114,7 +114,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
           }, PUSH_TX_RETRY_DELAY);
         });
       }
-      debugLog(`[wc-blockchain] walletPushTx error #${seq}: ${String(e)}`);
+      log(`[wc-blockchain] walletPushTx error #${seq}: ${String(e)}`);
       throw e;
     }
   }
@@ -134,7 +134,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       return [resp.puzzleReveal, resp.solution];
     } catch (e) {
       console.error('[wc-blockchain] getPuzzleAndSolution error', e);
-      debugLog(`[wc-blockchain] getPuzzleAndSolution error: ${String(e)}`);
+      log(`[wc-blockchain] getPuzzleAndSolution error: ${String(e)}`);
       return null;
     }
   }
@@ -157,13 +157,13 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         amountHex,
         coinStringLength: coinString.length,
       });
-      debugLog(
+      log(
         `[wc-blockchain] selectCoins coin0 parent=${parentCoinInfo} ph=${puzzleHash} amount=${selected.amount} amountHex=${amountHex} coinStringLen=${coinString.length}`,
       );
       return coinString;
     } catch (e) {
       console.error('[wc-blockchain] selectCoins error', e);
-      debugLog(`[wc-blockchain] selectCoins error: ${String(e)}`);
+      log(`[wc-blockchain] selectCoins error: ${String(e)}`);
       throw e;
     }
   }
@@ -236,16 +236,16 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       };
       console.log('[wc-blockchain] >>> createOfferForIds payload', payload);
       console.log('[wc-blockchain] >>> createOfferForIds payload(json)', JSON.stringify(payload));
-      debugLog(`[wc-blockchain] createOfferForIds payload: ${JSON.stringify(payload)}`);
+      log(`[wc-blockchain] createOfferForIds payload: ${JSON.stringify(payload)}`);
       const response = await rpc.createOfferForIds(payload);
       console.log('[wc-blockchain] <<< createOfferForIds', response);
       console.log('[wc-blockchain] <<< createOfferForIds (json)', JSON.stringify(response));
       const offerStr = (response as any)?.offer;
       if (typeof offerStr === 'string' && offerStr.startsWith('offer')) {
-        debugLog('[wc-blockchain] createOfferForIds returned bech32 offer string path');
+        log('[wc-blockchain] createOfferForIds returned bech32 offer string path');
         return offerStr;
       }
-      debugLog(`[wc-blockchain] createOfferForIds returned non-offer payload type=${typeof response}`);
+      log(`[wc-blockchain] createOfferForIds returned non-offer payload type=${typeof response}`);
       return response;
     } catch (e) {
       let parsedError: unknown = undefined;
@@ -264,7 +264,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         coinIds,
         maxHeight,
       });
-      debugLog(
+      log(
         `[wc-blockchain] createOfferForIds error: ${String(e)} payload=${JSON.stringify({
           offer,
           extraConditions,
@@ -292,13 +292,13 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         });
         const r = resp.coinRecords ?? [];
         if (r.length > 0) {
-          debugLog(`[wc-blockchain] getCoinRecordsByNames hit name=${name} count=${r.length}`);
+          log(`[wc-blockchain] getCoinRecordsByNames hit name=${name} count=${r.length}`);
         }
         records.push(...r);
       } catch (e) {
         const msg = String(e);
         if (msg.includes('not found')) {
-          debugLog(`[wc-blockchain] getCoinRecordsByNames miss name=${name}: ${msg}`);
+          log(`[wc-blockchain] getCoinRecordsByNames miss name=${name}: ${msg}`);
         } else {
           console.error(`[wc-blockchain] getCoinRecordsByNames unexpected error name=${name}:`, e);
           throw e;
@@ -314,7 +314,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       walletId: this.remoteWalletId!,
       coinIds: names,
     });
-    debugLog(`[wc-blockchain] registerRemoteCoins names=${names.join(',')} result=${JSON.stringify(result)}`);
+    log(`[wc-blockchain] registerRemoteCoins names=${names.join(',')} result=${JSON.stringify(result)}`);
   }
 
   // --- Private ---
@@ -341,14 +341,14 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
             .catch((e) => {
               this.remoteWalletPending = false;
               console.warn('[wc-blockchain] createNewRemoteWallet failed, will retry', e);
-              debugLog(`[wc-blockchain] createNewRemoteWallet failed: ${String(e)}`);
+              log(`[wc-blockchain] createNewRemoteWallet failed: ${String(e)}`);
             });
         }
       })
       .catch((e) => {
         this.remoteWalletPending = false;
         console.warn('[wc-blockchain] getWallets failed, will retry', e);
-        debugLog(`[wc-blockchain] getWallets failed: ${String(e)}`);
+        log(`[wc-blockchain] getWallets failed: ${String(e)}`);
       });
   }
 

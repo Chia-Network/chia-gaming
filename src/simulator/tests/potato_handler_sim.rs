@@ -983,7 +983,7 @@ pub struct GameRunOutcome {
     pub cradles: [SynchronousGameCradle; 2],
     pub local_uis: [LocalTestUIReceiver; 2],
     pub simulator: Simulator,
-    pub debug_logs: [Vec<String>; 2],
+    pub logs: [Vec<String>; 2],
 }
 
 fn reports_blocked(i: usize, blocked: &Option<(usize, usize)>) -> bool {
@@ -1161,7 +1161,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     let mut nerf_messages_for: u8 = 0;
     let mut start_step = 0;
     let mut num_steps = 0;
-    let mut debug_logs: [Vec<String>; 2] = [Vec::new(), Vec::new()];
+    let mut logs: [Vec<String>; 2] = [Vec::new(), Vec::new()];
 
     // Give coins to the cradles.
     cradles[0].opening_coin(allocator, parent_coin_0)?;
@@ -1244,7 +1244,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                     cradles,
                     local_uis,
                     simulator,
-                    debug_logs,
+                    logs,
                 });
             }
         }
@@ -1380,8 +1380,8 @@ fn run_game_container_with_action_list_with_success_predicate(
                             CradleEvent::CoinSolutionRequest(coin) => {
                                 coin_requests.push(coin.clone());
                             }
-                            CradleEvent::DebugLog(line) => {
-                                debug_logs[i].push(line.clone());
+                            CradleEvent::Log(line) => {
+                                logs[i].push(line.clone());
                             }
                             CradleEvent::WatchCoin { .. } => {}
                         }
@@ -2021,7 +2021,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         cradles,
         local_uis,
         simulator,
-        debug_logs,
+        logs,
     })
 }
 

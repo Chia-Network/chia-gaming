@@ -2,7 +2,7 @@ import { ReplaySubject } from 'rxjs';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 import { BlockchainReport } from '../types/ChiaGaming';
 import { applyCoinRecordsWatchDiff } from '../util/coinWatch';
-import { debugLog } from '../services/debugLog';
+import { log } from '../services/log';
 
 export interface CoinStateBackend {
   registerCoins(names: string[]): Promise<void>;
@@ -53,7 +53,7 @@ export class CoinStateMonitor {
       await this.backend.registerCoins([coinName]);
       this.pendingRegistration.delete(coinName);
     } catch (e) {
-      debugLog(`[coin-monitor] registerCoins failed for ${coinName}, will retry: ${String(e)}`);
+      log(`[coin-monitor] registerCoins failed for ${coinName}, will retry: ${String(e)}`);
     }
   }
 

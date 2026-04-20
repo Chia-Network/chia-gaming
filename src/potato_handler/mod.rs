@@ -170,7 +170,7 @@ pub(crate) fn format_reward_coin(label: &str, ph: &PuzzleHash, amount: &Amount) 
     Some(format!("{label} ph={ph} amt={amount}"))
 }
 
-pub(crate) fn make_send_debug_log(
+pub(crate) fn make_send_log(
     ch: &ChannelHandler,
     actions: &[BatchAction],
     clean_shutdown: bool,
@@ -405,7 +405,7 @@ impl PotatoHandler {
             };
             {
                 let ch = self.channel_handler()?;
-                effects.push(Effect::DebugLog(make_send_debug_log(ch, &[], false)));
+                effects.push(Effect::Log(make_send_log(ch, &[], false)));
             }
             effects.push(Effect::PeerBatch {
                 actions: vec![],
@@ -423,7 +423,7 @@ impl PotatoHandler {
             };
             {
                 let ch = self.channel_handler()?;
-                effects.push(Effect::DebugLog(make_send_debug_log(ch, &[], false)));
+                effects.push(Effect::Log(make_send_log(ch, &[], false)));
             }
             effects.push(Effect::PeerBatch {
                 actions: vec![],
@@ -548,7 +548,7 @@ impl PotatoHandler {
                     let game_id = gsi.game_id;
                     let my_contribution = gsi.my_contribution_this_game.clone();
                     let their_contribution = gsi.their_contribution_this_game.clone();
-                    effects.push(Effect::DebugLog(format!(
+                    effects.push(Effect::Log(format!(
                         "DBG_ISSUE: recv ProposeGame id={} {}",
                         game_id, ch.dbg_proposed_games_summary(),
                     )));
@@ -562,7 +562,7 @@ impl PotatoHandler {
                     let ch = self.channel_handler_mut()?;
                     let before = ch.dbg_proposed_games_summary();
                     ch.apply_received_accept_proposal(game_id)?;
-                    effects.push(Effect::DebugLog(format!(
+                    effects.push(Effect::Log(format!(
                         "DBG_ISSUE: recv AcceptProposal id={} before={} after={}",
                         game_id, before, ch.dbg_proposed_games_summary(),
                     )));
@@ -795,7 +795,7 @@ impl PotatoHandler {
             ) {
                 parts.push(format!("  {s}"));
             }
-            effects.push(Effect::DebugLog(parts.join("\n")));
+            effects.push(Effect::Log(parts.join("\n")));
         }
 
         effects.extend(self.update_channel_coin_after_receive(
@@ -878,7 +878,7 @@ impl PotatoHandler {
                     {
                         let ch = self.channel_handler_mut()?;
                         ch.send_propose_game(env, &my_gsi)?;
-                        effects.push(Effect::DebugLog(format!(
+                        effects.push(Effect::Log(format!(
                             "DBG_ISSUE: send ProposeGame id={} {}",
                             my_gsi.game_id, ch.dbg_proposed_games_summary(),
                         )));
@@ -912,7 +912,7 @@ impl PotatoHandler {
                         }
                         let before = ch.dbg_proposed_games_summary();
                         ch.send_accept_proposal(&game_id)?;
-                        effects.push(Effect::DebugLog(format!(
+                        effects.push(Effect::Log(format!(
                             "DBG_ISSUE: send AcceptProposal id={} before={} after={}",
                             game_id, before, ch.dbg_proposed_games_summary(),
                         )));
@@ -1002,7 +1002,7 @@ impl PotatoHandler {
 
         {
             let ch = self.channel_handler()?;
-            effects.push(Effect::DebugLog(make_send_debug_log(
+            effects.push(Effect::Log(make_send_log(
                 ch,
                 &batch_actions,
                 clean_shutdown_data.is_some(),
@@ -1177,7 +1177,7 @@ impl PotatoHandler {
                 effects.extend(incoming_effects);
             }
             Err(e) => {
-                effects.push(Effect::DebugLog(format!(
+                effects.push(Effect::Log(format!(
                     "[going-on-chain] error processing peer message: {e:?}"
                 )));
                 effects.extend(self.go_on_chain(env, true)?);
@@ -1210,7 +1210,7 @@ impl PotatoHandler {
                     };
                     {
                         let ch = self.channel_handler()?;
-                        effects.push(Effect::DebugLog(make_send_debug_log(ch, &[], false)));
+                        effects.push(Effect::Log(make_send_log(ch, &[], false)));
                     }
                     effects.push(Effect::PeerBatch {
                         actions: vec![],
@@ -1245,8 +1245,8 @@ impl PotatoHandler {
 
         if let Some(channel_coin) = channel_coin {
             if *coin_id == channel_coin {
-                let debug_log =
-                    Effect::DebugLog(format!("[channel-coin-spent] {}", format_coin(coin_id)));
+                let log_effect =
+                    Effect::Log(format!("[channel-coin-spent] {}", format_coin(coin_id)));
                 let handler = crate::potato_handler::spend_channel_coin_handler::SpendChannelCoinHandler::new_at_channel_conditions(
                     self.channel_handler.take(),
                     channel_coin,
@@ -1259,7 +1259,7 @@ impl PotatoHandler {
 
                 return Ok((
                     true,
-                    vec![debug_log, Effect::RequestPuzzleAndSolution(coin_id.clone())],
+                    vec![log_effect, Effect::RequestPuzzleAndSolution(coin_id.clone())],
                 ));
             }
         }
@@ -1408,7 +1408,7 @@ impl FromLocalUI for PotatoHandler {
             return Ok((
                 vec![cancelled_id],
                 vec![
-                    Effect::DebugLog(format!(
+                    Effect::Log(format!(
                         "DBG_ISSUE: propose_game BLOCKED cancelled_id={} {}",
                         cancelled_id, dbg_summary,
                     )),

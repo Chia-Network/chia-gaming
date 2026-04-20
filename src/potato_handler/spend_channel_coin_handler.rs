@@ -305,7 +305,7 @@ impl SpendChannelCoinHandler {
                 self.state = SpendChannelCoinState::ChannelConditions {
                     channel_coin: channel_coin.clone(),
                 };
-                effects.push(Effect::DebugLog(format!(
+                effects.push(Effect::Log(format!(
                     "[spend-channel:channel-coin-spent] {}",
                     format_coin(coin_id)
                 )));
@@ -321,7 +321,7 @@ impl SpendChannelCoinHandler {
                     unroll_coin: unroll_coin.clone(),
                     state_number: *state_number,
                 };
-                effects.push(Effect::DebugLog(format!(
+                effects.push(Effect::Log(format!(
                     "[spend-channel:unroll-coin-spent] {}",
                     format_coin(coin_id)
                 )));
@@ -336,7 +336,7 @@ impl SpendChannelCoinHandler {
                     unroll_coin: unroll_coin.clone(),
                     state_number: *state_number,
                 };
-                effects.push(Effect::DebugLog(format!(
+                effects.push(Effect::Log(format!(
                     "[spend-channel:unroll-coin-spent] {}",
                     format_coin(coin_id)
                 )));
@@ -346,7 +346,7 @@ impl SpendChannelCoinHandler {
             _ => {}
         }
 
-        effects.push(Effect::DebugLog(format!(
+        effects.push(Effect::Log(format!(
             "[spend-channel:coin-spent] {}",
             format_coin(coin_id),
         )));
@@ -374,7 +374,7 @@ impl SpendChannelCoinHandler {
         };
 
         if let Some(on_chain_state) = unroll_timed_out {
-            effects.push(Effect::DebugLog(format!(
+            effects.push(Effect::Log(format!(
                 "[unroll-timeout] state={on_chain_state}",
             )));
             match self.do_unroll_spend_to_games(env, coin_id, on_chain_state) {
@@ -383,7 +383,7 @@ impl SpendChannelCoinHandler {
                 }
                 Err(e) => {
                     let reason = format!("timeout unroll failed for state {on_chain_state}: {e:?}");
-                    effects.push(Effect::DebugLog(format!("[unroll-error] {reason}")));
+                    effects.push(Effect::Log(format!("[unroll-error] {reason}")));
                     effects.extend(self.base.emit_failure_cleanup());
                     self.advisory = Some(reason);
                     self.transition_to_failed_terminal();
@@ -418,7 +418,7 @@ impl SpendChannelCoinHandler {
                     Ok(effect) => effects.extend(effect),
                     Err(e) => {
                         let reason = format!("channel coin spent to non-unroll: {e:?}");
-                        effects.push(Effect::DebugLog(format!("[channel-error] {reason}")));
+                        effects.push(Effect::Log(format!("[channel-error] {reason}")));
                         effects.extend(self.base.emit_failure_cleanup());
                         self.advisory = Some(reason);
                         self.transition_to_failed_terminal();
@@ -440,7 +440,7 @@ impl SpendChannelCoinHandler {
                     Ok(transition_effects) => effects.extend(transition_effects),
                     Err(e) => {
                         let reason = format!("unroll coin spent with unexpected state: {e:?}");
-                        effects.push(Effect::DebugLog(format!("[unroll-error] {reason}")));
+                        effects.push(Effect::Log(format!("[unroll-error] {reason}")));
                         effects.extend(self.base.emit_failure_cleanup());
                         self.advisory = Some(reason);
                         self.transition_to_failed_terminal();
@@ -457,7 +457,7 @@ impl SpendChannelCoinHandler {
                     Ok(transition_effects) => effects.extend(transition_effects),
                     Err(e) => {
                         let reason = format!("unroll coin spent with unexpected state: {e:?}");
-                        effects.push(Effect::DebugLog(format!("[unroll-error] {reason}")));
+                        effects.push(Effect::Log(format!("[unroll-error] {reason}")));
                         effects.extend(self.base.emit_failure_cleanup());
                         self.advisory = Some(reason);
                         self.transition_to_failed_terminal();
@@ -541,7 +541,7 @@ impl SpendChannelCoinHandler {
         };
 
         Ok(vec![
-            Effect::DebugLog(format!(
+            Effect::Log(format!(
                 "[sig-diag] timeout spend bundle: state={on_chain_state} sig=identity_point"
             )),
             Effect::SpendTransaction(spend_bundle),
@@ -588,7 +588,7 @@ impl SpendChannelCoinHandler {
             };
 
             if is_clean {
-                effects.push(Effect::DebugLog(
+                effects.push(Effect::Log(
                     "[clean-end] clean shutdown landed".to_string(),
                 ));
                 {
@@ -675,7 +675,7 @@ impl SpendChannelCoinHandler {
             )?
         };
 
-        effects.push(Effect::DebugLog(format!(
+        effects.push(Effect::Log(format!(
             "[unroll-started] {} state={on_chain_state}",
             format_coin(unroll_coin),
         )));
@@ -683,11 +683,11 @@ impl SpendChannelCoinHandler {
         match outcome {
             UnrollOutcome::Preempted(bundle) => {
                 let sig_hex = bundle.spends.first().map(|s| hex::encode(s.bundle.signature.bytes())).unwrap_or_default();
-                effects.push(Effect::DebugLog(format!(
+                effects.push(Effect::Log(format!(
                     "[sig-diag] preempt spend: state={on_chain_state} agg_sig={sig_hex}",
                 )));
                 effects.push(Effect::SpendTransaction(bundle));
-                effects.push(Effect::DebugLog(format!(
+                effects.push(Effect::Log(format!(
                     "[unroll-preempt] state={on_chain_state}",
                 )));
                 self.state = SpendChannelCoinState::UnrollSpend {
@@ -713,7 +713,7 @@ impl SpendChannelCoinHandler {
                 });
             }
             UnrollOutcome::Unrecoverable(reason) => {
-                effects.push(Effect::DebugLog(format!("[unroll-error] {reason}",)));
+                effects.push(Effect::Log(format!("[unroll-error] {reason}",)));
                 effects.extend(self.base.emit_failure_cleanup());
                 self.advisory = Some(reason);
                 self.transition_to_failed_terminal();

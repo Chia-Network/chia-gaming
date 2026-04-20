@@ -168,7 +168,7 @@ pub enum CradleEvent {
     OutboundMessage(Vec<u8>),
     OutboundTransaction(SpendBundle),
     Notification(GameNotification),
-    DebugLog(String),
+    Log(String),
     CoinSolutionRequest(CoinString),
     ReceiveError(String),
     NeedCoinSpend(CoinSpendRequest),
@@ -224,9 +224,9 @@ pub enum Effect {
     ChannelPuzzleHash(PuzzleHash),
     ReceivedChannelOffer(SpendBundle),
 
-    // Debug logging — first-class effect so it lands in the FIFO event queue
+    // Logging — first-class effect so it lands in the FIFO event queue
     // at the correct temporal position.
-    DebugLog(String),
+    Log(String),
 }
 
 pub fn apply_effects(
@@ -305,8 +305,8 @@ pub fn apply_effects(
             Effect::ReceivedChannelOffer(bundle) => {
                 system.received_channel_offer(&bundle)?;
             }
-            Effect::DebugLog(line) => {
-                system.debug_log(&line)?;
+            Effect::Log(line) => {
+                system.log(&line)?;
             }
         }
     }

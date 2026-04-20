@@ -537,7 +537,7 @@ impl SpendWalletReceiver for HandshakeInitiatorHandler {
 
         {
             let ch = self.channel_handler()?;
-            effects.push(Effect::DebugLog(format!(
+            effects.push(Effect::Log(format!(
                 "[channel-created] {} state={} have_potato={}",
                 format_coin(&channel_coin),
                 ch.state_number(),
@@ -553,7 +553,7 @@ impl SpendWalletReceiver for HandshakeInitiatorHandler {
         _env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
-        Ok(vec![Effect::DebugLog(format!(
+        Ok(vec![Effect::Log(format!(
             "[initiator-handshake:coin-spent] {}",
             format_coin(coin_id),
         ))])
@@ -564,7 +564,7 @@ impl SpendWalletReceiver for HandshakeInitiatorHandler {
         _env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
-        Ok(vec![Effect::DebugLog(format!(
+        Ok(vec![Effect::Log(format!(
             "[initiator-handshake:coin-timeout] {}",
             format_coin(coin_id),
         ))])
@@ -577,7 +577,7 @@ impl SpendWalletReceiver for HandshakeInitiatorHandler {
         _puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
         Ok((
-            vec![Effect::DebugLog(format!(
+            vec![Effect::Log(format!(
                 "[initiator-handshake:coin-puzzle] {}",
                 format_coin(coin_id),
             ))],

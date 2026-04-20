@@ -39,7 +39,7 @@ import {
   SelectCoinsRequest,
   SelectCoinsResponse,
 } from '../types/rpc/SelectCoins';
-import { debugLog } from '../services/debugLog';
+import { log } from '../services/log';
 
 import { walletConnectState } from './useWalletConnect';
 
@@ -151,7 +151,7 @@ async function request<T, D extends object = object>(
         && attempt < 2
         && !retryBlockedByMethod
         && isTransientWalletConnectError(e);
-      debugLog(
+      log(
         `[WC RPC error] ${method} after ${elapsed}ms attempt=${attempt}: ${errText} active=${activeTopicNow} known=${knownTopics.join(',') || 'none'}`,
       );
       if (!isRetryable) {

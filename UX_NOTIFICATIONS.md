@@ -68,7 +68,7 @@ macrotask. Event types and their handlers:
 - `Notification` — surface game/channel state to the UI
 - `ReceiveError` — peer message decode failure
 - `CoinSolutionRequest` — fetch puzzle/solution from blockchain
-- `DebugLog` — diagnostic output
+- `Log` — diagnostic output
 - `NeedLauncherCoin` — request the wallet to provide the launcher coin
 - `NeedCoinSpend` — request the wallet to create and sign a spend bundle
 - `WatchCoin` — register a coin for wallet/watch tracking

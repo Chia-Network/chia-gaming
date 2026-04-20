@@ -8,7 +8,7 @@ import {
   ConnectionSetup,
 } from '../types/ChiaGaming';
 
-import { debugLog } from '../services/debugLog';
+import { log } from '../services/log';
 
 function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -172,7 +172,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     await this.withTransientRetry('get_peak', () => this.getHeightInfo());
     this.autoReconnect = true;
     this.reconnectAttempt = 0;
-    debugLog('[sim-blockchain] simulator probe succeeded');
+    log('[sim-blockchain] simulator probe succeeded');
   }
 
   async spend(blob: string, _spendBundle: unknown, _source?: string, _fee?: number): Promise<string> {
@@ -250,7 +250,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       Math.min(this.reconnectAttempt, FakeBlockchainInterface.RECONNECT_DELAYS.length - 1)
     ];
     this.reconnectAttempt++;
-    debugLog(`[sim-blockchain] scheduling reconnect in ${delay}ms (attempt ${this.reconnectAttempt})`);
+    log(`[sim-blockchain] scheduling reconnect in ${delay}ms (attempt ${this.reconnectAttempt})`);
     this.reconnectTimer = setTimeout(async () => {
       this.reconnectTimer = null;
       if (!this.autoReconnect || this.deleted) return;
@@ -259,9 +259,9 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         await this.getOrRequestToken();
         await this.withTransientRetry('get_peak', () => this.getHeightInfo());
         this.reconnectAttempt = 0;
-        debugLog('[sim-blockchain] reconnected successfully');
+        log('[sim-blockchain] reconnected successfully');
       } catch (err) {
-        debugLog(`[sim-blockchain] reconnect failed: ${err}`);
+        log(`[sim-blockchain] reconnect failed: ${err}`);
       }
     }, delay);
   }

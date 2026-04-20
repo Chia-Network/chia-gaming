@@ -93,7 +93,7 @@ mod gaming_wasm {
         | { OutboundMessage: string }
         | { OutboundTransaction: SpendBundle }
         | { Notification: any }
-        | { DebugLog: string }
+        | { Log: string }
         | { CoinSolutionRequest: string }
         | { ReceiveError: string }
         | { NeedCoinSpend: {
@@ -1159,8 +1159,8 @@ mod gaming_wasm {
                     .unwrap_or_else(|_| serde_json::json!(format!("{n:?}")));
                 serde_json::json!({ "Notification": val })
             }
-            CradleEvent::DebugLog(line) => {
-                serde_json::json!({ "DebugLog": line })
+            CradleEvent::Log(line) => {
+                serde_json::json!({ "Log": line })
             }
             CradleEvent::CoinSolutionRequest(coin) => {
                 serde_json::json!({ "CoinSolutionRequest": coin_string_to_hex(coin) })

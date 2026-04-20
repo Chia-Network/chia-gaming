@@ -22,7 +22,7 @@ import {
 import { WasmBlobWrapper } from './WasmBlobWrapper';
 import { SessionSave, getDefaultFee } from './save';
 import { coinIdFromBytes } from '../util';
-import { debugLog } from '../services/debugLog';
+import { log } from '../services/log';
 
 export type GameplayEvent =
   | { ProposalAccepted: { id: number | string } }
@@ -597,10 +597,10 @@ export function useGameSession(
     const go = gameObjectRef.current;
     if (!go || !go.isChannelReady()) return;
     if (gameIdsRef.current.length > 0) {
-      debugLog('[notify] proposeNewGame blocked — game active');
+      log('[notify] proposeNewGame blocked — game active');
       return;
     }
-    debugLog(`[notify] proposeNewGame sending proposal myContrib=${terms.myContribution} theirContrib=${terms.theirContribution}`);
+    log(`[notify] proposeNewGame sending proposal myContrib=${terms.myContribution} theirContrib=${terms.theirContribution}`);
     try {
       const ids = go.proposeGame({
         game_type: '63616c706f6b6572',
@@ -665,7 +665,7 @@ export function useGameSession(
   }, []);
 
   const triggerGoOnChain = useCallback(() => {
-    debugLog('[game] going on chain');
+    log('[game] going on chain');
     setGoOnChainPressed(true);
     gameObjectRef.current?.goOnChain();
   }, []);
@@ -716,14 +716,14 @@ export function useGameSession(
     if ('ProposalMade' in n) {
       const incoming = parseIncomingProposal(n.ProposalMade);
       if (!incoming) {
-        debugLog('[notify] ProposalMade parse failed; going on-chain');
+        log('[notify] ProposalMade parse failed; going on-chain');
         triggerGoOnChain();
         return;
       }
       proposalTermsByIdRef.current[incoming.id] = incoming.terms;
 
       if (!firstGameAcceptedRef.current && !iStarted) {
-        debugLog(`[notify] ProposalMade id=${incoming.id} auto-accepting first hand`);
+        log(`[notify] ProposalMade id=${incoming.id} auto-accepting first hand`);
         firstGameAcceptedRef.current = true;
         try {
           go?.acceptProposal(incoming.id);
@@ -735,7 +735,7 @@ export function useGameSession(
 
       const betweenHandsNow = handKeyRef.current > 0 && gameIdsRef.current.length === 0;
       if (!betweenHandsNow) {
-        debugLog(`[notify] rejecting proposal id=${incoming.id} — game active`);
+        log(`[notify] rejecting proposal id=${incoming.id} — game active`);
         try { go?.cancel_proposal(incoming.id); } catch (_) { /* already gone */ }
         return;
       }
@@ -758,7 +758,7 @@ export function useGameSession(
             sameTermsRequestedRef.current = false;
             setNewHandRequested(false);
             if (matchesLastTerms) {
-              debugLog(`[notify] ProposalMade id=${incoming.id} auto-rejecting stale proposal, re-sending ours`);
+              log(`[notify] ProposalMade id=${incoming.id} auto-rejecting stale proposal, re-sending ours`);
               try { go?.cancel_proposal(incoming.id); } catch (_) { /* already gone */ }
               proposeNewGame(retryTerms);
             } else {
@@ -775,7 +775,7 @@ export function useGameSession(
           if (retryTerms) {
             pendingRetryTermsRef.current = null;
             if (termsEqual(incoming.terms, lastHandTermsRef.current)) {
-              debugLog(`[notify] ProposalMade id=${incoming.id} auto-rejecting stale proposal, re-sending ours`);
+              log(`[notify] ProposalMade id=${incoming.id} auto-rejecting stale proposal, re-sending ours`);
               try { go?.cancel_proposal(incoming.id); } catch (_) { /* already gone */ }
               proposeNewGame(retryTerms);
             } else {
@@ -786,7 +786,7 @@ export function useGameSession(
               setBetweenHandMode('review-incoming-proposal');
             }
           } else if (termsEqual(incoming.terms, rejectedOnceTermsRef.current)) {
-            debugLog(`[notify] ProposalMade id=${incoming.id} auto-rejecting one-shot remembered terms`);
+            log(`[notify] ProposalMade id=${incoming.id} auto-rejecting one-shot remembered terms`);
             try { go?.cancel_proposal(incoming.id); } catch (_) { /* already gone */ }
             setRejectedOnceTerms(null);
           } else {
@@ -807,7 +807,7 @@ export function useGameSession(
       pendingRetryTermsRef.current = null;
       const gpa = n.ProposalAccepted!;
       const newId = String(gpa.id);
-      debugLog(`[notify] ProposalAccepted id=${newId} handKey will increment`);
+      log(`[notify] ProposalAccepted id=${newId} handKey will increment`);
       cancelStalePeerProposals(newId);
       setGameIds(prev => [...prev, newId]);
       gameIdsRef.current = [...gameIdsRef.current, newId];
@@ -910,7 +910,7 @@ export function useGameSession(
     } else if ('InsufficientBalance' in n) {
       const ib = n.InsufficientBalance as Record<string, unknown> | undefined;
       const ibId = String(ib?.id ?? '');
-      debugLog(`[notify] InsufficientBalance id=${ibId} ours=${ib?.our_balance_short} theirs=${ib?.their_balance_short}`);
+      log(`[notify] InsufficientBalance id=${ibId} ours=${ib?.our_balance_short} theirs=${ib?.their_balance_short}`);
       if (gameIdsRef.current.includes(ibId)) {
         setGameIds(prev => prev.filter(id => id !== ibId));
         gameIdsRef.current = gameIdsRef.current.filter(id => id !== ibId);
@@ -924,7 +924,7 @@ export function useGameSession(
       const proposalId = String(n.ProposalCancelled?.id ?? '');
       const reason = String((n.ProposalCancelled as Record<string, unknown>)?.reason ?? '');
       const isLocal = LOCAL_CANCEL_REASONS.has(reason);
-      debugLog(`[notify] ProposalCancelled id=${proposalId} reason=${reason} local=${isLocal}`);
+      log(`[notify] ProposalCancelled id=${proposalId} reason=${reason} local=${isLocal}`);
 
       const cancelledTerms = proposalId ? proposalTermsByIdRef.current[proposalId] ?? null : null;
       if (proposalId) {
@@ -953,7 +953,7 @@ export function useGameSession(
       }
     } else if ('ActionFailed' in n) {
       const reason = String(n.ActionFailed?.reason ?? 'Unknown error');
-      debugLog(`[game] action failed: ${reason}`);
+      log(`[game] action failed: ${reason}`);
     }
   }, [iStarted, proposeNewGame, gameplayEventSubject, gameConnectionState.stateIdentifier, triggerGoOnChain]);
 
@@ -970,8 +970,8 @@ export function useGameSession(
             break;
           case 'address':
             break;
-          case 'debug_log':
-            debugLog(`[wasm] ${evt.message}`);
+          case 'log':
+            log(`[wasm] ${evt.message}`);
             break;
           default: {
             const _exhaustive: never = evt;

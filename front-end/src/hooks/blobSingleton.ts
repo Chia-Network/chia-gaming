@@ -8,7 +8,7 @@ import {
   startNewSession,
   SessionSave,
 } from './save';
-import { debugLog } from '../services/debugLog';
+import { log } from '../services/log';
 
 export var blobSingleton: WasmBlobWrapper | null = null;
 export var initStarted = false;
@@ -44,9 +44,9 @@ export async function configGameObject(
   gameObject.setBlockchainAddress(address);
   let { game: cradle, puzzleHash } = wasmStateInit.createGame(calpokerHexes.proposalHex, calpokerHexes.parserHex, rngId, wasmConnection, iStarted, amount, amount, address.puzzleHash);
   gameObject.setGameCradle(cradle);
-  debugLog('[wasm] activateSpend');
+  log('[wasm] activateSpend');
   gameObject.activateSpend();
-  debugLog('[wasm] game object configured (handshake)');
+  log('[wasm] game object configured (handshake)');
   return gameObject;
 }
 
@@ -66,7 +66,7 @@ async function restoreSession(
   for (const { coin_name, coin_string } of watchedCoins) {
     blockchain.registerCoin(coin_name, coin_string);
   }
-  debugLog(`[restore] re-registered ${watchedCoins.length} watched coins`);
+  log(`[restore] re-registered ${watchedCoins.length} watched coins`);
 
   gameObject.messageNumber = save.messageNumber;
   gameObject.remoteNumber = save.remoteNumber;
@@ -75,8 +75,8 @@ async function restoreSession(
   gameObject.pairingToken = save.pairingToken;
   gameObject.unackedMessages = [...save.unackedMessages];
   gameObject.pendingTransactions = [...save.pendingTransactions];
-  gameObject.gameLog = [...save.gameLog];
-  gameObject.debugLogHistory = [...save.debugLog];
+  gameObject.history = [...save.history];
+  gameObject.logHistory = [...save.log];
   gameObject.activeGameId = save.activeGameId ?? null;
   gameObject.handState = save.handState ?? null;
   gameObject.lastChannelStatus = save.channelStatus ?? null;
@@ -101,7 +101,7 @@ async function restoreSession(
   gameObject.betweenHandReviewPeerProposal = save.betweenHandReviewPeerProposal ?? null;
   gameObject.markRestored();
 
-  debugLog('[restore] session restored');
+  log('[restore] session restored');
 }
 
 export function getBlobSingleton(
@@ -154,7 +154,7 @@ export function getBlobSingleton(
         await restoreSession(blobSingleton!, sessionSave, wasmStateInit, blockchain);
       } catch (e) {
         console.error('[blobSingleton] restoreSession error:', e);
-        debugLog(`[blobSingleton] restoreSession error: ${String(e)}`);
+        log(`[blobSingleton] restoreSession error: ${String(e)}`);
       }
     };
     doRestore();
@@ -177,7 +177,7 @@ export function getBlobSingleton(
           : typeof e === 'object' && e !== null && 'data' in e ? (e as any).data?.error ?? String(e)
           : String(e);
         console.error('[blobSingleton] newSession error:', e);
-        debugLog(`[blobSingleton] newSession error: ${msg}`);
+        log(`[blobSingleton] newSession error: ${msg}`);
         blobSingleton!.rxjsEmitter?.next({ type: 'error', error: msg });
       }
     };

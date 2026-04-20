@@ -99,7 +99,7 @@ pub trait ToLocalUI {
         notification: &crate::potato_handler::effects::GameNotification,
     ) -> Result<(), Error>;
 
-    fn debug_log(&mut self, _line: &str) -> Result<(), Error> {
+    fn log(&mut self, _line: &str) -> Result<(), Error> {
         Ok(())
     }
 }

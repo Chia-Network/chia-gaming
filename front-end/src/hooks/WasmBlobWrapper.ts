@@ -18,7 +18,7 @@ import { BlockchainPoller } from './BlockchainPoller';
 import {
   spend_bundle_to_clvm,
 } from '../util';
-import { debugLog } from '../services/debugLog';
+import { log } from '../services/log';
 import { saveSession, SessionSave, CalpokerHandState } from './save';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
 
@@ -92,8 +92,8 @@ export class WasmBlobWrapper {
 
   unackedMessages: Array<{ msgno: number; msg: string }> = [];
   pendingTransactions: string[] = [];
-  gameLog: string[] = [];
-  debugLogHistory: string[] = [];
+  history: string[] = [];
+  logHistory: string[] = [];
   private reorderQueue: Map<number, string> = new Map();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private restoredSession = false;
@@ -277,13 +277,13 @@ export class WasmBlobWrapper {
       const { computeLauncherCoin } = await import('../util/launcher');
       const { launcherCoinHex, launcherCoinId } = await computeLauncherCoin(coin);
       this.lastLauncherCoinId = launcherCoinId;
-      debugLog(`[wasm] provide_launcher_coin id=${launcherCoinId}`);
+      log(`[wasm] provide_launcher_coin id=${launcherCoinId}`);
       const result = this.cradle?.provide_launcher_coin(launcherCoinHex);
       this.processResult(result);
     } catch (e) {
       this.launcherProvided = false;
       console.error('[wasm] handleNeedLauncherCoin error:', e);
-      debugLog(`[wasm] handleNeedLauncherCoin error: ${String(e)}`);
+      log(`[wasm] handleNeedLauncherCoin error: ${String(e)}`);
       this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
     }
   }
@@ -321,7 +321,7 @@ export class WasmBlobWrapper {
       this.processResult(result);
     } catch (e) {
       console.error('[wasm] handleNeedCoinSpend error:', e);
-      debugLog(`[wasm] handleNeedCoinSpend error: ${String(e)}`);
+      log(`[wasm] handleNeedCoinSpend error: ${String(e)}`);
       let msg = extractErrorMessage(e);
       if (/insufficient funds/i.test(msg)) {
         msg = 'Wallet reports insufficient funds. It may be that your wallet has enough balance but some coins are locked. Free up locked coins in your wallet and try again.';
@@ -356,7 +356,7 @@ export class WasmBlobWrapper {
     if (this.transactionPublishNerfed) return;
     const spendBundle = this.wc?.convert_spend_to_coinset_org(blob);
     const fee = this.getFee();
-    debugLog(`[wasm] submitTransaction blobLen=${blob.length}`);
+    log(`[wasm] submitTransaction blobLen=${blob.length}`);
     this.blockchain.rpc.spend(blob, spendBundle, 'submitTransaction', fee || undefined).then(() => {
       const idx = this.pendingTransactions.indexOf(blob);
       if (idx !== -1) {
@@ -365,7 +365,7 @@ export class WasmBlobWrapper {
       }
     }).catch(e => {
       console.error('[wasm] submitTransaction failed:', e);
-      debugLog(`[wasm] submitTransaction failed: ${String(e)}`);
+      log(`[wasm] submitTransaction failed: ${String(e)}`);
       this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
       const idx = this.pendingTransactions.indexOf(blob);
       if (idx !== -1) {
@@ -377,7 +377,7 @@ export class WasmBlobWrapper {
 
   private resubmitPendingTransactions() {
     if (this.pendingTransactions.length === 0) return;
-    debugLog(`[wasm] resubmitting ${this.pendingTransactions.length} pending transactions`);
+    log(`[wasm] resubmitting ${this.pendingTransactions.length} pending transactions`);
     const blobs = [...this.pendingTransactions];
     for (const blob of blobs) {
       if (this.transactionPublishNerfed) return;
@@ -391,7 +391,7 @@ export class WasmBlobWrapper {
         }
       }).catch(e => {
         console.error('[wasm] resubmitPendingTransactions failed:', e);
-        debugLog(`[wasm] resubmitPendingTransactions failed: ${String(e)}`);
+        log(`[wasm] resubmitPendingTransactions failed: ${String(e)}`);
         this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
         const idx = this.pendingTransactions.indexOf(blob);
         if (idx !== -1) {
@@ -441,7 +441,7 @@ export class WasmBlobWrapper {
         if (cs) {
           this.lastChannelStatus = cs as unknown as ChannelStatusPayload;
           if (!this.channelReady && cs.state === 'Active') {
-            debugLog('[wasm] channel confirmed on-chain');
+            log('[wasm] channel confirmed on-chain');
             this.channelReady = true;
           }
         }
@@ -455,22 +455,22 @@ export class WasmBlobWrapper {
           this.activeGameId = null;
         }
       }
-      this.gameLog.push(JSON.stringify(n));
+      this.history.push(JSON.stringify(n));
       this.rxjsEmitter?.next({ type: 'notification', data: n });
     } else if ('ReceiveError' in event) {
       this.rxjsEmitter?.next({ type: 'error', error: event.ReceiveError });
     } else if ('CoinSolutionRequest' in event) {
       this.fulfillPuzzleSolutionRequest(event.CoinSolutionRequest);
-    } else if ('DebugLog' in event) {
-      this.debugLogHistory.push(event.DebugLog);
-      this.rxjsEmitter?.next({ type: 'debug_log', message: event.DebugLog });
+    } else if ('Log' in event) {
+      this.logHistory.push(event.Log);
+      this.rxjsEmitter?.next({ type: 'log', message: event.Log });
     } else if ('NeedLauncherCoin' in event) {
       this.handleNeedLauncherCoin();
     } else if ('NeedCoinSpend' in event) {
       this.handleNeedCoinSpend(event.NeedCoinSpend);
     } else if ('WatchCoin' in event) {
       const { coin_name, coin_string } = event.WatchCoin;
-      debugLog(`[wasm] WatchCoin name=${coin_name}`);
+      log(`[wasm] WatchCoin name=${coin_name}`);
       this.blockchain.registerCoin(coin_name, coin_string);
     }
   }
@@ -486,7 +486,7 @@ export class WasmBlobWrapper {
       }
     } catch (e) {
       console.error('[wasm] puzzle/solution fetch failed:', e);
-      debugLog(`[wasm] puzzle/solution fetch failed: ${String(e)}`);
+      log(`[wasm] puzzle/solution fetch failed: ${String(e)}`);
       this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
     }
   }
@@ -566,7 +566,7 @@ export class WasmBlobWrapper {
         }
       }
     }
-    debugLog(`[wasm] block height=${peak} created=${block_report.created_watched.length} deleted=${block_report.deleted_watched.length} timed_out=${block_report.timed_out.length}`);
+    log(`[wasm] block height=${peak} created=${block_report.created_watched.length} deleted=${block_report.deleted_watched.length} timed_out=${block_report.timed_out.length}`);
     if (!this.cradle) {
       this.pendingBlockNotification = { peak, report: block_report };
       return;
@@ -580,7 +580,7 @@ export class WasmBlobWrapper {
       this.processResult(result);
     } catch (e) {
       console.error('[wasm] block_data failed:', e);
-      debugLog(`[wasm] block_data failed: ${String(e)}`);
+      log(`[wasm] block_data failed: ${String(e)}`);
     }
   }
 
@@ -620,8 +620,8 @@ export class WasmBlobWrapper {
         perGameAmount: this.perGameAmount.toString(),
         pendingTransactions: [...this.pendingTransactions],
         unackedMessages: [...this.unackedMessages],
-        gameLog: [...this.gameLog],
-        debugLog: [...this.debugLogHistory],
+        history: [...this.history],
+        log: [...this.logHistory],
         activeGameId: this.activeGameId,
         handState: this.handState,
         channelStatus: this.lastChannelStatus,
@@ -733,6 +733,6 @@ export class WasmBlobWrapper {
 
   nerf(): void {
     this.transactionPublishNerfed = true;
-    debugLog('[wasm] transaction publish nerfed');
+    log('[wasm] transaction publish nerfed');
   }
 }

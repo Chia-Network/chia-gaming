@@ -1,6 +1,6 @@
 import { InternalBlockchainInterface } from '../types/ChiaGaming';
 import { CoinStateMonitor, CoinStateBackend } from './CoinStateMonitor';
-import { debugLog } from '../services/debugLog';
+import { log } from '../services/log';
 
 export class BlockchainPoller {
   readonly rpc: InternalBlockchainInterface;
@@ -46,7 +46,7 @@ export class BlockchainPoller {
       await this.monitor.receiveCoinStates(height, records);
     } catch (e) {
       console.error('[blockchain-poller] poll failed', e);
-      debugLog(`[blockchain-poller] poll failed: ${String(e)}`);
+      log(`[blockchain-poller] poll failed: ${String(e)}`);
     }
     await new Promise<void>((resolve) => {
       setTimeout(resolve, this.pollIntervalMs);

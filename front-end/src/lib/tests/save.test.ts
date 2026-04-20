@@ -42,8 +42,8 @@ const sampleSession: SessionSave = {
   perGameAmount: '10',
   pendingTransactions: ['tx1'],
   unackedMessages: [{ msgno: 4, msg: 'hello' }],
-  gameLog: ['log1'],
-  debugLog: ['dbg1'],
+  history: ['log1'],
+  log: ['dbg1'],
 };
 
 beforeEach(() => {

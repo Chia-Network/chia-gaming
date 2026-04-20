@@ -1,5 +1,5 @@
 import { PeerConnectionResult, ChatMessage } from '../types/ChiaGaming';
-import { debugLog } from './debugLog';
+import { log } from './log';
 
 export interface MatchedParams {
   token: string;
@@ -120,7 +120,7 @@ export class TrackerConnection {
     } catch {
       this.closed = true;
       const msg = `Invalid tracker URL: ${this.trackerUrl}`;
-      debugLog(`[tracker] ${msg}`);
+      log(`[tracker] ${msg}`);
       throw new Error(msg);
     }
     const ws = new WebSocket(wsUrl);
@@ -129,7 +129,7 @@ export class TrackerConnection {
     ws.onopen = () => {
       this.sendWs({ type: 'identify', session_id: this.sessionId });
       if (this.wasDisconnected) {
-        debugLog('[tracker] reconnected to tracker');
+        log('[tracker] reconnected to tracker');
         this.callbacks.onTrackerReconnected();
       }
       this.wasDisconnected = false;
@@ -146,11 +146,11 @@ export class TrackerConnection {
       try {
         msg = JSON.parse(evt.data) as TrackerEnvelope;
       } catch {
-        debugLog('[tracker] recv malformed ws json');
+        log('[tracker] recv malformed ws json');
         return;
       }
       if (!msg || typeof msg !== 'object' || !('type' in msg)) {
-        debugLog('[tracker] recv malformed ws envelope');
+        log('[tracker] recv malformed ws envelope');
         return;
       }
 
@@ -167,7 +167,7 @@ export class TrackerConnection {
             my_alias: msg.my_alias,
             peer_alias: msg.peer_alias,
           };
-          debugLog(`[tracker] connection_status has_pairing=${status.has_pairing} token=${status.token ?? 'none'} peer=${status.peer_connected ?? 'n/a'}`);
+          log(`[tracker] connection_status has_pairing=${status.has_pairing} token=${status.token ?? 'none'} peer=${status.peer_connected ?? 'n/a'}`);
           this.callbacks.onConnectionStatus(status);
           break;
         }
@@ -181,14 +181,14 @@ export class TrackerConnection {
             my_alias: msg.my_alias,
             peer_alias: msg.peer_alias,
           };
-          debugLog(`[tracker] matched initiator=${params.i_am_initiator} amount=${params.amount}`);
+          log(`[tracker] matched initiator=${params.i_am_initiator} amount=${params.amount}`);
           this.callbacks.onMatched(params);
           break;
         }
         case 'message': {
           if (this.closed || this.closePending) return;
           if (!isMessagePayload(msg.data)) {
-            debugLog('[tracker] recv malformed envelope');
+            log('[tracker] recv malformed envelope');
             return;
           }
           const payload: MessagePayload = msg.data;
@@ -197,15 +197,15 @@ export class TrackerConnection {
             return;
           }
           if (isAckPayload(payload)) {
-            debugLog(`[tracker] recv ack=${payload.ack}`);
+            log(`[tracker] recv ack=${payload.ack}`);
             this.callbacks.onAck(payload.ack);
             return;
           }
           if (!isDataPayload(payload)) {
-            debugLog('[tracker] recv malformed payload');
+            log('[tracker] recv malformed payload');
             return;
           }
-          debugLog(`[tracker] recv msgno=${payload.msgno} len=${payload.msg.length}`);
+          log(`[tracker] recv msgno=${payload.msgno} len=${payload.msg.length}`);
           if (!this.handlerRegistered) {
             this.messageBuffer.push(payload);
             return;
@@ -217,7 +217,7 @@ export class TrackerConnection {
           this.callbacks.onChat({ text: msg.text, fromAlias: msg.from_alias, timestamp: msg.timestamp, isMine: false });
           break;
         case 'peer_reconnected':
-          debugLog('[tracker] peer_reconnected');
+          log('[tracker] peer_reconnected');
           this.callbacks.onPeerReconnected();
           break;
         case 'keepalive':
@@ -227,7 +227,7 @@ export class TrackerConnection {
           this.callbacks.onClosed();
           break;
         case 'error':
-          debugLog(`[tracker] server error: ${msg.error ?? 'unknown'}`);
+          log(`[tracker] server error: ${msg.error ?? 'unknown'}`);
           break;
         default:
           break;
@@ -238,7 +238,7 @@ export class TrackerConnection {
       this.stopKeepaliveTimer();
       if (!this.closed && !this.wasDisconnected) {
         this.wasDisconnected = true;
-        debugLog('[tracker] WS connection error, will auto-reconnect');
+        log('[tracker] WS connection error, will auto-reconnect');
         this.callbacks.onTrackerDisconnected();
       }
     };
@@ -262,13 +262,13 @@ export class TrackerConnection {
 
   sendMessage(msgno: number, input: string) {
     const payload: MessagePayload = { msgno, msg: input };
-    debugLog(`[tracker] send msgno=${msgno} len=${input.length}`);
+    log(`[tracker] send msgno=${msgno} len=${input.length}`);
     this.sendWs({ type: 'message', session_id: this.sessionId, data: payload });
   }
 
   sendAck(ackMsgno: number) {
     const payload: MessagePayload = { ack: ackMsgno };
-    debugLog(`[tracker] send ack=${ackMsgno}`);
+    log(`[tracker] send ack=${ackMsgno}`);
     this.sendWs({ type: 'message', session_id: this.sessionId, data: payload });
   }
 
@@ -288,14 +288,14 @@ export class TrackerConnection {
   close() {
     if (this.closed) return;
     this.closePending = true;
-    debugLog('[tracker] requesting close');
+    log('[tracker] requesting close');
     this.sendWs({ type: 'close', session_id: this.sessionId });
   }
 
   forceDisconnect() {
     if (this.closed) return;
     this.closed = true;
-    debugLog('[tracker] force disconnect');
+    log('[tracker] force disconnect');
     this.stopKeepaliveTimer();
     this.ws?.close();
     this.ws = null;

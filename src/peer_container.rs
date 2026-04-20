@@ -671,9 +671,9 @@ impl ToLocalUI for SynchronousGameCradleState {
         Ok(())
     }
 
-    fn debug_log(&mut self, line: &str) -> Result<(), Error> {
+    fn log(&mut self, line: &str) -> Result<(), Error> {
         self.events
-            .push_back(CradleEvent::DebugLog(line.to_string()));
+            .push_back(CradleEvent::Log(line.to_string()));
         Ok(())
     }
 }

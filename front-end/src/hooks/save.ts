@@ -49,8 +49,8 @@ export interface SessionSave {
   perGameAmount: string;
   pendingTransactions: string[];
   unackedMessages: Array<{ msgno: number; msg: string }>;
-  gameLog: string[];
-  debugLog: string[];
+  history: string[];
+  log: string[];
   activeGameId?: string | null;
   handState?: CalpokerHandState | null;
   channelStatus?: ChannelStatusPayload | null;

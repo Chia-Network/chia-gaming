@@ -4,7 +4,7 @@ import { Subject } from 'rxjs';
 
 import { PROJECT_ID, RELAY_URL, CHAIN_ID } from '../constants/env';
 import { REQUIRED_NAMESPACES } from '../constants/wallet-connect';
-import { debugLog } from '../services/debugLog';
+import { log } from '../services/log';
 
 export interface StartConnectResult {
   approval: () => Promise<SessionTypes.Struct>;
@@ -61,7 +61,7 @@ class WalletState {
   private logSessionIds(label: string) {
     const sessionTopic = this.session?.topic ?? 'none';
     const knownTopics = this.client?.session?.keys ?? [];
-    debugLog(`[WC session] ${label} active=${sessionTopic} known=${knownTopics.join(',') || 'none'}`);
+    log(`[WC session] ${label} active=${sessionTopic} known=${knownTopics.join(',') || 'none'}`);
   }
 
   private onSessionConnected(session: SessionTypes.Struct) {
@@ -118,7 +118,7 @@ class WalletState {
     });
 
     this.observable.next({ stateName: 'initializing', initializing: true });
-    debugLog('WalletConnect initializing...');
+    log('WalletConnect initializing...');
 
     try {
       const signClient = await Client.init({
@@ -139,19 +139,19 @@ class WalletState {
       signClient.on('session_update', ({ topic, params }) => {
         const updated = signClient.session.get(topic);
         const merged = { ...updated, namespaces: params.namespaces };
-        debugLog(`[WC session] update topic=${topic}`);
+        log(`[WC session] update topic=${topic}`);
         this.onSessionConnected(merged);
       });
 
       signClient.on('session_delete', ({ topic }: { topic: string }) => {
         console.log('[WC] session deleted by wallet', { topic });
-        debugLog(`[WC session] delete topic=${topic}`);
+        log(`[WC session] delete topic=${topic}`);
         this.resetSession();
       });
 
       signClient.on('session_expire', ({ topic }: { topic: string }) => {
         console.log('[WC] session expired', { topic });
-        debugLog(`[WC session] expire topic=${topic}`);
+        log(`[WC session] expire topic=${topic}`);
         this.resetSession();
       });
 
@@ -166,7 +166,7 @@ class WalletState {
         this.onSessionConnected(session);
       }
 
-      debugLog('WalletConnect initialized');
+      log('WalletConnect initialized');
       this.observable.next({
         stateName: 'initialized',
         initialized: true,
@@ -174,7 +174,7 @@ class WalletState {
       });
     } catch (err) {
       console.error('[WC] Client.init() FAILED', err);
-      debugLog(`WalletConnect init failed: ${err}`);
+      log(`WalletConnect init failed: ${err}`);
       this.observable.next({
         stateName: 'initialized',
         initialized: true,

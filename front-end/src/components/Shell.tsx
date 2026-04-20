@@ -5,7 +5,7 @@ import { SimulatorSetupModal } from './SimulatorSetupModal';
 import QRCode from 'qrcode';
 import { GameSessionParams, PeerConnectionResult, ChatMessage, InternalBlockchainInterface, ConnectionSetup, TrackerLiveness } from '../types/ChiaGaming';
 import { TrackerConnection, MatchedParams, ConnectionStatus } from '../services/TrackerConnection';
-import { subscribeDebugLog } from '../services/debugLog';
+import { subscribeLog } from '../services/log';
 import {
   getPlayerId,
   getSessionId,
@@ -45,13 +45,13 @@ import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
 import { realBlockchainInfo } from '../hooks/RealBlockchainInterface';
 import { activate, deactivate, getActiveBlockchain } from '../hooks/activeBlockchain';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
-import { debugLog } from '../services/debugLog';
+import { log } from '../services/log';
 import { Button } from './button';
 
 import ChatPanel from './ChatPanel';
 import { TrackerPicker } from './TrackerPicker';
 
-type TabId = 'wallet' | 'tracker' | 'session' | 'chat' | 'game-log' | 'debug-log';
+type TabId = 'wallet' | 'tracker' | 'session' | 'chat' | 'history' | 'log';
 
 const MOJOS_PER_XCH = 1_000_000_000_000;
 
@@ -66,8 +66,8 @@ const TAB_DEFS: { id: TabId; label: string }[] = [
   { id: 'tracker', label: 'Tracker' },
   { id: 'session', label: 'Game' },
   { id: 'chat', label: 'Chat' },
-  { id: 'game-log', label: 'Log' },
-  { id: 'debug-log', label: 'Debug' },
+  { id: 'history', label: 'History' },
+  { id: 'log', label: 'Log' },
 ];
 
 const FALLBACK_AMOUNT = 100n;
@@ -76,6 +76,14 @@ const FALLBACK_PER_GAME = 10n;
 function LogPanel({ lines }: { lines: string[] }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const isNearBottom = useRef(true);
+  const [filter, setFilter] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  const filtered = useMemo(() => {
+    if (!filter) return lines;
+    const lower = filter.toLowerCase();
+    return lines.filter(line => line.toLowerCase().includes(lower));
+  }, [lines, filter]);
 
   const handleScroll = useCallback(() => {
     const el = ref.current;
@@ -89,16 +97,52 @@ function LogPanel({ lines }: { lines: string[] }) {
     if (isNearBottom.current && ref.current) {
       ref.current.scrollTop = ref.current.scrollHeight;
     }
-  }, [lines]);
+  }, [filtered]);
 
   return (
-    <textarea
-      ref={ref}
-      readOnly
-      value={lines.join('\n')}
-      onScroll={handleScroll}
-      className='w-full h-full resize-none rounded-md border border-canvas-border bg-canvas-bg p-3 text-xs font-mono text-canvas-text focus:outline-none'
-    />
+    <div className='flex flex-col h-full gap-2'>
+      <div className='flex items-center gap-2 shrink-0'>
+        <input
+          type='text'
+          placeholder='Filter\u2026'
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          className='flex-1 px-3 py-1.5 text-xs font-mono rounded-md border border-canvas-border bg-canvas-bg text-canvas-text placeholder:text-canvas-solid focus:outline-none'
+        />
+        {filter && (
+          <span className='text-xs text-canvas-solid whitespace-nowrap'>
+            {filtered.length}/{lines.length}
+          </span>
+        )}
+        <button
+          onClick={() => {
+            navigator.clipboard.writeText(filtered.join('\n'));
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          }}
+          className='p-1.5 rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors'
+          title='Copy to clipboard'
+        >
+          {copied ? (
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+              <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
+            </svg>
+          ) : (
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+              <path d="M7 3.5A1.5 1.5 0 0 1 8.5 2h3.879a1.5 1.5 0 0 1 1.06.44l3.122 3.12A1.5 1.5 0 0 1 17 6.622V12.5a1.5 1.5 0 0 1-1.5 1.5h-1v-3.379a3 3 0 0 0-.879-2.121L10.5 5.379A3 3 0 0 0 8.379 4.5H7v-1Z" />
+              <path d="M4.5 6A1.5 1.5 0 0 0 3 7.5v9A1.5 1.5 0 0 0 4.5 18h7a1.5 1.5 0 0 0 1.5-1.5v-5.879a1.5 1.5 0 0 0-.44-1.06L9.44 6.439A1.5 1.5 0 0 0 8.378 6H4.5Z" />
+            </svg>
+          )}
+        </button>
+      </div>
+      <textarea
+        ref={ref}
+        readOnly
+        value={filtered.join('\n')}
+        onScroll={handleScroll}
+        className='flex-1 min-h-0 resize-none rounded-md border border-canvas-border bg-canvas-bg p-3 text-xs font-mono text-canvas-text focus:outline-none'
+      />
+    </div>
   );
 }
 
@@ -108,7 +152,7 @@ const Shell = () => {
 
   const [activeTab, setActiveTabRaw] = useState<TabId>(() => {
     const saved = getSavedTab();
-    const valid: TabId[] = ['wallet', 'tracker', 'session', 'chat', 'game-log', 'debug-log'];
+    const valid: TabId[] = ['wallet', 'tracker', 'session', 'chat', 'history', 'log'];
     return saved && valid.includes(saved as TabId) ? (saved as TabId) : 'wallet';
   });
   const setActiveTab = useCallback((tab: TabId) => {
@@ -163,8 +207,8 @@ const Shell = () => {
   }, []);
 
 
-  const [gameLog, setGameLog] = useState<string[]>([]);
-  const [debugLogLines, setDebugLogLines] = useState<string[]>([]);
+  const [history, setHistory] = useState<string[]>([]);
+  const [logLines, setLogLines] = useState<string[]>([]);
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [unreadChat, setUnreadChatRaw] = useState(() => getSavedUnreadChat());
@@ -288,9 +332,9 @@ const Shell = () => {
     }
   }, []);
 
-  const appendGameLog = useCallback((line: string) => {
+  const appendHistory = useCallback((line: string) => {
     deferStateUpdate(() => {
-      setGameLog(prev => [...prev, line]);
+      setHistory(prev => [...prev, line]);
     });
   }, [deferStateUpdate]);
 
@@ -322,9 +366,9 @@ const Shell = () => {
   }, [markPeerActive]);
 
   useEffect(() => {
-    return subscribeDebugLog((line) => {
+    return subscribeLog((line) => {
       deferStateUpdate(() => {
-        setDebugLogLines(prev => [...prev, line]);
+        setLogLines(prev => [...prev, line]);
       });
     });
   }, [deferStateUpdate]);
@@ -445,11 +489,11 @@ const Shell = () => {
         });
         setPeerConn(stablePeerConn);
         if (save) {
-          setGameLog(save.gameLog);
-          setDebugLogLines(save.debugLog);
+          setHistory(save.history);
+          setLogLines(save.log);
           if (save.chatMessages) setChatMessages(save.chatMessages);
         } else {
-          setGameLog([]);
+          setHistory([]);
           setActiveTab('session');
         }
       } else {
@@ -528,8 +572,8 @@ const Shell = () => {
                 opponentAlias: save.opponentAlias,
               });
               setPeerConn(conn.getPeerConnection());
-              setGameLog(save.gameLog);
-              setDebugLogLines(save.debugLog);
+              setHistory(save.history);
+              setLogLines(save.log);
               if (save.chatMessages) setChatMessages(save.chatMessages);
             }
           } else {
@@ -550,8 +594,8 @@ const Shell = () => {
                 opponentAlias: save.opponentAlias,
               });
               setPeerConn(conn.getPeerConnection());
-              setGameLog(save.gameLog);
-              setDebugLogLines(save.debugLog);
+              setHistory(save.history);
+              setLogLines(save.log);
               if (save.chatMessages) setChatMessages(save.chatMessages);
             }
           }
@@ -671,7 +715,7 @@ const Shell = () => {
     setUserReady(true);
     setActiveTabRaw(prev => prev === 'wallet' ? 'tracker' : prev);
     requestBalance();
-    debugLog(`${bcType} wallet connected`);
+    log(`${bcType} wallet connected`);
   }, [requestBalance, setConnecting]);
 
   // --- Unified connection flow ---
@@ -792,8 +836,8 @@ const Shell = () => {
         opponentAlias: save.opponentAlias,
       });
       setPeerConn(stablePeerConn);
-      setGameLog(save.gameLog);
-      setDebugLogLines(save.debugLog);
+      setHistory(save.history);
+      setLogLines(save.log);
       if (save.chatMessages) setChatMessages(save.chatMessages);
     }
 
@@ -1271,7 +1315,7 @@ const Shell = () => {
               trackerLiveness={trackerLiveness}
               peerConnected={peerConnected}
               registerMessageHandler={registerMessageHandler}
-              appendGameLog={appendGameLog}
+              appendGameLog={appendHistory}
               sessionSave={sessionSaveRef.current ?? undefined}
               onSessionActivity={onSessionActivity}
             />
@@ -1295,18 +1339,18 @@ const Shell = () => {
           />
         </div>
 
-        {/* Game Log tab */}
-        <div style={{ position: 'absolute', inset: 0, padding: '1rem', display: activeTab === 'game-log' ? 'block' : 'none' }}>
-          <LogPanel lines={gameLog} />
+        {/* History tab */}
+        <div style={{ position: 'absolute', inset: 0, padding: '1rem', display: activeTab === 'history' ? 'block' : 'none' }}>
+          <LogPanel lines={history} />
         </div>
 
-        {/* Debug Log tab */}
-        <div style={{ position: 'absolute', inset: 0, padding: '1rem', display: activeTab === 'debug-log' ? 'block' : 'none' }}>
-          {debugLogLines.length > 0 ? (
-            <LogPanel lines={debugLogLines} />
+        {/* Log tab */}
+        <div style={{ position: 'absolute', inset: 0, padding: '1rem', display: activeTab === 'log' ? 'block' : 'none' }}>
+          {logLines.length > 0 ? (
+            <LogPanel lines={logLines} />
           ) : (
             <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
-              No debug log entries yet
+              No log entries yet
             </div>
           )}
         </div>

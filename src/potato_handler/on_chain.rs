@@ -604,7 +604,7 @@ impl OnChainGameHandler {
                 None
             });
             if let Some(ref rc) = reward_coin {
-                effects.push(Effect::DebugLog(format!(
+                effects.push(Effect::Log(format!(
                     "[slash-on-chain] {} reward={}",
                     format_coin(coin_id),
                     format_coin(rc),
@@ -620,7 +620,7 @@ impl OnChainGameHandler {
                     other_params: None,
                 }
             } else {
-                effects.push(Effect::DebugLog(format!(
+                effects.push(Effect::Log(format!(
                     "[game-error] {} slash succeeded but no reward coin found",
                     format_coin(coin_id),
                 )));
@@ -764,7 +764,7 @@ impl OnChainGameHandler {
             result
         } else {
             let reason = format!("game_coin_spent failed: {result:?}");
-            effects.push(Effect::DebugLog(format!(
+            effects.push(Effect::Log(format!(
                 "[game-error] {} {reason}",
                 format_coin(coin_id),
             )));
@@ -794,7 +794,7 @@ impl OnChainGameHandler {
             );
             if !is_expected {
                 let reason = format!("our turn coin spent unexpectedly: {their_turn_result:?}");
-                effects.push(Effect::DebugLog(format!(
+                effects.push(Effect::Log(format!(
                     "[game-error] {} {reason}",
                     format_coin(coin_id),
                 )));
@@ -824,7 +824,7 @@ impl OnChainGameHandler {
                 _redo,
             )) => {
                 let new_coin_id = CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt);
-                effects.push(Effect::DebugLog(format!(
+                effects.push(Effect::Log(format!(
                     "[move-on-chain] {} new_coin={}",
                     format_coin(coin_id),
                     format_coin(&new_coin_id),
@@ -908,13 +908,13 @@ impl OnChainGameHandler {
                     "timeout-on-chain"
                 };
                 if let Some(ref rc) = my_reward_coin_string {
-                    effects.push(Effect::DebugLog(format!(
+                    effects.push(Effect::Log(format!(
                         "[{label}] {} reward={}",
                         format_coin(coin_id),
                         format_coin(rc),
                     )));
                 } else {
-                    effects.push(Effect::DebugLog(format!(
+                    effects.push(Effect::Log(format!(
                         "[{label}] {} no reward",
                         format_coin(coin_id),
                     )));
@@ -969,7 +969,7 @@ impl OnChainGameHandler {
                 mover_share,
                 ..
             }) => {
-                effects.push(Effect::DebugLog(format!(
+                effects.push(Effect::Log(format!(
                     "[move-on-chain] {} new_coin={} mover_share={mover_share}",
                     format_coin(coin_id),
                     format_coin(&new_coin_string),
@@ -1044,7 +1044,7 @@ impl OnChainGameHandler {
             CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Slash(outcome)) => {
                 self.have_potato = PotatoState::Present;
 
-                effects.push(Effect::DebugLog(format!(
+                effects.push(Effect::Log(format!(
                     "[slash-on-chain] {}",
                     format_coin(coin_id),
                 )));
@@ -1126,7 +1126,7 @@ impl OnChainGameHandler {
             }
             CoinSpentInformation::OurReward(ph, amt) => {
                 let reward_coin_debug = CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt);
-                effects.push(Effect::DebugLog(format!(
+                effects.push(Effect::Log(format!(
                     "[timeout-on-chain] {} reward={}",
                     format_coin(coin_id),
                     format_coin(&reward_coin_debug),
@@ -1190,7 +1190,7 @@ impl OnChainGameHandler {
             let initial_potato = self.is_initial_potato;
             let game_id = game_def.game_id;
 
-            effects.push(Effect::DebugLog(format!(
+            effects.push(Effect::Log(format!(
                 "[timeout-on-chain] {}",
                 format_coin(coin_id),
             )));
@@ -1636,13 +1636,13 @@ impl OnChainGameHandler {
         if matched {
             effects.insert(
                 0,
-                Effect::DebugLog(format!(
+                Effect::Log(format!(
                     "[on-chain:game-coin-spent] {}",
                     format_coin(coin_id),
                 )),
             );
         } else {
-            effects.push(Effect::DebugLog(format!(
+            effects.push(Effect::Log(format!(
                 "[on-chain:coin-spent] {}",
                 format_coin(coin_id),
             )));
@@ -1675,7 +1675,7 @@ impl OnChainGameHandler {
             } else {
                 "opponent made impossible spend".to_string()
             };
-            effects.push(Effect::DebugLog(format!(
+            effects.push(Effect::Log(format!(
                 "[game-error] {} {reason}",
                 format_coin(coin_id),
             )));

@@ -26,7 +26,7 @@ export type CradleEvent =
   | { OutboundMessage: string }
   | { OutboundTransaction: SpendBundle }
   | { Notification: WasmNotification }
-  | { DebugLog: string }
+  | { Log: string }
   | { CoinSolutionRequest: string }
   | { ReceiveError: string }
   | { NeedCoinSpend: unknown }
@@ -153,7 +153,7 @@ export type WasmEvent =
   | { type: 'notification'; data: WasmNotification }
   | { type: 'error'; error: string }
   | { type: 'address'; data: BlockchainInboundAddressResult }
-  | { type: 'debug_log'; message: string };
+  | { type: 'log'; message: string };
 
 interface GameCradleCreateConfig {
   rng_id: number;
