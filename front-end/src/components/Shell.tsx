@@ -184,7 +184,13 @@ const Shell = () => {
   const lastTrackerActivityRef = useRef(0);
   const lastPeerActivityRef = useRef(0);
   const [pendingRestore, setPendingRestore] = useState<SessionSave | null>(() => loadSession());
+  const autoResumeRef = useRef(false);
   const [restoreDecided, setRestoreDecided] = useState<boolean>(() => {
+    if (sessionStorage.getItem('autoResume')) {
+      sessionStorage.removeItem('autoResume');
+      autoResumeRef.current = true;
+      return true;
+    }
     const hasInfo = hasAnySessionInfo();
     console.log('[Shell] restoreDecided init: hasAnySessionInfo=%s → restoreDecided=%s', hasInfo, !hasInfo);
     return !hasInfo;
@@ -855,6 +861,13 @@ const Shell = () => {
     setResuming(false);
   }, [uniqueId, completeConnection]);
 
+  useEffect(() => {
+    if (autoResumeRef.current) {
+      autoResumeRef.current = false;
+      handleResume();
+    }
+  }, [handleResume]);
+
   const handleStartOver = useCallback(async () => {
     if (activeBlockchainRef.current) {
       try { await activeBlockchainRef.current.disconnect(); } catch (_) {}
@@ -949,7 +962,7 @@ const Shell = () => {
             {' '}Would you like this tab to take over, or close it?
           </p>
           <button
-            onClick={() => { reclaimLease(); setTabConflict('none'); }}
+            onClick={() => { reclaimLease(); sessionStorage.setItem('autoResume', '1'); window.location.reload(); }}
             className='w-full px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors'
           >
             {isMidSession ? 'Take back control' : 'Take over'}
