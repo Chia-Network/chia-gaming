@@ -913,10 +913,10 @@ impl SynchronousGameCradle {
                     ChannelState::ResolvedClean => {
                         self.state.clean_shutdown = snap.coin.clone();
                     }
-                    ChannelState::ResolvedUnrolled | ChannelState::ResolvedStale => {
-                        if self.state.is_on_chain {
-                            self.state.peer_disconnected = true;
-                        }
+                    ChannelState::ResolvedUnrolled | ChannelState::ResolvedStale
+                        if self.state.is_on_chain =>
+                    {
+                        self.state.peer_disconnected = true;
                     }
                     ChannelState::GoingOnChain | ChannelState::Unrolling => {
                         self.state.peer_disconnected = true;

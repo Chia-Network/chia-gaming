@@ -49,7 +49,7 @@ fi
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
     if [ "$SKIP_NATIVE" -eq 0 ]; then
-        "$SCRIPT_DIR/build-chialisp.sh"
+        python3 "$SCRIPT_DIR/build_chialisp.py"
     fi
 
     echo "=== Building WASM (nodejs target for tests) ==="
@@ -95,4 +95,8 @@ fi
 
 echo "=== Running tests ==="
 cd "$FE_DIR"
+if [ ! command pnpm ] ; then
+    echo "Please install pnpm. Godspeed."
+    exit 3
+fi
 pnpm run test

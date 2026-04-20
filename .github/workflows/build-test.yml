@@ -80,7 +80,7 @@ jobs:
 
       - name: Build hex files
         run: |
-          tools/build-chialisp.sh
+          python3 tools/build_chialisp.py
 
       - name: Run rust tests and simulator tests
         run: |
