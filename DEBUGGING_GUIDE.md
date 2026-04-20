@@ -135,38 +135,20 @@ If you need to save output for later, pipe through `tee`:
 
 Use `2>&1` because some output goes to stderr.
 
-## Debugging Techniques
+## Project-Specific Diagnostics
 
-### Ad-hoc debug output
-
-Add targeted `eprintln!()` calls with a distinctive prefix (e.g. `MY_DEBUG:`)
-to the function you're investigating. This is always visible without any
-env vars. Remove after the issue is fixed.
-
-For existing debug output, set `RUST_LOG=debug` to enable `log::debug!` calls
-throughout the codebase.
-
-Set `SIM_TIMING=1` to see per-step timing in the simulation loop (useful for
-finding which step is slow).
-
-### Diagnosing simulation stalls
+### Simulation stalls
 
 The `simulation stalled` panic message includes `move_number`, `can_move`,
-and `next_action`. Ask:
+and `next_action`. These map directly to the structured diagnosis questions:
+which action was the sim loop waiting to fire, and why didn't its trigger
+condition become true?
 
-- What state did it stall on?
-- Was it supposed to have gotten there, or somewhere else?
-- If it was supposed to get there, what was supposed to happen next?
-- Why didn't it?
+### Puzzle hash mismatches
 
-### Diagnosing puzzle hash mismatches
-
-When a puzzle hash mismatch occurs, there are two sides to compare:
-
-- What was hashed to produce the **expected** value, and where did it come from?
-- What was hashed for the **attempted reveal**, and where did it come from?
-
-The divergence between these two answers is the bug.
+Trace both the **expected** hash (what was curried/committed earlier) and the
+**actual** hash (what was revealed/reconstructed). The divergence between
+their input data is the bug.
 
 ## Simulation Test Infrastructure
 
@@ -376,10 +358,6 @@ whether the trigger condition for the next action can ever be satisfied.
   high `block_until_ms` (120000 ms / 2 minutes). Never background these
   commands. The full test suite completes in ~30 seconds; builds are faster.
   Both scripts print overall elapsed time at completion.
-- **Diagnose before rebuilding.** If you change code and the test output
-  doesn't change, don't assume a stale build — add a temporary `eprintln!`
-  or `dbg!` at the change site to verify your code is actually being reached
-  before tearing apart the build cache.
 - **Don't use `sleep` to wait for processes.** When waiting for a command to
   finish, set `block_until_ms` to a value higher than the expected runtime.
   The tool returns as soon as the process exits or the timeout elapses,
