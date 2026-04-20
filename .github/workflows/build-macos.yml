@@ -46,7 +46,7 @@ jobs:
       - name: Build hex files
         run: |
           export PATH=~/.cargo/bin:$PATH
-          tools/build-chialisp.sh
+          python3 tools/build_chialisp.py
 
       - name: Run tests on macOS ARM
         run: |
