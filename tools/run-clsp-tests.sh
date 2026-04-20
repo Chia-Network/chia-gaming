@@ -1,7 +1,7 @@
 #!/bin/bash
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-"$SCRIPT_DIR/build-chialisp.sh"
+python3 "$SCRIPT_DIR/build_chialisp.py"
 
 cargo build
 cargo test chialisp

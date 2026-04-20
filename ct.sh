@@ -17,7 +17,7 @@ echo "=== Building rust + chialisp ==="
 cargo build --features sim-server
 echo "Build took: ${SECONDS} seconds"
 
-./tools/build-chialisp.sh
+python3 ./tools/build_chialisp.py
 
 echo "=== Running rust tests ==="
 cargo test --lib --features sim-server -- --nocapture
