@@ -597,8 +597,8 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
 
       {/* Main content area */}
       <div className='flex flex-col gap-2 px-4 pb-2 sm:px-6 md:px-8'>
-        {/* Game area */}
-          <div ref={gameAreaRef} className='relative overflow-hidden'>
+        {/* Game area — z-0 creates a stacking context so card zIndexes (up to 100) can't escape */}
+          <div ref={gameAreaRef} className='relative overflow-hidden z-0'>
           {showGameInterface && (
             <CalpokerHand
               key={session.handKey}
