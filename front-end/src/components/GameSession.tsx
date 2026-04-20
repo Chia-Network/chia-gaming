@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import { Component, useCallback, useEffect, useRef, useState, type RefObject, type ReactNode, type ErrorInfo } from 'react';
 import { Observable } from 'rxjs';
-import { useGameSession, ChannelStatusInfo, GameTurnState, GameplayEvent, isWindingDown } from '../hooks/useGameSession';
+import { useGameSession, ChannelStatusInfo, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, isWindingDown, QueuedNotification } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
 import { CalpokerHandState, CalpokerDisplaySnapshot } from '../hooks/save';
 import { formatMojos, formatAmount } from '../util';
@@ -14,6 +14,39 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
 import { Button } from './button';
 import { AmountInput } from './AmountInput';
+
+interface ErrorBoundaryProps { children: ReactNode; }
+interface ErrorBoundaryState { error: string | null; }
+
+export class GameSessionErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { error: null };
+
+  static getDerivedStateFromError(err: Error): ErrorBoundaryState {
+    return { error: err.stack || err.message };
+  }
+
+  componentDidCatch(err: Error, info: ErrorInfo) {
+    console.error('[GameSession] render crash:', err, info.componentStack);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className='flex flex-col items-center justify-center gap-4 w-full h-full p-8 text-canvas-text'>
+          <h2 className='text-xl font-semibold text-alert-text'>Something went wrong</h2>
+          <pre className='text-xs whitespace-pre-wrap break-all max-w-lg max-h-[40vh] overflow-auto select-text cursor-text bg-canvas-bg p-4 rounded border border-canvas-line'>{this.state.error}</pre>
+          <button
+            className='px-4 py-2 rounded bg-canvas-solid text-canvas-bg-subtle hover:opacity-90'
+            onClick={() => window.location.reload()}
+          >
+            Reload
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 function CoinId({ hex }: { hex: string }) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
@@ -90,50 +123,6 @@ function formatOptionalMojos(raw: string | null): string {
   }
 }
 
-function useViewportClampedDrag(boundsRef?: RefObject<HTMLElement | null>) {
-  const cardRef = useRef<HTMLDivElement | null>(null);
-  const x = useMotionValue(0);
-  const y = useMotionValue(0);
-
-  const clampToViewport = useCallback(() => {
-    const el = cardRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const boundsRect = boundsRef?.current?.getBoundingClientRect();
-    const minX = boundsRect?.left ?? 0;
-    const minY = boundsRect?.top ?? 0;
-    const maxX = boundsRect?.right ?? window.innerWidth;
-    const maxY = boundsRect?.bottom ?? window.innerHeight;
-    let nextX = x.get();
-    let nextY = y.get();
-
-    if (rect.width >= maxX - minX) {
-      nextX -= rect.left - minX;
-    } else {
-      if (rect.left < minX) nextX -= rect.left - minX;
-      if (rect.right > maxX) nextX -= rect.right - maxX;
-    }
-
-    if (rect.height >= maxY - minY) {
-      nextY -= rect.top - minY;
-    } else {
-      if (rect.top < minY) nextY -= rect.top - minY;
-      if (rect.bottom > maxY) nextY -= rect.bottom - maxY;
-    }
-
-    if (nextX !== x.get()) x.set(nextX);
-    if (nextY !== y.get()) y.set(nextY);
-  }, [boundsRef, x, y]);
-
-  useEffect(() => {
-    const onResize = () => clampToViewport();
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, [clampToViewport]);
-
-  return { cardRef, x, y, clampToViewport };
-}
-
 function useViewportClampedDragWithInsets(
   boundsRef: RefObject<HTMLElement | null> | undefined,
   insets: { top?: number; right?: number; bottom?: number; left?: number } = {},
@@ -182,73 +171,68 @@ function useViewportClampedDragWithInsets(
 }
 
 
-function ChannelAttentionOverlay({
-  info,
-  onDismiss,
-  boundsRef,
-}: {
-  info: ChannelStatusInfo;
-  onDismiss: () => void;
-  boundsRef: RefObject<HTMLElement | null>;
-}) {
-  const label = CHANNEL_STATE_LABELS[info.state] ?? info.state;
-  const isBad = info.state === 'Failed' || info.state === 'ResolvedStale';
-  const { cardRef, x, y, clampToViewport } = useViewportClampedDragWithInsets(boundsRef, { top: 8 });
+function ChannelStateContent({ info }: { info: ChannelStatusInfo }) {
   return (
-    <motion.div
-      ref={cardRef}
-      drag
-      dragMomentum={false}
-      dragElastic={0}
-      initial={false}
-      style={{ x, y }}
-      onDrag={clampToViewport}
-      onDragEnd={clampToViewport}
-      className='absolute z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing'
-    >
-      <Card className='theme-inverted w-full max-w-md shadow-xl bg-canvas-bg-subtle border border-canvas-line'>
-        <CardHeader className='text-center pb-2'>
-          <CardTitle className={`text-xl ${isBad ? 'text-alert-text' : 'text-canvas-text-contrast'}`}>
-            Channel: {label}
-          </CardTitle>
-          {info.advisory && (
-            <p className='text-sm text-canvas-text mt-1'>{info.advisory}</p>
-          )}
-        </CardHeader>
-        <Separator />
-        <CardContent className='pt-4 flex flex-col gap-2'>
-          {info.coinHex && (
-            <p className="text-xs text-canvas-text break-all">
-              Coin ID: <CoinId hex={info.coinHex} />
-            </p>
-          )}
-          {info.coinAmount && (
-            <p className='text-xs text-canvas-text'>
-              Coin amount: {formatOptionalMojos(info.coinAmount)} mojos
-            </p>
-          )}
-          <Button variant="solid" onClick={onDismiss} className='w-full'>
-            Dismiss
-          </Button>
-        </CardContent>
-      </Card>
-    </motion.div>
+    <>
+      {info.advisory && (
+        <p className='text-sm text-canvas-text-contrast select-text cursor-text'>{info.advisory}</p>
+      )}
+      {info.coinHex && (
+        <p className='text-xs text-canvas-text break-all select-text cursor-text'>
+          Coin ID: <CoinId hex={info.coinHex} />
+        </p>
+      )}
+      {info.coinAmount && (
+        <p className='text-xs text-canvas-text select-text cursor-text'>
+          Coin amount: {formatOptionalMojos(info.coinAmount)} mojos
+        </p>
+      )}
+    </>
   );
 }
 
-function ErrorAttentionOverlay({
-  message,
+function GameTerminalContent({ info }: { info: GameTerminalAttentionInfo }) {
+  return (
+    <div className='rounded-md border border-canvas-line bg-canvas-bg p-3 text-sm space-y-2 select-text cursor-text'>
+      <p className='flex flex-wrap items-center gap-x-2 gap-y-1'>
+        <span className='text-canvas-text'>My reward:</span>
+        <span className='font-semibold text-canvas-text-contrast'>
+          {formatOptionalMojos(info.myReward)}
+        </span>
+      </p>
+      <p className='flex flex-wrap items-center gap-x-2 gap-y-1'>
+        <span className='text-canvas-text'>Reward coin ID:</span>
+        {info.rewardCoinHex ? (
+          <CoinId hex={info.rewardCoinHex} />
+        ) : (
+          <span className='font-semibold text-canvas-text-contrast'>None</span>
+        )}
+      </p>
+    </div>
+  );
+}
+
+function NotificationOverlay({
+  notification,
   onDismiss,
   boundsRef,
+  zClass,
 }: {
-  message: string;
+  notification: QueuedNotification;
   onDismiss: () => void;
   boundsRef: RefObject<HTMLElement | null>;
+  zClass: string;
 }) {
   const { cardRef, x, y, clampToViewport } = useViewportClampedDragWithInsets(boundsRef, { top: 8 });
   const dragControls = useDragControls();
+  const isError = notification.kind === 'infra-error' || notification.kind === 'action-failed';
+  const titleColor = isError || notification.kind === 'channel-state'
+    ? 'text-alert-text'
+    : 'text-canvas-text-contrast';
+
   return (
     <motion.div
+      key={notification.id}
       ref={cardRef}
       drag
       dragControls={dragControls}
@@ -259,116 +243,31 @@ function ErrorAttentionOverlay({
       style={{ x, y }}
       onDrag={clampToViewport}
       onDragEnd={clampToViewport}
-      className='absolute z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2'
+      className={`absolute ${zClass} left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2`}
     >
       <Card className='theme-inverted w-full max-w-md shadow-xl bg-canvas-bg-subtle border border-canvas-line'>
         <CardHeader
           className='text-center pb-2 cursor-grab active:cursor-grabbing'
           onPointerDown={(e) => dragControls.start(e)}
         >
-          <CardTitle className='text-xl text-alert-text'>Error</CardTitle>
+          <CardTitle className={`text-xl ${titleColor}`}>{notification.title}</CardTitle>
         </CardHeader>
         <Separator />
         <CardContent className='pt-4 flex flex-col gap-2'>
-          <pre className='text-sm text-canvas-text-contrast whitespace-pre-wrap break-all font-sans select-text cursor-text max-h-[60vh] overflow-auto'>{message}</pre>
-          <Button variant="solid" onClick={onDismiss}>
+          {notification.kind === 'channel-state' && notification.payload && 'state' in notification.payload && (
+            <ChannelStateContent info={notification.payload as ChannelStatusInfo} />
+          )}
+          {notification.kind === 'game-terminal' && notification.payload && 'label' in notification.payload && (
+            <GameTerminalContent info={notification.payload as GameTerminalAttentionInfo} />
+          )}
+          {isError && notification.message && (
+            <pre className='text-sm text-canvas-text-contrast whitespace-pre-wrap break-all font-sans select-text cursor-text max-h-[60vh] overflow-auto'>{notification.message}</pre>
+          )}
+          {!isError && notification.kind !== 'channel-state' && notification.kind !== 'game-terminal' && notification.message && (
+            <p className='text-sm text-canvas-text-contrast text-center select-text cursor-text'>{notification.message}</p>
+          )}
+          <Button variant='solid' size='sm' onClick={onDismiss} className='self-center min-w-[96px]'>
             Dismiss
-          </Button>
-        </CardContent>
-      </Card>
-    </motion.div>
-  );
-}
-
-function GameTerminalAttentionOverlay({
-  label,
-  myReward,
-  rewardCoinHex,
-  onDismiss,
-  boundsRef,
-}: {
-  label: string;
-  myReward: string | null;
-  rewardCoinHex: string | null;
-  onDismiss: () => void;
-  boundsRef: RefObject<HTMLElement | null>;
-}) {
-  const { cardRef, x, y, clampToViewport } = useViewportClampedDrag(boundsRef);
-  const title = label.startsWith('Ended: ') ? label.slice('Ended: '.length) : label;
-  return (
-    <motion.div
-      ref={cardRef}
-      drag
-      dragMomentum={false}
-      dragElastic={0}
-      initial={false}
-      style={{ x, y }}
-      onDrag={clampToViewport}
-      onDragEnd={clampToViewport}
-      className='absolute z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing'
-    >
-      <Card className='theme-inverted w-full max-w-md shadow-xl bg-canvas-bg-subtle border border-canvas-line'>
-        <CardHeader className='text-center pb-2'>
-          <CardTitle className='text-xl text-canvas-text-contrast'>{title}</CardTitle>
-        </CardHeader>
-        <Separator />
-        <CardContent className='pt-4 flex flex-col gap-3'>
-          <div className='rounded-md border border-canvas-line bg-canvas-bg p-3 text-sm space-y-2'>
-            <p className='flex flex-wrap items-center gap-x-2 gap-y-1'>
-              <span className='text-canvas-text'>My reward:</span>
-              <span className='font-semibold text-canvas-text-contrast'>
-                {formatOptionalMojos(myReward)}
-              </span>
-            </p>
-            <p className='flex flex-wrap items-center gap-x-2 gap-y-1'>
-              <span className='text-canvas-text'>Reward coin ID:</span>
-              {rewardCoinHex ? (
-                <CoinId hex={rewardCoinHex} />
-              ) : (
-                <span className='font-semibold text-canvas-text-contrast'>None</span>
-              )}
-            </p>
-          </div>
-          <Button variant='solid' size='sm' onClick={onDismiss} className='self-center min-w-[96px]'>
-            OK
-          </Button>
-        </CardContent>
-      </Card>
-    </motion.div>
-  );
-}
-
-function BetweenHandErrorOverlay({
-  message,
-  onDismiss,
-  boundsRef,
-}: {
-  message: string;
-  onDismiss: () => void;
-  boundsRef: RefObject<HTMLElement | null>;
-}) {
-  const { cardRef, x, y, clampToViewport } = useViewportClampedDrag(boundsRef);
-  return (
-    <motion.div
-      ref={cardRef}
-      drag
-      dragMomentum={false}
-      dragElastic={0}
-      initial={false}
-      style={{ x, y }}
-      onDrag={clampToViewport}
-      onDragEnd={clampToViewport}
-      className='absolute z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing'
-    >
-      <Card className='theme-inverted w-full max-w-md shadow-xl bg-canvas-bg-subtle border border-canvas-line'>
-        <CardHeader className='text-center pb-2'>
-          <CardTitle className='text-lg text-canvas-text-contrast'>Notice</CardTitle>
-        </CardHeader>
-        <Separator />
-        <CardContent className='pt-4 flex flex-col gap-3'>
-          <p className='text-sm text-canvas-text-contrast text-center'>{message}</p>
-          <Button variant='solid' size='sm' onClick={onDismiss} className='self-center min-w-[96px]'>
-            OK
           </Button>
         </CardContent>
       </Card>
@@ -489,8 +388,6 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
 
   const channelOverlayBoundsRef = useRef<HTMLDivElement | null>(null);
   const gameAreaRef = useRef<HTMLDivElement | null>(null);
-
-  const [dismissedError, setDismissedError] = useState(false);
 
   const maxPerHandMojos = (() => {
     const ours = session.channelStatus.ourBalance;
@@ -629,21 +526,12 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
             </div>
           )}
 
-          {session.gameTerminalAttention && (
-            <GameTerminalAttentionOverlay
-              label={session.gameTerminalAttention.label}
-              myReward={session.gameTerminalAttention.myReward}
-              rewardCoinHex={session.gameTerminalAttention.rewardCoinHex}
-              onDismiss={session.dismissGameTerminalAttention}
+          {session.gameQueue[0] && (
+            <NotificationOverlay
+              notification={session.gameQueue[0]}
+              onDismiss={session.dismissGame}
               boundsRef={gameAreaRef}
-            />
-          )}
-
-          {session.betweenHandError && (
-            <BetweenHandErrorOverlay
-              message={session.betweenHandError}
-              onDismiss={session.dismissBetweenHandError}
-              boundsRef={gameAreaRef}
+              zClass='z-40'
             />
           )}
         </div>
@@ -727,18 +615,12 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
         )}
       </div>
 
-      {session.channelAttention && (
-        <ChannelAttentionOverlay
-          info={session.channelAttention}
-          onDismiss={session.dismissChannelAttention}
+      {session.channelQueue[0] && (
+        <NotificationOverlay
+          notification={session.channelQueue[0]}
+          onDismiss={session.dismissChannel}
           boundsRef={channelOverlayBoundsRef}
-        />
-      )}
-      {session.error && !dismissedError && (
-        <ErrorAttentionOverlay
-          message={session.error}
-          onDismiss={() => setDismissedError(true)}
-          boundsRef={channelOverlayBoundsRef}
+          zClass='z-50'
         />
       )}
     </div>

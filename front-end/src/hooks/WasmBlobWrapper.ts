@@ -112,8 +112,8 @@ export class WasmBlobWrapper {
   gameTerminalReward: string | null = null;
   gameTerminalRewardCoin: string | null = null;
   myRunningBalance: string = '0';
-  channelAttentionActive = false;
-  gameTerminalAttentionActive = false;
+  channelNotifQueue: Array<{ id: number; kind: string; title: string; message: string }> = [];
+  gameNotifQueue: Array<{ id: number; kind: string; title: string; message: string }> = [];
   betweenHandMode: string | null = null;
   betweenHandComposePerHand: string | null = null;
   betweenHandLastTerms: { my_contribution: string; their_contribution: string } | null = null;
@@ -419,7 +419,12 @@ export class WasmBlobWrapper {
       this.drainScheduled = false;
       const event = this.eventQueue.shift();
       if (event) {
-        this.dispatchEvent(event);
+        try {
+          this.dispatchEvent(event);
+        } catch (e) {
+          console.error('[wasm] dispatchEvent error:', e);
+          this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
+        }
         this.scheduleSave();
       }
       this.scheduleDrain();
@@ -514,8 +519,13 @@ export class WasmBlobWrapper {
 
   private deliverSingleMessage(msgno: number, msg: string) {
     this.remoteNumber = msgno;
-    const result = this.cradle!.deliver_message(msg);
-    this.processResult(result);
+    try {
+      const result = this.cradle!.deliver_message(msg);
+      this.processResult(result);
+    } catch (e) {
+      console.error('[wasm] deliver_message failed:', e);
+      this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
+    }
     this.sendAck(msgno);
   }
 
@@ -636,8 +646,8 @@ export class WasmBlobWrapper {
         gameTerminalReward: this.gameTerminalReward,
         gameTerminalRewardCoin: this.gameTerminalRewardCoin,
         myRunningBalance: this.myRunningBalance !== '0' ? this.myRunningBalance : undefined,
-        channelAttentionActive: this.channelAttentionActive || undefined,
-        gameTerminalAttentionActive: this.gameTerminalAttentionActive || undefined,
+        channelNotifQueue: this.channelNotifQueue.length > 0 ? this.channelNotifQueue : undefined,
+        gameNotifQueue: this.gameNotifQueue.length > 0 ? this.gameNotifQueue : undefined,
         betweenHandMode: this.betweenHandMode ?? undefined,
         betweenHandComposePerHand: this.betweenHandComposePerHand ?? undefined,
         betweenHandLastTerms: this.betweenHandLastTerms ?? undefined,

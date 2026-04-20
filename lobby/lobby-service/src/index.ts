@@ -151,11 +151,15 @@ app.use(
 
 // Prevent HTTP keep-alive from exhausting the browser's per-host connection
 // pool (typically 6 for HTTP/1.1), which would block WebSocket upgrades when
-// multiple tabs connect to the same tracker origin.  Also disable caching so
-// the browser never serves stale lobby JS after a rebuild.
-app.use((_req, res, next) => {
+// multiple tabs connect to the same tracker origin.
+// Assets under /app/<nonce>/ are immutable (cache-busted by build nonce);
+// everything else (index.html, build-meta.json, favicon) uses no-store.
+app.use((req, res, next) => {
   res.set('Connection', 'close');
-  res.set('Cache-Control', 'no-store');
+  res.set('Cache-Control',
+    req.path.startsWith('/app/')
+      ? 'public, max-age=31536000, immutable'
+      : 'no-store');
   next();
 });
 

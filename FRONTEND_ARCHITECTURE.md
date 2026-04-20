@@ -254,7 +254,8 @@ An `appState` key in localStorage holds a JSON-serialized `AppState` object
 | `channelStatus` | `ChannelStatusPayload?` | Last channel status for coin watching |
 | `myAlias` | `string?` | Local player display name |
 | `opponentAlias` | `string?` | Opponent display name |
-| `showBetweenHandOverlay` | `boolean?` | Whether the between-hand overlay was showing |
+| `channelNotifQueue` | `QueuedNotification[]?` | Persisted channel-scope notification queue |
+| `gameNotifQueue` | `QueuedNotification[]?` | Persisted game-scope notification queue |
 | `lastOutcomeWin` | `'win' \| 'lose' \| 'tie'?` | Last hand result |
 
 The surrounding `AppState` also holds `playerId`, `sessionId`, `blockchainType`,
@@ -561,8 +562,8 @@ individual hands). The `useGameSession` hook owns:
 - **WASM cradle** — the `WasmBlobWrapper` lifecycle, obtained via
   `getBlobSingleton`. The singleton persists across hands within a session.
 - **Notification dispatch** — subscribes to `WasmBlobWrapper`'s observable and
-  routes notifications to toasts (channel-scope and game-scope terminal events)
-  or to the gameplay event stream (gameplay events).
+  routes notifications to scoped notification queues (channel-scope and
+  game-scope) or to the gameplay event stream (gameplay events).
 - **Session-level state** — channel coin lifecycle, game coin lifecycle, running
   balance, hand counter, between-hand overlay.
 - **Game proposal flow** — the initiator proposes on `ChannelCreated`; the
@@ -600,40 +601,34 @@ What the game UI does **not** know about:
 
 ## Notification Routing
 
-WASM notifications fall into three categories based on how they are handled.
-All routing happens in `useGameSession`'s `handleNotification` callback.
+WASM notifications are routed by `useGameSession`'s `handleNotification`
+callback into one of four destinations:
 
-### Channel-scope (shown as toasts)
+### Channel notification queue
 
-These relate to the state channel itself, not any individual game:
+Infrastructure-level events pushed to the channel-scoped FIFO queue
+(`pushChannel`). These appear as dismissable, non-modal overlays at `z-50`
+over the full session area. See
+[UI Notification Queues](UX_NOTIFICATIONS.md#ui-notification-queues) for
+details.
 
-- `ChannelCreated`
-- `GoingOnChain`
-- `ChannelCoinSpent`
-- `UnrollCoinSpent`
-- `StaleChannelUnroll`
-- `ChannelError`
-- `CleanShutdownStarted`
-- `CleanShutdownComplete`
+| Kind | Source |
+|---|---|
+| `channel-state` | `ChannelStatus` in `ATTENTION_STATES` (replaceable slot) |
+| `session-over` | Balance exhausted → cooperative shutdown |
+| `action-failed` | `ActionFailed` (WASM `Err`) — also logged |
+| `infra-error` | `ReceiveError`, tx failures, general `error` events |
 
-### Game-scope terminal / edge-case (shown as toasts)
+### Game notification queue
 
-These end or prevent a game. They are shown as toasts and trigger game-over
-handling (removing the game ID, showing the between-hand overlay):
+In-game and between-hand events pushed to the game-scoped FIFO queue
+(`pushGame`). Overlays appear at `z-40` within the game area.
 
-- `WeTimedOut`
-- `OpponentTimedOut`
-- `WeSlashedOpponent`
-- `OpponentSlashedUs`
-- `OpponentSuccessfullyCheated`
-- `EndedCancelled`
-- `ProposalCancelled`
-- `InsufficientBalance`
-- `GameError`
-- `GameOnChain`
-- `WeMoved`
-- `OpponentPlayedIllegalMove`
-- `ActionFailed`
+| Kind | Source |
+|---|---|
+| `game-terminal` | `GameStatus` ended during on-chain flow |
+| `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer` |
+| `insufficient-bal` | `InsufficientBalance` notification |
 
 ### Game lifecycle (handled internally by session)
 
@@ -647,7 +642,8 @@ These drive game proposal and acceptance flow. They are consumed by
 These are the normal flow of play, forwarded to the active game UI component
 via the `gameplayEventSubject` RxJS stream:
 
-- `ProposalAccepted` — a new game is starting
+- `ProposalAccepted` — a new game is starting (also clears stale
+  `proposal-rejected` entries from the game queue)
 - `OpponentMoved` — the opponent made a move (with readable data)
 - `GameMessage` — advisory data (e.g. Alice revealing cards to Bob early)
 

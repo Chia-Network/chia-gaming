@@ -84,6 +84,23 @@ export interface GameTerminalAttentionInfo {
   rewardCoinHex: string | null;
 }
 
+export type NotificationKind =
+  | 'channel-state'
+  | 'session-over'
+  | 'action-failed'
+  | 'infra-error'
+  | 'game-terminal'
+  | 'proposal-rejected'
+  | 'insufficient-bal';
+
+export interface QueuedNotification {
+  id: number;
+  kind: NotificationKind;
+  title: string;
+  message: string;
+  payload?: ChannelStatusInfo | GameTerminalAttentionInfo;
+}
+
 export interface ChannelStatusInfo {
   state: ChannelState;
   advisory: string | null;
@@ -283,7 +300,6 @@ function parseIncomingProposal(value: unknown): BetweenHandProposal | null {
 }
 
 export interface UseGameSessionResult {
-  error: string | undefined;
   gameConnectionState: GameConnectionState;
   amount: bigint;
   perGameAmount: bigint;
@@ -311,8 +327,6 @@ export interface UseGameSessionResult {
   setComposePerHandAmount: (value: bigint) => void;
   composeProposalSent: boolean;
   newHandRequested: boolean;
-  betweenHandError: string | null;
-  dismissBetweenHandError: () => void;
   submitComposedProposal: (perHandAmount: bigint) => void;
   acceptReviewedProposal: () => void;
   rejectReviewedProposal: () => void;
@@ -322,10 +336,10 @@ export interface UseGameSessionResult {
   lastOutcome: CalpokerOutcome | undefined;
   restoredOutcomeWin: 'win' | 'lose' | 'tie' | undefined;
   goOnChainPressed: boolean;
-  gameTerminalAttention: GameTerminalAttentionInfo | null;
-  dismissGameTerminalAttention: () => void;
-  channelAttention: ChannelStatusInfo | null;
-  dismissChannelAttention: () => void;
+  channelQueue: QueuedNotification[];
+  gameQueue: QueuedNotification[];
+  dismissChannel: () => void;
+  dismissGame: () => void;
 }
 
 export function useGameSession(
@@ -363,7 +377,6 @@ export function useGameSession(
         ? { stateIdentifier: 'running' as const, stateDetail: [] }
         : { stateIdentifier: 'starting' as const, stateDetail: ['before handshake'] }
     );
-  const [error, setRealError] = useState<string | undefined>(undefined);
   const [myRunningBalance, setMyRunningBalance] = useState(() =>
     sessionSave?.myRunningBalance ? BigInt(sessionSave.myRunningBalance) : 0n
   );
@@ -373,22 +386,47 @@ export function useGameSession(
     if (sessionSave.channelStatus) return channelStatusFromPayload(sessionSave.channelStatus, null);
     return { ...INITIAL_CHANNEL_STATUS, state: 'Active' };
   });
-  const [channelAttention, setChannelAttention] = useState<ChannelStatusInfo | null>(() => {
-    if (sessionSave?.channelAttentionActive && sessionSave.channelStatus) {
-      return channelStatusFromPayload(sessionSave.channelStatus, null);
-    }
-    return null;
-  });
   const channelStateRef = useRef<ChannelState>(
     sessionSave?.channelReady
       ? (sessionSave.channelStatus?.state ?? 'Active')
       : INITIAL_CHANNEL_STATUS.state
   );
-  const channelAttentionStateRef = useRef<ChannelState | null>(
-    sessionSave?.channelStatus && ATTENTION_STATES.includes(sessionSave.channelStatus.state)
-      ? sessionSave.channelStatus.state
-      : null
+
+  const [channelQueue, setChannelQueue] = useState<QueuedNotification[]>(() =>
+    (sessionSave?.channelNotifQueue ?? []) as QueuedNotification[]
   );
+  const [gameQueue, setGameQueue] = useState<QueuedNotification[]>(() =>
+    (sessionSave?.gameNotifQueue ?? []) as QueuedNotification[]
+  );
+  const notifIdRef = useRef(
+    Math.max(
+      0,
+      ...(sessionSave?.channelNotifQueue ?? []).map(n => n.id),
+      ...(sessionSave?.gameNotifQueue ?? []).map(n => n.id),
+    )
+  );
+
+  const pushChannel = useCallback((n: Omit<QueuedNotification, 'id'>) => {
+    setChannelQueue(prev => {
+      if (n.kind === 'channel-state') {
+        const withoutOldState = prev.filter(e => e.kind !== 'channel-state');
+        return [{ ...n, id: ++notifIdRef.current }, ...withoutOldState];
+      }
+      return [...prev, { ...n, id: ++notifIdRef.current }];
+    });
+  }, []);
+
+  const pushGame = useCallback((n: Omit<QueuedNotification, 'id'>) => {
+    setGameQueue(prev => [...prev, { ...n, id: ++notifIdRef.current }]);
+  }, []);
+
+  const dismissChannel = useCallback(() => {
+    setChannelQueue(prev => prev.slice(1));
+  }, []);
+
+  const dismissGame = useCallback(() => {
+    setGameQueue(prev => prev.slice(1));
+  }, []);
   const [gameCoin, setGameCoin] = useState<GameCoinInfo>(() => ({
     coinHex: sessionSave?.gameCoinHex ?? null,
     turnState: (sessionSave?.gameTurnState as GameTurnState) ?? 'my-turn',
@@ -415,16 +453,6 @@ export function useGameSession(
   );
   const [lastOutcome, setLastOutcome] = useState<CalpokerOutcome | undefined>(undefined);
   const restoredOutcomeWin = sessionSave?.lastOutcomeWin;
-  const [gameTerminalAttention, setGameTerminalAttention] = useState<GameTerminalAttentionInfo | null>(() => {
-    if (sessionSave?.gameTerminalAttentionActive && sessionSave.gameTerminalLabel) {
-      return {
-        label: sessionSave.gameTerminalLabel,
-        myReward: sessionSave.gameTerminalReward ?? null,
-        rewardCoinHex: sessionSave.gameTerminalRewardCoin ?? null,
-      };
-    }
-    return null;
-  });
   const [betweenHandMode, setBetweenHandMode] = useState<BetweenHandMode>(() => {
     const mode = sessionSave?.betweenHandMode;
     if (mode === 'decision' || mode === 'compose-proposal' || mode === 'review-incoming-proposal') {
@@ -523,12 +551,6 @@ export function useGameSession(
   rejectedOnceTermsRef.current = rejectedOnceTerms;
   lastHandTermsRef.current = lastHandTerms;
 
-  const setError = useCallback((e: string | undefined) => {
-    if (e !== undefined) {
-      setRealError((prev) => prev === undefined ? e : prev);
-    }
-  }, []);
-
   const gameObjectRef = useRef<WasmBlobWrapper>(gameObject);
   gameObjectRef.current = gameObject;
 
@@ -580,6 +602,8 @@ export function useGameSession(
           their_contribution: reviewPeerProposal.terms.theirContribution.toString(),
         }
       : null;
+    go.channelNotifQueue = channelQueue.map(({ id, kind, title, message }) => ({ id, kind, title, message }));
+    go.gameNotifQueue = gameQueue.map(({ id, kind, title, message }) => ({ id, kind, title, message }));
     go.scheduleSave();
   }, [
     gameCoin,
@@ -591,6 +615,8 @@ export function useGameSession(
     rejectedOnceTerms,
     cachedPeerProposal,
     reviewPeerProposal,
+    channelQueue,
+    gameQueue,
   ]);
 
   const proposeNewGame = useCallback((terms: HandTerms) => {
@@ -652,18 +678,6 @@ export function useGameSession(
     }));
   }, []);
 
-  const dismissChannelAttention = useCallback(() => {
-    setChannelAttention(null);
-    const go = gameObjectRef.current;
-    if (go) { go.channelAttentionActive = false; go.scheduleSave(); }
-  }, []);
-
-  const dismissGameTerminalAttention = useCallback(() => {
-    setGameTerminalAttention(null);
-    const go = gameObjectRef.current;
-    if (go) { go.gameTerminalAttentionActive = false; go.scheduleSave(); }
-  }, []);
-
   const triggerGoOnChain = useCallback(() => {
     log('[game] going on chain');
     setGoOnChainPressed(true);
@@ -683,12 +697,8 @@ export function useGameSession(
       channelStateRef.current = info.state;
       setChannelStatus(info);
       if (ATTENTION_STATES.includes(cs.state)) {
-        const go = gameObjectRef.current;
-        if (go && (go.channelAttentionActive || cs.state !== channelAttentionStateRef.current)) {
-          go.channelAttentionActive = true;
-          channelAttentionStateRef.current = cs.state;
-          setChannelAttention(info);
-        }
+        const label = cs.state === 'Failed' || cs.state === 'ResolvedStale' ? 'Error' : `Channel: ${cs.state}`;
+        pushChannel({ kind: 'channel-state', title: label, message: info.advisory ?? '', payload: info });
       }
       if (cs.state === 'Active' && info.gameAllocated === '0') {
         const ours = BigInt(info.ourBalance ?? '0');
@@ -697,7 +707,7 @@ export function useGameSession(
           const msg = theirs <= 0n
             ? 'Session over — you won everything!'
             : 'Session over — you lost everything.';
-          setBetweenHandError(msg);
+          pushChannel({ kind: 'session-over', title: 'Session Over', message: msg });
           gameObjectRef.current?.cleanShutdown();
           return;
         }
@@ -825,7 +835,7 @@ export function useGameSession(
       setCachedPeerProposal(null);
       setReviewPeerProposal(null);
       setRejectedOnceTerms(null);
-      setBetweenHandError(null);
+      setGameQueue(prev => prev.filter(n => n.kind !== 'proposal-rejected'));
       setBetweenHandMode('decision');
       gameplayEventSubject.next({ ProposalAccepted: { id: gpa.id as number | string } });
     } else if ('GameStatus' in n) {
@@ -881,13 +891,12 @@ export function useGameSession(
           setCachedPeerProposal(null);
           setReviewPeerProposal(null);
           if (inOnChainFlow) {
-            const go2 = gameObjectRef.current;
-            if (go2) { go2.gameTerminalAttentionActive = true; }
-            setGameTerminalAttention({
+            const attentionInfo: GameTerminalAttentionInfo = {
               label: terminalInfo.label ?? `Ended: ${status}`,
               myReward: terminalInfo.myReward,
               rewardCoinHex: terminalInfo.rewardCoinHex,
-            });
+            };
+            pushGame({ kind: 'game-terminal', title: attentionInfo.label, message: '', payload: attentionInfo });
           }
         }
         gameplayEventSubject.next({ _terminal: true, notification: n });
@@ -918,7 +927,7 @@ export function useGameSession(
       cancelStalePeerProposals();
       setCachedPeerProposal(null);
       setReviewPeerProposal(null);
-      setBetweenHandError('Insufficient balance for that proposal. The hand could not start.');
+      pushGame({ kind: 'insufficient-bal', title: 'Notice', message: 'Insufficient balance for that proposal. The hand could not start.' });
       setBetweenHandMode('compose-proposal');
     } else if ('ProposalCancelled' in n) {
       const proposalId = String(n.ProposalCancelled?.id ?? '');
@@ -945,17 +954,16 @@ export function useGameSession(
         setComposeProposalSent(false);
         sameTermsRequestedRef.current = false;
         setNewHandRequested(false);
-        if (!betweenHandErrorRef.current) {
-          setBetweenHandError('Your proposal was rejected by the other side.');
-        }
+        pushGame({ kind: 'proposal-rejected', title: 'Notice', message: 'Your proposal was rejected by the other side.' });
       } else {
         pendingRetryTermsRef.current = null;
       }
     } else if ('ActionFailed' in n) {
       const reason = String(n.ActionFailed?.reason ?? 'Unknown error');
       log(`[game] action failed: ${reason}`);
+      pushChannel({ kind: 'action-failed', title: 'Error', message: reason });
     }
-  }, [iStarted, proposeNewGame, gameplayEventSubject, gameConnectionState.stateIdentifier, triggerGoOnChain]);
+  }, [iStarted, proposeNewGame, gameplayEventSubject, gameConnectionState.stateIdentifier, triggerGoOnChain, pushChannel, pushGame]);
 
   // Subscribe to WASM events
   useEffect(() => {
@@ -966,7 +974,7 @@ export function useGameSession(
             handleNotification(evt.data);
             break;
           case 'error':
-            setError(evt.error);
+            pushChannel({ kind: 'infra-error', title: 'Error', message: evt.error });
             break;
           case 'address':
             break;
@@ -989,7 +997,7 @@ export function useGameSession(
     return () => {
       subscription.unsubscribe();
     };
-  }, [gameObject, handleNotification, setError]);
+  }, [gameObject, handleNotification, pushChannel]);
 
   // Subscribe to blockchain block data
   useEffect(() => {
@@ -1051,24 +1059,12 @@ export function useGameSession(
 
   const openComposeProposal = useCallback(() => {
     setComposeProposalSent(false);
-    setBetweenHandError(null);
     setComposePerHandAmount(lastHandTermsRef.current.myContribution);
     setBetweenHandMode('compose-proposal');
   }, []);
 
   const [composeProposalSent, setComposeProposalSent] = useState(false);
   const [newHandRequested, setNewHandRequested] = useState(false);
-  const [betweenHandError, setBetweenHandErrorState] = useState<string | null>(null);
-  const betweenHandErrorRef = useRef<string | null>(null);
-  const setBetweenHandError = useCallback((msg: string | null) => {
-    betweenHandErrorRef.current = msg;
-    setBetweenHandErrorState(msg);
-  }, []);
-
-  const dismissBetweenHandError = useCallback(() => {
-    setBetweenHandError(null);
-  }, [setBetweenHandError]);
-
   const submitComposedProposal = useCallback((perHandAmount: bigint) => {
     if (perHandAmount <= 0n) return;
     proposeNewGame({
@@ -1111,7 +1107,6 @@ export function useGameSession(
   }, [triggerGoOnChain]);
 
   return {
-    error,
     gameConnectionState,
     amount,
     perGameAmount,
@@ -1135,8 +1130,6 @@ export function useGameSession(
     composePerHandAmount,
     composeProposalSent,
     newHandRequested,
-    betweenHandError,
-    dismissBetweenHandError,
     chooseNewHandSameTerms,
     chooseDoNotUseCurrentProposal,
     openComposeProposal,
@@ -1150,9 +1143,9 @@ export function useGameSession(
     lastOutcome,
     restoredOutcomeWin,
     goOnChainPressed,
-    gameTerminalAttention,
-    dismissGameTerminalAttention,
-    channelAttention,
-    dismissChannelAttention,
+    channelQueue,
+    gameQueue,
+    dismissChannel,
+    dismissGame,
   };
 }

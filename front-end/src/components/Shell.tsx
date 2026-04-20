@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 
 import GameSession from './GameSession';
+import { GameSessionErrorBoundary } from './GameSession';
 import { SimulatorSetupModal } from './SimulatorSetupModal';
 import QRCode from 'qrcode';
 import { GameSessionParams, PeerConnectionResult, ChatMessage, InternalBlockchainInterface, ConnectionSetup, TrackerLiveness } from '../types/ChiaGaming';
@@ -463,7 +464,13 @@ const Shell = () => {
     setTrackerOrigin(origin);
     saveTrackerUrl(origin);
     const lobbyUrl = `${origin}/?lobby=true&session=${sessionId}&uniqueId=${uniqueId}`;
-    setIframeUrl(lobbyUrl);
+    let iframeLaunched = false;
+    const launchIframe = () => {
+      if (!iframeLaunched) {
+        iframeLaunched = true;
+        setIframeUrl(lobbyUrl);
+      }
+    };
 
     const startSession = (
       conn: TrackerConnection,
@@ -515,6 +522,7 @@ const Shell = () => {
           trackerWsUpRef.current = true;
           lastTrackerActivityRef.current = Date.now();
           setTrackerLiveness('connected');
+          launchIframe();
           // Treat successful tracker match as immediate peer activity for UX.
           markPeerActive();
           let amount: bigint;
@@ -529,6 +537,7 @@ const Shell = () => {
           trackerWsUpRef.current = true;
           lastTrackerActivityRef.current = Date.now();
           setTrackerLiveness('connected');
+          launchIframe();
           if (!status.has_pairing || status.peer_connected === false) {
             markPeerInactive();
           } else if (status.peer_connected === true) {
@@ -1322,16 +1331,18 @@ const Shell = () => {
         {/* Game Session tab */}
         <div style={{ position: 'absolute', inset: 0, overflow: 'auto', visibility: activeTab === 'session' ? 'visible' : 'hidden' }}>
           {keepSession ? (
-            <GameSession
-              params={gameParams}
-              peerConn={peerConn}
-              trackerLiveness={trackerLiveness}
-              peerConnected={peerConnected}
-              registerMessageHandler={registerMessageHandler}
-              appendGameLog={appendHistory}
-              sessionSave={sessionSaveRef.current ?? undefined}
-              onSessionActivity={onSessionActivity}
-            />
+            <GameSessionErrorBoundary>
+              <GameSession
+                params={gameParams}
+                peerConn={peerConn}
+                trackerLiveness={trackerLiveness}
+                peerConnected={peerConnected}
+                registerMessageHandler={registerMessageHandler}
+                appendGameLog={appendHistory}
+                sessionSave={sessionSaveRef.current ?? undefined}
+                onSessionActivity={onSessionActivity}
+              />
+            </GameSessionErrorBoundary>
           ) : sessionCanMount ? (
             <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
               Restoring session...

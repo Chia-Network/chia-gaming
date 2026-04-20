@@ -276,6 +276,69 @@ assertion.
 
 ---
 
+## UI Notification Queues
+
+The frontend organizes user-facing notifications into two scoped FIFO queues,
+each rendering only its front item. Dismissing a notification reveals the next
+one in line. Both queues are non-modal — the user can interact with the UI
+underneath a visible notification.
+
+### Channel-Scoped Queue
+
+Displayed at `z-50`, bounded to the full session area. Covers infrastructure-
+level events: channel state highlights, session termination, WASM action
+failures, and general errors.
+
+| `kind` | Source | Behavior |
+|---|---|---|
+| `channel-state` | `ChannelStatus` in `ATTENTION_STATES` | **Replaceable slot**: a new channel-state entry replaces any prior undismissed channel-state entry rather than stacking. Always floats to position 0 in the queue. |
+| `session-over` | Balance exhausted (cooperative shutdown) | Queued as a normal FIFO entry. |
+| `action-failed` | `ActionFailed` notification (WASM `Err`) | Also logged to diagnostics. |
+| `infra-error` | `ReceiveError`, tx submit failures, general `error` events | Catch-all for infrastructure errors. |
+
+### Game-Scoped Queue
+
+Displayed at `z-40`, bounded to the game area. Covers in-game and between-hand
+events.
+
+| `kind` | Source | Behavior |
+|---|---|---|
+| `game-terminal` | `GameStatus` ended during on-chain flow | Shows reward amount and coin info. |
+| `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer` | Cleared when a `ProposalAccepted` arrives. |
+| `insufficient-bal` | `InsufficientBalance` notification | Game could not start due to balance. |
+
+### Data Model
+
+Each notification carries an `id` (unique integer), `kind`, `title`, `message`,
+and an optional `payload` (typed for `channel-state` and `game-terminal`
+entries). Queues are persisted to `SessionSave` (without non-serializable
+payloads) and restored on reload.
+
+### Overlay Behavior
+
+Both overlays share a unified `NotificationOverlay` component that:
+
+- Uses `useDragControls` with drag confined to the `CardHeader` (the drag
+  handle), leaving the content area free for text selection.
+- Applies `select-text cursor-text` CSS classes on content so the user can
+  select and copy notification text.
+- Has no backdrop/scrim — the UI underneath remains fully interactive.
+- Renders based on the `kind` of the front notification: channel-state shows
+  coin info, game-terminal shows reward details, errors use `<pre>` for
+  copyable stack traces, and notices show centered text.
+
+### Resilience
+
+The WASM event drain (`scheduleDrain`) wraps each `dispatchEvent` call in a
+`try/catch` so a single bad event cannot permanently halt the drain loop.
+Caught errors are emitted as `infra-error` notifications and draining
+continues. Similarly, `deliverSingleMessage` wraps the WASM
+`deliver_message` call so a peer-message panic emits an error rather than
+crashing the app. A React `ErrorBoundary` wraps the `GameSession` component
+so a render crash shows a recovery message instead of white-screening.
+
+---
+
 ## Additional Design Rules
 
 These are not lifecycle invariants but important rules enforced in the code:

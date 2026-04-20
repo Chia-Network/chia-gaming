@@ -59,7 +59,10 @@ const server = http.createServer((req, res) => {
     }
     const ext = path.extname(filePath);
     const ct = MIME[ext] || 'application/octet-stream';
-    const headers = { 'Content-Type': ct, 'Cache-Control': 'no-store' };
+    const cc = pathname.startsWith('/app/')
+      ? 'public, max-age=31536000, immutable'
+      : 'no-store';
+    const headers = { 'Content-Type': ct, 'Cache-Control': cc };
     if (ext === '.wasm') {
       headers['SourceMap'] = path.basename(filePath) + '.map';
     }

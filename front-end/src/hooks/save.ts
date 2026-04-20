@@ -65,8 +65,8 @@ export interface SessionSave {
   gameTerminalReward?: string | null;
   gameTerminalRewardCoin?: string | null;
   myRunningBalance?: string;
-  channelAttentionActive?: boolean;
-  gameTerminalAttentionActive?: boolean;
+  channelNotifQueue?: Array<{ id: number; kind: string; title: string; message: string }>;
+  gameNotifQueue?: Array<{ id: number; kind: string; title: string; message: string }>;
   betweenHandMode?: string;
   betweenHandComposePerHand?: string;
   betweenHandLastTerms?: { my_contribution: string; their_contribution: string } | null;

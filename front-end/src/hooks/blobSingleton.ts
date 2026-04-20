@@ -91,8 +91,8 @@ async function restoreSession(
   gameObject.gameTerminalReward = save.gameTerminalReward ?? null;
   gameObject.gameTerminalRewardCoin = save.gameTerminalRewardCoin ?? null;
   gameObject.myRunningBalance = save.myRunningBalance ?? '0';
-  gameObject.channelAttentionActive = save.channelAttentionActive ?? false;
-  gameObject.gameTerminalAttentionActive = save.gameTerminalAttentionActive ?? false;
+  gameObject.channelNotifQueue = save.channelNotifQueue ?? [];
+  gameObject.gameNotifQueue = save.gameNotifQueue ?? [];
   gameObject.betweenHandMode = save.betweenHandMode ?? null;
   gameObject.betweenHandComposePerHand = save.betweenHandComposePerHand ?? null;
   gameObject.betweenHandLastTerms = save.betweenHandLastTerms ?? null;
