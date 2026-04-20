@@ -226,9 +226,7 @@ function NotificationOverlay({
   const { cardRef, x, y, clampToViewport } = useViewportClampedDragWithInsets(boundsRef, { top: 8 });
   const dragControls = useDragControls();
   const isError = notification.kind === 'infra-error' || notification.kind === 'action-failed';
-  const titleColor = isError || notification.kind === 'channel-state'
-    ? 'text-alert-text'
-    : 'text-canvas-text-contrast';
+  const titleColor = isError ? 'text-alert-text' : 'text-canvas-text-contrast';
 
   return (
     <motion.div
@@ -435,7 +433,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
               <span className='font-medium'>California Poker</span>
               <span className='text-canvas-solid'>·</span>
               <span className='text-canvas-text'>Game size:</span>
-              <span className='font-medium'>{formatMojos(session.perGameAmount * 2n)}</span>
+              <span className='font-medium'>{formatMojos(session.currentHandAmount * 2n)}</span>
             </div>
             <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
               <span className='text-canvas-text'>Channel status:</span>
@@ -507,7 +505,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
               onOutcome={session.onHandOutcome}
               onTurnChanged={session.onTurnChanged}
               appendGameLog={session.appendGameLog}
-              perGameAmount={session.perGameAmount}
+              perGameAmount={session.currentHandAmount}
               initialHandState={session.handKey === 1 && sessionSave?.handState ? sessionSave.handState : undefined}
               myName={params.myAlias}
               opponentName={params.opponentAlias}

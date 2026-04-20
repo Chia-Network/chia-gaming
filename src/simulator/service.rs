@@ -4,7 +4,7 @@ use std::mem::swap;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
@@ -30,6 +30,31 @@ use crate::simulator::Simulator;
 use clvm_traits::Atom;
 use clvm_traits::ClvmEncoder;
 use clvm_traits::ToClvm;
+
+// ---------------------------------------------------------------------------
+// Logging
+// ---------------------------------------------------------------------------
+
+/// Format the current wall-clock time as `HH:MM:SS.mmm` in UTC, matching the
+/// time-of-day component used by the tracker's ISO8601 lines so simulator and
+/// tracker output can be read together easily.
+fn sim_ts() -> String {
+    let d = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let total_s = d.as_secs();
+    let ms = d.subsec_millis();
+    let s = total_s % 60;
+    let m = (total_s / 60) % 60;
+    let h = (total_s / 3600) % 24;
+    format!("{h:02}:{m:02}:{s:02}.{ms:03}")
+}
+
+/// Write one diagnostic line to stderr. All simulator log lines flow through
+/// this so they share a `[sim] <utc-time>` prefix.
+fn sim_log(msg: &str) {
+    eprintln!("[sim] {} {msg}", sim_ts());
+}
 
 // ---------------------------------------------------------------------------
 // WebSocket protocol types
@@ -122,6 +147,10 @@ impl GameRunner {
     }
 
     fn reset_sim(&mut self) -> StringWithError {
+        sim_log(&format!(
+            "reset: dropping {} identities, clearing sim state",
+            self.identities.len()
+        ));
         let coinset_adapter = FullCoinSetAdapter::default();
         let simulator = Simulator::default();
         self.detach_simulator(simulator, coinset_adapter);
@@ -211,8 +240,8 @@ impl GameRunner {
     }
 
     fn register(&mut self, name: &str, target_balance: Option<u64>) -> StringWithError {
-        let public_key = if let Some(identity) = self.lookup_identity(name) {
-            hex::encode(identity.puzzle_hash.bytes())
+        let (public_key, is_new) = if let Some(identity) = self.lookup_identity(name) {
+            (hex::encode(identity.puzzle_hash.bytes()), false)
         } else {
             let pk1: PrivateKey = self.rng.random();
             let identity = ChiaIdentity::new(&mut self.allocator, pk1)?;
@@ -221,8 +250,19 @@ impl GameRunner {
             let result = hex::encode(identity.puzzle_hash.bytes());
             self.identities.insert(name.to_string(), result.clone());
             self.pubkeys.insert(result.clone(), identity);
-            result
+            (result, true)
         };
+
+        if is_new {
+            sim_log(&format!(
+                "register: new identity name={name} target_balance={target_balance:?} identities_total={}",
+                self.identities.len()
+            ));
+        } else {
+            sim_log(&format!(
+                "register: existing identity name={name} target_balance={target_balance:?}"
+            ));
+        }
 
         if let Some(desired) = target_balance {
             if let Some(identity) = self.lookup_identity(&public_key).cloned() {
@@ -243,6 +283,9 @@ impl GameRunner {
                                     Amount::new(desired),
                                 )?;
                                 self.farm_and_chase()?;
+                                sim_log(&format!(
+                                    "register: trimmed balance name={name} from={total} to={desired}"
+                                ));
                                 break;
                             }
                         }
@@ -801,6 +844,7 @@ fn dispatch_ws_request(
         "register_remote_coins" => register_remote_coins(&req.params, registered_coins),
         "reset" => game_runner.reset_sim(),
         "exit" => {
+            sim_log("exit: received exit RPC, terminating");
             std::process::exit(0);
         }
         other => Err(Error::StrErr(format!("unknown method: {other}"))),
@@ -823,11 +867,17 @@ fn dispatch_ws_request(
             result: Some(parse_result_body(&body)),
             error: None,
         },
-        Err(e) => WsResponse {
-            id: req.id,
-            result: None,
-            error: Some(format!("{e:?}")),
-        },
+        Err(e) => {
+            sim_log(&format!(
+                "rpc_error method={} id={} err={e:?}",
+                req.method, req.id
+            ));
+            WsResponse {
+                id: req.id,
+                result: None,
+                error: Some(format!("{e:?}")),
+            }
+        }
     };
 
     DispatchResult {
@@ -874,7 +924,7 @@ fn run_health_server(height: Arc<AtomicUsize>) {
     let server = match Server::from_listener(listener, None) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("failed to start health server: {e}");
+            sim_log(&format!("failed to start health server: {e}"));
             return;
         }
     };
@@ -939,7 +989,7 @@ fn service_main_inner() {
     std::thread::spawn(|| {
         let mut buffer = String::default();
         if !matches!(stdin().read_line(&mut buffer), Ok(0)) {
-            println!("simulator server stopping");
+            sim_log("stdin-close: exiting");
             std::process::exit(0);
         }
     });
@@ -957,7 +1007,7 @@ fn service_main_inner() {
         TcpListener::from(sock)
     };
 
-    println!("Simulator: health on :5800, WebSocket API on :5801");
+    sim_log("startup: health on :5800, WebSocket API on :5801");
 
     let mut clients: Vec<ClientState> = Vec::new();
     let mut last_block_time = Instant::now();
@@ -967,33 +1017,40 @@ fn service_main_inner() {
         // 1. Accept new WebSocket connections (non-blocking)
         match ws_listener.accept() {
             Ok((stream, addr)) => {
-                eprintln!("new TCP connection from {addr}");
+                sim_log(&format!("tcp_accept: addr={addr}"));
                 stream
                     .set_read_timeout(Some(Duration::from_secs(5)))
                     .expect("set_read_timeout failed");
                 match tungstenite::accept(stream) {
                     Ok(ws) => {
                         if let Err(e) = ws.get_ref().set_nonblocking(true) {
-                            eprintln!("failed to set ws non-blocking: {e}");
+                            sim_log(&format!(
+                                "ws_setup_error: addr={addr} set_nonblocking failed: {e}"
+                            ));
                         } else {
                             clients.push(ClientState {
                                 ws,
                                 registered_coins: HashSet::new(),
                             });
-                            eprintln!("WebSocket client connected ({} total)", clients.len());
+                            sim_log(&format!(
+                                "ws_connected: addr={addr} clients_total={}",
+                                clients.len()
+                            ));
                         }
                     }
-                    Err(e) => eprintln!("WebSocket handshake error: {e}"),
+                    Err(e) => sim_log(&format!("ws_handshake_error: addr={addr} err={e}")),
                 }
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 // No pending connection
             }
-            Err(e) => eprintln!("accept error: {e}"),
+            Err(e) => sim_log(&format!("tcp_accept_error: {e}")),
         }
 
-        // 2. Read incoming WebSocket messages from all clients
-        let mut to_remove: Vec<usize> = Vec::new();
+        // 2. Read incoming WebSocket messages from all clients.
+        // `to_remove` pairs the client index with a human-readable reason so we
+        // can log exactly why each client was dropped.
+        let mut to_remove: Vec<(usize, String)> = Vec::new();
         for (i, client) in clients.iter_mut().enumerate() {
             loop {
                 match client.ws.read() {
@@ -1007,23 +1064,32 @@ fn service_main_inner() {
                             game_runner.simulator.get_current_height(),
                             Ordering::Relaxed,
                         );
-                        if ws_send(&mut client.ws, dr.response).is_err() {
-                            to_remove.push(i);
+                        if let Err(e) = ws_send(&mut client.ws, dr.response) {
+                            to_remove.push((i, format!("send_response_failed: {e}")));
                             break;
                         }
+                        let mut send_err: Option<String> = None;
                         for msg in dr.extra_messages {
-                            if ws_send(&mut client.ws, msg).is_err() {
-                                to_remove.push(i);
+                            if let Err(e) = ws_send(&mut client.ws, msg) {
+                                send_err = Some(format!("send_extra_failed: {e}"));
                                 break;
                             }
+                        }
+                        if let Some(reason) = send_err {
+                            to_remove.push((i, reason));
+                            break;
                         }
                     }
                     Ok(Message::Ping(data)) => {
                         let _ = client.ws.send(Message::Pong(data));
                     }
-                    Ok(Message::Close(_)) => {
+                    Ok(Message::Close(frame)) => {
                         let _ = client.ws.close(None);
-                        to_remove.push(i);
+                        let reason = match frame {
+                            Some(f) => format!("close_frame: code={} reason={}", f.code, f.reason),
+                            None => "close_frame: no frame".to_string(),
+                        };
+                        to_remove.push((i, reason));
                         break;
                     }
                     Err(tungstenite::Error::Io(ref e))
@@ -1031,8 +1097,8 @@ fn service_main_inner() {
                     {
                         break; // No more messages right now
                     }
-                    Err(_) => {
-                        to_remove.push(i);
+                    Err(e) => {
+                        to_remove.push((i, format!("read_error: {e}")));
                         break;
                     }
                     _ => {} // Binary, Pong — ignore
@@ -1041,14 +1107,14 @@ fn service_main_inner() {
         }
 
         // Remove disconnected clients (reverse order to preserve indices)
-        to_remove.sort_unstable();
-        to_remove.dedup();
-        for i in to_remove.into_iter().rev() {
+        to_remove.sort_by_key(|(i, _)| *i);
+        to_remove.dedup_by_key(|(i, _)| *i);
+        for (i, reason) in to_remove.into_iter().rev() {
             clients.remove(i);
-            eprintln!(
-                "WebSocket client disconnected ({} remaining)",
+            sim_log(&format!(
+                "ws_disconnected: reason=\"{reason}\" clients_remaining={}",
                 clients.len()
-            );
+            ));
         }
 
         // 3. Block timer: farm a block and push per-client event
@@ -1056,22 +1122,30 @@ fn service_main_inner() {
             match game_runner.farm_and_chase() {
                 Ok(new_height) => {
                     height.store(new_height as usize, Ordering::Relaxed);
-                    let mut dead: Vec<usize> = Vec::new();
+                    sim_log(&format!(
+                        "block_farmed: height={new_height} clients={}",
+                        clients.len()
+                    ));
+                    let mut dead: Vec<(usize, String)> = Vec::new();
                     for (i, client) in clients.iter_mut().enumerate() {
                         let evt_json = make_block_event_json_for_client(
                             &game_runner,
                             new_height,
                             &client.registered_coins,
                         );
-                        if ws_send(&mut client.ws, evt_json).is_err() {
-                            dead.push(i);
+                        if let Err(e) = ws_send(&mut client.ws, evt_json) {
+                            dead.push((i, format!("broadcast_failed: {e}")));
                         }
                     }
-                    for i in dead.into_iter().rev() {
+                    for (i, reason) in dead.into_iter().rev() {
                         clients.remove(i);
+                        sim_log(&format!(
+                            "ws_disconnected: reason=\"{reason}\" clients_remaining={}",
+                            clients.len()
+                        ));
                     }
                 }
-                Err(e) => eprintln!("farm_and_chase error: {e:?}"),
+                Err(e) => sim_log(&format!("farm_error: {e:?}")),
             }
             last_block_time = Instant::now();
         }
@@ -1085,7 +1159,7 @@ pub fn service_main() {
     if let Err(e) = std::panic::catch_unwind(|| {
         service_main_inner();
     }) {
-        eprintln!("panic: {e:?}");
+        sim_log(&format!("panic: {e:?}"));
         std::process::exit(1);
     }
 }

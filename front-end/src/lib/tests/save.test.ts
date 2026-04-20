@@ -1,6 +1,6 @@
 import {
   saveSession,
-  loadSession,
+  peekSession,
   clearSession,
   startNewSession,
   saveGame,
@@ -8,13 +8,13 @@ import {
   getSaveList,
   getPlayerId,
   getSessionId,
-  setBlockchainType,
   getBlockchainType,
   loadAppState,
   getAlias,
   setAlias,
   getTheme,
   setTheme,
+  getBuildNonce,
   SessionSave,
   _resetForTests,
 } from '../../hooks/save';
@@ -49,27 +49,47 @@ const sampleSession: SessionSave = {
 beforeEach(() => {
   _resetForTests();
   (global as any).localStorage = makeStorage();
+  (global as any).__buildNonce = '/app/test-nonce/';
 });
 
 afterEach(() => {
   delete (global as any).localStorage;
+  delete (global as any).__buildNonce;
 });
 
 describe('session persistence', () => {
-  it('round-trips a SessionSave through save and load', () => {
+  it('round-trips a SessionSave through save and peek', () => {
     saveSession(sampleSession);
-    const loaded = loadSession();
-    expect(loaded).toEqual(sampleSession);
+    const loaded = peekSession();
+    expect(loaded).toEqual({ ...sampleSession, buildNonce: '/app/test-nonce/' });
   });
 
   it('returns null when nothing is saved', () => {
-    expect(loadSession()).toBeNull();
+    expect(peekSession()).toBeNull();
   });
 
-  it('clearSession causes loadSession to return null', () => {
+  it('clearSession causes peekSession to return null', () => {
     saveSession(sampleSession);
     clearSession();
-    expect(loadSession()).toBeNull();
+    expect(peekSession()).toBeNull();
+  });
+
+  it('peekSession returns stale saves as-is; callers are expected to check buildNonce', () => {
+    saveSession(sampleSession);
+    const first = peekSession();
+    expect(first?.buildNonce).toBe('/app/test-nonce/');
+
+    (global as any).__buildNonce = '/app/different-nonce/';
+    const stale = peekSession();
+    // Pure read: save is still returned even though build nonce no longer matches.
+    expect(stale).not.toBeNull();
+    expect(stale!.buildNonce).toBe('/app/test-nonce/');
+    expect(stale!.buildNonce).not.toBe(getBuildNonce());
+  });
+
+  it('saveSession preserves blockchainType from the save object', () => {
+    saveSession({ ...sampleSession, blockchainType: 'walletconnect' });
+    expect(peekSession()?.blockchainType).toBe('walletconnect');
   });
 
   it('saveSession swallows quota-exceeded errors', () => {
@@ -105,29 +125,28 @@ describe('unified app state', () => {
   it('clearSession preserves playerId and alias but clears session-scoped fields', () => {
     const playerId = getPlayerId();
     getSessionId();
-    setBlockchainType('simulator');
+    saveSession({ ...sampleSession, blockchainType: 'simulator' });
     setAlias('MyName');
-    saveSession(sampleSession);
 
     clearSession();
 
     expect(getPlayerId()).toBe(playerId);
     expect(loadAppState().sessionId).toBeUndefined();
     expect(getBlockchainType()).toBeUndefined();
-    expect(loadSession()).toBeNull();
+    expect(peekSession()).toBeNull();
     expect(loadAppState().alias).toBe('MyName');
   });
 
-  it('setBlockchainType / getBlockchainType round-trip', () => {
+  it('getBlockchainType reads from gameSave', () => {
     expect(getBlockchainType()).toBeUndefined();
-    setBlockchainType('walletconnect');
+    saveSession({ blockchainType: 'walletconnect' });
     expect(getBlockchainType()).toBe('walletconnect');
   });
 
   it('saveSession stores gameSave inside the unified state', () => {
     saveSession(sampleSession);
     const state = loadAppState();
-    expect(state.gameSave).toEqual(sampleSession);
+    expect(state.gameSave).toEqual({ ...sampleSession, buildNonce: '/app/test-nonce/' });
   });
 
   it('version field is set on fresh state', () => {
@@ -171,10 +190,9 @@ describe('migration from old keys', () => {
     const state = loadAppState();
     expect(state.playerId).toBe('old-player');
     expect(state.sessionId).toBe('old-session');
-    expect(state.blockchainType).toBe('simulator');
     expect(state.gameSave).toBeDefined();
+    expect(state.gameSave!.blockchainType).toBe('simulator');
     expect((state.gameSave as any).uniqueId).toBeUndefined();
-    expect((state.gameSave as any).blockchainType).toBeUndefined();
 
     expect(localStorage.getItem('playerId')).toBeNull();
     expect(localStorage.getItem('sessionId')).toBeNull();

@@ -10,14 +10,14 @@ import { subscribeLog } from '../services/log';
 import {
   getPlayerId,
   getSessionId,
-  setBlockchainType as persistBlockchainType,
   getBlockchainType,
   getTheme,
   setTheme as saveTheme,
-  loadSession,
+  peekSession,
+  saveSession,
   clearSession,
   hardReset,
-  hasAnySessionInfo,
+  getBuildNonce,
   SessionSave,
   getDefaultFee,
   setDefaultFee as saveDefaultFee,
@@ -37,7 +37,7 @@ import {
   setTrackerUrl as saveTrackerUrl,
   isLeaseConflict,
   claimLease,
-  reclaimLease,
+  clearLease,
   onFenced,
   offFenced,
 } from '../hooks/save';
@@ -74,6 +74,35 @@ const TAB_DEFS: { id: TabId; label: string }[] = [
 const FALLBACK_AMOUNT = 100n;
 const FALLBACK_PER_GAME = 10n;
 
+function HistoryPanel({ lines }: { lines: string[] }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const isNearBottom = useRef(true);
+
+  const handleScroll = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    const threshold = 48;
+    isNearBottom.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
+  }, []);
+
+  useEffect(() => {
+    if (isNearBottom.current && ref.current) {
+      ref.current.scrollTop = ref.current.scrollHeight;
+    }
+  }, [lines]);
+
+  return (
+    <textarea
+      ref={ref}
+      readOnly
+      value={lines.join('\n')}
+      onScroll={handleScroll}
+      className='w-full h-full resize-none rounded-md border border-canvas-border bg-canvas-bg p-3 text-xs font-mono text-canvas-text focus:outline-none'
+    />
+  );
+}
+
 function LogPanel({ lines }: { lines: string[] }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const isNearBottom = useRef(true);
@@ -105,7 +134,7 @@ function LogPanel({ lines }: { lines: string[] }) {
       <div className='flex items-center gap-2 shrink-0'>
         <input
           type='text'
-          placeholder='Filter\u2026'
+          placeholder='Filter'
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           className='flex-1 px-3 py-1.5 text-xs font-mono rounded-md border border-canvas-border bg-canvas-bg text-canvas-text placeholder:text-canvas-solid focus:outline-none'
@@ -184,31 +213,74 @@ const Shell = () => {
   const trackerWsUpRef = useRef(false);
   const lastTrackerActivityRef = useRef(0);
   const lastPeerActivityRef = useRef(0);
-  const [pendingRestore, setPendingRestore] = useState<SessionSave | null>(() => loadSession());
-  const autoResumeRef = useRef(false);
-  const [restoreDecided, setRestoreDecided] = useState<boolean>(() => {
-    if (sessionStorage.getItem('autoResume')) {
-      sessionStorage.removeItem('autoResume');
-      autoResumeRef.current = true;
-      return true;
+  // --- Boot state machine ---
+  //
+  // The boot initializer NEVER claims the lease. Claiming the lease writes
+  // to localStorage, which fences any existing tab via the storage event.
+  // We must not do that until the user has made a conscious choice.
+  //
+  //   1. Save exists with matching nonce → 'resumeDialog'.
+  //   2. Save exists but nonce is stale → clearSession(), then fall through
+  //      to "no save" logic.
+  //   3. No save → if another tab holds the lease, 'tabConflict'
+  //      (the other tab is live even if we don't have its save locally);
+  //      otherwise claim the lease and go 'ready'.
+  //
+  // From 'resumeDialog':
+  //   - Start over → hardReset() + reload.
+  //   - Resume     → if lease conflict, 'tabConflict'; else claim + hydrate.
+  //
+  // From 'tabConflict':
+  //   - Take over → claimLease(), hydrate if save available.
+  //   - Close     → 'tabDead' (terminal).
+  //
+  // A mid-session fenced event (another tab claimed the lease while we were
+  // 'ready') also transitions to 'tabConflict' so the user can take control
+  // back.
+  type BootState =
+    | { kind: 'ready' }
+    | { kind: 'resumeDialog'; save: SessionSave | null }
+    | { kind: 'tabConflict'; save: SessionSave | null; midSession: boolean }
+    | { kind: 'tabDead' };
+
+  const [bootState, setBootState] = useState<BootState>(() => {
+    let save = peekSession();
+    const currentNonce = getBuildNonce();
+    if (save && save.buildNonce !== currentNonce) {
+      console.log(
+        '[Shell] boot: stale save (build %s != %s), wiping',
+        save.buildNonce ?? 'none',
+        currentNonce ?? 'none',
+      );
+      clearSession();
+      clearLease();
+      save = null;
     }
-    const hasInfo = hasAnySessionInfo();
-    console.log('[Shell] restoreDecided init: hasAnySessionInfo=%s → restoreDecided=%s', hasInfo, !hasInfo);
-    return !hasInfo;
+    if (save) {
+      console.log('[Shell] boot: save present (bcType=%s token=%s), showing resume dialog',
+        save.blockchainType ?? 'none', save.pairingToken ?? 'none');
+      return { kind: 'resumeDialog', save };
+    }
+    if (isLeaseConflict()) {
+      console.log('[Shell] boot: no save but another tab holds the lease, showing tabConflict');
+      return { kind: 'tabConflict', save: null, midSession: false };
+    }
+    console.log('[Shell] boot: no state, no conflict, claiming lease');
+    claimLease();
+    return { kind: 'ready' };
   });
-  const [tabConflict, setTabConflict] = useState<'none' | 'startup' | 'midSession'>(() =>
-    isLeaseConflict() ? 'startup' : 'none',
-  );
-  const [tabDead, setTabDead] = useState(false);
 
-  // Claim the lease on mount if no conflict was detected at startup
+  // Subscribe to mid-session lease loss. Only meaningful once we're 'ready' —
+  // if we're still in a dialog, we haven't claimed the lease yet.
   useEffect(() => {
-    if (tabConflict === 'none') claimLease();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Subscribe to mid-session lease loss
-  useEffect(() => {
-    const handler = () => setTabConflict(prev => prev === 'none' ? 'midSession' : prev);
+    const handler = () => {
+      trackerConnRef.current?.disconnect();
+      trackerConnRef.current = null;
+      setBootState(prev => {
+        if (prev.kind !== 'ready') return prev;
+        return { kind: 'tabConflict', save: peekSession(), midSession: true };
+      });
+    };
     onFenced(handler);
     return () => { offFenced(handler); };
   }, []);
@@ -464,13 +536,7 @@ const Shell = () => {
     setTrackerOrigin(origin);
     saveTrackerUrl(origin);
     const lobbyUrl = `${origin}/?lobby=true&session=${sessionId}&uniqueId=${uniqueId}`;
-    let iframeLaunched = false;
-    const launchIframe = () => {
-      if (!iframeLaunched) {
-        iframeLaunched = true;
-        setIframeUrl(lobbyUrl);
-      }
-    };
+    setIframeUrl(lobbyUrl);
 
     const startSession = (
       conn: TrackerConnection,
@@ -502,8 +568,8 @@ const Shell = () => {
         });
         setPeerConn(stablePeerConn);
         if (save) {
-          setHistory(save.history);
-          setLogLines(save.log);
+          if (save.history) setHistory(save.history);
+          if (save.log) setLogLines(save.log);
           if (save.chatMessages) setChatMessages(save.chatMessages);
         } else {
           setHistory([]);
@@ -522,7 +588,6 @@ const Shell = () => {
           trackerWsUpRef.current = true;
           lastTrackerActivityRef.current = Date.now();
           setTrackerLiveness('connected');
-          launchIframe();
           // Treat successful tracker match as immediate peer activity for UX.
           markPeerActive();
           let amount: bigint;
@@ -537,7 +602,6 @@ const Shell = () => {
           trackerWsUpRef.current = true;
           lastTrackerActivityRef.current = Date.now();
           setTrackerLiveness('connected');
-          launchIframe();
           if (!status.has_pairing || status.peer_connected === false) {
             markPeerInactive();
           } else if (status.peer_connected === true) {
@@ -556,61 +620,61 @@ const Shell = () => {
             return;
           }
 
-          const save = loadSession();
+          const save = peekSession();
 
           if (status.has_pairing && status.token) {
             if (save && save.pairingToken === status.token) {
               let amount: bigint;
               let perGame: bigint;
-              try { amount = BigInt(save.amount); } catch { amount = FALLBACK_AMOUNT; }
-              try { perGame = BigInt(save.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
+              try { amount = BigInt(save.amount ?? '0'); } catch { amount = FALLBACK_AMOUNT; }
+              try { perGame = BigInt(save.perGameAmount ?? '0'); } catch { perGame = FALLBACK_PER_GAME; }
               startSession(conn, status.i_am_initiator!, amount, perGame, status.token, save, status.my_alias, status.peer_alias);
             } else if (!save) {
               console.warn('[Shell] connection_status: unrecognized pairing, requesting close');
               conn.close();
               clearSession();
-            } else {
+            } else if (save.serializedCradle) {
               console.warn('[Shell] connection_status: token mismatch (tracker=%s, save=%s), closing unknown pairing', status.token, save.pairingToken);
               conn.close();
               let amount: bigint;
               let perGame: bigint;
-              try { amount = BigInt(save.amount); } catch { amount = FALLBACK_AMOUNT; }
-              try { perGame = BigInt(save.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
+              try { amount = BigInt(save.amount ?? '0'); } catch { amount = FALLBACK_AMOUNT; }
+              try { perGame = BigInt(save.perGameAmount ?? '0'); } catch { perGame = FALLBACK_PER_GAME; }
               sessionSaveRef.current = save;
               setGameParams({
-                iStarted: save.iStarted,
+                iStarted: save.iStarted ?? false,
                 amount,
                 perGameAmount: perGame,
                 restoring: true,
-                pairingToken: save.pairingToken,
+                pairingToken: save.pairingToken ?? '',
                 myAlias: save.myAlias,
                 opponentAlias: save.opponentAlias,
               });
               setPeerConn(conn.getPeerConnection());
-              setHistory(save.history);
-              setLogLines(save.log);
+              if (save.history) setHistory(save.history);
+              if (save.log) setLogLines(save.log);
               if (save.chatMessages) setChatMessages(save.chatMessages);
             }
           } else {
-            if (save) {
-              console.warn('[Shell] connection_status: no pairing but have save, going on-chain');
+            if (save && save.serializedCradle) {
+              console.warn('[Shell] connection_status: no pairing but have full save, going on-chain');
               let amount: bigint;
               let perGame: bigint;
-              try { amount = BigInt(save.amount); } catch { amount = FALLBACK_AMOUNT; }
-              try { perGame = BigInt(save.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
+              try { amount = BigInt(save.amount ?? '0'); } catch { amount = FALLBACK_AMOUNT; }
+              try { perGame = BigInt(save.perGameAmount ?? '0'); } catch { perGame = FALLBACK_PER_GAME; }
               sessionSaveRef.current = save;
               setGameParams({
-                iStarted: save.iStarted,
+                iStarted: save.iStarted ?? false,
                 amount,
                 perGameAmount: perGame,
                 restoring: true,
-                pairingToken: save.pairingToken,
+                pairingToken: save.pairingToken ?? '',
                 myAlias: save.myAlias,
                 opponentAlias: save.opponentAlias,
               });
               setPeerConn(conn.getPeerConnection());
-              setHistory(save.history);
-              setLogLines(save.log);
+              if (save.history) setHistory(save.history);
+              if (save.log) setLogLines(save.log);
               if (save.chatMessages) setChatMessages(save.chatMessages);
             }
           }
@@ -671,15 +735,15 @@ const Shell = () => {
       );
     }
 
-    const initialSave = loadSession();
-    if (initialSave) {
+    const initialSave = peekSession();
+    if (initialSave && initialSave.pairingToken) {
       let amount: bigint;
       let perGame: bigint;
-      try { amount = BigInt(initialSave.amount); } catch { amount = FALLBACK_AMOUNT; }
-      try { perGame = BigInt(initialSave.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
+      try { amount = BigInt(initialSave.amount ?? '0'); } catch { amount = FALLBACK_AMOUNT; }
+      try { perGame = BigInt(initialSave.perGameAmount ?? '0'); } catch { perGame = FALLBACK_PER_GAME; }
       startSession(
         conn,
-        initialSave.iStarted,
+        initialSave.iStarted ?? false,
         amount,
         perGame,
         initialSave.pairingToken,
@@ -703,9 +767,9 @@ const Shell = () => {
     };
   }, [userReady, connectToTracker]);
 
-  // Disconnect tracker when fenced; reconnect when reclaimed
+  // Disconnect tracker when we're not in the 'ready' state; reconnect when we become ready again.
   useEffect(() => {
-    if (tabConflict !== 'none') {
+    if (bootState.kind !== 'ready') {
       trackerConnRef.current?.disconnect();
       trackerConnRef.current = null;
     } else if (userReady) {
@@ -714,14 +778,14 @@ const Shell = () => {
         connectToTracker(url);
       }
     }
-  }, [tabConflict, userReady, connectToTracker]);
+  }, [bootState.kind, userReady, connectToTracker]);
 
   // Shared connection completion
   const completeConnection = useCallback((iface: InternalBlockchainInterface, bcType: 'simulator' | 'walletconnect', pollMs: number) => {
     console.log('[Shell] completeConnection: bcType=%s', bcType);
     deactivate();
     activate(iface, pollMs);
-    persistBlockchainType(bcType);
+    saveSession({ blockchainType: bcType });
     activeBlockchainRef.current = iface;
     setBlockchainType(bcType);
     setWalletConnected(true);
@@ -739,7 +803,7 @@ const Shell = () => {
     wcAbortRef.current = false;
     const { iface, pollMs } = getInterface(bcType);
     try {
-      persistBlockchainType(bcType);
+      saveSession({ blockchainType: bcType });
       setBlockchainType(bcType);
       setConnecting(true);
       const setup = await iface.beginConnect(uniqueId);
@@ -826,23 +890,21 @@ const Shell = () => {
 
   const [resuming, setResuming] = useState(false);
 
-  const handleResume = useCallback(async () => {
-    const bcType = getBlockchainType() ?? 'simulator';
-    console.log('[Shell] handleResume: bcType=%s', bcType);
+  // Hydrate local UI state from a SessionSave and kick off a backend connect.
+  // Called only after the user has consented (Resume button) and the lease is ours.
+  const performResume = useCallback(async (save: SessionSave) => {
+    const bcType = save.blockchainType ?? 'simulator';
+    console.log('[Shell] performResume: bcType=%s token=%s', bcType, save.pairingToken ?? 'none');
     setResuming(true);
-    setPendingRestore(null);
-    setRestoreDecided(true);
 
-    const save = loadSession();
-    if (save) {
-      console.log('[Shell] handleResume: hydrating from local save (token=%s)', save.pairingToken);
-      sessionSaveRef.current = save;
-      let amount: bigint;
-      let perGame: bigint;
-      try { amount = BigInt(save.amount); } catch { amount = FALLBACK_AMOUNT; }
-      try { perGame = BigInt(save.perGameAmount); } catch { perGame = FALLBACK_PER_GAME; }
+    sessionSaveRef.current = save;
+    let amount: bigint;
+    let perGame: bigint;
+    try { amount = BigInt(save.amount ?? '0'); } catch { amount = FALLBACK_AMOUNT; }
+    try { perGame = BigInt(save.perGameAmount ?? '0'); } catch { perGame = FALLBACK_PER_GAME; }
+    if (save.pairingToken) {
       setGameParams({
-        iStarted: save.iStarted,
+        iStarted: save.iStarted ?? false,
         amount,
         perGameAmount: perGame,
         restoring: true,
@@ -851,31 +913,75 @@ const Shell = () => {
         opponentAlias: save.opponentAlias,
       });
       setPeerConn(stablePeerConn);
-      setHistory(save.history);
-      setLogLines(save.log);
-      if (save.chatMessages) setChatMessages(save.chatMessages);
     }
+    if (save.history) setHistory(save.history);
+    if (save.log) setLogLines(save.log);
+    if (save.chatMessages) setChatMessages(save.chatMessages);
+
+    setBlockchainType(bcType);
 
     const { iface, pollMs } = getInterface(bcType);
-
     try {
       const setup = await iface.beginConnect(uniqueId);
       await setup.finalize();
       completeConnection(iface, bcType, pollMs);
     } catch (err) {
-      console.warn('[Shell] resume connect failed, falling back', err);
+      console.warn('[Shell] performResume connect failed, falling back', err);
       setUserReady(true);
     }
-    console.log('[Shell] handleResume: done');
+    console.log('[Shell] performResume: done');
     setResuming(false);
-  }, [uniqueId, completeConnection]);
+  }, [uniqueId, completeConnection, stablePeerConn]);
 
-  useEffect(() => {
-    if (autoResumeRef.current) {
-      autoResumeRef.current = false;
-      handleResume();
-    }
-  }, [handleResume]);
+  // User clicked "Resume Session" in the resumeDialog.
+  // If another tab holds the lease, ask to take over first; otherwise proceed.
+  const handleResume = useCallback(() => {
+    setBootState(prev => {
+      if (prev.kind !== 'resumeDialog') return prev;
+      const save = prev.save;
+      if (isLeaseConflict()) {
+        console.log('[Shell] resume: lease conflict, showing tabConflict dialog');
+        return { kind: 'tabConflict', save, midSession: false };
+      }
+      console.log('[Shell] resume: no conflict, claiming lease and hydrating');
+      claimLease();
+      if (save && save.serializedCradle) {
+        void performResume(save);
+      } else {
+        const bcType = save?.blockchainType;
+        if (bcType) {
+          void handleConnect(bcType, true);
+        }
+      }
+      return { kind: 'ready' };
+    });
+  }, [performResume, handleConnect]);
+
+  // User clicked "Take over" in the tabConflict dialog.
+  // Claim the lease in place (this fences the other tab via storage event)
+  // and continue with whatever action we were about to take.
+  const handleTakeOver = useCallback(() => {
+    setBootState(prev => {
+      if (prev.kind !== 'tabConflict') return prev;
+      console.log('[Shell] takeOver: claiming lease in place (midSession=%s)', prev.midSession);
+      claimLease();
+      if (prev.midSession) {
+        // Our session is already live — just reclaim the lease.
+      } else if (prev.save && prev.save.serializedCradle) {
+        void performResume(prev.save);
+      } else {
+        const bcType = prev.save?.blockchainType ?? getBlockchainType();
+        if (bcType) {
+          void handleConnect(bcType, true);
+        }
+      }
+      return { kind: 'ready' };
+    });
+  }, [performResume, handleConnect]);
+
+  const handleCloseTab = useCallback(() => {
+    setBootState({ kind: 'tabDead' });
+  }, []);
 
   const handleStartOver = useCallback(async () => {
     if (activeBlockchainRef.current) {
@@ -902,25 +1008,8 @@ const Shell = () => {
     handleConnect(blockchainType);
   }, [blockchainType, handleConnect]);
 
-  // Auto-reconnect on load when blockchainType is persisted but no game session.
-  // If `connecting` was persisted (mid-handshake reload), use non-silent mode so
-  // the QR code / modal reappears. Otherwise silently reconnect.
-  const autoReconnectRef = useRef(false);
-  useEffect(() => {
-    if (autoReconnectRef.current) return;
-    const bcType = getBlockchainType();
-    const session = loadSession();
-    console.log('[Shell] auto-reconnect effect: bcType=%s hasSession=%s', bcType ?? 'none', !!session);
-    if (bcType && !session) {
-      autoReconnectRef.current = true;
-      const wasConnecting = getSavedConnecting();
-      console.log('[Shell] auto-reconnect: firing handleConnect (wasConnecting=%s)', wasConnecting);
-      handleConnect(bcType, !wasConnecting);
-    }
-  }, [handleConnect]);
-
   // --- Tab dead (user chose to yield to another tab) ---
-  if (tabDead) {
+  if (bootState.kind === 'tabDead') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', width: '100vw', height: '100vh' }}
            className='bg-canvas-bg-subtle text-canvas-text'>
@@ -945,9 +1034,56 @@ const Shell = () => {
     );
   }
 
+  // --- Resume / Start over dialog (checked BEFORE tab-conflict per spec) ---
+  if (bootState.kind === 'resumeDialog') {
+    const hasFullSave = bootState.save !== null;
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', width: '100vw', height: '100vh' }}
+           className='bg-canvas-bg-subtle text-canvas-text'>
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '0.75rem',
+          padding: '1.5rem',
+          borderRadius: '0.5rem',
+          border: '1px solid var(--color-canvas-border)',
+          background: 'var(--color-canvas-bg)',
+          maxWidth: '24rem',
+          width: '90%',
+        }}>
+          <p className='text-canvas-text-contrast font-semibold text-lg'>
+            {hasFullSave ? 'Previously saved state' : 'Session in progress'}
+          </p>
+          <p className='text-canvas-text text-sm text-center'>
+            {hasFullSave
+              ? 'You have previously saved state. Resume where you left off, or start over?'
+              : 'A session is already in progress. Resume it, or start over?'}
+          </p>
+          <button
+            onClick={handleResume}
+            disabled={resuming}
+            className='w-full px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors disabled:opacity-50'
+          >
+            {resuming ? 'Resuming\u2026' : 'Resume Session'}
+          </button>
+          <button
+            onClick={handleStartOver}
+            disabled={resuming}
+            className='w-full px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-50'
+          >
+            Start over
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // --- Tab conflict dialog (another tab holds the lease) ---
-  if (tabConflict !== 'none') {
-    const isMidSession = tabConflict === 'midSession';
+  // Reached from: boot (no save but lease held), resume (lease held),
+  // or mid-session fence (another tab stole the lease).
+  if (bootState.kind === 'tabConflict') {
+    const isMidSession = bootState.midSession;
     return (
       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', width: '100vw', height: '100vh', ...(isMidSession ? { position: 'fixed', inset: 0, zIndex: 9999 } : {}) }}
            className='bg-canvas-bg-subtle text-canvas-text'>
@@ -971,56 +1107,16 @@ const Shell = () => {
             {' '}Would you like this tab to take over, or close it?
           </p>
           <button
-            onClick={() => { reclaimLease(); sessionStorage.setItem('autoResume', '1'); window.location.reload(); }}
+            onClick={handleTakeOver}
             className='w-full px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors'
           >
             {isMidSession ? 'Take back control' : 'Take over'}
           </button>
           <button
-            onClick={() => setTabDead(true)}
+            onClick={handleCloseTab}
             className='w-full px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors'
           >
             Close this tab
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // --- Restore dialog ---
-  if (!restoreDecided) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', width: '100vw', height: '100vh' }}
-           className='bg-canvas-bg-subtle text-canvas-text'>
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: '0.75rem',
-          padding: '1.5rem',
-          borderRadius: '0.5rem',
-          border: '1px solid var(--color-canvas-border)',
-          background: 'var(--color-canvas-bg)',
-          maxWidth: '24rem',
-          width: '90%',
-        }}>
-          <p className='text-canvas-text-contrast font-semibold text-lg'>Previously saved state</p>
-          <p className='text-canvas-text text-sm text-center'>
-            You have previously saved state. Resume where you left off, or start over?
-          </p>
-          <button
-            onClick={handleResume}
-            disabled={resuming}
-            className='w-full px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors disabled:opacity-50'
-          >
-            {resuming ? 'Resuming\u2026' : 'Resume Session'}
-          </button>
-          <button
-            onClick={handleStartOver}
-            disabled={resuming}
-            className='w-full px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-50'
-          >
-            Start over
           </button>
         </div>
       </div>
@@ -1076,7 +1172,7 @@ const Shell = () => {
         {/* Right side: Branding + Theme */}
         <div style={{ marginLeft: 'auto', paddingBottom: '0.25rem' }} className='flex items-center gap-2'>
           <img
-            src='/images/chia_logo.png'
+            src='images/chia_logo.png'
             alt='Chia Logo'
             className='max-w-12 h-auto'
             style={{ filter: isDark ? 'brightness(2.1) contrast(1.1)' : 'none' }}
@@ -1365,7 +1461,7 @@ const Shell = () => {
 
         {/* History tab */}
         <div style={{ position: 'absolute', inset: 0, padding: '1rem', display: activeTab === 'history' ? 'block' : 'none' }}>
-          <LogPanel lines={history} />
+          <HistoryPanel lines={history} />
         </div>
 
         {/* Log tab */}

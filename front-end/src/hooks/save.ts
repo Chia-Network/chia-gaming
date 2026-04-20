@@ -39,18 +39,20 @@ export interface CalpokerHandState {
 type BlockchainType = 'simulator' | 'walletconnect';
 
 export interface SessionSave {
-  serializedCradle: string;
-  pairingToken: string;
-  messageNumber: number;
-  remoteNumber: number;
-  channelReady: boolean;
-  iStarted: boolean;
-  amount: string;
-  perGameAmount: string;
-  pendingTransactions: string[];
-  unackedMessages: Array<{ msgno: number; msg: string }>;
-  history: string[];
-  log: string[];
+  buildNonce?: string;
+  blockchainType?: BlockchainType;
+  serializedCradle?: string;
+  pairingToken?: string;
+  messageNumber?: number;
+  remoteNumber?: number;
+  channelReady?: boolean;
+  iStarted?: boolean;
+  amount?: string;
+  perGameAmount?: string;
+  pendingTransactions?: string[];
+  unackedMessages?: Array<{ msgno: number; msg: string }>;
+  history?: string[];
+  log?: string[];
   activeGameId?: string | null;
   handState?: CalpokerHandState | null;
   channelStatus?: ChannelStatusPayload | null;
@@ -67,6 +69,7 @@ export interface SessionSave {
   myRunningBalance?: string;
   channelNotifQueue?: Array<{ id: number; kind: string; title: string; message: string }>;
   gameNotifQueue?: Array<{ id: number; kind: string; title: string; message: string }>;
+  dismissedChannelState?: string;
   betweenHandMode?: string;
   betweenHandComposePerHand?: string;
   betweenHandLastTerms?: { my_contribution: string; their_contribution: string } | null;
@@ -79,7 +82,6 @@ interface AppState {
   version: number;
   playerId: string;
   sessionId?: string;
-  blockchainType?: BlockchainType;
   gameSave?: SessionSave;
   alias?: string;
   theme?: 'dark' | 'light';
@@ -165,7 +167,7 @@ function migrateToV2(): AppState | null {
     }
   }
 
-  let base: Partial<AppState> = {};
+  let base: Partial<AppState> & { blockchainType?: BlockchainType } = {};
 
   if (v1Raw) {
     try {
@@ -192,6 +194,11 @@ function migrateToV2(): AppState | null {
     } catch { /* ignore */ }
   }
 
+  // Move blockchainType into gameSave where it belongs
+  if (base.blockchainType && base.gameSave && !base.gameSave.blockchainType) {
+    base.gameSave.blockchainType = base.blockchainType;
+  }
+
   const hasAnything = base.playerId || base.sessionId || base.gameSave
     || oldAlias || oldTheme || savedGames.length > 0;
   if (!hasAnything) return null;
@@ -200,7 +207,6 @@ function migrateToV2(): AppState | null {
     version: CURRENT_VERSION,
     playerId: base.playerId ?? randomHex(),
     sessionId: base.sessionId,
-    blockchainType: base.blockchainType,
     gameSave: base.gameSave,
     alias: oldAlias ?? undefined,
     theme: oldTheme ?? undefined,
@@ -281,6 +287,10 @@ export function reclaimLease(): void {
   claimLease();
 }
 
+export function clearLease(): void {
+  try { localStorage.removeItem(LEASE_KEY); } catch { /* ignore */ }
+}
+
 export function isFenced(): boolean {
   return fenced;
 }
@@ -345,8 +355,20 @@ export function loadAppState(): AppState {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed.version === CURRENT_VERSION) {
-        console.log('[save] loadAppState: hasGameSave=%s bcType=%s', !!parsed.gameSave, parsed.blockchainType ?? 'none');
+        if (parsed.blockchainType) {
+          if (parsed.gameSave && !parsed.gameSave.blockchainType) {
+            parsed.gameSave.blockchainType = parsed.blockchainType;
+          }
+          if (!parsed.gameSave) {
+            parsed.gameSave = { blockchainType: parsed.blockchainType };
+          }
+          delete parsed.blockchainType;
+        }
+        console.log('[save] loadAppState: hasGameSave=%s bcType=%s', !!parsed.gameSave, parsed.gameSave?.blockchainType ?? 'none');
         cached = parsed as AppState;
+        if (parsed.gameSave && !parsed.gameSave.buildNonce) {
+          saveSession(parsed.gameSave);
+        }
         return cached;
       }
     }
@@ -382,27 +404,30 @@ export function getSessionId(): string {
   return state.sessionId;
 }
 
-export function setBlockchainType(bcType: BlockchainType): void {
-  mutate(s => { s.blockchainType = bcType; });
+export function getBlockchainType(): BlockchainType | undefined {
+  return loadAppState().gameSave?.blockchainType;
 }
 
-export function getBlockchainType(): BlockchainType | undefined {
-  return loadAppState().blockchainType;
+export function getBuildNonce(): string | undefined {
+  if (typeof window !== 'undefined') return window.__buildNonce;
+  if (typeof globalThis !== 'undefined') return (globalThis as any).__buildNonce;
+  return undefined;
 }
 
 export function saveSession(save: SessionSave): void {
+  save.buildNonce = getBuildNonce();
   mutate(s => { s.gameSave = save; });
 }
 
-export function loadSession(): SessionSave | null {
-  const save = loadAppState().gameSave ?? null;
-  console.log('[save] loadSession: %s (token=%s)', save ? 'found' : 'null', save?.pairingToken ?? 'n/a');
-  return save;
-}
-
-export function hasAnySessionInfo(): boolean {
-  const state = loadAppState();
-  return state.blockchainType !== undefined || state.gameSave !== undefined;
+/**
+ * Pure read of the persisted session, if any. Does NOT filter on build nonce
+ * or have side effects. Callers that want to know whether the save is usable
+ * under the current build should check `save.buildNonce === getBuildNonce()`
+ * themselves. Boot logic is expected to wipe stale saves, so at runtime any
+ * save returned here is safe to consume.
+ */
+export function peekSession(): SessionSave | null {
+  return loadAppState().gameSave ?? null;
 }
 
 export function clearSession(): void {

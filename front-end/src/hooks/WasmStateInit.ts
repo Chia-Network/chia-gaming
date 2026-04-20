@@ -46,7 +46,7 @@ export async function storeInitArgs(
   readyToInit.next(true);
 }
 
-const WASM_URL = '/chia_gaming_wasm_bg.wasm';
+const WASM_URL = 'chia_gaming_wasm_bg.wasm';
 
 export class WasmStateInit {
   wasmConnection: WasmConnection | undefined;

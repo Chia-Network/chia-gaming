@@ -20,7 +20,7 @@ import {
   setInitStarted,
 } from './blobSingleton';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
-import { SessionSave, getDefaultFee } from './save';
+import { SessionSave, saveSession, getDefaultFee, getBlockchainType } from './save';
 import { coinIdFromBytes } from '../util';
 import { log } from '../services/log';
 
@@ -303,6 +303,7 @@ export interface UseGameSessionResult {
   gameConnectionState: GameConnectionState;
   amount: bigint;
   perGameAmount: bigint;
+  currentHandAmount: bigint;
   myRunningBalance: bigint;
   iStarted: boolean;
   playerNumber: number;
@@ -392,6 +393,12 @@ export function useGameSession(
       : INITIAL_CHANNEL_STATUS.state
   );
 
+  const [dismissedChannelState, setDismissedChannelState] = useState<ChannelState | null>(
+    () => (sessionSave?.dismissedChannelState as ChannelState | undefined) ?? null
+  );
+  const dismissedChannelStateRef = useRef<ChannelState | null>(dismissedChannelState);
+  dismissedChannelStateRef.current = dismissedChannelState;
+
   const [channelQueue, setChannelQueue] = useState<QueuedNotification[]>(() =>
     (sessionSave?.channelNotifQueue ?? []) as QueuedNotification[]
   );
@@ -410,7 +417,7 @@ export function useGameSession(
     setChannelQueue(prev => {
       if (n.kind === 'channel-state') {
         const withoutOldState = prev.filter(e => e.kind !== 'channel-state');
-        return [{ ...n, id: ++notifIdRef.current }, ...withoutOldState];
+        return [...withoutOldState, { ...n, id: ++notifIdRef.current }];
       }
       return [...prev, { ...n, id: ++notifIdRef.current }];
     });
@@ -421,7 +428,15 @@ export function useGameSession(
   }, []);
 
   const dismissChannel = useCallback(() => {
-    setChannelQueue(prev => prev.slice(1));
+    setChannelQueue(prev => {
+      const dismissed = prev[0];
+      if (dismissed?.kind === 'channel-state') {
+        // Remember: user dismissed the notification for the current channel
+        // state. Don't re-notify for the same state on reload or re-event.
+        setDismissedChannelState(channelStateRef.current);
+      }
+      return prev.slice(1);
+    });
   }, []);
 
   const dismissGame = useCallback(() => {
@@ -540,8 +555,19 @@ export function useGameSession(
   const rejectedOnceTermsRef = useRef<HandTerms | null>(rejectedOnceTerms);
   const lastHandTermsRef = useRef<HandTerms>(lastHandTerms);
   const proposalTermsByIdRef = useRef<Record<string, HandTerms>>({});
+  const outgoingProposalIdsRef = useRef<Set<string>>(new Set());
   const pendingRetryTermsRef = useRef<HandTerms | null>(null);
+  const expectingCounterProposalRef = useRef<boolean>(false);
+  const rejectionFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gameplayEventSubject = useRef(new Subject<GameplayEvent>()).current;
+
+  const clearExpectingCounterProposal = useCallback(() => {
+    expectingCounterProposalRef.current = false;
+    if (rejectionFallbackTimerRef.current) {
+      clearTimeout(rejectionFallbackTimerRef.current);
+      rejectionFallbackTimerRef.current = null;
+    }
+  }, []);
 
   gameIdsRef.current = gameIds;
   handKeyRef.current = handKey;
@@ -566,58 +592,74 @@ export function useGameSession(
     }
   }, []);
 
+  const persistFullSession = useCallback(() => {
+    const go = gameObjectRef.current;
+    const wasm = go?.getWasmFields();
+    if (!wasm) return;
+    const save: SessionSave = {
+      blockchainType: getBlockchainType(),
+      ...wasm,
+      gameCoinHex: gameCoin.coinHex,
+      gameTurnState: gameCoin.turnState,
+      gameTerminalType: gameTerminal.type !== 'none' ? gameTerminal.type : undefined,
+      gameTerminalLabel: gameTerminal.label,
+      gameTerminalReward: gameTerminal.myReward,
+      gameTerminalRewardCoin: gameTerminal.rewardCoinHex,
+      myRunningBalance: myRunningBalance !== 0n ? myRunningBalance.toString() : undefined,
+      channelNotifQueue: channelQueue.length > 0
+        ? channelQueue.map(({ id, kind, title, message }) => ({ id, kind, title, message }))
+        : undefined,
+      gameNotifQueue: gameQueue.length > 0
+        ? gameQueue.map(({ id, kind, title, message }) => ({ id, kind, title, message }))
+        : undefined,
+      dismissedChannelState: dismissedChannelState ?? undefined,
+      betweenHandMode: betweenHandMode ?? undefined,
+      betweenHandComposePerHand: composePerHandAmount.toString(),
+      betweenHandLastTerms: {
+        my_contribution: lastHandTerms.myContribution.toString(),
+        their_contribution: lastHandTerms.theirContribution.toString(),
+      },
+      betweenHandRejectedOnceTerms: rejectedOnceTerms
+        ? {
+            my_contribution: rejectedOnceTerms.myContribution.toString(),
+            their_contribution: rejectedOnceTerms.theirContribution.toString(),
+          }
+        : undefined,
+      betweenHandCachedPeerProposal: cachedPeerProposal
+        ? {
+            id: cachedPeerProposal.id,
+            my_contribution: cachedPeerProposal.terms.myContribution.toString(),
+            their_contribution: cachedPeerProposal.terms.theirContribution.toString(),
+          }
+        : undefined,
+      betweenHandReviewPeerProposal: reviewPeerProposal
+        ? {
+            id: reviewPeerProposal.id,
+            my_contribution: reviewPeerProposal.terms.myContribution.toString(),
+            their_contribution: reviewPeerProposal.terms.theirContribution.toString(),
+          }
+        : undefined,
+    };
+    saveSession(save);
+  }, [
+    gameCoin, gameTerminal, myRunningBalance, betweenHandMode,
+    composePerHandAmount, lastHandTerms, rejectedOnceTerms,
+    cachedPeerProposal, reviewPeerProposal,
+    channelQueue, dismissedChannelState, gameQueue,
+  ]);
+
+  // Save when JS-side state changes
+  useEffect(() => {
+    persistFullSession();
+  }, [persistFullSession]);
+
+  // Wire up the wasm-side save trigger
   useEffect(() => {
     const go = gameObjectRef.current;
     if (!go) return;
-    go.gameCoinHex = gameCoin.coinHex;
-    go.gameTurnState = gameCoin.turnState;
-    go.gameTerminalType = gameTerminal.type;
-    go.gameTerminalLabel = gameTerminal.label;
-    go.gameTerminalReward = gameTerminal.myReward;
-    go.gameTerminalRewardCoin = gameTerminal.rewardCoinHex;
-    go.myRunningBalance = myRunningBalance.toString();
-    go.betweenHandMode = betweenHandMode;
-    go.betweenHandComposePerHand = composePerHandAmount.toString();
-    go.betweenHandLastTerms = {
-      my_contribution: lastHandTerms.myContribution.toString(),
-      their_contribution: lastHandTerms.theirContribution.toString(),
-    };
-    go.betweenHandRejectedOnceTerms = rejectedOnceTerms
-      ? {
-          my_contribution: rejectedOnceTerms.myContribution.toString(),
-          their_contribution: rejectedOnceTerms.theirContribution.toString(),
-        }
-      : null;
-    go.betweenHandCachedPeerProposal = cachedPeerProposal
-      ? {
-          id: cachedPeerProposal.id,
-          my_contribution: cachedPeerProposal.terms.myContribution.toString(),
-          their_contribution: cachedPeerProposal.terms.theirContribution.toString(),
-        }
-      : null;
-    go.betweenHandReviewPeerProposal = reviewPeerProposal
-      ? {
-          id: reviewPeerProposal.id,
-          my_contribution: reviewPeerProposal.terms.myContribution.toString(),
-          their_contribution: reviewPeerProposal.terms.theirContribution.toString(),
-        }
-      : null;
-    go.channelNotifQueue = channelQueue.map(({ id, kind, title, message }) => ({ id, kind, title, message }));
-    go.gameNotifQueue = gameQueue.map(({ id, kind, title, message }) => ({ id, kind, title, message }));
-    go.scheduleSave();
-  }, [
-    gameCoin,
-    gameTerminal,
-    myRunningBalance,
-    betweenHandMode,
-    composePerHandAmount,
-    lastHandTerms,
-    rejectedOnceTerms,
-    cachedPeerProposal,
-    reviewPeerProposal,
-    channelQueue,
-    gameQueue,
-  ]);
+    go.onSaveNeeded = persistFullSession;
+    return () => { go.onSaveNeeded = null; };
+  }, [persistFullSession]);
 
   const proposeNewGame = useCallback((terms: HandTerms) => {
     const go = gameObjectRef.current;
@@ -638,6 +680,7 @@ export function useGameSession(
       });
       for (const id of ids) {
         proposalTermsByIdRef.current[id] = terms;
+        outgoingProposalIdsRef.current.add(id);
       }
     } catch (_) {
       // proposal can fail if channel isn't ready yet; user can retry
@@ -657,7 +700,6 @@ export function useGameSession(
     const go = gameObjectRef.current;
     if (go) {
       go.lastOutcomeWin = outcome.my_win_outcome;
-      go.scheduleSave();
     }
     cancelStalePeerProposals();
     pendingRetryTermsRef.current = null;
@@ -696,7 +738,16 @@ export function useGameSession(
       const info = channelStatusFromPayload(cs, coinHex);
       channelStateRef.current = info.state;
       setChannelStatus(info);
-      if (ATTENTION_STATES.includes(cs.state)) {
+      // If the channel state has moved away from (or to something other than)
+      // the state the user previously dismissed a notification for, forget
+      // that dismissal so future events for this state will notify again.
+      if (dismissedChannelStateRef.current !== null
+          && dismissedChannelStateRef.current !== cs.state) {
+        dismissedChannelStateRef.current = null;
+        setDismissedChannelState(null);
+      }
+      if (ATTENTION_STATES.includes(cs.state)
+          && dismissedChannelStateRef.current !== cs.state) {
         const label = cs.state === 'Failed' || cs.state === 'ResolvedStale' ? 'Error' : `Channel: ${cs.state}`;
         pushChannel({ kind: 'channel-state', title: label, message: info.advisory ?? '', payload: info });
       }
@@ -754,7 +805,17 @@ export function useGameSession(
       switch (betweenHandModeRef.current) {
         case 'decision': {
           const retryTerms = pendingRetryTermsRef.current;
-          if (matchesLastTerms && sameTermsRequestedRef.current) {
+          if (expectingCounterProposalRef.current) {
+            // Peer rejected our same-terms "New Hand" proposal and is counter-proposing.
+            // Route directly to review so the user sees the accept/reject dialog with
+            // no flicker through compose-proposal.
+            clearExpectingCounterProposal();
+            pendingRetryTermsRef.current = null;
+            sameTermsRequestedRef.current = false;
+            setNewHandRequested(false);
+            setReviewPeerProposal(incoming);
+            setBetweenHandMode('review-incoming-proposal');
+          } else if (matchesLastTerms && sameTermsRequestedRef.current) {
             pendingRetryTermsRef.current = null;
             try {
               go?.acceptProposal(incoming.id);
@@ -763,6 +824,21 @@ export function useGameSession(
             } catch (e) {
               console.error('acceptProposal failed:', e);
             }
+          } else if (sameTermsRequestedRef.current && !matchesLastTerms) {
+            // We requested "New Hand" (same terms) but peer independently proposed
+            // different terms. Withdraw our outgoing proposal so peer can't accept it
+            // while we're reviewing theirs, and prompt the user to accept/reject.
+            log(`[notify] ProposalMade id=${incoming.id} different terms after New Hand; cancelling ours and reviewing theirs`);
+            sameTermsRequestedRef.current = false;
+            setNewHandRequested(false);
+            pendingRetryTermsRef.current = null;
+            for (const id of Array.from(outgoingProposalIdsRef.current)) {
+              if (id === incoming.id) continue;
+              try { go?.cancel_proposal(id); } catch (_) { /* already gone */ }
+            }
+            outgoingProposalIdsRef.current.clear();
+            setReviewPeerProposal(incoming);
+            setBetweenHandMode('review-incoming-proposal');
           } else if (retryTerms) {
             pendingRetryTermsRef.current = null;
             sameTermsRequestedRef.current = false;
@@ -815,9 +891,11 @@ export function useGameSession(
       sameTermsRequestedRef.current = false;
       setNewHandRequested(false);
       pendingRetryTermsRef.current = null;
+      clearExpectingCounterProposal();
       const gpa = n.ProposalAccepted!;
       const newId = String(gpa.id);
       log(`[notify] ProposalAccepted id=${newId} handKey will increment`);
+      outgoingProposalIdsRef.current.delete(newId);
       cancelStalePeerProposals(newId);
       setGameIds(prev => [...prev, newId]);
       gameIdsRef.current = [...gameIdsRef.current, newId];
@@ -936,8 +1014,10 @@ export function useGameSession(
       log(`[notify] ProposalCancelled id=${proposalId} reason=${reason} local=${isLocal}`);
 
       const cancelledTerms = proposalId ? proposalTermsByIdRef.current[proposalId] ?? null : null;
+      const wasOurs = proposalId ? outgoingProposalIdsRef.current.has(proposalId) : false;
       if (proposalId) {
         delete proposalTermsByIdRef.current[proposalId];
+        outgoingProposalIdsRef.current.delete(proposalId);
         if (cachedPeerProposalRef.current?.id === proposalId) {
           setCachedPeerProposal(null);
         }
@@ -952,9 +1032,29 @@ export function useGameSession(
       } else if (reason === 'CancelledByPeer') {
         pendingRetryTermsRef.current = null;
         setComposeProposalSent(false);
+        const wasSameTermsReq = sameTermsRequestedRef.current && wasOurs;
         sameTermsRequestedRef.current = false;
         setNewHandRequested(false);
-        pushGame({ kind: 'proposal-rejected', title: 'Notice', message: 'Your proposal was rejected by the other side.' });
+        if (wasSameTermsReq) {
+          // Our "New Hand" same-terms proposal was rejected by the peer — most
+          // likely because they're about to send a counter-proposal. Don't show
+          // a scary toast; stay in 'decision' mode briefly so that when their
+          // proposal arrives, the 'decision' handler routes it to review with
+          // no flicker. If no counter-proposal arrives quickly, fall back to
+          // compose-proposal mode so the user isn't stuck.
+          log('[notify] our same-terms proposal rejected; awaiting counter-proposal');
+          clearExpectingCounterProposal();
+          expectingCounterProposalRef.current = true;
+          rejectionFallbackTimerRef.current = setTimeout(() => {
+            rejectionFallbackTimerRef.current = null;
+            if (!expectingCounterProposalRef.current) return;
+            expectingCounterProposalRef.current = false;
+            setComposePerHandAmount(lastHandTermsRef.current.myContribution);
+            setBetweenHandMode('compose-proposal');
+          }, 300);
+        } else {
+          pushGame({ kind: 'proposal-rejected', title: 'Notice', message: 'Your proposal was rejected by the other side.' });
+        }
       } else {
         pendingRetryTermsRef.current = null;
       }
@@ -963,7 +1063,7 @@ export function useGameSession(
       log(`[game] action failed: ${reason}`);
       pushChannel({ kind: 'action-failed', title: 'Error', message: reason });
     }
-  }, [iStarted, proposeNewGame, gameplayEventSubject, gameConnectionState.stateIdentifier, triggerGoOnChain, pushChannel, pushGame]);
+  }, [iStarted, proposeNewGame, gameplayEventSubject, gameConnectionState.stateIdentifier, triggerGoOnChain, pushChannel, pushGame, clearExpectingCounterProposal, cancelStalePeerProposals]);
 
   // Subscribe to WASM events
   useEffect(() => {
@@ -1011,6 +1111,15 @@ export function useGameSession(
       subscription.unsubscribe();
     };
   }, [gameObject, blockchain]);
+
+  useEffect(() => {
+    return () => {
+      if (rejectionFallbackTimerRef.current) {
+        clearTimeout(rejectionFallbackTimerRef.current);
+        rejectionFallbackTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const chooseNewHandSameTerms = useCallback(() => {
     const cached = cachedPeerProposalRef.current;
@@ -1110,6 +1219,7 @@ export function useGameSession(
     gameConnectionState,
     amount,
     perGameAmount,
+    currentHandAmount: lastHandTerms.myContribution,
     myRunningBalance,
     iStarted,
     playerNumber,

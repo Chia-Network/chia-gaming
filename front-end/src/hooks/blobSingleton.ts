@@ -56,6 +56,9 @@ async function restoreSession(
   wasmStateInit: WasmStateInit,
   blockchain: BlockchainPoller,
 ): Promise<void> {
+  if (!save.serializedCradle) {
+    throw new Error('restoreSession called without serializedCradle');
+  }
   const wasmConnection = await wasmStateInit.getWasmConnection();
   gameObject.loadWasm(wasmConnection);
 
@@ -68,15 +71,15 @@ async function restoreSession(
   }
   log(`[restore] re-registered ${watchedCoins.length} watched coins`);
 
-  gameObject.messageNumber = save.messageNumber;
-  gameObject.remoteNumber = save.remoteNumber;
-  gameObject.channelReady = save.channelReady;
-  gameObject.iStarted = save.iStarted;
-  gameObject.pairingToken = save.pairingToken;
-  gameObject.unackedMessages = [...save.unackedMessages];
-  gameObject.pendingTransactions = [...save.pendingTransactions];
-  gameObject.history = [...save.history];
-  gameObject.logHistory = [...save.log];
+  gameObject.messageNumber = save.messageNumber ?? 1;
+  gameObject.remoteNumber = save.remoteNumber ?? 0;
+  gameObject.channelReady = save.channelReady ?? false;
+  gameObject.iStarted = save.iStarted ?? false;
+  gameObject.pairingToken = save.pairingToken ?? '';
+  gameObject.unackedMessages = [...(save.unackedMessages ?? [])];
+  gameObject.pendingTransactions = [...(save.pendingTransactions ?? [])];
+  gameObject.history = [...(save.history ?? [])];
+  gameObject.logHistory = [...(save.log ?? [])];
   gameObject.activeGameId = save.activeGameId ?? null;
   gameObject.handState = save.handState ?? null;
   gameObject.lastChannelStatus = save.channelStatus ?? null;
@@ -84,21 +87,6 @@ async function restoreSession(
   gameObject.opponentAlias = save.opponentAlias;
   gameObject.lastOutcomeWin = save.lastOutcomeWin;
   gameObject.chatMessages = save.chatMessages ?? [];
-  gameObject.gameCoinHex = save.gameCoinHex ?? null;
-  gameObject.gameTurnState = save.gameTurnState ?? 'my-turn';
-  gameObject.gameTerminalType = save.gameTerminalType ?? 'none';
-  gameObject.gameTerminalLabel = save.gameTerminalLabel ?? null;
-  gameObject.gameTerminalReward = save.gameTerminalReward ?? null;
-  gameObject.gameTerminalRewardCoin = save.gameTerminalRewardCoin ?? null;
-  gameObject.myRunningBalance = save.myRunningBalance ?? '0';
-  gameObject.channelNotifQueue = save.channelNotifQueue ?? [];
-  gameObject.gameNotifQueue = save.gameNotifQueue ?? [];
-  gameObject.betweenHandMode = save.betweenHandMode ?? null;
-  gameObject.betweenHandComposePerHand = save.betweenHandComposePerHand ?? null;
-  gameObject.betweenHandLastTerms = save.betweenHandLastTerms ?? null;
-  gameObject.betweenHandRejectedOnceTerms = save.betweenHandRejectedOnceTerms ?? null;
-  gameObject.betweenHandCachedPeerProposal = save.betweenHandCachedPeerProposal ?? null;
-  gameObject.betweenHandReviewPeerProposal = save.betweenHandReviewPeerProposal ?? null;
   gameObject.markRestored();
 
   log('[restore] session restored');

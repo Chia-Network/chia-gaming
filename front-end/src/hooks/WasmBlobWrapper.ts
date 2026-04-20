@@ -19,8 +19,30 @@ import {
   spend_bundle_to_clvm,
 } from '../util';
 import { log } from '../services/log';
-import { saveSession, SessionSave, CalpokerHandState } from './save';
+import type { CalpokerHandState } from './save';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
+
+export interface WasmFields {
+  serializedCradle: string;
+  pairingToken: string;
+  messageNumber: number;
+  remoteNumber: number;
+  channelReady: boolean;
+  iStarted: boolean;
+  amount: string;
+  perGameAmount: string;
+  pendingTransactions: string[];
+  unackedMessages: Array<{ msgno: number; msg: string }>;
+  history: string[];
+  log: string[];
+  activeGameId: string | null;
+  handState: CalpokerHandState | null;
+  channelStatus: ChannelStatusPayload | null;
+  myAlias: string | undefined;
+  opponentAlias: string | undefined;
+  lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined;
+  chatMessages: Array<{ text: string; fromAlias: string; timestamp: number; isMine: boolean }>;
+}
 
 function clvmToBytes(value: Program | null): Uint8Array {
   if (value === null || value === undefined) return new Uint8Array([0x80]);
@@ -105,21 +127,7 @@ export class WasmBlobWrapper {
   opponentAlias: string | undefined = undefined;
   lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined = undefined;
   chatMessages: Array<{ text: string; fromAlias: string; timestamp: number; isMine: boolean }> = [];
-  gameCoinHex: string | null = null;
-  gameTurnState: string = 'my-turn';
-  gameTerminalType: string = 'none';
-  gameTerminalLabel: string | null = null;
-  gameTerminalReward: string | null = null;
-  gameTerminalRewardCoin: string | null = null;
-  myRunningBalance: string = '0';
-  channelNotifQueue: Array<{ id: number; kind: string; title: string; message: string }> = [];
-  gameNotifQueue: Array<{ id: number; kind: string; title: string; message: string }> = [];
-  betweenHandMode: string | null = null;
-  betweenHandComposePerHand: string | null = null;
-  betweenHandLastTerms: { my_contribution: string; their_contribution: string } | null = null;
-  betweenHandRejectedOnceTerms: { my_contribution: string; their_contribution: string } | null = null;
-  betweenHandCachedPeerProposal: { id: string; my_contribution: string; their_contribution: string } | null = null;
-  betweenHandReviewPeerProposal: { id: string; my_contribution: string; their_contribution: string } | null = null;
+  onSaveNeeded: (() => void) | null = null;
   getFee: () => number = () => 0;
 
   constructor(
@@ -601,7 +609,7 @@ export class WasmBlobWrapper {
     if (this.saveTimer) return;
     const timer = setTimeout(() => {
       this.saveTimer = null;
-      this.persistSession();
+      this.onSaveNeeded?.();
     }, SAVE_DEBOUNCE_MS);
     if (typeof timer === 'object' && 'unref' in timer) timer.unref();
     this.saveTimer = timer;
@@ -611,16 +619,15 @@ export class WasmBlobWrapper {
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
-      this.persistSession();
+      this.onSaveNeeded?.();
     }
   }
 
-  private persistSession() {
-    if (!this.cradle) return;
+  getWasmFields(): WasmFields | null {
+    if (!this.cradle) return null;
     try {
-      const serializedCradle = this.cradle.serialize();
-      const save: SessionSave = {
-        serializedCradle,
+      return {
+        serializedCradle: this.cradle.serialize(),
         pairingToken: this.pairingToken,
         messageNumber: this.messageNumber,
         remoteNumber: this.remoteNumber,
@@ -638,26 +645,11 @@ export class WasmBlobWrapper {
         myAlias: this.myAlias,
         opponentAlias: this.opponentAlias,
         lastOutcomeWin: this.lastOutcomeWin,
-        chatMessages: this.chatMessages.length > 0 ? [...this.chatMessages] : undefined,
-        gameCoinHex: this.gameCoinHex,
-        gameTurnState: this.gameTurnState,
-        gameTerminalType: this.gameTerminalType !== 'none' ? this.gameTerminalType : undefined,
-        gameTerminalLabel: this.gameTerminalLabel,
-        gameTerminalReward: this.gameTerminalReward,
-        gameTerminalRewardCoin: this.gameTerminalRewardCoin,
-        myRunningBalance: this.myRunningBalance !== '0' ? this.myRunningBalance : undefined,
-        channelNotifQueue: this.channelNotifQueue.length > 0 ? this.channelNotifQueue : undefined,
-        gameNotifQueue: this.gameNotifQueue.length > 0 ? this.gameNotifQueue : undefined,
-        betweenHandMode: this.betweenHandMode ?? undefined,
-        betweenHandComposePerHand: this.betweenHandComposePerHand ?? undefined,
-        betweenHandLastTerms: this.betweenHandLastTerms ?? undefined,
-        betweenHandRejectedOnceTerms: this.betweenHandRejectedOnceTerms ?? undefined,
-        betweenHandCachedPeerProposal: this.betweenHandCachedPeerProposal ?? undefined,
-        betweenHandReviewPeerProposal: this.betweenHandReviewPeerProposal ?? undefined,
+        chatMessages: [...this.chatMessages],
       };
-      saveSession(save);
     } catch (e) {
-      console.error('[wasm] persistSession failed:', e);
+      console.error('[wasm] getWasmFields failed:', e);
+      return null;
     }
   }
 

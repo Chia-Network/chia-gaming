@@ -13,9 +13,9 @@ const app = express();
 const httpServer = createServer(app);
 
 function parseArgs() {
-  const args = minimist(process.argv.slice(2));
+  const args = minimist(process.argv.slice(2), { boolean: ['verbose'], alias: { verbose: 'v' } });
   if (!args.self) {
-    console.warn('usage: lobby --self [own-url] --dir [serve-directory]');
+    console.warn('usage: lobby --self [own-url] --dir [serve-directory] [--verbose]');
     process.exit(1);
   }
   return args;
@@ -25,6 +25,7 @@ const args = parseArgs();
 const selfWs = String(args.self).replace(/^http/i, 'ws');
 const simUrl = String(args.sim || 'http://localhost:5800');
 const simWsUrl = simUrl.replace(/^http/i, 'ws').replace(/:5800\b/, ':5801');
+const verbose = Boolean(args.verbose);
 
 type RelayPayload =
   | { msgno: number; msg: string }
@@ -107,6 +108,11 @@ function logTracker(event: string, fields?: Record<string, unknown>): void {
   console.log(`[tracker] ${new Date().toISOString()} ${event}${payload}`);
 }
 
+function logTrackerVerbose(event: string, fields?: Record<string, unknown>): void {
+  if (!verbose) return;
+  logTracker(event, fields);
+}
+
 function relayPayloadKind(data: RelayPayload): 'keepalive' | 'ack' | 'message' {
   if ('keepalive' in data) return 'keepalive';
   if ('ack' in data) return 'ack';
@@ -187,7 +193,7 @@ function sendWs(ws: WebSocket, type: string, payload: unknown): void {
     return;
   }
   ws.send(JSON.stringify({ type, ...((payload as Record<string, unknown>) ?? {}) }));
-  logTracker('send_ws_ok', { ws_id: wsId(ws), type });
+  logTrackerVerbose('send_ws_ok', { ws_id: wsId(ws), type });
 }
 
 function sendLobbyEvent(playerId: string, type: string, payload: unknown): void {
@@ -196,7 +202,7 @@ function sendLobbyEvent(playerId: string, type: string, payload: unknown): void 
     logTracker('send_lobby_event_drop_missing_ws', { player_id: playerId, type });
     return;
   }
-  logTracker('send_lobby_event', { player_id: playerId, ws_id: wsId(ws), type });
+  logTrackerVerbose('send_lobby_event', { player_id: playerId, ws_id: wsId(ws), type });
   sendWs(ws, type, payload);
 }
 
@@ -226,7 +232,7 @@ function sendGameEvent(playerId: string, type: string, payload: unknown): void {
     logTracker('send_game_event_drop_missing_ws', { player_id: playerId, session_id: sessionId, type });
     return;
   }
-  logTracker('send_game_event', { player_id: playerId, session_id: sessionId, ws_id: wsId(ws), type });
+  logTrackerVerbose('send_game_event', { player_id: playerId, session_id: sessionId, ws_id: wsId(ws), type });
   sendWs(ws, type, payload);
 }
 
@@ -639,7 +645,7 @@ function onGameMessage(msg: Extract<GameInboundMessage, { type: 'message' }>): v
     logTracker('game_message_drop_unpaired', { player_id: playerId, session_id: msg.session_id });
     return;
   }
-  logTracker('game_message_relay', {
+  logTrackerVerbose('game_message_relay', {
     from_player_id: playerId,
     to_player_id: peerId,
     session_id: msg.session_id,
@@ -660,7 +666,7 @@ function onGameChat(msg: Extract<GameInboundMessage, { type: 'chat' }>): void {
     return;
   }
   const fromAlias = lobby.players[playerId]?.alias ?? playerId;
-  logTracker('game_chat_relay', { from_player_id: playerId, to_player_id: peerId, session_id: msg.session_id });
+  logTrackerVerbose('game_chat_relay', { from_player_id: playerId, to_player_id: peerId, session_id: msg.session_id });
   sendGameEvent(peerId, 'chat', {
     text: msg.text,
     from_alias: fromAlias,
@@ -727,7 +733,7 @@ function clearKeepalive(ws: WebSocket): void {
 
 function onGetAlias(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'get_alias' }>): void {
   const alias = knownAliases.get(msg.id) ?? null;
-  logTracker('get_alias', { ws_id: wsId(ws), player_id: msg.id, found: alias !== null });
+  logTrackerVerbose('get_alias', { ws_id: wsId(ws), player_id: msg.id, found: alias !== null });
   sendWs(ws, 'alias_result', { alias });
 }
 
@@ -756,7 +762,7 @@ lobbyWsServer.on('connection', (ws) => {
       logTracker('lobby_ws_message_parse_drop', { ws_id: currentWsId, bytes: text.length });
       return;
     }
-    logTracker('lobby_ws_message', { ws_id: currentWsId, type: parsed.type, bytes: text.length });
+    logTrackerVerbose('lobby_ws_message', { ws_id: currentWsId, type: parsed.type, bytes: text.length });
 
     switch (parsed.type) {
       case 'join': {
@@ -840,7 +846,7 @@ gameWsServer.on('connection', (ws) => {
       logTracker('game_ws_message_parse_drop', { ws_id: currentWsId, bytes: text.length });
       return;
     }
-    logTracker('game_ws_message', { ws_id: currentWsId, type: parsed.type, bytes: text.length });
+    logTrackerVerbose('game_ws_message', { ws_id: currentWsId, type: parsed.type, bytes: text.length });
 
     switch (parsed.type) {
       case 'identify':
@@ -959,7 +965,7 @@ setInterval(() => {
   if (lobbyChanged) {
     broadcastLobbyUpdate();
   }
-  logTracker('state_snapshot', {
+  logTrackerVerbose('state_snapshot', {
     players: Object.keys(lobby.players).length,
     challenges: lobby.challenges.size,
     pairings: lobby.pairings.size,

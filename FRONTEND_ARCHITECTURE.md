@@ -233,22 +233,25 @@ This is always-on — not a feature the user opts into.
 
 An `appState` key in localStorage holds a JSON-serialized `AppState` object
 (version 2). The game session save lives at `appState.gameSave` as a
-`SessionSave`:
+`SessionSave`. All game-specific fields are optional — a save may contain only
+`blockchainType` (pre-game state) or the full set (mid-game state):
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `serializedCradle` | `string` | Full WASM cradle state via `cradle.serialize()` |
-| `pairingToken` | `string` | Tracker pairing token, for reconciliation on reconnect |
-| `messageNumber` | `number` | Next outbound message sequence number |
-| `remoteNumber` | `number` | Last delivered inbound message sequence number |
-| `channelReady` | `boolean` | Whether the channel has been created |
-| `iStarted` | `boolean` | Whether this player was the initiator |
-| `amount` | `string` | Channel buy-in (bigint as string) |
-| `perGameAmount` | `string` | Per-hand amount (bigint as string) |
-| `pendingTransactions` | `string[]` | CLVM blobs of transactions not yet confirmed |
-| `unackedMessages` | `Array<{ msgno, msg }>` | Outbound messages not yet acknowledged by the peer |
-| `history` | `string[]` | Game notification log |
-| `log` | `string[]` | Log history |
+| `buildNonce` | `string?` | Build nonce stamped on every save; used for stale detection |
+| `blockchainType` | `'simulator' \| 'walletconnect'?` | Which wallet backend is active |
+| `serializedCradle` | `string?` | Full WASM cradle state via `cradle.serialize()` |
+| `pairingToken` | `string?` | Tracker pairing token, for reconciliation on reconnect |
+| `messageNumber` | `number?` | Next outbound message sequence number |
+| `remoteNumber` | `number?` | Last delivered inbound message sequence number |
+| `channelReady` | `boolean?` | Whether the channel has been created |
+| `iStarted` | `boolean?` | Whether this player was the initiator |
+| `amount` | `string?` | Channel buy-in (bigint as string) |
+| `perGameAmount` | `string?` | Per-hand amount (bigint as string) |
+| `pendingTransactions` | `string[]?` | CLVM blobs of transactions not yet confirmed |
+| `unackedMessages` | `Array<{ msgno, msg }>?` | Outbound messages not yet acknowledged by the peer |
+| `history` | `string[]?` | Game notification log |
+| `log` | `string[]?` | Log history |
 | `activeGameId` | `string \| null?` | Current game ID |
 | `handState` | `CalpokerHandState?` | Card state snapshot for mid-hand restore |
 | `channelStatus` | `ChannelStatusPayload?` | Last channel status for coin watching |
@@ -257,32 +260,114 @@ An `appState` key in localStorage holds a JSON-serialized `AppState` object
 | `channelNotifQueue` | `QueuedNotification[]?` | Persisted channel-scope notification queue |
 | `gameNotifQueue` | `QueuedNotification[]?` | Persisted game-scope notification queue |
 | `lastOutcomeWin` | `'win' \| 'lose' \| 'tie'?` | Last hand result |
+| `dismissedChannelState` | `string?` | Last dismissed channel-state notification value |
+| `betweenHandMode` | `string?` | Between-hand overlay state |
+| `betweenHandComposePerHand` | `string?` | Proposed per-hand amount in compose overlay |
+| `betweenHandLastTerms` | `{ my_contribution, their_contribution }?` | Last agreed hand terms |
+| `gameCoinHex` | `string?` | Current game coin ID |
+| `gameTurnState` | `string?` | Whose turn it is |
+| `myRunningBalance` | `string?` | Running balance delta from initial amount |
 
-The surrounding `AppState` also holds `playerId`, `sessionId`, `blockchainType`,
-`alias`, `theme`, `activeTab`, `defaultFee`, `feeUnit`, and `savedGames` —
-these persist across sessions.
+The surrounding `AppState` also holds `playerId`, `sessionId`, `alias`,
+`theme`, `activeTab`, `defaultFee`, `feeUnit`, and `savedGames` — these persist
+across sessions. Note that `blockchainType` lives exclusively inside
+`SessionSave`, not at the `AppState` level.
 
-#### When saves happen
+#### Save architecture
 
-`WasmBlobWrapper.persistSession()` is debounced (500ms) and called at the end of
-every `processResult()` invocation. It also fires when:
-- An outbound message is added to the unacked log
-- A pending transaction is added or removed
-- An ack is received and the unacked log is pruned
+Session persistence is owned by the outer JavaScript layer, not by
+`WasmBlobWrapper`. The save combines two sources of state:
+
+1. **WASM-native state** — `WasmBlobWrapper.getWasmFields()` returns the
+   cradle serialization, message counters, protocol state, history, aliases,
+   and other fields that originate inside the WASM bridge.
+2. **JS-side state** — React state in `useGameSession`: game coin, turn state,
+   notification queues, between-hand mode, running balance, dismissed
+   notifications, etc.
+
+`useGameSession` defines a `persistFullSession` callback that merges both
+sources into a single `SessionSave` and calls `saveSession()`. This callback
+fires in two situations:
+
+- **JS state changes** — a React effect triggers `persistFullSession` whenever
+  any dependency in the JS-side state changes.
+- **WASM state changes** — `WasmBlobWrapper.onSaveNeeded` is wired to
+  `persistFullSession`. Inside WasmBlobWrapper, `scheduleSave()` debounces
+  (500ms) and fires `onSaveNeeded`. `scheduleSave()` is called at the end of
+  every `processResult()` invocation, when outbound messages are added, when
+  pending transactions change, and when acks are received.
+
+This means the outer JS layer always builds the complete, coherent save from
+both JS and WASM state at once.
+
+**Pre-game saves:** `Shell.tsx` calls `saveSession({ blockchainType })` as
+soon as the user picks a connection type (before any WASM cradle exists). This
+ensures that even pre-game state is persisted and detected on reload.
+
+`saveSession()` always stamps `buildNonce` from the current build, so every
+save carries the nonce it was created under.
+
+#### Boot state machine
+
+On page load, `Shell.tsx` runs a boot sequence that determines which dialog
+(if any) to show before the app becomes interactive:
+
+```
+peekSession() → save
+                 │
+                 ├─ save exists, save.buildNonce !== currentNonce
+                 │   → clearSession(), clearLease(), save = null
+                 │
+                 ├─ save exists (nonce matches)
+                 │   → show Resume / Start Over dialog
+                 │       │
+                 │       ├─ Start Over → clearSession(), claimLease(), ready
+                 │       │
+                 │       └─ Resume → is there a lease conflict?
+                 │           │
+                 │           ├─ Yes → show Take Over dialog
+                 │           │   ├─ Take Over → claimLease(), restore
+                 │           │   └─ Close Tab → dead
+                 │           │
+                 │           └─ No → claimLease(), restore
+                 │
+                 ├─ no save, lease conflict (another tab is active)
+                 │   → show Take Over dialog (save: null)
+                 │
+                 └─ no save, no conflict
+                     → claimLease(), ready (fresh start)
+```
+
+**Stale nonce handling:** Every frontend build gets a unique nonce (milliseconds
+since epoch). `saveSession()` stamps it on every save. On boot, if the save's
+nonce doesn't match the current build, the save is from a previous build and is
+wiped along with the tab lease. This prevents stale saves from interfering with
+a fresh build.
+
+**Full vs pre-game saves:** The resume/takeover handlers check
+`save.serializedCradle` to distinguish full game saves from pre-game saves.
+A full save triggers `performResume` (WASM restore + tracker reconnect). A
+pre-game save triggers `handleConnect(save.blockchainType)` to re-establish
+the wallet connection without attempting WASM deserialization.
+
+**Lease claiming:** The lease is never claimed during the boot initializer's
+read phase. It is only claimed inside user action handlers (`handleResume`,
+`handleStartOver`, `handleTakeOver`) after the user has made a choice. This
+prevents a new tab from immediately fencing an existing tab before the user
+decides what to do.
 
 #### Restore path
 
-On page reload, `Shell.tsx` receives a `connection_status` event from the
-tracker. If the tracker reports an active pairing whose token matches the local
-save's `pairingToken`, the restore path activates:
+When the user chooses to resume a full save, `performResume` fires:
 
-1. Load WASM and hex presets via `WasmStateInit.getWasmConnection()`.
-2. Deserialize the cradle via `WasmStateInit.deserializeGame()`, which calls
-   `create_serialized_game` with a fresh RNG seed.
-3. Restore all counters and logs (`messageNumber`, `remoteNumber`,
-   `channelReady`, `unackedMessages`, `pendingTransactions`, etc.).
-4. Skip `activateSpend` (which calls `start_handshake`) — the channel already
-   exists.
+1. Hydrate local UI state (game params, history, log, chat) from the save.
+2. Connect to the wallet backend (`beginConnect` + `finalize`).
+3. Connect to the tracker. On `connection_status`, reconcile the tracker's
+   pairing state against the save (see
+   [Reconnect Reconciliation](#reconnect-reconciliation)).
+4. `blobSingleton.restoreSession` loads WASM and deserializes the cradle via
+   `WasmStateInit.deserializeGame()`, restores counters and logs, and calls
+   `markRestored()`.
 5. When `qualifyingEvents` reaches 7 (bitmask: wasm loaded + cradle set +
    auto-flush), re-send all un-acked messages and re-submit all pending
    transactions.
@@ -293,6 +378,7 @@ The session save is cleared when:
 - The game finishes (`processResult` sets `finished`)
 - The user clicks "End Session" (clean shutdown)
 - The user clicks "Reset" (`localStorage.clear()`)
+- A stale nonce is detected on boot
 
 ### Peer Message Reliability
 
@@ -525,16 +611,20 @@ and poll interval; the rest of the flow is generic.
 
 **Auto-reconnect:** Both backends implement their own WebSocket reconnect with
 exponential backoff. Shell's `onConnectionChange` callback handles UI state
-transitions (connected ↔ disconnected) generically. On page load, if
-`blockchainType` is persisted but no game session exists, Shell calls
-`handleConnect(bcType, true)` (silent mode) to re-establish the connection
-automatically — no modals or QR codes are shown, consistent with the principle
-that a reload should be invisible to the user.
+transitions (connected ↔ disconnected) generically. On page load, if the
+user chooses to resume a pre-game save (one with `blockchainType` but no
+`serializedCradle`), Shell calls `handleConnect(bcType, true)` (silent mode)
+to re-establish the connection automatically — no modals or QR codes are shown,
+consistent with the principle that a reload should be invisible to the user.
 
-**Session persistence:** `blockchainType` is persisted to `localStorage`
-immediately when the user makes their choice, before the connection completes.
-`clearSession()` removes it on explicit disconnect, cancel, or unrecoverable
-error.
+**Session persistence:** `blockchainType` is persisted as a minimal
+`SessionSave` (via `saveSession({ blockchainType })`) immediately when the
+user makes their choice, before the connection completes. This is the earliest
+point at which state is saved — even before a WASM cradle exists. Once the
+full game session is running, `useGameSession` takes over persistence and
+includes `blockchainType` in every subsequent save alongside the WASM and
+JS state. `clearSession()` removes it on explicit disconnect, cancel, or
+unrecoverable error.
 
 **Intentional deviation:** The simulator returns `ConnectionSetup.fields`
 because there is no external wallet to scan the QR code. This triggers the
@@ -716,12 +806,12 @@ limit concurrency.
 |------|---------|
 | `front-end/src/components/Shell.tsx` | Top-level component: wallet, tracker, tabs, logs |
 | `front-end/src/components/GameSession.tsx` | Game session UI: header, coin status, game area, overlays |
-| `front-end/src/hooks/useGameSession.ts` | Session hook: WASM subscription, notification routing, game flow |
+| `front-end/src/hooks/useGameSession.ts` | Session hook: WASM subscription, notification routing, game flow, session persistence |
 | `front-end/src/hooks/useCalpokerHand.ts` | Calpoker hook: five-step protocol, card parsing, move submission |
-| `front-end/src/hooks/WasmBlobWrapper.ts` | WASM bridge: message delivery, block data, event queue |
+| `front-end/src/hooks/WasmBlobWrapper.ts` | WASM bridge: message delivery, block data, event queue, `getWasmFields()` for persistence |
 | `front-end/src/hooks/WasmStateInit.ts` | WASM initialization: load binary, deposit .hex files, create cradle |
 | `front-end/src/hooks/blobSingleton.ts` | Singleton management: create or retrieve the WasmBlobWrapper; restore path for session persistence |
-| `front-end/src/hooks/save.ts` | `SessionSave` interface and `saveSession`/`loadSession`/`clearSession` functions |
+| `front-end/src/hooks/save.ts` | `SessionSave` interface, `saveSession`/`peekSession`/`clearSession`, tab lease management, nonce stamping |
 | `front-end/src/hooks/FakeBlockchainInterface.ts` | Simulator blockchain backend: WebSocket to local sim, auto-reconnect |
 | `front-end/src/hooks/RealBlockchainInterface.ts` | WalletConnect blockchain backend: RPC via WalletConnect sessions |
 | `front-end/src/services/TrackerConnection.ts` | Game relay WebSocket client (`/ws/game`) |
