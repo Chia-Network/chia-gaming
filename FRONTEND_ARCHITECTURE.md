@@ -204,6 +204,33 @@ the reconciliation logic described in [Reconnect Reconciliation](#reconnect-reco
 `TrackerConnection` exposes `onTrackerDisconnected` and `onTrackerReconnected`
 callbacks for logging/diagnostics around game channel stream health.
 
+#### WebSocket Connection Discipline
+
+All three WebSocket clients — `FakeBlockchainInterface` (simulator),
+`TrackerConnection` (game channel), and `useLobbySocket` (lobby iframe) —
+follow the same connection discipline:
+
+1. **Exponential backoff with jitter on reconnect.** A shared delay schedule
+   `[1s, 2s, 4s, 8s, 15s, 30s]` governs retry intervals. Each attempt picks a
+   random jitter factor (0.75–1.25× the base delay). The attempt counter resets
+   to zero on a successful `onopen`.
+
+2. **Connection timeout.** Each `new WebSocket()` is given 10 seconds to reach
+   `OPEN`. If `readyState` is still `CONNECTING` after 10 seconds, the socket
+   is closed, which triggers `onclose` and feeds into the backoff reconnect.
+
+3. **Deferred WebSocket ref assignment.** The WebSocket reference (used by
+   `send`, `close`, and stale-check guards) is only assigned after `onopen`
+   fires. Before that, the in-flight socket is tracked separately so cleanup
+   can abort a pending connection attempt without leaking it.
+
+These properties are critical for local development, where all three clients
+target the same host (`127.0.0.1`). Without backoff and timeouts, aggressive
+reconnect attempts (especially after connection-refused RSTs) can trigger
+browser-level per-host connection throttling, causing multi-second freezes
+across all connections to that host — even connections from different browser
+contexts (e.g. the lobby iframe vs. the main app).
+
 **Future direction: lean `matched`.** The `matched` payload currently carries
 game parameters (game_type, amount, per_game) because the lobby UI negotiates
 them. In the future, `matched` may shrink to just `{ token, i_am_initiator }`
@@ -609,8 +636,10 @@ and poll interval; the rest of the flow is generic.
 5. After finalize resolves, `completeConnection()` activates polling and
    switches to the Tracker tab.
 
-**Auto-reconnect:** Both backends implement their own WebSocket reconnect with
-exponential backoff. Shell's `onConnectionChange` callback handles UI state
+**Auto-reconnect:** Both backends implement their own WebSocket reconnect
+following the shared connection discipline described in
+[WebSocket Connection Discipline](#websocket-connection-discipline).
+Shell's `onConnectionChange` callback handles UI state
 transitions (connected ↔ disconnected) generically. On page load, if the
 user chooses to resume a pre-game save (one with `blockchainType` but no
 `serializedCradle`), Shell calls `handleConnect(bcType, true)` (silent mode)
