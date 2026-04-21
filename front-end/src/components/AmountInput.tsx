@@ -46,6 +46,7 @@ interface AmountInputProps {
   disabled?: boolean;
   label?: string;
   exceedsLabel?: string;
+  onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
 }
 
 export function AmountInput({
@@ -56,6 +57,7 @@ export function AmountInput({
   disabled,
   label = 'Amount',
   exceedsLabel = 'Exceeds available balance.',
+  onKeyDown,
 }: AmountInputProps) {
   const [unit, setUnit] = useState<AmountUnit>('mojo');
   const [rawInput, setRawInput] = useState(() => valueMojos.toString());
@@ -135,6 +137,7 @@ export function AmountInput({
         inputMode={unit === 'xch' ? 'decimal' : 'numeric'}
         value={rawInput}
         onChange={(e) => handleChange(e.target.value)}
+        onKeyDown={onKeyDown}
         disabled={disabled}
         className={`w-full rounded border px-2 py-1 text-sm bg-canvas-bg-subtle text-canvas-text-contrast outline-none ${
           !isValid && rawInput.trim() !== '' ? 'border-alert-solid' : 'border-canvas-line'

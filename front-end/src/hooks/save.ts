@@ -38,8 +38,34 @@ export interface CalpokerHandState {
 
 type BlockchainType = 'simulator' | 'walletconnect';
 
-export interface SessionSave {
+/**
+ * Single flat state object stored in localStorage. Stale nonce = wipe
+ * everything. No nesting, no migration — alpha-mode simplicity.
+ */
+export interface SessionState {
+  version: number;
   buildNonce?: string;
+
+  // Identity (regenerated on wipe)
+  playerId: string;
+  sessionId?: string;
+  alias?: string;
+
+  // Preferences
+  theme?: 'dark' | 'light';
+  defaultFee?: number;
+  feeUnit?: 'mojo' | 'xch';
+  trackerUrl?: string;
+  savedGames?: SavedGame[];
+
+  // UI state
+  activeTab?: string;
+  unreadChat?: boolean;
+  unreadGame?: boolean;
+  walletAlert?: boolean;
+  trackerAlert?: boolean;
+
+  // Session / game state
   blockchainType?: BlockchainType;
   serializedCradle?: string;
   pairingToken?: string;
@@ -78,26 +104,12 @@ export interface SessionSave {
   betweenHandReviewPeerProposal?: { id: string; my_contribution: string; their_contribution: string } | null;
 }
 
-interface AppState {
-  version: number;
-  playerId: string;
-  sessionId?: string;
-  gameSave?: SessionSave;
-  alias?: string;
-  theme?: 'dark' | 'light';
-  savedGames?: SavedGame[];
-  defaultFee?: number;
-  feeUnit?: 'mojo' | 'xch';
-  activeTab?: string;
-  connecting?: boolean;
-  unreadChat?: boolean;
-  unreadSession?: boolean;
-  walletAlert?: boolean;
-  trackerUrl?: string;
-}
+/** @deprecated — alias kept for callers that haven't been updated yet */
+export type SessionSave = SessionState;
 
-const APP_STATE_KEY = 'appState';
-const CURRENT_VERSION = 2;
+const STATE_KEY = 'appState';
+const CURRENT_VERSION = 3;
+
 function isWalletConnectStorageKey(key: string): boolean {
   const lower = key.toLowerCase();
   return lower.startsWith('wc@') || lower.includes('walletconnect') || lower.includes('wallet_connect');
@@ -141,99 +153,9 @@ async function clearWalletConnectIndexedDb(): Promise<void> {
   await Promise.all(knownDbNames.map((name) => deleteIndexedDb(name)));
 }
 
-/**
- * Migrate from v1 (persistedState + scattered keys) to v2 (appState).
- * Returns null if there's nothing to migrate.
- */
-function migrateToV2(): AppState | null {
-  // v1: single 'persistedState' key
-  const v1Raw = localStorage.getItem('persistedState');
-  // Pre-v1: individual keys
-  const oldPlayerId = localStorage.getItem('playerId');
-  const oldSessionId = localStorage.getItem('sessionId');
-  const oldSaveRaw = localStorage.getItem('sessionSave');
-  const oldAlias = localStorage.getItem('alias');
-  const oldTheme = localStorage.getItem('theme') as 'dark' | 'light' | null;
-
-  // Saved games (saveNames + save-{id})
-  const saveNamesRaw = localStorage.getItem('saveNames');
-  const savedGames: SavedGame[] = [];
-  if (saveNamesRaw) {
-    for (const name of saveNamesRaw.split(',').filter(Boolean)) {
-      const raw = localStorage.getItem(`save-${name}`);
-      if (raw) {
-        try { savedGames.push(JSON.parse(raw)); } catch { /* skip */ }
-      }
-    }
-  }
-
-  let base: Partial<AppState> & { blockchainType?: BlockchainType } = {};
-
-  if (v1Raw) {
-    try {
-      const v1 = JSON.parse(v1Raw);
-      base = {
-        playerId: v1.playerId,
-        sessionId: v1.sessionId,
-        blockchainType: v1.blockchainType,
-        gameSave: v1.gameSave,
-      };
-    } catch { /* ignore corrupt data */ }
-  }
-
-  if (!base.playerId && oldPlayerId) base.playerId = oldPlayerId;
-  if (!base.sessionId && oldSessionId) base.sessionId = oldSessionId;
-
-  if (!base.gameSave && oldSaveRaw) {
-    try {
-      const oldSave = JSON.parse(oldSaveRaw);
-      if (!base.playerId && oldSave.uniqueId) base.playerId = oldSave.uniqueId;
-      if (!base.blockchainType && oldSave.blockchainType) base.blockchainType = oldSave.blockchainType;
-      const { uniqueId: _u, blockchainType: _b, ...rest } = oldSave;
-      base.gameSave = rest;
-    } catch { /* ignore */ }
-  }
-
-  // Move blockchainType into gameSave where it belongs
-  if (base.blockchainType && base.gameSave && !base.gameSave.blockchainType) {
-    base.gameSave.blockchainType = base.blockchainType;
-  }
-
-  const hasAnything = base.playerId || base.sessionId || base.gameSave
-    || oldAlias || oldTheme || savedGames.length > 0;
-  if (!hasAnything) return null;
-
-  const state: AppState = {
-    version: CURRENT_VERSION,
-    playerId: base.playerId ?? randomHex(),
-    sessionId: base.sessionId,
-    gameSave: base.gameSave,
-    alias: oldAlias ?? undefined,
-    theme: oldTheme ?? undefined,
-    savedGames: savedGames.length > 0 ? savedGames : undefined,
-  };
-
-  // Clean up old keys
-  localStorage.removeItem('persistedState');
-  localStorage.removeItem('playerId');
-  localStorage.removeItem('sessionId');
-  localStorage.removeItem('sessionSave');
-  localStorage.removeItem('alias');
-  localStorage.removeItem('theme');
-  if (saveNamesRaw) {
-    for (const name of saveNamesRaw.split(',').filter(Boolean)) {
-      localStorage.removeItem(`save-${name}`);
-    }
-    localStorage.removeItem('saveNames');
-  }
-
-  localStorage.setItem(APP_STATE_KEY, JSON.stringify(state));
-  return state;
-}
-
 // --- In-memory cache + debounced persistence ---
 
-let cached: AppState | null = null;
+let cached: SessionState | null = null;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 const PERSIST_DEBOUNCE_MS = 300;
 
@@ -302,9 +224,9 @@ function flushToLocalStorage(): void {
     persistTimer = null;
   }
   try {
-    localStorage.setItem(APP_STATE_KEY, JSON.stringify(cached));
+    localStorage.setItem(STATE_KEY, JSON.stringify(cached));
   } catch (e) {
-    console.error('[save] failed to persist app state:', e);
+    console.error('[save] failed to persist state:', e);
   }
 }
 
@@ -348,42 +270,34 @@ export function _resetForTests(): void {
   try { localStorage.removeItem(LEASE_KEY); } catch { /* ignore */ }
 }
 
-export function loadAppState(): AppState {
+function freshState(): SessionState {
+  return { version: CURRENT_VERSION, playerId: randomHex() };
+}
+
+export function loadState(): SessionState {
   if (cached) return cached;
   try {
-    const raw = localStorage.getItem(APP_STATE_KEY);
+    const raw = localStorage.getItem(STATE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed.version === CURRENT_VERSION) {
-        if (parsed.blockchainType) {
-          if (parsed.gameSave && !parsed.gameSave.blockchainType) {
-            parsed.gameSave.blockchainType = parsed.blockchainType;
-          }
-          if (!parsed.gameSave) {
-            parsed.gameSave = { blockchainType: parsed.blockchainType };
-          }
-          delete parsed.blockchainType;
-        }
-        console.log('[save] loadAppState: hasGameSave=%s bcType=%s', !!parsed.gameSave, parsed.gameSave?.blockchainType ?? 'none');
-        cached = parsed as AppState;
-        if (parsed.gameSave && !parsed.gameSave.buildNonce) {
-          saveSession(parsed.gameSave);
-        }
+        cached = parsed as SessionState;
         return cached;
       }
     }
   } catch (e) {
-    console.error('[save] failed to load app state:', e);
+    console.error('[save] failed to load state:', e);
   }
-  const migrated = migrateToV2();
-  if (migrated) { cached = migrated; return cached; }
-  console.log('[save] loadAppState: fresh state (nothing persisted)');
-  cached = { version: CURRENT_VERSION, playerId: randomHex() };
+  // Any old version or corrupt data → fresh start
+  cached = freshState();
   return cached;
 }
 
-function mutate(fn: (state: AppState) => void): void {
-  const state = loadAppState();
+/** @deprecated — alias for loadState() */
+export function loadAppState(): SessionState { return loadState(); }
+
+function mutate(fn: (state: SessionState) => void): void {
+  const state = loadState();
   fn(state);
   schedulePersist();
 }
@@ -391,13 +305,13 @@ function mutate(fn: (state: AppState) => void): void {
 // --- Convenience accessors ---
 
 export function getPlayerId(): string {
-  const state = loadAppState();
+  const state = loadState();
   if (!cached) schedulePersist();
   return state.playerId;
 }
 
 export function getSessionId(): string {
-  const state = loadAppState();
+  const state = loadState();
   if (state.sessionId) return state.sessionId;
   state.sessionId = randomHex();
   schedulePersist();
@@ -405,7 +319,7 @@ export function getSessionId(): string {
 }
 
 export function getBlockchainType(): BlockchainType | undefined {
-  return loadAppState().gameSave?.blockchainType;
+  return loadState().blockchainType;
 }
 
 export function getBuildNonce(): string | undefined {
@@ -414,34 +328,25 @@ export function getBuildNonce(): string | undefined {
   return undefined;
 }
 
-export function saveSession(save: SessionSave): void {
-  save.buildNonce = getBuildNonce();
-  mutate(s => { s.gameSave = save; });
+export function saveSession(fields: Partial<SessionState>): void {
+  mutate(s => {
+    Object.assign(s, fields);
+    s.buildNonce = getBuildNonce();
+  });
 }
 
 /**
- * Pure read of the persisted session, if any. Does NOT filter on build nonce
- * or have side effects. Callers that want to know whether the save is usable
- * under the current build should check `save.buildNonce === getBuildNonce()`
- * themselves. Boot logic is expected to wipe stale saves, so at runtime any
- * save returned here is safe to consume.
+ * Returns the current state if it has game-related content (blockchainType
+ * or serializedCradle), null otherwise. Callers check buildNonce themselves.
  */
-export function peekSession(): SessionSave | null {
-  return loadAppState().gameSave ?? null;
+export function peekSession(): SessionState | null {
+  const state = loadState();
+  if (state.blockchainType || state.serializedCradle) return state;
+  return null;
 }
 
 export function clearSession(): void {
-  const state = loadAppState();
-  cached = {
-    version: CURRENT_VERSION,
-    playerId: state.playerId,
-    alias: state.alias,
-    theme: state.theme,
-    activeTab: state.activeTab,
-    defaultFee: state.defaultFee,
-    feeUnit: state.feeUnit,
-    trackerUrl: state.trackerUrl,
-  };
+  cached = freshState();
   flushToLocalStorage();
 }
 
@@ -461,7 +366,7 @@ export async function hardReset(): Promise<void> {
 // --- Alias ---
 
 export function getAlias(): string {
-  const state = loadAppState();
+  const state = loadState();
   if (state.alias) return state.alias;
   const generated = `Player_${randomHex().substring(0, 8)}`;
   state.alias = generated;
@@ -476,7 +381,7 @@ export function setAlias(alias: string): void {
 // --- Theme ---
 
 export function getTheme(): 'dark' | 'light' | undefined {
-  return loadAppState().theme;
+  return loadState().theme;
 }
 
 export function setTheme(theme: 'dark' | 'light'): void {
@@ -486,7 +391,7 @@ export function setTheme(theme: 'dark' | 'light'): void {
 // --- Default fee ---
 
 export function getDefaultFee(): number {
-  return loadAppState().defaultFee ?? 0;
+  return loadState().defaultFee ?? 0;
 }
 
 export function setDefaultFee(fee: number): void {
@@ -494,7 +399,7 @@ export function setDefaultFee(fee: number): void {
 }
 
 export function getFeeUnit(): 'mojo' | 'xch' {
-  return loadAppState().feeUnit ?? 'mojo';
+  return loadState().feeUnit ?? 'mojo';
 }
 
 export function setFeeUnit(unit: 'mojo' | 'xch'): void {
@@ -504,53 +409,51 @@ export function setFeeUnit(unit: 'mojo' | 'xch'): void {
 // --- Active tab ---
 
 export function getActiveTab(): string | undefined {
-  return loadAppState().activeTab;
+  return loadState().activeTab;
 }
 
 export function setActiveTab(tab: string): void {
   mutate(s => { s.activeTab = tab; });
 }
 
-// --- Connecting flag ---
-
-export function getConnecting(): boolean {
-  return loadAppState().connecting ?? false;
-}
-
-export function setConnecting(v: boolean): void {
-  mutate(s => { s.connecting = v || undefined; });
-}
-
 // --- Notification badges ---
 
 export function getUnreadChat(): boolean {
-  return loadAppState().unreadChat ?? false;
+  return loadState().unreadChat ?? false;
 }
 
 export function setUnreadChat(v: boolean): void {
   mutate(s => { s.unreadChat = v || undefined; });
 }
 
-export function getUnreadSession(): boolean {
-  return loadAppState().unreadSession ?? false;
+export function getUnreadGame(): boolean {
+  return loadState().unreadGame ?? false;
 }
 
-export function setUnreadSession(v: boolean): void {
-  mutate(s => { s.unreadSession = v || undefined; });
+export function setUnreadGame(v: boolean): void {
+  mutate(s => { s.unreadGame = v || undefined; });
 }
 
 export function getWalletAlert(): boolean {
-  return loadAppState().walletAlert ?? false;
+  return loadState().walletAlert ?? false;
 }
 
 export function setWalletAlert(v: boolean): void {
   mutate(s => { s.walletAlert = v || undefined; });
 }
 
+export function getTrackerAlert(): boolean {
+  return loadState().trackerAlert ?? false;
+}
+
+export function setTrackerAlert(v: boolean): void {
+  mutate(s => { s.trackerAlert = v || undefined; });
+}
+
 // --- Tracker URL ---
 
 export function getTrackerUrl(): string | undefined {
-  return loadAppState().trackerUrl;
+  return loadState().trackerUrl;
 }
 
 export function setTrackerUrl(url: string | undefined): void {
@@ -560,7 +463,7 @@ export function setTrackerUrl(url: string | undefined): void {
 // --- Saved games ---
 
 export function getSaveList(): string[] {
-  return (loadAppState().savedGames ?? []).map(g => g.id);
+  return (loadState().savedGames ?? []).map(g => g.id);
 }
 
 export function startNewSession() {
@@ -582,6 +485,5 @@ export function saveGame(g: SavedGame): [string, unknown] | undefined {
 }
 
 export function loadSave(saveId: string): SavedGame | undefined {
-  return (loadAppState().savedGames ?? []).find(g => g.id === saveId);
+  return (loadState().savedGames ?? []).find(g => g.id === saveId);
 }
-

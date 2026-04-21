@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { Button } from './button';
 
-const DEV_TRACKER = 'http://localhost:3003';
+const DEV_TRACKER = 'http://127.0.0.1:3003';
 
 function parseTrackerUrl(raw: string): string | null {
   const trimmed = raw.trim();
@@ -63,7 +63,7 @@ export function TrackerPicker({ onConnect }: TrackerPickerProps) {
           onClick={() => onConnect(DEV_TRACKER)}
           className='text-xs text-canvas-solid underline hover:text-canvas-text'
         >
-          dev: connect to local tracker (localhost:3003)
+          dev: connect to local tracker (127.0.0.1:3003)
         </button>
       </div>
     </div>

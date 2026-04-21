@@ -18,21 +18,21 @@ import {
   clearSession,
   hardReset,
   getBuildNonce,
-  SessionSave,
+  SessionState,
   getDefaultFee,
   setDefaultFee as saveDefaultFee,
   getFeeUnit,
   setFeeUnit as saveFeeUnit,
   getActiveTab as getSavedTab,
   setActiveTab as saveActiveTab,
-  getConnecting as getSavedConnecting,
-  setConnecting as saveConnecting,
   getUnreadChat as getSavedUnreadChat,
   setUnreadChat as saveUnreadChat,
-  getUnreadSession as getSavedUnreadSession,
-  setUnreadSession as saveUnreadSession,
+  getUnreadGame as getSavedUnreadGame,
+  setUnreadGame as saveUnreadGame,
   getWalletAlert as getSavedWalletAlert,
   setWalletAlert as saveWalletAlert,
+  getTrackerAlert as getSavedTrackerAlert,
+  setTrackerAlert as saveTrackerAlert,
   getTrackerUrl,
   setTrackerUrl as saveTrackerUrl,
   isLeaseConflict,
@@ -52,7 +52,7 @@ import { Button } from './button';
 import ChatPanel from './ChatPanel';
 import { TrackerPicker } from './TrackerPicker';
 
-type TabId = 'wallet' | 'tracker' | 'session' | 'chat' | 'history' | 'log';
+type TabId = 'wallet' | 'tracker' | 'game' | 'chat' | 'history' | 'log';
 
 const MOJOS_PER_XCH = 1_000_000_000_000;
 
@@ -65,7 +65,7 @@ function getInterface(bcType: 'simulator' | 'walletconnect') {
 const TAB_DEFS: { id: TabId; label: string }[] = [
   { id: 'wallet', label: 'Wallet' },
   { id: 'tracker', label: 'Tracker' },
-  { id: 'session', label: 'Game' },
+  { id: 'game', label: 'Game' },
   { id: 'chat', label: 'Chat' },
   { id: 'history', label: 'History' },
   { id: 'log', label: 'Log' },
@@ -177,12 +177,31 @@ function LogPanel({ lines }: { lines: string[] }) {
 }
 
 const Shell = () => {
+  // Wipe stale saves before any useState reads from localStorage, so that
+  // hooks like activeTab don't latch values from an old session.
+  const staleWipeRef = useRef(false);
+  if (!staleWipeRef.current) {
+    staleWipeRef.current = true;
+    const save = peekSession();
+    const currentNonce = getBuildNonce();
+    if (save && save.buildNonce !== currentNonce) {
+      console.log(
+        '[Shell] boot: stale save (build %s != %s), wiping',
+        save.buildNonce ?? 'none',
+        currentNonce ?? 'none',
+      );
+      clearSession();
+      clearLease();
+    }
+  }
+
   const uniqueId = getPlayerId();
   const sessionId = getSessionId();
 
   const [activeTab, setActiveTabRaw] = useState<TabId>(() => {
     const saved = getSavedTab();
-    const valid: TabId[] = ['wallet', 'tracker', 'session', 'chat', 'history', 'log'];
+    if (saved === 'session') return 'game';
+    const valid: TabId[] = ['wallet', 'tracker', 'game', 'chat', 'history', 'log'];
     return saved && valid.includes(saved as TabId) ? (saved as TabId) : 'wallet';
   });
   const setActiveTab = useCallback((tab: TabId) => {
@@ -239,23 +258,12 @@ const Shell = () => {
   // back.
   type BootState =
     | { kind: 'ready' }
-    | { kind: 'resumeDialog'; save: SessionSave | null }
-    | { kind: 'tabConflict'; save: SessionSave | null; midSession: boolean }
+    | { kind: 'resumeDialog'; save: SessionState | null }
+    | { kind: 'tabConflict'; save: SessionState | null; midSession: boolean }
     | { kind: 'tabDead' };
 
   const [bootState, setBootState] = useState<BootState>(() => {
-    let save = peekSession();
-    const currentNonce = getBuildNonce();
-    if (save && save.buildNonce !== currentNonce) {
-      console.log(
-        '[Shell] boot: stale save (build %s != %s), wiping',
-        save.buildNonce ?? 'none',
-        currentNonce ?? 'none',
-      );
-      clearSession();
-      clearLease();
-      save = null;
-    }
+    const save = peekSession();
     if (save) {
       console.log('[Shell] boot: save present (bcType=%s token=%s), showing resume dialog',
         save.blockchainType ?? 'none', save.pairingToken ?? 'none');
@@ -276,6 +284,8 @@ const Shell = () => {
     const handler = () => {
       trackerConnRef.current?.disconnect();
       trackerConnRef.current = null;
+      activeBlockchainRef.current?.disconnect().catch(() => {});
+      activeBlockchainRef.current = null;
       setBootState(prev => {
         if (prev.kind !== 'ready') return prev;
         return { kind: 'tabConflict', save: peekSession(), midSession: true };
@@ -285,6 +295,16 @@ const Shell = () => {
     return () => { offFenced(handler); };
   }, []);
 
+  // Close WebSocket connections on page unload/reload so the browser doesn't
+  // leave stale TCP sockets that block new connections in the reloaded page.
+  useEffect(() => {
+    const cleanup = () => {
+      trackerConnRef.current?.disconnect();
+      activeBlockchainRef.current?.disconnect().catch(() => {});
+    };
+    window.addEventListener('beforeunload', cleanup);
+    return () => { window.removeEventListener('beforeunload', cleanup); };
+  }, []);
 
   const [history, setHistory] = useState<string[]>([]);
   const [logLines, setLogLines] = useState<string[]>([]);
@@ -292,10 +312,12 @@ const Shell = () => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [unreadChat, setUnreadChatRaw] = useState(() => getSavedUnreadChat());
   const setUnreadChat = useCallback((v: boolean) => { setUnreadChatRaw(v); saveUnreadChat(v); }, []);
-  const [unreadSession, setUnreadSessionRaw] = useState(() => getSavedUnreadSession());
-  const setUnreadSession = useCallback((v: boolean) => { setUnreadSessionRaw(v); saveUnreadSession(v); }, []);
+  const [unreadGame, setUnreadGameRaw] = useState(() => getSavedUnreadGame());
+  const setUnreadGame = useCallback((v: boolean) => { setUnreadGameRaw(v); saveUnreadGame(v); }, []);
   const [walletAlert, setWalletAlertRaw] = useState(() => getSavedWalletAlert());
   const setWalletAlert = useCallback((v: boolean) => { setWalletAlertRaw(v); saveWalletAlert(v); }, []);
+  const [trackerAlert, setTrackerAlertRaw] = useState(() => getSavedTrackerAlert());
+  const setTrackerAlert = useCallback((v: boolean) => { setTrackerAlertRaw(v); saveTrackerAlert(v); }, []);
   const [iframeUrl, setIframeUrl] = useState('about:blank');
   const [balance, setBalance] = useState<number | undefined>();
 
@@ -305,8 +327,7 @@ const Shell = () => {
   // Connection state
   const [showSimModal, setShowSimModal] = useState(false);
   const [connectionSetup, setConnectionSetup] = useState<ConnectionSetup | null>(null);
-  const [connecting, setConnectingRaw] = useState(() => getSavedConnecting());
-  const setConnecting = useCallback((v: boolean) => { setConnectingRaw(v); saveConnecting(v); }, []);
+  const [connecting, setConnecting] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState('');
   const wcAbortRef = useRef(false);
   const [defaultFee, setDefaultFee] = useState<number>(() => getDefaultFee());
@@ -398,7 +419,7 @@ const Shell = () => {
   const trackerConnRef = useRef<TrackerConnection | null>(null);
   const activeTabRef = useRef<TabId>(activeTab);
   activeTabRef.current = activeTab;
-  const sessionSaveRef = useRef<SessionSave | null>(null);
+  const sessionSaveRef = useRef<SessionState | null>(null);
   const sessionStartedRef = useRef(false);
   const activePairingTokenRef = useRef<string | null>(null);
   const balanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -544,7 +565,7 @@ const Shell = () => {
       amount: bigint,
       perGame: bigint,
       token: string,
-      save: SessionSave | null,
+      save: SessionState | null,
       myAlias?: string,
       opponentAlias?: string,
     ) => {
@@ -573,7 +594,7 @@ const Shell = () => {
           if (save.chatMessages) setChatMessages(save.chatMessages);
         } else {
           setHistory([]);
-          setActiveTab('session');
+          setActiveTab('game');
         }
       } else {
         console.log('[Shell] startSession: state already hydrated by handleResume, upgrading peer connection only');
@@ -716,6 +737,11 @@ const Shell = () => {
             setUnreadChat(true);
           }
         },
+        onLobbyAttention: () => {
+          if (activeTabRef.current !== 'tracker') {
+            setTrackerAlert(true);
+          }
+        },
       });
     } catch (err) {
       console.error('[Shell] TrackerConnection failed for origin=%s', origin, err);
@@ -800,6 +826,7 @@ const Shell = () => {
   // --- Unified connection flow ---
   // silent: skip the modal on reconnect (e.g. auto-reconnect after completed connection)
   const handleConnect = useCallback(async (bcType: 'simulator' | 'walletconnect', silent = false) => {
+    log(`[Shell] handleConnect: bcType=${bcType} silent=${silent}`);
     wcAbortRef.current = false;
     const { iface, pollMs } = getInterface(bcType);
     try {
@@ -814,8 +841,10 @@ const Shell = () => {
         setConnecting(false);
         return;
       }
+      log(`[Shell] handleConnect: calling finalize`);
       await setup.finalize();
       if (wcAbortRef.current) return;
+      log(`[Shell] handleConnect: finalize complete`);
       completeConnection(iface, bcType, pollMs);
     } catch (err) {
       if (!wcAbortRef.current) {
@@ -830,10 +859,12 @@ const Shell = () => {
 
   const handleFinalize = useCallback(async () => {
     if (!connectionSetup || !blockchainType) return;
+    log(`[Shell] handleFinalize: bcType=${blockchainType}`);
     const { iface, pollMs } = getInterface(blockchainType);
     setConnecting(true);
     try {
       await connectionSetup.finalize();
+      log(`[Shell] handleFinalize: finalize complete`);
       setShowSimModal(false);
       completeConnection(iface, blockchainType, pollMs);
     } catch (err) {
@@ -871,10 +902,10 @@ const Shell = () => {
     });
   }, [gameParams?.myAlias]);
 
-  const onSessionActivity = useCallback(() => {
-    if (activeTabRef.current !== 'session') {
+  const onGameActivity = useCallback(() => {
+    if (activeTabRef.current !== 'game') {
       deferStateUpdate(() => {
-        setUnreadSession(true);
+        setUnreadGame(true);
       });
     }
   }, [deferStateUpdate]);
@@ -882,17 +913,18 @@ const Shell = () => {
   const handleTabChange = useCallback((tabId: TabId) => {
     setActiveTab(tabId);
     if (tabId === 'chat') setUnreadChat(false);
-    if (tabId === 'session') setUnreadSession(false);
+    if (tabId === 'game') setUnreadGame(false);
     if (tabId === 'wallet') setWalletAlert(false);
+    if (tabId === 'tracker') setTrackerAlert(false);
   }, []);
 
   useThemeSyncToIframe('tracker-iframe', [iframeUrl]);
 
   const [resuming, setResuming] = useState(false);
 
-  // Hydrate local UI state from a SessionSave and kick off a backend connect.
+  // Hydrate local UI state from a SessionState and kick off a backend connect.
   // Called only after the user has consented (Resume button) and the lease is ours.
-  const performResume = useCallback(async (save: SessionSave) => {
+  const performResume = useCallback(async (save: SessionState) => {
     const bcType = save.blockchainType ?? 'simulator';
     console.log('[Shell] performResume: bcType=%s token=%s', bcType, save.pairingToken ?? 'none');
     setResuming(true);
@@ -980,6 +1012,10 @@ const Shell = () => {
   }, [performResume, handleConnect]);
 
   const handleCloseTab = useCallback(() => {
+    trackerConnRef.current?.disconnect();
+    trackerConnRef.current = null;
+    activeBlockchainRef.current?.disconnect().catch(() => {});
+    activeBlockchainRef.current = null;
     setBootState({ kind: 'tabDead' });
   }, []);
 
@@ -1146,8 +1182,9 @@ const Shell = () => {
           const active = activeTab === tab.id;
           const showDot = !active && (
             (tab.id === 'chat' && unreadChat) ||
-            (tab.id === 'session' && unreadSession) ||
-            (tab.id === 'wallet' && walletAlert)
+            (tab.id === 'game' && unreadGame) ||
+            (tab.id === 'wallet' && walletAlert) ||
+            (tab.id === 'tracker' && trackerAlert)
           );
           return (
             <button
@@ -1425,7 +1462,7 @@ const Shell = () => {
         </div>
 
         {/* Game Session tab */}
-        <div style={{ position: 'absolute', inset: 0, overflow: 'auto', visibility: activeTab === 'session' ? 'visible' : 'hidden' }}>
+        <div style={{ position: 'absolute', inset: 0, overflow: 'auto', visibility: activeTab === 'game' ? 'visible' : 'hidden' }}>
           {keepSession ? (
             <GameSessionErrorBoundary>
               <GameSession
@@ -1436,7 +1473,7 @@ const Shell = () => {
                 registerMessageHandler={registerMessageHandler}
                 appendGameLog={appendHistory}
                 sessionSave={sessionSaveRef.current ?? undefined}
-                onSessionActivity={onSessionActivity}
+                onGameActivity={onGameActivity}
               />
             </GameSessionErrorBoundary>
           ) : sessionCanMount ? (

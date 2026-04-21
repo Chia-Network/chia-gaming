@@ -20,7 +20,7 @@ import {
   setInitStarted,
 } from './blobSingleton';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
-import { SessionSave, saveSession, getDefaultFee, getBlockchainType } from './save';
+import { SessionState, saveSession, getDefaultFee, getBlockchainType } from './save';
 import { coinIdFromBytes } from '../util';
 import { log } from '../services/log';
 
@@ -349,7 +349,7 @@ export function useGameSession(
   peerConn: PeerConnectionResult,
   registerMessageHandler: (handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void,
   appendGameLog: (line: string) => void,
-  sessionSave?: SessionSave,
+  sessionSave?: SessionState,
 ): UseGameSessionResult {
   const { iStarted, amount, perGameAmount } = params;
   const playerNumber = iStarted ? 1 : 2;
@@ -596,7 +596,7 @@ export function useGameSession(
     const go = gameObjectRef.current;
     const wasm = go?.getWasmFields();
     if (!wasm) return;
-    const save: SessionSave = {
+    const save: Partial<SessionState> = {
       blockchainType: getBlockchainType(),
       ...wasm,
       gameCoinHex: gameCoin.coinHex,
@@ -1204,6 +1204,7 @@ export function useGameSession(
       }
     }
     setReviewPeerProposal(null);
+    setComposeProposalSent(false);
     setBetweenHandMode('compose-proposal');
   }, []);
 

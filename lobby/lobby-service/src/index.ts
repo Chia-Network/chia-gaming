@@ -470,6 +470,7 @@ function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'c
     amount: challenge.amount,
     per_game: challenge.per_game,
   });
+  sendGameEvent(target_id, 'lobby_attention', {});
 }
 
 function onChallengeAccept(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'challenge_accept' }>): void {
@@ -979,6 +980,6 @@ setInterval(() => {
 }, 15_000);
 
 const port = process.env.PORT || 5801;
-httpServer.listen({ host: '0.0.0.0', port }, () => {
+httpServer.listen({ host: '::', port }, () => {
   console.log(`Server running on port ${port}`);
 });

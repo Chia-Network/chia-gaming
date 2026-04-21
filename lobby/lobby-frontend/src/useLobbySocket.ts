@@ -71,8 +71,10 @@ export function useLobbySocket(
   const [aliasLoaded, setAliasLoaded] = useState(false);
   const uniqueIdRef = useRef(uniqueId);
   const wsRef = useRef<WebSocket | null>(null);
+  const pendingWsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const keepaliveTimerRef = useRef<number | null>(null);
+  const reconnectAttemptRef = useRef(0);
   const closingRef = useRef(false);
   const pendingOutboundRef = useRef<Record<string, unknown>[]>([]);
 
@@ -115,6 +117,8 @@ export function useLobbySocket(
     closingRef.current = false;
     setReconnectBlocked(false);
 
+    const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000, 30000];
+
     const connect = () => {
       if (closingRef.current) return;
       lobbyHsLog('connect_start', {
@@ -124,27 +128,24 @@ export function useLobbySocket(
       });
       const ws = new WebSocket(wsUrl);
       const connectStartedAt = Date.now();
-      const waitThresholdsMs = [2_000, 5_000, 10_000, 20_000, 30_000];
-      let waitThresholdIdx = 0;
-      const openWaitTimer = window.setInterval(() => {
+      pendingWsRef.current = ws;
+
+      const connectTimeout = window.setTimeout(() => {
         if (ws.readyState !== WebSocket.CONNECTING) return;
-        const elapsedMs = Date.now() - connectStartedAt;
-        while (waitThresholdIdx < waitThresholdsMs.length && elapsedMs >= waitThresholdsMs[waitThresholdIdx]) {
-          lobbyHsLog('ws_open_wait', {
-            conn_id: connIdRef.current,
-            session_id: sessionId,
-            elapsed_ms: elapsedMs,
-            threshold_ms: waitThresholdsMs[waitThresholdIdx],
-            ready_state: ws.readyState,
-          });
-          waitThresholdIdx += 1;
-        }
-      }, 250);
-      wsRef.current = ws;
+        lobbyHsLog('ws_connect_timeout', {
+          conn_id: connIdRef.current,
+          session_id: sessionId,
+          elapsed_ms: Date.now() - connectStartedAt,
+        });
+        try { ws.close(); } catch { /* ignore */ }
+      }, 10_000);
 
       ws.onopen = () => {
-        clearInterval(openWaitTimer);
-        if (wsRef.current !== ws) return;
+        clearTimeout(connectTimeout);
+        if (pendingWsRef.current !== ws) return;
+        pendingWsRef.current = null;
+        wsRef.current = ws;
+        reconnectAttemptRef.current = 0;
         lobbyHsLog('ws_open', {
           conn_id: connIdRef.current,
           session_id: sessionId,
@@ -226,12 +227,13 @@ export function useLobbySocket(
       };
 
       ws.onclose = (event: CloseEvent) => {
-        clearInterval(openWaitTimer);
+        clearTimeout(connectTimeout);
         if (keepaliveTimerRef.current !== null) {
           clearInterval(keepaliveTimerRef.current);
           keepaliveTimerRef.current = null;
         }
-        if (wsRef.current !== ws) return;
+        const isCurrentWs = wsRef.current === ws || pendingWsRef.current === ws;
+        if (!isCurrentWs) return;
         lobbyHsLog('ws_close', {
           conn_id: connIdRef.current,
           session_id: sessionId,
@@ -243,15 +245,22 @@ export function useLobbySocket(
         });
         setIsConnected(false);
         wsRef.current = null;
+        pendingWsRef.current = null;
         if (closingRef.current) return;
         if (event.code === 4001) {
           setReconnectBlocked(true);
           return;
         }
+        const base = RECONNECT_DELAYS[
+          Math.min(reconnectAttemptRef.current, RECONNECT_DELAYS.length - 1)
+        ];
+        const delay = Math.round(base * (0.75 + Math.random() * 0.5));
+        reconnectAttemptRef.current++;
         lobbyHsLog('reconnect_timer_set', {
           conn_id: connIdRef.current,
           session_id: sessionId,
-          delay_ms: 1000,
+          delay_ms: delay,
+          attempt: reconnectAttemptRef.current,
         });
         reconnectTimerRef.current = window.setTimeout(() => {
           lobbyHsLog('reconnect_timer_fire', {
@@ -259,18 +268,19 @@ export function useLobbySocket(
             session_id: sessionId,
           });
           connect();
-        }, 1000);
+        }, delay);
       };
 
       ws.onerror = () => {
-        clearInterval(openWaitTimer);
-        if (wsRef.current !== ws) return;
+        clearTimeout(connectTimeout);
+        const isCurrentWs = wsRef.current === ws || pendingWsRef.current === ws;
+        if (!isCurrentWs) return;
         lobbyHsLog('ws_error', {
           conn_id: connIdRef.current,
           session_id: sessionId,
           connect_elapsed_ms: Date.now() - connectStartedAt,
         });
-        try { ws.close(); } catch {}
+        try { ws.close(); } catch { /* ignore */ }
       };
     };
 
@@ -292,8 +302,10 @@ export function useLobbySocket(
         keepaliveTimerRef.current = null;
       }
       send({ type: 'leave', id: uniqueId }, false);
-      try { wsRef.current?.close(); } catch {}
+      try { wsRef.current?.close(); } catch { /* ignore */ }
+      try { pendingWsRef.current?.close(); } catch { /* ignore */ }
       wsRef.current = null;
+      pendingWsRef.current = null;
       pendingOutboundRef.current = [];
     };
   }, [uniqueId, lobbyUrl, sessionId, send]);

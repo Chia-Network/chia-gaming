@@ -35,6 +35,7 @@ export interface TrackerConnectionCallbacks {
   onTrackerReconnected: () => void;
   onTrackerActivity: () => void;
   onChat: (msg: ChatMessage) => void;
+  onLobbyAttention: () => void;
 }
 
 export type MessagePayload =
@@ -50,7 +51,8 @@ type TrackerEnvelope =
   | { type: 'peer_reconnected' }
   | { type: 'keepalive' }
   | { type: 'closed' }
-  | { type: 'error'; error?: string };
+  | { type: 'error'; error?: string }
+  | { type: 'lobby_attention' };
 
 function isMessagePayload(data: unknown): data is MessagePayload {
   if (!data || typeof data !== 'object') return false;
@@ -89,6 +91,8 @@ export class TrackerConnection {
   private wasDisconnected = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+  private static readonly RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000, 30000];
+  private reconnectAttempt = 0;
 
   constructor(trackerUrl: string, sessionId: string, callbacks: TrackerConnectionCallbacks) {
     this.trackerUrl = trackerUrl;
@@ -124,9 +128,17 @@ export class TrackerConnection {
       throw new Error(msg);
     }
     const ws = new WebSocket(wsUrl);
-    this.ws = ws;
+
+    const connectTimeout = globalThis.setTimeout(() => {
+      if (this.ws === ws || this.closed) return;
+      log('[tracker] connection timeout, closing attempt');
+      try { ws.close(); } catch { /* ignore */ }
+    }, 10_000);
 
     ws.onopen = () => {
+      globalThis.clearTimeout(connectTimeout);
+      this.ws = ws;
+      this.reconnectAttempt = 0;
       this.sendWs({ type: 'identify', session_id: this.sessionId });
       if (this.wasDisconnected) {
         log('[tracker] reconnected to tracker');
@@ -141,6 +153,7 @@ export class TrackerConnection {
     };
 
     ws.onmessage = (evt: MessageEvent<string>) => {
+      if (this.ws !== ws) return;
       this.callbacks.onTrackerActivity();
       let msg: TrackerEnvelope | null = null;
       try {
@@ -226,6 +239,9 @@ export class TrackerConnection {
           this.closePending = false;
           this.callbacks.onClosed();
           break;
+        case 'lobby_attention':
+          this.callbacks.onLobbyAttention();
+          break;
         case 'error':
           log(`[tracker] server error: ${msg.error ?? 'unknown'}`);
           break;
@@ -235,6 +251,7 @@ export class TrackerConnection {
     };
 
     ws.onerror = () => {
+      globalThis.clearTimeout(connectTimeout);
       this.stopKeepaliveTimer();
       if (!this.closed && !this.wasDisconnected) {
         this.wasDisconnected = true;
@@ -244,18 +261,26 @@ export class TrackerConnection {
     };
 
     ws.onclose = () => {
+      globalThis.clearTimeout(connectTimeout);
       this.stopKeepaliveTimer();
       if (this.closed) return;
       if (!this.wasDisconnected) {
         this.wasDisconnected = true;
         this.callbacks.onTrackerDisconnected();
       }
-      this.ws = null;
+      if (this.ws === ws) {
+        this.ws = null;
+      }
       if (this.reconnectTimer === null) {
+        const base = TrackerConnection.RECONNECT_DELAYS[
+          Math.min(this.reconnectAttempt, TrackerConnection.RECONNECT_DELAYS.length - 1)
+        ];
+        const jitter = Math.round(base * (0.75 + Math.random() * 0.5));
+        this.reconnectAttempt++;
         this.reconnectTimer = globalThis.setTimeout(() => {
           this.reconnectTimer = null;
           this.connectWs();
-        }, 1000);
+        }, jitter);
       }
     };
   }

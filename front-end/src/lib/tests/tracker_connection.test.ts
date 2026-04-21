@@ -84,6 +84,7 @@ function makeCallbacks(): TrackerConnectionCallbacks {
     onTrackerReconnected: jest.fn(),
     onTrackerActivity: jest.fn(),
     onChat: jest.fn(),
+    onLobbyAttention: jest.fn(),
   };
 }
 

@@ -358,8 +358,8 @@ export interface GameSessionProps {
   peerConnected?: boolean | null;
   registerMessageHandler: (handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void;
   appendGameLog: (line: string) => void;
-  sessionSave?: import('../hooks/save').SessionSave;
-  onSessionActivity?: () => void;
+  sessionSave?: import('../hooks/save').SessionState;
+  onGameActivity?: () => void;
 }
 
 const TRACKER_LIVENESS_LABELS: Record<string, string> = {
@@ -369,20 +369,30 @@ const TRACKER_LIVENESS_LABELS: Record<string, string> = {
   disconnected: 'Disconnected',
 };
 
-const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLiveness, peerConnected, registerMessageHandler, appendGameLog, sessionSave, onSessionActivity }) => {
+const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLiveness, peerConnected, registerMessageHandler, appendGameLog, sessionSave, onGameActivity }) => {
   const uniqueId = getPlayerId();
 
   const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, sessionSave);
 
   useEffect(() => {
-    if (!onSessionActivity) return;
+    if (!onGameActivity) return;
     const sub = session.gameplayEvent$.subscribe((evt) => {
       if ('OpponentMoved' in evt || 'ProposalAccepted' in evt) {
-        onSessionActivity();
+        onGameActivity();
       }
     });
     return () => sub.unsubscribe();
-  }, [session.gameplayEvent$, onSessionActivity]);
+  }, [session.gameplayEvent$, onGameActivity]);
+
+  const prevGameQueueLen = useRef(session.gameQueue.length);
+  const prevChannelQueueLen = useRef(session.channelQueue.length);
+  useEffect(() => {
+    const grew = session.gameQueue.length > prevGameQueueLen.current ||
+                 session.channelQueue.length > prevChannelQueueLen.current;
+    prevGameQueueLen.current = session.gameQueue.length;
+    prevChannelQueueLen.current = session.channelQueue.length;
+    if (grew) onGameActivity?.();
+  }, [session.gameQueue.length, session.channelQueue.length, onGameActivity]);
 
   const channelOverlayBoundsRef = useRef<HTMLDivElement | null>(null);
   const gameAreaRef = useRef<HTMLDivElement | null>(null);
@@ -416,6 +426,14 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
   return (
     <div className='relative w-full h-full min-h-0 flex flex-col bg-canvas-bg-subtle text-canvas-text pt-6'>
       <div ref={channelOverlayBoundsRef} className='absolute inset-0 pointer-events-none' />
+      {session.gameQueue[0] && (
+        <NotificationOverlay
+          notification={session.gameQueue[0]}
+          onDismiss={session.dismissGame}
+          boundsRef={channelOverlayBoundsRef}
+          zClass='z-40'
+        />
+      )}
       {/* Session header (shrink-0) */}
       <div className='flex-shrink-0 px-4 pt-3 pb-2 sm:px-6 md:px-8'>
         {/* Report + end session */}
@@ -524,14 +542,6 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
             </div>
           )}
 
-          {session.gameQueue[0] && (
-            <NotificationOverlay
-              notification={session.gameQueue[0]}
-              onDismiss={session.dismissGame}
-              boundsRef={gameAreaRef}
-              zClass='z-40'
-            />
-          )}
         </div>
 
         {/* Between-hand session controls */}
@@ -572,6 +582,11 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
                     disabled={session.composeProposalSent}
                     label='Per-player stake'
                     exceedsLabel='Exceeds available reserve.'
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !session.composeProposalSent && session.composePerHandAmount > 0n) {
+                        session.submitComposedProposal(session.composePerHandAmount);
+                      }
+                    }}
                   />
                   <div className='flex flex-wrap items-center gap-3'>
                     <Button

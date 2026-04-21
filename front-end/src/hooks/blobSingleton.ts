@@ -6,7 +6,7 @@ import {
 import { BlockchainPoller } from './BlockchainPoller';
 import {
   startNewSession,
-  SessionSave,
+  SessionState,
 } from './save';
 import { log } from '../services/log';
 
@@ -52,7 +52,7 @@ export async function configGameObject(
 
 async function restoreSession(
   gameObject: WasmBlobWrapper,
-  save: SessionSave,
+  save: SessionState,
   wasmStateInit: WasmStateInit,
   blockchain: BlockchainPoller,
 ): Promise<void> {
@@ -99,7 +99,7 @@ export function getBlobSingleton(
   uniqueId: string,
   amount: bigint,
   iStarted: boolean,
-  sessionSave?: SessionSave,
+  sessionSave?: SessionState,
   pairingToken?: string,
   perGameAmount?: bigint,
   getFee?: () => number,

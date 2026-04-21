@@ -912,9 +912,10 @@ fn respond_not_found(request: tiny_http::Request) {
 
 fn run_health_server(height: Arc<AtomicUsize>) {
     let listener = {
-        let addr: SocketAddr = "0.0.0.0:5800".parse().unwrap();
-        let sock = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)
+        let addr: SocketAddr = "[::]:5800".parse().unwrap();
+        let sock = socket2::Socket::new(socket2::Domain::IPV6, socket2::Type::STREAM, None)
             .expect("failed to create socket for health server");
+        sock.set_only_v6(false).expect("set_only_v6 failed");
         sock.set_reuse_address(true)
             .expect("set_reuse_address failed");
         sock.bind(&addr.into()).expect("failed to bind port 5800");
@@ -996,9 +997,10 @@ fn service_main_inner() {
 
     // WebSocket API on port 5801 — SO_REUSEADDR lets us rebind immediately after restart.
     let ws_listener = {
-        let addr: SocketAddr = "0.0.0.0:5801".parse().unwrap();
-        let sock = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)
+        let addr: SocketAddr = "[::]:5801".parse().unwrap();
+        let sock = socket2::Socket::new(socket2::Domain::IPV6, socket2::Type::STREAM, None)
             .expect("failed to create socket");
+        sock.set_only_v6(false).expect("set_only_v6 failed");
         sock.set_reuse_address(true)
             .expect("set_reuse_address failed");
         sock.set_nonblocking(true).expect("set_nonblocking failed");
@@ -1019,9 +1021,15 @@ fn service_main_inner() {
             Ok((stream, addr)) => {
                 sim_log(&format!("tcp_accept: addr={addr}"));
                 stream
-                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .set_read_timeout(Some(Duration::from_millis(500)))
                     .expect("set_read_timeout failed");
-                match tungstenite::accept(stream) {
+                let hs_start = Instant::now();
+                let hs_result = tungstenite::accept(stream);
+                let hs_ms = hs_start.elapsed().as_millis();
+                if hs_ms > 5 {
+                    sim_log(&format!("ws_handshake_slow: addr={addr} elapsed={hs_ms}ms"));
+                }
+                match hs_result {
                     Ok(ws) => {
                         if let Err(e) = ws.get_ref().set_nonblocking(true) {
                             sim_log(&format!(
