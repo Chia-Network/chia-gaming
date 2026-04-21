@@ -550,7 +550,8 @@ impl PotatoHandler {
                     let their_contribution = gsi.their_contribution_this_game.clone();
                     effects.push(Effect::Log(format!(
                         "DBG_ISSUE: recv ProposeGame id={} {}",
-                        game_id, ch.dbg_proposed_games_summary(),
+                        game_id,
+                        ch.dbg_proposed_games_summary(),
                     )));
                     effects.push(Effect::Notify(GameNotification::ProposalMade {
                         id: game_id,
@@ -564,7 +565,9 @@ impl PotatoHandler {
                     ch.apply_received_accept_proposal(game_id)?;
                     effects.push(Effect::Log(format!(
                         "DBG_ISSUE: recv AcceptProposal id={} before={} after={}",
-                        game_id, before, ch.dbg_proposed_games_summary(),
+                        game_id,
+                        before,
+                        ch.dbg_proposed_games_summary(),
                     )));
                     effects.push(Effect::Notify(GameNotification::ProposalAccepted {
                         id: *game_id,
@@ -880,7 +883,8 @@ impl PotatoHandler {
                         ch.send_propose_game(env, &my_gsi)?;
                         effects.push(Effect::Log(format!(
                             "DBG_ISSUE: send ProposeGame id={} {}",
-                            my_gsi.game_id, ch.dbg_proposed_games_summary(),
+                            my_gsi.game_id,
+                            ch.dbg_proposed_games_summary(),
                         )));
                     }
                     batch_actions.push(BatchAction::ProposeGame(their_wire));
@@ -914,7 +918,9 @@ impl PotatoHandler {
                         ch.send_accept_proposal(&game_id)?;
                         effects.push(Effect::Log(format!(
                             "DBG_ISSUE: send AcceptProposal id={} before={} after={}",
-                            game_id, before, ch.dbg_proposed_games_summary(),
+                            game_id,
+                            before,
+                            ch.dbg_proposed_games_summary(),
                         )));
                     }
                     effects.push(Effect::Notify(GameNotification::ProposalAccepted {
@@ -1259,7 +1265,10 @@ impl PotatoHandler {
 
                 return Ok((
                     true,
-                    vec![log_effect, Effect::RequestPuzzleAndSolution(coin_id.clone())],
+                    vec![
+                        log_effect,
+                        Effect::RequestPuzzleAndSolution(coin_id.clone()),
+                    ],
                 ));
             }
         }

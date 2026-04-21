@@ -1567,7 +1567,10 @@ impl OnChainGameHandler {
                             status: GameStatusKind::EndedWeTimedOut,
                             my_reward: Some(Amount::default()),
                             coin_id: None,
-                            reason: Some("zero reward: our turn to accept timeout but our share is zero".to_string()),
+                            reason: Some(
+                                "zero reward: our turn to accept timeout but our share is zero"
+                                    .to_string(),
+                            ),
                             other_params: finished_params,
                         })]);
                     }

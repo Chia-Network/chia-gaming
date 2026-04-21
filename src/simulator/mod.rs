@@ -7,8 +7,10 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 use chia_consensus::consensus_constants::ConsensusConstants;
-use chia_consensus::spendbundle_validation::{get_flags_for_height_and_constants, validate_clvm_and_signature};
 use chia_consensus::flags::MEMPOOL_MODE;
+use chia_consensus::spendbundle_validation::{
+    get_flags_for_height_and_constants, validate_clvm_and_signature,
+};
 use chia_consensus::validation_error::ErrorCode;
 use clvm_traits::{ClvmEncoder, ToClvm};
 
@@ -260,8 +262,14 @@ fn to_protocol_spend_bundle(
 
     for (i, tx) in txs.iter().enumerate() {
         let (parent, ph, amount) = tx.coin.get_coin_string_parts()?;
-        let parent_arr: [u8; 32] = parent.bytes().try_into().map_err(|_| Error::StrErr("bad parent".into()))?;
-        let ph_arr: [u8; 32] = ph.bytes().try_into().map_err(|_| Error::StrErr("bad ph".into()))?;
+        let parent_arr: [u8; 32] = parent
+            .bytes()
+            .try_into()
+            .map_err(|_| Error::StrErr("bad parent".into()))?;
+        let ph_arr: [u8; 32] = ph
+            .bytes()
+            .try_into()
+            .map_err(|_| Error::StrErr("bad ph".into()))?;
         let coin = chia_protocol::Coin {
             parent_coin_info: chia_protocol::Bytes32::from(parent_arr),
             puzzle_hash: chia_protocol::Bytes32::from(ph_arr),
@@ -269,7 +277,9 @@ fn to_protocol_spend_bundle(
         };
         let puzzle_bytes = tx.bundle.puzzle.to_program().bytes().to_vec();
         let solution_node = tx.bundle.solution.to_clvm(allocator).into_gen()?;
-        let solution_bytes = Program::from_nodeptr(allocator, solution_node)?.bytes().to_vec();
+        let solution_bytes = Program::from_nodeptr(allocator, solution_node)?
+            .bytes()
+            .to_vec();
         protocol_spends.push(chia_protocol::CoinSpend {
             coin,
             puzzle_reveal: chia_protocol::Bytes::from(puzzle_bytes).into(),
@@ -290,7 +300,9 @@ fn to_protocol_spend_bundle(
 
 fn format_validation_error(code: ErrorCode) -> String {
     let desc = match code {
-        ErrorCode::DuplicateOutput => "duplicate output (two CREATE_COINs with same puzzle_hash and amount)",
+        ErrorCode::DuplicateOutput => {
+            "duplicate output (two CREATE_COINs with same puzzle_hash and amount)"
+        }
         ErrorCode::BadAggregateSignature => "bad aggregate signature",
         ErrorCode::InvalidCoinSolution => "invalid coin solution",
         ErrorCode::InvalidBlockSolution => "invalid puzzle reveal",

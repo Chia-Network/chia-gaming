@@ -810,8 +810,18 @@ impl ChannelHandler {
                 "[sig-diag] storing timeout slot state={} our_half={} peer_half={} base_hash={}",
                 outcome.state_number,
                 hex::encode(outcome.signature.bytes()),
-                hex::encode(timeout_info.signatures.my_unroll_half_signature_peer.bytes()),
-                hex::encode(outcome.conditions_without_hash.sha256tree(env.allocator).bytes()),
+                hex::encode(
+                    timeout_info
+                        .signatures
+                        .my_unroll_half_signature_peer
+                        .bytes()
+                ),
+                hex::encode(
+                    outcome
+                        .conditions_without_hash
+                        .sha256tree(env.allocator)
+                        .bytes()
+                ),
             );
         }
         self.timeout = Some(timeout_info);
@@ -1765,7 +1775,11 @@ impl ChannelHandler {
 
         let curried_puzzle = CurriedProgram {
             program: env.unroll_puzzle.clone(),
-            args: clvm_curried_args!(shared_puzzle_hash.clone(), unrolling_state_number, conditions_hash),
+            args: clvm_curried_args!(
+                shared_puzzle_hash.clone(),
+                unrolling_state_number,
+                conditions_hash
+            ),
         }
         .to_clvm(env.allocator)
         .into_gen()?;

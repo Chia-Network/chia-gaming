@@ -5454,89 +5454,95 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         );
     }));
 
-    res.push(("proposer_side_clean_shutdown_with_pending_proposal_succeeds", &|| {
-        let mut allocator = AllocEncoder::new();
+    res.push((
+        "proposer_side_clean_shutdown_with_pending_proposal_succeeds",
+        &|| {
+            let mut allocator = AllocEncoder::new();
 
-        // No initial game. Alice proposes, then (before Bob accepts/cancels)
-        // Alice initiates clean shutdown. Pending proposals should be cancelled
-        // and shutdown should complete cleanly.
-        let moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::CleanShutdown(0),
-        ];
+            // No initial game. Alice proposes, then (before Bob accepts/cancels)
+            // Alice initiates clean shutdown. Pending proposals should be cancelled
+            // and shutdown should complete cleanly.
+            let moves = vec![
+                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                GameAction::CleanShutdown(0),
+            ];
 
-        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
-            &mut allocator,
-            &moves,
-            None,
-            Some(200),
-        )
-        .expect("should finish");
+            let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &moves,
+                None,
+                Some(200),
+            )
+            .expect("should finish");
 
-        let p0_notifs = &outcome.local_uis[0].notifications;
-        assert!(
-            p0_notifs
-                .iter()
-                .any(|n| matches!(n, GameNotification::ProposalCancelled { .. })),
-            "Alice should see ProposalCancelled during shutdown, got: {p0_notifs:?}"
-        );
+            let p0_notifs = &outcome.local_uis[0].notifications;
+            assert!(
+                p0_notifs
+                    .iter()
+                    .any(|n| matches!(n, GameNotification::ProposalCancelled { .. })),
+                "Alice should see ProposalCancelled during shutdown, got: {p0_notifs:?}"
+            );
 
-        let p1_notifs = &outcome.local_uis[1].notifications;
-        assert!(
-            p1_notifs
-                .iter()
-                .any(|n| matches!(n, GameNotification::ProposalMade { .. })),
-            "Bob should see ProposalMade, got: {p1_notifs:?}"
-        );
-        assert!(
-            p1_notifs
-                .iter()
-                .any(|n| matches!(n, GameNotification::ProposalCancelled { .. })),
-            "Bob should see ProposalCancelled during shutdown, got: {p1_notifs:?}"
-        );
-    }));
+            let p1_notifs = &outcome.local_uis[1].notifications;
+            assert!(
+                p1_notifs
+                    .iter()
+                    .any(|n| matches!(n, GameNotification::ProposalMade { .. })),
+                "Bob should see ProposalMade, got: {p1_notifs:?}"
+            );
+            assert!(
+                p1_notifs
+                    .iter()
+                    .any(|n| matches!(n, GameNotification::ProposalCancelled { .. })),
+                "Bob should see ProposalCancelled during shutdown, got: {p1_notifs:?}"
+            );
+        },
+    ));
 
-    res.push(("receiver_side_clean_shutdown_with_pending_proposal_succeeds", &|| {
-        let mut allocator = AllocEncoder::new();
+    res.push((
+        "receiver_side_clean_shutdown_with_pending_proposal_succeeds",
+        &|| {
+            let mut allocator = AllocEncoder::new();
 
-        // No initial game. Alice proposes, Bob has the potato and
-        // initiates clean shutdown. The proposal should be cancelled
-        // on both sides.
-        let moves = vec![
-            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
-            GameAction::CleanShutdown(1),
-        ];
+            // No initial game. Alice proposes, Bob has the potato and
+            // initiates clean shutdown. The proposal should be cancelled
+            // on both sides.
+            let moves = vec![
+                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                GameAction::CleanShutdown(1),
+            ];
 
-        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
-            &mut allocator,
-            &moves,
-            None,
-            Some(200),
-        )
-        .expect("should finish");
+            let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &moves,
+                None,
+                Some(200),
+            )
+            .expect("should finish");
 
-        let p0_notifs = &outcome.local_uis[0].notifications;
-        assert!(
-            p0_notifs
-                .iter()
-                .any(|n| matches!(n, GameNotification::ProposalCancelled { .. })),
-            "Alice should see ProposalCancelled during shutdown, got: {p0_notifs:?}"
-        );
+            let p0_notifs = &outcome.local_uis[0].notifications;
+            assert!(
+                p0_notifs
+                    .iter()
+                    .any(|n| matches!(n, GameNotification::ProposalCancelled { .. })),
+                "Alice should see ProposalCancelled during shutdown, got: {p0_notifs:?}"
+            );
 
-        let p1_notifs = &outcome.local_uis[1].notifications;
-        assert!(
-            p1_notifs
-                .iter()
-                .any(|n| matches!(n, GameNotification::ProposalMade { .. })),
-            "Bob should see ProposalMade, got: {p1_notifs:?}"
-        );
-        assert!(
-            p1_notifs
-                .iter()
-                .any(|n| matches!(n, GameNotification::ProposalCancelled { .. })),
-            "Bob should see ProposalCancelled during shutdown, got: {p1_notifs:?}"
-        );
-    }));
+            let p1_notifs = &outcome.local_uis[1].notifications;
+            assert!(
+                p1_notifs
+                    .iter()
+                    .any(|n| matches!(n, GameNotification::ProposalMade { .. })),
+                "Bob should see ProposalMade, got: {p1_notifs:?}"
+            );
+            assert!(
+                p1_notifs
+                    .iter()
+                    .any(|n| matches!(n, GameNotification::ProposalCancelled { .. })),
+                "Bob should see ProposalCancelled during shutdown, got: {p1_notifs:?}"
+            );
+        },
+    ));
 
     res.push(("test_proposal_cancel_by_proposer", &|| {
         let mut allocator = AllocEncoder::new();

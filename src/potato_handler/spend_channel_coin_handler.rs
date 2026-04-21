@@ -588,9 +588,7 @@ impl SpendChannelCoinHandler {
             };
 
             if is_clean {
-                effects.push(Effect::Log(
-                    "[clean-end] clean shutdown landed".to_string(),
-                ));
+                effects.push(Effect::Log("[clean-end] clean shutdown landed".to_string()));
                 {
                     let ch = self.base.channel_handler_mut()?;
                     for (id, amount, game_finished) in ch.drain_cached_accept_timeouts() {
@@ -682,7 +680,11 @@ impl SpendChannelCoinHandler {
 
         match outcome {
             UnrollOutcome::Preempted(bundle) => {
-                let sig_hex = bundle.spends.first().map(|s| hex::encode(s.bundle.signature.bytes())).unwrap_or_default();
+                let sig_hex = bundle
+                    .spends
+                    .first()
+                    .map(|s| hex::encode(s.bundle.signature.bytes()))
+                    .unwrap_or_default();
                 effects.push(Effect::Log(format!(
                     "[sig-diag] preempt spend: state={on_chain_state} agg_sig={sig_hex}",
                 )));
