@@ -410,19 +410,10 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn create_serialized_game(json: &str, new_seed: &str) -> Result<i32, JsValue> {
-        let mut cradle: JsCradle = if json.starts_with('{') {
-            serde_json::from_str(json)
-                .map_err(|e| types::Error::StrErr(e.to_string()))
-                .into_js()?
-        } else {
-            let bytes = hex::decode(json)
-                .map_err(|e| types::Error::StrErr(e.to_string()))
-                .into_js()?;
-            bson::from_slice::<JsCradle>(&bytes)
-                .map_err(|e| types::Error::StrErr(e.to_string()))
-                .into_js()?
-        };
+    pub fn create_serialized_game(data: &[u8], new_seed: &str) -> Result<i32, JsValue> {
+        let mut cradle: JsCradle = bencodex::from_slice::<JsCradle>(data)
+            .map_err(|e| types::Error::StrErr(e.to_string()))
+            .into_js()?;
         let hashed = Sha256Input::Bytes(new_seed.as_bytes()).hash();
         cradle.rng = ChaCha8SerializationWrapper(ChaCha8Rng::from_seed(*hashed.bytes()));
         let new_id = get_next_id();
@@ -447,11 +438,11 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn serialize_cradle(cid: i32) -> Result<String, JsValue> {
+    pub fn serialize_cradle(cid: i32) -> Result<js_sys::Uint8Array, JsValue> {
         with_game(cid, move |cradle: &mut JsCradle| {
-            let bytes = bson::to_vec(&cradle)
+            let bytes = bencodex::to_vec(&cradle)
                 .map_err(|e| types::Error::StrErr(e.to_string()))?;
-            Ok(hex::encode(bytes))
+            Ok(js_sys::Uint8Array::from(bytes.as_slice()))
         })
     }
 
@@ -824,16 +815,18 @@ mod gaming_wasm {
                 .cradle
                 .flush_and_collect(&mut cradle.allocator)?;
 
-            #[derive(Serialize)]
-            struct ProposeGameResult {
-                ids: Vec<String>,
-                events: Vec<serde_json::Value>,
+            let events = js_sys::Array::new();
+            for event in &dr.events {
+                events.push(&cradle_event_to_js(event)?);
             }
-
-            to_js_compat(&ProposeGameResult {
-                ids: ids.iter().map(game_id_to_string).collect(),
-                events: dr.events.iter().map(cradle_event_to_js).collect(),
-            })
+            let ids_arr = js_sys::Array::new();
+            for id in &ids {
+                ids_arr.push(&JsValue::from_str(&game_id_to_string(id)));
+            }
+            let obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&obj, &"ids".into(), &ids_arr);
+            let _ = js_sys::Reflect::set(&obj, &"events".into(), &events);
+            Ok(obj.into())
         })
     }
 
@@ -1030,8 +1023,8 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn deliver_message(cid: i32, inbound_message: &str) -> Result<JsValue, JsValue> {
-        let message_data = hex::decode(inbound_message).into_js()?;
+    pub fn deliver_message(cid: i32, inbound_message: &[u8]) -> Result<JsValue, JsValue> {
+        let message_data = inbound_message.to_vec();
         with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle.cradle.deliver_message(&message_data)
         })
@@ -1068,11 +1061,6 @@ mod gaming_wasm {
         coin_id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         max_height: Option<u64>,
-    }
-
-    #[derive(Serialize)]
-    struct JsDrainResult {
-        events: Vec<serde_json::Value>,
     }
 
     fn raw_condition_to_js(cond: &RawCoinCondition) -> JsRawCoinCondition {
@@ -1140,58 +1128,64 @@ mod gaming_wasm {
         }
     }
 
-    fn to_js_compat<T: Serialize>(value: &T) -> Result<JsValue, types::Error> {
-        value
-            .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+    fn json_event_to_js(val: serde_json::Value) -> Result<JsValue, types::Error> {
+        val.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
             .into_e()
     }
 
-    fn cradle_event_to_js(event: &CradleEvent) -> serde_json::Value {
+    fn cradle_event_to_js(event: &CradleEvent) -> Result<JsValue, types::Error> {
         match event {
             CradleEvent::OutboundMessage(data) => {
-                serde_json::json!({ "OutboundMessage": hex::encode(data) })
+                let obj = js_sys::Object::new();
+                let arr = js_sys::Uint8Array::from(data.as_slice());
+                let _ = js_sys::Reflect::set(&obj, &"OutboundMessage".into(), &arr);
+                Ok(obj.into())
             }
             CradleEvent::OutboundTransaction(bundle) => {
-                serde_json::json!({ "OutboundTransaction": spend_bundle_to_js(bundle) })
+                json_event_to_js(serde_json::json!({ "OutboundTransaction": spend_bundle_to_js(bundle) }))
             }
             CradleEvent::Notification(n) => {
                 let val = serde_json::to_value(n)
                     .unwrap_or_else(|_| serde_json::json!(format!("{n:?}")));
-                serde_json::json!({ "Notification": val })
+                json_event_to_js(serde_json::json!({ "Notification": val }))
             }
             CradleEvent::Log(line) => {
-                serde_json::json!({ "Log": line })
+                json_event_to_js(serde_json::json!({ "Log": line }))
             }
             CradleEvent::CoinSolutionRequest(coin) => {
-                serde_json::json!({ "CoinSolutionRequest": coin_string_to_hex(coin) })
+                json_event_to_js(serde_json::json!({ "CoinSolutionRequest": coin_string_to_hex(coin) }))
             }
             CradleEvent::ReceiveError(msg) => {
-                serde_json::json!({ "ReceiveError": msg })
+                json_event_to_js(serde_json::json!({ "ReceiveError": msg }))
             }
             CradleEvent::NeedCoinSpend(req) => {
-                serde_json::json!({ "NeedCoinSpend": coin_spend_request_to_js(req) })
+                json_event_to_js(serde_json::json!({ "NeedCoinSpend": coin_spend_request_to_js(req) }))
             }
             CradleEvent::NeedLauncherCoin => {
-                serde_json::json!({ "NeedLauncherCoin": true })
+                json_event_to_js(serde_json::json!({ "NeedLauncherCoin": true }))
             }
             CradleEvent::WatchCoin {
                 coin_name,
                 coin_string,
             } => {
-                serde_json::json!({
+                json_event_to_js(serde_json::json!({
                     "WatchCoin": {
                         "coin_name": hex::encode(coin_name.bytes()),
                         "coin_string": coin_string_to_hex(coin_string),
                     }
-                })
+                }))
             }
         }
     }
 
     fn drain_result_to_js(dr: &DrainResult) -> Result<JsValue, types::Error> {
-        to_js_compat(&JsDrainResult {
-            events: dr.events.iter().map(cradle_event_to_js).collect(),
-        })
+        let events = js_sys::Array::new();
+        for event in &dr.events {
+            events.push(&cradle_event_to_js(event)?);
+        }
+        let obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&obj, &"events".into(), &events);
+        Ok(obj.into())
     }
 
     fn with_game_drain<F>(cid: i32, f: F) -> Result<JsValue, JsValue>

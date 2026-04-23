@@ -39,7 +39,7 @@ export interface TrackerConnectionCallbacks {
 }
 
 export type MessagePayload =
-  | { msgno: number; msg: string }
+  | { msgno: number; msg: Uint8Array }
   | { ack: number }
   | { keepalive: true };
 
@@ -61,7 +61,7 @@ function isMessagePayload(data: unknown): data is MessagePayload {
   if ('msgno' in data || 'msg' in data) {
     return (
       typeof (data as { msgno?: unknown }).msgno === 'number' &&
-      typeof (data as { msg?: unknown }).msg === 'string'
+      (data as { msg?: unknown }).msg instanceof Uint8Array
     );
   }
   return false;
@@ -75,7 +75,7 @@ function isAckPayload(data: MessagePayload): data is { ack: number } {
   return 'ack' in data;
 }
 
-function isDataPayload(data: MessagePayload): data is { msgno: number; msg: string } {
+function isDataPayload(data: MessagePayload): data is { msgno: number; msg: Uint8Array } {
   return 'msgno' in data && 'msg' in data;
 }
 
@@ -152,12 +152,34 @@ export class TrackerConnection {
       this.startKeepaliveTimer();
     };
 
-    ws.onmessage = (evt: MessageEvent<string>) => {
+    ws.binaryType = 'arraybuffer';
+
+    ws.onmessage = (evt: MessageEvent) => {
       if (this.ws !== ws) return;
       this.callbacks.onTrackerActivity();
+
+      if (evt.data instanceof ArrayBuffer) {
+        if (this.closed || this.closePending) return;
+        if (evt.data.byteLength < 4) {
+          log('[tracker] recv binary frame too short');
+          return;
+        }
+        const view = new DataView(evt.data);
+        const msgno = view.getUint32(0, false);
+        const msgBytes = new Uint8Array(evt.data, 4);
+        const payload: MessagePayload = { msgno, msg: msgBytes };
+        log(`[tracker] recv msgno=${msgno} len=${msgBytes.byteLength}`);
+        if (!this.handlerRegistered) {
+          this.messageBuffer.push(payload);
+          return;
+        }
+        this.callbacks.onMessage(payload);
+        return;
+      }
+
       let msg: TrackerEnvelope | null = null;
       try {
-        msg = JSON.parse(evt.data) as TrackerEnvelope;
+        msg = JSON.parse(evt.data as string) as TrackerEnvelope;
       } catch {
         log('[tracker] recv malformed ws json');
         return;
@@ -214,16 +236,7 @@ export class TrackerConnection {
             this.callbacks.onAck(payload.ack);
             return;
           }
-          if (!isDataPayload(payload)) {
-            log('[tracker] recv malformed payload');
-            return;
-          }
-          log(`[tracker] recv msgno=${payload.msgno} len=${payload.msg.length}`);
-          if (!this.handlerRegistered) {
-            this.messageBuffer.push(payload);
-            return;
-          }
-          this.callbacks.onMessage(payload);
+          log('[tracker] recv unexpected text-frame data message');
           break;
         }
         case 'chat':
@@ -285,10 +298,15 @@ export class TrackerConnection {
     };
   }
 
-  sendMessage(msgno: number, input: string) {
-    const payload: MessagePayload = { msgno, msg: input };
-    log(`[tracker] send msgno=${msgno} len=${input.length}`);
-    this.sendWs({ type: 'message', session_id: this.sessionId, data: payload });
+  sendMessage(msgno: number, input: Uint8Array) {
+    log(`[tracker] send msgno=${msgno} len=${input.byteLength}`);
+    const ws = this.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const frame = new Uint8Array(4 + input.byteLength);
+    const view = new DataView(frame.buffer);
+    view.setUint32(0, msgno, false);
+    frame.set(input, 4);
+    ws.send(frame);
   }
 
   sendAck(ackMsgno: number) {
@@ -328,7 +346,7 @@ export class TrackerConnection {
 
   getPeerConnection(): PeerConnectionResult {
     return {
-      sendMessage: (msgno: number, input: string) => this.sendMessage(msgno, input),
+      sendMessage: (msgno: number, input: Uint8Array) => this.sendMessage(msgno, input),
       sendAck: (ackMsgno: number) => this.sendAck(ackMsgno),
       sendKeepalive: () => this.sendKeepalive(),
       hostLog: (msg: string) => this.hostLog(msg),
@@ -337,7 +355,7 @@ export class TrackerConnection {
   }
 
   registerMessageHandler(
-    handler: (msgno: number, msg: string) => void,
+    handler: (msgno: number, msg: Uint8Array) => void,
     ackHandler: (ack: number) => void,
     keepaliveHandler: () => void,
   ) {

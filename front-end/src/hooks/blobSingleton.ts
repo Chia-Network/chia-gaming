@@ -7,6 +7,7 @@ import { BlockchainPoller } from './BlockchainPoller';
 import {
   startNewSession,
   SessionState,
+  base64ToUint8,
 } from './save';
 import { log } from '../services/log';
 
@@ -62,7 +63,8 @@ async function restoreSession(
   const wasmConnection = await wasmStateInit.getWasmConnection();
   gameObject.loadWasm(wasmConnection);
 
-  const cradle = wasmStateInit.deserializeGame(wasmConnection, save.serializedCradle);
+  const cradleBytes = base64ToUint8(save.serializedCradle);
+  const cradle = wasmStateInit.deserializeGame(wasmConnection, cradleBytes);
   gameObject.setGameCradle(cradle);
 
   const watchedCoins = cradle.get_watching_coins();
@@ -76,7 +78,7 @@ async function restoreSession(
   gameObject.channelReady = save.channelReady ?? false;
   gameObject.iStarted = save.iStarted ?? false;
   gameObject.pairingToken = save.pairingToken ?? '';
-  gameObject.unackedMessages = [...(save.unackedMessages ?? [])];
+  gameObject.unackedMessages = (save.unackedMessages ?? []).map(m => ({ msgno: m.msgno, msg: base64ToUint8(m.msg) }));
   gameObject.pendingTransactions = [...(save.pendingTransactions ?? [])];
   gameObject.history = [...(save.history ?? [])];
   gameObject.logHistory = [...(save.log ?? [])];
@@ -95,7 +97,7 @@ async function restoreSession(
 export function getBlobSingleton(
   blockchain: BlockchainPoller,
   peerConn: PeerConnectionResult,
-  registerMessageHandler: (handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void,
+  registerMessageHandler: (handler: (msgno: number, msg: Uint8Array) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void,
   uniqueId: string,
   amount: bigint,
   iStarted: boolean,
@@ -123,7 +125,7 @@ export function getBlobSingleton(
   blobSingleton.setPeerKeepalive(() => peerConn.sendKeepalive());
 
   registerMessageHandler(
-    (msgno: number, msg: string) => {
+    (msgno: number, msg: Uint8Array) => {
       blobSingleton?.deliverMessage(msgno, msg);
     },
     (ack: number) => {

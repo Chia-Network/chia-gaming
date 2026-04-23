@@ -1171,9 +1171,7 @@ impl PotatoHandler {
                 Self::MAX_MESSAGE_SIZE,
             )))
         } else {
-            let doc = bson::Document::from_reader(&mut msg.as_slice()).into_gen()?;
-            let msg_envelope: PeerMessage =
-                bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
+            let msg_envelope: PeerMessage = bencodex::from_slice(&msg).into_gen()?;
             self.incoming_messages.push_back(Rc::new(msg_envelope));
             self.process_incoming_message(env)
         };

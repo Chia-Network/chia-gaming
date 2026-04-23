@@ -165,41 +165,20 @@ mod tests {
     use crate::common::types::PrivateKey;
 
     #[test]
-    fn aggsig_nonzero_serializes_to_bson_binary() {
+    fn aggsig_nonzero_round_trips() {
         let sk = PrivateKey::default();
         let (_pk, sig) = signer(&sk, b"aggsig-test");
-        let bson = bson::to_bson(&sig).expect("aggsig should serialize");
-        match bson {
-            bson::Bson::Binary(bin) => assert_eq!(bin.bytes.len(), 96),
-            other => panic!("expected bson binary, got {other:?}"),
-        }
+        let bytes = bencodex::to_vec(&sig).expect("should serialize");
+        let back: Aggsig = bencodex::from_slice(&bytes).expect("should deserialize");
+        assert_eq!(back, sig);
     }
 
     #[test]
-    fn aggsig_zero_serializes_as_empty_binary() {
+    fn aggsig_zero_round_trips() {
         let sig = Aggsig::default();
-        let bson = bson::to_bson(&sig).expect("aggsig should serialize");
-        match bson {
-            bson::Bson::Binary(bin) => assert!(bin.bytes.is_empty()),
-            other => panic!("expected bson binary, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn aggsig_deserializes_empty_binary_to_default() {
-        let bson = bson::Bson::Binary(bson::Binary {
-            subtype: bson::spec::BinarySubtype::Generic,
-            bytes: vec![],
-        });
-        let sig: Aggsig = bson::from_bson(bson).expect("empty binary should deserialize");
-        assert_eq!(sig, Aggsig::default());
-    }
-
-    #[test]
-    fn aggsig_rejects_hex_string_legacy_format() {
-        let legacy = bson::Bson::String("deadbeef".to_string());
-        let parsed: Result<Aggsig, _> = bson::from_bson(legacy);
-        assert!(parsed.is_err());
+        let bytes = bencodex::to_vec(&sig).expect("should serialize");
+        let back: Aggsig = bencodex::from_slice(&bytes).expect("should deserialize");
+        assert_eq!(back, sig);
     }
 
     #[test]

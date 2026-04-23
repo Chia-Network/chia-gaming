@@ -55,7 +55,7 @@ function preset_file(name: string) {
   deposit_file(name, fs.readFileSync(rooted(name), 'utf8'));
 }
 
-interface SimpleMessage { msgno: number; msg: string };
+interface SimpleMessage { msgno: number; msg: Uint8Array };
 
 function makeStorage(): Storage {
   const store = new Map<string, string>();
@@ -110,7 +110,7 @@ afterEach(() => {
 
 class WasmBlobWrapperAdapter {
   blob: WasmBlobWrapper | undefined;
-  waiting_messages: Array<string>;
+  waiting_messages: Array<SimpleMessage>;
 
   constructor() {
     this.waiting_messages = [];
@@ -132,7 +132,7 @@ class WasmBlobWrapperAdapter {
     this.blob.kickSystem(2);
   }
 
-  deliver_message(msgno: number, msg: string) {
+  deliver_message(msgno: number, msg: Uint8Array) {
     this.blob?.deliverMessage(msgno, msg);
   }
 
@@ -146,7 +146,7 @@ class WasmBlobWrapperAdapter {
     return w;
   }
 
-  add_outbound_message(msgno: number, msg: string) {
+  add_outbound_message(msgno: number, msg: Uint8Array) {
     this.waiting_messages.push({ msgno, msg });
   }
 
@@ -291,7 +291,7 @@ it(
     const cradle2 = addActiveCradle(new WasmBlobWrapperAdapter());
     try {
       let peer_conn1: PeerConnectionResult = {
-        sendMessage: (msgno: number, message: string) => {
+        sendMessage: (msgno: number, message: Uint8Array) => {
           cradle1.add_outbound_message(msgno, message);
         },
         sendAck: (_ackMsgno: number) => {},
@@ -311,7 +311,7 @@ it(
       cradle1.set_blob(wasm_blob1);
 
       let peer_conn2: PeerConnectionResult = {
-        sendMessage: (msgno: number, message: string) => {
+        sendMessage: (msgno: number, message: Uint8Array) => {
           cradle2.add_outbound_message(msgno, message);
         },
         sendAck: (_ackMsgno: number) => {},

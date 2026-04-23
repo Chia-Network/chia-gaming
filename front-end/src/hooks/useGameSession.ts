@@ -20,7 +20,7 @@ import {
   setInitStarted,
 } from './blobSingleton';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
-import { SessionState, saveSession, getDefaultFee, getBlockchainType } from './save';
+import { SessionState, saveSession, getDefaultFee, getBlockchainType, uint8ToBase64 } from './save';
 import { coinIdFromBytes } from '../util';
 import { log } from '../services/log';
 
@@ -347,7 +347,7 @@ export function useGameSession(
   params: GameSessionParams,
   uniqueId: string,
   peerConn: PeerConnectionResult,
-  registerMessageHandler: (handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void,
+  registerMessageHandler: (handler: (msgno: number, msg: Uint8Array) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void,
   appendGameLog: (line: string) => void,
   sessionSave?: SessionState,
 ): UseGameSessionResult {
@@ -598,7 +598,25 @@ export function useGameSession(
     if (!wasm) return;
     const save: Partial<SessionState> = {
       blockchainType: getBlockchainType(),
-      ...wasm,
+      serializedCradle: uint8ToBase64(wasm.serializedCradle),
+      pairingToken: wasm.pairingToken,
+      messageNumber: wasm.messageNumber,
+      remoteNumber: wasm.remoteNumber,
+      channelReady: wasm.channelReady,
+      iStarted: wasm.iStarted,
+      amount: wasm.amount,
+      perGameAmount: wasm.perGameAmount,
+      pendingTransactions: wasm.pendingTransactions,
+      unackedMessages: wasm.unackedMessages.map(m => ({ msgno: m.msgno, msg: uint8ToBase64(m.msg) })),
+      history: wasm.history,
+      log: wasm.log,
+      activeGameId: wasm.activeGameId,
+      handState: wasm.handState,
+      channelStatus: wasm.channelStatus,
+      myAlias: wasm.myAlias,
+      opponentAlias: wasm.opponentAlias,
+      lastOutcomeWin: wasm.lastOutcomeWin,
+      chatMessages: wasm.chatMessages,
       gameCoinHex: gameCoin.coinHex,
       gameTurnState: gameCoin.turnState,
       gameTerminalType: gameTerminal.type !== 'none' ? gameTerminal.type : undefined,

@@ -1,0 +1,12 @@
+[package]
+name = "bencodex"
+version = "0.1.0"
+edition = "2021"
+description = "Bencodex (Bencoding Extended) serialization with serde support"
+
+[dependencies]
+serde = "=1.0.228"
+
+[dev-dependencies]
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_bytes = "0.11"

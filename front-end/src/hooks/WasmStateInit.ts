@@ -191,7 +191,7 @@ export class WasmStateInit {
 
   deserializeGame(
     wasm: WasmConnection,
-    serializedGame: string,
+    serializedGame: Uint8Array,
   ): ChiaGame {
     const entropy = new Uint8Array(32);
     crypto.getRandomValues(entropy);

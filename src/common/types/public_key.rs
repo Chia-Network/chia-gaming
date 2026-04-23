@@ -125,20 +125,11 @@ mod tests {
     use crate::common::types::PrivateKey;
 
     #[test]
-    fn public_key_serializes_to_bson_binary() {
+    fn public_key_round_trips() {
         let sk = PrivateKey::default();
         let pk = private_to_public_key(&sk);
-        let bson = bson::to_bson(&pk).expect("public key should serialize");
-        match bson {
-            bson::Bson::Binary(bin) => assert_eq!(bin.bytes.len(), 48),
-            other => panic!("expected bson binary, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn public_key_rejects_hex_string_legacy_format() {
-        let legacy = bson::Bson::String("deadbeef".to_string());
-        let parsed: Result<PublicKey, _> = bson::from_bson(legacy);
-        assert!(parsed.is_err());
+        let bytes = bencodex::to_vec(&pk).expect("should serialize");
+        let back: PublicKey = bencodex::from_slice(&bytes).expect("should deserialize");
+        assert_eq!(back, pk);
     }
 }

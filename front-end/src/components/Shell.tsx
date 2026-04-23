@@ -439,7 +439,7 @@ const Shell = () => {
   }, [deferStateUpdate]);
 
   const pendingMsgHandlerRef = useRef<{
-    handler: (msgno: number, msg: string) => void;
+    handler: (msgno: number, msg: Uint8Array) => void;
     ackHandler: (ack: number) => void;
     keepaliveHandler: () => void;
   } | null>(null);
@@ -454,7 +454,7 @@ const Shell = () => {
     setPeerConnected(false);
   }, []);
 
-  const registerMessageHandler = useCallback((handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => {
+  const registerMessageHandler = useCallback((handler: (msgno: number, msg: Uint8Array) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => {
     pendingMsgHandlerRef.current = { handler, ackHandler, keepaliveHandler };
     if (trackerConnRef.current) {
       trackerConnRef.current.registerMessageHandler(

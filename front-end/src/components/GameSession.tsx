@@ -356,7 +356,7 @@ export interface GameSessionProps {
   peerConn: import('../types/ChiaGaming').PeerConnectionResult;
   trackerLiveness?: import('../types/ChiaGaming').TrackerLiveness | null;
   peerConnected?: boolean | null;
-  registerMessageHandler: (handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void;
+  registerMessageHandler: (handler: (msgno: number, msg: Uint8Array) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void;
   appendGameLog: (line: string) => void;
   sessionSave?: import('../hooks/save').SessionState;
   onGameActivity?: () => void;

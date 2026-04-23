@@ -189,10 +189,8 @@ impl ChannelHandlerBase {
     /// Deserialize a peer message and handle `CleanShutdownComplete`;
     /// ignore everything else.
     pub fn received_message_passive(&self, msg: Vec<u8>) -> Result<Vec<Effect>, Error> {
-        let doc = bson::Document::from_reader(&mut msg.as_slice())
-            .map_err(|e| Error::StrErr(format!("bson parse error: {e:?}")))?;
-        let msg_envelope: PeerMessage = bson::from_bson(bson::Bson::Document(doc))
-            .map_err(|e| Error::StrErr(format!("bson deserialize error: {e:?}")))?;
+        let msg_envelope: PeerMessage = bencodex::from_slice(&msg)
+            .map_err(|e| Error::StrErr(format!("bencodex deserialize error: {e:?}")))?;
 
         if let PeerMessage::CleanShutdownComplete(coin_spend) = &msg_envelope {
             return Ok(vec![Effect::SpendTransaction(SpendBundle {

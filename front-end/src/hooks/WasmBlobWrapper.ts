@@ -23,7 +23,7 @@ import type { CalpokerHandState } from './save';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
 
 export interface WasmFields {
-  serializedCradle: string;
+  serializedCradle: Uint8Array;
   pairingToken: string;
   messageNumber: number;
   remoteNumber: number;
@@ -32,7 +32,7 @@ export interface WasmFields {
   amount: string;
   perGameAmount: string;
   pendingTransactions: string[];
-  unackedMessages: Array<{ msgno: number; msg: string }>;
+  unackedMessages: Array<{ msgno: number; msg: Uint8Array }>;
   history: string[];
   log: string[];
   activeGameId: string | null;
@@ -85,7 +85,7 @@ export class WasmBlobWrapper {
   amount: bigint;
   perGameAmount: bigint;
   wc: WasmConnection | undefined;
-  sendMessage: (msgno: number, msg: string) => void;
+  sendMessage: (msgno: number, msg: Uint8Array) => void;
   sendAck: (ackMsgno: number) => void;
   private peerSendKeepalive: (() => void) | null = null;
   private transactionPublishNerfed = false;
@@ -98,7 +98,7 @@ export class WasmBlobWrapper {
   pairingToken: string;
   channelReady: boolean;
   iStarted: boolean;
-  storedMessages: Array<{ msgno: number; msg: string }>;
+  storedMessages: Array<{ msgno: number; msg: Uint8Array }>;
   cleanShutdownCalled: boolean;
   reloading: boolean;
   qualifyingEvents: number;
@@ -112,11 +112,11 @@ export class WasmBlobWrapper {
   private lastSelectCoinsValue: string | null = null;
   private lastLauncherCoinId: string | null = null;
 
-  unackedMessages: Array<{ msgno: number; msg: string }> = [];
+  unackedMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
   pendingTransactions: string[] = [];
   history: string[] = [];
   logHistory: string[] = [];
-  private reorderQueue: Map<number, string> = new Map();
+  private reorderQueue: Map<number, Uint8Array> = new Map();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private restoredSession = false;
   private beforeUnloadHandler: (() => void) | null = null;
@@ -506,7 +506,7 @@ export class WasmBlobWrapper {
 
   // --- Inbound events ---
 
-  deliverMessage(msgno: number, msg: string) {
+  deliverMessage(msgno: number, msg: Uint8Array) {
     this.notePeerActivity();
     if (!this.wc || !this.cradle || this.qualifyingEvents != 7 || this.reloading) {
       this.storedMessages.push({ msgno, msg });
@@ -525,7 +525,7 @@ export class WasmBlobWrapper {
     this.flushReorderQueue();
   }
 
-  private deliverSingleMessage(msgno: number, msg: string) {
+  private deliverSingleMessage(msgno: number, msg: Uint8Array) {
     this.remoteNumber = msgno;
     try {
       const result = this.cradle!.deliver_message(msg);

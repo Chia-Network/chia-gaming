@@ -2,7 +2,6 @@ use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
-use serde_json_any_key::*;
 
 use crate::channel_handler::types::ChannelHandlerEnv;
 use crate::channel_handler::types::{
@@ -43,7 +42,6 @@ pub struct OnChainGameHandler {
     have_potato: PotatoState,
     channel_timeout: Timeout,
     game_action_queue: VecDeque<GameAction>,
-    #[serde(with = "any_key_map")]
     game_map: HashMap<CoinString, OnChainGameState>,
     #[serde(skip)]
     pending_moves: HashMap<CoinString, PendingMoveSavedState>,

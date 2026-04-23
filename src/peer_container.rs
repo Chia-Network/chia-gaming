@@ -5,7 +5,6 @@ use clvm_traits::ToClvm;
 use rand::Rng;
 
 use serde::{Deserialize, Serialize};
-use serde_json_any_key::*;
 
 #[cfg(test)]
 use crate::channel_handler::types::ChannelCoinSpendInfo;
@@ -445,7 +444,6 @@ pub trait GameCradle {
 struct SynchronousGameCradleState {
     #[serde(skip)]
     current_height: u64,
-    #[serde(with = "any_key_map")]
     watching_coins: HashMap<CoinString, WatchEntry>,
 
     is_initiator: bool,
@@ -471,8 +469,7 @@ impl PacketSender for SynchronousGameCradleState {
         if self.peer_disconnected {
             return Ok(());
         }
-        let bson_doc = bson::to_bson(&msg).map_err(|e| Error::StrErr(format!("{e:?}")))?;
-        let msg_data = bson::to_vec(&bson_doc).map_err(|e| Error::StrErr(format!("{e:?}")))?;
+        let msg_data = bencodex::to_vec(&msg).map_err(|e| Error::StrErr(format!("{e:?}")))?;
         self.events
             .push_back(CradleEvent::OutboundMessage(msg_data));
         Ok(())
@@ -1149,8 +1146,7 @@ impl SynchronousGameCradle {
             _ => unreachable!(),
         };
 
-        let doc = bson::Document::from_reader(&mut msg.as_slice()).into_gen()?;
-        let msg_envelope: PeerMessage = bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
+        let msg_envelope: PeerMessage = bencodex::from_slice(&msg).into_gen()?;
         let fake_move = f(&msg_envelope)?;
 
         self.state.send_message(&fake_move)

@@ -28,7 +28,6 @@ const simWsUrl = simUrl.replace(/^http/i, 'ws').replace(/:5800\b/, ':5801');
 const verbose = Boolean(args.verbose);
 
 type RelayPayload =
-  | { msgno: number; msg: string }
   | { ack: number }
   | { keepalive: true };
 
@@ -113,10 +112,9 @@ function logTrackerVerbose(event: string, fields?: Record<string, unknown>): voi
   logTracker(event, fields);
 }
 
-function relayPayloadKind(data: RelayPayload): 'keepalive' | 'ack' | 'message' {
+function relayPayloadKind(data: RelayPayload): 'keepalive' | 'ack' {
   if ('keepalive' in data) return 'keepalive';
-  if ('ack' in data) return 'ack';
-  return 'message';
+  return 'ack';
 }
 
 app.use(
@@ -178,12 +176,6 @@ function isRelayPayload(data: unknown): data is RelayPayload {
   if (!data || typeof data !== 'object') return false;
   if ('keepalive' in data) return (data as { keepalive?: unknown }).keepalive === true;
   if ('ack' in data) return typeof (data as { ack?: unknown }).ack === 'number';
-  if ('msgno' in data || 'msg' in data) {
-    return (
-      typeof (data as { msgno?: unknown }).msgno === 'number' &&
-      typeof (data as { msg?: unknown }).msg === 'string'
-    );
-  }
   return false;
 }
 
@@ -839,8 +831,32 @@ gameWsServer.on('connection', (ws) => {
   logTracker('game_ws_connected', { ws_id: currentWsId });
   setupKeepalive(ws);
 
-  ws.on('message', (message) => {
+  ws.on('message', (message, isBinary) => {
     wsLastActivity.set(ws, Date.now());
+
+    if (isBinary) {
+      const buf = Buffer.isBuffer(message) ? message : Buffer.from(message as ArrayBuffer);
+      const meta = wsGameMeta.get(ws);
+      if (!meta?.playerId) {
+        logTracker('game_binary_drop_no_player', { ws_id: currentWsId, bytes: buf.byteLength });
+        return;
+      }
+      const peerId = lobby.getPairedPlayerId(meta.playerId);
+      if (!peerId) {
+        logTracker('game_binary_drop_unpaired', { ws_id: currentWsId, player_id: meta.playerId, bytes: buf.byteLength });
+        return;
+      }
+      const peerSessionId = playerToSession.get(peerId);
+      const peerWs = peerSessionId ? gameConnections.get(peerSessionId) : undefined;
+      if (!peerWs || peerWs.readyState !== WebSocket.OPEN) {
+        logTracker('game_binary_drop_peer_offline', { ws_id: currentWsId, player_id: meta.playerId, peer_id: peerId });
+        return;
+      }
+      logTrackerVerbose('game_binary_relay', { from: meta.playerId, to: peerId, bytes: buf.byteLength });
+      peerWs.send(buf);
+      return;
+    }
+
     const text = typeof message === 'string' ? message : message.toString();
     const parsed = parseGameInbound(text);
     if (!parsed) {
