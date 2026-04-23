@@ -294,7 +294,7 @@ fn to_protocol_spend_bundle(
 
     Ok(chia_protocol::SpendBundle {
         coin_spends: protocol_spends,
-        aggregated_signature: agg_sig.to_bls().into(),
+        aggregated_signature: agg_sig.to_bls(),
     })
 }
 

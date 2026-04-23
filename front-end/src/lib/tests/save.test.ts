@@ -19,6 +19,7 @@ import {
   setTrackerAlert,
   SessionState,
   _resetForTests,
+  _writeRawState,
 } from '../../hooks/save';
 
 function makeStorage(): Storage {
@@ -164,7 +165,7 @@ describe('flat state', () => {
   });
 
   it('old version data is treated as fresh start', () => {
-    localStorage.setItem('appState', JSON.stringify({ version: 2, playerId: 'old-player' }));
+    _writeRawState({ version: 2, playerId: 'old-player' });
     const state = loadAppState();
     expect(state.playerId).not.toBe('old-player');
     expect(state.version).toBe(3);

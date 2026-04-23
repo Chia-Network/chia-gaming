@@ -1444,7 +1444,7 @@ impl FromLocalUI for PotatoHandler {
 
         for (index, (mine, _theirs)) in my_games
             .into_iter()
-            .zip(their_games.into_iter())
+            .zip(their_games)
             .enumerate()
         {
             let wire = WireProposeGame {

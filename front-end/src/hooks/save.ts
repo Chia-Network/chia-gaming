@@ -349,6 +349,11 @@ if (typeof window !== 'undefined') {
   }, 3000);
 }
 
+/** @internal — write obfuscated JSON to STATE_KEY (for tests that need to seed localStorage) */
+export function _writeRawState(obj: Record<string, unknown>): void {
+  localStorage.setItem(STATE_KEY, obfuscate(JSON.stringify(obj)));
+}
+
 /** @internal — reset module state between test cases */
 export function _resetForTests(): void {
   if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
