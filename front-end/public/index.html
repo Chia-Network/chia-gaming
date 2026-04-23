@@ -4,7 +4,6 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#000000" />
-    <link rel="stylesheet" href="./index.css"></link>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <title>Chia Gaming</title>
   </head>
@@ -12,20 +11,43 @@
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
     <script>
-     var body = document.getElementById('body');
-     var se = document.createElement('script');
-     se.setAttribute('type', 'module');
-     se.appendChild(document.createTextNode([
-       'import * as cg from "./chia_gaming_wasm.js";',
-       'const intervalId = setInterval(() => {',
-       '  if (window.loadWasm) {',
-       '    clearInterval(intervalId);',
-       '    window.loadWasm(cg.default, cg);',
-       '  }',
-       '}, 500);'
-     ].join('\n')));
-     body.appendChild(se);
+      (function () {
+        fetch('/build-meta.json')
+          .then(function (r) { return r.json(); })
+          .then(function (meta) {
+            window.__buildNonce = meta.basePath;
+
+            var base = document.createElement('base');
+            base.href = meta.basePath;
+            document.head.appendChild(base);
+
+            var css = document.createElement('link');
+            css.rel = 'stylesheet';
+            css.href = 'index.css';
+            document.head.appendChild(css);
+
+            var wasm = document.createElement('script');
+            wasm.type = 'module';
+            wasm.textContent = [
+              'import * as cg from "./chia_gaming_wasm.js";',
+              'const intervalId = setInterval(() => {',
+              '  if (window.loadWasm) {',
+              '    clearInterval(intervalId);',
+              '    window.loadWasm(cg.default, cg);',
+              '  }',
+              '}, 500);'
+            ].join('\n');
+            document.body.appendChild(wasm);
+
+            var app = document.createElement('script');
+            app.src = 'index.js';
+            document.body.appendChild(app);
+          })
+          .catch(function (err) {
+            document.getElementById('root').textContent =
+              'Failed to load build metadata: ' + err.message;
+          });
+      })();
     </script>
-    <script src="index.js"></script>
   </body>
 </html>

@@ -128,8 +128,8 @@ fn test_standard_puzzle() {
 
 fn test_public_key_add() {
     let mut rng = ChaCha8Rng::from_seed([0; 32]);
-    let private_key_1: PrivateKey = rng.gen();
-    let private_key_2: PrivateKey = rng.gen();
+    let private_key_1: PrivateKey = rng.random();
+    let private_key_2: PrivateKey = rng.random();
     let pk1 = private_to_public_key(&private_key_1);
     let pk2 = private_to_public_key(&private_key_2);
     assert_ne!(pk1, pk2);
@@ -140,8 +140,8 @@ fn test_public_key_add() {
 
 fn test_bram_2_of_2_signature() {
     let mut rng = ChaCha8Rng::from_seed([0; 32]);
-    let private_key_1: PrivateKey = rng.gen();
-    let private_key_2: PrivateKey = rng.gen();
+    let private_key_1: PrivateKey = rng.random();
+    let private_key_2: PrivateKey = rng.random();
     let combined_pk = private_key_1.clone() + private_key_2.clone();
     let message = b"hi there";
     let signature_combined = combined_pk.sign(message);
@@ -278,7 +278,7 @@ fn test_standard_puzzle_solution_maker() {
         .expect("should convert");
     let res = run_program(
         allocator.allocator(),
-        &ChiaDialect::new(0),
+        &ChiaDialect::default(),
         puzzle_node,
         solution_node,
         0,

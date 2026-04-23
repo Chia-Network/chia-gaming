@@ -23,10 +23,10 @@ export interface SpendBundle {
 }
 
 export type CradleEvent =
-  | { OutboundMessage: string }
+  | { OutboundMessage: Uint8Array }
   | { OutboundTransaction: SpendBundle }
   | { Notification: WasmNotification }
-  | { DebugLog: string }
+  | { Log: string }
   | { CoinSolutionRequest: string }
   | { ReceiveError: string }
   | { NeedCoinSpend: unknown }
@@ -142,6 +142,7 @@ export interface ChannelStatusPayload {
   our_balance: unknown;
   their_balance: unknown;
   game_allocated: unknown;
+  have_potato?: boolean | null;
 }
 
 export type WasmNotification = {
@@ -152,7 +153,7 @@ export type WasmEvent =
   | { type: 'notification'; data: WasmNotification }
   | { type: 'error'; error: string }
   | { type: 'address'; data: BlockchainInboundAddressResult }
-  | { type: 'debug_log'; message: string };
+  | { type: 'log'; message: string };
 
 interface GameCradleCreateConfig {
   rng_id: number;
@@ -170,7 +171,7 @@ export interface WasmConnection {
   init: (print: (msg: string) => void) => void;
   create_rng: (seed: string) => number;
   create_game_cradle: (config: GameCradleCreateConfig) => { id: number; puzzle_hash: string };
-  create_serialized_game: (serialized: string, new_seed: string) => number;
+  create_serialized_game: (serialized: Uint8Array, new_seed: string) => number;
   deposit_file: (name: string, data: string) => void;
 
   // Blockchain
@@ -225,13 +226,14 @@ export interface WasmConnection {
     puzzle_hex: string | undefined,
     solution_hex: string | undefined,
   ) => WasmResult | undefined;
-  deliver_message: (cid: number, inbound_message: string) => WasmResult | undefined;
+  deliver_message: (cid: number, inbound_message: Uint8Array) => WasmResult | undefined;
   cradle_amount: (cid: number) => number;
   cradle_our_share: (cid: number) => number;
   cradle_their_share: (cid: number) => number;
   get_identity: (cid: number) => IChiaIdentity;
   get_game_state_id: (cid: number) => string | undefined;
-  serialize_cradle: (cid: number) => string;
+  serialize_cradle: (cid: number) => Uint8Array;
+  get_watching_coins: (cid: number) => Array<{ coin_name: string; coin_string: string }>;
 
   // Misc
   sha256bytes: (hex: string) => string;
@@ -239,7 +241,7 @@ export interface WasmConnection {
 
 export class ChiaGame {
   wasm: WasmConnection;
-  waiting_messages: string[];
+  waiting_messages: Uint8Array[];
   cradle: number;
 
   constructor(
@@ -247,7 +249,7 @@ export class ChiaGame {
     cradleId: number,
   ) {
     this.wasm = wasm;
-    this.waiting_messages = [];
+    this.waiting_messages = [] as Uint8Array[];
     this.cradle = cradleId;
   }
 
@@ -283,8 +285,12 @@ export class ChiaGame {
     return this.wasm.get_game_state_id(this.cradle);
   }
 
-  serialize(): string {
+  serialize(): Uint8Array {
     return this.wasm.serialize_cradle(this.cradle);
+  }
+
+  get_watching_coins(): Array<{ coin_name: string; coin_string: string }> {
+    return this.wasm.get_watching_coins(this.cradle);
   }
 
   accept(id: string): WasmResult | undefined {
@@ -319,7 +325,7 @@ export class ChiaGame {
     return this.wasm.cheat(this.cradle, game_id, String(mover_share));
   }
 
-  deliver_message(msg: string): WasmResult | undefined {
+  deliver_message(msg: Uint8Array): WasmResult | undefined {
     return this.wasm.deliver_message(this.cradle, msg);
   }
 
@@ -428,7 +434,7 @@ function compare_card(a: number, b: number): number {
 }
 
 export interface PeerConnectionResult {
-  sendMessage: (msgno: number, input: string) => void;
+  sendMessage: (msgno: number, input: Uint8Array) => void;
   sendAck: (ackMsgno: number) => void;
   sendKeepalive: () => void;
   hostLog: (msg: string) => void;

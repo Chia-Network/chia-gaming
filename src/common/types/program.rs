@@ -154,12 +154,10 @@ mod tests {
     use super::Program;
 
     #[test]
-    fn program_serializes_to_bson_binary() {
+    fn program_round_trips() {
         let p = Program::from_bytes(&[0xff, 0x01, 0x80]);
-        let bson = bson::to_bson(&p).expect("program should serialize");
-        match bson {
-            bson::Bson::Binary(bin) => assert_eq!(bin.bytes, vec![0xff, 0x01, 0x80]),
-            other => panic!("expected bson binary, got {other:?}"),
-        }
+        let bytes = bencodex::to_vec(&p).expect("should serialize");
+        let back: Program = bencodex::from_slice(&bytes).expect("should deserialize");
+        assert_eq!(back.0, p.0);
     }
 }

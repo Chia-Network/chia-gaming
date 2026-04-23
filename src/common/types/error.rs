@@ -12,7 +12,7 @@ pub enum Error {
     EncodeErr(ToClvmError),
     StrErr(String),
     BlsErr(chia_bls::Error),
-    BsonErr(bson::de::Error),
+    BencodexErr(bencodex::Error),
     JsonErr(serde_json::Error),
     HexErr(hex::FromHexError),
     Channel(String),
@@ -78,9 +78,9 @@ impl ErrToError for ToClvmError {
     }
 }
 
-impl ErrToError for bson::de::Error {
+impl ErrToError for bencodex::Error {
     fn into_gen(self) -> Error {
-        Error::BsonErr(self)
+        Error::BencodexErr(self)
     }
 }
 

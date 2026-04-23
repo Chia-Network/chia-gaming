@@ -155,26 +155,10 @@ mod tests {
     use super::CoinString;
 
     #[test]
-    fn coin_string_serializes_to_bson_binary() {
+    fn coin_string_round_trips() {
         let coin = CoinString::from_bytes(&[1, 2, 3, 4, 5]);
-        let bson = bson::to_bson(&coin).expect("coinstring should serialize");
-        match bson {
-            bson::Bson::Binary(bin) => {
-                assert_eq!(bin.bytes, vec![1, 2, 3, 4, 5]);
-            }
-            other => panic!("expected bson binary, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn coin_string_deserializes_from_legacy_array() {
-        let legacy = bson::Bson::Array(vec![
-            bson::Bson::Int32(1),
-            bson::Bson::Int32(2),
-            bson::Bson::Int32(3),
-            bson::Bson::Int32(4),
-        ]);
-        let coin: CoinString = bson::from_bson(legacy).expect("legacy array should deserialize");
-        assert_eq!(coin.to_bytes(), &[1, 2, 3, 4]);
+        let bytes = bencodex::to_vec(&coin).expect("should serialize");
+        let back: CoinString = bencodex::from_slice(&bytes).expect("should deserialize");
+        assert_eq!(back.to_bytes(), coin.to_bytes());
     }
 }

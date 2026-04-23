@@ -186,8 +186,8 @@ pub(crate) fn test_unroll_can_verify_own_signature() {
         ..UnrollCoin::default()
     };
 
-    let private_key_1 = rng.gen();
-    let private_key_2 = rng.gen();
+    let private_key_1 = rng.random();
+    let private_key_2 = rng.random();
     let public_key_1 = private_to_public_key(&private_key_1);
     let public_key_2 = private_to_public_key(&private_key_2);
     let ref_puzzle_hash_1 = puzzle_hash_for_pk(&mut allocator, &public_key_1).expect("should work");

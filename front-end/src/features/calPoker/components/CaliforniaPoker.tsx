@@ -24,7 +24,7 @@ import {
 import { SuitName } from '../../../types/californiaPoker/CardValueSuit';
 import { CalpokerDisplaySnapshot } from '../../../hooks/save';
 import GameBottomBar from './components/GameBottomBar';
-import { Button } from '../../../components/button';
+
 
 function translateTopline(topline: string | undefined): string | null {
   if (!topline) return null;
@@ -43,15 +43,11 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   handleMakeMove,
   outcome,
   myWinOutcome,
-  onDisplayComplete,
   onGameLog,
   onSnapshotChange,
   initialSnapshot,
   myName,
   opponentName,
-  onPlayAgain,
-  onEndSession,
-  showBetweenHandActions,
 }) => {
   const [gameState, setGameState] = useState(GAME_STATES.INITIAL);
   // const [playerCards, setPlayerHand] = useState<CardValueSuit[]>([]);
@@ -116,7 +112,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   >();
   const [aiBestHand, setAiBestHand] = useState<BestHandType | undefined>();
   const [showSwapAnimation, setShowSwapAnimation] = useState(false);
-  const [newHandWaiting, setNewHandWaiting] = useState(false);
   const [movingCards, setMovingCards] = useState<MovingCardData[]>([]);
   const [playerHaloCardIds, setPlayerHaloCardIds] = useState<number[]>([]);
   const [opponentHaloCardIds, setOpponentHaloCardIds] = useState<number[]>([]);
@@ -522,7 +517,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         GAME_STATES.FINAL, newPlayer, newOpponent, cardSelections,
         liveWinner, pBest, oBest, aiSwapCardIds, playerSwapCardIds, pText, oText,
       );
-      onDisplayComplete();
       }, SWAP_ANIMATION_DURATION);
     }, PRE_SWAP_REVEAL_DURATION);
   };
@@ -681,42 +675,23 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
           </div>
         </div>
 
-        {/* Action bar — fixed height, always present */}
-        <div className='flex-shrink-0 w-full h-12 relative flex items-center justify-center'>
-          {gameState === GAME_STATES.SELECTING && moveNumber === 1 && (
-            <GameBottomBar
-              buttonText={buttonText}
-              isDisabled={isDisabled}
-              doHandleMakeMove={doHandleMakeMove}
-            />
-          )}
-          {gameState === GAME_STATES.AWAITING_SWAP && (
-            <div className='rounded-md bg-canvas-bg px-4 py-2 text-sm font-medium text-canvas-text shadow-md'>
-              Waiting for opponent
-            </div>
-          )}
-          {showBetweenHandActions && gameState === GAME_STATES.FINAL && (
-            <>
-              <Button
-                variant='solid'
-                size='sm'
-                onClick={onEndSession}
-                className='absolute left-2 px-4 py-2'
-              >
-                End Session
-              </Button>
-              <Button
-                variant='solid'
-                color='primary'
-                onClick={() => { setNewHandWaiting(true); onPlayAgain?.(); }}
-                disabled={newHandWaiting}
-                className='z-10 px-4 py-2'
-              >
-                {newHandWaiting ? 'Waiting' : 'New Hand'}
-              </Button>
-            </>
-          )}
-        </div>
+        {/* Action bar — only during active gameplay */}
+        {(gameState === GAME_STATES.SELECTING || gameState === GAME_STATES.AWAITING_SWAP) && !outcome && (
+          <div className='flex-shrink-0 w-full h-12 relative flex items-center justify-center'>
+            {gameState === GAME_STATES.SELECTING && moveNumber === 1 && (
+              <GameBottomBar
+                buttonText={buttonText}
+                isDisabled={isDisabled}
+                doHandleMakeMove={doHandleMakeMove}
+              />
+            )}
+            {gameState === GAME_STATES.AWAITING_SWAP && (
+              <div className='rounded-md bg-canvas-bg px-4 py-2 text-sm font-medium text-canvas-text shadow-md'>
+                Waiting for opponent
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Animations */}

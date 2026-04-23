@@ -66,7 +66,7 @@ mod sim_tests {
             contributions: &[Amount; 2],
             unroll_advance_timeout: Timeout,
         ) -> Result<ChannelHandlerGame, Error> {
-            let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.gen();
+            let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.random();
 
             let make_ref_info =
                 |env: &mut ChannelHandlerEnv<'_>,

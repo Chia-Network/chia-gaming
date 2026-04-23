@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import { Component, useCallback, useEffect, useRef, useState, type RefObject, type ReactNode, type ErrorInfo } from 'react';
 import { Observable } from 'rxjs';
-import { useGameSession, ChannelStatusInfo, GameTurnState, GameplayEvent, isWindingDown } from '../hooks/useGameSession';
+import { useGameSession, ChannelStatusInfo, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, isWindingDown, QueuedNotification } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
 import { CalpokerHandState, CalpokerDisplaySnapshot } from '../hooks/save';
 import { formatMojos, formatAmount } from '../util';
@@ -9,10 +9,44 @@ import { CalpokerOutcome, ChannelState } from '../types/ChiaGaming';
 import { WasmBlobWrapper } from '../hooks/WasmBlobWrapper';
 import Calpoker from '../features/calPoker';
 
-import { motion, useMotionValue } from 'framer-motion';
+import { motion, useMotionValue, useDragControls } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
 import { Button } from './button';
+import { AmountInput } from './AmountInput';
+
+interface ErrorBoundaryProps { children: ReactNode; }
+interface ErrorBoundaryState { error: string | null; }
+
+export class GameSessionErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { error: null };
+
+  static getDerivedStateFromError(err: Error): ErrorBoundaryState {
+    return { error: err.stack || err.message };
+  }
+
+  componentDidCatch(err: Error, info: ErrorInfo) {
+    console.error('[GameSession] render crash:', err, info.componentStack);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className='flex flex-col items-center justify-center gap-4 w-full h-full p-8 text-canvas-text'>
+          <h2 className='text-xl font-semibold text-alert-text'>Something went wrong</h2>
+          <pre className='text-xs whitespace-pre-wrap break-all max-w-lg max-h-[40vh] overflow-auto select-text cursor-text bg-canvas-bg p-4 rounded border border-canvas-line'>{this.state.error}</pre>
+          <button
+            className='px-4 py-2 rounded bg-canvas-solid text-canvas-bg-subtle hover:opacity-90'
+            onClick={() => window.location.reload()}
+          >
+            Reload
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 function CoinId({ hex }: { hex: string }) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
@@ -64,13 +98,14 @@ const CHANNEL_STATE_LABELS: Record<ChannelState, string> = {
 const GAME_TURN_LABELS: Record<GameTurnState, string> = {
   'my-turn': 'Your turn',
   'their-turn': 'Their turn',
+  'playing-on-chain': 'Playing our move on-chain',
   'replaying': 'Replaying our move on-chain',
   'opponent-illegal-move': 'Your turn (opponent attempted illegal move)',
   'ended': 'Ended',
 };
 
 function channelCoinLabelForState(state: ChannelState): string {
-  if (state === 'ResolvedUnrolled' || state === 'ResolvedStale') {
+  if (state === 'ResolvedClean' || state === 'ResolvedUnrolled' || state === 'ResolvedStale') {
     return 'Channel reward coin ID';
   }
   if (state === 'Unrolling') {
@@ -86,50 +121,6 @@ function formatOptionalMojos(raw: string | null): string {
   } catch {
     return raw;
   }
-}
-
-function useViewportClampedDrag(boundsRef?: RefObject<HTMLElement | null>) {
-  const cardRef = useRef<HTMLDivElement | null>(null);
-  const x = useMotionValue(0);
-  const y = useMotionValue(0);
-
-  const clampToViewport = useCallback(() => {
-    const el = cardRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const boundsRect = boundsRef?.current?.getBoundingClientRect();
-    const minX = boundsRect?.left ?? 0;
-    const minY = boundsRect?.top ?? 0;
-    const maxX = boundsRect?.right ?? window.innerWidth;
-    const maxY = boundsRect?.bottom ?? window.innerHeight;
-    let nextX = x.get();
-    let nextY = y.get();
-
-    if (rect.width >= maxX - minX) {
-      nextX -= rect.left - minX;
-    } else {
-      if (rect.left < minX) nextX -= rect.left - minX;
-      if (rect.right > maxX) nextX -= rect.right - maxX;
-    }
-
-    if (rect.height >= maxY - minY) {
-      nextY -= rect.top - minY;
-    } else {
-      if (rect.top < minY) nextY -= rect.top - minY;
-      if (rect.bottom > maxY) nextY -= rect.bottom - maxY;
-    }
-
-    if (nextX !== x.get()) x.set(nextX);
-    if (nextY !== y.get()) y.set(nextY);
-  }, [boundsRef, x, y]);
-
-  useEffect(() => {
-    const onResize = () => clampToViewport();
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, [clampToViewport]);
-
-  return { cardRef, x, y, clampToViewport };
 }
 
 function useViewportClampedDragWithInsets(
@@ -180,152 +171,101 @@ function useViewportClampedDragWithInsets(
 }
 
 
-function ChannelAttentionOverlay({
-  info,
-  onDismiss,
-  boundsRef,
-}: {
-  info: ChannelStatusInfo;
-  onDismiss: () => void;
-  boundsRef: RefObject<HTMLElement | null>;
-}) {
-  const label = CHANNEL_STATE_LABELS[info.state] ?? info.state;
-  const isBad = info.state === 'Failed' || info.state === 'ResolvedStale';
-  const { cardRef, x, y, clampToViewport } = useViewportClampedDragWithInsets(boundsRef, { top: 8 });
+function ChannelStateContent({ info }: { info: ChannelStatusInfo }) {
   return (
-    <motion.div
-      ref={cardRef}
-      drag
-      dragMomentum={false}
-      dragElastic={0}
-      initial={false}
-      style={{ x, y }}
-      onDrag={clampToViewport}
-      onDragEnd={clampToViewport}
-      className='absolute z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing'
-    >
-      <Card className='theme-inverted w-full max-w-md shadow-xl bg-canvas-bg-subtle border border-canvas-line'>
-        <CardHeader className='text-center pb-2'>
-          <CardTitle className={`text-xl ${isBad ? 'text-alert-text' : 'text-canvas-text-contrast'}`}>
-            Channel: {label}
-          </CardTitle>
-          {info.advisory && (
-            <p className='text-sm text-canvas-text mt-1'>{info.advisory}</p>
-          )}
-        </CardHeader>
-        <Separator />
-        <CardContent className='pt-4 flex flex-col gap-2'>
-          {info.coinHex && (
-            <p className="text-xs text-canvas-text break-all">
-              Coin ID: <CoinId hex={info.coinHex} />
-            </p>
-          )}
-          {info.coinAmount && (
-            <p className='text-xs text-canvas-text'>
-              Coin amount: {formatOptionalMojos(info.coinAmount)} mojos
-            </p>
-          )}
-          <Button variant="solid" onClick={onDismiss} className='w-full'>
-            Dismiss
-          </Button>
-        </CardContent>
-      </Card>
-    </motion.div>
+    <>
+      {info.advisory && (
+        <p className='text-sm text-canvas-text-contrast select-text cursor-text'>{info.advisory}</p>
+      )}
+      {info.coinHex && (
+        <p className='text-xs text-canvas-text break-all select-text cursor-text'>
+          Coin ID: <CoinId hex={info.coinHex} />
+        </p>
+      )}
+      {info.coinAmount && (
+        <p className='text-xs text-canvas-text select-text cursor-text'>
+          Coin amount: {formatOptionalMojos(info.coinAmount)} mojos
+        </p>
+      )}
+    </>
   );
 }
 
-function ErrorAttentionOverlay({
-  message,
-  onDismiss,
-  boundsRef,
-}: {
-  message: string;
-  onDismiss: () => void;
-  boundsRef: RefObject<HTMLElement | null>;
-}) {
-  const { cardRef, x, y, clampToViewport } = useViewportClampedDragWithInsets(boundsRef, { top: 8 });
+function GameTerminalContent({ info }: { info: GameTerminalAttentionInfo }) {
   return (
-    <motion.div
-      ref={cardRef}
-      drag
-      dragMomentum={false}
-      dragElastic={0}
-      initial={false}
-      style={{ x, y }}
-      onDrag={clampToViewport}
-      onDragEnd={clampToViewport}
-      className='absolute z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing'
-    >
-      <Card className='theme-inverted w-full max-w-md shadow-xl bg-canvas-bg-subtle border border-canvas-line'>
-        <CardHeader className='text-center pb-2'>
-          <CardTitle className='text-xl text-alert-text'>Error</CardTitle>
-        </CardHeader>
-        <Separator />
-        <CardContent className='pt-4 flex flex-col gap-2'>
-          <pre
-            onPointerDownCapture={(e) => e.stopPropagation()}
-            className='text-sm text-canvas-text-contrast whitespace-pre-wrap break-all font-sans select-text cursor-text max-h-[60vh] overflow-auto'
-          >{message}</pre>
-          <Button variant="solid" onClick={onDismiss} className='w-full'>
-            Dismiss
-          </Button>
-        </CardContent>
-      </Card>
-    </motion.div>
+    <div className='rounded-md border border-canvas-line bg-canvas-bg p-3 text-sm space-y-2 select-text cursor-text'>
+      <p className='flex flex-wrap items-center gap-x-2 gap-y-1'>
+        <span className='text-canvas-text'>My reward:</span>
+        <span className='font-semibold text-canvas-text-contrast'>
+          {formatOptionalMojos(info.myReward)}
+        </span>
+      </p>
+      <p className='flex flex-wrap items-center gap-x-2 gap-y-1'>
+        <span className='text-canvas-text'>Reward coin ID:</span>
+        {info.rewardCoinHex ? (
+          <CoinId hex={info.rewardCoinHex} />
+        ) : (
+          <span className='font-semibold text-canvas-text-contrast'>None</span>
+        )}
+      </p>
+    </div>
   );
 }
 
-function GameTerminalAttentionOverlay({
-  label,
-  myReward,
-  rewardCoinHex,
+function NotificationOverlay({
+  notification,
   onDismiss,
   boundsRef,
+  zClass,
 }: {
-  label: string;
-  myReward: string | null;
-  rewardCoinHex: string | null;
+  notification: QueuedNotification;
   onDismiss: () => void;
   boundsRef: RefObject<HTMLElement | null>;
+  zClass: string;
 }) {
-  const { cardRef, x, y, clampToViewport } = useViewportClampedDrag(boundsRef);
-  const title = label.startsWith('Ended: ') ? label.slice('Ended: '.length) : label;
+  const { cardRef, x, y, clampToViewport } = useViewportClampedDragWithInsets(boundsRef, { top: 8 });
+  const dragControls = useDragControls();
+  const isError = notification.kind === 'infra-error' || notification.kind === 'action-failed';
+  const titleColor = isError ? 'text-alert-text' : 'text-canvas-text-contrast';
+
   return (
     <motion.div
+      key={notification.id}
       ref={cardRef}
       drag
+      dragControls={dragControls}
+      dragListener={false}
       dragMomentum={false}
       dragElastic={0}
       initial={false}
       style={{ x, y }}
       onDrag={clampToViewport}
       onDragEnd={clampToViewport}
-      className='absolute z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing'
+      className={`absolute ${zClass} left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2`}
     >
       <Card className='theme-inverted w-full max-w-md shadow-xl bg-canvas-bg-subtle border border-canvas-line'>
-        <CardHeader className='text-center pb-2'>
-          <CardTitle className='text-xl text-canvas-text-contrast'>{title}</CardTitle>
+        <CardHeader
+          className='text-center pb-2 cursor-grab active:cursor-grabbing'
+          onPointerDown={(e) => dragControls.start(e)}
+        >
+          <CardTitle className={`text-xl ${titleColor}`}>{notification.title}</CardTitle>
         </CardHeader>
         <Separator />
-        <CardContent className='pt-4 flex flex-col gap-3'>
-          <div className='rounded-md border border-canvas-line bg-canvas-bg p-3 text-sm space-y-2'>
-            <p className='flex flex-wrap items-center gap-x-2 gap-y-1'>
-              <span className='text-canvas-text'>My reward:</span>
-              <span className='font-semibold text-canvas-text-contrast'>
-                {formatOptionalMojos(myReward)}
-              </span>
-            </p>
-            <p className='flex flex-wrap items-center gap-x-2 gap-y-1'>
-              <span className='text-canvas-text'>Reward coin ID:</span>
-              {rewardCoinHex ? (
-                <CoinId hex={rewardCoinHex} />
-              ) : (
-                <span className='font-semibold text-canvas-text-contrast'>None</span>
-              )}
-            </p>
-          </div>
+        <CardContent className='pt-4 flex flex-col gap-2'>
+          {notification.kind === 'channel-state' && notification.payload && 'state' in notification.payload && (
+            <ChannelStateContent info={notification.payload as ChannelStatusInfo} />
+          )}
+          {notification.kind === 'game-terminal' && notification.payload && 'label' in notification.payload && (
+            <GameTerminalContent info={notification.payload as GameTerminalAttentionInfo} />
+          )}
+          {isError && notification.message && (
+            <pre className='text-sm text-canvas-text-contrast whitespace-pre-wrap break-all font-sans select-text cursor-text max-h-[60vh] overflow-auto'>{notification.message}</pre>
+          )}
+          {!isError && notification.kind !== 'channel-state' && notification.kind !== 'game-terminal' && notification.message && (
+            <p className='text-sm text-canvas-text-contrast text-center select-text cursor-text'>{notification.message}</p>
+          )}
           <Button variant='solid' size='sm' onClick={onDismiss} className='self-center min-w-[96px]'>
-            OK
+            Dismiss
           </Button>
         </CardContent>
       </Card>
@@ -343,13 +283,9 @@ interface CalpokerHandProps {
   onTurnChanged: (isMyTurn: boolean) => void;
   appendGameLog: (line: string) => void;
   perGameAmount: bigint;
-  onDisplayComplete: () => void;
   initialHandState?: CalpokerHandState;
   myName?: string;
   opponentName?: string;
-  onPlayAgain?: () => void;
-  onEndSession?: () => void;
-  showBetweenHandActions?: boolean;
 }
 
 function CalpokerHand({
@@ -362,13 +298,9 @@ function CalpokerHand({
   onTurnChanged,
   appendGameLog,
   perGameAmount,
-  onDisplayComplete,
   initialHandState,
   myName,
   opponentName,
-  onPlayAgain,
-  onEndSession,
-  showBetweenHandActions,
 }: CalpokerHandProps) {
   const {
     playerHand,
@@ -410,15 +342,11 @@ function CalpokerHand({
       handleMakeMove={handleMakeMove}
       handleCheat={handleCheat}
       handleNerf={handleNerf}
-      onDisplayComplete={onDisplayComplete}
       onGameLog={handleGameLog}
       onSnapshotChange={saveDisplaySnapshot}
       initialSnapshot={initialDisplaySnapshot}
       myName={myName}
       opponentName={opponentName}
-      onPlayAgain={onPlayAgain}
-      onEndSession={onEndSession}
-      showBetweenHandActions={showBetweenHandActions}
     />
   );
 }
@@ -428,10 +356,10 @@ export interface GameSessionProps {
   peerConn: import('../types/ChiaGaming').PeerConnectionResult;
   trackerLiveness?: import('../types/ChiaGaming').TrackerLiveness | null;
   peerConnected?: boolean | null;
-  registerMessageHandler: (handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void;
+  registerMessageHandler: (handler: (msgno: number, msg: Uint8Array) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void;
   appendGameLog: (line: string) => void;
-  sessionSave?: import('../hooks/save').SessionSave;
-  onSessionActivity?: () => void;
+  sessionSave?: import('../hooks/save').SessionState;
+  onGameActivity?: () => void;
 }
 
 const TRACKER_LIVENESS_LABELS: Record<string, string> = {
@@ -441,39 +369,55 @@ const TRACKER_LIVENESS_LABELS: Record<string, string> = {
   disconnected: 'Disconnected',
 };
 
-const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLiveness, peerConnected, registerMessageHandler, appendGameLog, sessionSave, onSessionActivity }) => {
+const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLiveness, peerConnected, registerMessageHandler, appendGameLog, sessionSave, onGameActivity }) => {
   const uniqueId = getPlayerId();
 
   const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, sessionSave);
 
   useEffect(() => {
-    if (!onSessionActivity) return;
+    if (!onGameActivity) return;
     const sub = session.gameplayEvent$.subscribe((evt) => {
       if ('OpponentMoved' in evt || 'ProposalAccepted' in evt) {
-        onSessionActivity();
+        onGameActivity();
       }
     });
     return () => sub.unsubscribe();
-  }, [session.gameplayEvent$, onSessionActivity]);
+  }, [session.gameplayEvent$, onGameActivity]);
+
+  const prevGameQueueLen = useRef(session.gameQueue.length);
+  const prevChannelQueueLen = useRef(session.channelQueue.length);
+  useEffect(() => {
+    const grew = session.gameQueue.length > prevGameQueueLen.current ||
+                 session.channelQueue.length > prevChannelQueueLen.current;
+    prevGameQueueLen.current = session.gameQueue.length;
+    prevChannelQueueLen.current = session.channelQueue.length;
+    if (grew) onGameActivity?.();
+  }, [session.gameQueue.length, session.channelQueue.length, onGameActivity]);
 
   const channelOverlayBoundsRef = useRef<HTMLDivElement | null>(null);
   const gameAreaRef = useRef<HTMLDivElement | null>(null);
-  const [gameAreaMinHeight, setGameAreaMinHeight] = useState<number | undefined>(undefined);
 
-  useEffect(() => {
-    const el = gameAreaRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(([entry]) => {
-      setGameAreaMinHeight(entry.contentRect.height);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  const [dismissedError, setDismissedError] = useState(false);
+  const maxPerHandMojos = (() => {
+    const ours = session.channelStatus.ourBalance;
+    const theirs = session.channelStatus.theirBalance;
+    if (ours == null || theirs == null) return null;
+    try {
+      const a = BigInt(ours);
+      const b = BigInt(theirs);
+      return a < b ? a : b;
+    } catch {
+      return null;
+    }
+  })();
 
   const handEverStarted = session.handKey > 0;
-  const channelStateLabel = CHANNEL_STATE_LABELS[session.channelStatus.state] ?? session.channelStatus.state;
+  const hideGameInterfaceForBetweenHandDialog =
+    session.betweenHands &&
+    (session.betweenHandMode === 'compose-proposal' || session.betweenHandMode === 'review-incoming-proposal');
+  const showGameInterface = handEverStarted && !!session.displayGameId && !hideGameInterfaceForBetweenHandDialog;
+  const channelStateLabel = session.channelStatus.state === 'Active' && session.channelStatus.havePotato
+    ? 'Active \u{1F954}'
+    : CHANNEL_STATE_LABELS[session.channelStatus.state] ?? session.channelStatus.state;
   const channelCoinLabel = channelCoinLabelForState(session.channelStatus.state);
   const gameStateLabel = session.gameTerminal.label ?? GAME_TURN_LABELS[session.gameCoin.turnState];
   const gameCoinLabel = session.gameTerminal.type !== 'none' ? 'Game reward coin ID' : 'Game coin ID';
@@ -482,6 +426,14 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
   return (
     <div className='relative w-full h-full min-h-0 flex flex-col bg-canvas-bg-subtle text-canvas-text pt-6'>
       <div ref={channelOverlayBoundsRef} className='absolute inset-0 pointer-events-none' />
+      {session.gameQueue[0] && (
+        <NotificationOverlay
+          notification={session.gameQueue[0]}
+          onDismiss={session.dismissGame}
+          boundsRef={channelOverlayBoundsRef}
+          zClass='z-40'
+        />
+      )}
       {/* Session header (shrink-0) */}
       <div className='flex-shrink-0 px-4 pt-3 pb-2 sm:px-6 md:px-8'>
         {/* Report + end session */}
@@ -499,7 +451,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
               <span className='font-medium'>California Poker</span>
               <span className='text-canvas-solid'>·</span>
               <span className='text-canvas-text'>Game size:</span>
-              <span className='font-medium'>{formatMojos(session.perGameAmount * 2n)}</span>
+              <span className='font-medium'>{formatMojos(session.currentHandAmount * 2n)}</span>
             </div>
             <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
               <span className='text-canvas-text'>Channel status:</span>
@@ -558,27 +510,23 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
 
       {/* Main content area */}
       <div className='flex flex-col gap-2 px-4 pb-2 sm:px-6 md:px-8'>
-        {/* Game area */}
-          <div ref={gameAreaRef} className='relative overflow-hidden' style={gameAreaMinHeight != null ? { minHeight: gameAreaMinHeight } : undefined}>
-          {handEverStarted && (
+        {/* Game area — z-0 creates a stacking context so card zIndexes (up to 100) can't escape */}
+          <div ref={gameAreaRef} className='relative overflow-hidden z-0'>
+          {showGameInterface && (
             <CalpokerHand
               key={session.handKey}
               gameObject={session.gameObject}
-              gameId={session.activeGameId ?? ''}
+              gameId={session.activeGameId ?? session.displayGameId ?? ''}
               iStarted={session.iStarted}
               playerNumber={session.playerNumber}
               gameplayEvent$={session.gameplayEvent$}
               onOutcome={session.onHandOutcome}
               onTurnChanged={session.onTurnChanged}
               appendGameLog={session.appendGameLog}
-              perGameAmount={session.perGameAmount}
-              onDisplayComplete={session.onDisplayComplete}
+              perGameAmount={session.currentHandAmount}
               initialHandState={session.handKey === 1 && sessionSave?.handState ? sessionSave.handState : undefined}
               myName={params.myAlias}
               opponentName={params.opponentAlias}
-              onPlayAgain={session.playAgain}
-              onEndSession={session.stopPlaying}
-              showBetweenHandActions={session.showBetweenHandOverlay && !isWindingDown(session.channelStatus.state)}
             />
           )}
 
@@ -588,31 +536,104 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
               <p className='text-canvas-text'>Waiting for game to start…</p>
             </div>
           )}
-
-          {session.gameTerminalAttention && (
-            <GameTerminalAttentionOverlay
-              label={session.gameTerminalAttention.label}
-              myReward={session.gameTerminalAttention.myReward}
-              rewardCoinHex={session.gameTerminalAttention.rewardCoinHex}
-              onDismiss={session.dismissGameTerminalAttention}
-              boundsRef={gameAreaRef}
-            />
+          {handEverStarted && !session.displayGameId && !session.betweenHands && (
+            <div className='flex items-center justify-center py-20'>
+              <p className='text-canvas-text'>Waiting for game to start…</p>
+            </div>
           )}
+
         </div>
+
+        {/* Between-hand session controls */}
+        {session.betweenHands && !isWindingDown(session.channelStatus.state) && (
+          <>
+            {session.betweenHandMode === 'decision' && (
+              <div className='relative flex w-full items-center justify-center py-2'>
+                <Button
+                  variant='solid'
+                  color='primary'
+                  size='sm'
+                  onClick={session.chooseNewHandSameTerms}
+                  disabled={session.newHandRequested}
+                >
+                  {session.newHandRequested ? 'Waiting\u2026' : 'New Hand'}
+                </Button>
+                <Button
+                  variant='ghost'
+                  color='neutral'
+                  size='sm'
+                  className='absolute right-2'
+                  onClick={session.chooseDoNotUseCurrentProposal}
+                  leadingIcon={<span className='text-base leading-none'>&times;</span>}
+                  iconOnly
+                />
+              </div>
+            )}
+
+            {session.betweenHandMode === 'compose-proposal' && (
+              <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4'>
+                <div className='flex flex-col gap-3'>
+                  <p className='text-sm text-canvas-text-contrast'>Propose terms for the next hand.</p>
+                  <AmountInput
+                    valueMojos={session.composePerHandAmount}
+                    onChange={session.setComposePerHandAmount}
+                    maxMojos={maxPerHandMojos}
+                    onUseMax={maxPerHandMojos != null ? () => session.setComposePerHandAmount(maxPerHandMojos) : undefined}
+                    disabled={session.composeProposalSent}
+                    label='Per-player stake'
+                    exceedsLabel='Exceeds available reserve.'
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !session.composeProposalSent && session.composePerHandAmount > 0n) {
+                        session.submitComposedProposal(session.composePerHandAmount);
+                      }
+                    }}
+                  />
+                  <div className='flex flex-wrap items-center gap-3'>
+                    <Button
+                      variant='solid'
+                      color='primary'
+                      size='sm'
+                      disabled={session.composeProposalSent || session.composePerHandAmount <= 0n}
+                      onClick={() => session.submitComposedProposal(session.composePerHandAmount)}
+                    >
+                      {session.composeProposalSent ? 'Proposal Sent' : 'Send Proposal'}
+                    </Button>
+                    <Button variant='solid' size='sm' onClick={session.startCleanShutdown}>
+                      Start Clean Shutdown
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {session.betweenHandMode === 'review-incoming-proposal' && session.reviewPeerProposal && (
+              <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4'>
+                <div className='flex flex-col gap-3'>
+                  <p className='text-sm text-canvas-text-contrast'>Do you want to accept this hand?</p>
+                  <p className='text-xs text-canvas-text'>
+                    Per-player stake: {formatMojos(session.reviewPeerProposal.terms.myContribution)}
+                  </p>
+                  <div className='flex flex-wrap items-center gap-3'>
+                    <Button variant='solid' color='primary' size='sm' onClick={session.acceptReviewedProposal}>
+                      Yes
+                    </Button>
+                    <Button variant='solid' size='sm' onClick={session.rejectReviewedProposal}>
+                      No
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
       </div>
 
-      {session.channelAttention && (
-        <ChannelAttentionOverlay
-          info={session.channelAttention}
-          onDismiss={session.dismissChannelAttention}
+      {session.channelQueue[0] && (
+        <NotificationOverlay
+          notification={session.channelQueue[0]}
+          onDismiss={session.dismissChannel}
           boundsRef={channelOverlayBoundsRef}
-        />
-      )}
-      {session.error && !dismissedError && (
-        <ErrorAttentionOverlay
-          message={session.error}
-          onDismiss={() => setDismissedError(true)}
-          boundsRef={channelOverlayBoundsRef}
+          zClass='z-50'
         />
       )}
     </div>

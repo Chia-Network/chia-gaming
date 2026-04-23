@@ -498,8 +498,7 @@ impl HandshakeInitiatorHandler {
                 msg.len(),
             )));
         }
-        let doc = bson::Document::from_reader(&mut msg.as_slice()).into_gen()?;
-        let msg_envelope: PeerMessage = bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
+        let msg_envelope: PeerMessage = bencodex::from_slice(&msg).into_gen()?;
         self.incoming_messages.push_back(Rc::new(msg_envelope));
         self.process_incoming_message(env)
     }
@@ -537,7 +536,7 @@ impl SpendWalletReceiver for HandshakeInitiatorHandler {
 
         {
             let ch = self.channel_handler()?;
-            effects.push(Effect::DebugLog(format!(
+            effects.push(Effect::Log(format!(
                 "[channel-created] {} state={} have_potato={}",
                 format_coin(&channel_coin),
                 ch.state_number(),
@@ -553,7 +552,7 @@ impl SpendWalletReceiver for HandshakeInitiatorHandler {
         _env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
-        Ok(vec![Effect::DebugLog(format!(
+        Ok(vec![Effect::Log(format!(
             "[initiator-handshake:coin-spent] {}",
             format_coin(coin_id),
         ))])
@@ -564,7 +563,7 @@ impl SpendWalletReceiver for HandshakeInitiatorHandler {
         _env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
-        Ok(vec![Effect::DebugLog(format!(
+        Ok(vec![Effect::Log(format!(
             "[initiator-handshake:coin-timeout] {}",
             format_coin(coin_id),
         ))])
@@ -577,7 +576,7 @@ impl SpendWalletReceiver for HandshakeInitiatorHandler {
         _puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(Vec<Effect>, Option<ResyncInfo>), Error> {
         Ok((
-            vec![Effect::DebugLog(format!(
+            vec![Effect::Log(format!(
                 "[initiator-handshake:coin-puzzle] {}",
                 format_coin(coin_id),
             ))],
@@ -771,6 +770,7 @@ impl PeerHandler for HandshakeInitiatorHandler {
                     our_balance: None,
                     their_balance: None,
                     game_allocated: None,
+                    have_potato: None,
                 });
             }
         }
@@ -794,6 +794,7 @@ impl PeerHandler for HandshakeInitiatorHandler {
                     .channel_handler
                     .as_ref()
                     .map(|ch| ch.total_game_allocated()),
+                have_potato: None,
             });
         }
         let state = match &self.state {
@@ -832,6 +833,7 @@ impl PeerHandler for HandshakeInitiatorHandler {
             our_balance,
             their_balance,
             game_allocated,
+            have_potato: None,
         })
     }
     fn channel_handler(&self) -> Result<&ChannelHandler, Error> {

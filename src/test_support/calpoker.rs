@@ -989,7 +989,7 @@ mod sim_tests {
             assert_stayed_off_chain(&outcome, "two_games_joiner");
         }));
 
-        res.push(("test_debug_log_state_numbers_monotonic", &|| {
+        res.push(("test_log_state_numbers_monotonic", &|| {
             let mut allocator = AllocEncoder::new();
             let mut moves = vec![
                 GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
@@ -1000,10 +1000,10 @@ mod sim_tests {
 
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves)
                 .expect("game should complete");
-            assert_stayed_off_chain(&outcome, "debug_log_state_numbers");
+            assert_stayed_off_chain(&outcome, "log_state_numbers");
 
             for who in 0..2 {
-                let log = &outcome.debug_logs[who];
+                let log = &outcome.logs[who];
                 assert!(
                     !log.is_empty(),
                     "p{who}: debug log is empty"

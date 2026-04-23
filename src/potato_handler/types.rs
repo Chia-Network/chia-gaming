@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
-use serde_json_any_key::*;
 
 use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::channel_handler::types::{
@@ -99,7 +98,7 @@ pub trait ToLocalUI {
         notification: &crate::potato_handler::effects::GameNotification,
     ) -> Result<(), Error>;
 
-    fn debug_log(&mut self, _line: &str) -> Result<(), Error> {
+    fn log(&mut self, _line: &str) -> Result<(), Error> {
         Ok(())
     }
 }
@@ -244,7 +243,6 @@ pub struct GameFactory {
 pub struct PotatoHandlerInit {
     pub have_potato: bool,
     pub private_keys: ChannelHandlerPrivateKeys,
-    #[serde(with = "any_key_map")]
     pub game_types: BTreeMap<GameType, GameFactory>,
     pub my_contribution: Amount,
     pub their_contribution: Amount,

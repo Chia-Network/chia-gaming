@@ -1,4 +1,5 @@
-const _host = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+const _raw = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+const _host = _raw === 'localhost' ? '127.0.0.1' : _raw;
 const _win = typeof window !== 'undefined' ? (window as any) : {};
 export const BLOCKCHAIN_SERVICE_URL =
   _win.__SIM_URL__ || `http://${_host}:5800`;

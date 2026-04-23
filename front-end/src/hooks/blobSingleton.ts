@@ -6,9 +6,10 @@ import {
 import { BlockchainPoller } from './BlockchainPoller';
 import {
   startNewSession,
-  SessionSave,
+  SessionState,
+  base64ToUint8,
 } from './save';
-import { debugLog } from '../services/debugLog';
+import { log } from '../services/log';
 
 export var blobSingleton: WasmBlobWrapper | null = null;
 export var initStarted = false;
@@ -44,63 +45,63 @@ export async function configGameObject(
   gameObject.setBlockchainAddress(address);
   let { game: cradle, puzzleHash } = wasmStateInit.createGame(calpokerHexes.proposalHex, calpokerHexes.parserHex, rngId, wasmConnection, iStarted, amount, amount, address.puzzleHash);
   gameObject.setGameCradle(cradle);
-  debugLog('[wasm] activateSpend');
+  log('[wasm] activateSpend');
   gameObject.activateSpend();
-  debugLog('[wasm] game object configured (handshake)');
+  log('[wasm] game object configured (handshake)');
   return gameObject;
 }
 
 async function restoreSession(
   gameObject: WasmBlobWrapper,
-  save: SessionSave,
+  save: SessionState,
   wasmStateInit: WasmStateInit,
+  blockchain: BlockchainPoller,
 ): Promise<void> {
+  if (!save.serializedCradle) {
+    throw new Error('restoreSession called without serializedCradle');
+  }
   const wasmConnection = await wasmStateInit.getWasmConnection();
   gameObject.loadWasm(wasmConnection);
 
-  const cradle = wasmStateInit.deserializeGame(wasmConnection, save.serializedCradle);
+  const cradleBytes = base64ToUint8(save.serializedCradle);
+  const cradle = wasmStateInit.deserializeGame(wasmConnection, cradleBytes);
   gameObject.setGameCradle(cradle);
 
-  gameObject.messageNumber = save.messageNumber;
-  gameObject.remoteNumber = save.remoteNumber;
-  gameObject.channelReady = save.channelReady;
-  gameObject.iStarted = save.iStarted;
-  gameObject.pairingToken = save.pairingToken;
-  gameObject.unackedMessages = [...save.unackedMessages];
-  gameObject.pendingTransactions = [...save.pendingTransactions];
-  gameObject.gameLog = [...save.gameLog];
-  gameObject.debugLogHistory = [...save.debugLog];
+  const watchedCoins = cradle.get_watching_coins();
+  for (const { coin_name, coin_string } of watchedCoins) {
+    blockchain.registerCoin(coin_name, coin_string);
+  }
+  log(`[restore] re-registered ${watchedCoins.length} watched coins`);
+
+  gameObject.messageNumber = save.messageNumber ?? 1;
+  gameObject.remoteNumber = save.remoteNumber ?? 0;
+  gameObject.channelReady = save.channelReady ?? false;
+  gameObject.iStarted = save.iStarted ?? false;
+  gameObject.pairingToken = save.pairingToken ?? '';
+  gameObject.unackedMessages = (save.unackedMessages ?? []).map(m => ({ msgno: m.msgno, msg: base64ToUint8(m.msg) }));
+  gameObject.pendingTransactions = [...(save.pendingTransactions ?? [])];
+  gameObject.history = [...(save.history ?? [])];
+  gameObject.logHistory = [...(save.log ?? [])];
   gameObject.activeGameId = save.activeGameId ?? null;
   gameObject.handState = save.handState ?? null;
   gameObject.lastChannelStatus = save.channelStatus ?? null;
   gameObject.myAlias = save.myAlias;
   gameObject.opponentAlias = save.opponentAlias;
-  gameObject.showBetweenHandOverlay = save.showBetweenHandOverlay ?? false;
   gameObject.lastOutcomeWin = save.lastOutcomeWin;
   gameObject.chatMessages = save.chatMessages ?? [];
-  gameObject.gameCoinHex = save.gameCoinHex ?? null;
-  gameObject.gameTurnState = save.gameTurnState ?? 'my-turn';
-  gameObject.gameTerminalType = save.gameTerminalType ?? 'none';
-  gameObject.gameTerminalLabel = save.gameTerminalLabel ?? null;
-  gameObject.gameTerminalReward = save.gameTerminalReward ?? null;
-  gameObject.gameTerminalRewardCoin = save.gameTerminalRewardCoin ?? null;
-  gameObject.myRunningBalance = save.myRunningBalance ?? '0';
-  gameObject.channelAttentionActive = save.channelAttentionActive ?? false;
-  gameObject.gameTerminalAttentionActive = save.gameTerminalAttentionActive ?? false;
-  gameObject.restoreSavedWatchCoins(save.channelStatus);
   gameObject.markRestored();
 
-  debugLog('[restore] session restored');
+  log('[restore] session restored');
 }
 
 export function getBlobSingleton(
   blockchain: BlockchainPoller,
   peerConn: PeerConnectionResult,
-  registerMessageHandler: (handler: (msgno: number, msg: string) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void,
+  registerMessageHandler: (handler: (msgno: number, msg: Uint8Array) => void, ackHandler: (ack: number) => void, keepaliveHandler: () => void) => void,
   uniqueId: string,
   amount: bigint,
   iStarted: boolean,
-  sessionSave?: SessionSave,
+  sessionSave?: SessionState,
   pairingToken?: string,
   perGameAmount?: bigint,
   getFee?: () => number,
@@ -124,7 +125,7 @@ export function getBlobSingleton(
   blobSingleton.setPeerKeepalive(() => peerConn.sendKeepalive());
 
   registerMessageHandler(
-    (msgno: number, msg: string) => {
+    (msgno: number, msg: Uint8Array) => {
       blobSingleton?.deliverMessage(msgno, msg);
     },
     (ack: number) => {
@@ -140,10 +141,10 @@ export function getBlobSingleton(
   if (sessionSave) {
     const doRestore = async () => {
       try {
-        await restoreSession(blobSingleton!, sessionSave, wasmStateInit);
+        await restoreSession(blobSingleton!, sessionSave, wasmStateInit, blockchain);
       } catch (e) {
         console.error('[blobSingleton] restoreSession error:', e);
-        debugLog(`[blobSingleton] restoreSession error: ${String(e)}`);
+        log(`[blobSingleton] restoreSession error: ${String(e)}`);
       }
     };
     doRestore();
@@ -166,7 +167,7 @@ export function getBlobSingleton(
           : typeof e === 'object' && e !== null && 'data' in e ? (e as any).data?.error ?? String(e)
           : String(e);
         console.error('[blobSingleton] newSession error:', e);
-        debugLog(`[blobSingleton] newSession error: ${msg}`);
+        log(`[blobSingleton] newSession error: ${msg}`);
         blobSingleton!.rxjsEmitter?.next({ type: 'error', error: msg });
       }
     };

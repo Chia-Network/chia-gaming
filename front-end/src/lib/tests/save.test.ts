@@ -1,6 +1,6 @@
 import {
   saveSession,
-  loadSession,
+  peekSession,
   clearSession,
   startNewSession,
   saveGame,
@@ -8,15 +8,18 @@ import {
   getSaveList,
   getPlayerId,
   getSessionId,
-  setBlockchainType,
   getBlockchainType,
   loadAppState,
   getAlias,
   setAlias,
   getTheme,
   setTheme,
-  SessionSave,
+  getBuildNonce,
+  getTrackerAlert,
+  setTrackerAlert,
+  SessionState,
   _resetForTests,
+  _writeRawState,
 } from '../../hooks/save';
 
 function makeStorage(): Storage {
@@ -31,7 +34,7 @@ function makeStorage(): Storage {
   };
 }
 
-const sampleSession: SessionSave = {
+const sampleSession: Partial<SessionState> = {
   serializedCradle: '{"some":"data"}',
   pairingToken: 'tok-123',
   messageNumber: 5,
@@ -42,34 +45,53 @@ const sampleSession: SessionSave = {
   perGameAmount: '10',
   pendingTransactions: ['tx1'],
   unackedMessages: [{ msgno: 4, msg: 'hello' }],
-  gameLog: ['log1'],
-  debugLog: ['dbg1'],
+  history: ['log1'],
+  log: ['dbg1'],
 };
 
 beforeEach(() => {
   _resetForTests();
   (global as any).localStorage = makeStorage();
+  (global as any).__buildNonce = '/app/test-nonce/';
 });
 
 afterEach(() => {
   delete (global as any).localStorage;
+  delete (global as any).__buildNonce;
 });
 
 describe('session persistence', () => {
-  it('round-trips a SessionSave through save and load', () => {
+  it('round-trips session fields through save and peek', () => {
     saveSession(sampleSession);
-    const loaded = loadSession();
-    expect(loaded).toEqual(sampleSession);
+    const loaded = peekSession();
+    expect(loaded).toMatchObject({ ...sampleSession, buildNonce: '/app/test-nonce/' });
   });
 
   it('returns null when nothing is saved', () => {
-    expect(loadSession()).toBeNull();
+    expect(peekSession()).toBeNull();
   });
 
-  it('clearSession causes loadSession to return null', () => {
+  it('clearSession causes peekSession to return null', () => {
     saveSession(sampleSession);
     clearSession();
-    expect(loadSession()).toBeNull();
+    expect(peekSession()).toBeNull();
+  });
+
+  it('peekSession returns stale saves as-is; callers check buildNonce', () => {
+    saveSession(sampleSession);
+    const first = peekSession();
+    expect(first?.buildNonce).toBe('/app/test-nonce/');
+
+    (global as any).__buildNonce = '/app/different-nonce/';
+    const stale = peekSession();
+    expect(stale).not.toBeNull();
+    expect(stale!.buildNonce).toBe('/app/test-nonce/');
+    expect(stale!.buildNonce).not.toBe(getBuildNonce());
+  });
+
+  it('saveSession preserves blockchainType', () => {
+    saveSession({ ...sampleSession, blockchainType: 'walletconnect' });
+    expect(peekSession()?.blockchainType).toBe('walletconnect');
   });
 
   it('saveSession swallows quota-exceeded errors', () => {
@@ -89,7 +111,7 @@ describe('session persistence', () => {
   });
 });
 
-describe('unified app state', () => {
+describe('flat state', () => {
   it('getPlayerId generates and persists a player ID', () => {
     const id = getPlayerId();
     expect(id).toBeTruthy();
@@ -102,37 +124,51 @@ describe('unified app state', () => {
     expect(getSessionId()).toBe(id);
   });
 
-  it('clearSession preserves playerId and alias but clears session-scoped fields', () => {
-    const playerId = getPlayerId();
+  it('clearSession generates a new playerId', () => {
+    const oldId = getPlayerId();
+    clearSession();
+    const newId = getPlayerId();
+    expect(newId).toBeTruthy();
+    expect(newId).not.toBe(oldId);
+  });
+
+  it('clearSession wipes everything', () => {
     getSessionId();
-    setBlockchainType('simulator');
+    saveSession({ ...sampleSession, blockchainType: 'simulator' });
     setAlias('MyName');
-    saveSession(sampleSession);
 
     clearSession();
 
-    expect(getPlayerId()).toBe(playerId);
     expect(loadAppState().sessionId).toBeUndefined();
     expect(getBlockchainType()).toBeUndefined();
-    expect(loadSession()).toBeNull();
-    expect(loadAppState().alias).toBe('MyName');
+    expect(peekSession()).toBeNull();
+    expect(loadAppState().alias).toBeUndefined();
   });
 
-  it('setBlockchainType / getBlockchainType round-trip', () => {
+  it('getBlockchainType reads from flat state', () => {
     expect(getBlockchainType()).toBeUndefined();
-    setBlockchainType('walletconnect');
+    saveSession({ blockchainType: 'walletconnect' });
     expect(getBlockchainType()).toBe('walletconnect');
   });
 
-  it('saveSession stores gameSave inside the unified state', () => {
+  it('saveSession merges fields into the flat state', () => {
     saveSession(sampleSession);
     const state = loadAppState();
-    expect(state.gameSave).toEqual(sampleSession);
+    expect(state.serializedCradle).toBe(sampleSession.serializedCradle);
+    expect(state.pairingToken).toBe(sampleSession.pairingToken);
+    expect(state.buildNonce).toBe('/app/test-nonce/');
   });
 
   it('version field is set on fresh state', () => {
     const state = loadAppState();
-    expect(state.version).toBe(2);
+    expect(state.version).toBe(3);
+  });
+
+  it('old version data is treated as fresh start', () => {
+    _writeRawState({ version: 2, playerId: 'old-player' });
+    const state = loadAppState();
+    expect(state.playerId).not.toBe('old-player');
+    expect(state.version).toBe(3);
   });
 });
 
@@ -161,73 +197,16 @@ describe('alias and theme', () => {
   });
 });
 
-describe('migration from old keys', () => {
-  it('migrates playerId, sessionId, and sessionSave from old keys', () => {
-    const oldSave = { ...sampleSession, uniqueId: 'old-player', blockchainType: 'simulator' as const };
-    localStorage.setItem('playerId', 'old-player');
-    localStorage.setItem('sessionId', 'old-session');
-    localStorage.setItem('sessionSave', JSON.stringify(oldSave));
-
-    const state = loadAppState();
-    expect(state.playerId).toBe('old-player');
-    expect(state.sessionId).toBe('old-session');
-    expect(state.blockchainType).toBe('simulator');
-    expect(state.gameSave).toBeDefined();
-    expect((state.gameSave as any).uniqueId).toBeUndefined();
-    expect((state.gameSave as any).blockchainType).toBeUndefined();
-
-    expect(localStorage.getItem('playerId')).toBeNull();
-    expect(localStorage.getItem('sessionId')).toBeNull();
-    expect(localStorage.getItem('sessionSave')).toBeNull();
+describe('tracker alert', () => {
+  it('getTrackerAlert returns false initially', () => {
+    expect(getTrackerAlert()).toBe(false);
   });
 
-  it('migrates playerId alone when no session exists', () => {
-    localStorage.setItem('playerId', 'solo-player');
-    const state = loadAppState();
-    expect(state.playerId).toBe('solo-player');
-    expect(state.gameSave).toBeUndefined();
-    expect(localStorage.getItem('playerId')).toBeNull();
-  });
-
-  it('migrates from v1 persistedState key', () => {
-    localStorage.setItem('persistedState', JSON.stringify({ playerId: 'v1-player', sessionId: 'v1-sess' }));
-    const state = loadAppState();
-    expect(state.playerId).toBe('v1-player');
-    expect(state.sessionId).toBe('v1-sess');
-    expect(state.version).toBe(2);
-    expect(localStorage.getItem('persistedState')).toBeNull();
-  });
-
-  it('does not re-migrate when appState already exists', () => {
-    const appState = { version: 2, playerId: 'new-player' };
-    localStorage.setItem('appState', JSON.stringify(appState));
-    localStorage.setItem('playerId', 'should-be-ignored');
-    const state = loadAppState();
-    expect(state.playerId).toBe('new-player');
-  });
-
-  it('migrates alias and theme from old keys', () => {
-    localStorage.setItem('playerId', 'test-player');
-    localStorage.setItem('alias', 'OldAlias');
-    localStorage.setItem('theme', 'dark');
-    const state = loadAppState();
-    expect(state.alias).toBe('OldAlias');
-    expect(state.theme).toBe('dark');
-    expect(localStorage.getItem('alias')).toBeNull();
-    expect(localStorage.getItem('theme')).toBeNull();
-  });
-
-  it('migrates saved games from saveNames/save-{id}', () => {
-    localStorage.setItem('playerId', 'test-player');
-    localStorage.setItem('saveNames', 'g1,g2');
-    localStorage.setItem('save-g1', JSON.stringify({ id: 'g1', searchParams: {}, url: '' }));
-    localStorage.setItem('save-g2', JSON.stringify({ id: 'g2', searchParams: {}, url: '' }));
-    const state = loadAppState();
-    expect(state.savedGames).toHaveLength(2);
-    expect(state.savedGames![0].id).toBe('g1');
-    expect(state.savedGames![1].id).toBe('g2');
-    expect(localStorage.getItem('saveNames')).toBeNull();
-    expect(localStorage.getItem('save-g1')).toBeNull();
+  it('setTrackerAlert / getTrackerAlert round-trip', () => {
+    setTrackerAlert(true);
+    expect(getTrackerAlert()).toBe(true);
+    setTrackerAlert(false);
+    expect(getTrackerAlert()).toBe(false);
   });
 });
 

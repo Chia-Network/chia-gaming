@@ -50,6 +50,7 @@ pub struct ChannelStatusSnapshot {
     pub our_balance: Option<Amount>,
     pub their_balance: Option<Amount>,
     pub game_allocated: Option<Amount>,
+    pub have_potato: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -84,6 +85,27 @@ pub struct GameStatusOtherParams {
     pub game_finished: Option<bool>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum CancelReason {
+    SupersededByIncoming,
+    PeerProposalPending,
+    GameActive,
+    CancelledByPeer,
+    CancelledByUs,
+    ChannelError,
+    WentOnChain,
+    CleanShutdown,
+}
+
+impl CancelReason {
+    pub fn is_local(self) -> bool {
+        matches!(
+            self,
+            Self::SupersededByIncoming | Self::PeerProposalPending | Self::GameActive
+        )
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum GameNotification {
     GameStatus {
@@ -105,7 +127,7 @@ pub enum GameNotification {
     },
     ProposalCancelled {
         id: GameID,
-        reason: String,
+        reason: CancelReason,
     },
     InsufficientBalance {
         id: GameID,
@@ -123,6 +145,8 @@ pub enum GameNotification {
         our_balance: Option<Amount>,
         their_balance: Option<Amount>,
         game_allocated: Option<Amount>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        have_potato: Option<bool>,
     },
 }
 
@@ -144,7 +168,7 @@ pub enum CradleEvent {
     OutboundMessage(Vec<u8>),
     OutboundTransaction(SpendBundle),
     Notification(GameNotification),
-    DebugLog(String),
+    Log(String),
     CoinSolutionRequest(CoinString),
     ReceiveError(String),
     NeedCoinSpend(CoinSpendRequest),
@@ -200,9 +224,9 @@ pub enum Effect {
     ChannelPuzzleHash(PuzzleHash),
     ReceivedChannelOffer(SpendBundle),
 
-    // Debug logging — first-class effect so it lands in the FIFO event queue
+    // Logging — first-class effect so it lands in the FIFO event queue
     // at the correct temporal position.
-    DebugLog(String),
+    Log(String),
 }
 
 pub fn apply_effects(
@@ -281,8 +305,8 @@ pub fn apply_effects(
             Effect::ReceivedChannelOffer(bundle) => {
                 system.received_channel_offer(&bundle)?;
             }
-            Effect::DebugLog(line) => {
-                system.debug_log(&line)?;
+            Effect::Log(line) => {
+                system.log(&line)?;
             }
         }
     }

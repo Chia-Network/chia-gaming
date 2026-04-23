@@ -1,0 +1,9 @@
+[package]
+name = "chia-pos2"
+version = "0.4.2"
+edition = "2021"
+description = "Stub for WASM builds — provides the chia-pos2 API surface without C++ code"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde-big-array = "0.5"

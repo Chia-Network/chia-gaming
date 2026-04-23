@@ -18,24 +18,25 @@ sim-server = ["sim-tests", "dep:tiny_http", "dep:tungstenite", "dep:socket2"]
 used_linker = []
 
 [dependencies]
-bson = "=2.14.0"
-chia-bls = "=0.36.1"
+bencodex = { path = "bencodex" }
+chia-bls = "=0.38.2"
+chia-consensus = "=0.38.2"
+chia-protocol = "=0.38.2"
 chia-puzzles = "=0.20.2"
-clvm-traits = "=0.36.1"
-clvm-utils = "=0.36.1"
-clvmr = { version = "=0.16.2", features = ["pre-eval"] }
+clvm-traits = "=0.38.2"
+clvm-utils = "=0.38.2"
+clvmr = { version = "=0.17.5", features = ["pre-eval"] }
 hex = "=0.4.3"
 lazy_static = "=1.5.0"
 num-bigint = "=0.4.6"
 num-traits = "=0.2.19"
-rand = "=0.8.5"
-rand_chacha = "=0.3.1"
+rand = "=0.9.3"
+rand_chacha = "=0.9.0"
 socket2 = { version = "=0.6.3", optional = true }
 tiny_http = { version = "=0.12", optional = true }
-tungstenite = { version = "=0.24", optional = true }
+tungstenite = { version = "=0.29", optional = true }
 serde = { version = "=1.0.228", features = ["rc"] }
 serde_json = "=1.0.145"
-serde_json_any_key = "=2.0.0"
 sha2 = "=0.10.9"
 typetag = "=0.2.21"
 

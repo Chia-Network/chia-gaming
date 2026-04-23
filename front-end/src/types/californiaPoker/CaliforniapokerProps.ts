@@ -11,13 +11,9 @@ export interface CaliforniapokerProps {
   setCardSelections: (n: number[] | ((prev: number[]) => number[])) => void;
   handleMakeMove: () => void;
   myWinOutcome: 'win' | 'lose' | 'tie' | undefined;
-  onDisplayComplete: () => void;
   onGameLog: (lines: string[]) => void;
   onSnapshotChange: (snapshot: CalpokerDisplaySnapshot) => void;
   initialSnapshot?: CalpokerDisplaySnapshot;
   myName?: string;
   opponentName?: string;
-  onPlayAgain?: () => void;
-  onEndSession?: () => void;
-  showBetweenHandActions?: boolean;
 }

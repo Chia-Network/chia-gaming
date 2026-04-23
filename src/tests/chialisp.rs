@@ -16,7 +16,7 @@ fn test_make_cards() {
         .expect("should build");
     let result = run_program(
         allocator.allocator(),
-        &ChiaDialect::new(0),
+        &ChiaDialect::default(),
         program_clvm,
         source_data,
         0,

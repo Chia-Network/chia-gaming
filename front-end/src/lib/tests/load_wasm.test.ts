@@ -29,7 +29,6 @@ import {
 } from '../../types/ChiaGaming';
 import { BLOCKCHAIN_SERVICE_URL, BLOCKCHAIN_WS_URL } from '../../settings';
 import {
-  FakeBlockchainInterface,
   fakeBlockchainInfo,
 } from '../../hooks/FakeBlockchainInterface';
 import { _resetForTests as resetSaveState } from '../../hooks/save';
@@ -56,7 +55,7 @@ function preset_file(name: string) {
   deposit_file(name, fs.readFileSync(rooted(name), 'utf8'));
 }
 
-interface SimpleMessage { msgno: number; msg: string };
+interface SimpleMessage { msgno: number; msg: Uint8Array };
 
 function makeStorage(): Storage {
   const store = new Map<string, string>();
@@ -101,7 +100,7 @@ function cleanupActiveResources() {
   }
   testPoller?.stop();
   testPoller = null;
-  fakeBlockchainInfo.close();
+  void fakeBlockchainInfo.disconnect();
 }
 
 afterEach(() => {
@@ -111,7 +110,7 @@ afterEach(() => {
 
 class WasmBlobWrapperAdapter {
   blob: WasmBlobWrapper | undefined;
-  waiting_messages: Array<string>;
+  waiting_messages: Array<SimpleMessage>;
 
   constructor() {
     this.waiting_messages = [];
@@ -133,7 +132,7 @@ class WasmBlobWrapperAdapter {
     this.blob.kickSystem(2);
   }
 
-  deliver_message(msgno: number, msg: string) {
+  deliver_message(msgno: number, msg: Uint8Array) {
     this.blob?.deliverMessage(msgno, msg);
   }
 
@@ -147,7 +146,7 @@ class WasmBlobWrapperAdapter {
     return w;
   }
 
-  add_outbound_message(msgno: number, msg: string) {
+  add_outbound_message(msgno: number, msg: Uint8Array) {
     this.waiting_messages.push({ msgno, msg });
   }
 
@@ -252,27 +251,24 @@ function sleepMs(ms: number): Promise<void> {
 }
 
 async function isSimulatorAvailable(): Promise<boolean> {
-  // HTTP health alone can be ready slightly before WS RPC accepts requests.
-  // Probe both endpoints with short retries to reduce startup race flakiness.
   const attempts = [0, 150, 300, 600, 1000];
   for (const delayMs of attempts) {
     if (delayMs > 0) {
       await sleepMs(delayMs);
     }
-
     try {
       await fetch(`${BLOCKCHAIN_SERVICE_URL}/get_peak`, { method: 'POST' });
-
-      const probe = new FakeBlockchainInterface(BLOCKCHAIN_WS_URL);
-      try {
-        await probe.registerUser(`ws-ready-probe-${Date.now()}-${getRandomInt(1_000_000)}`);
-      } finally {
-        probe.close();
-      }
-
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const WS = (globalThis as any).WebSocket ?? require('ws');
+      await new Promise<void>((resolve, reject) => {
+        const ws = new WS(BLOCKCHAIN_WS_URL);
+        const timeout = setTimeout(() => { try { ws.close(); } catch { /* ignore */ } reject(new Error('timeout')); }, 2000);
+        ws.onopen = () => { clearTimeout(timeout); try { ws.close(); } catch { /* ignore */ } resolve(); };
+        ws.onerror = () => { clearTimeout(timeout); reject(new Error('ws error')); };
+      });
       return true;
     } catch {
-      // Retry; simulator may still be in the HTTP-ready / WS-not-ready window.
+      // Retry; simulator may still be starting up.
     }
   }
   return false;
@@ -285,9 +281,9 @@ it(
       console.warn('Simulator not running at', BLOCKCHAIN_SERVICE_URL, '- skipping load_wasm test. Run ./ct.sh for full suite.');
       return;
     }
-    await fakeBlockchainInfo.registerUser('block-producer');
-    await fakeBlockchainInfo.startMonitoring();
-    testPoller = new BlockchainPoller(fakeBlockchainInfo, 1000);
+    const setup = await fakeBlockchainInfo.beginConnect('block-producer');
+    await setup.finalize();
+    testPoller = new BlockchainPoller(fakeBlockchainInfo, 1000, 2000);
     testPoller.start();
     const poller = testPoller;
 
@@ -295,7 +291,7 @@ it(
     const cradle2 = addActiveCradle(new WasmBlobWrapperAdapter());
     try {
       let peer_conn1: PeerConnectionResult = {
-        sendMessage: (msgno: number, message: string) => {
+        sendMessage: (msgno: number, message: Uint8Array) => {
           cradle1.add_outbound_message(msgno, message);
         },
         sendAck: (_ackMsgno: number) => {},
@@ -315,7 +311,7 @@ it(
       cradle1.set_blob(wasm_blob1);
 
       let peer_conn2: PeerConnectionResult = {
-        sendMessage: (msgno: number, message: string) => {
+        sendMessage: (msgno: number, message: Uint8Array) => {
           cradle2.add_outbound_message(msgno, message);
         },
         sendAck: (_ackMsgno: number) => {},

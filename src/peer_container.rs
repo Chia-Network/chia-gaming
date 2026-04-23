@@ -5,7 +5,6 @@ use clvm_traits::ToClvm;
 use rand::Rng;
 
 use serde::{Deserialize, Serialize};
-use serde_json_any_key::*;
 
 #[cfg(test)]
 use crate::channel_handler::types::ChannelCoinSpendInfo;
@@ -445,7 +444,6 @@ pub trait GameCradle {
 struct SynchronousGameCradleState {
     #[serde(skip)]
     current_height: u64,
-    #[serde(with = "any_key_map")]
     watching_coins: HashMap<CoinString, WatchEntry>,
 
     is_initiator: bool,
@@ -471,8 +469,7 @@ impl PacketSender for SynchronousGameCradleState {
         if self.peer_disconnected {
             return Ok(());
         }
-        let bson_doc = bson::to_bson(&msg).map_err(|e| Error::StrErr(format!("{e:?}")))?;
-        let msg_data = bson::to_vec(&bson_doc).map_err(|e| Error::StrErr(format!("{e:?}")))?;
+        let msg_data = bencodex::to_vec(&msg).map_err(|e| Error::StrErr(format!("{e:?}")))?;
         self.events
             .push_back(CradleEvent::OutboundMessage(msg_data));
         Ok(())
@@ -647,7 +644,7 @@ impl SynchronousGameCradle {
         }
     }
     pub fn new<R: Rng>(rng: &mut R, config: SynchronousGameCradleConfig) -> Self {
-        let private_keys: ChannelHandlerPrivateKeys = rng.gen();
+        let private_keys: ChannelHandlerPrivateKeys = rng.random();
         SynchronousGameCradle::new_with_keys(config, private_keys)
     }
 }
@@ -671,9 +668,8 @@ impl ToLocalUI for SynchronousGameCradleState {
         Ok(())
     }
 
-    fn debug_log(&mut self, line: &str) -> Result<(), Error> {
-        self.events
-            .push_back(CradleEvent::DebugLog(line.to_string()));
+    fn log(&mut self, line: &str) -> Result<(), Error> {
+        self.events.push_back(CradleEvent::Log(line.to_string()));
         Ok(())
     }
 }
@@ -899,6 +895,7 @@ impl SynchronousGameCradle {
             our_balance: snap.our_balance.clone(),
             their_balance: snap.their_balance.clone(),
             game_allocated: snap.game_allocated.clone(),
+            have_potato: snap.have_potato,
         }
     }
 
@@ -913,11 +910,12 @@ impl SynchronousGameCradle {
                     ChannelState::ResolvedClean => {
                         self.state.clean_shutdown = snap.coin.clone();
                     }
-                    ChannelState::ResolvedUnrolled | ChannelState::ResolvedStale => {
-                        if self.state.is_on_chain {
-                            self.state.peer_disconnected = true;
-                        }
+                    ChannelState::ResolvedUnrolled | ChannelState::ResolvedStale
+                        if self.state.is_on_chain =>
+                    {
+                        self.state.peer_disconnected = true;
                     }
+                    ChannelState::ResolvedUnrolled | ChannelState::ResolvedStale => {}
                     ChannelState::GoingOnChain | ChannelState::Unrolling => {
                         self.state.peer_disconnected = true;
                     }
@@ -1149,8 +1147,7 @@ impl SynchronousGameCradle {
             _ => unreachable!(),
         };
 
-        let doc = bson::Document::from_reader(&mut msg.as_slice()).into_gen()?;
-        let msg_envelope: PeerMessage = bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
+        let msg_envelope: PeerMessage = bencodex::from_slice(&msg).into_gen()?;
         let fake_move = f(&msg_envelope)?;
 
         self.state.send_message(&fake_move)

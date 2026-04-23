@@ -370,23 +370,18 @@ pub fn standard_solution_partial(
     let mut one_create = false;
     for cond in conds.iter() {
         match cond {
-            CoinCondition::CreateCoin(_, _) => {
-                if !one_create {
-                    one_create = true;
-                    add_signature(
-                        &mut aggregated_signature,
-                        if partial {
-                            partial_signer(
-                                private_key,
-                                aggregate_public_key,
-                                &coin_agg_sig_me_message,
-                            )
-                        } else {
-                            private_key.sign(&coin_agg_sig_me_message)
-                        },
-                    );
-                }
+            CoinCondition::CreateCoin(_, _) if !one_create => {
+                one_create = true;
+                add_signature(
+                    &mut aggregated_signature,
+                    if partial {
+                        partial_signer(private_key, aggregate_public_key, &coin_agg_sig_me_message)
+                    } else {
+                        private_key.sign(&coin_agg_sig_me_message)
+                    },
+                );
             }
+            CoinCondition::CreateCoin(_, _) => {}
             CoinCondition::AggSigMe(pubkey, data) => {
                 let mut message = pubkey.bytes().to_vec();
                 message.extend_from_slice(data);

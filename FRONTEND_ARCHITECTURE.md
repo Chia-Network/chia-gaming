@@ -49,7 +49,7 @@ a session token:
    matchmaking UX. The player app sends `postMessage` to the iframe only for
    **theme syncing** (CSS variables and dark-mode class), never for game data.
    The lobby iframe may request a theme sync via `postMessage` as well.
-2. A **game relay WebSocket** to the tracker (`/ws`). This carries match
+2. A **game relay WebSocket** to the tracker (`/ws/game`). This carries match
    notifications and game messages. The protocol is defined in
    [Tracker Relay Protocol](#tracker-relay-protocol) below.
 
@@ -69,9 +69,10 @@ The tracker has two communication channels per player:
 2. **Game channel** — used by the player app's `TrackerConnection` for game
    message relay.
 
-Both channels connect to the same tracker WebSocket endpoint (`/ws`). The
-tracker links them by `session_id` (`join` from lobby iframe, `identify` from
-game channel) and maps session → player internally.
+Each channel uses a dedicated WebSocket endpoint: the lobby channel connects to
+`/ws/lobby` and the game channel connects to `/ws/game`. The tracker links them
+by `session_id` (`join` from lobby iframe, `identify` from game channel) and
+maps session → player internally.
 
 #### Lobby channel events
 
@@ -79,23 +80,32 @@ game channel) and maps session → player internally.
 
 | Event | Payload | Purpose |
 |-------|---------|---------|
+| `get_alias` | `{ id }` | Look up a previously saved alias (sent on connect, before joining) |
+| `set_alias` | `{ id, alias }` | Save a new alias on the tracker |
 | `join` | `{ id, alias, session_id }` | Register in the lobby with a player ID and display alias |
 | `leave` | `{ id }` | Leave the lobby |
 | `challenge` | `{ from_id, target_id, game, amount, per_game }` | Challenge another player to a game |
 | `challenge_accept` | `{ challenge_id, accepter_id }` | Accept a pending challenge |
 | `challenge_decline` | `{ challenge_id }` | Decline a pending challenge |
-| `change_alias` | `{ id, newAlias }` | Update lobby display alias |
+| `challenge_cancel` | `{ from_id }` | Cancel an outgoing challenge |
+| `change_alias` | `{ id, newAlias }` | Update lobby display alias mid-session |
 
 **Tracker → Lobby iframe:**
 
 | Event | Payload | Purpose |
 |-------|---------|---------|
-| `lobby_update` | `Player[]` | Current list of players in the lobby (broadcast on changes) |
+| `alias_result` | `{ alias }` | Response to `get_alias` or `set_alias` (`alias` is `null` if no alias is saved) |
+| `lobby_update` | `Player[]` | Current list of players in the lobby (broadcast on changes). Each `Player` includes `status` (`'waiting'` or `'playing'`) and, when playing, `opponent_alias`. |
 | `challenge_received` | `{ challenge_id, from_id, from_alias, game, amount, per_game }` | Someone challenged you |
 | `challenge_resolved` | `{ challenge_id, accepted }` | Your outgoing challenge was accepted or declined |
 
 When a challenge is accepted, the tracker creates a **pairing** (two player IDs
 linked by a random token) and emits `matched` to both players' game channels.
+Both players' status is set to `'playing'` with the opponent's alias, and any
+pending challenges involving either player are cancelled. The tracker rejects
+new challenges sent to or from a player whose status is `'playing'`. When the
+pairing ends (game close or connection sweep), both players revert to
+`'waiting'`.
 
 #### Game channel events
 
@@ -170,7 +180,7 @@ keepalives at two separate layers:
 
 **Game channel client (`TrackerConnection`):**
 
-- Uses a WebSocket connection to `/ws` and re-sends `identify` on reconnect.
+- Uses a WebSocket connection to `/ws/game` and re-sends `identify` on reconnect.
 - Starts a 15-second keepalive interval on `ws.onopen` that sends
   `{ type: 'keepalive' }` to the tracker. Cleared on close/error/disconnect.
 - Fires `onTrackerActivity()` on every incoming `ws.onmessage` (any message
@@ -178,8 +188,11 @@ keepalives at two separate layers:
 
 **Lobby channel client (`useLobbySocket`):**
 
-- Uses a WebSocket connection to `/ws`.
-- On reconnect, re-emits `join` to re-register the lobby channel.
+- Uses a WebSocket connection to `/ws/lobby`.
+- Connects immediately and sends `get_alias` to retrieve a saved alias. Once
+  the alias is confirmed (either from a saved alias or after the user picks
+  one), sends `join` to register in the lobby.
+- On reconnect, re-emits `get_alias` followed by `join` to re-register.
 
 #### Tracker Reconnection
 
@@ -190,6 +203,33 @@ the reconciliation logic described in [Reconnect Reconciliation](#reconnect-reco
 
 `TrackerConnection` exposes `onTrackerDisconnected` and `onTrackerReconnected`
 callbacks for logging/diagnostics around game channel stream health.
+
+#### WebSocket Connection Discipline
+
+All three WebSocket clients — `FakeBlockchainInterface` (simulator),
+`TrackerConnection` (game channel), and `useLobbySocket` (lobby iframe) —
+follow the same connection discipline:
+
+1. **Exponential backoff with jitter on reconnect.** A shared delay schedule
+   `[1s, 2s, 4s, 8s, 15s, 30s]` governs retry intervals. Each attempt picks a
+   random jitter factor (0.75–1.25× the base delay). The attempt counter resets
+   to zero on a successful `onopen`.
+
+2. **Connection timeout.** Each `new WebSocket()` is given 10 seconds to reach
+   `OPEN`. If `readyState` is still `CONNECTING` after 10 seconds, the socket
+   is closed, which triggers `onclose` and feeds into the backoff reconnect.
+
+3. **Deferred WebSocket ref assignment.** The WebSocket reference (used by
+   `send`, `close`, and stale-check guards) is only assigned after `onopen`
+   fires. Before that, the in-flight socket is tracked separately so cleanup
+   can abort a pending connection attempt without leaking it.
+
+These properties are critical for local development, where all three clients
+target the same host (`127.0.0.1`). Without backoff and timeouts, aggressive
+reconnect attempts (especially after connection-refused RSTs) can trigger
+browser-level per-host connection throttling, causing multi-second freezes
+across all connections to that host — even connections from different browser
+contexts (e.g. the lobby iframe vs. the main app).
 
 **Future direction: lean `matched`.** The `matched` payload currently carries
 game parameters (game_type, amount, per_game) because the lobby UI negotiates
@@ -220,55 +260,141 @@ This is always-on — not a feature the user opts into.
 
 An `appState` key in localStorage holds a JSON-serialized `AppState` object
 (version 2). The game session save lives at `appState.gameSave` as a
-`SessionSave`:
+`SessionSave`. All game-specific fields are optional — a save may contain only
+`blockchainType` (pre-game state) or the full set (mid-game state):
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `serializedCradle` | `string` | Full WASM cradle state via `cradle.serialize()` |
-| `pairingToken` | `string` | Tracker pairing token, for reconciliation on reconnect |
-| `messageNumber` | `number` | Next outbound message sequence number |
-| `remoteNumber` | `number` | Last delivered inbound message sequence number |
-| `channelReady` | `boolean` | Whether the channel has been created |
-| `iStarted` | `boolean` | Whether this player was the initiator |
-| `amount` | `string` | Channel buy-in (bigint as string) |
-| `perGameAmount` | `string` | Per-hand amount (bigint as string) |
-| `pendingTransactions` | `string[]` | CLVM blobs of transactions not yet confirmed |
-| `unackedMessages` | `Array<{ msgno, msg }>` | Outbound messages not yet acknowledged by the peer |
-| `gameLog` | `string[]` | Game notification log |
-| `debugLog` | `string[]` | Debug log history |
+| `buildNonce` | `string?` | Build nonce stamped on every save; used for stale detection |
+| `blockchainType` | `'simulator' \| 'walletconnect'?` | Which wallet backend is active |
+| `serializedCradle` | `string?` | Full WASM cradle state via `cradle.serialize()` |
+| `pairingToken` | `string?` | Tracker pairing token, for reconciliation on reconnect |
+| `messageNumber` | `number?` | Next outbound message sequence number |
+| `remoteNumber` | `number?` | Last delivered inbound message sequence number |
+| `channelReady` | `boolean?` | Whether the channel has been created |
+| `iStarted` | `boolean?` | Whether this player was the initiator |
+| `amount` | `string?` | Channel buy-in (bigint as string) |
+| `perGameAmount` | `string?` | Per-hand amount (bigint as string) |
+| `pendingTransactions` | `string[]?` | CLVM blobs of transactions not yet confirmed |
+| `unackedMessages` | `Array<{ msgno, msg }>?` | Outbound messages not yet acknowledged by the peer |
+| `history` | `string[]?` | Game notification log |
+| `log` | `string[]?` | Log history |
 | `activeGameId` | `string \| null?` | Current game ID |
 | `handState` | `CalpokerHandState?` | Card state snapshot for mid-hand restore |
 | `channelStatus` | `ChannelStatusPayload?` | Last channel status for coin watching |
 | `myAlias` | `string?` | Local player display name |
 | `opponentAlias` | `string?` | Opponent display name |
-| `showBetweenHandOverlay` | `boolean?` | Whether the between-hand overlay was showing |
+| `channelNotifQueue` | `QueuedNotification[]?` | Persisted channel-scope notification queue |
+| `gameNotifQueue` | `QueuedNotification[]?` | Persisted game-scope notification queue |
 | `lastOutcomeWin` | `'win' \| 'lose' \| 'tie'?` | Last hand result |
+| `dismissedChannelState` | `string?` | Last dismissed channel-state notification value |
+| `betweenHandMode` | `string?` | Between-hand overlay state |
+| `betweenHandComposePerHand` | `string?` | Proposed per-hand amount in compose overlay |
+| `betweenHandLastTerms` | `{ my_contribution, their_contribution }?` | Last agreed hand terms |
+| `gameCoinHex` | `string?` | Current game coin ID |
+| `gameTurnState` | `string?` | Whose turn it is |
+| `myRunningBalance` | `string?` | Running balance delta from initial amount |
 
-The surrounding `AppState` also holds `playerId`, `sessionId`, `blockchainType`,
-`alias`, `theme`, `activeTab`, `defaultFee`, `feeUnit`, and `savedGames` —
-these persist across sessions.
+The surrounding `AppState` also holds `playerId`, `sessionId`, `alias`,
+`theme`, `activeTab`, `defaultFee`, `feeUnit`, and `savedGames` — these persist
+across sessions. Note that `blockchainType` lives exclusively inside
+`SessionSave`, not at the `AppState` level.
 
-#### When saves happen
+#### Save architecture
 
-`WasmBlobWrapper.persistSession()` is debounced (500ms) and called at the end of
-every `processResult()` invocation. It also fires when:
-- An outbound message is added to the unacked log
-- A pending transaction is added or removed
-- An ack is received and the unacked log is pruned
+Session persistence is owned by the outer JavaScript layer, not by
+`WasmBlobWrapper`. The save combines two sources of state:
+
+1. **WASM-native state** — `WasmBlobWrapper.getWasmFields()` returns the
+   cradle serialization, message counters, protocol state, history, aliases,
+   and other fields that originate inside the WASM bridge.
+2. **JS-side state** — React state in `useGameSession`: game coin, turn state,
+   notification queues, between-hand mode, running balance, dismissed
+   notifications, etc.
+
+`useGameSession` defines a `persistFullSession` callback that merges both
+sources into a single `SessionSave` and calls `saveSession()`. This callback
+fires in two situations:
+
+- **JS state changes** — a React effect triggers `persistFullSession` whenever
+  any dependency in the JS-side state changes.
+- **WASM state changes** — `WasmBlobWrapper.onSaveNeeded` is wired to
+  `persistFullSession`. Inside WasmBlobWrapper, `scheduleSave()` debounces
+  (500ms) and fires `onSaveNeeded`. `scheduleSave()` is called at the end of
+  every `processResult()` invocation, when outbound messages are added, when
+  pending transactions change, and when acks are received.
+
+This means the outer JS layer always builds the complete, coherent save from
+both JS and WASM state at once.
+
+**Pre-game saves:** `Shell.tsx` calls `saveSession({ blockchainType })` as
+soon as the user picks a connection type (before any WASM cradle exists). This
+ensures that even pre-game state is persisted and detected on reload.
+
+`saveSession()` always stamps `buildNonce` from the current build, so every
+save carries the nonce it was created under.
+
+#### Boot state machine
+
+On page load, `Shell.tsx` runs a boot sequence that determines which dialog
+(if any) to show before the app becomes interactive:
+
+```
+peekSession() → save
+                 │
+                 ├─ save exists, save.buildNonce !== currentNonce
+                 │   → clearSession(), clearLease(), save = null
+                 │
+                 ├─ save exists (nonce matches)
+                 │   → show Resume / Start Over dialog
+                 │       │
+                 │       ├─ Start Over → clearSession(), claimLease(), ready
+                 │       │
+                 │       └─ Resume → is there a lease conflict?
+                 │           │
+                 │           ├─ Yes → show Take Over dialog
+                 │           │   ├─ Take Over → claimLease(), restore
+                 │           │   └─ Close Tab → dead
+                 │           │
+                 │           └─ No → claimLease(), restore
+                 │
+                 ├─ no save, lease conflict (another tab is active)
+                 │   → show Take Over dialog (save: null)
+                 │
+                 └─ no save, no conflict
+                     → claimLease(), ready (fresh start)
+```
+
+**Stale nonce handling:** Every frontend build gets a unique nonce (milliseconds
+since epoch). `saveSession()` stamps it on every save. On boot, if the save's
+nonce doesn't match the current build, the save is from a previous build and is
+wiped along with the tab lease. This prevents stale saves from interfering with
+a fresh build.
+
+**Full vs pre-game saves:** The resume/takeover handlers check
+`save.serializedCradle` to distinguish full game saves from pre-game saves.
+A full save triggers `performResume` (WASM restore + tracker reconnect). A
+pre-game save triggers `handleConnect(save.blockchainType)` to re-establish
+the wallet connection without attempting WASM deserialization.
+
+**Lease claiming:** The lease is never claimed during the boot initializer's
+read phase. It is only claimed inside user action handlers (`handleResume`,
+`handleStartOver`, `handleTakeOver`) after the user has made a choice. This
+prevents a new tab from immediately fencing an existing tab before the user
+decides what to do.
 
 #### Restore path
 
-On page reload, `Shell.tsx` receives a `connection_status` event from the
-tracker. If the tracker reports an active pairing whose token matches the local
-save's `pairingToken`, the restore path activates:
+When the user chooses to resume a full save, `performResume` fires:
 
-1. Load WASM and hex presets via `WasmStateInit.getWasmConnection()`.
-2. Deserialize the cradle via `WasmStateInit.deserializeGame()`, which calls
-   `create_serialized_game` with a fresh RNG seed.
-3. Restore all counters and logs (`messageNumber`, `remoteNumber`,
-   `channelReady`, `unackedMessages`, `pendingTransactions`, etc.).
-4. Skip `activateSpend` (which calls `start_handshake`) — the channel already
-   exists.
+1. Hydrate local UI state (game params, history, log, chat) from the save.
+2. Connect to the wallet backend (`beginConnect` + `finalize`).
+3. Connect to the tracker. On `connection_status`, reconcile the tracker's
+   pairing state against the save (see
+   [Reconnect Reconciliation](#reconnect-reconciliation)).
+4. `blobSingleton.restoreSession` loads WASM and deserializes the cradle via
+   `WasmStateInit.deserializeGame()`, restores counters and logs, and calls
+   `markRestored()`.
 5. When `qualifyingEvents` reaches 7 (bitmask: wasm loaded + cradle set +
    auto-flush), re-send all un-acked messages and re-submit all pending
    transactions.
@@ -279,6 +405,7 @@ The session save is cleared when:
 - The game finishes (`processResult` sets `finished`)
 - The user clicks "End Session" (clean shutdown)
 - The user clicks "Reset" (`localStorage.clear()`)
+- A stale nonce is detected on boot
 
 ### Peer Message Reliability
 
@@ -454,8 +581,8 @@ but the MVP is limited to one game at a time.
 │  └──────────────────────────────────────────────────────────┘   │
 │                                                                 │
 │  Chat tab (ChatPanel — peer text messages)                      │
-│  Game Log tab (append-only text area)                           │
-│  Debug Log tab (append-only text area)                          │
+│  History tab (append-only text area)                            │
+│  Log tab (append-only text area)                                │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -469,7 +596,7 @@ The Shell is the top-level React component. It owns:
   `TrackerConnection` client for the game channel, and sets up the lobby iframe
 - **Theme sync** — pushes CSS variables and dark-mode class into the lobby iframe
   (`useThemeSyncToIframe`)
-- **Tab navigation** — six tabs: Wallet, Tracker, Game Session, Chat, Game Log, Debug Log
+- **Tab navigation** — six tabs: Wallet, Tracker, Game Session, Chat, History, Log
 - **Unique ID and session ID** — persisted in localStorage, stable across reloads
 
 The Shell does not know about game types or game protocol details. When the
@@ -509,18 +636,24 @@ and poll interval; the rest of the flow is generic.
 5. After finalize resolves, `completeConnection()` activates polling and
    switches to the Tracker tab.
 
-**Auto-reconnect:** Both backends implement their own WebSocket reconnect with
-exponential backoff. Shell's `onConnectionChange` callback handles UI state
-transitions (connected ↔ disconnected) generically. On page load, if
-`blockchainType` is persisted but no game session exists, Shell calls
-`handleConnect(bcType, true)` (silent mode) to re-establish the connection
-automatically — no modals or QR codes are shown, consistent with the principle
-that a reload should be invisible to the user.
+**Auto-reconnect:** Both backends implement their own WebSocket reconnect
+following the shared connection discipline described in
+[WebSocket Connection Discipline](#websocket-connection-discipline).
+Shell's `onConnectionChange` callback handles UI state
+transitions (connected ↔ disconnected) generically. On page load, if the
+user chooses to resume a pre-game save (one with `blockchainType` but no
+`serializedCradle`), Shell calls `handleConnect(bcType, true)` (silent mode)
+to re-establish the connection automatically — no modals or QR codes are shown,
+consistent with the principle that a reload should be invisible to the user.
 
-**Session persistence:** `blockchainType` is persisted to `localStorage`
-immediately when the user makes their choice, before the connection completes.
-`clearSession()` removes it on explicit disconnect, cancel, or unrecoverable
-error.
+**Session persistence:** `blockchainType` is persisted as a minimal
+`SessionSave` (via `saveSession({ blockchainType })`) immediately when the
+user makes their choice, before the connection completes. This is the earliest
+point at which state is saved — even before a WASM cradle exists. Once the
+full game session is running, `useGameSession` takes over persistence and
+includes `blockchainType` in every subsequent save alongside the WASM and
+JS state. `clearSession()` removes it on explicit disconnect, cancel, or
+unrecoverable error.
 
 **Intentional deviation:** The simulator returns `ConnectionSetup.fields`
 because there is no external wallet to scan the QR code. This triggers the
@@ -548,8 +681,8 @@ individual hands). The `useGameSession` hook owns:
 - **WASM cradle** — the `WasmBlobWrapper` lifecycle, obtained via
   `getBlobSingleton`. The singleton persists across hands within a session.
 - **Notification dispatch** — subscribes to `WasmBlobWrapper`'s observable and
-  routes notifications to toasts (channel-scope and game-scope terminal events)
-  or to the gameplay event stream (gameplay events).
+  routes notifications to scoped notification queues (channel-scope and
+  game-scope) or to the gameplay event stream (gameplay events).
 - **Session-level state** — channel coin lifecycle, game coin lifecycle, running
   balance, hand counter, between-hand overlay.
 - **Game proposal flow** — the initiator proposes on `ChannelCreated`; the
@@ -557,7 +690,7 @@ individual hands). The `useGameSession` hook owns:
   "play again".
 - **Between-game UX** — an overlay showing the final result of each hand, with
   "Play Another Hand" and "End Session" buttons.
-- **Game log** and **debug log** — append-only text areas managed by the Shell,
+- **History** and **Log** — append-only text areas managed by the Shell,
   with callbacks passed down.
 
 ### CalpokerHand Component (`CalpokerHand` + `useCalpokerHand`)
@@ -587,40 +720,34 @@ What the game UI does **not** know about:
 
 ## Notification Routing
 
-WASM notifications fall into three categories based on how they are handled.
-All routing happens in `useGameSession`'s `handleNotification` callback.
+WASM notifications are routed by `useGameSession`'s `handleNotification`
+callback into one of four destinations:
 
-### Channel-scope (shown as toasts)
+### Channel notification queue
 
-These relate to the state channel itself, not any individual game:
+Infrastructure-level events pushed to the channel-scoped FIFO queue
+(`pushChannel`). These appear as dismissable, non-modal overlays at `z-50`
+over the full session area. See
+[UI Notification Queues](UX_NOTIFICATIONS.md#ui-notification-queues) for
+details.
 
-- `ChannelCreated`
-- `GoingOnChain`
-- `ChannelCoinSpent`
-- `UnrollCoinSpent`
-- `StaleChannelUnroll`
-- `ChannelError`
-- `CleanShutdownStarted`
-- `CleanShutdownComplete`
+| Kind | Source |
+|---|---|
+| `channel-state` | `ChannelStatus` in `ATTENTION_STATES` (replaceable slot) |
+| `session-over` | Balance exhausted → cooperative shutdown |
+| `action-failed` | `ActionFailed` (WASM `Err`) — also logged |
+| `infra-error` | `ReceiveError`, tx failures, general `error` events |
 
-### Game-scope terminal / edge-case (shown as toasts)
+### Game notification queue
 
-These end or prevent a game. They are shown as toasts and trigger game-over
-handling (removing the game ID, showing the between-hand overlay):
+In-game and between-hand events pushed to the game-scoped FIFO queue
+(`pushGame`). Overlays appear at `z-40` within the game area.
 
-- `WeTimedOut`
-- `OpponentTimedOut`
-- `WeSlashedOpponent`
-- `OpponentSlashedUs`
-- `OpponentSuccessfullyCheated`
-- `EndedCancelled`
-- `ProposalCancelled`
-- `InsufficientBalance`
-- `GameError`
-- `GameOnChain`
-- `WeMoved`
-- `OpponentPlayedIllegalMove`
-- `ActionFailed`
+| Kind | Source |
+|---|---|
+| `game-terminal` | `GameStatus` ended during on-chain flow |
+| `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer` |
+| `insufficient-bal` | `InsufficientBalance` notification |
 
 ### Game lifecycle (handled internally by session)
 
@@ -634,28 +761,73 @@ These drive game proposal and acceptance flow. They are consumed by
 These are the normal flow of play, forwarded to the active game UI component
 via the `gameplayEventSubject` RxJS stream:
 
-- `ProposalAccepted` — a new game is starting
+- `ProposalAccepted` — a new game is starting (also clears stale
+  `proposal-rejected` entries from the game queue)
 - `OpponentMoved` — the opponent made a move (with readable data)
 - `GameMessage` — advisory data (e.g. Alice revealing cards to Bob early)
 
 Terminal notifications are also forwarded as `{ _terminal: true, notification }`
 so the game UI can stop processing.
 
-## MVP Simplifications
+## Single-Hand Enforcement
 
 The WASM layer supports multiple simultaneous games (games are tracked by
-`GameID`), but the MVP frontend supports only **one game at a time**. This means:
+`GameID`), but the frontend currently enforces **one game at a time**. This is
+a deliberate architectural choice: single-hand enforcement lives almost entirely
+in JavaScript, keeping the WASM/Rust layer multi-hand-ready for future use. The
+game UI component contract does not change — each game instance behaves as if
+it is the only game. When multi-handing is added, the session component gains
+a multiplexer (game ID → component mapping) and the JS-side guards are relaxed.
 
-- The session component manages a single game UI component
-- The between-game flow is strictly sequential: hand ends → overlay → propose
-  next → accept → new hand starts
-- Notification routing is trivial: gameplay events go to the one game component
+### JS-side guards
 
-This is a UI simplification, not an architectural limitation. When multiple
-simultaneous games are added, the session component gains a multiplexer (game
-ID → component mapping) and UI for switching between games. The game UI component
-contract does not change — each game instance still behaves as if it is the only
-game.
+**Send guard** — `proposeNewGame` in `useGameSession` bails immediately if
+`gameIdsRef.current.length > 0` (a game is active). This prevents the user
+from proposing a new hand while one is in progress.
+
+**Receive guard** — When a `ProposalMade` notification arrives while a game is
+active (`handKeyRef.current > 0 && gameIdsRef.current.length === 0` is false),
+the handler calls `cancel_proposal` to reject it outright, rather than caching
+it.
+
+**First-game proposal** — The initiator proposes the first game exactly once,
+triggered by `ChannelStatus { state: Active }` with the guard
+`!firstGameAcceptedRef.current && iStarted`. `firstGameAcceptedRef` is set
+to `true` immediately, making it structurally impossible to fire twice. The
+receiver auto-accepts the first `ProposalMade` with a symmetric guard
+(`!firstGameAcceptedRef.current && !iStarted`).
+
+### WASM-side constraints
+
+Two proposal constraints live in WASM because they arise from the potato
+protocol's asynchronous nature and cannot be deferred to JS:
+
+1. **`SupersededByIncoming`** — When a batch arrives containing a
+   `ProposeGame` from the peer, any locally queued `QueuedProposal` actions
+   are removed from the `game_action_queue`. The queued proposals were built
+   against a now-stale state (the incoming batch carries the potato and the
+   definitive state). WASM emits `ProposalCancelled { reason:
+   SupersededByIncoming }` for each removed proposal.
+
+2. **`PeerProposalPending`** — When JS calls `propose_game` while an
+   unresolved peer proposal exists in `proposed_games`, WASM rejects
+   immediately with `ProposalCancelled { reason: PeerProposalPending }`.
+   This prevents silently cancelling the peer's proposal as a side effect
+   of proposing our own.
+
+Both represent the same fundamental situation — a collision between our
+proposal intent and the peer's — hitting at different points in the potato
+cycle. In case 1, our proposal was queued but unsent when the peer's batch
+arrived. In case 2, the peer's proposal was already recorded when JS tried to
+propose. The frontend handles both identically: stash the cancelled terms in
+`pendingRetryTermsRef` and wait for the incoming peer proposal to surface
+before deciding what to do (see
+[Proposal Collision Handling](GAME_LIFECYCLE.md#proposal-collision-handling)).
+
+Everything else in WASM — `MAX_PROPOSALS` (100), nonce parity/monotonicity,
+amount consistency, timeout caps — are validation/safety checks, not
+single-hand enforcement. They exist to prevent protocol violations, not to
+limit concurrency.
 
 ## Key Files
 
@@ -663,15 +835,15 @@ game.
 |------|---------|
 | `front-end/src/components/Shell.tsx` | Top-level component: wallet, tracker, tabs, logs |
 | `front-end/src/components/GameSession.tsx` | Game session UI: header, coin status, game area, overlays |
-| `front-end/src/hooks/useGameSession.ts` | Session hook: WASM subscription, notification routing, game flow |
+| `front-end/src/hooks/useGameSession.ts` | Session hook: WASM subscription, notification routing, game flow, session persistence |
 | `front-end/src/hooks/useCalpokerHand.ts` | Calpoker hook: five-step protocol, card parsing, move submission |
-| `front-end/src/hooks/WasmBlobWrapper.ts` | WASM bridge: message delivery, block data, event queue |
+| `front-end/src/hooks/WasmBlobWrapper.ts` | WASM bridge: message delivery, block data, event queue, `getWasmFields()` for persistence |
 | `front-end/src/hooks/WasmStateInit.ts` | WASM initialization: load binary, deposit .hex files, create cradle |
 | `front-end/src/hooks/blobSingleton.ts` | Singleton management: create or retrieve the WasmBlobWrapper; restore path for session persistence |
-| `front-end/src/hooks/save.ts` | `SessionSave` interface and `saveSession`/`loadSession`/`clearSession` functions |
+| `front-end/src/hooks/save.ts` | `SessionSave` interface, `saveSession`/`peekSession`/`clearSession`, tab lease management, nonce stamping |
 | `front-end/src/hooks/FakeBlockchainInterface.ts` | Simulator blockchain backend: WebSocket to local sim, auto-reconnect |
 | `front-end/src/hooks/RealBlockchainInterface.ts` | WalletConnect blockchain backend: RPC via WalletConnect sessions |
-| `front-end/src/services/TrackerConnection.ts` | Game relay WebSocket client (`/ws`) |
+| `front-end/src/services/TrackerConnection.ts` | Game relay WebSocket client (`/ws/game`) |
 | `front-end/src/types/ChiaGaming.ts` | TypeScript types for WASM interface and game data |
 | `lobby/lobby-frontend/src/useLobbySocket.ts` | Lobby channel hook (`useLobbySocket`): lobby WebSocket join/challenge/alias messaging |
 | `lobby/lobby-service/src/index.ts` | Tracker server: lobby, challenges, pairing, message relay, liveness sweep |

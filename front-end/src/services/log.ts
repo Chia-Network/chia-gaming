@@ -11,13 +11,13 @@ function timestamp(): string {
   return `${hh}:${mm}:${ss}.${ms}`;
 }
 
-export function debugLog(line: string) {
+export function log(line: string) {
   const stamped = `[${timestamp()}] ${line}`;
   buffer.push(stamped);
   listeners.forEach(fn => fn(stamped));
 }
 
-export function subscribeDebugLog(fn: Listener): () => void {
+export function subscribeLog(fn: Listener): () => void {
   buffer.forEach(fn);
   listeners.add(fn);
   return () => { listeners.delete(fn); };

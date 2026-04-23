@@ -2,7 +2,6 @@ use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
-use serde_json_any_key::*;
 
 use crate::channel_handler::types::ChannelHandlerEnv;
 use crate::channel_handler::types::{
@@ -43,7 +42,6 @@ pub struct OnChainGameHandler {
     have_potato: PotatoState,
     channel_timeout: Timeout,
     game_action_queue: VecDeque<GameAction>,
-    #[serde(with = "any_key_map")]
     game_map: HashMap<CoinString, OnChainGameState>,
     #[serde(skip)]
     pending_moves: HashMap<CoinString, PendingMoveSavedState>,
@@ -604,7 +602,7 @@ impl OnChainGameHandler {
                 None
             });
             if let Some(ref rc) = reward_coin {
-                effects.push(Effect::DebugLog(format!(
+                effects.push(Effect::Log(format!(
                     "[slash-on-chain] {} reward={}",
                     format_coin(coin_id),
                     format_coin(rc),
@@ -620,7 +618,7 @@ impl OnChainGameHandler {
                     other_params: None,
                 }
             } else {
-                effects.push(Effect::DebugLog(format!(
+                effects.push(Effect::Log(format!(
                     "[game-error] {} slash succeeded but no reward coin found",
                     format_coin(coin_id),
                 )));
@@ -764,7 +762,7 @@ impl OnChainGameHandler {
             result
         } else {
             let reason = format!("game_coin_spent failed: {result:?}");
-            effects.push(Effect::DebugLog(format!(
+            effects.push(Effect::Log(format!(
                 "[game-error] {} {reason}",
                 format_coin(coin_id),
             )));
@@ -794,7 +792,7 @@ impl OnChainGameHandler {
             );
             if !is_expected {
                 let reason = format!("our turn coin spent unexpectedly: {their_turn_result:?}");
-                effects.push(Effect::DebugLog(format!(
+                effects.push(Effect::Log(format!(
                     "[game-error] {} {reason}",
                     format_coin(coin_id),
                 )));
@@ -824,7 +822,7 @@ impl OnChainGameHandler {
                 _redo,
             )) => {
                 let new_coin_id = CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt);
-                effects.push(Effect::DebugLog(format!(
+                effects.push(Effect::Log(format!(
                     "[move-on-chain] {} new_coin={}",
                     format_coin(coin_id),
                     format_coin(&new_coin_id),
@@ -908,13 +906,13 @@ impl OnChainGameHandler {
                     "timeout-on-chain"
                 };
                 if let Some(ref rc) = my_reward_coin_string {
-                    effects.push(Effect::DebugLog(format!(
+                    effects.push(Effect::Log(format!(
                         "[{label}] {} reward={}",
                         format_coin(coin_id),
                         format_coin(rc),
                     )));
                 } else {
-                    effects.push(Effect::DebugLog(format!(
+                    effects.push(Effect::Log(format!(
                         "[{label}] {} no reward",
                         format_coin(coin_id),
                     )));
@@ -969,7 +967,7 @@ impl OnChainGameHandler {
                 mover_share,
                 ..
             }) => {
-                effects.push(Effect::DebugLog(format!(
+                effects.push(Effect::Log(format!(
                     "[move-on-chain] {} new_coin={} mover_share={mover_share}",
                     format_coin(coin_id),
                     format_coin(&new_coin_string),
@@ -1044,7 +1042,7 @@ impl OnChainGameHandler {
             CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Slash(outcome)) => {
                 self.have_potato = PotatoState::Present;
 
-                effects.push(Effect::DebugLog(format!(
+                effects.push(Effect::Log(format!(
                     "[slash-on-chain] {}",
                     format_coin(coin_id),
                 )));
@@ -1126,7 +1124,7 @@ impl OnChainGameHandler {
             }
             CoinSpentInformation::OurReward(ph, amt) => {
                 let reward_coin_debug = CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt);
-                effects.push(Effect::DebugLog(format!(
+                effects.push(Effect::Log(format!(
                     "[timeout-on-chain] {} reward={}",
                     format_coin(coin_id),
                     format_coin(&reward_coin_debug),
@@ -1190,7 +1188,7 @@ impl OnChainGameHandler {
             let initial_potato = self.is_initial_potato;
             let game_id = game_def.game_id;
 
-            effects.push(Effect::DebugLog(format!(
+            effects.push(Effect::Log(format!(
                 "[timeout-on-chain] {}",
                 format_coin(coin_id),
             )));
@@ -1410,12 +1408,18 @@ impl OnChainGameHandler {
         }
 
         let game_amount = self.get_game_amount(&game_id)?;
+
+        let has_pending_slash = self
+            .game_map
+            .values()
+            .any(|g| g.game_id == game_id && g.pending_slash_amount.is_some());
+
         let (pre_referee, pre_last_ph) = self.save_game_state(&game_id)?;
 
         let (old_ph, new_ph, _state_number, move_result, transaction) =
             self.on_chain_our_move(env, &game_id, &readable_move, entropy.clone(), current_coin)?;
 
-        if move_result.basic.mover_share == game_amount && move_result.basic.max_move_size > 0 {
+        if !has_pending_slash && move_result.basic.mover_share == game_amount {
             let finished = self.is_game_finished(&game_id);
             self.restore_game_state(&game_id, pre_referee, pre_last_ph)?;
             self.game_map.retain(|_, def| def.game_id != game_id);
@@ -1432,7 +1436,7 @@ impl OnChainGameHandler {
                 status: GameStatusKind::EndedWeTimedOut,
                 my_reward: Some(Amount::default()),
                 coin_id: None,
-                reason: None,
+                reason: Some("abandoned: opponent gets everything after our move".to_string()),
                 other_params: finished_params,
             })));
         }
@@ -1561,7 +1565,10 @@ impl OnChainGameHandler {
                             status: GameStatusKind::EndedWeTimedOut,
                             my_reward: Some(Amount::default()),
                             coin_id: None,
-                            reason: None,
+                            reason: Some(
+                                "zero reward: our turn to accept timeout but our share is zero"
+                                    .to_string(),
+                            ),
                             other_params: finished_params,
                         })]);
                     }
@@ -1630,13 +1637,13 @@ impl OnChainGameHandler {
         if matched {
             effects.insert(
                 0,
-                Effect::DebugLog(format!(
+                Effect::Log(format!(
                     "[on-chain:game-coin-spent] {}",
                     format_coin(coin_id),
                 )),
             );
         } else {
-            effects.push(Effect::DebugLog(format!(
+            effects.push(Effect::Log(format!(
                 "[on-chain:coin-spent] {}",
                 format_coin(coin_id),
             )));
@@ -1669,7 +1676,7 @@ impl OnChainGameHandler {
             } else {
                 "opponent made impossible spend".to_string()
             };
-            effects.push(Effect::DebugLog(format!(
+            effects.push(Effect::Log(format!(
                 "[game-error] {} {reason}",
                 format_coin(coin_id),
             )));
@@ -1792,6 +1799,7 @@ impl PeerHandler for OnChainGameHandler {
             our_balance: Some(self.my_out_of_game_balance.clone()),
             their_balance: Some(self.their_out_of_game_balance.clone()),
             game_allocated: None,
+            have_potato: None,
         })
     }
 

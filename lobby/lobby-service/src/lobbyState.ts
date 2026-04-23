@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 
 import {
   Player,
+  PlayerStatus,
   Challenge,
   Pairing,
 } from './types/lobby';
@@ -29,6 +30,13 @@ export class Lobby {
     const existing = !!this.players[playerId];
     delete this.players[playerId];
     return existing;
+  }
+
+  setPlayerStatus(playerId: string, status: PlayerStatus, opponentAlias?: string): void {
+    const player = this.players[playerId];
+    if (!player) return;
+    player.status = status;
+    player.opponent_alias = opponentAlias;
   }
 
   getPlayers(): Player[] {

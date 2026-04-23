@@ -5,8 +5,10 @@ codebase — a system for playing two-player games over Chia state channels.
 For detailed coverage of specific areas, see [Further Reading](#further-reading)
 at the end of this document.
 
-**Alpha status:** This project is in alpha. No on-chain wire formats, persistence
-formats, or external APIs are stable yet. Breaking changes should be expected.
+**Alpha status:** This project is in alpha. No backwards compatibility is
+maintained for anything — on-chain wire formats, persistence formats, browser
+localStorage, external APIs, or internal interfaces. Breaking changes should
+be expected.
 
 ## Table of Contents
 

@@ -1,9 +1,12 @@
+export type PlayerStatus = 'waiting' | 'playing';
+
 export interface Player {
   id: string;
   alias: string;
   session_id: string;
   walletAddress?: string;
-  status: string;
+  status: PlayerStatus;
+  opponent_alias?: string;
   parameters: any;
 }
 

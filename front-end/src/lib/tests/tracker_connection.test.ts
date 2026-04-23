@@ -14,11 +14,13 @@ class MockWebSocket {
 
   url: string;
   readyState = MockWebSocket.CONNECTING;
+  binaryType: string = 'blob';
   onopen: WSHandler = null;
   onmessage: WSHandler = null;
   onerror: WSHandler = null;
   onclose: WSHandler = null;
-  sent: unknown[] = [];
+  sentJson: unknown[] = [];
+  sentBinary: Uint8Array[] = [];
   closed = false;
 
   constructor(url: string) {
@@ -31,8 +33,14 @@ class MockWebSocket {
     });
   }
 
-  send(data: string) {
-    this.sent.push(JSON.parse(data));
+  send(data: string | Uint8Array | ArrayBuffer) {
+    if (typeof data === 'string') {
+      this.sentJson.push(JSON.parse(data));
+    } else if (data instanceof Uint8Array) {
+      this.sentBinary.push(data);
+    } else if (data instanceof ArrayBuffer) {
+      this.sentBinary.push(new Uint8Array(data));
+    }
   }
 
   close() {
@@ -42,6 +50,14 @@ class MockWebSocket {
 
   _fire(data: unknown) {
     this.onmessage?.({ data: JSON.stringify(data) });
+  }
+
+  _fireBinary(msgno: number, payload: Uint8Array) {
+    const frame = new ArrayBuffer(4 + payload.byteLength);
+    const view = new DataView(frame);
+    view.setUint32(0, msgno, false);
+    new Uint8Array(frame, 4).set(payload);
+    this.onmessage?.({ data: frame });
   }
 
   _fireError() {
@@ -84,6 +100,7 @@ function makeCallbacks(): TrackerConnectionCallbacks {
     onTrackerReconnected: jest.fn(),
     onTrackerActivity: jest.fn(),
     onChat: jest.fn(),
+    onLobbyAttention: jest.fn(),
   };
 }
 
@@ -108,8 +125,8 @@ describe('connection setup', () => {
     await Promise.resolve(); // flush microtasks
 
     const ws = MockWebSocket.instance!;
-    expect(ws.url).toBe('ws://t/ws');
-    expect(ws.sent).toEqual([{ type: 'identify', session_id: 's1' }]);
+    expect(ws.url).toBe('ws://t/ws/game');
+    expect(ws.sentJson).toEqual([{ type: 'identify', session_id: 's1' }]);
   });
 });
 
@@ -217,8 +234,9 @@ describe('message discrimination', () => {
     const handler = jest.fn();
     conn.registerMessageHandler(handler, jest.fn(), jest.fn());
 
-    MockWebSocket.instance!._fire({ type: 'message', data: { msgno: 1, msg: 'hello' } });
-    expect(handler).toHaveBeenCalledWith(1, 'hello');
+    const payload = new TextEncoder().encode('hello');
+    MockWebSocket.instance!._fireBinary(1, payload);
+    expect(handler).toHaveBeenCalledWith(1, payload);
   });
 
   it('ignores legacy string-encoded data payloads', async () => {
@@ -244,16 +262,18 @@ describe('message buffering before registerMessageHandler', () => {
     const conn = new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
 
-    MockWebSocket.instance!._fire({ type: 'message', data: { msgno: 1, msg: 'first' } });
-    MockWebSocket.instance!._fire({ type: 'message', data: { msgno: 2, msg: 'second' } });
+    const first = new TextEncoder().encode('first');
+    const second = new TextEncoder().encode('second');
+    MockWebSocket.instance!._fireBinary(1, first);
+    MockWebSocket.instance!._fireBinary(2, second);
     expect(cb.onMessage).not.toHaveBeenCalled();
 
     const handler = jest.fn();
     conn.registerMessageHandler(handler, jest.fn(), jest.fn());
 
     expect(handler).toHaveBeenCalledTimes(2);
-    expect(handler).toHaveBeenCalledWith(1, 'first');
-    expect(handler).toHaveBeenCalledWith(2, 'second');
+    expect(handler).toHaveBeenCalledWith(1, first);
+    expect(handler).toHaveBeenCalledWith(2, second);
   });
 });
 
@@ -271,16 +291,17 @@ describe('close-pending suppresses messages', () => {
     conn.registerMessageHandler(handler, jest.fn(), jest.fn());
 
     conn.close();
-    expect(MockWebSocket.instance!.sent).toContainEqual({ type: 'close', session_id: 's1' });
+    expect(MockWebSocket.instance!.sentJson).toContainEqual({ type: 'close', session_id: 's1' });
 
-    MockWebSocket.instance!._fire({ type: 'message', data: { msgno: 1, msg: 'suppressed' } });
+    MockWebSocket.instance!._fireBinary(1, new TextEncoder().encode('suppressed'));
     expect(handler).not.toHaveBeenCalled();
 
     MockWebSocket.instance!._fire({ type: 'closed' });
     expect(cb.onClosed).toHaveBeenCalled();
 
-    MockWebSocket.instance!._fire({ type: 'message', data: { msgno: 2, msg: 'delivered' } });
-    expect(handler).toHaveBeenCalledWith(2, 'delivered');
+    const delivered = new TextEncoder().encode('delivered');
+    MockWebSocket.instance!._fireBinary(2, delivered);
+    expect(handler).toHaveBeenCalledWith(2, delivered);
   });
 });
 
@@ -289,14 +310,19 @@ describe('close-pending suppresses messages', () => {
 // ---------------------------------------------------------------------------
 
 describe('outbound message format', () => {
-  it('sendMessage posts numbered payload', async () => {
+  it('sendMessage posts numbered payload as binary frame', async () => {
     const cb = makeCallbacks();
     const conn = new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
     const ws = MockWebSocket.instance!;
-    ws.sent = [];
-    conn.sendMessage(3, 'payload');
-    expect(ws.sent).toEqual([{ type: 'message', session_id: 's1', data: { msgno: 3, msg: 'payload' } }]);
+    ws.sentBinary = [];
+    const payload = new TextEncoder().encode('payload');
+    conn.sendMessage(3, payload);
+    expect(ws.sentBinary).toHaveLength(1);
+    const frame = ws.sentBinary[0];
+    const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength);
+    expect(view.getUint32(0, false)).toBe(3);
+    expect(new Uint8Array(frame.buffer, frame.byteOffset + 4)).toEqual(payload);
   });
 
   it('sendAck posts ack payload', async () => {
@@ -304,9 +330,9 @@ describe('outbound message format', () => {
     const conn = new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
     const ws = MockWebSocket.instance!;
-    ws.sent = [];
+    ws.sentJson = [];
     conn.sendAck(5);
-    expect(ws.sent).toEqual([{ type: 'message', session_id: 's1', data: { ack: 5 } }]);
+    expect(ws.sentJson).toEqual([{ type: 'message', session_id: 's1', data: { ack: 5 } }]);
   });
 
   it('sendKeepalive posts keepalive payload', async () => {
@@ -314,9 +340,9 @@ describe('outbound message format', () => {
     const conn = new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
     const ws = MockWebSocket.instance!;
-    ws.sent = [];
+    ws.sentJson = [];
     conn.sendKeepalive();
-    expect(ws.sent).toEqual([{ type: 'message', session_id: 's1', data: { keepalive: true } }]);
+    expect(ws.sentJson).toEqual([{ type: 'message', session_id: 's1', data: { keepalive: true } }]);
   });
 });
 
@@ -330,7 +356,7 @@ describe('forceDisconnect lifecycle', () => {
     const conn = new TrackerConnection('http://t', 's1', cb);
     await Promise.resolve();
     conn.forceDisconnect();
-    expect(MockWebSocket.instance!.sent.some((m) => (m as any).type === 'close')).toBe(false);
+    expect(MockWebSocket.instance!.sentJson.some((m) => (m as any).type === 'close')).toBe(false);
     expect(MockWebSocket.instance!.closed).toBe(true);
   });
 });

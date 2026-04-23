@@ -13,7 +13,6 @@ use clvm_utils::CurriedProgram;
 use clvmr::allocator::NodePtr;
 
 use serde::{Deserialize, Serialize};
-use serde_json_any_key::*;
 
 use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::channel_handler::types::{
@@ -123,7 +122,7 @@ pub struct ChannelHandler {
     // Maps state_number → timeout_conditions_hash (DEFAULT_HASH) for each
     // exchange we've participated in.  Needed to reconstruct the unroll coin
     // puzzle for preemption when the on-chain state is from an older exchange.
-    #[serde(with = "any_key_map")]
+    #[serde(with = "bencodex::string_key_map")]
     state_conditions_hashes: HashMap<usize, PuzzleHash>,
 
     // Live games
@@ -701,9 +700,16 @@ impl ChannelHandler {
         let channel_coin_spend =
             self.create_conditions_and_signature_of_channel_coin(env, &self.unroll.coin)?;
 
+        let our_half = self.unroll.coin.get_unroll_coin_signature()?;
+        eprintln!(
+            "[sig-diag] update_cached_unroll (SENDER) state={} our_half_sig={} (peer sigs cleared)",
+            self.state_number,
+            hex::encode(our_half.bytes()),
+        );
+
         Ok(PotatoSignatures {
             my_channel_half_signature_peer: channel_coin_spend.signature,
-            my_unroll_half_signature_peer: self.unroll.coin.get_unroll_coin_signature()?,
+            my_unroll_half_signature_peer: our_half,
         })
     }
 
@@ -755,6 +761,13 @@ impl ChannelHandler {
         // Unroll coin section.
         let mut test_unroll = self.unroll.coin.clone();
         test_unroll.state_number = self.state_number + 1;
+
+        eprintln!(
+            "[sig-diag] recv_potato_verify new_state={} peer_unroll_half={}",
+            test_unroll.state_number,
+            hex::encode(signatures.my_unroll_half_signature_peer.bytes()),
+        );
+
         test_unroll.update(
             env,
             &self.private_keys.my_unroll_coin_private_key,
@@ -787,10 +800,30 @@ impl ChannelHandler {
         if let Some(old_timeout) = self.timeout.take() {
             self.old_unrolls.push(old_timeout);
         }
-        self.timeout = Some(ChannelHandlerUnrollSpendInfo {
+        let timeout_info = ChannelHandlerUnrollSpendInfo {
             coin: test_unroll.clone(),
             signatures: signatures.clone(),
-        });
+        };
+        if let Some(ref outcome) = timeout_info.coin.outcome {
+            eprintln!(
+                "[sig-diag] storing timeout slot state={} our_half={} peer_half={} base_hash={}",
+                outcome.state_number,
+                hex::encode(outcome.signature.bytes()),
+                hex::encode(
+                    timeout_info
+                        .signatures
+                        .my_unroll_half_signature_peer
+                        .bytes()
+                ),
+                hex::encode(
+                    outcome
+                        .conditions_without_hash
+                        .sha256tree(env.allocator)
+                        .bytes()
+                ),
+            );
+        }
+        self.timeout = Some(timeout_info);
 
         self.have_potato = true;
 
@@ -1087,6 +1120,34 @@ impl ChannelHandler {
 
     pub fn find_proposal(&self, game_id: &GameID) -> Option<&ProposedGame> {
         self.proposed_games.iter().find(|p| p.game_id == *game_id)
+    }
+
+    pub fn pending_peer_proposal_ids(&self) -> Vec<GameID> {
+        self.proposed_games
+            .iter()
+            .filter(|p| !self.is_our_nonce_parity(&p.game_id))
+            .map(|p| p.game_id)
+            .collect()
+    }
+
+    pub fn dbg_proposed_games_summary(&self) -> String {
+        if self.proposed_games.is_empty() {
+            return "proposed_games=[]".to_string();
+        }
+        let entries: Vec<String> = self
+            .proposed_games
+            .iter()
+            .map(|p| {
+                format!(
+                    "id={} ours={} my={} their={}",
+                    p.game_id,
+                    self.is_our_nonce_parity(&p.game_id),
+                    p.my_contribution.to_u64(),
+                    p.their_contribution.to_u64(),
+                )
+            })
+            .collect();
+        format!("proposed_games=[{}]", entries.join("; "))
     }
 
     pub fn my_out_of_game_balance(&self) -> Amount {
@@ -1620,11 +1681,18 @@ impl ChannelHandler {
             .coin
             .make_unroll_puzzle_solution(env, &agg_key)?;
 
+        let sig = self.unroll.coin.get_unroll_coin_signature()?;
+        eprintln!(
+            "[sig-diag] TIMEOUT_UNROLL_SPEND state={} sig={}",
+            self.unroll.coin.state_number,
+            hex::encode(sig.bytes()),
+        );
+
         Ok(ChannelCoinSpentResult {
             transaction: Spend {
                 puzzle: Puzzle::from_nodeptr(env.allocator, curried_puzzle)?,
                 solution: Program::from_nodeptr(env.allocator, solution)?.into(),
-                signature: self.unroll.coin.get_unroll_coin_signature()?,
+                signature: sig,
             },
             timeout: true,
             games_canceled: vec![],
@@ -1706,7 +1774,11 @@ impl ChannelHandler {
 
         let curried_puzzle = CurriedProgram {
             program: env.unroll_puzzle.clone(),
-            args: clvm_curried_args!(shared_puzzle_hash, unrolling_state_number, conditions_hash),
+            args: clvm_curried_args!(
+                shared_puzzle_hash.clone(),
+                unrolling_state_number,
+                conditions_hash
+            ),
         }
         .to_clvm(env.allocator)
         .into_gen()?;
@@ -1717,11 +1789,30 @@ impl ChannelHandler {
             .make_unroll_puzzle_solution(env, &agg_key)?;
 
         // SIGNATURE: aggregate of both halves from the preemption source.
-        let mut signature = preempt_source.coin.get_unroll_coin_signature()?;
-        signature += preempt_source
+        let our_half = preempt_source.coin.get_unroll_coin_signature()?;
+        let peer_half = preempt_source
             .signatures
             .my_unroll_half_signature_peer
             .clone();
+        let signature = our_half.clone() + peer_half.clone();
+
+        let solution_hash = preempt_source
+            .coin
+            .get_internal_conditions_for_unroll_coin_spend()?
+            .sha256tree(env.allocator);
+
+        eprintln!(
+            "[sig-diag] PREEMPTION old_sn={} new_sn={} source={} agg_key={} our_half={} peer_half={} agg_sig={} base_hash={} shared_ph={}",
+            unrolling_state_number,
+            preempt_source.coin.state_number,
+            if unroll_ok { "unroll" } else { "timeout" },
+            hex::encode(agg_key.bytes()),
+            hex::encode(our_half.bytes()),
+            hex::encode(peer_half.bytes()),
+            hex::encode(signature.bytes()),
+            hex::encode(solution_hash.bytes()),
+            hex::encode(shared_puzzle_hash.bytes()),
+        );
 
         Ok(ChannelCoinSpentResult {
             transaction: Spend {

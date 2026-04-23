@@ -86,35 +86,39 @@ fi
 
 # ── Assemble staging directories ────────────────────────────────────
 
+BUILD_NONCE=$(date +%s%3N)
+echo "=== Build nonce: $BUILD_NONCE ==="
+
 echo "=== Assembling player app staging directory (symlinks) ==="
 GAME_SERVE="$FE_DIR/serve"
 rm -rf "$GAME_SERVE"
-mkdir -p "$GAME_SERVE"
+mkdir -p "$GAME_SERVE/app/$BUILD_NONCE"
 ln -sf "$FE_DIR/public/index.html" "$GAME_SERVE/index.html"
 if [ -f "$FE_DIR/public/favicon.svg" ]; then
     ln -sf "$FE_DIR/public/favicon.svg" "$GAME_SERVE/favicon.svg"
 fi
-ln -sf "$FE_DIR/dist/js/index-rollup.js" "$GAME_SERVE/index.js"
-ln -sf "$FE_DIR/dist/css/index.css" "$GAME_SERVE/index.css"
-ln -sf "$FE_DIR/dist/chia_gaming_wasm.js" "$GAME_SERVE/chia_gaming_wasm.js"
-ln -sf "$FE_DIR/dist/chia_gaming_wasm_bg.wasm" "$GAME_SERVE/chia_gaming_wasm_bg.wasm"
-echo '{"version":3,"sources":[],"mappings":""}' > "$GAME_SERVE/chia_gaming_wasm_bg.wasm.map"
-# Static urls config for the player app
-echo "{\"tracker\": \"http://localhost:$TRACKER_PORT\"}" > "$GAME_SERVE/urls"
-# Symlink chialisp hex files
-ln -sf "$CLSP_DIR" "$GAME_SERVE/clsp"
-# Symlink images if they exist
+echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$GAME_SERVE/build-meta.json"
+GAME_NONCE_DIR="$GAME_SERVE/app/$BUILD_NONCE"
+ln -sf "$FE_DIR/dist/js/index-rollup.js" "$GAME_NONCE_DIR/index.js"
+ln -sf "$FE_DIR/dist/css/index.css" "$GAME_NONCE_DIR/index.css"
+ln -sf "$FE_DIR/dist/chia_gaming_wasm.js" "$GAME_NONCE_DIR/chia_gaming_wasm.js"
+ln -sf "$FE_DIR/dist/chia_gaming_wasm_bg.wasm" "$GAME_NONCE_DIR/chia_gaming_wasm_bg.wasm"
+echo '{"version":3,"sources":[],"mappings":""}' > "$GAME_NONCE_DIR/chia_gaming_wasm_bg.wasm.map"
+echo "{\"tracker\": \"http://localhost:$TRACKER_PORT\"}" > "$GAME_NONCE_DIR/urls"
+ln -sf "$CLSP_DIR" "$GAME_NONCE_DIR/clsp"
 if [ -d "$FE_DIR/public/images" ]; then
-    ln -sf "$FE_DIR/public/images" "$GAME_SERVE/images"
+    ln -sf "$FE_DIR/public/images" "$GAME_NONCE_DIR/images"
 fi
 
 echo "=== Assembling lobby-frontend staging directory (symlinks) ==="
 LOBBY_SERVE="$LOBBY_FRONTEND_DIR/serve"
 rm -rf "$LOBBY_SERVE"
-mkdir -p "$LOBBY_SERVE"
+mkdir -p "$LOBBY_SERVE/app/$BUILD_NONCE"
 ln -sf "$LOBBY_FRONTEND_DIR/public/index.html" "$LOBBY_SERVE/index.html"
-ln -sf "$LOBBY_FRONTEND_DIR/public/index.js" "$LOBBY_SERVE/index.js"
-ln -sf "$LOBBY_FRONTEND_DIR/dist/css/index.css" "$LOBBY_SERVE/index.css"
+echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$LOBBY_SERVE/build-meta.json"
+LOBBY_NONCE_DIR="$LOBBY_SERVE/app/$BUILD_NONCE"
+ln -sf "$LOBBY_FRONTEND_DIR/public/index.js" "$LOBBY_NONCE_DIR/index.js"
+ln -sf "$LOBBY_FRONTEND_DIR/dist/css/index.css" "$LOBBY_NONCE_DIR/index.css"
 
 # ── Start services ──────────────────────────────────────────────────
 

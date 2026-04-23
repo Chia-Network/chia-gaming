@@ -1,0 +1,251 @@
+---
+description: >-
+  Systematic debugging techniques. You are bad at debugging. Your
+  instinct is to skip evidence gathering and jump to theories
+  (usually "race condition"). This rule corrects that instinct.
+alwaysApply: true
+---
+
+# Debugging Techniques
+
+This skill assumes a codebase with reasonably clean test output and a
+test suite fast enough to run frequently. These are properties worth
+maintaining. If the codebase you're working in doesn't have them, the
+principles still apply but the mechanics may need adaptation.
+
+## The Red-Green Loop
+
+After every code change, run the full test suite. If anything fails:
+
+1. **Isolate** the failing test. Run it alone. Single tests typically
+   complete in seconds, giving you a tight iteration loop.
+2. **Fix** the failure, re-running the isolated test as you go.
+3. **Widen**: once the isolated test passes, run the full suite again.
+   If new failures appeared, go back to step 1 with the next one.
+4. **Repeat** until everything is green.
+
+Never consider a change done until the full suite is green. A fix that
+breaks something else is wrong or incomplete -- it means your
+understanding of the problem was off. That's useful information; use
+it.
+
+## Take Test Failures Seriously
+
+### Tests Are Correct Until Proven Otherwise
+
+The default assumption is that failing tests mean buggy code, not
+wrong tests. Tests are black-box consumers of the interface -- they
+should not need to change when implementation details change.
+
+Only modify a test when you can articulate exactly which
+**requirement** changed and why the old test encoded a requirement
+that no longer applies. "My code does something different now" is not
+a reason -- it's a restatement of the bug. If you find yourself
+editing a test to make it pass, stop and ask whether you're fixing
+the test or hiding the bug.
+
+### Don't Dismiss Failures as Pre-existing
+
+In a well-tested codebase, red tests are not background noise.
+
+- **Flaky tests are bugs worth fixing.** Don't hand-wave them as
+  "known flaky" unless explicitly told to ignore them.
+- **Failures at the start of a new session** most likely mean the
+  previous session introduced them. A common pattern: the previous
+  AI session went off the rails, the user started a fresh
+  conversation, and the "pre-existing" failures are exactly what
+  you're here to fix.
+
+"Pre-existing" is not a diagnosis. It's an excuse to stop
+investigating. Treat every red test as your responsibility until you
+have concrete evidence otherwise.
+
+## Structured Diagnosis
+
+When something breaks, first try to trace through the code mentally
+or with the debugger. Follow the execution path from input to the
+point of failure and see if the bug is obvious. Often it is.
+
+If tracing doesn't immediately reveal the problem, fall back to the
+four questions:
+
+1. **What happened?** Read the actual error, output, or behavior.
+   Don't paraphrase -- look at the exact message, return value, or
+   state.
+2. **What was supposed to happen?** Check the test expectation, spec,
+   or prior working behavior.
+3. **Where did they diverge?** The gap between 1 and 2 is where the
+   bug lives. Sometimes the divergence is obvious ("expected 5, got
+   3"). Sometimes you need to trace further back to find where the
+   correct path and the actual path split.
+4. **What diagnostics would clarify?** If the divergence point isn't
+   obvious, add targeted logging or assertions to narrow it down.
+   Each round of diagnostics should at minimum halve the search
+   space, but good diagnostics often do much better -- a single
+   well-placed print at a key decision point can eliminate most
+   possibilities at once. Calibrate how many diagnostics you add per
+   run: each test run costs time, so pack enough diagnostics in to
+   make the run count. But don't add so many that the output becomes
+   a wall of noise you have to wade through -- that trades one
+   problem for another.
+
+### Don't Speculate
+
+When the cause isn't immediately clear, the temptation is to generate
+theories: "maybe it's a race condition," "maybe the cache is stale,"
+"maybe the framework does something unexpected." Resist this. These
+theories feel productive but they lead to speculative fixes that
+"address" imaginary problems while the real bug persists.
+
+Instead, go back to step 4 and add more diagnostics. Let the evidence
+lead. If you can't explain *why* a fix would work -- with reference
+to a specific code path and specific incorrect values -- you don't
+understand the bug yet and the fix is a guess.
+
+### Application: Stalls and Hangs
+
+When a process hangs or stops making progress:
+
+1. What state is it in? (last log line, last observable action)
+2. Was it supposed to reach this state, or diverge earlier?
+3. What event or condition would unblock it?
+4. Why didn't that event occur?
+
+These four questions almost always point directly to the problem:
+a message that was never sent, a condition that's never satisfied,
+a lock that's never released, a callback that's never registered.
+
+### Application: Mismatches
+
+When two values should be equal but aren't (hash mismatches,
+assertion failures, snapshot diffs):
+
+1. Trace the **expected** value: what produced it, from what inputs,
+   and where was it stored or committed?
+2. Trace the **actual** value: what produced it, from what inputs,
+   and where did it come from?
+3. Find where the two traces diverge. That's the bug.
+
+Don't just stare at the two values -- trace their provenance. The
+divergence might be different inputs, different code paths, stale
+cached values, or a serialization asymmetry.
+
+## Diagnostic Discipline
+
+### Adding Diagnostics
+
+- Use a **distinctive prefix** (e.g. `DBG_ISSUE:`) so output is easy
+  to find and won't be confused with existing logs. This also makes
+  cleanup easy: search for the prefix and remove every occurrence.
+- Be surgical: print the specific values you need, **with variable
+  names in the output string**. `DBG: x=5, y=3` is useful.
+  `DBG: 5` is not -- you won't remember what 5 means when you're
+  reading the log.
+- Don't dump entire data structures. If a struct has 20 fields, print
+  the 2-3 you actually need to check.
+
+### Removing Diagnostics
+
+Diagnostics are temporary. Remove them as soon as the issue is
+resolved. They are not documentation and they are not comments. A
+codebase littered with leftover `DBG:` prints is a sign of sloppy
+process.
+
+### Session Cleanup
+
+At the end of a debugging session, verify that no diagnostic prints,
+temporary variables, commented-out code, or cosmetic changes from your
+investigation remain in the codebase. Track which files you touched
+during debugging and check each one -- don't assume you can diff
+against a clean baseline, since the session may have started with
+pre-existing local changes.
+
+## Fix the Root Cause
+
+Fixes should address the actual cause of the problem, not paper over
+the symptom. The hallmark of a bad fix is that it's simultaneously
+too expensive and too weak: it always pays a cost even when the
+problem isn't present, and it still doesn't guarantee correctness
+when the problem is.
+
+The prototypical example is adding a `sleep` to fix a race condition.
+The sleep always incurs the full delay even when the other operation
+finished instantly, and it still might not wait long enough when the
+system is under load. The correct fix enforces the actual ordering
+constraint -- a lock, a condition variable, a callback, a channel --
+and costs exactly zero when the condition is already met.
+
+Another common pattern: a function is being called multiple times when
+it should only be called once, and the repeated calls cause problems.
+Don't add a guard to make it idempotent -- figure out why it's being
+called multiple times. There's usually already a mechanism that should
+have prevented the duplicate calls; that mechanism is what's broken.
+Adding idempotency hides the real bug and leaves the broken mechanism
+in place to cause subtler problems later.
+
+The mirror case: an idempotent call that should be happening isn't.
+Don't add the call at a convenient point in the code. Figure out
+where the call was *supposed* to happen, why it isn't happening in
+this case, and fix that. A call in the wrong place might fix the
+immediate symptom but it won't be triggered by the right conditions
+and it won't compose correctly with the rest of the system.
+
+If you can't articulate the root cause, you aren't ready to write the
+fix. Go back to diagnosis.
+
+## When a Fix Doesn't Work
+
+When your fix doesn't produce the expected result, don't immediately
+revert. A failed fix is a diagnostic signal -- often more informative
+than a print statement.
+
+**If nothing changed**, see [Verify Your Changes Take
+Effect](#verify-your-changes-take-effect) to confirm your code is
+actually running. If it is running but had no effect, your diagnosis
+was wrong about where the bug is -- that narrows the search.
+
+**If things got worse** -- the error changed, a different test broke,
+or the failure is now more severe -- the fix is not necessarily wrong:
+
+- **Your diagnosis may have been wrong.** The fix addresses something
+  other than the real problem. The new behavior is telling you what
+  the actual problem is. Ask: what *did* the fix change, and what does
+  the new failure reveal?
+- **The fix may have uncovered a second bug.** Your fix was correct,
+  but it removed a failure that was masking a deeper one. The symptoms
+  are worse because you're now hitting a bug that was always there but
+  hidden. Both bugs need fixing -- reverting would just re-hide the
+  second one.
+
+Only revert when you've determined that the fix was genuinely wrong.
+When you do revert, do it cleanly: no leftover variable renames,
+reordered imports, added whitespace, or half-finished refactors. The
+code should look exactly as it did before the attempt. Track which
+files you modified and verify each one is fully restored -- don't rely
+on diffing against an assumed-clean baseline, since the session may
+have started with uncommitted work in progress.
+
+The worst outcome is a series of speculative fixes, each partially
+reverted, leaving the code in a state that's different from where you
+started in ways nobody can fully account for.
+
+## Verify Your Changes Take Effect
+
+When you change code and the behavior doesn't change, the temptation
+is to blame the build -- and then waste time tearing apart build
+caches, rewriting build configs, or questioning the toolchain. Almost
+always, the code simply isn't being reached.
+
+Before investigating the build system, add a temporary print at the
+exact change site and rebuild. This takes seconds and is decisive:
+
+- If the print doesn't appear, your code isn't being reached. Check
+  whether you're in the wrong file or function (duplicates, dead code
+  path), the wrong build target (wrong binary, feature flag), or
+  whether hot-reload isn't picking up the change.
+- If the print appears but behavior is unchanged, the bug is
+  downstream of your change -- your edit is correct but insufficient,
+  or the real problem is later in the code path.
+
+Either way, you've avoided a wild goose chase through the build
+system. Prove your code is running before diagnosing further.

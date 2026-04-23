@@ -9,7 +9,7 @@ impl Serialize for ChaCha8SerializationWrapper {
     where
         S: Serializer,
     {
-        hex::encode(self.0.get_seed()).serialize(serializer)
+        serializer.serialize_bytes(&self.0.get_seed())
     }
 }
 
@@ -18,13 +18,24 @@ impl<'de> Deserialize<'de> for ChaCha8SerializationWrapper {
     where
         D: Deserializer<'de>,
     {
-        let st = String::deserialize(deserializer)?;
-        let slice = hex::decode(&st).map_err(serde::de::Error::custom)?;
+        struct SeedVisitor;
 
-        let mut bytes: [u8; 32] = [0; 32];
-        for (i, b) in slice.iter().enumerate() {
-            bytes[i % 32] = *b;
+        impl<'de> serde::de::Visitor<'de> for SeedVisitor {
+            type Value = ChaCha8SerializationWrapper;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(f, "32 bytes for ChaCha8 seed")
+            }
+
+            fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<Self::Value, E> {
+                let mut bytes = [0u8; 32];
+                for (i, b) in v.iter().enumerate() {
+                    bytes[i % 32] = *b;
+                }
+                Ok(ChaCha8SerializationWrapper(ChaCha8Rng::from_seed(bytes)))
+            }
         }
-        Ok(ChaCha8SerializationWrapper(ChaCha8Rng::from_seed(bytes)))
+
+        deserializer.deserialize_bytes(SeedVisitor)
     }
 }

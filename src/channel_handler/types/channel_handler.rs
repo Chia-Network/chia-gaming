@@ -1,6 +1,5 @@
+use rand::distr::StandardUniform;
 use rand::prelude::*;
-
-use rand::distributions::Standard;
 
 use serde::{Deserialize, Serialize};
 
@@ -19,12 +18,12 @@ pub struct ChannelHandlerPrivateKeys {
     pub my_referee_private_key: PrivateKey,
 }
 
-impl Distribution<ChannelHandlerPrivateKeys> for Standard {
+impl Distribution<ChannelHandlerPrivateKeys> for StandardUniform {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> ChannelHandlerPrivateKeys {
         ChannelHandlerPrivateKeys {
-            my_channel_coin_private_key: rng.gen(),
-            my_unroll_coin_private_key: rng.gen(),
-            my_referee_private_key: rng.gen(),
+            my_channel_coin_private_key: rng.random(),
+            my_unroll_coin_private_key: rng.random(),
+            my_referee_private_key: rng.random(),
         }
     }
 }
