@@ -6,6 +6,77 @@ function randomHex(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+// --- Save-state obfuscation ---
+
+const OBFUSCATION_KEY = new Uint8Array([
+  0x4a, 0x7f, 0x2c, 0x91, 0xd3, 0x56, 0xe8, 0x1b,
+  0xa0, 0x63, 0xf5, 0x38, 0xc4, 0x87, 0x0e, 0x6d,
+]);
+const SALT_LEN = 16;
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const result = new Uint8Array(hex.length >> 1);
+  for (let i = 0; i < hex.length; i += 2) {
+    result[i >> 1] = parseInt(hex.slice(i, i + 2), 16);
+  }
+  return result;
+}
+
+function rc4Keystream(key: Uint8Array, length: number): Uint8Array {
+  const S = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) S[i] = i;
+  let j = 0;
+  for (let i = 0; i < 256; i++) {
+    j = (j + S[i] + key[i % key.length]) & 0xff;
+    [S[i], S[j]] = [S[j], S[i]];
+  }
+  const stream = new Uint8Array(length);
+  let a = 0;
+  j = 0;
+  for (let k = 0; k < length; k++) {
+    a = (a + 1) & 0xff;
+    j = (j + S[a]) & 0xff;
+    [S[a], S[j]] = [S[j], S[a]];
+    stream[k] = S[(S[a] + S[j]) & 0xff];
+  }
+  return stream;
+}
+
+function obfuscate(json: string): string {
+  const plaintext = new TextEncoder().encode(json);
+  const salt = new Uint8Array(SALT_LEN);
+  crypto.getRandomValues(salt);
+  const key = new Uint8Array(SALT_LEN + OBFUSCATION_KEY.length);
+  key.set(salt);
+  key.set(OBFUSCATION_KEY, SALT_LEN);
+  const stream = rc4Keystream(key, plaintext.length);
+  const out = new Uint8Array(SALT_LEN + plaintext.length);
+  out.set(salt);
+  for (let i = 0; i < plaintext.length; i++) {
+    out[SALT_LEN + i] = plaintext[i] ^ stream[i];
+  }
+  return bytesToHex(out);
+}
+
+function deobfuscate(hex: string): string {
+  const bytes = hexToBytes(hex);
+  const salt = bytes.slice(0, SALT_LEN);
+  const ciphertext = bytes.slice(SALT_LEN);
+  const key = new Uint8Array(SALT_LEN + OBFUSCATION_KEY.length);
+  key.set(salt);
+  key.set(OBFUSCATION_KEY, SALT_LEN);
+  const stream = rc4Keystream(key, ciphertext.length);
+  const plaintext = new Uint8Array(ciphertext.length);
+  for (let i = 0; i < ciphertext.length; i++) {
+    plaintext[i] = ciphertext[i] ^ stream[i];
+  }
+  return new TextDecoder().decode(plaintext);
+}
+
 interface SavedGame {
   id: string;
   searchParams: Record<string, string>;
@@ -224,7 +295,7 @@ function flushToLocalStorage(): void {
     persistTimer = null;
   }
   try {
-    localStorage.setItem(STATE_KEY, JSON.stringify(cached));
+    localStorage.setItem(STATE_KEY, obfuscate(JSON.stringify(cached)));
   } catch (e) {
     console.error('[save] failed to persist state:', e);
   }
@@ -279,7 +350,8 @@ export function loadState(): SessionState {
   try {
     const raw = localStorage.getItem(STATE_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw);
+      const json = deobfuscate(raw);
+      const parsed = JSON.parse(json);
       if (parsed.version === CURRENT_VERSION) {
         cached = parsed as SessionState;
         return cached;
@@ -288,7 +360,6 @@ export function loadState(): SessionState {
   } catch (e) {
     console.error('[save] failed to load state:', e);
   }
-  // Any old version or corrupt data → fresh start
   cached = freshState();
   return cached;
 }
