@@ -141,6 +141,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       const result = await rpc.pushTransactions({
         transactions: [txRecord],
         push: true,
+        sign: false,
         fee: feeValue || undefined,
       });
       log(`[wc-blockchain] pushTransactions submitted #${seq} result=${JSON.stringify(result)}`);
