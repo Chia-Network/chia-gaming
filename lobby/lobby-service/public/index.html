@@ -41,7 +41,7 @@
              'const intervalId = setInterval(() => {',
              '  if (window.loadWasm) {',
              '    clearInterval(intervalId);',
-             '    window.loadWasm(cg.initSync, cg);',
+             '    window.loadWasm(cg.default, cg);',
              '  }',
              '}, 500);'
          ];
