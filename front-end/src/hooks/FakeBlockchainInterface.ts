@@ -16,6 +16,9 @@ function sleepMs(ms: number): Promise<void> {
 
 function getWebSocketClass(): any {
   if (typeof globalThis.WebSocket !== 'undefined') return globalThis.WebSocket;
+  // Node.js < 22 doesn't have a built-in WebSocket global; fall back to the ws package.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  try { return require('ws'); } catch { /* not available */ }
   throw new Error('No WebSocket implementation available');
 }
 
