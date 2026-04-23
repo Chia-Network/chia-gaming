@@ -50,6 +50,11 @@ export interface TransactionRecord {
 export interface PushTransactionsRequest {
   transactions: TransactionRecord[];
   push?: boolean;
+  // The chia wallet re-signs bundles by default (auto_sign_txs=True in its
+  // tx_endpoint decorator). Our spend bundles are already signed with
+  // game/channel keys the wallet does not own, so we must pass sign=false to
+  // avoid a "Pubkey <fingerprint> not found (or path/sum hinted to)" error.
+  sign?: boolean;
   fee?: number;
 }
 
