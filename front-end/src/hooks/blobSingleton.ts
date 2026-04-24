@@ -18,6 +18,14 @@ export function setInitStarted(value: boolean) {
     initStarted = value;
 }
 
+export function destroyBlobSingleton(): void {
+    if (blobSingleton) {
+        blobSingleton.cleanup();
+        blobSingleton = null;
+    }
+    initStarted = false;
+}
+
 async function fetchHex(fetchUrl: string): Promise<string> {
     const resp = await fetch(fetchUrl);
     if (!resp.ok) {

@@ -12,6 +12,7 @@ import {
   ChannelStatusPayload,
   GameStatusPayload,
   GameStatusState,
+  SessionPhase,
 } from '../types/ChiaGaming';
 import { getActiveBlockchain } from './activeBlockchain';
 import {
@@ -76,6 +77,7 @@ export interface GameTerminalInfo {
   label: string | null;
   myReward: string | null;
   rewardCoinHex: string | null;
+  cleanEnd?: boolean;
 }
 
 export interface GameTerminalAttentionInfo {
@@ -171,6 +173,19 @@ export function isWindingDown(state: ChannelState): boolean {
   return WINDING_DOWN_STATES.has(state);
 }
 
+const RESOLVED_STATES: ReadonlySet<ChannelState> = new Set<ChannelState>([
+  'ResolvedClean', 'ResolvedUnrolled', 'ResolvedStale', 'Failed',
+]);
+
+export function deriveSessionPhase(
+  channelState: ChannelState,
+  goOnChainPressed: boolean,
+): Exclude<SessionPhase, 'none'> {
+  if (RESOLVED_STATES.has(channelState)) return 'resolved';
+  if (goOnChainPressed || isWindingDown(channelState)) return 'on-chain';
+  return 'off-chain';
+}
+
 function parseAmount(v: unknown): string | null {
   if (v == null) return null;
   if (typeof v === 'object' && v !== null && 'Amount' in (v as Record<string, unknown>)) {
@@ -179,24 +194,34 @@ function parseAmount(v: unknown): string | null {
   return String(v);
 }
 
-function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex: string | null): GameTerminalInfo {
+function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex: string | null, turnState: GameTurnState): GameTerminalInfo {
   if (gs.status === 'ended-we-timed-out') {
-    const clean = gs.other_params?.game_finished;
+    const clean = !!gs.other_params?.game_finished;
+    let label: string;
+    if (clean) {
+      label = 'Game ended cleanly';
+    } else if (turnState === 'replaying' || turnState === 'their-turn') {
+      label = 'We timed out while trying to post a move';
+    } else {
+      label = 'We timed out while waiting for user to move';
+    }
     return {
       type: 'we-timed-out',
-      label: clean ? 'Game ended cleanly' : 'Ended: we timed out',
+      label,
       myReward: parseAmount(gs.my_reward),
       rewardCoinHex,
+      cleanEnd: clean,
     };
   }
 
   if (gs.status === 'ended-opponent-timed-out') {
-    const clean = gs.other_params?.game_finished;
+    const clean = !!gs.other_params?.game_finished;
     return {
       type: 'opponent-timed-out',
-      label: clean ? 'Game ended cleanly' : 'Ended: opponent timed out',
+      label: clean ? 'Game ended cleanly' : 'Opponent timed out',
       myReward: parseAmount(gs.my_reward),
       rewardCoinHex,
+      cleanEnd: clean,
     };
   }
 
@@ -446,6 +471,9 @@ export function useGameSession(
     coinHex: sessionSave?.gameCoinHex ?? null,
     turnState: (sessionSave?.gameTurnState as GameTurnState) ?? 'my-turn',
   }));
+  const turnStateRef = useRef<GameTurnState>(
+    (sessionSave?.gameTurnState as GameTurnState) ?? 'my-turn'
+  );
   const [gameTerminal, setGameTerminal] = useState<GameTerminalInfo>(() => {
     if (sessionSave?.gameTerminalType && sessionSave.gameTerminalType !== 'none') {
       return {
@@ -453,6 +481,7 @@ export function useGameSession(
         label: sessionSave.gameTerminalLabel ?? null,
         myReward: sessionSave.gameTerminalReward ?? null,
         rewardCoinHex: sessionSave.gameTerminalRewardCoin ?? null,
+        cleanEnd: sessionSave.gameTerminalCleanEnd,
       };
     }
     return INITIAL_GAME_TERMINAL;
@@ -623,6 +652,7 @@ export function useGameSession(
       gameTerminalLabel: gameTerminal.label,
       gameTerminalReward: gameTerminal.myReward,
       gameTerminalRewardCoin: gameTerminal.rewardCoinHex,
+      gameTerminalCleanEnd: gameTerminal.cleanEnd,
       myRunningBalance: myRunningBalance !== 0n ? myRunningBalance.toString() : undefined,
       channelNotifQueue: channelQueue.length > 0
         ? channelQueue.map(({ id, kind, title, message }) => ({ id, kind, title, message }))
@@ -711,6 +741,7 @@ export function useGameSession(
     setGameIds(prev => prev.slice(1));
     gameIdsRef.current = gameIdsRef.current.slice(1);
     setGameCoin({ coinHex: null, turnState: 'my-turn' });
+    turnStateRef.current = 'my-turn';
     const delta = outcome.my_win_outcome === 'win' ? perGameAmount
                 : outcome.my_win_outcome === 'lose' ? -perGameAmount
                 : 0n;
@@ -728,14 +759,13 @@ export function useGameSession(
   }, [perGameAmount, cancelStalePeerProposals]);
 
   const onTurnChanged = useCallback((isMyTurn: boolean) => {
-    setGameCoin(prev => ({
-      coinHex: prev.coinHex,
-      turnState: isMyTurn
-        ? 'my-turn'
-        : ON_CHAIN_FLOW_STATES.has(channelStateRef.current)
-          ? 'playing-on-chain'
-          : 'their-turn',
-    }));
+    const ts: GameTurnState = isMyTurn
+      ? 'my-turn'
+      : ON_CHAIN_FLOW_STATES.has(channelStateRef.current)
+        ? 'playing-on-chain'
+        : 'their-turn';
+    turnStateRef.current = ts;
+    setGameCoin(prev => ({ coinHex: prev.coinHex, turnState: ts }));
   }, []);
 
   const triggerGoOnChain = useCallback(() => {
@@ -926,7 +956,9 @@ export function useGameSession(
       go?.setHandState(null);
       setHandKey(prev => prev + 1);
       setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
-      setGameCoin({ coinHex: null, turnState: iStarted ? 'their-turn' : 'my-turn' });
+      const startTurn: GameTurnState = iStarted ? 'their-turn' : 'my-turn';
+      turnStateRef.current = startTurn;
+      setGameCoin({ coinHex: null, turnState: startTurn });
       setGameTerminal(INITIAL_GAME_TERMINAL);
       setCachedPeerProposal(null);
       setReviewPeerProposal(null);
@@ -952,12 +984,16 @@ export function useGameSession(
           setGameCoin(prev => ({ ...prev, coinHex }));
         }
       } else if (status === 'my-turn' || status === 'on-chain-my-turn') {
+        turnStateRef.current = 'my-turn';
         setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'my-turn' }));
       } else if (status === 'their-turn' || status === 'on-chain-their-turn') {
+        turnStateRef.current = 'their-turn';
         setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'their-turn' }));
       } else if (status === 'replaying') {
+        turnStateRef.current = 'replaying';
         setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'replaying' }));
       } else if (status === 'illegal-move-detected') {
+        turnStateRef.current = 'opponent-illegal-move';
         setGameCoin(prev => ({ coinHex: coinHex ?? prev.coinHex, turnState: 'opponent-illegal-move' }));
       } else if (isTerminalStatus(status)) {
         const other = gs.other_params ?? null;
@@ -975,8 +1011,9 @@ export function useGameSession(
         }
 
         const rewardCoinHex = await coinIdHex(gs.coin_id);
-        const terminalInfo = parseGameStatusTerminalInfo(gs, rewardCoinHex);
+        const terminalInfo = parseGameStatusTerminalInfo(gs, rewardCoinHex, turnStateRef.current);
         setGameTerminal(terminalInfo);
+        turnStateRef.current = 'ended';
         setGameCoin(prev => ({ ...prev, coinHex: null, turnState: 'ended' }));
         const hadActiveGame = gameIdsRef.current.length > 0;
         if (hadActiveGame) {

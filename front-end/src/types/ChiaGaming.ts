@@ -3,6 +3,8 @@ import { Program } from 'clvm-lib';
 
 export type TrackerLiveness = 'connected' | 'reconnecting' | 'inactive' | 'disconnected';
 
+export type SessionPhase = 'none' | 'off-chain' | 'on-chain' | 'resolved';
+
 interface Amount {
   amt: bigint;
 }

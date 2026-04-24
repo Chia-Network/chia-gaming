@@ -1,11 +1,11 @@
 import { Component, useCallback, useEffect, useRef, useState, type RefObject, type ReactNode, type ErrorInfo } from 'react';
 import { Observable } from 'rxjs';
-import { useGameSession, ChannelStatusInfo, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, isWindingDown, QueuedNotification } from '../hooks/useGameSession';
+import { useGameSession, ChannelStatusInfo, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, isWindingDown, deriveSessionPhase, QueuedNotification } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
 import { CalpokerHandState, CalpokerDisplaySnapshot } from '../hooks/save';
 import { formatMojos, formatAmount } from '../util';
 import { getPlayerId } from '../hooks/save';
-import { CalpokerOutcome, ChannelState } from '../types/ChiaGaming';
+import { CalpokerOutcome, ChannelState, SessionPhase } from '../types/ChiaGaming';
 import { WasmBlobWrapper } from '../hooks/WasmBlobWrapper';
 import Calpoker from '../features/calPoker';
 
@@ -360,6 +360,7 @@ export interface GameSessionProps {
   appendGameLog: (line: string) => void;
   sessionSave?: import('../hooks/save').SessionState;
   onGameActivity?: () => void;
+  onSessionPhaseChange?: (phase: Exclude<SessionPhase, 'none'>, hasError: boolean) => void;
 }
 
 const TRACKER_LIVENESS_LABELS: Record<string, string> = {
@@ -369,10 +370,22 @@ const TRACKER_LIVENESS_LABELS: Record<string, string> = {
   disconnected: 'Disconnected',
 };
 
-const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLiveness, peerConnected, registerMessageHandler, appendGameLog, sessionSave, onGameActivity }) => {
+const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLiveness, peerConnected, registerMessageHandler, appendGameLog, sessionSave, onGameActivity, onSessionPhaseChange }) => {
   const uniqueId = getPlayerId();
 
   const session = useGameSession(params, uniqueId, peerConn, registerMessageHandler, appendGameLog, sessionSave);
+
+  useEffect(() => {
+    if (!onSessionPhaseChange) return;
+    const phase = deriveSessionPhase(session.channelStatus.state, session.goOnChainPressed);
+    const hasError =
+      session.channelStatus.state === 'Failed' ||
+      session.channelStatus.state === 'ResolvedStale' ||
+      session.gameTerminal.type === 'opponent-successfully-cheated' ||
+      session.gameTerminal.type === 'game-error' ||
+      (session.gameTerminal.type === 'we-timed-out' && !session.gameTerminal.cleanEnd);
+    onSessionPhaseChange(phase, hasError);
+  }, [session.channelStatus.state, session.goOnChainPressed, session.gameTerminal.type, session.gameTerminal.cleanEnd, onSessionPhaseChange]);
 
   useEffect(() => {
     if (!onGameActivity) return;

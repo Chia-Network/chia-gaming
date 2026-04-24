@@ -180,6 +180,7 @@ export interface SessionState {
   gameTerminalLabel?: string | null;
   gameTerminalReward?: string | null;
   gameTerminalRewardCoin?: string | null;
+  gameTerminalCleanEnd?: boolean;
   myRunningBalance?: string;
   channelNotifQueue?: Array<{ id: number; kind: string; title: string; message: string }>;
   gameNotifQueue?: Array<{ id: number; kind: string; title: string; message: string }>;

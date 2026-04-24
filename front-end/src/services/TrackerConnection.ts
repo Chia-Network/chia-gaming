@@ -92,7 +92,9 @@ export class TrackerConnection {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
   private static readonly RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000, 30000];
+  static readonly MAX_RECONNECT_ATTEMPTS = 18;
   private reconnectAttempt = 0;
+  private available = true;
 
   constructor(trackerUrl: string, sessionId: string, callbacks: TrackerConnectionCallbacks) {
     this.trackerUrl = trackerUrl;
@@ -139,7 +141,7 @@ export class TrackerConnection {
       globalThis.clearTimeout(connectTimeout);
       this.ws = ws;
       this.reconnectAttempt = 0;
-      this.sendWs({ type: 'identify', session_id: this.sessionId });
+      this.sendWs({ type: 'identify', session_id: this.sessionId, available: this.available });
       if (this.wasDisconnected) {
         log('[tracker] reconnected to tracker');
         this.callbacks.onTrackerReconnected();
@@ -285,6 +287,12 @@ export class TrackerConnection {
         this.ws = null;
       }
       if (this.reconnectTimer === null) {
+        if (this.reconnectAttempt >= TrackerConnection.MAX_RECONNECT_ATTEMPTS) {
+          log('[tracker] reconnect budget exhausted, declaring connection dead');
+          this.closed = true;
+          this.callbacks.onClosed();
+          return;
+        }
         const base = TrackerConnection.RECONNECT_DELAYS[
           Math.min(this.reconnectAttempt, TrackerConnection.RECONNECT_DELAYS.length - 1)
         ];
@@ -385,6 +393,11 @@ export class TrackerConnection {
     for (const payload of buffered) {
       this.callbacks.onMessage(payload);
     }
+  }
+
+  setAvailable(available: boolean) {
+    this.available = available;
+    this.sendWs({ type: 'set_status', session_id: this.sessionId, available });
   }
 
   disconnect() {
