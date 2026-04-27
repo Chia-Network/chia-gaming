@@ -519,7 +519,6 @@ pub struct SynchronousGameCradle {
     state: SynchronousGameCradleState,
     peer: Box<dyn PeerHandler>,
     amount: Amount,
-    #[serde(skip)]
     last_channel_status: Option<ChannelStatusSnapshot>,
     #[cfg(test)]
     #[serde(skip)]

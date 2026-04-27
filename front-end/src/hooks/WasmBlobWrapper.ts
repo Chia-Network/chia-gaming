@@ -714,7 +714,6 @@ export class WasmBlobWrapper {
   cleanShutdown(): void {
     if (!this.cradle) return;
     this.cleanShutdownCalled = true;
-    this.onChain = true;
     try {
       const result = this.cradle.shut_down();
       this.processResult(result);

@@ -42,7 +42,7 @@ pub enum ChannelState {
     Failed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ChannelStatusSnapshot {
     pub state: ChannelState,
     pub advisory: Option<String>,

@@ -112,6 +112,7 @@ impl SpendChannelCoinHandler {
         have_potato: PotatoState,
         channel_timeout: Timeout,
         unroll_timeout: Timeout,
+        expected_clean_shutdown: Option<(PuzzleHash, Amount)>,
     ) -> Self {
         SpendChannelCoinHandler {
             state: SpendChannelCoinState::ChannelConditions { channel_coin },
@@ -125,7 +126,7 @@ impl SpendChannelCoinHandler {
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,
-            expected_clean_shutdown: None,
+            expected_clean_shutdown,
             last_channel_coin_spend_info: None,
             replacement: None,
         }

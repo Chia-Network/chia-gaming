@@ -126,6 +126,8 @@ pub struct PotatoHandler {
     #[serde(skip)]
     last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
 
+    pending_clean_shutdown: Option<(CoinString, PuzzleHash, Amount)>,
+
     #[serde(skip)]
     channel_spend_replacement:
         Option<Box<crate::potato_handler::spend_channel_coin_handler::SpendChannelCoinHandler>>,
@@ -249,6 +251,7 @@ impl PotatoHandler {
             incoming_messages,
             peer_wants_potato: false,
             last_channel_coin_spend_info,
+            pending_clean_shutdown: None,
             channel_spend_replacement: None,
         }
     }
@@ -501,6 +504,20 @@ impl PotatoHandler {
                     name: Some("Create unroll".to_string()),
                     spends: vec![coin_spend.clone()],
                 }));
+                if let Some((coin, puzzle_hash, amount)) = self.pending_clean_shutdown.take() {
+                    let handler = crate::potato_handler::spend_channel_coin_handler::SpendChannelCoinHandler::new_for_clean_shutdown(
+                        self.channel_handler.take(),
+                        coin,
+                        puzzle_hash,
+                        amount,
+                        std::mem::take(&mut self.game_action_queue),
+                        self.have_potato.clone(),
+                        self.channel_timeout.clone(),
+                        self.unroll_timeout.clone(),
+                        self.last_channel_coin_spend_info.take(),
+                    );
+                    self.channel_spend_replacement = Some(Box::new(handler));
+                }
             }
             _ => {
                 return Err(Error::StrErr(format!(
@@ -1022,19 +1039,8 @@ impl PotatoHandler {
             clean_shutdown: clean_shutdown_data,
         });
 
-        if let Some((coin, puzzle_hash, amount)) = pending_shutdown {
-            let handler = crate::potato_handler::spend_channel_coin_handler::SpendChannelCoinHandler::new_for_clean_shutdown(
-                self.channel_handler.take(),
-                coin,
-                puzzle_hash,
-                amount,
-                std::mem::take(&mut self.game_action_queue),
-                self.have_potato.clone(),
-                self.channel_timeout.clone(),
-                self.unroll_timeout.clone(),
-                self.last_channel_coin_spend_info.take(),
-            );
-            self.channel_spend_replacement = Some(Box::new(handler));
+        if let Some(shutdown_info) = pending_shutdown {
+            self.pending_clean_shutdown = Some(shutdown_info);
         }
 
         Ok((true, effects))
@@ -1202,6 +1208,16 @@ impl PotatoHandler {
             return Ok(effects);
         };
 
+        if self.pending_clean_shutdown.is_some() {
+            if matches!(msg_envelope.borrow(), PeerMessage::CleanShutdownComplete(_)) {
+                effects.extend(self.pass_on_channel_handler_message(env, msg_envelope)?);
+                return Ok(effects);
+            }
+            return Err(Error::StrErr(format!(
+                "expected CleanShutdownComplete, got {msg_envelope:?}"
+            )));
+        }
+
         match msg_envelope.borrow() {
             PeerMessage::HandshakeF { .. } => {}
 
@@ -1251,6 +1267,7 @@ impl PotatoHandler {
             if *coin_id == channel_coin {
                 let log_effect =
                     Effect::Log(format!("[channel-coin-spent] {}", format_coin(coin_id)));
+                let expected_clean_shutdown = self.pending_clean_shutdown.take().map(|(_, ph, amt)| (ph, amt));
                 let handler = crate::potato_handler::spend_channel_coin_handler::SpendChannelCoinHandler::new_at_channel_conditions(
                     self.channel_handler.take(),
                     channel_coin,
@@ -1258,6 +1275,7 @@ impl PotatoHandler {
                     self.have_potato.clone(),
                     self.channel_timeout.clone(),
                     self.unroll_timeout.clone(),
+                    expected_clean_shutdown,
                 );
                 self.channel_spend_replacement = Some(Box::new(handler));
 
