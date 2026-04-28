@@ -1269,7 +1269,10 @@ impl PotatoHandler {
             if *coin_id == channel_coin {
                 let log_effect =
                     Effect::Log(format!("[channel-coin-spent] {}", format_coin(coin_id)));
-                let expected_clean_shutdown = self.pending_clean_shutdown.take().map(|(_, ph, amt)| (ph, amt));
+                let expected_clean_shutdown = self
+                    .pending_clean_shutdown
+                    .take()
+                    .map(|(_, ph, amt)| (ph, amt));
                 let handler = crate::potato_handler::spend_channel_coin_handler::SpendChannelCoinHandler::new_at_channel_conditions(
                     self.channel_handler.take(),
                     channel_coin,

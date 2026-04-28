@@ -1193,9 +1193,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     let has_explicit_go_on_chain = moves_input.iter().any(|m| {
         matches!(
             m,
-            GameAction::GoOnChain(_)
-                | GameAction::ForceUnroll(_)
-                | GameAction::ForceStaleUnroll(_)
+            GameAction::GoOnChain(_) | GameAction::ForceUnroll(_) | GameAction::ForceStaleUnroll(_)
         )
     });
 

@@ -1425,7 +1425,8 @@ impl OnChainGameHandler {
             panic!(
                 "do_on_chain_move: Move for game {:?} deferred (not our turn). \
                  coin={:?}, queue_len={}, game_map={:?}",
-                game_id, current_coin,
+                game_id,
+                current_coin,
                 self.game_action_queue.len(),
                 self.game_map.keys().collect::<Vec<_>>(),
             );
