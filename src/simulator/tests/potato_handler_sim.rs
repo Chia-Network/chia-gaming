@@ -1174,7 +1174,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                 GameAction::CleanShutdown(_)
                     | GameAction::WaitBlocks(_, _)
                     | GameAction::GoOnChain(_)
-                    | GameAction::GoOnChainThenMove(_)
                     | GameAction::AcceptTimeout(_, _)
                     | GameAction::Timeout(_)
                     | GameAction::Cheat(_, _, _)
@@ -1195,7 +1194,6 @@ fn run_game_container_with_action_list_with_success_predicate(
         matches!(
             m,
             GameAction::GoOnChain(_)
-                | GameAction::GoOnChainThenMove(_)
                 | GameAction::ForceUnroll(_)
                 | GameAction::ForceStaleUnroll(_)
         )
@@ -1545,41 +1543,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                             continue;
                         }
                         local_uis[*who].go_on_chain = true;
-                    }
-                    GameAction::GoOnChainThenMove(who) => {
-                        if !cradles[*who].handshake_finished() {
-                            move_number -= 1;
-                            continue;
-                        }
-
-                        local_uis[*who].go_on_chain = true;
-                        let got_error = local_uis[*who].got_error;
-                        cradles[*who].go_on_chain(allocator, &mut local_uis[*who], got_error)?;
-                        local_uis[*who].go_on_chain = false;
-
-                        let next = moves_input.get(move_number);
-                        if let Some(GameAction::Move(mwho, gid, readable, _)) = next {
-                            assert_eq!(
-                                *mwho, *who,
-                                "GoOnChainThenMove({who}) followed by Move({mwho},...) — player mismatch"
-                            );
-                            if gid_diag_on {
-                                gid_diag(
-                                    &test_name,
-                                    move_number,
-                                    "GoOnChainThenMove/Move",
-                                    gid,
-                                    gid,
-                                );
-                            }
-                            let entropy = rng.random();
-                            cradles[*who].make_move(allocator, gid, readable.clone(), entropy)?;
-                            move_number += 1;
-                        } else {
-                            panic!(
-                                "GoOnChainThenMove({who}) must be followed by a Move action, got {next:?}"
-                            );
-                        }
                     }
                     GameAction::FakeMove(who, gid, readable, move_data) => {
                         if gid_diag_on {
@@ -4028,7 +3991,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         // 4 moves so that after the redo (bob's discard) it's Alice's
-        // turn, allowing Cheat(0) to fire.
+        // turn, allowing Cheat(0) to fire.  Wait for the unroll and redo
+        // to complete before issuing the cheat.
         let mut on_chain_moves: Vec<GameAction> = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
             GameAction::AcceptProposal(1, GameID(1)),
@@ -4036,6 +4000,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let game_moves = prefix_test_moves(&mut allocator, GameID(1));
         on_chain_moves.extend(game_moves.into_iter().take(4));
         on_chain_moves.push(GameAction::GoOnChain(0));
+        on_chain_moves.push(GameAction::WaitBlocks(8, 0));
         on_chain_moves.push(GameAction::Cheat(0, GameID(1), Amount::default()));
         on_chain_moves.push(GameAction::WaitBlocks(30, 0));
 
@@ -5213,11 +5178,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Nerf Alice's messages so her commit potato never reaches Bob.
         // Alice's local state advances (commit cached for redo) but
         // hs.spend stays pre-commit because Bob never acknowledged.
-        // GoOnChainThenMove broadcasts the pre-commit unroll and queues
-        // the reveal.  The unroll is NOT stale from Bob's perspective
+        // Go on-chain: the unroll is NOT stale from Bob's perspective
         // (he never got the commit).  Alice redoes her commit on-chain,
         // then it's Bob's turn for the seed.  Bob is nerfed so he
-        // times out.  The queued reveal never fires (game ends first).
+        // times out.  Alice's reveal never fires (game ends first).
         let mut all_moves_vec = vec![
             GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
             GameAction::AcceptProposal(1, GameID(1)),
@@ -5230,8 +5194,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         moves.push(all_moves[1].clone()); // accept proposal
         moves.push(GameAction::NerfMessages(0));
         moves.push(all_moves[2].clone()); // alice commit — potato dropped
-        moves.push(GameAction::GoOnChainThenMove(0));
-        moves.push(all_moves[4].clone()); // alice reveal — consumed by GoOnChainThenMove
+        moves.push(GameAction::GoOnChain(0));
+        moves.push(all_moves[4].clone()); // alice reveal — dispatched when it's her turn (never fires, bob times out)
         moves.push(GameAction::NerfTransactions(1));
         moves.push(GameAction::WaitBlocks(120, 0));
 
@@ -6140,10 +6104,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         // Alice makes move 0 (mover_share=100), Bob makes move 1
         // (mover_share=100).  Now it's Alice's turn.  Alice's move 2
-        // sets mover_share=200 (giving Bob everything).  We use
-        // GoOnChainThenMove to go on-chain and immediately queue the
-        // losing move.  After the unroll the on-chain handler processes
-        // the move.  Instead of submitting, the system should detect
+        // sets mover_share=200 (giving Bob everything).  Go on-chain,
+        // then issue the losing move normally once the unroll completes
+        // and it's Alice's turn.  The on-chain handler should detect
         // mover_share == coin_amount and fire WeTimedOut(0) for Alice.
         let moves = [
             DebugGameTestMove::new(100, 0),
@@ -6152,10 +6115,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         ];
         let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
 
-        // Extract the third move to pair with GoOnChainThenMove.
+        // Extract the third move and issue it after GoOnChain as a normal move.
         let on_chain_move = sim_setup.game_actions.pop().unwrap();
 
-        sim_setup.game_actions.push(GameAction::GoOnChainThenMove(0));
+        sim_setup.game_actions.push(GameAction::GoOnChain(0));
         sim_setup.game_actions.push(on_chain_move);
         sim_setup.game_actions.push(GameAction::WaitBlocks(120, 1));
         sim_setup.game_actions.push(GameAction::WaitBlocks(5, 0));
@@ -6192,7 +6155,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let mut allocator = AllocEncoder::new();
 
         // With the deterministic prefix_test_moves seed, Alice loses.
-        // Play steps a–d off-chain, then go on-chain and queue step e.
+        // Play steps a–d off-chain, then go on-chain.  After the unroll
+        // and redo, step e (Alice's losing final move) is issued normally.
         // The on-chain handler should detect mover_share == game_amount
         // at step e and skip the move instead of submitting it.
         let mut moves = vec![
@@ -6201,9 +6165,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         ];
         moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
 
-        // Pop step e (Alice's final move) and pair it with GoOnChainThenMove.
+        // Pop step e and issue it after GoOnChain, as a normal move.
         let step_e = moves.pop().unwrap();
-        moves.push(GameAction::GoOnChainThenMove(0));
+        moves.push(GameAction::GoOnChain(0));
         moves.push(step_e);
         moves.push(GameAction::WaitBlocks(120, 1));
         moves.push(GameAction::WaitBlocks(5, 0));

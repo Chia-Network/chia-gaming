@@ -1382,10 +1382,12 @@ impl OnChainGameHandler {
     }
 
     pub fn next_action(&mut self, env: &mut ChannelHandlerEnv<'_>) -> Result<Vec<Effect>, Error> {
-        if let Some(action) = self.game_action_queue.pop_front() {
-            return self.do_on_chain_action(env, action);
+        while let Some(action) = self.game_action_queue.pop_front() {
+            let result = self.do_on_chain_action(env, action)?;
+            if !result.is_empty() {
+                return Ok(result);
+            }
         }
-
         Ok(Vec::new())
     }
 
@@ -1402,9 +1404,13 @@ impl OnChainGameHandler {
             return Ok(None);
         }
         if my_turn == Some(false) {
-            self.game_action_queue
-                .push_back(GameAction::Move(game_id, readable_move, entropy));
-            return Ok(None);
+            panic!(
+                "do_on_chain_move: Move for game {:?} deferred (not our turn). \
+                 coin={:?}, queue_len={}, game_map={:?}",
+                game_id, current_coin,
+                self.game_action_queue.len(),
+                self.game_map.keys().collect::<Vec<_>>(),
+            );
         }
 
         let game_amount = self.get_game_amount(&game_id)?;
@@ -1494,29 +1500,31 @@ impl OnChainGameHandler {
             GameAction::Move(game_id, readable_move, hash) => match get_current_coin(&game_id) {
                 Ok(current_coin) => {
                     if self.pending_moves.contains_key(&current_coin) {
-                        self.game_action_queue.push_back(GameAction::Move(
-                            game_id,
-                            readable_move,
-                            hash,
-                        ));
-                        return Ok(Vec::new());
+                        panic!(
+                            "do_on_chain_action: Move for game {:?} blocked by pending_moves on coin {:?}. \
+                             pending_moves={:?}, queue_len={}, game_map keys={:?}",
+                            game_id, current_coin, self.pending_moves.keys().collect::<Vec<_>>(),
+                            self.game_action_queue.len(),
+                            self.game_map.keys().collect::<Vec<_>>(),
+                        );
                     }
                     Ok(self
                         .do_on_chain_move(env, &current_coin, game_id, readable_move, hash)?
                         .into_iter()
                         .collect())
                 }
-                Err(_) => self.next_action(env),
+                Err(_) => Ok(Vec::new()),
             },
             GameAction::Cheat(game_id, mover_share, entropy) => match get_current_coin(&game_id) {
                 Ok(current_coin) => {
                     if self.pending_moves.contains_key(&current_coin) {
-                        self.game_action_queue.push_back(GameAction::Cheat(
-                            game_id,
-                            mover_share,
-                            entropy,
-                        ));
-                        return Ok(Vec::new());
+                        panic!(
+                            "do_on_chain_action: Cheat for game {:?} blocked by pending_moves on coin {:?}. \
+                             pending_moves={:?}, queue_len={}, game_map keys={:?}",
+                            game_id, current_coin, self.pending_moves.keys().collect::<Vec<_>>(),
+                            self.game_action_queue.len(),
+                            self.game_map.keys().collect::<Vec<_>>(),
+                        );
                     }
                     let my_turn = self.my_move_in_game(&game_id);
                     if my_turn == Some(true) {
@@ -1530,15 +1538,14 @@ impl OnChainGameHandler {
                     } else if my_turn.is_none() {
                         Ok(Vec::new())
                     } else {
-                        self.game_action_queue.push_back(GameAction::Cheat(
-                            game_id,
-                            mover_share,
-                            entropy,
-                        ));
-                        Ok(Vec::new())
+                        panic!(
+                            "do_on_chain_action: Cheat for game {:?} deferred (not our turn, my_turn={:?}). \
+                             coin={:?}, queue_len={}",
+                            game_id, my_turn, current_coin, self.game_action_queue.len(),
+                        );
                     }
                 }
-                Err(_) => self.next_action(env),
+                Err(_) => Ok(Vec::new()),
             },
             GameAction::AcceptTimeout(game_id) => {
                 let current_coin = get_current_coin(&game_id)?;

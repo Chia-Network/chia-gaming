@@ -578,8 +578,9 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
                   className='absolute right-2'
                   onClick={session.chooseDoNotUseCurrentProposal}
                   leadingIcon={<span className='text-base leading-none'>&times;</span>}
-                  iconOnly
-                />
+                >
+                  Close
+                </Button>
               </div>
             )}
 

@@ -267,14 +267,6 @@ impl UnrollCoin {
         let unroll_signature =
             unsafe_sign_partial(unroll_private_key, &unroll_aggregate_key, base_hash.bytes());
 
-        eprintln!(
-            "[sig-diag] UnrollCoin::update state={} base_hash={} agg_key={} half_sig={}",
-            self.state_number,
-            hex::encode(base_hash.bytes()),
-            hex::encode(unroll_aggregate_key.bytes()),
-            hex::encode(unroll_signature.bytes()),
-        );
-
         self.outcome = Some(UnrollCoinOutcome {
             conditions: timeout_conditions,
             conditions_without_hash: base_conditions,
@@ -301,17 +293,6 @@ impl UnrollCoin {
         let result = aggregate_unroll_signature.verify(
             aggregate_unroll_public_key,
             unroll_puzzle_solution_hash.bytes(),
-        );
-
-        eprintln!(
-            "[sig-diag] UnrollCoin::verify state={} hash={} agg_key={} peer_half={} our_half={} agg_sig={} ok={}",
-            self.state_number,
-            hex::encode(unroll_puzzle_solution_hash.bytes()),
-            hex::encode(aggregate_unroll_public_key.bytes()),
-            hex::encode(signature.bytes()),
-            hex::encode(our_half.bytes()),
-            hex::encode(aggregate_unroll_signature.bytes()),
-            result,
         );
 
         Ok(result)

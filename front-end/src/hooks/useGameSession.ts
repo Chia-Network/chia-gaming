@@ -1116,7 +1116,13 @@ export function useGameSession(
       }
     } else if ('ActionFailed' in n) {
       const reason = String(n.ActionFailed?.reason ?? 'Unknown error');
+      const recentLogs = gameObject.logHistory?.slice(-10) ?? [];
       log(`[game] action failed: ${reason}`);
+      log(`[game] DBG_ONCHAIN: recent wasm logs at time of ActionFailed:`);
+      for (const l of recentLogs) {
+        log(`[game] DBG_ONCHAIN:   ${l}`);
+      }
+      log(`[game] DBG_ONCHAIN: channelStatus=${JSON.stringify(gameObject.lastChannelStatus)}`);
       pushChannel({ kind: 'action-failed', title: 'Error', message: reason });
     }
   }, [iStarted, proposeNewGame, gameplayEventSubject, gameConnectionState.stateIdentifier, triggerGoOnChain, pushChannel, pushGame, clearExpectingCounterProposal, cancelStalePeerProposals]);
