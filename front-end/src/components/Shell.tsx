@@ -1607,11 +1607,11 @@ const Shell = () => {
         <div style={{ position: 'absolute', inset: 0, display: activeTab === 'tracker' ? 'flex' : 'none', flexDirection: 'column' }}>
           {trackerOrigin ? (
             <>
-              <div className='flex items-center justify-between px-4 py-2 border-b border-canvas-border bg-canvas-bg-subtle text-base text-canvas-text shrink-0'>
+              <div className='flex items-center justify-between px-4 py-2 border-b border-canvas-border bg-canvas-bg-subtle text-sm text-canvas-text shrink-0'>
                 <span>Connected to {trackerOrigin}</span>
                 <button
                   onClick={handleDisconnectTracker}
-                  className='px-3 py-1 text-sm rounded bg-alert-solid text-primary-on-primary hover:opacity-80 transition-opacity'
+                  className='flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors'
                 >
                   Disconnect
                 </button>

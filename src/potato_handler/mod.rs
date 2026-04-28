@@ -496,6 +496,7 @@ impl PotatoHandler {
                         illegal_move_detected: None,
                         moved_by_us: None,
                         game_finished: None,
+                        forfeited: None,
                     }),
                 }));
             }
@@ -621,6 +622,7 @@ impl PotatoHandler {
                             illegal_move_detected: None,
                             moved_by_us: None,
                             game_finished: if finished { Some(true) } else { None },
+                            forfeited: None,
                         }),
                     }));
                     if !move_result.message.is_empty() {

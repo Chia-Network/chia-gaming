@@ -118,6 +118,7 @@ interface GameStatusOtherParams {
   illegal_move_detected?: boolean;
   moved_by_us?: boolean;
   game_finished?: boolean;
+  forfeited?: boolean;
 }
 
 export interface GameStatusPayload {

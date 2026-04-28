@@ -198,8 +198,11 @@ function parseAmount(v: unknown): string | null {
 function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex: string | null, turnState: GameTurnState): GameTerminalInfo {
   if (gs.status === 'ended-we-timed-out') {
     const clean = !!gs.other_params?.game_finished;
+    const forfeited = !!gs.other_params?.forfeited;
     let label: string;
-    if (clean) {
+    if (forfeited) {
+      label = 'Forfeited, nothing to collect';
+    } else if (clean) {
       label = 'Game ended cleanly';
     } else if (turnState === 'replaying' || turnState === 'their-turn') {
       label = 'We timed out while trying to post a move';
@@ -211,18 +214,19 @@ function parseGameStatusTerminalInfo(gs: GameStatusPayload, rewardCoinHex: strin
       label,
       myReward: parseAmount(gs.my_reward),
       rewardCoinHex,
-      cleanEnd: clean,
+      cleanEnd: clean || forfeited,
     };
   }
 
   if (gs.status === 'ended-opponent-timed-out') {
     const clean = !!gs.other_params?.game_finished;
+    const forfeited = !!gs.other_params?.forfeited;
     return {
       type: 'opponent-timed-out',
-      label: clean ? 'Game ended cleanly' : 'Opponent timed out',
+      label: forfeited ? 'Forfeited, nothing to collect' : clean ? 'Game ended cleanly' : 'Opponent timed out',
       myReward: parseAmount(gs.my_reward),
       rewardCoinHex,
-      cleanEnd: clean,
+      cleanEnd: clean || forfeited,
     };
   }
 

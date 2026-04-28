@@ -226,7 +226,7 @@ function NotificationOverlay({
   const { cardRef, x, y, clampToViewport } = useViewportClampedDragWithInsets(boundsRef, { top: 8 });
   const dragControls = useDragControls();
   const isError = notification.kind === 'infra-error' || notification.kind === 'action-failed';
-  const titleColor = isError ? 'text-alert-text' : 'text-canvas-text-contrast';
+  const titleColor = 'text-canvas-text-contrast';
 
   return (
     <motion.div
