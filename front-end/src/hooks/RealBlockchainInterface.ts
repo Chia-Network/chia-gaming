@@ -13,7 +13,7 @@ import { decodeBech32mPuzzleHash, encodePuzzleHashToBech32m } from '../util/bech
 import { TransactionRecord, WalletSpendBundle } from '../types/rpc/PushTransactions';
 import { walletConnectState } from './useWalletConnect';
 
-const PUSH_TX_RETRY_DELAY = 30000;
+const PUSH_RETRY_DELAY = 30000;
 const ASSERT_BEFORE_HEIGHT_ABSOLUTE = 87;
 const CREATE_COIN = 51;
 const ASSERT_COIN_ANNOUNCEMENT = 61;
@@ -58,7 +58,7 @@ function toSafeNumber(value: bigint, fieldName: string): number {
   return Number(value);
 }
 
-function isRetryablePushTxError(errStr: string): boolean {
+function isRetryablePushError(errStr: string): boolean {
   return errStr.includes('UNKNOWN_UNSPENT') || errStr.includes('NO_TRANSACTIONS_WHILE_SYNCING');
 }
 
@@ -148,11 +148,11 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       return result as unknown as string;
     } catch (e: unknown) {
       const errStr = typeof e === 'string' ? e : ((e as any)?.message || JSON.stringify(e));
-      if (isRetryablePushTxError(errStr)) {
+      if (isRetryablePushError(errStr)) {
         return new Promise((resolve, reject) => {
           setTimeout(() => {
             this.spend(_blob, spendBundle, `retry-of-#${seq}`, fee).then(resolve).catch(reject);
-          }, PUSH_TX_RETRY_DELAY);
+          }, PUSH_RETRY_DELAY);
         });
       }
       log(`[wc-blockchain] pushTransactions error #${seq}: ${String(e)}`);

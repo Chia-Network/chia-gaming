@@ -413,7 +413,7 @@ pub fn handshake(
                     signature,
                 },
             });
-            let included_result = simulator.push_tx(env.allocator, &spends.spends)?;
+            let included_result = simulator.push_transactions(env.allocator, &spends.spends)?;
 
             pipes[who].unfunded_offer = None;
             assert_eq!(included_result.code, 1);
@@ -1317,12 +1317,12 @@ fn run_game_container_with_action_list_with_success_predicate(
                                     continue;
                                 }
                                 let t_tx = std::time::Instant::now();
-                                let included_result = simulator.push_tx(allocator, &tx.spends)?;
+                                let included_result = simulator.push_transactions(allocator, &tx.spends)?;
                                 if timing_enabled {
                                     let tx_elapsed = t_tx.elapsed();
                                     if tx_elapsed.as_millis() > 10 {
                                         eprintln!(
-                                            "  step {num_steps}: p{i} push_tx({:?}) {tx_elapsed:.2?}",
+                                            "  step {num_steps}: p{i} push_transactions({:?}) {tx_elapsed:.2?}",
                                             tx.name
                                         );
                                     }
@@ -1614,7 +1614,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 if any_stale {
                                     continue;
                                 }
-                                simulator.push_tx(allocator, &tx.spends)?;
+                                simulator.push_transactions(allocator, &tx.spends)?;
                             }
                         } else {
                             nerfed_tx_backlog.clear();
@@ -1654,14 +1654,14 @@ fn run_game_container_with_action_list_with_success_predicate(
                     }
                     GameAction::ForceUnroll(who) => {
                         let spend = cradles[*who].force_unroll_spend(allocator)?;
-                        simulator.push_tx(allocator, &spend.spends)?;
+                        simulator.push_transactions(allocator, &spend.spends)?;
                     }
                     GameAction::SaveUnrollSnapshot(who) => {
                         cradles[*who].save_unroll_snapshot();
                     }
                     GameAction::ForceStaleUnroll(who) => {
                         let spend = cradles[*who].force_stale_unroll_spend(allocator)?;
-                        let _included_result = simulator.push_tx(allocator, &spend.spends)?;
+                        let _included_result = simulator.push_transactions(allocator, &spend.spends)?;
                     }
                     GameAction::InjectRawMessage(who, data) => {
                         cradles[*who].deliver_message(data)?;
