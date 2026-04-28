@@ -511,7 +511,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
               variant='solid'
               onClick={session.goOnChain}
               size='sm'
-              disabled={session.goOnChainPressed || isWindingDown(session.channelStatus.state)}
+              disabled={session.goOnChainPressed || isWindingDown(session.channelStatus.state) || session.channelStatus.state === 'ShuttingDown'}
             >
               Go On-Chain
             </Button>
@@ -558,7 +558,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
         </div>
 
         {/* Between-hand session controls */}
-        {session.betweenHands && !isWindingDown(session.channelStatus.state) && (
+        {session.betweenHands && !isWindingDown(session.channelStatus.state) && session.channelStatus.state !== 'ShuttingDown' && (
           <>
             {session.betweenHandMode === 'decision' && (
               <div className='relative flex w-full items-center justify-center py-2'>

@@ -941,15 +941,21 @@ const Shell = () => {
   useEffect(() => {
     if (sessionPhase !== 'resolved') return;
     clearSession();
-    setGameParams(null);
     sessionSaveRef.current = null;
+  }, [sessionPhase]);
+
+  const closeResolvedSession = useCallback(() => {
+    destroyBlobSingleton();
+    setGameParams(null);
+    setPeerConn(null);
     activePairingTokenRef.current = null;
     setSessionPhase('none');
     setSessionError(false);
-  }, [sessionPhase]);
+    trackerConnRef.current?.setAvailable(true);
+  }, []);
 
   useEffect(() => {
-    trackerConnRef.current?.setAvailable(sessionPhase === 'none');
+    trackerConnRef.current?.setAvailable(sessionPhase === 'none' || sessionPhase === 'resolved');
   }, [sessionPhase]);
 
   const handleTabChange = useCallback((tabId: TabId) => {
@@ -1651,20 +1657,31 @@ const Shell = () => {
           </div>
           {sessionPhase !== 'none' && (
             <div className='flex items-center gap-2 px-3 py-1.5 border-t border-canvas-border bg-canvas-bg shrink-0 text-xs'>
-              {peerConnected && (
+              {sessionPhase === 'resolved' ? (
                 <button
-                  onClick={handleEndPeerConnection}
-                  className='px-2 py-0.5 rounded border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors'
+                  onClick={closeResolvedSession}
+                  className='ml-auto px-2 py-0.5 rounded border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors'
                 >
-                  End Peer
+                  Close Session
                 </button>
+              ) : (
+                <>
+                  {peerConnected && (
+                    <button
+                      onClick={handleEndPeerConnection}
+                      className='px-2 py-0.5 rounded border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors'
+                    >
+                      End Peer
+                    </button>
+                  )}
+                  <button
+                    onClick={handleAbandonSession}
+                    className='ml-auto px-2 py-0.5 rounded border border-alert-solid text-alert-text hover:bg-alert-solid hover:text-primary-on-primary transition-colors'
+                  >
+                    Abandon Session
+                  </button>
+                </>
               )}
-              <button
-                onClick={handleAbandonSession}
-                className='ml-auto px-2 py-0.5 rounded border border-alert-solid text-alert-text hover:bg-alert-solid hover:text-primary-on-primary transition-colors'
-              >
-                Abandon Session
-              </button>
             </div>
           )}
         </div>
