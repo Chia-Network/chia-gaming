@@ -182,6 +182,7 @@ export function deriveSessionPhase(
   goOnChainPressed: boolean,
 ): Exclude<SessionPhase, 'none'> {
   if (RESOLVED_STATES.has(channelState)) return 'resolved';
+  if (channelState === 'ShutdownTransactionPending') return 'off-chain';
   if (goOnChainPressed || isWindingDown(channelState)) return 'on-chain';
   return 'off-chain';
 }
