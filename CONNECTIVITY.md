@@ -98,8 +98,10 @@ session:  none | off-chain | on-chain
 - **off-chain**: the game is being played through the peer relay. The relay is
   the authority for game moves.
 - **on-chain**: the blockchain is the authority. This transition is one-way —
-  once you initiate `goOnChain()` or `cleanShutdown()`, you are on-chain from
-  the perspective of all connectivity rules.
+  once you initiate `goOnChain()`, you are on-chain from the perspective of
+  all connectivity rules. `cleanShutdown()` does **not** immediately
+  transition to on-chain — it stays in the cooperative off-chain flow until
+  the peer countersigns and the shutdown transaction is formed.
 
 2 × 2 × 3 = 12 combinations, minus 3 impossible states (tracker down, peer
 up) = **9 reachable states**.
@@ -197,8 +199,8 @@ Specific rules:
 | State | Derived from | Meaning |
 |-------|-------------|---------|
 | `none` | `gameParams === null` | No session. Available for matchmaking. |
-| `off-chain` | Session exists, `goOnChain()` / `cleanShutdown()` not yet called | Playing through the peer relay. |
-| `on-chain` | `goOnChain()` or `cleanShutdown()` initiated | Resolving on the blockchain. May or may not have peer. |
+| `off-chain` | Session exists, not yet resolving on-chain | Playing through the peer relay. `cleanShutdown()` stays off-chain until the shutdown transaction is formed. |
+| `on-chain` | `goOnChain()` initiated, or clean shutdown transaction submitted | Resolving on the blockchain. May or may not have peer. |
 
 The on-chain state persists until the WASM cradle reports a terminal channel
 status: `ResolvedClean`, `ResolvedUnrolled`, `ResolvedStale`, or `Failed`.
