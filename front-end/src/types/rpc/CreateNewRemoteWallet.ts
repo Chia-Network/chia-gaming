@@ -1,4 +1,4 @@
-export type CreateNewRemoteWalletRequest = Record<string, never>;
+export type CreateNewRemoteWalletRequest = { allowUnsynced?: boolean };
 
 export interface CreateNewRemoteWalletResponse {
   id: number;

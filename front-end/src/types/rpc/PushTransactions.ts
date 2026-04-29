@@ -56,6 +56,7 @@ export interface PushTransactionsRequest {
   // avoid a "Pubkey <fingerprint> not found (or path/sum hinted to)" error.
   sign?: boolean;
   fee?: number;
+  allowUnsynced?: boolean;
 }
 
 export interface PushTransactionsResponse {

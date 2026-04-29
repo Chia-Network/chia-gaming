@@ -143,6 +143,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         push: true,
         sign: false,
         fee: feeValue || undefined,
+        allowUnsynced: true,
       });
       log(`[wc-blockchain] pushTransactions submitted #${seq} result=${JSON.stringify(result)}`);
       return result as unknown as string;
@@ -182,7 +183,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   async selectCoins(_uniqueId: string, amount: number): Promise<string | null> {
     try {
-      const result = await rpc.selectCoins({ walletId: 1, amount: String(amount) });
+      const result = await rpc.selectCoins({ walletId: 1, amount: String(amount), allowUnsynced: true });
       if (!result?.coins?.length) return null;
       console.log('[wc-blockchain] <<< selectCoins raw', result);
       console.log('[wc-blockchain] <<< selectCoins raw(json)', JSON.stringify(result));
@@ -210,7 +211,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async getHeightInfo(): Promise<number> {
-    const resp = await rpc.getHeightInfo({});
+    const resp = await rpc.getHeightInfo({ usePeakHeight: true });
     return resp.prevTransactionBlockHeight ?? 0;
   }
 
@@ -274,6 +275,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         driverDict: {},
         extraConditions: normalizedConditions.length ? normalizedConditions : undefined,
         coinIds,
+        allowUnsynced: true,
       };
       console.log('[wc-blockchain] >>> createOfferForIds payload', payload);
       console.log('[wc-blockchain] >>> createOfferForIds payload(json)', JSON.stringify(payload));
@@ -330,6 +332,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         const resp = await rpc.getCoinRecordsByNames({
           names: [name],
           includeSpentCoins: true,
+          allowUnsynced: true,
         });
         const r = resp.coinRecords ?? [];
         if (r.length > 0) {
@@ -373,7 +376,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
           console.log(`[wc-blockchain] found existing remote wallet id=${remote.id}`);
         } else {
           console.log('[wc-blockchain] no remote wallet found, creating...');
-          rpc.createNewRemoteWallet({})
+          rpc.createNewRemoteWallet({ allowUnsynced: true })
             .then((created) => {
               this.remoteWalletId = created.id;
               this.remoteWalletPending = false;

@@ -1,4 +1,4 @@
-export type GetHeightInfoRequest = Record<string, never>;
+export type GetHeightInfoRequest = { usePeakHeight?: boolean };
 
 export interface GetHeightInfoResponse {
   height: number;
