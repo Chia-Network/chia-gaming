@@ -520,7 +520,9 @@ impl GameRunner {
     }
 
     fn spend_list_of_spends(&mut self, spends: &[CoinSpend]) -> StringWithError {
-        let result = self.simulator.push_transactions(&mut self.allocator, spends)?;
+        let result = self
+            .simulator
+            .push_transactions(&mut self.allocator, spends)?;
         let e_res = result
             .e
             .map(|e| format!("{e}"))
@@ -830,8 +832,9 @@ fn dispatch_ws_request(
             blob.and_then(|b| game_runner.spend(b))
         }
         "push_tx" | "push_transactions" => {
-            let push_req: Result<PushTransactionsRequest, Error> = serde_json::from_value(req.params.clone())
-                .map_err(|e| Error::StrErr(format!("bad push_transactions params: {e}")));
+            let push_req: Result<PushTransactionsRequest, Error> =
+                serde_json::from_value(req.params.clone())
+                    .map_err(|e| Error::StrErr(format!("bad push_transactions params: {e}")));
             push_req.and_then(|r| game_runner.push_transactions(&r.spend_bundle))
         }
         "block_spends" => {

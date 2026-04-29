@@ -321,7 +321,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 signature: altered_sig,
             },
         };
-        let r3 = s.push_transactions(&mut allocator, &[altered_tx]).expect("ok");
+        let r3 = s
+            .push_transactions(&mut allocator, &[altered_tx])
+            .expect("ok");
         assert_eq!(
             r3.code, 3,
             "re-submitting a different transaction for an already-spent coin should be rejected"
@@ -593,7 +595,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             },
         };
 
-        let ok = s.push_transactions(&mut allocator, &[tx_a, tx_b]).expect("push");
+        let ok = s
+            .push_transactions(&mut allocator, &[tx_a, tx_b])
+            .expect("push");
         assert_eq!(
             ok.code, 1,
             "assertion should pass when announcement is created in same bundle"

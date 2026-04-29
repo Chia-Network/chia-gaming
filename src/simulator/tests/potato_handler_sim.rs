@@ -1317,7 +1317,8 @@ fn run_game_container_with_action_list_with_success_predicate(
                                     continue;
                                 }
                                 let t_tx = std::time::Instant::now();
-                                let included_result = simulator.push_transactions(allocator, &tx.spends)?;
+                                let included_result =
+                                    simulator.push_transactions(allocator, &tx.spends)?;
                                 if timing_enabled {
                                     let tx_elapsed = t_tx.elapsed();
                                     if tx_elapsed.as_millis() > 10 {
@@ -1661,7 +1662,8 @@ fn run_game_container_with_action_list_with_success_predicate(
                     }
                     GameAction::ForceStaleUnroll(who) => {
                         let spend = cradles[*who].force_stale_unroll_spend(allocator)?;
-                        let _included_result = simulator.push_transactions(allocator, &spend.spends)?;
+                        let _included_result =
+                            simulator.push_transactions(allocator, &spend.spends)?;
                     }
                     GameAction::InjectRawMessage(who, data) => {
                         cradles[*who].deliver_message(data)?;
