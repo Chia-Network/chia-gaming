@@ -217,6 +217,22 @@ function deleteIndexedDb(name: string): Promise<void> {
   });
 }
 
+function clearWalletConnectLocalStorageKeys(): void {
+  try {
+    const toRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && isWalletConnectStorageKey(key)) toRemove.push(key);
+    }
+    for (const key of toRemove) localStorage.removeItem(key);
+  } catch { /* ignore */ }
+}
+
+export function clearWalletConnectStorage(): void {
+  clearWalletConnectLocalStorageKeys();
+  void clearWalletConnectIndexedDb();
+}
+
 async function clearWalletConnectIndexedDb(): Promise<void> {
   if (typeof indexedDB === 'undefined') return;
   const dynamicDatabaseLookup = indexedDB as IDBFactory & { databases?: () => Promise<Array<{ name?: string }>> };

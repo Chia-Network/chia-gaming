@@ -434,7 +434,8 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
     if (walletConnectState.getSession()) {
       return {
-        qrUri: `wc-session://${walletConnectState.getSession()!.topic}`,
+        qrUri: '',
+        skipQr: true,
         finalize: async () => {
           await this.startMonitoring();
           this.fireConnectionChange(true);

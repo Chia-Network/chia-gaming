@@ -567,6 +567,7 @@ export interface ConnectionField {
 
 export interface ConnectionSetup {
   qrUri: string;
+  skipQr?: boolean;
   fields?: { balance?: ConnectionField };
   finalize(values?: { balance?: number }): Promise<void>;
 }

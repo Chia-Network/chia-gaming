@@ -18,6 +18,7 @@ import {
   clearSession,
   hardReset,
   getBuildNonce,
+  clearWalletConnectStorage,
   SessionState,
   getDefaultFee,
   setDefaultFee as saveDefaultFee,
@@ -192,6 +193,7 @@ const Shell = () => {
       );
       clearSession();
       clearLease();
+      clearWalletConnectStorage();
     }
   }
 
@@ -858,7 +860,7 @@ const Shell = () => {
       setConnecting(true);
       const setup = await iface.beginConnect(uniqueId);
       if (wcAbortRef.current) return;
-      setConnectionSetup(setup);
+      if (!setup.skipQr) setConnectionSetup(setup);
       if (setup.fields && !silent) {
         setShowSimModal(true);
         setConnecting(false);
