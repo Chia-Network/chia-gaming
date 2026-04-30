@@ -23,7 +23,7 @@ use crate::referee::types::{
 };
 use crate::referee::types::{
     GameMoveDetails, GameMoveStateInfo, RMFixed, SlashOutcome, TheirTurnCoinSpentResult,
-    TheirTurnMoveResult,
+    TheirTurnMoveResult, ValidationInfoHash,
 };
 use crate::referee::Referee;
 
@@ -383,21 +383,13 @@ impl TheirTurnReferee {
         let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
         let (state, validation_program) = self.get_validation_program_for_their_move()?;
         let pre_state_nodeptr = state.to_nodeptr(allocator)?;
-        let is_initial = matches!(
-            self.state.borrow(),
-            TheirTurnRefereeGameState::Initial { .. }
-        );
-        let offchain_prev_hash = if is_initial {
-            None
-        } else {
-            puzzle_args.game_move.validation_info_hash.clone()
-        };
+        let prev_hash = puzzle_args.game_move.validation_info_hash.clone();
         let offchain_puzzle_args = Rc::new(RefereePuzzleArgs {
             mover_pubkey: self.fixed.my_identity.public_key.clone(),
             waiter_pubkey: self.fixed.their_referee_pubkey.clone(),
             game_move: details.clone(),
             validation_program: validation_program.clone(),
-            previous_validation_info_hash: offchain_prev_hash,
+            previous_validation_info_hash: prev_hash.clone(),
             ..ref_puzzle_args.clone()
         });
         let rc_puzzle_args = Rc::new(RefereePuzzleArgs {
@@ -405,7 +397,7 @@ impl TheirTurnReferee {
             waiter_pubkey: self.fixed.their_referee_pubkey.clone(),
             game_move: details.clone(),
             validation_program: validation_program.clone(),
-            previous_validation_info_hash: puzzle_args.game_move.validation_info_hash.clone(),
+            previous_validation_info_hash: prev_hash,
             ..ref_puzzle_args.clone()
         });
         let state_update = self.run_state_update(
@@ -445,7 +437,7 @@ impl TheirTurnReferee {
                 last_mover_share: details.basic.mover_share.clone(),
 
                 new_move: GameMoveDetails {
-                    validation_info_hash: Some(validation_program_hash),
+                    validation_info_hash: ValidationInfoHash::Hash(validation_program_hash),
                     ..details.clone()
                 },
             },
@@ -504,9 +496,11 @@ impl TheirTurnReferee {
 
         let new_move = &rem_conditions[0];
         let validation_info_hash = if rem_conditions[1].is_empty() {
-            None
+            ValidationInfoHash::None
+        } else if rem_conditions[1] == [0x78] {
+            ValidationInfoHash::Initial
         } else {
-            Some(Hash::from_slice(&rem_conditions[1])?)
+            ValidationInfoHash::Hash(Hash::from_slice(&rem_conditions[1])?)
         };
         let new_mover_share = if let Some(share) = u64_from_atom(&rem_conditions[2]) {
             let amt = Amount::new(share);

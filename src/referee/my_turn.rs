@@ -20,7 +20,9 @@ use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs,
     OnChainRefereeMoveData, RefereePuzzleArgs, StateUpdateMoveArgs,
 };
-use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RMFixed};
+use crate::referee::types::{
+    GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RMFixed, ValidationInfoHash,
+};
 use crate::referee::Referee;
 
 // Contains a state of the game for use in currying the coin puzzle or for
@@ -398,9 +400,9 @@ impl MyTurnReferee {
             state_to_update.clone(),
         );
         let validation_info_hash = if result.waiting_handler.is_some() {
-            Some(v.hash().clone())
+            ValidationInfoHash::Hash(v.hash().clone())
         } else {
-            None
+            ValidationInfoHash::None
         };
         let game_move_details = GameMoveDetails {
             basic: GameMoveStateInfo {
@@ -410,18 +412,13 @@ impl MyTurnReferee {
             },
             validation_info_hash,
         };
-        let is_initial = matches!(self.state.as_ref(), MyTurnRefereeGameState::Initial { .. });
-        let offchain_prev_hash = if is_initial {
-            None
-        } else {
-            ref_puzzle_args.game_move.validation_info_hash.clone()
-        };
+        let prev_hash = ref_puzzle_args.game_move.validation_info_hash.clone();
         let offchain_puzzle_args = Rc::new(RefereePuzzleArgs {
             mover_pubkey: self.fixed.their_referee_pubkey.clone(),
             waiter_pubkey: self.fixed.my_identity.public_key.clone(),
             game_move: game_move_details.clone(),
             validation_program: result.outgoing_move_state_update_program.clone(),
-            previous_validation_info_hash: offchain_prev_hash,
+            previous_validation_info_hash: prev_hash.clone(),
             ..ref_puzzle_args.clone()
         });
         let new_state_following_my_move = self.run_validator_for_my_move(
@@ -436,7 +433,7 @@ impl MyTurnReferee {
             waiter_pubkey: self.fixed.my_identity.public_key.clone(),
             game_move: game_move_details.clone(),
             validation_program: result.outgoing_move_state_update_program.clone(),
-            previous_validation_info_hash: ref_puzzle_args.game_move.validation_info_hash.clone(),
+            previous_validation_info_hash: prev_hash,
             ..ref_puzzle_args.clone()
         });
 

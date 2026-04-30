@@ -18,7 +18,7 @@ use crate::referee::their_turn::TheirTurnReferee;
 use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, GameMoveDetails, GameMoveStateInfo,
     GameMoveWireData, OnChainRefereeMoveData, OnChainRefereeSolution, RMFixed, RefereePuzzleArgs,
-    TheirTurnCoinSpentResult, TheirTurnMoveResult,
+    TheirTurnCoinSpentResult, TheirTurnMoveResult, ValidationInfoHash,
 };
 
 pub(crate) struct RefereeInitialSetup {
@@ -73,9 +73,9 @@ pub(crate) fn referee_initial_setup(
         &fixed,
         &GameMoveDetails {
             basic: initial_move,
-            validation_info_hash: Some(vi_hash.hash().clone()),
+            validation_info_hash: ValidationInfoHash::Hash(vi_hash.hash().clone()),
         },
-        None,
+        ValidationInfoHash::Initial,
         ip,
         my_turn,
     ));

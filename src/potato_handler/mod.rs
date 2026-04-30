@@ -148,13 +148,10 @@ fn format_batch_action(action: &BatchAction) -> String {
         BatchAction::CancelProposal(id) => format!("CancelProposal id={id}"),
         BatchAction::Move(id, details) => {
             format!(
-                "Move id={id} mover_share={} max_move_size={} validation_info_hash={}",
+                "Move id={id} mover_share={} max_move_size={} validation_info_hash={:?}",
                 details.basic.mover_share,
                 details.basic.max_move_size,
-                details
-                    .validation_info_hash
-                    .as_ref()
-                    .map_or("none".to_string(), |h| h.to_string()),
+                details.validation_info_hash,
             )
         }
         BatchAction::AcceptTimeout(id, amount) => {
