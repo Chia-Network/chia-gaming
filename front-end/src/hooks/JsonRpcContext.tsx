@@ -46,7 +46,7 @@ import { walletConnectState } from './useWalletConnect';
 type Loose = Record<string, unknown>;
 type GetWalletsRequest = Loose;
 type GetWalletsResponse = Array<{ id: number; type: number; [key: string]: unknown }>;
-const WC_REQUEST_TIMEOUT_MS = 15000;
+const WC_REQUEST_TIMEOUT_MS = 60000;
 const WC_RETRY_DELAY_MS = 1000;
 const WC_INTER_REQUEST_MS = 50;
 
