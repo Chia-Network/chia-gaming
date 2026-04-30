@@ -42,11 +42,26 @@ jobs:
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rust.sh
           sh rust.sh -y
+          source ~/.cargo/env
+          rustup update stable
 
       - name: Build hex files
         run: |
           export PATH=~/.cargo/bin:$PATH
           tools/build-chialisp.sh
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pytest
+        run: pip install pytest
+
+      - name: Test build_chialisp.py
+        run: |
+          export PATH=~/.cargo/bin:$PATH
+          tools/test-build-chialisp.sh
 
       - name: Run tests on macOS ARM
         run: |

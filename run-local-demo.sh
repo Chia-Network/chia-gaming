@@ -71,7 +71,9 @@ if [ "$FORCE_BUILD" -eq 1 ]; then
 fi
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
-    echo "=== Building simulator + chialisp (if needed) ==="
+    echo "=== Building chialisp (if needed) ==="
+	tools/build-chialisp.sh -v
+    echo "=== Building simulator ==="
     cargo build --features sim-server --bin chia-gaming-sim
     echo "=== Building WASM (web target) ==="
     (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/dist" --dev --target=web)
