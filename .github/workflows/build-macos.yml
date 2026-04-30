@@ -48,6 +48,17 @@ jobs:
           export PATH=~/.cargo/bin:$PATH
           tools/build-chialisp.sh
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pytest
+        run: pip install pytest
+
+      - name: Test build_chialisp.py
+        run: tools/test-build-chialisp.sh
+
       - name: Run tests on macOS ARM
         run: |
           export PATH=~/.cargo/bin:$PATH
