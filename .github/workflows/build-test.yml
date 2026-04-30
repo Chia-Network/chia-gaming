@@ -111,9 +111,11 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
           components: "clippy, rustfmt"
+      - name: Build hex files
+        run: tools/build-chialisp.sh
+
       - name: Run for coverage
         run: |
-          cp build.rs.disabled build.rs
           sudo apt-get update
           sudo apt-get install lcov -y
           rustup component add llvm-tools-preview

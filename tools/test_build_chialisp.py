@@ -261,7 +261,6 @@ class TestFullBuild:
         assert len(hex_files) > 0, "Expected hex files to be produced"
         assert cache_path.is_file(), "Cache should be written after build"
 
-    #xxx
     def test_full_partial_hex_builds_all(
         self, save_restore_build_state: tuple[Path, Path, Path]
     ) -> None:
