@@ -1023,8 +1023,10 @@ impl SpendChannelCoinHandler {
             resolved_clean: false,
             terminal_reward_coin: self.terminal_reward_coin.clone(),
         });
-        effects.extend(on_chain.next_action(env)?);
         self.replacement = Some(Box::new(on_chain));
+        if let Some(on_chain) = self.replacement.as_mut() {
+            effects.extend(on_chain.next_action(env)?);
+        }
 
         Ok(effects)
     }
