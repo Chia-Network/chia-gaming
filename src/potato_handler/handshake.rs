@@ -11,6 +11,8 @@ pub struct HandshakeB {
     pub reward_puzzle_hash: PuzzleHash,
     pub referee_pubkey: PublicKey,
     pub reward_payout_signature: Aggsig,
+    pub channel_key_pop: Aggsig,
+    pub unroll_key_pop: Aggsig,
 }
 
 pub type HandshakeA = HandshakeB;

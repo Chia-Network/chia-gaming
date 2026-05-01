@@ -290,8 +290,8 @@ the same A-F wire messages. Handshake messages are not sent via `Batch`:
 
 | Step | Sender | Message | Payload |
 |------|--------|---------|---------|
-| A | Initiator | `HandshakeA` | Public keys (channel, unroll, referee), reward puzzle hash, reward payout signature |
-| B | Receiver | `HandshakeB` | Public keys (channel, unroll, referee), reward puzzle hash, reward payout signature |
+| A | Initiator | `HandshakeA` | Public keys (channel, unroll, referee), reward puzzle hash, reward payout signature, channel key PoP, unroll key PoP |
+| B | Receiver | `HandshakeB` | Public keys (channel, unroll, referee), reward puzzle hash, reward payout signature, channel key PoP, unroll key PoP |
 | C | Initiator | `HandshakeC` | `CoinString` of the launcher coin (parent + SINGLETON_LAUNCHER_HASH + 0) |
 | D | Receiver | `HandshakeD` | State-0 `PotatoSignatures` (half-sigs for channel and unroll coins) |
 | E | Initiator | `HandshakeE` | Partial `SpendBundle` (wallet spend + launcher spend) + state-0 `PotatoSignatures` |
@@ -365,6 +365,15 @@ after the transition is silently ignored by `PotatoHandler`.
    `ChannelHandler::verify_and_store_initial_peer_signatures` at the first
    point where they receive the peer's state-0 signatures (initiator on D,
    receiver on E), verifying and storing them before proceeding.
+4. **Proof-of-possession (PoP) for aggregate keys:** The channel and unroll
+   coins use simple BLS key aggregation (pk_a + pk_b). Without proof that
+   each party controls the private key behind their public key, a rogue key
+   attack is possible: the responder (who sees the initiator's key first)
+   could craft pk_rogue = G*sk_attacker − pk_honest, making the aggregate
+   entirely controlled by the attacker. To prevent this, each `HandshakeA`/`B`
+   message includes a PoP for both the channel key and the unroll key:
+   `Sign(sk, pk.bytes())`. The receiver verifies these before proceeding.
+   (The referee key already has an implicit PoP via `reward_payout_signature`.)
 
 #### Wallet API interaction
 

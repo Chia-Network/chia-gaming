@@ -8,7 +8,7 @@ use crate::channel_handler::types::{ChannelCoinSpendInfo, ChannelHandlerEnv, Rea
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
     chia_dialect, Aggsig, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash,
-    IntoErr, Program, PuzzleHash, Spend, SpendBundle, Timeout,
+    IntoErr, Program, ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::peer_container::PeerHandler;
 use crate::potato_handler::effects::{
@@ -55,7 +55,7 @@ pub struct SpendChannelCoinHandler {
     was_stale: bool,
     terminal_reward_coin: Option<CoinString>,
 
-    expected_clean_shutdown: Option<(PuzzleHash, Amount)>,
+    expected_clean_shutdown_solution: Option<ProgramRef>,
 
     last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
 
@@ -94,7 +94,7 @@ impl SpendChannelCoinHandler {
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,
-            expected_clean_shutdown: None,
+            expected_clean_shutdown_solution: None,
             last_channel_coin_spend_info: None,
             replacement: None,
         }
@@ -124,20 +124,20 @@ impl SpendChannelCoinHandler {
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,
-            expected_clean_shutdown: None,
+            expected_clean_shutdown_solution: None,
             last_channel_coin_spend_info: None,
             replacement: None,
         }
     }
 
     /// Create a handler for the clean shutdown path.  The handler watches the
-    /// channel coin spend and checks whether the clean shutdown transaction or
-    /// an unroll landed.
+    /// channel coin spend and checks whether the clean shutdown transaction
+    /// or an unroll landed.  We store the exact solution we expect on-chain so
+    /// detection is a direct comparison.
     pub fn new_for_clean_shutdown(
         channel_handler: Option<ChannelHandler>,
         channel_coin: CoinString,
-        expected_puzzle_hash: PuzzleHash,
-        expected_amount: Amount,
+        clean_shutdown_solution: ProgramRef,
         game_action_queue: VecDeque<GameAction>,
         have_potato: PotatoState,
         channel_timeout: Timeout,
@@ -156,7 +156,7 @@ impl SpendChannelCoinHandler {
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,
-            expected_clean_shutdown: Some((expected_puzzle_hash, expected_amount)),
+            expected_clean_shutdown_solution: Some(clean_shutdown_solution),
             last_channel_coin_spend_info,
             replacement: None,
         }
@@ -549,34 +549,10 @@ impl SpendChannelCoinHandler {
 
         let mut effects = Vec::new();
 
-        let run_puzzle = puzzle.to_nodeptr(env.allocator)?;
-        let run_args = solution.to_nodeptr(env.allocator)?;
-        let conditions_result = run_program(
-            env.allocator.allocator(),
-            &chia_dialect(),
-            run_puzzle,
-            run_args,
-            0,
-        )
-        .into_gen()?;
-        let conditions_nodeptr = conditions_result.1;
-
-        let channel_conditions = CoinCondition::from_nodeptr(env.allocator, conditions_nodeptr);
-
-        // Check if clean shutdown transaction landed (change coin with expected
-        // puzzle hash and amount present in the conditions).
-        if let Some((ref expected_ph, ref expected_amt)) = self.expected_clean_shutdown {
-            let is_clean = if *expected_amt > Amount::default() {
-                channel_conditions.iter().any(|c| {
-                    matches!(c, CoinCondition::CreateCoin(ph, amt) if *ph == *expected_ph && *amt == *expected_amt)
-                })
-            } else {
-                !channel_conditions
-                    .iter()
-                    .any(|c| matches!(c, CoinCondition::Rem(_)))
-            };
-
-            if is_clean {
+        // Clean shutdown detection: compare the on-chain solution directly
+        // to the one we co-signed.
+        if let Some(ref expected_solution) = self.expected_clean_shutdown_solution {
+            if *solution == *expected_solution.pref() {
                 effects.push(Effect::Log("[clean-end] clean shutdown landed".to_string()));
                 {
                     let ch = self.base.channel_handler_mut()?;
@@ -604,19 +580,49 @@ impl SpendChannelCoinHandler {
             }
         }
 
-        // Not a clean shutdown — an unroll landed.  Find the unroll coin.
-        let unroll_coin = channel_conditions
-            .iter()
-            .find_map(|c| {
-                if let CoinCondition::CreateCoin(ph, amt) = c {
-                    let created = CoinString::from_parts(&coin_id.to_coin_id(), ph, amt);
-                    return Some(created);
-                }
-                None
-            })
-            .ok_or_else(|| {
-                Error::StrErr("channel conditions didn't include a coin creation".to_string())
-            })?;
+        let run_puzzle = puzzle.to_nodeptr(env.allocator)?;
+        let run_args = solution.to_nodeptr(env.allocator)?;
+        let conditions_result = run_program(
+            env.allocator.allocator(),
+            &chia_dialect(),
+            run_puzzle,
+            run_args,
+            0,
+        )
+        .into_gen()?;
+        let conditions_nodeptr = conditions_result.1;
+
+        // Not a clean shutdown — an unroll landed.  Find the unroll coin
+        // by matching its puzzle hash against our known unroll puzzle hashes.
+        let channel_conditions = CoinCondition::from_nodeptr(env.allocator, conditions_nodeptr);
+        let unroll_coin = {
+            let ch = self.base.channel_handler()?;
+            let map = ch.unroll_puzzle_hash_map();
+
+            channel_conditions
+                .iter()
+                .find_map(|c| {
+                    if let CoinCondition::CreateCoin(ph, amt) = c {
+                        if map.contains_key(ph) {
+                            return Some(CoinString::from_parts(
+                                &coin_id.to_coin_id(),
+                                ph,
+                                amt,
+                            ));
+                        }
+                    }
+                    None
+                })
+        };
+
+        let unroll_coin = match unroll_coin {
+            Some(c) => c,
+            None => {
+                return Err(Error::StrErr(
+                    "No CREATE_COIN in channel spend matches a known unroll puzzle hash".to_string(),
+                ));
+            }
+        };
 
         {
             let ch = self.base.channel_handler_mut()?;
@@ -648,7 +654,9 @@ impl SpendChannelCoinHandler {
 
         let on_chain_state = {
             let player_ch = self.base.channel_handler()?;
-            player_ch.unrolling_state_from_conditions(env, conditions_nodeptr)?
+            let (state_number, _) =
+                player_ch.resolve_unroll_from_conditions(env, conditions_nodeptr)?;
+            state_number
         };
 
         let outcome = {
@@ -814,8 +822,7 @@ impl SpendChannelCoinHandler {
         }
 
         if game_map.is_empty() {
-            let resolved_clean = self.is_clean_shutdown_from_reward(&on_chain_reward_coin);
-            self.transition_to_completed_terminal(resolved_clean);
+            self.transition_to_completed_terminal(false);
             return Ok(effects);
         }
 
@@ -884,8 +891,7 @@ impl SpendChannelCoinHandler {
         }
 
         if game_map.is_empty() {
-            let resolved_clean = self.is_clean_shutdown_from_reward(&on_chain_reward_coin);
-            self.transition_to_completed_terminal(resolved_clean);
+            self.transition_to_completed_terminal(false);
             return Ok(effects);
         }
 
@@ -1023,23 +1029,6 @@ impl SpendChannelCoinHandler {
         Ok(effects)
     }
 
-    /// Check whether the reward coin from a resolved unroll matches our
-    /// expected clean shutdown parameters.
-    fn is_clean_shutdown_from_reward(&self, reward_coin: &Option<CoinString>) -> bool {
-        let (expected_ph, expected_amt) = match &self.expected_clean_shutdown {
-            Some(pair) => pair,
-            None => return false,
-        };
-        if *expected_amt == Amount::default() {
-            return reward_coin.is_none();
-        }
-        if let Some(coin) = reward_coin {
-            if let Some((_, ph, amt)) = coin.to_parts() {
-                return ph == *expected_ph && amt == *expected_amt;
-            }
-        }
-        false
-    }
 }
 
 impl SpendWalletReceiver for SpendChannelCoinHandler {
@@ -1160,7 +1149,7 @@ impl PeerHandler for SpendChannelCoinHandler {
         let (state, coin) = match &self.state {
             SpendChannelCoinState::ChannelSpend { channel_coin }
             | SpendChannelCoinState::ChannelConditions { channel_coin } => {
-                let s = if self.expected_clean_shutdown.is_some() {
+                let s = if self.expected_clean_shutdown_solution.is_some() {
                     ChannelState::ShutdownTransactionPending
                 } else {
                     ChannelState::GoingOnChain

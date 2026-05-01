@@ -168,6 +168,22 @@ impl HandshakeInitiatorHandler {
                 "Invalid reward payout signature in handshake".to_string(),
             ));
         }
+        if !msg
+            .channel_key_pop
+            .verify(&msg.channel_public_key, &msg.channel_public_key.bytes())
+        {
+            return Err(Error::Channel(
+                "Invalid proof-of-possession for channel key".to_string(),
+            ));
+        }
+        if !msg
+            .unroll_key_pop
+            .verify(&msg.unroll_public_key, &msg.unroll_public_key.bytes())
+        {
+            return Err(Error::Channel(
+                "Invalid proof-of-possession for unroll key".to_string(),
+            ));
+        }
         ChannelHandler::new(
             env,
             self.private_keys.clone(),
@@ -195,12 +211,22 @@ impl HandshakeInitiatorHandler {
             &self.private_keys.my_referee_private_key,
             &self.reward_puzzle_hash,
         );
+        let channel_key_pop = self
+            .private_keys
+            .my_channel_coin_private_key
+            .sign(&channel_public_key.bytes());
+        let unroll_key_pop = self
+            .private_keys
+            .my_unroll_coin_private_key
+            .sign(&unroll_public_key.bytes());
         HandshakeB {
             channel_public_key,
             unroll_public_key,
             reward_puzzle_hash: self.reward_puzzle_hash.clone(),
             referee_pubkey: referee_public_key,
             reward_payout_signature: reward_payout_sig,
+            channel_key_pop,
+            unroll_key_pop,
         }
     }
 
@@ -404,6 +430,22 @@ impl HandshakeInitiatorHandler {
                 ) {
                     return Err(Error::Channel(
                         "Invalid reward payout signature in HandshakeB".to_string(),
+                    ));
+                }
+                if !msg
+                    .channel_key_pop
+                    .verify(&msg.channel_public_key, &msg.channel_public_key.bytes())
+                {
+                    return Err(Error::Channel(
+                        "Invalid proof-of-possession for channel key in HandshakeB".to_string(),
+                    ));
+                }
+                if !msg
+                    .unroll_key_pop
+                    .verify(&msg.unroll_public_key, &msg.unroll_public_key.bytes())
+                {
+                    return Err(Error::Channel(
+                        "Invalid proof-of-possession for unroll key in HandshakeB".to_string(),
                     ));
                 }
 

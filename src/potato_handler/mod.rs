@@ -681,7 +681,7 @@ impl PotatoHandler {
                 }
             }
 
-            let (coin, want_puzzle_hash, want_amount, full_spend, channel_puzzle_public_key) = {
+            let (coin, full_spend, channel_puzzle_public_key) = {
                 let ch = self.channel_handler_mut()?;
                 let coin = ch.state_channel_coin().clone();
                 let clvm_conditions = conditions.to_nodeptr(env.allocator)?;
@@ -708,13 +708,7 @@ impl PotatoHandler {
 
                 let full_spend = ch.received_potato_clean_shutdown(env, sig, clvm_conditions)?;
                 let channel_puzzle_public_key = ch.get_aggregate_channel_public_key();
-                (
-                    coin,
-                    want_puzzle_hash,
-                    want_amount,
-                    full_spend,
-                    channel_puzzle_public_key,
-                )
+                (coin, full_spend, channel_puzzle_public_key)
             };
 
             {
@@ -763,8 +757,7 @@ impl PotatoHandler {
             let handler = crate::potato_handler::spend_channel_coin_handler::SpendChannelCoinHandler::new_for_clean_shutdown(
                 self.channel_handler.take(),
                 coin.clone(),
-                want_puzzle_hash,
-                want_amount,
+                full_spend.solution.clone(),
                 std::mem::take(&mut self.game_action_queue),
                 PotatoState::Present,
                 self.channel_timeout.clone(),
@@ -847,7 +840,7 @@ impl PotatoHandler {
         let mut effects = Vec::new();
         let mut batch_actions: Vec<BatchAction> = Vec::new();
         let mut clean_shutdown_data: Option<Box<(Aggsig, ProgramRef)>> = None;
-        let mut pending_shutdown: Option<(CoinString, PuzzleHash, Amount)> = None;
+        let mut pending_shutdown: Option<(CoinString, ProgramRef)> = None;
         let mut deferred = VecDeque::new();
 
         while let Some(action) = self.game_action_queue.pop_front() {
@@ -973,17 +966,10 @@ impl PotatoHandler {
                         let ch = self.channel_handler_mut()?;
                         get_conditions_with_channel_handler(env, ch)?
                     };
-                    let (state_channel_coin, spend, want_puzzle_hash, want_amount) = {
+                    let (state_channel_coin, spend) = {
                         let ch = self.channel_handler_mut()?;
                         let spend = ch.send_potato_clean_shutdown(env, real_conditions)?;
-                        let want_puzzle_hash = ch.get_reward_puzzle_hash(env)?;
-                        let want_amount = ch.my_out_of_game_balance();
-                        (
-                            ch.state_channel_coin().clone(),
-                            spend,
-                            want_puzzle_hash,
-                            want_amount,
-                        )
+                        (ch.state_channel_coin().clone(), spend)
                     };
 
                     let shutdown_condition_program =
@@ -994,7 +980,7 @@ impl PotatoHandler {
                     )));
 
                     pending_shutdown =
-                        Some((state_channel_coin.clone(), want_puzzle_hash, want_amount));
+                        Some((state_channel_coin.clone(), spend.solution.clone()));
                 }
                 GameAction::SendPotato => {
                     unreachable!("SendPotato should not be queued");
@@ -1035,12 +1021,11 @@ impl PotatoHandler {
             clean_shutdown: clean_shutdown_data,
         });
 
-        if let Some((coin, puzzle_hash, amount)) = pending_shutdown {
+        if let Some((coin, shutdown_solution)) = pending_shutdown {
             let handler = crate::potato_handler::spend_channel_coin_handler::SpendChannelCoinHandler::new_for_clean_shutdown(
                 self.channel_handler.take(),
                 coin,
-                puzzle_hash,
-                amount,
+                shutdown_solution,
                 std::mem::take(&mut self.game_action_queue),
                 self.have_potato.clone(),
                 self.channel_timeout.clone(),
