@@ -57,7 +57,6 @@ pub struct SpendChannelCoinHandler {
 
     expected_clean_shutdown: Option<(PuzzleHash, Amount)>,
 
-    #[serde(skip)]
     last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
 
     #[serde(skip)]

@@ -89,7 +89,6 @@ pub struct HandshakeReceiverHandler {
     waiting_to_start: bool,
     incoming_messages: VecDeque<Rc<PeerMessage>>,
 
-    #[serde(skip)]
     last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
 
     #[serde(skip)]

@@ -24,6 +24,7 @@ use crate::referee::Referee;
 
 use std::borrow::Borrow;
 
+#[derive(Serialize, Deserialize)]
 pub enum PendingMoveKind {
     OurMove {
         post_move_referee: Rc<Referee>,
@@ -31,6 +32,7 @@ pub enum PendingMoveKind {
     },
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct PendingMoveSavedState {
     pub expected_ph: PuzzleHash,
     pub game_id: GameID,
@@ -43,7 +45,6 @@ pub struct OnChainGameHandler {
     channel_timeout: Timeout,
     game_action_queue: VecDeque<GameAction>,
     game_map: HashMap<CoinString, OnChainGameState>,
-    #[serde(skip)]
     pending_moves: HashMap<CoinString, PendingMoveSavedState>,
 
     // Extracted from ChannelHandler at transition time.

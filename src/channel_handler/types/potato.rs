@@ -37,9 +37,7 @@ pub struct PotatoMoveCachedData {
     pub puzzle_hash: PuzzleHash,
     pub match_puzzle_hash: PuzzleHash,
     pub amount: Amount,
-    #[serde(skip)]
     pub saved_post_move_referee: Option<Rc<Referee>>,
-    #[serde(skip)]
     pub saved_post_move_last_ph: Option<PuzzleHash>,
 }
 

@@ -123,7 +123,6 @@ pub struct PotatoHandler {
 
     peer_wants_potato: bool,
 
-    #[serde(skip)]
     last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
 
     #[serde(skip)]

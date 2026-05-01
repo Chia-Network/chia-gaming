@@ -94,7 +94,6 @@ pub struct HandshakeInitiatorHandler {
     transaction_pushed: bool,
     incoming_messages: VecDeque<Rc<PeerMessage>>,
 
-    #[serde(skip)]
     last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
 
     #[serde(skip)]
