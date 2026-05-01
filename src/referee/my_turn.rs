@@ -180,7 +180,7 @@ impl MyTurnReferee {
         their_reward_puzzle_hash: &PuzzleHash,
         their_reward_payout_signature: &Aggsig,
         reward_puzzle_hash: &PuzzleHash,
-        nonce: usize,
+        nonce: u64,
         agg_sig_me_additional_data: &Hash,
         state_number: usize,
     ) -> Result<(Self, PuzzleHash), Error> {

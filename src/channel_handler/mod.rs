@@ -108,8 +108,8 @@ pub struct ChannelHandler {
     // Role-namespaced nonces for game proposals.  Initiator uses even
     // values (0, 2, 4, …), responder uses odd (1, 3, 5, …).  The nonce
     // doubles as the GameID.
-    my_next_nonce: usize,
-    their_next_nonce: usize,
+    my_next_nonce: u64,
+    their_next_nonce: u64,
 
     state_channel: CoinSpend,
 
@@ -151,14 +151,14 @@ impl ChannelHandler {
         self.private_keys.my_unroll_coin_private_key.clone()
     }
 
-    pub fn allocate_my_nonce(&mut self) -> usize {
+    pub fn allocate_my_nonce(&mut self) -> u64 {
         let n = self.my_next_nonce;
         self.my_next_nonce += 2;
         n
     }
 
     pub fn is_our_nonce_parity(&self, game_id: &GameID) -> bool {
-        game_id.0 as usize % 2 == self.my_next_nonce % 2
+        game_id.0 % 2 == self.my_next_nonce % 2
     }
 
     pub fn state_number(&self) -> usize {
@@ -887,7 +887,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<'_>,
         start_info: &Rc<GameStartInfo>,
     ) -> Result<(), Error> {
-        let new_game_nonce = start_info.game_id.0 as usize;
+        let new_game_nonce = start_info.game_id.0;
 
         let referee_identity = ChiaIdentity::new(
             env.allocator,
@@ -938,7 +938,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<'_>,
         start_info: &Rc<GameStartInfo>,
     ) -> Result<(), Error> {
-        let new_game_nonce = start_info.game_id.0 as usize;
+        let new_game_nonce = start_info.game_id.0;
         let expected_parity = self.their_next_nonce % 2;
         if new_game_nonce % 2 != expected_parity {
             return Err(Error::StrErr(format!(
@@ -953,7 +953,7 @@ impl ChannelHandler {
         }
 
         // 4.3: Sanity limit on nonce gap to prevent absurd jumps.
-        const MAX_NONCE_GAP: usize = 1000;
+        const MAX_NONCE_GAP: u64 = 1000;
         if new_game_nonce > self.their_next_nonce + MAX_NONCE_GAP {
             return Err(Error::StrErr(format!(
                 "received nonce {new_game_nonce} too far ahead of expected {} (max gap {MAX_NONCE_GAP})",

@@ -1407,7 +1407,7 @@ impl FromLocalUI for PotatoHandler {
             let (dbg_summary, cancelled_id) = {
                 let ch = self.channel_handler_mut()?;
                 let summary = ch.dbg_proposed_games_summary();
-                let id = GameID(ch.allocate_my_nonce() as u64);
+                let id = GameID(ch.allocate_my_nonce());
                 (summary, id)
             };
             return Ok((
@@ -1427,7 +1427,7 @@ impl FromLocalUI for PotatoHandler {
 
         let game_id = {
             let ch = self.channel_handler_mut()?;
-            GameID(ch.allocate_my_nonce() as u64)
+            GameID(ch.allocate_my_nonce())
         };
 
         let (my_games, their_games) = self.get_games_by_start_type(env, true, &game_id, game)?;

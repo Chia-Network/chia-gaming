@@ -2281,7 +2281,7 @@ pub fn setup_debug_test(
 
     // Player 0 (have_potato=true) allocates odd nonces in this harness.
     // The first proposal from player 0 is therefore GameID(1).
-    let first_game_nonce: usize = 1;
+    let first_game_nonce: u64 = 1;
     let mut debug_games = make_debug_games(allocator, rng, &private_identities, first_game_nonce)?;
 
     let mut game_actions = Vec::new();

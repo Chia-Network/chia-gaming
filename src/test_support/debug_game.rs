@@ -93,7 +93,7 @@ pub struct BareDebugGameHandler {
 
     move_count: usize,
     mod_hash: PuzzleHash,
-    nonce: usize,
+    nonce: u64,
     timeout: Timeout,
 
     // Live
@@ -135,7 +135,7 @@ impl BareDebugGameHandler {
     fn new_with_contributions(
         allocator: &mut AllocEncoder,
         game_id: GameID,
-        nonce: usize,
+        nonce: u64,
         identities: &[ChiaIdentity],
         referee_coin_puzzle_hash: &PuzzleHash,
         timeout: Timeout,
@@ -579,7 +579,7 @@ pub fn make_debug_games(
     allocator: &mut AllocEncoder,
     rng: &mut ChaCha8Rng,
     identities: &[ChiaIdentity],
-    nonce: usize,
+    nonce: u64,
 ) -> Result<[BareDebugGameHandler; 2], Error> {
     make_debug_games_with_contributions(allocator, rng, identities, 100, 100, nonce)
 }
@@ -590,10 +590,10 @@ pub fn make_debug_games_with_contributions(
     identities: &[ChiaIdentity],
     my_contribution: u64,
     their_contribution: u64,
-    nonce: usize,
+    nonce: u64,
 ) -> Result<[BareDebugGameHandler; 2], Error> {
     let rng_seq0: Vec<Hash> = (0..50).map(|_| rng.random()).collect();
-    let gid = GameID(nonce as u64);
+    let gid = GameID(nonce);
     let referee_coin = read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex")?;
     let ref_coin_hash = referee_coin.sha256tree(allocator);
     BareDebugGameHandler::new_with_contributions(
@@ -638,7 +638,7 @@ pub struct ExhaustiveMoveInputs {
     max_move_size: usize,
     mover_share: Amount,
     count: usize,
-    nonce: usize,
+    nonce: u64,
     slash: u8,
     opponent_mover_share: Amount,
     previous_validation_info: Option<ValidationInfo>,
@@ -717,7 +717,7 @@ impl ExhaustiveMoveInputs {
         let timeout_atom = at_least_one_byte(allocator, self.timeout.to_u64())?;
         assert_ne!(self.amount, Amount::default());
         let amount_atom = at_least_one_byte(allocator, self.amount.to_u64())?;
-        let nonce_atom = at_least_one_byte(allocator, self.nonce as u64)?;
+        let nonce_atom = at_least_one_byte(allocator, self.nonce)?;
         let max_move_size_atom = at_least_one_byte(allocator, self.max_move_size as u64)?;
         let mover_share_atom = at_least_one_byte(allocator, self.opponent_mover_share.to_u64())?;
         let count_atom = at_least_one_byte(allocator, self.count as u64)?;

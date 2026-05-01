@@ -125,7 +125,7 @@ pub struct RMFixed {
 
     pub timeout: Timeout,
     pub amount: Amount,
-    pub nonce: usize,
+    pub nonce: u64,
 }
 
 // =============================================================================
@@ -189,7 +189,7 @@ pub struct RefereePuzzleArgs {
     pub waiter_pubkey: PublicKey,
     pub timeout: Timeout,
     pub amount: Amount,
-    pub nonce: usize,
+    pub nonce: u64,
     pub game_move: GameMoveDetails,
     pub validation_program: StateUpdateProgram,
     pub previous_validation_info_hash: ValidationInfoHash,
