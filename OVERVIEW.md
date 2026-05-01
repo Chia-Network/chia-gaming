@@ -131,6 +131,15 @@ stale state of the same parity — one they can fully sign — effectively rolli
 back to a favorable earlier state. The parity constraint means you cannot both
 publish and preempt; only your opponent can preempt your unroll.
 
+**Why only the two most recent states are needed for preemption.** The code
+keeps the current unroll state and the previous one (in `timeout`). These two
+states have adjacent sequence numbers, so one is always even and the other
+odd — exactly one will satisfy the parity constraint against any published
+unroll. Older states (`old_unrolls`) are never needed because preemption
+always wants the highest available sequence number, and both recent states
+have the peer's half-signature (required to form a complete aggregate
+signature for the on-chain spend).
+
 **Key code:** `src/channel_handler/types/unroll_coin.rs`,
 `clsp/unroll/unroll_puzzle.clsp`
 
@@ -208,8 +217,10 @@ The receiver processes actions sequentially and rejects the entire batch if any
 action fails validation. Rejection uses a **rollback mechanism**: the
 `ChannelHandler` (which derives `Clone`) is snapshot-cloned before processing
 begins. If any action or signature verification fails, the snapshot is restored,
-undoing all intermediate mutations from earlier actions in the batch. The error
-then triggers go-on-chain (the peer sent a bad batch, so we dispute on-chain).
+undoing all intermediate mutations from earlier actions in the batch — including
+changes to `live_games`, `pending_accept_timeouts`, balances, `state_number`,
+`cached_last_actions`, and every other `ChannelHandler` field. The error then
+triggers go-on-chain (the peer sent a bad batch, so we dispute on-chain).
 
 Because the batch comes with the potato, the sender constructed it while holding
 the definitive state. Every action in the batch should be valid against that
@@ -247,6 +258,11 @@ unified pattern:
 
 This ensures that multiple user actions between potato receives are
 automatically batched together.
+
+The `game_action_queue` is populated only by local API calls (user/UI
+actions), never by received peer messages. `drain_queue_into_batch` processes
+this local queue when the potato is held; any errors during draining reflect
+bugs in our own queued actions, not adversarial peer data.
 
 ### Non-Potato Messages
 

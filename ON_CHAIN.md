@@ -17,6 +17,7 @@ see `OVERVIEW.md`. For off-chain game proposals and flow, see
   - [Referee State Model](#referee-state-model)
   - [Reward Payout Signatures](#reward-payout-signatures)
   - [Off-Chain Validation Signal and Initial State](#off-chain-validation-signal-and-initial-state)
+  - [ValidationInfoHash and the Initial Sentinel](#validationinfohash-and-the-initial-sentinel)
 - [On-Chain Game State Tracking (our_turn)](#on-chain-game-state-tracking-our_turn)
 
 ---
@@ -193,6 +194,33 @@ inspects the actual spend conditions:
    only reward coins; `finish_on_chain_transition` finds an empty game map
    and transitions to `OnChainGameHandler`. The outcome is the same correct
    balances, just with more on-chain transactions.
+
+### Griefing Bound
+
+A malicious peer could craft a clean shutdown conditions list that includes
+unrecognized opcodes (timelocks, announcements, etc.) alongside the valid
+`CREATE_COIN` outputs. The victim's condition parser only checks that the
+expected payout exists; it does not reject unknown opcodes.
+
+This is a **griefing vector bounded to time and transaction fees**, not a
+fund-safety issue, for two reasons:
+
+1. **CLVM conditions are additive.** In Chialisp, conditions are a flat list
+  of outputs and assertions. A `CREATE_COIN` output cannot be cancelled,
+   reduced, or redirected by any other condition in the same spend. The only
+   effect of additional conditions is to make the *entire spend fail* (e.g. an
+   unsatisfied timelock prevents the transaction from being mined). No
+   condition can selectively remove or modify another condition's output.
+2. **The unroll fallback always exists.** If the clean shutdown spend fails to
+  land (because the attacker's extra conditions prevent mining), both sides
+   fall back to the unroll path. The unroll path produces the same correct
+   balance split — it just costs more time (unroll timeout + game timeouts)
+   and more transaction fees. The attacker pays the same cost.
+
+Reward payout destinations are separately protected by `AGG_SIG_UNSAFE`
+signatures exchanged during the handshake (see
+[Reward Payout Signatures](#reward-payout-signatures)), so the attacker
+cannot redirect the victim's share to a different address.
 
 ### Key Code
 
@@ -417,7 +445,7 @@ RefereePuzzleArgs {
         },
         validation_info_hash,  // hash of the validation program + state
     },
-    previous_validation_info_hash,  // hash from the prior move (None for initial state)
+    previous_validation_info_hash,  // ValidationInfoHash: Initial (sentinel) for first coin, then hash of prior move
     validation_program,     // the chialisp program that validates moves
     nonce,                  // role-namespaced counter; also serves as the GameID
     referee_coin_puzzle_hash, // puzzle hash of the referee puzzle itself
@@ -589,17 +617,35 @@ to the puzzle that it is running in off-chain validation mode rather than as
 a real on-chain spend. `waiter_pubkey` was chosen for this because it is the
 argument least likely to be needed for real validation logic.
 
-`RefereePuzzleArgs` also contains a `previous_validation_info_hash` field,
-which records the hash of the previous move's validation program (used by
-slash to prove a prior move was invalid). At the initial game state there is
-no previous move, so this field is `None`. When the first move is made, the
-off-chain validation args keep `None` (there is no prior move to slash), but
-the on-chain args use `Some(hash)` because the chialisp referee puzzle
-always propagates the current validation info hash (`INFOHASH_B`) into the
-new coin's `previous_validation_info_hash` (`INFOHASH_A`).
+### ValidationInfoHash and the Initial Sentinel
 
-**Key code:** `src/referee/types.rs` — `RefereePuzzleArgs::off_chain()`,
-`src/referee/my_turn.rs`, `src/referee/their_turn.rs`,
+`RefereePuzzleArgs` contains a `previous_validation_info_hash` field, which
+records the hash of the previous move's validation program (used by slash to
+prove a prior move was invalid). This field uses the `ValidationInfoHash`
+enum, which has three variants with distinct CLVM encodings:
+
+| Variant   | CLVM encoding         | Truthy? | When used |
+|-----------|-----------------------|---------|-----------|
+| `None`    | `()` (nil / empty atom) | No    | Game over — no further moves, only slash or timeout |
+| `Initial` | `0x78` (`'x'`, 1 byte) | Yes   | Initial game coin — no previous move exists |
+| `Hash(h)` | 32-byte atom          | Yes    | Normal play — hash of prior validation program |
+
+The initial game coin's `previous_validation_info_hash` is set to `Initial`
+(the single-byte sentinel `0x78`). This is truthy in CLVM, which matters
+because the referee puzzle checks truthiness of `previous_validation_info_hash`
+to decide whether moves are allowed — a falsy (nil) value means the game can
+only slash or timeout. The sentinel is a single byte rather than a full hash
+to save on-chain space, since there is no real previous validation program to
+reference and slashing is impossible when no moves have been made.
+
+Each move propagates the current `validation_info_hash` (`INFOHASH_B`) into
+the next coin's `previous_validation_info_hash` (`INFOHASH_A`). There is no
+separate code path for the initial state — the same derivation logic applies
+uniformly to all moves.
+
+**Key code:** `src/referee/types.rs` — `ValidationInfoHash`,
+`RefereePuzzleArgs::off_chain()`;
+`src/referee/my_turn.rs`, `src/referee/their_turn.rs`;
 `clsp/referee/onchain/referee.clsp`
 
 ---
