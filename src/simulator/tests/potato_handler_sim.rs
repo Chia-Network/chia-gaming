@@ -1189,6 +1189,8 @@ fn run_game_container_with_action_list_with_success_predicate(
                     | GameAction::SaveUnrollSnapshot(_)
                     | GameAction::ForceStaleUnroll(_)
                     | GameAction::InjectRawMessage(_, _)
+                    | GameAction::SelfAcceptProposal(_, _)
+                    | GameAction::WrongParityProposal(_)
             )
     };
     let has_explicit_go_on_chain = moves_input.iter().any(|m| {
@@ -1704,6 +1706,42 @@ fn run_game_container_with_action_list_with_success_predicate(
                     }
                     GameAction::InjectRawMessage(who, data) => {
                         cradles[*who].deliver_message(data)?;
+                    }
+                    GameAction::SelfAcceptProposal(who, gid) => {
+                        cradles[*who].self_accept_proposal(allocator, gid)?;
+                    }
+                    GameAction::WrongParityProposal(who) => {
+                        cradles[*who].propose_game(
+                            allocator,
+                            &GameStart {
+                                amount: Amount::new(200),
+                                my_contribution: Amount::new(100),
+                                game_type: GameType(game_type.to_vec()),
+                                timeout: Timeout::new(10),
+                                my_turn: true,
+                                parameters: extras.clone(),
+                            },
+                        )?;
+                        cradles[*who].flush_pending(allocator)?;
+                        cradles[*who].replace_last_message(|msg_envelope| {
+                            if let PeerMessage::Batch { actions, signatures, clean_shutdown } = msg_envelope {
+                                let mut new_actions = actions.clone();
+                                for action in new_actions.iter_mut() {
+                                    if let BatchAction::ProposeGame(ref mut wire) = action {
+                                        wire.game_id = GameID(wire.game_id.0 ^ 1);
+                                    }
+                                }
+                                Ok(PeerMessage::Batch {
+                                    actions: new_actions,
+                                    signatures: signatures.clone(),
+                                    clean_shutdown: clean_shutdown.clone(),
+                                })
+                            } else {
+                                Err(Error::StrErr(format!(
+                                    "WrongParityProposal expected PeerMessage::Batch, got {msg_envelope:?}"
+                                )))
+                            }
+                        })?;
                     }
                 }
             }
@@ -6393,6 +6431,53 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             }
         },
     ));
+
+    res.push(("test_wrong_parity_proposal_rejected", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        let moves = vec![
+            GameAction::WaitBlocks(5, 0),
+            GameAction::WrongParityProposal(0),
+            GameAction::WaitBlocks(20, 0),
+        ];
+
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            Some(&|_, cradles| cradles[1].is_on_chain() || cradles[1].is_failed()),
+            None,
+        )
+        .expect("should finish");
+
+        assert!(
+            outcome.cradles[1].is_on_chain() || outcome.cradles[1].is_failed(),
+            "player 1 should go on-chain or fail after receiving wrong-parity proposal"
+        );
+    }));
+
+    res.push(("test_self_accept_proposal_rejected", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        let moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::WaitBlocks(3, 0),
+            GameAction::SelfAcceptProposal(0, GameID(1)),
+            GameAction::WaitBlocks(20, 0),
+        ];
+
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            Some(&|_, cradles| cradles[1].is_on_chain() || cradles[1].is_failed()),
+            None,
+        )
+        .expect("should finish");
+
+        assert!(
+            outcome.cradles[1].is_on_chain() || outcome.cradles[1].is_failed(),
+            "player 1 should go on-chain or fail after peer self-accepted"
+        );
+    }));
 
     res
 }

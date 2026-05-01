@@ -289,6 +289,17 @@ impl PotatoHandler {
         Ok(effects)
     }
 
+    #[cfg(test)]
+    pub(crate) fn self_accept_proposal(
+        &mut self,
+        _env: &mut ChannelHandlerEnv<'_>,
+        game_id: &GameID,
+    ) -> Result<Vec<Effect>, Error> {
+        let (_continued, effects) =
+            self.do_game_action(GameAction::ForcedSelfAccept(*game_id))?;
+        Ok(effects)
+    }
+
     pub fn has_pending_incoming(&self) -> bool {
         !self.incoming_messages.is_empty()
     }
@@ -988,6 +999,12 @@ impl PotatoHandler {
                 GameAction::SendPotato => {
                     unreachable!("SendPotato should not be queued");
                 }
+                #[cfg(test)]
+                GameAction::ForcedSelfAccept(game_id) => {
+                    let ch = self.channel_handler_mut()?;
+                    ch.send_accept_proposal(&game_id)?;
+                    batch_actions.push(BatchAction::AcceptProposal(game_id));
+                }
             }
         }
 
@@ -1612,6 +1629,14 @@ impl PeerHandler for PotatoHandler {
         entropy: Hash,
     ) -> Result<Vec<Effect>, Error> {
         PotatoHandler::cheat_game(self, env, game_id, mover_share, entropy)
+    }
+    #[cfg(test)]
+    fn self_accept_proposal(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_>,
+        game_id: &GameID,
+    ) -> Result<Vec<Effect>, Error> {
+        PotatoHandler::self_accept_proposal(self, env, game_id)
     }
     fn flush_pending_actions(
         &mut self,

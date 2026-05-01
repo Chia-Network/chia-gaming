@@ -55,6 +55,15 @@ Multiple proposals and acceptances can be batched in a single potato pass.
 Acceptances should be ordered before proposals in the batch to ensure funds
 freed by accepted games are available for new proposals.
 
+### Receiver-Side Acceptance Validation
+
+When `apply_received_accept_proposal` processes an incoming `AcceptProposal`,
+it verifies that the game_id has **our** nonce parity — meaning it was a
+proposal we made that the peer is legitimately accepting. If the game_id has
+the peer's parity, the peer is attempting to accept their own proposal
+(self-accept attack), which is rejected as a protocol violation triggering
+rollback and go-on-chain.
+
 ### Race Conditions in Proposal Lifecycle
 
 Because cancel and accept requests are queued and only sent when the potato is

@@ -229,6 +229,12 @@ mod sim_tests {
         /// Inject raw bytes into a player's inbound message queue.
         /// Used for testing message validation (e.g. oversized messages).
         InjectRawMessage(usize, Vec<u8>),
+        /// Force a self-accept: bypass local parity check and send
+        /// AcceptProposal for our own game_id (SEC-975). (player, game_id)
+        SelfAcceptProposal(usize, GameID),
+        /// Propose a game but tamper the outbound message to use a game_id
+        /// with the wrong parity. Tests receiver-side parity rejection.
+        WrongParityProposal(usize),
     }
 
     impl std::fmt::Debug for GameAction {
@@ -276,6 +282,12 @@ mod sim_tests {
                 GameAction::ForceStaleUnroll(p) => write!(formatter, "ForceStaleUnroll({p})"),
                 GameAction::InjectRawMessage(p, data) => {
                     write!(formatter, "InjectRawMessage({p}, {} bytes)", data.len())
+                }
+                GameAction::SelfAcceptProposal(p, g) => {
+                    write!(formatter, "SelfAcceptProposal({p},{g:?})")
+                }
+                GameAction::WrongParityProposal(p) => {
+                    write!(formatter, "WrongParityProposal({p})")
                 }
             }
         }

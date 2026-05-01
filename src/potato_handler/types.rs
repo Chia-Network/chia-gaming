@@ -209,6 +209,8 @@ pub enum GameAction {
     QueuedAcceptProposal(GameID),
     QueuedCancelProposal(GameID),
     Cheat(GameID, Amount, Hash),
+    #[cfg(test)]
+    ForcedSelfAccept(GameID),
 }
 
 impl std::fmt::Debug for GameAction {
@@ -226,6 +228,8 @@ impl std::fmt::Debug for GameAction {
                 write!(formatter, "QueuedCancelProposal({gi:?})")
             }
             GameAction::Cheat(gi, ms, _) => write!(formatter, "Cheat({gi:?},{ms:?})"),
+            #[cfg(test)]
+            GameAction::ForcedSelfAccept(gi) => write!(formatter, "ForcedSelfAccept({gi:?})"),
         }
     }
 }

@@ -1052,6 +1052,11 @@ impl ChannelHandler {
 
     /// Apply a received accept-proposal without verifying signatures.
     pub fn apply_received_accept_proposal(&mut self, game_id: &GameID) -> Result<(), Error> {
+        if !self.is_our_nonce_parity(game_id) {
+            return Err(Error::StrErr(format!(
+                "peer attempted to accept their own proposal {game_id:?}"
+            )));
+        }
         self.accept_proposal_inner(game_id)
     }
 

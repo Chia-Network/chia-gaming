@@ -88,6 +88,16 @@ pub trait PeerHandler {
         mover_share: Amount,
         entropy: Hash,
     ) -> Result<Vec<Effect>, Error>;
+    #[cfg(test)]
+    fn self_accept_proposal(
+        &mut self,
+        _env: &mut ChannelHandlerEnv<'_>,
+        _game_id: &GameID,
+    ) -> Result<Vec<Effect>, Error> {
+        Err(Error::StrErr(
+            "self_accept_proposal: not in off-chain phase".to_string(),
+        ))
+    }
     fn take_replacement(&mut self) -> Option<Box<dyn PeerHandler>>;
 
     fn new_block(&mut self, _height: u64) -> Result<Vec<Effect>, Error> {
@@ -408,6 +418,15 @@ pub trait GameCradle {
         allocator: &mut AllocEncoder,
         game_id: &GameID,
         mover_share: Amount,
+    ) -> Result<(), Error>;
+
+    /// Force a self-accept: bypass the local parity check and send
+    /// AcceptProposal for our own game_id. For testing SEC-975 only.
+    #[cfg(test)]
+    fn self_accept_proposal(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        game_id: &GameID,
     ) -> Result<(), Error>;
 
     /// Check whether we're on chain.
@@ -1200,6 +1219,20 @@ impl SynchronousGameCradle {
 }
 
 impl GameCradle for SynchronousGameCradle {
+    #[cfg(test)]
+    fn self_accept_proposal(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        game_id: &GameID,
+    ) -> Result<(), Error> {
+        let reported_effects = {
+            let mut env = ChannelHandlerEnv::new(allocator)?;
+            self.peer.self_accept_proposal(&mut env, game_id)?
+        };
+        self.process_effects(reported_effects, allocator)?;
+        Ok(())
+    }
+
     fn cheat(
         &mut self,
         allocator: &mut AllocEncoder,

@@ -1584,6 +1584,8 @@ impl OnChainGameHandler {
             GameAction::QueuedProposal(_, _)
             | GameAction::QueuedAcceptProposal(_)
             | GameAction::QueuedCancelProposal(_) => Ok(vec![]),
+            #[cfg(test)]
+            GameAction::ForcedSelfAccept(_) => Ok(vec![]),
         }
     }
 
