@@ -256,6 +256,28 @@ could be worse than asking.
 
 This is always-on — not a feature the user opts into.
 
+#### WASM–JS trust model
+
+The WASM module and its host JavaScript execute in the **same trust domain** —
+they are served from the same origin, run in the same process, and share the
+same memory. The WASM-to-JS boundary is not a security boundary.
+
+Private keys (channel, unroll, referee) are intentionally included in the
+serialized cradle state. Without them, a deserialized session cannot resume
+signing and the game would be unrecoverable after a page reload. Any
+JavaScript that can call `serialize_cradle()` can equally call every other
+exported WASM function (`make_move`, `go_on_chain`, etc.), so withholding keys
+from the serialized form would not meaningfully limit an attacker who already
+has script execution in the same origin.
+
+The actual security boundaries are:
+
+- **The browser origin** — isolates the player app from other web content.
+- **The WebSocket connection to peers** — all peer messages are untrusted and
+  validated by the WASM engine before acting on them.
+- **The blockchain** — on-chain spends require valid aggregate signatures that
+  only the two channel participants can produce.
+
 #### What is saved (`SessionSave`)
 
 An `appState` key in localStorage holds a JSON-serialized `AppState` object
