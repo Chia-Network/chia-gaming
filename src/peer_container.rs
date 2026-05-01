@@ -461,7 +461,6 @@ pub trait GameCradle {
 
 #[derive(Serialize, Deserialize)]
 struct SynchronousGameCradleState {
-    #[serde(skip)]
     current_height: u64,
     watching_coins: HashMap<CoinString, WatchEntry>,
 
