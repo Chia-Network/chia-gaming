@@ -278,6 +278,19 @@ The actual security boundaries are:
 - **The blockchain** — on-chain spends require valid aggregate signatures that
   only the two channel participants can produce.
 
+#### RNG non-serialization
+
+The game cradle's `ChaCha8Rng` (used for move entropy and identity
+generation) is **not** serialized.  The `ChaCha8SerializationWrapper`
+emits nothing for the RNG field (`#[serde(skip)]`) and deserializes to a
+zeroed placeholder via `Default`.  On restore, `create_serialized_game`
+always takes a fresh `new_seed` parameter from JavaScript, hashes it, and
+creates a brand new `ChaCha8Rng` — the deserialized placeholder is
+immediately overwritten.  This avoids persisting seed material and
+guarantees fresh entropy after every save/restore cycle.  The RNG is used
+only for commit-reveal preimages and initial key generation, not for
+cryptographic nonces or signatures (BLS signatures are deterministic).
+
 #### What is saved (`SessionSave`)
 
 An `appState` key in localStorage holds a JSON-serialized `AppState` object

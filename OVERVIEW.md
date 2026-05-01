@@ -131,14 +131,19 @@ stale state of the same parity — one they can fully sign — effectively rolli
 back to a favorable earlier state. The parity constraint means you cannot both
 publish and preempt; only your opponent can preempt your unroll.
 
-**Why only the two most recent states are needed for preemption.** The code
-keeps the current unroll state and the previous one (in `timeout`). These two
-states have adjacent sequence numbers, so one is always even and the other
-odd — exactly one will satisfy the parity constraint against any published
-unroll. Older states (`old_unrolls`) are never needed because preemption
-always wants the highest available sequence number, and both recent states
-have the peer's half-signature (required to form a complete aggregate
-signature for the on-chain spend).
+**Unroll state tracking.** The code tracks `latest_sent_unroll` (the most
+recent unroll we sent the opponent) and `latest_received_unroll` (the most
+recent unroll received from them).  For preemption, only the latest state
+is needed — it has the highest sequence number and the correct parity.
+However, the opponent can broadcast *any* unroll we ever sent them (all
+carry valid aggregate signatures from the time they were created).  To
+identify these on-chain, the `ChannelHandler` maintains an
+`unroll_puzzle_hash_map` that maps each sent unroll's puzzle hash to its
+full spend info.  This map grows linearly with session length (one entry
+per state transition) but entries are small.  When a channel coin spend
+is detected, the `CREATE_COIN` puzzle hashes in the on-chain conditions
+are matched against this map to identify which unroll landed and retrieve
+the data needed for preemption or timeout.
 
 **Key code:** `src/channel_handler/types/unroll_coin.rs`,
 `clsp/unroll/unroll_puzzle.clsp`

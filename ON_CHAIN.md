@@ -179,20 +179,20 @@ initiate an unroll (via `go_on_chain`) around the same time. Both spend the
 channel coin, so only one can land on-chain.
 
 Because of this, the system never blindly trusts that the clean shutdown
-landed. When the channel coin is detected as spent, `SpendChannelCoinHandler`
-inspects the actual spend conditions:
+landed. When `SpendChannelCoinHandler` is created for the clean shutdown
+path, it stores the exact on-chain solution (`ProgramRef`) that was
+co-signed for the shutdown.  When the channel coin spend is detected, the
+handler compares the on-chain solution directly against the stored one:
 
-1. **Clean shutdown landed:** The conditions contain a `CreateCoin` matching
-   the expected change coin (puzzle hash and amount). The handler transitions
-   to an `OnChainGameHandler` with an empty game map and `resolved_clean: true`,
-   which emits `ChannelStatus` with state `ResolvedClean`.
-2. **An unroll landed instead:** The conditions do not match (or, when the
-   player's expected reward is zero, they contain a `Rem` — which clean
-   shutdown conditions never include). The handler continues with unroll
-   logic, comparing the on-chain state number against the local state to
-   decide preempt vs timeout. Since no games are active, the unroll creates
-   only reward coins; `finish_on_chain_transition` finds an empty game map
-   and transitions to `OnChainGameHandler`. The outcome is the same correct
+1. **Clean shutdown landed:** The on-chain solution matches the expected
+   solution byte-for-byte.  The handler emits `ChannelStatus` with state
+   `ResolvedClean`.
+2. **An unroll landed instead:** The solution does not match.  The handler
+   runs the puzzle to extract conditions, then matches `CREATE_COIN` puzzle
+   hashes against the `unroll_puzzle_hash_map` to identify which unroll
+   state landed.  Since no games are active, the unroll creates only reward
+   coins; `finish_on_chain_transition` finds an empty game map and
+   transitions to `OnChainGameHandler`. The outcome is the same correct
    balances, just with more on-chain transactions.
 
 ### Griefing Bound
@@ -267,15 +267,16 @@ and the opponent's stale unroll succeeds via timeout, the system enters
 
 ### Staleness Detection
 
-Staleness is determined by comparing the `on_chain_state` (the sequence number
-extracted from the channel coin's `REM` conditions when the unroll coin was
-created) against `timeout_state_number()` from `ChannelHandler`.
+Staleness is determined by comparing the `on_chain_state` (the sequence
+number retrieved from the `unroll_puzzle_hash_map` when the on-chain
+`CREATE_COIN` puzzle hash is matched) against the latest received unroll's
+state number from `ChannelHandler`.
 
-`timeout_state_number()` returns the state number captured in the handler's
-timeout snapshot (`self.timeout.as_ref().map(|t| t.coin.state_number)`), and
+The latest received unroll state number comes from
+`self.latest_received_unroll.as_ref().map(|t| t.coin.state_number)`, and
 staleness is computed as:
 
-`is_stale = timeout_state_number().is_some_and(|t| on_chain_state + 1 < t)`
+`is_stale = latest_received_state.is_some_and(|t| on_chain_state + 1 < t)`
 
 
 | Condition                                                                        | Classification                                     |
