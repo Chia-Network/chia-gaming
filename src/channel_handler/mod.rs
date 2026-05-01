@@ -499,6 +499,13 @@ impl ChannelHandler {
             ));
         }
 
+        if unroll_advance_timeout.to_u64() != 15 {
+            return Err(Error::Channel(format!(
+                "unroll_advance_timeout must be 15, got {}",
+                unroll_advance_timeout.to_u64(),
+            )));
+        }
+
         let aggregate_public_key = our_channel_pubkey.clone() + their_channel_pubkey.clone();
 
         let state_channel_coin_puzzle_hash =

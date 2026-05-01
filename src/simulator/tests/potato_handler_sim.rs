@@ -1130,7 +1130,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             my_contribution: Amount::new(bal),
             their_contribution: Amount::new(bal),
             channel_timeout: Timeout::new(5),
-            unroll_timeout: Timeout::new(5),
+            unroll_timeout: Timeout::new(15),
             reward_puzzle_hash: identities[0].puzzle_hash.clone(),
         },
         private_keys[0].clone(),
@@ -1143,7 +1143,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             my_contribution: Amount::new(bal),
             their_contribution: Amount::new(bal),
             channel_timeout: Timeout::new(5),
-            unroll_timeout: Timeout::new(5),
+            unroll_timeout: Timeout::new(15),
             reward_puzzle_hash: identities[1].puzzle_hash.clone(),
         },
         private_keys[1].clone(),
@@ -3731,10 +3731,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         moves.push(GameAction::GoOnChain(0));
         // Nerf bob so he can't interfere during the unroll process.
         moves.push(GameAction::NerfTransactions(1));
-        // Wait for channel spend inclusion + unroll coin registration + 5-block
+        // Wait for channel spend inclusion + unroll coin registration + 15-block
         // unroll timeout to fire. At the end of this wait the unroll spend is
         // submitted (alice is still un-nerfed here).
-        moves.push(GameAction::WaitBlocks(4, 0));
+        moves.push(GameAction::WaitBlocks(14, 0));
         // Switch the nerf: now alice's redo transaction will be dropped while
         // bob is free to act.
         moves.push(GameAction::NerfTransactions(0));

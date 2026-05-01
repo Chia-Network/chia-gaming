@@ -492,7 +492,7 @@ pub fn test_peer_smoke() {
             my_contribution: Amount::new(100),
             their_contribution: Amount::new(100),
             channel_timeout: Timeout::new(1000),
-            unroll_timeout: Timeout::new(5),
+            unroll_timeout: Timeout::new(15),
             reward_puzzle_hash: reward_puzzle_hash1.clone(),
         };
         if have_potato {

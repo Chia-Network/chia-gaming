@@ -2,7 +2,7 @@ use crate::common::types::Timeout;
 use lazy_static::lazy_static;
 
 lazy_static! {
-    pub static ref DEFAULT_UNROLL_TIME_LOCK: Timeout = Timeout::new(5);
+    pub static ref DEFAULT_UNROLL_TIME_LOCK: Timeout = Timeout::new(15);
 }
 
 #[cfg(test)]
