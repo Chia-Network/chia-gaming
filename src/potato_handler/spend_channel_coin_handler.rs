@@ -1001,7 +1001,7 @@ impl SpendChannelCoinHandler {
             .take()
             .ok_or_else(|| Error::StrErr("no channel handler yet".to_string()))?;
 
-        let mut on_chain = OnChainGameHandler::new(OnChainGameHandlerArgs {
+        let on_chain = OnChainGameHandler::new(OnChainGameHandlerArgs {
             have_potato: PotatoState::Present,
             channel_timeout: self.base.channel_timeout.clone(),
             game_action_queue: on_chain_queue,

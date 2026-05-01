@@ -1264,15 +1264,6 @@ impl ChannelHandler {
 
         let match_puzzle_hash = referee_result.puzzle_hash_for_unroll.clone();
 
-        let _ = self.live_games[game_idx].get_transaction_for_move(
-            env.allocator,
-            &CoinString::from_parts(
-                &CoinID::default(),
-                &PuzzleHash::default(),
-                &Amount::default(),
-            ),
-        );
-
         self.live_games[game_idx].last_referee_puzzle_hash =
             self.live_games[game_idx].outcome_puzzle_hash(env.allocator)?;
 
