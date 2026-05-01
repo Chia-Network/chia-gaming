@@ -134,8 +134,9 @@ mod gaming_wasm {
 
     #[derive(Serialize, Deserialize)]
     struct JsCradle {
-        #[serde(skip_serializing, skip_deserializing)]
+        #[serde(skip)]
         allocator: AllocEncoder,
+        #[serde(skip)]
         rng: ChaCha8SerializationWrapper,
         cradle: SynchronousGameCradle,
     }
