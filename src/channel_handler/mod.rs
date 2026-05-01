@@ -991,8 +991,6 @@ impl ChannelHandler {
             )));
         }
 
-        self.their_next_nonce = new_game_nonce + 2;
-
         let referee_identity = ChiaIdentity::new(
             env.allocator,
             self.private_keys.my_referee_private_key.clone(),
@@ -1014,6 +1012,8 @@ impl ChannelHandler {
             &agg_sig_me,
             self.state_number,
         )?;
+
+        self.their_next_nonce = new_game_nonce + 2;
 
         self.proposed_games.push(ProposedGame::new(
             start_info.game_id,
