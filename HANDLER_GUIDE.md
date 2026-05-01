@@ -16,6 +16,7 @@ resolution), see `OVERVIEW.md`. For the raw calling conventions, see
 - [My-Turn Handler](#my-turn-handler)
 - [Their-Turn Handler](#their-turn-handler)
 - [Handler Chaining](#handler-chaining)
+- [Proposal Execution Model](#proposal-execution-model)
 - [Detailed Turn Data Flow](#detailed-turn-data-flow)
 - [Validators](#validators)
 - [Validator Chaining](#validator-chaining)
@@ -199,6 +200,34 @@ creating an implicit state machine.
 
 When a handler returns nil for the next handler, the game is over. No more
 turns will be taken.
+
+---
+
+## Proposal Execution Model
+
+Both peers derive their handler and validator programs locally — no full
+programs or hashes cross the wire from the peer during proposal.
+
+When a proposal arrives, the receiving peer runs the same registered factory
+puzzle (`run_make_proposal`) on their own machine, using only the agreed
+economic parameters (bet size, contributions) as input. The factory returns
+both `wire_data` (containing the `initial_validator_hash` among other fields)
+and `local_data` (containing the actual `initial_validator` program). The
+proposer's side uses the `local_data` directly; the responder runs the
+`parser` on the `wire_data` to extract their own handler/validator pair.
+
+Critically, the `initial_validator_hash` and the `initial_validator` program
+are both outputs of the same local CLVM execution. Neither value is supplied
+by the peer — the peer's proposal contains only the game type tag and
+economic terms (`amount`, `my_contribution`, `timeout`, `my_turn`). The
+`StateUpdateProgram` constructed from these outputs is therefore
+self-consistent by construction: the hash matches the program because they
+came from the same factory invocation.
+
+This design means the peer cannot supply a mismatched program/hash pair.
+The only way a mismatch could occur is if the two peers have different
+versions of the registered game factory — which would be a configuration
+bug, not an attack.
 
 ---
 
