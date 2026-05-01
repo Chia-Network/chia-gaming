@@ -30,66 +30,24 @@ use crate::referee::Referee;
 // Contains a state of the game for use in currying the coin puzzle or for
 // reference when calling the game_handler.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum TheirTurnRefereeGameState {
-    Initial {
-        initial_state: Rc<Program>,
-        initial_validation_program: StateUpdateProgram,
-        initial_puzzle_args: Rc<RefereePuzzleArgs>,
-        game_handler: GameHandler,
-    },
-    // We were given a validation program back from the 'our turn' handler
-    // as well as a state.
-    AfterOurTurn {
-        their_turn_game_handler: Option<GameHandler>,
-        my_turn_validation_program: StateUpdateProgram,
-        state_preceding_our_turn: Rc<Program>,
-        their_turn_validation_program: StateUpdateProgram,
-        state_after_our_turn: Rc<Program>,
-        create_this_coin: Rc<RefereePuzzleArgs>,
-        spend_this_coin: Rc<RefereePuzzleArgs>,
-        move_spend: Rc<OnChainRefereeMoveData>,
-    },
+pub struct TheirTurnRefereeGameState {
+    pub game_handler: Option<GameHandler>,
+    pub slash_validation_program: StateUpdateProgram,
+    pub slash_state: Rc<Program>,
+    pub their_turn_validation_program: StateUpdateProgram,
+    pub current_state: Rc<Program>,
+    pub create_this_coin: Rc<RefereePuzzleArgs>,
+    pub spend_this_coin: Rc<RefereePuzzleArgs>,
+    pub move_spend: Option<Rc<OnChainRefereeMoveData>>,
 }
 
 impl TheirTurnRefereeGameState {
-    pub fn is_my_turn(&self) -> bool {
-        match self {
-            TheirTurnRefereeGameState::Initial { game_handler, .. } => {
-                matches!(game_handler, GameHandler::MyTurnHandler(_))
-            }
-            TheirTurnRefereeGameState::AfterOurTurn { .. } => false,
-        }
-    }
-
-    pub fn processing_my_turn(&self) -> bool {
-        match self {
-            TheirTurnRefereeGameState::Initial { .. } => false,
-            TheirTurnRefereeGameState::AfterOurTurn { .. } => true,
-        }
-    }
-
     pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
-        match self {
-            TheirTurnRefereeGameState::Initial {
-                initial_puzzle_args,
-                ..
-            } => initial_puzzle_args.clone(),
-            TheirTurnRefereeGameState::AfterOurTurn {
-                create_this_coin, ..
-            } => create_this_coin.clone(),
-        }
+        self.create_this_coin.clone()
     }
 
     pub fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
-        match self {
-            TheirTurnRefereeGameState::Initial {
-                initial_puzzle_args,
-                ..
-            } => initial_puzzle_args.clone(),
-            TheirTurnRefereeGameState::AfterOurTurn {
-                spend_this_coin, ..
-            } => spend_this_coin.clone(),
-        }
+        self.spend_this_coin.clone()
     }
 }
 
@@ -137,11 +95,15 @@ impl TheirTurnReferee {
             agg_sig_me_additional_data,
         )?;
 
-        let state = Rc::new(TheirTurnRefereeGameState::Initial {
-            initial_state: game_start_info.initial_state.p(),
-            initial_validation_program: game_start_info.initial_validation_program.clone(),
-            initial_puzzle_args: setup.ref_puzzle_args,
-            game_handler: game_start_info.game_handler.clone(),
+        let state = Rc::new(TheirTurnRefereeGameState {
+            game_handler: Some(game_start_info.game_handler.clone()),
+            slash_validation_program: game_start_info.initial_validation_program.clone(),
+            slash_state: game_start_info.initial_state.p(),
+            their_turn_validation_program: game_start_info.initial_validation_program.clone(),
+            current_state: game_start_info.initial_state.p(),
+            create_this_coin: setup.ref_puzzle_args.clone(),
+            spend_this_coin: setup.ref_puzzle_args,
+            move_spend: None,
         });
 
         Ok((
@@ -178,63 +140,27 @@ impl TheirTurnReferee {
     }
 
     pub fn get_move_info(&self) -> Option<Rc<OnChainRefereeMoveData>> {
-        if let TheirTurnRefereeGameState::AfterOurTurn { move_spend, .. } = self.state.borrow() {
-            return Some(move_spend.clone());
-        }
-
-        None
+        self.state.move_spend.clone()
     }
 
     pub fn get_game_handler(&self) -> Option<GameHandler> {
-        match self.state.borrow() {
-            TheirTurnRefereeGameState::Initial { game_handler, .. } => Some(game_handler.clone()),
-            TheirTurnRefereeGameState::AfterOurTurn {
-                their_turn_game_handler,
-                ..
-            } => their_turn_game_handler.clone(),
-        }
+        self.state.game_handler.clone()
     }
 
     pub fn get_validation_program_for_their_move(
         &self,
     ) -> Result<(Rc<Program>, StateUpdateProgram), Error> {
-        match self.state.borrow() {
-            TheirTurnRefereeGameState::Initial {
-                game_handler,
-                initial_state,
-                initial_validation_program,
-                ..
-            } => {
-                if game_handler.is_my_turn() {
-                    return Err(Error::StrErr("no moves have been made yet".to_string()));
-                }
-                Ok((initial_state.clone(), initial_validation_program.clone()))
-            }
-            TheirTurnRefereeGameState::AfterOurTurn {
-                state_after_our_turn,
-                their_turn_validation_program,
-                ..
-            } => Ok((
-                state_after_our_turn.clone(),
-                their_turn_validation_program.clone(),
-            )),
-        }
+        Ok((
+            self.state.current_state.clone(),
+            self.state.their_turn_validation_program.clone(),
+        ))
     }
 
     pub fn slash_infohash_inputs(&self) -> Option<(StateUpdateProgram, Rc<Program>)> {
-        if let TheirTurnRefereeGameState::AfterOurTurn {
-            my_turn_validation_program,
-            state_preceding_our_turn,
-            ..
-        } = self.state.borrow()
-        {
-            return Some((
-                my_turn_validation_program.clone(),
-                state_preceding_our_turn.clone(),
-            ));
-        }
-
-        None
+        Some((
+            self.state.slash_validation_program.clone(),
+            self.state.slash_state.clone(),
+        ))
     }
 
     pub fn get_amount(&self) -> Amount {
@@ -294,14 +220,7 @@ impl TheirTurnReferee {
         allocator: &mut AllocEncoder,
         message: &[u8],
     ) -> Result<ReadableMove, Error> {
-        // Do stuff with message handler.
-        let state = match self.state.borrow() {
-            TheirTurnRefereeGameState::Initial { initial_state, .. } => initial_state.clone(),
-            TheirTurnRefereeGameState::AfterOurTurn {
-                state_after_our_turn,
-                ..
-            } => state_after_our_turn.clone(),
-        };
+        let state = self.state.current_state.clone();
 
         let result = if let Some(handler) = self.message_handler.as_ref() {
             handler.run(

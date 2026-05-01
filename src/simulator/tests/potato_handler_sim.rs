@@ -3033,6 +3033,26 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         );
     }));
 
+    res.push(("test_slash_first_move", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        let moves = vec![
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::AcceptProposal(1, GameID(1)),
+            GameAction::GoOnChain(0),
+            GameAction::Cheat(0, GameID(1), Amount::default()),
+            GameAction::WaitBlocks(30, 0),
+        ];
+
+        let outcome =
+            run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+
+        let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
+        // Bob (player 1) should get all the money via slash because
+        // Alice (player 0) cheated on the first move.
+        assert_eq!(p2_balance, p1_balance + 200);
+    }));
+
     res.push(("test_referee_play_debug_game_alice_slash", &|| {
         let mut allocator = AllocEncoder::new();
         let seed_data: [u8; 32] = [0; 32];

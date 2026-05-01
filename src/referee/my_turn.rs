@@ -299,17 +299,17 @@ impl MyTurnReferee {
             after_args: new_puzzle_args.clone(),
         });
 
-        let new_state = TheirTurnRefereeGameState::AfterOurTurn {
-            their_turn_game_handler: game_handler.clone(),
+        let new_state = TheirTurnRefereeGameState {
+            game_handler: game_handler.clone(),
             their_turn_validation_program: my_turn_result
                 .incoming_move_state_update_program
                 .clone(),
-            my_turn_validation_program: my_turn_result.outgoing_move_state_update_program.clone(),
-            state_after_our_turn: new_state.clone(),
-            state_preceding_our_turn: current_state.clone(),
+            slash_validation_program: my_turn_result.outgoing_move_state_update_program.clone(),
+            current_state: new_state.clone(),
+            slash_state: current_state.clone(),
             create_this_coin: current_puzzle_args,
             spend_this_coin: new_puzzle_args,
-            move_spend,
+            move_spend: Some(move_spend),
         };
 
         let new_parent = MyTurnReferee {
