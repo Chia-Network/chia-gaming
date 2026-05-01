@@ -18,8 +18,14 @@ impl Distribution<PrivateKey> for StandardUniform {
 
 ///
 /// Private Key
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PrivateKey(chia_bls::SecretKey);
+
+impl std::fmt::Debug for PrivateKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PrivateKey(XXXXXXXX)")
+    }
+}
 
 impl Default for PrivateKey {
     fn default() -> Self {
