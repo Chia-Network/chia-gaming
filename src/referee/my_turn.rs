@@ -399,7 +399,7 @@ impl MyTurnReferee {
             result.outgoing_move_state_update_program.clone(),
             state_to_update.clone(),
         );
-        let validation_info_hash = if result.waiting_handler.is_some() {
+        let validation_program_hash = if result.waiting_handler.is_some() {
             ValidationInfoHash::Hash(v.hash().clone())
         } else {
             ValidationInfoHash::None
@@ -410,9 +410,9 @@ impl MyTurnReferee {
                 mover_share: result.mover_share.clone(),
                 max_move_size: result.max_move_size,
             },
-            validation_info_hash,
+            validation_program_hash,
         };
-        let prev_hash = ref_puzzle_args.game_move.validation_info_hash.clone();
+        let prev_hash = ref_puzzle_args.game_move.validation_program_hash.clone();
         let offchain_puzzle_args = Rc::new(RefereePuzzleArgs {
             mover_pubkey: self.fixed.their_referee_pubkey.clone(),
             waiter_pubkey: self.fixed.my_identity.public_key.clone(),

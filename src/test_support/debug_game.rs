@@ -360,7 +360,7 @@ impl BareDebugGameHandler {
                             mover_share: mover_share.clone(),
                             max_move_size: self.max_move_size,
                         },
-                        validation_info_hash: ValidationInfoHash::Hash(
+                        validation_program_hash: ValidationInfoHash::Hash(
                             ValidationInfo::new_state_update(
                                 allocator,
                                 validation_program.clone(),
@@ -503,7 +503,7 @@ impl BareDebugGameHandler {
                                         mover_share: inputs.opponent_mover_share.clone(),
                                         max_move_size: inputs.max_move_size,
                                     },
-                                    validation_info_hash: ValidationInfoHash::Hash(vprog.hash().clone()),
+                                    validation_program_hash: ValidationInfoHash::Hash(vprog.hash().clone()),
                                 },
                             },
                         )?,

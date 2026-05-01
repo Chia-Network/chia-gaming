@@ -383,7 +383,7 @@ impl TheirTurnReferee {
         let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
         let (state, validation_program) = self.get_validation_program_for_their_move()?;
         let pre_state_nodeptr = state.to_nodeptr(allocator)?;
-        let prev_hash = puzzle_args.game_move.validation_info_hash.clone();
+        let prev_hash = puzzle_args.game_move.validation_program_hash.clone();
         let offchain_puzzle_args = Rc::new(RefereePuzzleArgs {
             mover_pubkey: self.fixed.my_identity.public_key.clone(),
             waiter_pubkey: self.fixed.their_referee_pubkey.clone(),
@@ -437,7 +437,7 @@ impl TheirTurnReferee {
                 last_mover_share: details.basic.mover_share.clone(),
 
                 new_move: GameMoveDetails {
-                    validation_info_hash: ValidationInfoHash::Hash(validation_program_hash),
+                    validation_program_hash: ValidationInfoHash::Hash(validation_program_hash),
                     ..details.clone()
                 },
             },
@@ -532,7 +532,7 @@ impl TheirTurnReferee {
                 mover_share: new_mover_share.clone(),
                 max_move_size,
             },
-            validation_info_hash: validation_info_hash.clone(),
+            validation_program_hash: validation_info_hash.clone(),
         };
 
         let (new_self, result) =
@@ -588,7 +588,7 @@ impl TheirTurnReferee {
                 nonce: self.fixed.nonce,
                 referee_coin_puzzle_hash: self.fixed.referee_coin_puzzle_hash.clone(),
                 validation_program: slash_validation_program.clone(),
-                previous_validation_info_hash: after_args.game_move.validation_info_hash.clone(),
+                previous_validation_info_hash: after_args.game_move.validation_program_hash.clone(),
             });
             let puzzle = curry_referee_puzzle(allocator, &self.fixed.referee_coin_puzzle, &args)?;
             let new_puzzle_hash =

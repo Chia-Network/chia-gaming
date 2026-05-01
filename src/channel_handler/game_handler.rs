@@ -68,11 +68,9 @@ pub struct TheirTurnInputs<'a> {
     pub pre_state: NodePtr,
     pub state: NodePtr,
 
-    /// Only needs a couple things from last move.
     pub last_move: &'a [u8],
     pub last_mover_share: Amount,
 
-    /// New move is a full move details.
     pub new_move: GameMoveDetails,
 }
 
@@ -281,7 +279,7 @@ impl GameHandler {
                                 .into_gen()?,
                         ),
                         (
-                            inputs.new_move.validation_info_hash.clone(),
+                            inputs.new_move.validation_program_hash.clone(),
                             (inputs.new_move.basic.mover_share.clone(), ()),
                         ),
                     ),

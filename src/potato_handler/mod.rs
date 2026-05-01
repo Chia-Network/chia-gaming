@@ -150,7 +150,7 @@ fn format_batch_action(action: &BatchAction) -> String {
                 "Move id={id} mover_share={} max_move_size={} validation_info_hash={:?}",
                 details.basic.mover_share,
                 details.basic.max_move_size,
-                details.validation_info_hash,
+                details.validation_program_hash,
             )
         }
         BatchAction::AcceptTimeout(id, amount) => {

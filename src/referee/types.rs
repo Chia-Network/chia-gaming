@@ -62,10 +62,7 @@ impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for ValidationInfoHash {
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
 pub struct GameMoveDetails {
     pub basic: GameMoveStateInfo,
-    /// sha256 of the concatenation of two hashes:
-    /// 1 - The next game handler program
-    /// 2 - The game state.
-    pub validation_info_hash: ValidationInfoHash,
+    pub validation_program_hash: ValidationInfoHash,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -261,7 +258,7 @@ where
             self.nonce.to_clvm(encoder)?,
             encoder.encode_atom(clvm_traits::Atom::Borrowed(&self.game_move.basic.move_made))?,
             self.game_move.basic.max_move_size.to_clvm(encoder)?,
-            self.game_move.validation_info_hash.to_clvm(encoder)?,
+            self.game_move.validation_program_hash.to_clvm(encoder)?,
             self.game_move.basic.mover_share.to_clvm(encoder)?,
             self.previous_validation_info_hash.to_clvm(encoder)?,
         ]
@@ -388,7 +385,7 @@ impl OnChainRefereeMoveData {
         fixed: &RMFixed,
         coin_string: &CoinString,
     ) -> Result<OnChainRefereeMove, Error> {
-        let infohash_c: Option<Hash> = if self.new_move.validation_info_hash.is_some() {
+        let infohash_c: Option<Hash> = if self.new_move.validation_program_hash.is_some() {
             let vi = ValidationInfo::new_state_update(
                 allocator,
                 self.validation_program.clone(),
@@ -511,7 +508,7 @@ impl OnChainRefereeSolution {
                         &refmove.game_move.basic.move_made,
                     ))
                     .into_gen()?;
-                let infohash_c: Option<Hash> = if refmove.game_move.validation_info_hash.is_some() {
+                let infohash_c: Option<Hash> = if refmove.game_move.validation_program_hash.is_some() {
                     let vi = ValidationInfo::new_state_update(
                         encoder,
                         refmove.validation_program.clone(),
