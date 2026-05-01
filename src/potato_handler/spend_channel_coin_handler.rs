@@ -516,11 +516,6 @@ impl SpendChannelCoinHandler {
             let timeout_solution = matching_unroll.coin.make_timeout_unroll_solution(env)?;
             let timeout_solution_program = Program::from_nodeptr(env.allocator, timeout_solution)?;
 
-            eprintln!(
-                "[sig-diag] do_unroll_spend_to_games state={} sig=identity_point (no AGG_SIG required)",
-                on_chain_state,
-            );
-
             SpendBundle {
                 name: Some("create unroll (timeout)".to_string()),
                 spends: vec![CoinSpend {
@@ -540,12 +535,7 @@ impl SpendChannelCoinHandler {
             reward_coin: None,
         };
 
-        Ok(vec![
-            Effect::Log(format!(
-                "[sig-diag] timeout spend bundle: state={on_chain_state} sig=identity_point"
-            )),
-            Effect::SpendTransaction(spend_bundle),
-        ])
+        Ok(vec![Effect::SpendTransaction(spend_bundle)])
     }
 
     fn handle_channel_coin_spent(
@@ -680,14 +670,6 @@ impl SpendChannelCoinHandler {
 
         match outcome {
             UnrollOutcome::Preempted(bundle) => {
-                let sig_hex = bundle
-                    .spends
-                    .first()
-                    .map(|s| hex::encode(s.bundle.signature.bytes()))
-                    .unwrap_or_default();
-                effects.push(Effect::Log(format!(
-                    "[sig-diag] preempt spend: state={on_chain_state} agg_sig={sig_hex}",
-                )));
                 effects.push(Effect::SpendTransaction(bundle));
                 effects.push(Effect::Log(format!(
                     "[unroll-preempt] state={on_chain_state}",
