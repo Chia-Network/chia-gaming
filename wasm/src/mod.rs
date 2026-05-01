@@ -1298,7 +1298,7 @@ mod gaming_wasm {
             &chia_dialect(),
             puzzle_reveal_node,
             solution_node,
-            0,
+            11_000_000_000,
         )
         .into_gen()
         .into_js()?;
