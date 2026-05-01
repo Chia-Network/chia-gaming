@@ -1453,6 +1453,14 @@ impl GameCradle for SynchronousGameCradle {
         if self.state.peer_disconnected {
             return Ok(());
         }
+        const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
+        if inbound_message.len() > MAX_MESSAGE_SIZE {
+            return Err(Error::StrErr(format!(
+                "Inbound message size {} exceeds maximum {}",
+                inbound_message.len(),
+                MAX_MESSAGE_SIZE,
+            )));
+        }
         self.state
             .inbound_messages
             .push_back(inbound_message.to_vec());
