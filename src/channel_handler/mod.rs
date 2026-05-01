@@ -1817,12 +1817,16 @@ impl ChannelHandler {
             let coin_id = CoinString::from_parts(&unroll_coin_id, coin_ph, coin_amt);
 
             let live_latest = self.live_games.iter().find(|g| {
-                !matched_game_ids.contains(&g.game_id) && g.last_referee_puzzle_hash == *coin_ph
+                !matched_game_ids.contains(&g.game_id)
+                    && g.last_referee_puzzle_hash == *coin_ph
+                    && g.get_amount() == *coin_amt
             });
             let live_redo = if live_latest.is_none() {
                 cached_moves.iter().find_map(|(gid, mph)| {
                     if *mph == *coin_ph && !matched_game_ids.contains(gid) {
-                        self.live_games.iter().find(|g| g.game_id == *gid)
+                        self.live_games
+                            .iter()
+                            .find(|g| g.game_id == *gid && g.get_amount() == *coin_amt)
                     } else {
                         None
                     }
