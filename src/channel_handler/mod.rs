@@ -973,11 +973,9 @@ impl ChannelHandler {
             )));
         }
 
-        // 4.8: Sanity limit on game timeout.
-        const MAX_GAME_TIMEOUT: u64 = 10000;
-        if start_info.timeout.to_u64() > MAX_GAME_TIMEOUT {
+        if start_info.timeout.to_u64() != 15 {
             return Err(Error::StrErr(format!(
-                "proposal timeout {} exceeds maximum {MAX_GAME_TIMEOUT}",
+                "proposal game_timeout must be 15, got {}",
                 start_info.timeout.to_u64(),
             )));
         }

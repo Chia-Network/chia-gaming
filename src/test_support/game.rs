@@ -393,7 +393,7 @@ mod sim_tests {
             .finish_handshake(env, 0)
             .expect("should finish handshake");
 
-        let timeout = Timeout::new(10);
+        let timeout = Timeout::new(15);
 
         let our_game_start =
             alice_game.game_start(game_id, &contributions[0], &contributions[1], &timeout);

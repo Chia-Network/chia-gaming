@@ -602,7 +602,7 @@ pub fn make_debug_games_with_contributions(
         nonce,
         identities,
         &ref_coin_hash,
-        Timeout::new(10),
+        Timeout::new(15),
         &rng_seq0,
         my_contribution,
         their_contribution,
