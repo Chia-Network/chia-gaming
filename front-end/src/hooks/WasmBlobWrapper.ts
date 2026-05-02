@@ -100,6 +100,7 @@ export class WasmBlobWrapper {
   iStarted: boolean;
   storedMessages: Array<{ msgno: number; msg: Uint8Array }>;
   cleanShutdownCalled: boolean;
+  onChain: boolean;
   reloading: boolean;
   qualifyingEvents: number;
   blockchain: BlockchainPoller;
@@ -149,6 +150,7 @@ export class WasmBlobWrapper {
     this.channelReady = false;
     this.storedMessages = [];
     this.cleanShutdownCalled = false;
+    this.onChain = false;
     this.reloading = false;
     this.qualifyingEvents = 0;
     this.blockchain = blockchain;
@@ -441,6 +443,7 @@ export class WasmBlobWrapper {
 
   private dispatchEvent(event: CradleEvent): void {
     if ('OutboundMessage' in event) {
+      if (this.onChain) return;
       const msgno = this.messageNumber++;
       this.unackedMessages.push({ msgno, msg: event.OutboundMessage });
       this.sendMessage(msgno, event.OutboundMessage);
@@ -508,6 +511,10 @@ export class WasmBlobWrapper {
 
   deliverMessage(msgno: number, msg: Uint8Array) {
     this.notePeerActivity();
+    if (this.onChain) {
+      this.sendAck(msgno);
+      return;
+    }
     if (!this.wc || !this.cradle || this.qualifyingEvents != 7 || this.reloading) {
       this.storedMessages.push({ msgno, msg });
       return;
@@ -721,6 +728,7 @@ export class WasmBlobWrapper {
 
   goOnChain(): void {
     if (!this.cradle) throw new Error('no cradle');
+    this.onChain = true;
     try {
       const result = this.cradle.go_on_chain();
       this.processResult(result);

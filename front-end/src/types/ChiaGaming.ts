@@ -3,6 +3,8 @@ import { Program } from 'clvm-lib';
 
 export type TrackerLiveness = 'connected' | 'reconnecting' | 'inactive' | 'disconnected';
 
+export type SessionPhase = 'none' | 'off-chain' | 'on-chain' | 'resolved';
+
 interface Amount {
   amt: bigint;
 }
@@ -116,6 +118,7 @@ interface GameStatusOtherParams {
   illegal_move_detected?: boolean;
   moved_by_us?: boolean;
   game_finished?: boolean;
+  forfeited?: boolean;
 }
 
 export interface GameStatusPayload {
@@ -564,6 +567,7 @@ export interface ConnectionField {
 
 export interface ConnectionSetup {
   qrUri: string;
+  skipQr?: boolean;
   fields?: { balance?: ConnectionField };
   finalize(values?: { balance?: number }): Promise<void>;
 }

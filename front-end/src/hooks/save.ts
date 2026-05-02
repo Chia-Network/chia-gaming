@@ -180,6 +180,7 @@ export interface SessionState {
   gameTerminalLabel?: string | null;
   gameTerminalReward?: string | null;
   gameTerminalRewardCoin?: string | null;
+  gameTerminalCleanEnd?: boolean;
   myRunningBalance?: string;
   channelNotifQueue?: Array<{ id: number; kind: string; title: string; message: string }>;
   gameNotifQueue?: Array<{ id: number; kind: string; title: string; message: string }>;
@@ -214,6 +215,22 @@ function deleteIndexedDb(name: string): Promise<void> {
       resolve();
     }
   });
+}
+
+function clearWalletConnectLocalStorageKeys(): void {
+  try {
+    const toRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && isWalletConnectStorageKey(key)) toRemove.push(key);
+    }
+    for (const key of toRemove) localStorage.removeItem(key);
+  } catch { /* ignore */ }
+}
+
+export function clearWalletConnectStorage(): void {
+  clearWalletConnectLocalStorageKeys();
+  void clearWalletConnectIndexedDb();
 }
 
 async function clearWalletConnectIndexedDb(): Promise<void> {

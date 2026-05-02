@@ -445,6 +445,13 @@ impl OnChainGameHandler {
             }
         }
 
+        if self.live_games[live_game_idx].is_game_over() {
+            self.live_games[live_game_idx].last_referee_puzzle_hash = ph.clone();
+            return Ok(CoinSpentInformation::TheirSpend(
+                TheirTurnCoinSpentResult::Expected(state_number, ph, amt, None),
+            ));
+        }
+
         let spent_result = self.live_games[live_game_idx].their_turn_coin_spent(
             env.allocator,
             coin_string,
@@ -561,6 +568,7 @@ impl OnChainGameHandler {
                             illegal_move_detected: None,
                             moved_by_us: Some(true),
                             game_finished: if game_over { Some(true) } else { None },
+                            forfeited: None,
                         }),
                     }));
                     effects.push(Effect::RegisterCoin {
@@ -1015,28 +1023,36 @@ impl OnChainGameHandler {
                         illegal_move_detected: None,
                         moved_by_us: None,
                         game_finished: finished_flag,
+                        forfeited: None,
                     }),
                 }));
 
-                effects.push(Effect::Notify(GameNotification::GameStatus {
-                    id: game_id,
-                    status: GameStatusKind::MyTurn,
-                    my_reward: None,
-                    coin_id: None,
-                    reason: None,
-                    other_params: Some(GameStatusOtherParams {
-                        readable: Some(readable),
-                        mover_share: Some(mover_share),
-                        illegal_move_detected: None,
-                        moved_by_us: None,
-                        game_finished: finished_flag,
-                    }),
-                }));
+                if !finished {
+                    effects.push(Effect::Notify(GameNotification::GameStatus {
+                        id: game_id,
+                        status: GameStatusKind::MyTurn,
+                        my_reward: None,
+                        coin_id: None,
+                        reason: None,
+                        other_params: Some(GameStatusOtherParams {
+                            readable: Some(readable),
+                            mover_share: Some(mover_share),
+                            illegal_move_detected: None,
+                            moved_by_us: None,
+                            game_finished: finished_flag,
+                            forfeited: None,
+                        }),
+                    }));
+                }
                 effects.push(Effect::RegisterCoin {
-                    coin: new_coin_string,
+                    coin: new_coin_string.clone(),
                     timeout: gt,
                     name: Some("coin gives my turn"),
                 });
+                if finished {
+                    self.game_action_queue
+                        .push_back(GameAction::AcceptTimeout(game_id));
+                }
 
                 unblock_queue = true;
             }
@@ -1075,6 +1091,7 @@ impl OnChainGameHandler {
                                 illegal_move_detected: Some(true),
                                 moved_by_us: None,
                                 game_finished: None,
+                                forfeited: None,
                             }),
                         }));
                         self.game_map.insert(
@@ -1105,6 +1122,7 @@ impl OnChainGameHandler {
                                 illegal_move_detected: Some(true),
                                 moved_by_us: None,
                                 game_finished: None,
+                                forfeited: None,
                             }),
                         }));
                         if let Some(eff) = self.try_emit_terminal(
@@ -1383,10 +1401,12 @@ impl OnChainGameHandler {
     }
 
     pub fn next_action(&mut self, env: &mut ChannelHandlerEnv<'_>) -> Result<Vec<Effect>, Error> {
-        if let Some(action) = self.game_action_queue.pop_front() {
-            return self.do_on_chain_action(env, action);
+        while let Some(action) = self.game_action_queue.pop_front() {
+            let result = self.do_on_chain_action(env, action)?;
+            if !result.is_empty() {
+                return Ok(result);
+            }
         }
-
         Ok(Vec::new())
     }
 
@@ -1403,9 +1423,14 @@ impl OnChainGameHandler {
             return Ok(None);
         }
         if my_turn == Some(false) {
-            self.game_action_queue
-                .push_back(GameAction::Move(game_id, readable_move, entropy));
-            return Ok(None);
+            panic!(
+                "do_on_chain_move: Move for game {:?} deferred (not our turn). \
+                 coin={:?}, queue_len={}, game_map={:?}",
+                game_id,
+                current_coin,
+                self.game_action_queue.len(),
+                self.game_map.keys().collect::<Vec<_>>(),
+            );
         }
 
         let game_amount = self.get_game_amount(&game_id)?;
@@ -1421,24 +1446,19 @@ impl OnChainGameHandler {
             self.on_chain_our_move(env, &game_id, &readable_move, entropy.clone(), current_coin)?;
 
         if !has_pending_slash && move_result.basic.mover_share == game_amount {
-            let finished = self.is_game_finished(&game_id);
             self.restore_game_state(&game_id, pre_referee, pre_last_ph)?;
             self.game_map.retain(|_, def| def.game_id != game_id);
-            let finished_params = if finished {
-                Some(GameStatusOtherParams {
-                    game_finished: Some(true),
-                    ..Default::default()
-                })
-            } else {
-                None
-            };
             return Ok(Some(Effect::Notify(GameNotification::GameStatus {
                 id: game_id,
                 status: GameStatusKind::EndedWeTimedOut,
                 my_reward: Some(Amount::default()),
                 coin_id: None,
                 reason: Some("abandoned: opponent gets everything after our move".to_string()),
-                other_params: finished_params,
+                other_params: Some(GameStatusOtherParams {
+                    game_finished: Some(true),
+                    forfeited: Some(true),
+                    ..Default::default()
+                }),
             })));
         }
 
@@ -1495,29 +1515,31 @@ impl OnChainGameHandler {
             GameAction::Move(game_id, readable_move, hash) => match get_current_coin(&game_id) {
                 Ok(current_coin) => {
                     if self.pending_moves.contains_key(&current_coin) {
-                        self.game_action_queue.push_back(GameAction::Move(
-                            game_id,
-                            readable_move,
-                            hash,
-                        ));
-                        return Ok(Vec::new());
+                        panic!(
+                            "do_on_chain_action: Move for game {:?} blocked by pending_moves on coin {:?}. \
+                             pending_moves={:?}, queue_len={}, game_map keys={:?}",
+                            game_id, current_coin, self.pending_moves.keys().collect::<Vec<_>>(),
+                            self.game_action_queue.len(),
+                            self.game_map.keys().collect::<Vec<_>>(),
+                        );
                     }
                     Ok(self
                         .do_on_chain_move(env, &current_coin, game_id, readable_move, hash)?
                         .into_iter()
                         .collect())
                 }
-                Err(_) => self.next_action(env),
+                Err(_) => Ok(Vec::new()),
             },
             GameAction::Cheat(game_id, mover_share, entropy) => match get_current_coin(&game_id) {
                 Ok(current_coin) => {
                     if self.pending_moves.contains_key(&current_coin) {
-                        self.game_action_queue.push_back(GameAction::Cheat(
-                            game_id,
-                            mover_share,
-                            entropy,
-                        ));
-                        return Ok(Vec::new());
+                        panic!(
+                            "do_on_chain_action: Cheat for game {:?} blocked by pending_moves on coin {:?}. \
+                             pending_moves={:?}, queue_len={}, game_map keys={:?}",
+                            game_id, current_coin, self.pending_moves.keys().collect::<Vec<_>>(),
+                            self.game_action_queue.len(),
+                            self.game_map.keys().collect::<Vec<_>>(),
+                        );
                     }
                     let my_turn = self.my_move_in_game(&game_id);
                     if my_turn == Some(true) {
@@ -1531,15 +1553,14 @@ impl OnChainGameHandler {
                     } else if my_turn.is_none() {
                         Ok(Vec::new())
                     } else {
-                        self.game_action_queue.push_back(GameAction::Cheat(
-                            game_id,
-                            mover_share,
-                            entropy,
-                        ));
-                        Ok(Vec::new())
+                        panic!(
+                            "do_on_chain_action: Cheat for game {:?} deferred (not our turn, my_turn={:?}). \
+                             coin={:?}, queue_len={}",
+                            game_id, my_turn, current_coin, self.game_action_queue.len(),
+                        );
                     }
                 }
-                Err(_) => self.next_action(env),
+                Err(_) => Ok(Vec::new()),
             },
             GameAction::AcceptTimeout(game_id) => {
                 let current_coin = get_current_coin(&game_id)?;
@@ -1547,20 +1568,7 @@ impl OnChainGameHandler {
                 if my_turn == Some(true) {
                     let our_share = self.get_game_our_current_share(&game_id);
                     if matches!(our_share, Ok(ref s) if *s == Amount::default()) {
-                        let game_finished = self
-                            .game_map
-                            .get(&current_coin)
-                            .map(|d| d.game_finished)
-                            .unwrap_or(false);
                         self.game_map.remove(&current_coin);
-                        let finished_params = if game_finished {
-                            Some(GameStatusOtherParams {
-                                game_finished: Some(true),
-                                ..Default::default()
-                            })
-                        } else {
-                            None
-                        };
                         return Ok(vec![Effect::Notify(GameNotification::GameStatus {
                             id: game_id,
                             status: GameStatusKind::EndedWeTimedOut,
@@ -1570,7 +1578,11 @@ impl OnChainGameHandler {
                                 "zero reward: our turn to accept timeout but our share is zero"
                                     .to_string(),
                             ),
-                            other_params: finished_params,
+                            other_params: Some(GameStatusOtherParams {
+                                game_finished: Some(true),
+                                forfeited: Some(true),
+                                ..Default::default()
+                            }),
                         })]);
                     }
                 }

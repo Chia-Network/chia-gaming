@@ -196,11 +196,6 @@ mod sim_tests {
         ProposeNewGameTheirTurn(usize, ProposeTrigger),
         /// Go on chain
         GoOnChain(usize),
-        /// Go on chain and immediately make the next Move in the action
-        /// list before any blockchain events are processed.  This tests
-        /// that moves issued right after go_on_chain get queued and
-        /// replayed once the on-chain transition completes.
-        GoOnChainThenMove(usize),
         /// Wait a number of blocks
         WaitBlocks(usize, usize),
         /// Accept timeout (player, game_id)
@@ -258,9 +253,6 @@ mod sim_tests {
                     write!(formatter, "ProposeNewGameTheirTurn({p},{t:?})")
                 }
                 GameAction::GoOnChain(p) => write!(formatter, "GoOnChain({p})"),
-                GameAction::GoOnChainThenMove(p) => {
-                    write!(formatter, "GoOnChainThenMove({p})")
-                }
                 GameAction::AcceptTimeout(p, g) => {
                     write!(formatter, "AcceptTimeout({p},{g:?})")
                 }

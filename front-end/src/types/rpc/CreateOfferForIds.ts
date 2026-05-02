@@ -9,6 +9,7 @@ export interface CreateOfferForIdsRequest {
   fee?: number;
   extraConditions?: Array<{ opcode: number; args: any }>;
   coinIds?: string[];
+  allowUnsynced?: boolean;
 }
 
 export interface CreateOfferForIdsResponse {

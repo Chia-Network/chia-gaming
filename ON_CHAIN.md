@@ -162,12 +162,44 @@ immediately goes on-chain instead of cooperating.
    to reward conditions (each player's balance goes directly to their reward
    puzzle hash, with no game coins). The `clean_shutdown` field is separate
    from the `actions` list, so it is structurally processed after all actions
-   on the receive side.
+   on the receive side. The initiator remains in `PotatoHandler` after sending
+   this batch — it does **not** transition to `SpendChannelCoinHandler` yet.
+   While waiting for the response, `PotatoHandler` rejects any peer message
+   other than `CleanShutdownComplete` as a protocol violation (triggering
+   go-on-chain).
 2. The responder receives the batch, processes any actions, then combines the
   initiator's half-signature with their own to produce a complete `CoinSpend`.
    They reply with `PeerMessage::CleanShutdownComplete(coin_spend)` — a
-   standalone message outside the normal potato flow.
-3. Either side can then submit the completed spend on-chain.
+   standalone message outside the normal potato flow. The responder transitions
+   to `SpendChannelCoinHandler` immediately (it already has the complete spend).
+3. The initiator receives `CleanShutdownComplete`, submits the transaction,
+   and transitions to `SpendChannelCoinHandler`. Either side can submit the
+   completed spend on-chain; duplicate submissions are harmless.
+
+### Assumes Single-Handing
+
+The current implementation assumes **single-handing** (at most one outstanding
+proposal at a time). Under this assumption, when the user requests a clean
+shutdown, there is never a pending proposal that could interfere — the shutdown
+batch is the only thing queued. This allows the front-end to immediately report
+`ShuttingDown` status, and allows `PotatoHandler` to reject any unexpected
+peer messages while waiting for `CleanShutdownComplete`.
+
+In a future **multi-handing** model, the initiator might have outstanding
+proposals when the user requests a shutdown. Those proposals would need to
+resolve (accepted, rejected, or cancelled) before the shutdown batch can be
+sent. This means:
+
+- The `ShuttingDown` status could not be emitted immediately — the system
+  would still be processing proposals.
+- The message-rejection guard in `PotatoHandler` (which currently rejects
+  everything except `CleanShutdownComplete`) would need to also accept
+  proposal-resolution messages during the wind-down phase.
+- The precondition check (`has_active_games()`) would need to account for
+  proposals that are still in flight.
+
+This is noted here as a future design consideration — the current code is
+correct for single-handing.
 
 ### Why "Advisory" — Race Handling
 
@@ -224,8 +256,12 @@ cannot redirect the victim's share to a different address.
 
 ### Key Code
 
+- `src/potato_handler/mod.rs` — `pending_clean_shutdown` field,
+  `drain_queue_into_batch` (stores shutdown metadata),
+  `process_incoming_message` (receives `CleanShutdownComplete` and creates
+  `SpendChannelCoinHandler`)
 - `src/potato_handler/spend_channel_coin_handler.rs` —
-`handle_channel_coin_spent`, `handle_unroll_from_channel_conditions`
+  `handle_channel_coin_spent`, `handle_unroll_from_channel_conditions`
 
 ---
 

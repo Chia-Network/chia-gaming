@@ -9,10 +9,11 @@ import { CoinRecord } from '../types/rpc/CoinRecord';
 
 import { log } from '../services/log';
 import { normalizeHexString, toUint8, toHexString } from '../util';
-import { decodeBech32mPuzzleHash } from '../util/bech32m';
+import { decodeBech32mPuzzleHash, encodePuzzleHashToBech32m } from '../util/bech32m';
+import { TransactionRecord, WalletSpendBundle } from '../types/rpc/PushTransactions';
 import { walletConnectState } from './useWalletConnect';
 
-const PUSH_TX_RETRY_DELAY = 30000;
+const PUSH_RETRY_DELAY = 30000;
 const ASSERT_BEFORE_HEIGHT_ABSOLUTE = 87;
 const CREATE_COIN = 51;
 const ASSERT_COIN_ANNOUNCEMENT = 61;
@@ -57,7 +58,7 @@ function toSafeNumber(value: bigint, fieldName: string): number {
   return Number(value);
 }
 
-function isRetryablePushTxError(errStr: string): boolean {
+function isRetryablePushError(errStr: string): boolean {
   return errStr.includes('UNKNOWN_UNSPENT') || errStr.includes('NO_TRANSACTIONS_WHILE_SYNCING');
 }
 
@@ -96,25 +97,66 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   private spendSeq = 0;
 
+  private async buildTransactionRecord(
+    spendBundle: WalletSpendBundle,
+    fee: number,
+  ): Promise<TransactionRecord> {
+    const puzzleHash = this.blockchainAddressData.puzzleHash || '0'.repeat(64);
+    const toAddress = encodePuzzleHashToBech32m(puzzleHash);
+
+    const nameBytes = new TextEncoder().encode(JSON.stringify(spendBundle));
+    const hashBuf = await crypto.subtle.digest('SHA-256', nameBytes);
+    const name = Array.from(new Uint8Array(hashBuf), (b) => b.toString(16).padStart(2, '0')).join('');
+
+    return {
+      confirmed_at_height: 0,
+      created_at_time: Math.floor(Date.now() / 1000),
+      to_puzzle_hash: puzzleHash,
+      amount: 0,
+      fee_amount: fee,
+      confirmed: false,
+      sent: 0,
+      spend_bundle: spendBundle,
+      additions: [],
+      removals: [],
+      wallet_id: 0,
+      sent_to: [],
+      trade_id: null,
+      type: 1,
+      name,
+      memos: {},
+      valid_times: {},
+      to_address: toAddress,
+    };
+  }
+
   async spend(_blob: string, spendBundle: unknown, _source?: string, fee?: number): Promise<string> {
     const seq = ++this.spendSeq;
     const src = _source ?? 'unknown';
-    log(`[wc-blockchain] walletPushTx submitting #${seq} from=${src} fee=${fee ?? 0}`);
+    const feeValue = fee || 0;
+    log(`[wc-blockchain] pushTransactions submitting #${seq} from=${src} fee=${feeValue}`);
 
     try {
-      const result = await rpc.walletPushTx({ spendBundle: spendBundle as object, fee: fee || undefined });
-      log(`[wc-blockchain] walletPushTx submitted #${seq} result=${JSON.stringify(result)}`);
+      const txRecord = await this.buildTransactionRecord(spendBundle as WalletSpendBundle, feeValue);
+      const result = await rpc.pushTransactions({
+        transactions: [txRecord],
+        push: true,
+        sign: false,
+        fee: feeValue || undefined,
+        allowUnsynced: true,
+      });
+      log(`[wc-blockchain] pushTransactions submitted #${seq} result=${JSON.stringify(result)}`);
       return result as unknown as string;
     } catch (e: unknown) {
       const errStr = typeof e === 'string' ? e : ((e as any)?.message || JSON.stringify(e));
-      if (isRetryablePushTxError(errStr)) {
+      if (isRetryablePushError(errStr)) {
         return new Promise((resolve, reject) => {
           setTimeout(() => {
             this.spend(_blob, spendBundle, `retry-of-#${seq}`, fee).then(resolve).catch(reject);
-          }, PUSH_TX_RETRY_DELAY);
+          }, PUSH_RETRY_DELAY);
         });
       }
-      log(`[wc-blockchain] walletPushTx error #${seq}: ${String(e)}`);
+      log(`[wc-blockchain] pushTransactions error #${seq}: ${String(e)}`);
       throw e;
     }
   }
@@ -141,7 +183,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   async selectCoins(_uniqueId: string, amount: number): Promise<string | null> {
     try {
-      const result = await rpc.selectCoins({ walletId: 1, amount: String(amount) });
+      const result = await rpc.selectCoins({ walletId: 1, amount: String(amount), allowUnsynced: true });
       if (!result?.coins?.length) return null;
       console.log('[wc-blockchain] <<< selectCoins raw', result);
       console.log('[wc-blockchain] <<< selectCoins raw(json)', JSON.stringify(result));
@@ -169,7 +211,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async getHeightInfo(): Promise<number> {
-    const resp = await rpc.getHeightInfo({});
+    const resp = await rpc.getHeightInfo({ usePeakHeight: true });
     return resp.prevTransactionBlockHeight ?? 0;
   }
 
@@ -233,6 +275,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         driverDict: {},
         extraConditions: normalizedConditions.length ? normalizedConditions : undefined,
         coinIds,
+        allowUnsynced: true,
       };
       console.log('[wc-blockchain] >>> createOfferForIds payload', payload);
       console.log('[wc-blockchain] >>> createOfferForIds payload(json)', JSON.stringify(payload));
@@ -289,6 +332,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         const resp = await rpc.getCoinRecordsByNames({
           names: [name],
           includeSpentCoins: true,
+          allowUnsynced: true,
         });
         const r = resp.coinRecords ?? [];
         if (r.length > 0) {
@@ -332,7 +376,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
           console.log(`[wc-blockchain] found existing remote wallet id=${remote.id}`);
         } else {
           console.log('[wc-blockchain] no remote wallet found, creating...');
-          rpc.createNewRemoteWallet({})
+          rpc.createNewRemoteWallet({ allowUnsynced: true })
             .then((created) => {
               this.remoteWalletId = created.id;
               this.remoteWalletPending = false;
@@ -390,7 +434,8 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
     if (walletConnectState.getSession()) {
       return {
-        qrUri: `wc-session://${walletConnectState.getSession()!.topic}`,
+        qrUri: '',
+        skipQr: true,
         finalize: async () => {
           await this.startMonitoring();
           this.fireConnectionChange(true);

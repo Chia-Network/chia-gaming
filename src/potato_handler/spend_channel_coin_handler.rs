@@ -111,6 +111,7 @@ impl SpendChannelCoinHandler {
         have_potato: PotatoState,
         channel_timeout: Timeout,
         unroll_timeout: Timeout,
+        expected_clean_shutdown_solution: Option<ProgramRef>,
     ) -> Self {
         SpendChannelCoinHandler {
             state: SpendChannelCoinState::ChannelConditions { channel_coin },
@@ -124,7 +125,7 @@ impl SpendChannelCoinHandler {
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,
-            expected_clean_shutdown_solution: None,
+            expected_clean_shutdown_solution,
             last_channel_coin_spend_info: None,
             replacement: None,
         }
@@ -854,16 +855,13 @@ impl SpendChannelCoinHandler {
                     ));
                 }
             }
-            for (coin, game_id, game_finished, our_turn, accepted) in &zero_reward_games {
+            for (coin, game_id, _game_finished, our_turn, accepted) in &zero_reward_games {
                 game_map.remove(coin);
-                let finished_params = if *game_finished {
-                    Some(GameStatusOtherParams {
-                        game_finished: Some(true),
-                        ..Default::default()
-                    })
-                } else {
-                    None
-                };
+                let forfeit_params = Some(GameStatusOtherParams {
+                    game_finished: Some(true),
+                    forfeited: Some(true),
+                    ..Default::default()
+                });
                 let (status, reason) = if *our_turn || *accepted {
                     (
                         GameStatusKind::EndedWeTimedOut,
@@ -885,7 +883,7 @@ impl SpendChannelCoinHandler {
                     my_reward: Some(Amount::default()),
                     coin_id: None,
                     reason: Some(reason.to_string()),
-                    other_params: finished_params,
+                    other_params: forfeit_params,
                 }));
             }
         }

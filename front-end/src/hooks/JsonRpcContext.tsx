@@ -32,9 +32,9 @@ import {
   GetPuzzleAndSolutionResponse,
 } from '../types/rpc/GetPuzzleAndSolution';
 import {
-  PushTxRequest,
-  PushTxResponse,
-} from '../types/rpc/PushTx';
+  PushTransactionsRequest,
+  PushTransactionsResponse,
+} from '../types/rpc/PushTransactions';
 import {
   SelectCoinsRequest,
   SelectCoinsResponse,
@@ -46,7 +46,7 @@ import { walletConnectState } from './useWalletConnect';
 type Loose = Record<string, unknown>;
 type GetWalletsRequest = Loose;
 type GetWalletsResponse = Array<{ id: number; type: number; [key: string]: unknown }>;
-const WC_REQUEST_TIMEOUT_MS = 15000;
+const WC_REQUEST_TIMEOUT_MS = 60000;
 const WC_RETRY_DELAY_MS = 1000;
 const WC_INTER_REQUEST_MS = 50;
 
@@ -205,8 +205,8 @@ async function createOfferForIds(data: CreateOfferForIdsRequest) {
   );
 }
 
-async function walletPushTx(data: PushTxRequest) {
-  return await request<PushTxResponse>(ChiaMethod.WalletPushTx, data);
+async function pushTransactions(data: PushTransactionsRequest) {
+  return await request<PushTransactionsResponse>(ChiaMethod.PushTransactions, data);
 }
 
 async function createNewRemoteWallet(data: CreateNewRemoteWalletRequest) {
@@ -244,7 +244,7 @@ export const rpc = {
   selectCoins,
   getHeightInfo,
   createOfferForIds,
-  walletPushTx,
+  pushTransactions,
   createNewRemoteWallet,
   registerRemoteCoins,
   getCoinRecordsByNames,

@@ -156,7 +156,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         assert_eq!(my.len(), 2, "get_my_coins should include reward coins");
     }));
 
-    res.push(("test_simulator_push_tx_and_farm", &|| {
+    res.push(("test_simulator_push_transactions_and_farm", &|| {
         let seed: [u8; 32] = [3; 32];
         let mut rng = ChaCha8Rng::from_seed(seed);
         let mut allocator = AllocEncoder::new();
@@ -202,7 +202,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             },
         };
 
-        let result = s.push_tx(&mut allocator, &[tx]).expect("ok");
+        let result = s.push_transactions(&mut allocator, &[tx]).expect("ok");
         assert_eq!(result.code, 1, "should be accepted into mempool");
 
         // Before farming: old coin still visible, new coin not yet
@@ -275,13 +275,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         };
 
         let tx1 = spend_coin(&mut allocator);
-        let r1 = s.push_tx(&mut allocator, &[tx1]).expect("ok");
+        let r1 = s.push_transactions(&mut allocator, &[tx1]).expect("ok");
         assert_eq!(r1.code, 1, "first spend should succeed");
 
         s.farm_block(&identity.puzzle_hash);
 
         let tx2 = spend_coin(&mut allocator);
-        let r2 = s.push_tx(&mut allocator, &[tx2]).expect("ok");
+        let r2 = s.push_transactions(&mut allocator, &[tx2]).expect("ok");
         assert_eq!(
             r2.code, 1,
             "re-submitting the exact same transaction should de-duplicate"
@@ -321,7 +321,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 signature: altered_sig,
             },
         };
-        let r3 = s.push_tx(&mut allocator, &[altered_tx]).expect("ok");
+        let r3 = s
+            .push_transactions(&mut allocator, &[altered_tx])
+            .expect("ok");
         assert_eq!(
             r3.code, 3,
             "re-submitting a different transaction for an already-spent coin should be rejected"
@@ -372,7 +374,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             },
         };
 
-        let result = s.push_tx(&mut allocator, &[tx]).expect("ok");
+        let result = s.push_transactions(&mut allocator, &[tx]).expect("ok");
         assert_eq!(
             result.code, 3,
             "spending non-existent coin should be rejected"
@@ -415,7 +417,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             },
         };
 
-        let result = s.push_tx(&mut allocator, &[tx]).expect("ok");
+        let result = s.push_transactions(&mut allocator, &[tx]).expect("ok");
         assert_eq!(result.code, 3, "bad signature should be rejected");
     }));
 
@@ -593,7 +595,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             },
         };
 
-        let ok = s.push_tx(&mut allocator, &[tx_a, tx_b]).expect("push");
+        let ok = s
+            .push_transactions(&mut allocator, &[tx_a, tx_b])
+            .expect("push");
         assert_eq!(
             ok.code, 1,
             "assertion should pass when announcement is created in same bundle"
@@ -652,7 +656,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 },
             };
 
-            let res = s.push_tx(&mut allocator, &[tx]).expect("push");
+            let res = s.push_transactions(&mut allocator, &[tx]).expect("push");
             assert_eq!(res.code, 3, "missing announcement should be rejected");
             assert!(
                 res.diagnostic.contains("ASSERT_COIN_ANNOUNCEMENT failed"),

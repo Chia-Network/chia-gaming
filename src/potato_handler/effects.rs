@@ -42,7 +42,7 @@ pub enum ChannelState {
     Failed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ChannelStatusSnapshot {
     pub state: ChannelState,
     pub advisory: Option<String>,
@@ -83,6 +83,8 @@ pub struct GameStatusOtherParams {
     pub moved_by_us: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub game_finished: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forfeited: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

@@ -271,7 +271,7 @@ there is a bug.
 | **RESERVE_FEE not satisfied**   | Declared fee exceeds available implicit fee. Means the fee arithmetic is wrong.                                                  |
 
 
-**Key code:** `src/simulator/mod.rs` — `push_tx`
+**Key code:** `src/simulator/mod.rs` — `push_transactions`
 
 ---
 

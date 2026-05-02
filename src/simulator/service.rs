@@ -520,7 +520,9 @@ impl GameRunner {
     }
 
     fn spend_list_of_spends(&mut self, spends: &[CoinSpend]) -> StringWithError {
-        let result = self.simulator.push_tx(&mut self.allocator, spends)?;
+        let result = self
+            .simulator
+            .push_transactions(&mut self.allocator, spends)?;
         let e_res = result
             .e
             .map(|e| format!("{e}"))
@@ -543,7 +545,7 @@ impl GameRunner {
         self.spend_list_of_spends(&spend_bundle.spends)
     }
 
-    fn push_tx(&mut self, spend_decoded: &CoinsetSpendBundle) -> StringWithError {
+    fn push_transactions(&mut self, spend_decoded: &CoinsetSpendBundle) -> StringWithError {
         let aggsig_bytes = check_for_hex(&spend_decoded.aggregated_signature)?;
         let aggsig = Aggsig::from_slice(&aggsig_bytes)?;
         let mut spends: Vec<CoinSpend> = map_m(
@@ -667,7 +669,7 @@ impl GameRunner {
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize, Deserialize)]
-struct PushTxRequest {
+struct PushTransactionsRequest {
     spend_bundle: CoinsetSpendBundle,
 }
 
@@ -829,10 +831,11 @@ fn dispatch_ws_request(
             let blob = get_str_param(&req.params, "blob");
             blob.and_then(|b| game_runner.spend(b))
         }
-        "push_tx" => {
-            let push_req: Result<PushTxRequest, Error> = serde_json::from_value(req.params.clone())
-                .map_err(|e| Error::StrErr(format!("bad push_tx params: {e}")));
-            push_req.and_then(|r| game_runner.push_tx(&r.spend_bundle))
+        "push_tx" | "push_transactions" => {
+            let push_req: Result<PushTransactionsRequest, Error> =
+                serde_json::from_value(req.params.clone())
+                    .map_err(|e| Error::StrErr(format!("bad push_transactions params: {e}")));
+            push_req.and_then(|r| game_runner.push_transactions(&r.spend_bundle))
         }
         "block_spends" => {
             let height = get_u64_param(&req.params, "height");

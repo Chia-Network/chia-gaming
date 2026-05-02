@@ -126,7 +126,7 @@ describe('connection setup', () => {
 
     const ws = MockWebSocket.instance!;
     expect(ws.url).toBe('ws://t/ws/game');
-    expect(ws.sentJson).toEqual([{ type: 'identify', session_id: 's1' }]);
+    expect(ws.sentJson).toEqual([{ type: 'identify', session_id: 's1', available: true }]);
   });
 });
 
@@ -358,5 +358,71 @@ describe('forceDisconnect lifecycle', () => {
     conn.forceDisconnect();
     expect(MockWebSocket.instance!.sentJson.some((m) => (m as any).type === 'close')).toBe(false);
     expect(MockWebSocket.instance!.closed).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// setAvailable
+// ---------------------------------------------------------------------------
+
+describe('setAvailable', () => {
+  it('sends set_status with available=true', async () => {
+    const cb = makeCallbacks();
+    const conn = new TrackerConnection('http://t', 's1', cb);
+    await Promise.resolve();
+    const ws = MockWebSocket.instance!;
+    ws.sentJson = [];
+    conn.setAvailable(true);
+    expect(ws.sentJson).toEqual([{ type: 'set_status', session_id: 's1', available: true }]);
+  });
+
+  it('sends set_status with available=false', async () => {
+    const cb = makeCallbacks();
+    const conn = new TrackerConnection('http://t', 's1', cb);
+    await Promise.resolve();
+    const ws = MockWebSocket.instance!;
+    ws.sentJson = [];
+    conn.setAvailable(false);
+    expect(ws.sentJson).toEqual([{ type: 'set_status', session_id: 's1', available: false }]);
+  });
+
+  it('includes available=false in identify on reconnect', async () => {
+    jest.useFakeTimers();
+    const cb = makeCallbacks();
+    const conn = new TrackerConnection('http://t', 's1', cb);
+    await Promise.resolve();
+    expectedTrackerDisconnects = 1;
+    conn.setAvailable(false);
+
+    const ws1 = MockWebSocket.instance!;
+    ws1._fireClose();
+    jest.advanceTimersByTime(5000);
+    await Promise.resolve();
+
+    const ws2 = MockWebSocket.instance!;
+    expect(ws2).not.toBe(ws1);
+    const identifyMsg = ws2.sentJson.find((m: any) => m.type === 'identify') as any;
+    expect(identifyMsg).toBeDefined();
+    expect(identifyMsg.available).toBe(false);
+    jest.useRealTimers();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Retry budget
+// ---------------------------------------------------------------------------
+
+describe('retry budget', () => {
+  it('MAX_RECONNECT_ATTEMPTS is a positive number', () => {
+    expect(TrackerConnection.MAX_RECONNECT_ATTEMPTS).toBeGreaterThan(0);
+  });
+
+  it('does not fire onClosed on a normal single close', async () => {
+    const cb = makeCallbacks();
+    expectedTrackerDisconnects = 1;
+    new TrackerConnection('http://t', 's1', cb);
+    await Promise.resolve();
+    MockWebSocket.instance!._fireClose();
+    expect(cb.onClosed).not.toHaveBeenCalled();
   });
 });

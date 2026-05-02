@@ -133,7 +133,8 @@ const LobbyScreen = () => {
     );
   }
 
-  const iAmPlaying = players.find((p) => p.id === uniqueId)?.status === 'playing';
+  const myStatus = players.find((p) => p.id === uniqueId)?.status;
+  const iAmUnavailable = myStatus === 'playing' || myStatus === 'busy';
 
   return (
     <div className="p-4 sm:p-6 min-h-screen bg-canvas-bg-subtle">
@@ -290,7 +291,7 @@ const LobbyScreen = () => {
         <div className="space-y-2">
           {players.map((player) => {
             const isMe = player.id === uniqueId;
-            const isPlaying = player.status === 'playing';
+            const isUnavailable = player.status === 'playing' || player.status === 'busy';
 
             return (
               <div
@@ -308,16 +309,16 @@ const LobbyScreen = () => {
                   )}
                 </div>
 
-                {isPlaying ? (
+                {isUnavailable ? (
                   <span className="text-sm text-canvas-text italic">
-                    Playing vs {player.opponent_alias}
+                    {player.status === 'playing' ? `Playing vs ${player.opponent_alias}` : 'In Session'}
                   </span>
                 ) : !isMe && (
                   <Button
                     variant="solid"
                     color="primary"
                     size="sm"
-                    disabled={reconnectBlocked || !isConnected || challengeSent || !!challengeTarget || iAmPlaying}
+                    disabled={reconnectBlocked || !isConnected || challengeSent || !!challengeTarget || iAmUnavailable}
                     onClick={() => openChallengeDialog(player.id, player.alias)}
                     leadingIcon={<Swords className="w-4 h-4" />}
                   >

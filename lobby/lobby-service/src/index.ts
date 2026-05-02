@@ -44,10 +44,11 @@ type LobbyInboundMessage =
   | { type: 'keepalive' };
 
 type GameInboundMessage =
-  | { type: 'identify'; session_id: string }
+  | { type: 'identify'; session_id: string; available?: boolean }
   | { type: 'message'; session_id: string; data: RelayPayload }
   | { type: 'chat'; session_id: string; text: string }
   | { type: 'close'; session_id: string }
+  | { type: 'set_status'; session_id: string; available: boolean }
   | { type: 'keepalive' };
 
 interface LobbyConnMeta {
@@ -57,6 +58,7 @@ interface LobbyConnMeta {
 interface GameConnMeta {
   sessionId: string;
   playerId?: string;
+  available?: boolean;
 }
 
 const LOBBY_DISCONNECT_GRACE_MS = 3000;
@@ -322,6 +324,13 @@ function cancelPlayerChallenges(playerId: string): void {
 }
 
 function completeGameRegistration(playerId: string): void {
+  const sessionId = playerToSession.get(playerId);
+  const gameWs = sessionId ? gameConnections.get(sessionId) : undefined;
+  const gameMeta = gameWs ? wsGameMeta.get(gameWs) : undefined;
+  if (gameMeta?.available === false) {
+    lobby.setPlayerStatus(playerId, 'busy');
+    broadcastLobbyUpdate();
+  }
   const pairing = lobby.getPairingForPlayer(playerId);
   if (pairing) {
     const peerId = pairing.playerA_id === playerId ? pairing.playerB_id : pairing.playerA_id;
@@ -442,6 +451,18 @@ function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'c
   if (!hasActiveGameConnection(target_id)) {
     logTracker('challenge_drop_target_no_game_conn', { sender_id: senderId, target_id });
     sendWs(ws, 'error', { error: 'Peer is not connected.' });
+    sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
+    return;
+  }
+  if (fromPlayer.status === 'busy') {
+    logTracker('challenge_drop_sender_busy', { sender_id: senderId, target_id });
+    sendWs(ws, 'error', { error: 'You are in an active session. Finish it first.' });
+    return;
+  }
+  const targetPlayer = lobby.players[target_id];
+  if (targetPlayer?.status === 'busy') {
+    logTracker('challenge_drop_target_busy', { sender_id: senderId, target_id });
+    sendWs(ws, 'error', { error: 'That player is in an active session.' });
     sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
     return;
   }
@@ -608,7 +629,7 @@ function onIdentify(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'ide
     logTracker('game_connection_replaced', { ws_id: wsId(previousGameConn), session_id: msg.session_id });
     try { previousGameConn.close(4001, 'replaced_by_new_connection'); } catch {}
   }
-  wsGameMeta.set(ws, { sessionId: msg.session_id, playerId });
+  wsGameMeta.set(ws, { sessionId: msg.session_id, playerId, available: msg.available });
   gameConnections.set(msg.session_id, ws);
   if (!playerId) {
     pendingGameIdentifies.set(msg.session_id, ws);
@@ -685,6 +706,18 @@ function onGameClose(msg: Extract<GameInboundMessage, { type: 'close' }>): void 
     broadcastLobbyUpdate();
     logTracker('pairing_removed_on_close', { token: pairing.token, player_id: playerId, peer_id: peerId ?? null });
   }
+}
+
+function onSetStatus(msg: Extract<GameInboundMessage, { type: 'set_status' }>): void {
+  const playerId = sessionToPlayer.get(msg.session_id);
+  if (!playerId) {
+    logTracker('set_status_drop_unknown_session', { session_id: msg.session_id });
+    return;
+  }
+  const newStatus = msg.available ? 'waiting' : 'busy';
+  logTracker('set_status', { player_id: playerId, available: msg.available, status: newStatus });
+  lobby.setPlayerStatus(playerId, newStatus);
+  broadcastLobbyUpdate();
 }
 
 function parseLobbyInbound(raw: string): LobbyInboundMessage | null {
@@ -877,6 +910,9 @@ gameWsServer.on('connection', (ws) => {
         break;
       case 'close':
         onGameClose(parsed);
+        break;
+      case 'set_status':
+        onSetStatus(parsed);
         break;
       case 'keepalive':
         break;

@@ -4,7 +4,9 @@ This document describes the architecture of the frontend JavaScript/TypeScript
 code. It reflects the current implementation unless explicitly marked as a future
 direction.
 
-For the backend/WASM architecture, see `OVERVIEW.md`.
+For the backend/WASM architecture, see `OVERVIEW.md`. For the connectivity
+model (wallet, tracker, peer, session interactions and rollover), see
+`CONNECTIVITY.md`.
 
 ## System-Level View
 
@@ -492,7 +494,9 @@ on every inbound message delivery, ack reception, and keepalive reception.
 
 Peer liveness is **passive** — there is no automatic `goOnChain()` on timeout.
 Instead, `Shell.tsx` derives two liveness indicators using a 5-second polling
-interval and passes them to `GameSession` for display.
+interval. These feed into the **tab-dot connectivity indicators** — colored
+dots to the left of each tab label showing connection health (green / yellow /
+red / gray). They are also passed to `GameSession` for in-game display.
 
 **Tracker indicator** (`TrackerLiveness`) combines WebSocket connectivity with
 keepalive freshness into four states:
@@ -512,6 +516,12 @@ within the last 60 seconds (`PEER_LIVENESS_MS`) means Active, otherwise
 Inactive. The activity ref is updated by wrapped handlers in
 `registerMessageHandler`, ensuring it stays current even after
 `TrackerConnection.registerMessageHandler` replaces the initial callbacks.
+
+**Action buttons**: The tracker disconnect button lives in the tracker tab
+header strip (right-aligned next to "Connected to {origin}"). Session action
+buttons (End Peer, Abandon Session) live in the Game tab's bottom action bar.
+Both are gated by cascade confirmation dialogs when the action would disrupt
+an active session. See `CONNECTIVITY.md` for the full connectivity model.
 
 #### Reconnect
 
@@ -783,6 +793,12 @@ In-game and between-hand events pushed to the game-scoped FIFO queue
 | `game-terminal` | `GameStatus` ended during on-chain flow |
 | `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer` |
 | `insufficient-bal` | `InsufficientBalance` notification |
+
+Timeout terminal labels use `game_finished` from `other_params` and the
+current `turnState` (tracked via `turnStateRef`) to produce context-aware
+messages — see `CONNECTIVITY.md` "Timeout labels" for the full matrix.
+Premature timeouts where we failed to move are flagged as errors via
+`cleanEnd: false` on `GameTerminalInfo`.
 
 ### Game lifecycle (handled internally by session)
 

@@ -1195,9 +1195,13 @@ mod gaming_wasm {
     {
         with_game(cid, move |cradle: &mut JsCradle| {
             if let Err(e) = f(cradle) {
+                let reason = format!("{e:?}");
+                cradle.cradle.push_event(CradleEvent::Log(format!(
+                    "DBG_ONCHAIN: with_game_drain caught error, converting to ActionFailed: {reason}"
+                )));
                 cradle.cradle.push_event(CradleEvent::Notification(
                     GameNotification::ActionFailed {
-                        reason: format!("{e:?}"),
+                        reason,
                     },
                 ));
             }

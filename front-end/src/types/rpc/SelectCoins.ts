@@ -1,6 +1,7 @@
 export interface SelectCoinsRequest {
   walletId: number;
   amount: number | string;
+  allowUnsynced?: boolean;
 }
 
 export interface SelectCoinsCoin {
