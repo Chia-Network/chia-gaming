@@ -368,7 +368,8 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     this.remoteWalletPending = true;
     console.log('[wc-blockchain] ensuring remote wallet exists...');
     rpc.getWallets({ includeData: true })
-      .then((wallets) => {
+      .then((resp) => {
+        const wallets = (resp as any).wallets ?? [];
         const remote = wallets.find((w: any) => w.type === WalletType.Remote);
         if (remote) {
           this.remoteWalletId = remote.id;

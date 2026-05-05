@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 use clvmr::allocator::{NodePtr, SExp};
@@ -8,8 +8,42 @@ use rand::Rng;
 use crate::common::types::{AllocEncoder, Error};
 
 use sha2::{Digest, Sha256};
-#[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Hash, Default)]
+#[derive(Clone, Eq, PartialEq, Hash, Default)]
 pub struct Hash(pub [u8; 32]);
+
+impl Serialize for Hash {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bytes(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for Hash {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct HashVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for HashVisitor {
+            type Value = Hash;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(f, "32 bytes")
+            }
+
+            fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<Self::Value, E> {
+                if v.len() != 32 {
+                    return Err(E::custom(format!(
+                        "expected 32 bytes for Hash, got {}",
+                        v.len()
+                    )));
+                }
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(v);
+                Ok(Hash(arr))
+            }
+        }
+
+        deserializer.deserialize_bytes(HashVisitor)
+    }
+}
 
 pub fn atom_from_clvm(allocator: &AllocEncoder, n: NodePtr) -> Option<Vec<u8>> {
     if matches!(allocator.allocator_ref().sexp(n), SExp::Atom) {

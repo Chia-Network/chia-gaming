@@ -572,11 +572,6 @@ impl PotatoHandler {
                     let game_id = gsi.game_id;
                     let my_contribution = gsi.my_contribution_this_game.clone();
                     let their_contribution = gsi.their_contribution_this_game.clone();
-                    effects.push(Effect::Log(format!(
-                        "DBG_ISSUE: recv ProposeGame id={} {}",
-                        game_id,
-                        ch.dbg_proposed_games_summary(),
-                    )));
                     effects.push(Effect::Notify(GameNotification::ProposalMade {
                         id: game_id,
                         my_contribution,
@@ -585,14 +580,7 @@ impl PotatoHandler {
                 }
                 BatchAction::AcceptProposal(game_id) => {
                     let ch = self.channel_handler_mut()?;
-                    let before = ch.dbg_proposed_games_summary();
                     ch.apply_received_accept_proposal(game_id)?;
-                    effects.push(Effect::Log(format!(
-                        "DBG_ISSUE: recv AcceptProposal id={} before={} after={}",
-                        game_id,
-                        before,
-                        ch.dbg_proposed_games_summary(),
-                    )));
                     effects.push(Effect::Notify(GameNotification::ProposalAccepted {
                         id: *game_id,
                     }));
@@ -899,11 +887,6 @@ impl PotatoHandler {
                     {
                         let ch = self.channel_handler_mut()?;
                         ch.send_propose_game(env, &my_gsi)?;
-                        effects.push(Effect::Log(format!(
-                            "DBG_ISSUE: send ProposeGame id={} {}",
-                            my_gsi.game_id,
-                            ch.dbg_proposed_games_summary(),
-                        )));
                     }
                     batch_actions.push(BatchAction::ProposeGame(their_wire));
                 }
@@ -932,14 +915,7 @@ impl PotatoHandler {
                             batch_actions.push(BatchAction::CancelProposal(game_id));
                             continue;
                         }
-                        let before = ch.dbg_proposed_games_summary();
                         ch.send_accept_proposal(&game_id)?;
-                        effects.push(Effect::Log(format!(
-                            "DBG_ISSUE: send AcceptProposal id={} before={} after={}",
-                            game_id,
-                            before,
-                            ch.dbg_proposed_games_summary(),
-                        )));
                     }
                     effects.push(Effect::Notify(GameNotification::ProposalAccepted {
                         id: game_id,
@@ -1427,19 +1403,13 @@ impl FromLocalUI for PotatoHandler {
             !ch.pending_peer_proposal_ids().is_empty()
         };
         if has_pending_peer {
-            let (dbg_summary, cancelled_id) = {
+            let cancelled_id = {
                 let ch = self.channel_handler_mut()?;
-                let summary = ch.dbg_proposed_games_summary();
-                let id = GameID(ch.allocate_my_nonce());
-                (summary, id)
+                GameID(ch.allocate_my_nonce())
             };
             return Ok((
                 vec![cancelled_id],
                 vec![
-                    Effect::Log(format!(
-                        "DBG_ISSUE: propose_game BLOCKED cancelled_id={} {}",
-                        cancelled_id, dbg_summary,
-                    )),
                     Effect::Notify(GameNotification::ProposalCancelled {
                         id: cancelled_id,
                         reason: CancelReason::PeerProposalPending,
