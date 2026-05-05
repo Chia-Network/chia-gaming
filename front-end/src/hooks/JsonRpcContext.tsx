@@ -151,9 +151,11 @@ async function request<T, D extends object = object>(
         && attempt < 2
         && !retryBlockedByMethod
         && isTransientWalletConnectError(e);
+      const paramKeys = Object.keys(params).join(',');
       log(
-        `[WC RPC error] ${method} after ${elapsed}ms attempt=${attempt}: ${errText} active=${activeTopicNow} known=${knownTopics.join(',') || 'none'}`,
+        `[WC RPC error] ${method} after ${elapsed}ms attempt=${attempt}: ${errText} paramKeys=[${paramKeys}] active=${activeTopicNow} known=${knownTopics.join(',') || 'none'}`,
       );
+      console.error(`[WC RPC error] ${method} paramKeys=[${paramKeys}] params=`, params, 'error=', e);
       if (!isRetryable) {
         throw e;
       }
@@ -165,6 +167,10 @@ async function request<T, D extends object = object>(
   const result = raw as Record<string, unknown> | undefined;
   if (result?.error) {
     const errorText = toDebugJson(result.error);
+    const paramKeys = Object.keys(params).join(',');
+    const trace = new Error().stack?.split('\n').slice(1, 6).join('\n') ?? '';
+    console.error(`[WC RPC rejected] method=${method} paramKeys=[${paramKeys}]\n  error: ${errorText}\n${trace}`);
+    log(`[WC RPC rejected] method=${method} paramKeys=[${paramKeys}] error=${errorText}`);
     throw new Error(errorText);
   }
 
@@ -184,10 +190,11 @@ async function getWalletBalance(data: GetWalletBalanceRequest) {
 }
 
 async function getCurrentAddress(data: GetCurrentAddressRequest) {
-  return await request<GetCurrentAddressResponse>(
-    ChiaMethod.GetCurrentAddress,
-    data,
+  const resp = await request<Record<string, unknown>>(
+    ChiaMethod.GetNextAddress,
+    { ...data, newAddress: false },
   );
+  return (resp as any).address as GetCurrentAddressResponse;
 }
 
 async function selectCoins(data: SelectCoinsRequest) {

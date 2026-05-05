@@ -24,7 +24,7 @@ export class CoinStateMonitor {
   }
 
   getRegisteredCoinNames(): string[] {
-    return Array.from(this.registeredCoinNames);
+    return Array.from(this.registeredCoinNames).filter(n => !this.pendingRegistration.has(n));
   }
 
   getPeak(): number {

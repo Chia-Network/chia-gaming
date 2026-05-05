@@ -80,18 +80,13 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async startMonitoring() {
-    try {
-      const addr = await rpc.getCurrentAddress({ walletId: 1 });
-      const puzzleHash = decodeBech32mPuzzleHash(addr);
-      if (puzzleHash) {
-        this.blockchainAddressData = { puzzleHash };
-        log(`[wc-blockchain] address resolved: ${addr} → ${puzzleHash}`);
-      } else {
-        console.warn('[wc-blockchain] failed to decode address:', addr);
-      }
-    } catch (e) {
-      console.warn('[wc-blockchain] getCurrentAddress failed, puzzleHash will be empty', e);
+    const addr = await rpc.getCurrentAddress({ walletId: 1 });
+    const puzzleHash = decodeBech32mPuzzleHash(addr);
+    if (!puzzleHash) {
+      throw new Error(`failed to decode change address: ${addr}`);
     }
+    this.blockchainAddressData = { puzzleHash };
+    log(`[wc-blockchain] address resolved: ${addr} → ${puzzleHash}`);
     this.ensureRemoteWallet();
   }
 
@@ -354,11 +349,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   async registerCoins(names: string[]): Promise<void> {
     await this.waitForRemoteWallet();
-    const result = await rpc.registerRemoteCoins({
+    await rpc.registerRemoteCoins({
       walletId: this.remoteWalletId!,
       coinIds: names,
     });
-    log(`[wc-blockchain] registerRemoteCoins names=${names.join(',')} result=${JSON.stringify(result)}`);
   }
 
   // --- Private ---
