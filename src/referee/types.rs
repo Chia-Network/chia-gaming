@@ -508,16 +508,17 @@ impl OnChainRefereeSolution {
                         &refmove.game_move.basic.move_made,
                     ))
                     .into_gen()?;
-                let infohash_c: Option<Hash> = if refmove.game_move.validation_program_hash.is_some() {
-                    let vi = ValidationInfo::new_state_update(
-                        encoder,
-                        refmove.validation_program.clone(),
-                        refmove.state.clone(),
-                    );
-                    Some(vi.hash().clone())
-                } else {
-                    None
-                };
+                let infohash_c: Option<Hash> =
+                    if refmove.game_move.validation_program_hash.is_some() {
+                        let vi = ValidationInfo::new_state_update(
+                            encoder,
+                            refmove.validation_program.clone(),
+                            refmove.state.clone(),
+                        );
+                        Some(vi.hash().clone())
+                    } else {
+                        None
+                    };
 
                 (
                     move_atom,

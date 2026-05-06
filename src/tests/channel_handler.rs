@@ -180,10 +180,9 @@ pub(crate) mod sim_tests {
             let fake_ph = PuzzleHash::default();
             let amount = Amount::new(200);
             let cond = (CREATE_COIN, (fake_ph, (amount, ())));
-            let conditions: clvmr::NodePtr =
-                (Node(cond.to_clvm(env.allocator).expect("clvm")), ())
-                    .to_clvm(env.allocator)
-                    .expect("conditions");
+            let conditions: clvmr::NodePtr = (Node(cond.to_clvm(env.allocator).expect("clvm")), ())
+                .to_clvm(env.allocator)
+                .expect("conditions");
             let p0 = &game.player(0).ch;
             let result = p0.channel_coin_spent(&mut env, false, conditions);
             assert!(
