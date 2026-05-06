@@ -1,6 +1,5 @@
 [compile]
 unroll-puzzle = "clsp/unroll/unroll_puzzle.clsp"
-unroll-meta-puzzle = "clsp/unroll/unroll_meta_puzzle.clsp"
 debug-game = "clsp/test/debug_game.clsp"
 calpoker-generate = "clsp/games/calpoker/calpoker_include.clsp"
 calpoker-validator-a = "clsp/games/calpoker/onchain/a.clsp"

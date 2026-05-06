@@ -33,7 +33,7 @@ pub use potato::{
     PotatoMoveCachedData, PotatoSignatures,
 };
 pub use proposed_game::ProposedGame;
-pub use read::{read_unroll_metapuzzle, read_unroll_puzzle};
+pub use read::read_unroll_puzzle;
 pub use readable_move::ReadableMove;
 pub use result::{DispositionResult, HandshakeResult, MoveResult};
 pub use state_update_program::{HasStateUpdateProgram, StateUpdateProgram};

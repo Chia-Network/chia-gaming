@@ -19,26 +19,22 @@ use crate::common::types::{
 ///
 /// Unroll takes these curried parameters:
 ///
-/// - SHARED_PUZZLE_HASH
+/// - SHARED_PUBKEY (aggregate 2-of-2 unroll public key)
 /// - OLD_SEQUENCE_NUMBER
 /// - DEFAULT_CONDITIONS_HASH
 ///
-/// The fully curried unroll program takes either
-/// - reveal
-///
-/// or
-///
-/// - meta_puzzle conditions since conditions are passed through metapuzzle.
+/// The solution is just conditions (as the dotted-pair cdr of the args).
+/// Dispatch is via shatree(conditions) == DEFAULT_CONDITIONS_HASH:
+///   - Match: timeout path, returns conditions as-is
+///   - No match: preemption path; the first condition must be
+///     (REM sequence_number). Checks sequence number > old with opposite
+///     parity, then prepends AGG_SIG_UNSAFE SHARED_PUBKEY conditions_hash
 ///
 /// At the end of the day update and verify should produce the same conditions for
 /// a specific generation and verify the same message.
 ///
 /// UnrollCoin is responsible for enforcing that a time lock (ASSERT_RELATIVE ...) etc
 /// so that the other player has an opportunity to challenge the unroll.
-///
-/// The unrolling player will have to trigger the "reveal" part as below after a time
-/// if the other player doesn't successfully challenge by providing another program that
-/// produces new conditions that match the parity criteria.
 ///
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct UnrollCoin {
@@ -110,28 +106,20 @@ impl UnrollCoin {
         }
     }
 
-    /// What a spend can bring:
-    /// Either a game creation that got cancelled happens,
-    /// move we did that needs to be replayed on chain.
-    /// game folding that we need to replay on chain.
+    /// Curry the unroll puzzle with (aggregate_public_key, old_state_number,
+    /// conditions_hash).  The aggregate key is curried directly — no
+    /// metapuzzle indirection.
     pub fn make_curried_unroll_puzzle(
         &self,
         env: &mut ChannelHandlerEnv<'_>,
         aggregate_public_key: &PublicKey,
     ) -> Result<NodePtr, Error> {
         let conditions_hash = self.get_conditions_hash_for_unroll_puzzle()?;
-        let shared_puzzle = CurriedProgram {
-            program: env.unroll_metapuzzle.clone(),
-            args: clvm_curried_args!(aggregate_public_key.clone()),
-        }
-        .to_clvm(env.allocator)
-        .into_gen()?;
-        let shared_puzzle_hash = Node(shared_puzzle).sha256tree(env.allocator);
 
         CurriedProgram {
             program: env.unroll_puzzle.clone(),
             args: clvm_curried_args!(
-                shared_puzzle_hash,
+                aggregate_public_key.clone(),
                 self.get_old_state_number()?,
                 conditions_hash
             ),
@@ -140,39 +128,25 @@ impl UnrollCoin {
         .into_gen()
     }
 
-    /// Build a solution for the challenge/preemption path: (metapuzzle, conditions).
-    /// The CLSP runs metapuzzle(conditions) which adds AGG_SIG_UNSAFE.
+    /// Build the solution for the preemption path: just the base conditions
+    /// (without the timelock).  The puzzle prepends AGG_SIG_UNSAFE inline.
     pub fn make_unroll_puzzle_solution(
         &self,
         env: &mut ChannelHandlerEnv<'_>,
-        aggregate_public_key: &PublicKey,
     ) -> Result<NodePtr, Error> {
-        let unroll_inner_puzzle = CurriedProgram {
-            program: env.unroll_metapuzzle.clone(),
-            args: clvm_curried_args!(aggregate_public_key.clone()),
-        }
-        .to_clvm(env.allocator)
-        .into_gen()?;
-
-        let unroll_puzzle_solution = (
-            Node(unroll_inner_puzzle),
-            (self.get_internal_conditions_for_unroll_coin_spend()?, ()),
-        )
-            .to_clvm(env.allocator)
-            .into_gen()?;
-        Ok(unroll_puzzle_solution)
+        let conditions = self.get_internal_conditions_for_unroll_coin_spend()?;
+        conditions.to_nodeptr(env.allocator)
     }
 
-    /// Build a solution for the default/timeout path: just (reveal).
-    /// The CLSP verifies shatree(reveal) == DEFAULT_CONDITIONS_HASH and
-    /// returns reveal.  The timeout conditions include ASSERT_HEIGHT_RELATIVE.
+    /// Build the solution for the timeout path: just the timeout conditions
+    /// (which include ASSERT_HEIGHT_RELATIVE).  The puzzle checks
+    /// shatree(conditions) == DEFAULT_CONDITIONS_HASH.
     pub fn make_timeout_unroll_solution(
         &self,
         env: &mut ChannelHandlerEnv<'_>,
     ) -> Result<NodePtr, Error> {
         let timeout_conditions = self.get_conditions_for_unroll_coin_spend()?;
-        let solution = (timeout_conditions, ()).to_clvm(env.allocator).into_gen()?;
-        Ok(solution)
+        timeout_conditions.to_nodeptr(env.allocator)
     }
 
     /// Returns a list of create coin conditions which the unroll coin should do.
@@ -215,7 +189,6 @@ impl UnrollCoin {
 
         // Signatures for the unroll puzzle are always unsafe.
         // Signatures for the channel puzzle are always safe (std format).
-        // Meta puzzle for the unroll can't be standard.
         for (ph, a) in inputs.puzzle_hashes_and_amounts.iter() {
             let clvm_conditions = (CREATE_COIN, (ph.clone(), (a.clone(), ())))
                 .to_clvm(env.allocator)

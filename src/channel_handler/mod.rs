@@ -1623,7 +1623,7 @@ impl ChannelHandler {
         let solution = self
             .latest_sent_unroll
             .coin
-            .make_unroll_puzzle_solution(env, &agg_key)?;
+            .make_timeout_unroll_solution(env)?;
 
         let sig = self.latest_sent_unroll.coin.get_unroll_coin_signature()?;
 
@@ -1691,19 +1691,12 @@ impl ChannelHandler {
 
         // PUZZLE: must match the on-chain unroll coin.  Reconstruct it from
         // known components using the conditions_hash resolved by the caller
-        // from the unroll puzzle hash map.
-        let shared_puzzle = CurriedProgram {
-            program: env.unroll_metapuzzle.clone(),
-            args: clvm_curried_args!(agg_key.clone()),
-        }
-        .to_clvm(env.allocator)
-        .into_gen()?;
-        let shared_puzzle_hash = Node(shared_puzzle).sha256tree(env.allocator);
-
+        // from the unroll puzzle hash map.  The aggregate public key is
+        // curried directly (no metapuzzle indirection).
         let curried_puzzle = CurriedProgram {
             program: env.unroll_puzzle.clone(),
             args: clvm_curried_args!(
-                shared_puzzle_hash.clone(),
+                agg_key.clone(),
                 unrolling_state_number,
                 conditions_hash.clone()
             ),
@@ -1714,7 +1707,7 @@ impl ChannelHandler {
         // SOLUTION: from the preemption source (our newer state).
         let solution = preempt_source
             .coin
-            .make_unroll_puzzle_solution(env, &agg_key)?;
+            .make_unroll_puzzle_solution(env)?;
 
         // SIGNATURE: aggregate of both halves from the preemption source.
         let our_half = preempt_source.coin.get_unroll_coin_signature()?;

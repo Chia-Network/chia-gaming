@@ -2,8 +2,7 @@ use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
 use crate::channel_handler::types::{
-    read_unroll_metapuzzle, read_unroll_puzzle, ChannelHandlerEnv, UnrollCoin,
-    UnrollCoinConditionInputs,
+    read_unroll_puzzle, ChannelHandlerEnv, UnrollCoin, UnrollCoinConditionInputs,
 };
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{
@@ -121,7 +120,6 @@ pub(crate) mod sim_tests {
     pub(crate) fn test_preemption_parity_constraint() {
         let mut allocator = AllocEncoder::new();
         let mut rng = ChaCha8Rng::from_seed([0; 32]);
-        let unroll_metapuzzle = read_unroll_metapuzzle(&mut allocator).unwrap();
         let unroll_puzzle = read_unroll_puzzle(&mut allocator).unwrap();
         let nil = allocator.allocator().nil();
         let ref_coin_puz = Puzzle::from_nodeptr(&mut allocator, nil).expect("should work");
@@ -131,7 +129,6 @@ pub(crate) mod sim_tests {
             allocator: &mut allocator,
             referee_coin_puzzle: ref_coin_puz,
             referee_coin_puzzle_hash: ref_coin_ph,
-            unroll_metapuzzle,
             unroll_puzzle,
             standard_puzzle,
             agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
@@ -215,7 +212,6 @@ pub(crate) fn test_unroll_can_verify_own_signature() {
     let ref_puzzle_hash_1 = puzzle_hash_for_pk(&mut allocator, &public_key_1).expect("should work");
     let ref_puzzle_hash_2 = puzzle_hash_for_pk(&mut allocator, &public_key_2).expect("should work");
 
-    let unroll_metapuzzle = read_unroll_metapuzzle(&mut allocator).unwrap();
     let unroll_puzzle = read_unroll_puzzle(&mut allocator).unwrap();
     let nil = allocator.allocator().nil();
     let ref_coin_puz = Puzzle::from_nodeptr(&mut allocator, nil).expect("should work");
@@ -225,7 +221,6 @@ pub(crate) fn test_unroll_can_verify_own_signature() {
         allocator: &mut allocator,
         referee_coin_puzzle: ref_coin_puz,
         referee_coin_puzzle_hash: ref_coin_ph.clone(),
-        unroll_metapuzzle,
         unroll_puzzle,
         standard_puzzle,
         agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),

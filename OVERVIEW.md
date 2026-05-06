@@ -111,15 +111,19 @@ payout coins (no unroll needed).
 
 The unroll coin implements the **optimistic rollback** mechanism:
 
-- **Curried parameters:** `SHARED_PUZZLE_HASH`, `OLD_SEQUENCE_NUMBER`,
-`DEFAULT_CONDITIONS_HASH`
-- **Timeout path** (no challenge): After `unroll_timeout` blocks pass, the
-default conditions are revealed and applied. These conditions create the game
-coins and reward coins reflecting the last agreed state.
-- **Preemption path** (challenge): The opponent provides a solution with a
-**higher sequence number** (with correct parity). The unroll puzzle verifies
-the new sequence number is greater than the old one and has the right parity
-bit, then applies the challenger's conditions instead.
+- **Curried parameters:** `SHARED_PUBKEY` (aggregate 2-of-2 unroll public
+key), `OLD_SEQUENCE_NUMBER`, `DEFAULT_CONDITIONS_HASH`
+- **Solution:** The conditions list, passed as the dotted-pair cdr of the
+puzzle args.  Dispatch is via `shatree(conditions) == DEFAULT_CONDITIONS_HASH`.
+- **Timeout path** (hash matches): The conditions are returned as-is.  They
+include `ASSERT_HEIGHT_RELATIVE` so the spend can only land after the
+timeout elapses.  These conditions create the game coins and reward coins
+reflecting the last agreed state.
+- **Preemption path** (hash does not match): The puzzle checks that the
+conditions contain a **higher sequence number** with the correct parity,
+then prepends `AGG_SIG_UNSAFE SHARED_PUBKEY (shatree conditions)` and
+returns.  The aggregate signature from both unroll keys ensures the
+conditions were co-signed.
 
 **Parity rule.** Each player only ever sends half-signed states of one parity
 to the opponent (based on `started_with_potato`), so each player can only

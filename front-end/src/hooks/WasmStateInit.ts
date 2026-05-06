@@ -71,7 +71,6 @@ export class WasmStateInit {
     }
     const presetFiles = [
       //'resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex', -- now loaded by crates.io::chia_puzzles
-      'clsp/unroll/unroll_meta_puzzle.hex',
       'clsp/unroll/unroll_puzzle_state_channel_unrolling.hex',
       'clsp/referee/onchain/referee.hex',
       'clsp/games/calpoker/calpoker_include_calpoker_make_proposal.hex',
