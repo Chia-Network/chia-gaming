@@ -194,7 +194,6 @@ async function getNextAddress(data: GetNextAddressRequest) {
     ChiaMethod.GetNextAddress,
     data,
   );
-  return (resp as any).address as GetCurrentAddressResponse;
 }
 
 async function selectCoins(data: SelectCoinsRequest) {
