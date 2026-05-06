@@ -298,8 +298,7 @@ impl PotatoHandler {
         _env: &mut ChannelHandlerEnv<'_>,
         game_id: &GameID,
     ) -> Result<Vec<Effect>, Error> {
-        let (_continued, effects) =
-            self.do_game_action(GameAction::ForcedSelfAccept(*game_id))?;
+        let (_continued, effects) = self.do_game_action(GameAction::ForcedSelfAccept(*game_id))?;
         Ok(effects)
     }
 
@@ -973,8 +972,7 @@ impl PotatoHandler {
                         shutdown_condition_program.into(),
                     )));
 
-                    pending_shutdown =
-                        Some((state_channel_coin.clone(), spend.solution.clone()));
+                    pending_shutdown = Some((state_channel_coin.clone(), spend.solution.clone()));
                 }
                 GameAction::SendPotato => {
                     unreachable!("SendPotato should not be queued");
@@ -1409,12 +1407,10 @@ impl FromLocalUI for PotatoHandler {
             };
             return Ok((
                 vec![cancelled_id],
-                vec![
-                    Effect::Notify(GameNotification::ProposalCancelled {
-                        id: cancelled_id,
-                        reason: CancelReason::PeerProposalPending,
-                    }),
-                ],
+                vec![Effect::Notify(GameNotification::ProposalCancelled {
+                    id: cancelled_id,
+                    reason: CancelReason::PeerProposalPending,
+                })],
             ));
         }
 

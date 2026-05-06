@@ -349,11 +349,11 @@ impl HandshakeReceiverHandler {
                     let channel_key_pop = self
                         .private_keys
                         .my_channel_coin_private_key
-                        .sign(&channel_public_key.bytes());
+                        .sign(channel_public_key.bytes());
                     let unroll_key_pop = self
                         .private_keys
                         .my_unroll_coin_private_key
-                        .sign(&unroll_public_key.bytes());
+                        .sign(unroll_public_key.bytes());
                     HandshakeB {
                         channel_public_key,
                         unroll_public_key,

@@ -600,27 +600,22 @@ impl SpendChannelCoinHandler {
             let ch = self.base.channel_handler()?;
             let map = ch.unroll_puzzle_hash_map();
 
-            channel_conditions
-                .iter()
-                .find_map(|c| {
-                    if let CoinCondition::CreateCoin(ph, amt) = c {
-                        if map.contains_key(ph) {
-                            return Some(CoinString::from_parts(
-                                &coin_id.to_coin_id(),
-                                ph,
-                                amt,
-                            ));
-                        }
+            channel_conditions.iter().find_map(|c| {
+                if let CoinCondition::CreateCoin(ph, amt) = c {
+                    if map.contains_key(ph) {
+                        return Some(CoinString::from_parts(&coin_id.to_coin_id(), ph, amt));
                     }
-                    None
-                })
+                }
+                None
+            })
         };
 
         let unroll_coin = match unroll_coin {
             Some(c) => c,
             None => {
                 return Err(Error::StrErr(
-                    "No CREATE_COIN in channel spend matches a known unroll puzzle hash".to_string(),
+                    "No CREATE_COIN in channel spend matches a known unroll puzzle hash"
+                        .to_string(),
                 ));
             }
         };
@@ -1028,7 +1023,6 @@ impl SpendChannelCoinHandler {
 
         Ok(effects)
     }
-
 }
 
 impl SpendWalletReceiver for SpendChannelCoinHandler {
