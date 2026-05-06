@@ -80,7 +80,9 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async startMonitoring() {
-    const addr = await rpc.getCurrentAddress({ walletId: 1 });
+  
+    const resp = await rpc.getNextAddress({ walletId: 1, newAddress: true });
+    const addr = resp.address;
     const puzzleHash = decodeBech32mPuzzleHash(addr);
     if (!puzzleHash) {
       throw new Error(`failed to decode change address: ${addr}`);

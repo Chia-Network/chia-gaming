@@ -4,9 +4,9 @@ import {
   CreateOfferForIdsResponse,
 } from '../types/rpc/CreateOfferForIds';
 import {
-  GetCurrentAddressRequest,
-  GetCurrentAddressResponse,
-} from '../types/rpc/GetCurrentAddress';
+  GetNextAddressRequest,
+  GetNextAddressResponse,
+} from '../types/rpc/GetNextAddress';
 import {
   GetWalletBalanceRequest,
   GetWalletBalanceResponse,
@@ -189,10 +189,10 @@ async function getWalletBalance(data: GetWalletBalanceRequest) {
   );
 }
 
-async function getCurrentAddress(data: GetCurrentAddressRequest) {
-  const resp = await request<Record<string, unknown>>(
+async function getNextAddress(data: GetNextAddressRequest) {
+  return await request<GetNextAddressResponse>(
     ChiaMethod.GetNextAddress,
-    { ...data, newAddress: false },
+    data,
   );
   return (resp as any).address as GetCurrentAddressResponse;
 }
@@ -247,7 +247,7 @@ async function getPuzzleAndSolution(data: GetPuzzleAndSolutionRequest) {
 export const rpc = {
   getWallets,
   getWalletBalance,
-  getCurrentAddress,
+  getNextAddress,
   selectCoins,
   getHeightInfo,
   createOfferForIds,
