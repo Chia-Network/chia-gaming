@@ -447,7 +447,7 @@ impl Referee {
         let waiter_share = self.fixed().amount.checked_sub(&mover_share)?;
 
         let i_am_mover = args.mover_pubkey == self.fixed().my_identity.public_key;
-        let (mover_payout_ph, waiter_payout_ph) = if i_am_mover {
+        let (my_ph, their_ph) = if i_am_mover {
             (
                 self.fixed().reward_puzzle_hash.clone(),
                 self.fixed().their_reward_puzzle_hash.clone(),
@@ -464,6 +464,9 @@ impl Referee {
         } else {
             (waiter_share.clone(), mover_share.clone())
         };
+
+        let mover_payout_ph = if mover_share > Amount::default() { Some(my_ph) } else { None };
+        let waiter_payout_ph = if waiter_share > Amount::default() { Some(their_ph) } else { None };
 
         let mut aggregate_signature = Aggsig::default();
         if my_share > Amount::default() {

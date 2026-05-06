@@ -469,8 +469,8 @@ pub struct OnChainRefereeSlash {
 #[derive(Debug, Clone)]
 pub enum OnChainRefereeSolution {
     Timeout {
-        mover_payout_ph: PuzzleHash,
-        waiter_payout_ph: PuzzleHash,
+        mover_payout_ph: Option<PuzzleHash>,
+        waiter_payout_ph: Option<PuzzleHash>,
         aggregate_signature: Aggsig,
     },
     Move(Rc<OnChainRefereeMove>),
@@ -499,7 +499,7 @@ impl OnChainRefereeSolution {
                 mover_payout_ph,
                 waiter_payout_ph,
                 ..
-            } => (mover_payout_ph.clone(), (waiter_payout_ph.clone(), ()))
+            } => (mover_payout_ph.as_ref(), (waiter_payout_ph.as_ref(), ()))
                 .to_clvm(encoder)
                 .into_gen(),
             OnChainRefereeSolution::Move(refmove) => {
