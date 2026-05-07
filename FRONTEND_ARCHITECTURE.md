@@ -705,6 +705,60 @@ because there is no external wallet to scan the QR code. This triggers the
 `SimulatorSetupModal` overlay — the only place where Shell's UI differs between
 backends. All other connection logic is shared.
 
+### WalletConnect BigInt Serialization
+
+WalletConnect's internal JSON handling (`@walletconnect/safe-json`) uses a
+custom convention for BigInts: `safeJsonStringify` serializes `BigInt(123)` as
+the string `"123n"`, and `safeJsonParse` converts strings matching `/^\d+n$/`
+back to BigInts. This means BigInt values survive a WC round-trip, but as
+string-encoded values rather than native JSON numbers.
+
+This convention has two bugs that we patch around:
+
+**Bug 1: Negative BigInts.** The parse regex `^\d+n$` doesn't match negative
+values like `"-100n"`. These pass through as plain strings, which downstream
+code (e.g. the Chia daemon) can't parse. We fix this with a **pnpm patch** on
+`@walletconnect/safe-json@1.0.2` (`patches/@walletconnect__safe-json@1.0.2.patch`)
+that changes the regex to `^-?\d+n$`. This patch applies to all WC packages in
+the frontend that depend on safe-json.
+
+**Bug 2: Verify API hashing.** WC's sign-client computes SHA-256 hashes of
+payloads for its Verify API using bare `JSON.stringify`, which throws on
+BigInt values. We fix this with a **pnpm patch** on
+`@walletconnect/sign-client@2.23.9` that injects a `__wcSafe` helper using the
+same `"n"`-suffix convention and replaces the 5 internal `hashMessage(JSON.stringify(...))`
+call sites with `hashMessage(__wcSafe(...))`. This patch is large (280KB)
+because the sign-client ships as a single minified line — the actual change is
+one helper definition and 5 call-site substitutions.
+
+**Wallet GUI side.** The Chia wallet GUI (`chia-blockchain-gui`) has its own
+mitigations since its WC packages are installed via npm (no pnpm patching):
+
+- **`JSON.stringify` monkey-patch** (`packages/gui/src/index.tsx`): Early in
+  the renderer entry point, `JSON.stringify` is replaced with a BigInt-safe
+  version using the `"n"` convention. This covers WC's internal hash
+  computation paths in the renderer process.
+
+- **`deepFixBrokenBigInts`** (`packages/gui/src/electron/permissions/dispatchAsPair.ts`):
+  A recursive post-processor that walks incoming WC params and converts any
+  string matching `/^-?\d+n$/` back to a real BigInt. This runs in the main
+  process before params reach the daemon, catching negative BigInts that
+  `safeJsonParse` failed to convert.
+
+- **Confirm dialog replacer** (`packages/gui/src/electron/dialogs/Confirm/Confirm.tsx`):
+  The "Raw data" display uses `JSON.stringify(data, (_, v) => typeof v === 'bigint' ? String(v) : v, 2)`
+  to avoid crashing when rendered data contains BigInts.
+
+**Frontend (`jsonSafe.ts`).** The player app has its own BigInt-safe JSON
+utilities in `front-end/src/util/jsonSafe.ts`:
+
+- `jsonParse` — uses a `JSON.parse` reviver that converts all integers to
+  BigInt (matching the behavior of the `lossless-json` library previously
+  used). This ensures values from the simulator backend arrive as BigInts.
+- `jsonStringify` — hand-rolled serializer that emits BigInts as bare numeric
+  literals (via `toString()` directly into the JSON string), avoiding both the
+  `JSON.stringify` BigInt crash and the precision loss of `Number()` conversion.
+
 ### Lobby Iframe (Tracker)
 
 The lobby iframe is **untrusted**. It is served by a tracker and provides
