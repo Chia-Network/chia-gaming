@@ -2,13 +2,13 @@ import { CoinRecord } from '../types/rpc/CoinRecord';
 import { WatchReport } from '../types/ChiaGaming';
 import { toHexString, toUint8 } from '../util';
 
-function encodeClvmInt(n: number): Uint8Array {
-  if (n === 0) return new Uint8Array(0);
+function encodeClvmInt(n: bigint): Uint8Array {
+  if (n === 0n) return new Uint8Array(0);
   const bytes: number[] = [];
   let v = n;
-  while (v > 0) {
-    bytes.unshift(v & 0xff);
-    v = Math.floor(v / 256);
+  while (v > 0n) {
+    bytes.unshift(Number(v & 0xffn));
+    v >>= 8n;
   }
   if (bytes[0] & 0x80) {
     bytes.unshift(0);
@@ -54,7 +54,7 @@ export async function applyCoinRecordsWatchDiff(
     const coinString = coinNameToString.get(coinName);
     if (!coinString) continue;
 
-    const isSpent = rec.spent ?? rec.spentBlockIndex > 0;
+    const isSpent = rec.spent ?? rec.spentBlockIndex > 0n;
 
     const wasSpent = previousCoinStates.get(coinName);
     const wasSeen = wasSpent !== undefined;

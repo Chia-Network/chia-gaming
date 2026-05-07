@@ -1,5 +1,5 @@
 export interface RegisterRemoteCoinsRequest {
-  walletId: number;
+  walletId: bigint;
   coinIds: string[];
 }
 

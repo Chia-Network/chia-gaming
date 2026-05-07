@@ -4,6 +4,14 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@walletconnect/safe-json@1.0.2':
+    hash: 348b14548555216c875a28da7cb8ebbc2a5326549ab946cf85a0ec6b8221ef44
+    path: patches/@walletconnect__safe-json@1.0.2.patch
+  '@walletconnect/sign-client@2.23.9':
+    hash: 292172da8a50de17a5c1dae741703ac6a2d3e1f913698651a3070fbfb35b961a
+    path: patches/@walletconnect__sign-client@2.23.9.patch
+
 importers:
 
   .:
@@ -25,7 +33,7 @@ importers:
         version: 1.2.8(@types/react-dom@19.2.0(@types/react@19.2.0))(@types/react@19.2.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
       '@walletconnect/sign-client':
         specifier: 2.23.9
-        version: 2.23.9(typescript@5.9.3)
+        version: 2.23.9(patch_hash=292172da8a50de17a5c1dae741703ac6a2d3e1f913698651a3070fbfb35b961a)(typescript@5.9.3)
       '@walletconnect/types':
         specifier: 2.23.9
         version: 2.23.9
@@ -3889,7 +3897,7 @@ snapshots:
       '@walletconnect/logger': 3.0.2
       '@walletconnect/relay-api': 1.0.11
       '@walletconnect/relay-auth': 1.1.0
-      '@walletconnect/safe-json': 1.0.2
+      '@walletconnect/safe-json': 1.0.2(patch_hash=348b14548555216c875a28da7cb8ebbc2a5326549ab946cf85a0ec6b8221ef44)
       '@walletconnect/time': 1.0.2
       '@walletconnect/types': 2.23.9
       '@walletconnect/utils': 2.23.9(typescript@5.9.3)
@@ -3940,7 +3948,7 @@ snapshots:
   '@walletconnect/jsonrpc-provider@1.0.14':
     dependencies:
       '@walletconnect/jsonrpc-utils': 1.0.8
-      '@walletconnect/safe-json': 1.0.2
+      '@walletconnect/safe-json': 1.0.2(patch_hash=348b14548555216c875a28da7cb8ebbc2a5326549ab946cf85a0ec6b8221ef44)
       events: 3.3.0
 
   '@walletconnect/jsonrpc-types@1.0.4':
@@ -3957,7 +3965,7 @@ snapshots:
   '@walletconnect/jsonrpc-ws-connection@1.0.16':
     dependencies:
       '@walletconnect/jsonrpc-utils': 1.0.8
-      '@walletconnect/safe-json': 1.0.2
+      '@walletconnect/safe-json': 1.0.2(patch_hash=348b14548555216c875a28da7cb8ebbc2a5326549ab946cf85a0ec6b8221ef44)
       events: 3.3.0
       ws: 7.5.10
     transitivePeerDependencies:
@@ -3966,7 +3974,7 @@ snapshots:
 
   '@walletconnect/keyvaluestorage@1.1.1':
     dependencies:
-      '@walletconnect/safe-json': 1.0.2
+      '@walletconnect/safe-json': 1.0.2(patch_hash=348b14548555216c875a28da7cb8ebbc2a5326549ab946cf85a0ec6b8221ef44)
       idb-keyval: 6.2.2
       unstorage: 1.17.5(idb-keyval@6.2.2)
     transitivePeerDependencies:
@@ -3991,7 +3999,7 @@ snapshots:
 
   '@walletconnect/logger@3.0.2':
     dependencies:
-      '@walletconnect/safe-json': 1.0.2
+      '@walletconnect/safe-json': 1.0.2(patch_hash=348b14548555216c875a28da7cb8ebbc2a5326549ab946cf85a0ec6b8221ef44)
       pino: 10.0.0
 
   '@walletconnect/relay-api@1.0.11':
@@ -4002,15 +4010,15 @@ snapshots:
     dependencies:
       '@noble/curves': 1.8.0
       '@noble/hashes': 1.7.0
-      '@walletconnect/safe-json': 1.0.2
+      '@walletconnect/safe-json': 1.0.2(patch_hash=348b14548555216c875a28da7cb8ebbc2a5326549ab946cf85a0ec6b8221ef44)
       '@walletconnect/time': 1.0.2
       uint8arrays: 3.1.1
 
-  '@walletconnect/safe-json@1.0.2':
+  '@walletconnect/safe-json@1.0.2(patch_hash=348b14548555216c875a28da7cb8ebbc2a5326549ab946cf85a0ec6b8221ef44)':
     dependencies:
       tslib: 1.14.1
 
-  '@walletconnect/sign-client@2.23.9(typescript@5.9.3)':
+  '@walletconnect/sign-client@2.23.9(patch_hash=292172da8a50de17a5c1dae741703ac6a2d3e1f913698651a3070fbfb35b961a)(typescript@5.9.3)':
     dependencies:
       '@walletconnect/core': 2.23.9(typescript@5.9.3)
       '@walletconnect/events': 1.0.1
@@ -4091,7 +4099,7 @@ snapshots:
       '@walletconnect/logger': 3.0.2
       '@walletconnect/relay-api': 1.0.11
       '@walletconnect/relay-auth': 1.1.0
-      '@walletconnect/safe-json': 1.0.2
+      '@walletconnect/safe-json': 1.0.2(patch_hash=348b14548555216c875a28da7cb8ebbc2a5326549ab946cf85a0ec6b8221ef44)
       '@walletconnect/time': 1.0.2
       '@walletconnect/types': 2.23.9
       '@walletconnect/window-getters': 1.0.1

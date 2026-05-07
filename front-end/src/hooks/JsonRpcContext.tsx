@@ -40,12 +40,13 @@ import {
   SelectCoinsResponse,
 } from '../types/rpc/SelectCoins';
 import { log } from '../services/log';
+import { jsonStringify } from '../util/jsonSafe';
 
 import { walletConnectState } from './useWalletConnect';
 
 type Loose = Record<string, unknown>;
 type GetWalletsRequest = Loose;
-type GetWalletsResponse = Array<{ id: number; type: number; [key: string]: unknown }>;
+type GetWalletsResponse = Array<{ id: bigint; type: bigint; [key: string]: unknown }>;
 const WC_REQUEST_TIMEOUT_MS = 60000;
 const WC_RETRY_DELAY_MS = 1000;
 const WC_INTER_REQUEST_MS = 50;
@@ -71,21 +72,34 @@ function getErrorText(err: unknown): string {
       const parts = [obj.message];
       if ('code' in obj) parts.push(`code=${String(obj.code)}`);
       if ('data' in obj && obj.data !== undefined) {
-        try { parts.push(`data=${JSON.stringify(obj.data)}`); } catch { /* skip */ }
+        try { parts.push(`data=${jsonStringify(obj.data)}`); } catch { /* skip */ }
       }
       return parts.length > 1 ? `${parts[0]} (${parts.slice(1).join(', ')})` : parts[0];
     }
-    try { return JSON.stringify(err); } catch { /* fall through */ }
+    try { return jsonStringify(err); } catch { /* fall through */ }
   }
   return String(err);
 }
 
 function toDebugJson(value: unknown): string {
   try {
-    return JSON.stringify(value);
+    return jsonStringify(value);
   } catch {
     return String(value);
   }
+}
+
+function deepNumbersToBigInt(value: unknown): unknown {
+  if (typeof value === 'number' && Number.isInteger(value)) return BigInt(value);
+  if (Array.isArray(value)) return value.map(deepNumbersToBigInt);
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = deepNumbersToBigInt(v);
+    }
+    return out;
+  }
+  return value;
 }
 
 function isTransientWalletConnectError(err: unknown): boolean {
@@ -124,10 +138,11 @@ async function request<T, D extends object = object>(
   let raw: unknown;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
+      const session = walletConnectState.getSession()!;
       raw = await serialized(() =>
         Promise.race([
           walletConnectState.getClient()!.request({
-            topic: walletConnectState.getSession()!.topic,
+            topic: session.topic,
             chainId: walletConnectState.getChainId(),
             request: { method, params },
           }),
@@ -155,7 +170,7 @@ async function request<T, D extends object = object>(
       log(
         `[WC RPC error] ${method} after ${elapsed}ms attempt=${attempt}: ${errText} paramKeys=[${paramKeys}] active=${activeTopicNow} known=${knownTopics.join(',') || 'none'}`,
       );
-      console.error(`[WC RPC error] ${method} paramKeys=[${paramKeys}] params=`, params, 'error=', e);
+      console.error(`[WC RPC error] ${method} paramKeys=[${paramKeys}]`, e);
       if (!isRetryable) {
         throw e;
       }
@@ -164,7 +179,7 @@ async function request<T, D extends object = object>(
     }
   }
 
-  const result = raw as Record<string, unknown> | undefined;
+  const result = deepNumbersToBigInt(raw) as Record<string, unknown> | undefined;
   if (result?.error) {
     const errorText = toDebugJson(result.error);
     const paramKeys = Object.keys(params).join(',');

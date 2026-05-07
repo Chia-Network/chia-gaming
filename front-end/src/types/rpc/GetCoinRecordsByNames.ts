@@ -2,8 +2,8 @@ import { CoinRecord } from './CoinRecord';
 
 export interface GetCoinRecordsByNamesRequest {
   names: string[];
-  startHeight?: number;
-  endHeight?: number;
+  startHeight?: bigint;
+  endHeight?: bigint;
   includeSpentCoins?: boolean;
   allowUnsynced?: boolean;
 }

@@ -1,9 +1,9 @@
 export type GetHeightInfoRequest = { usePeakHeight?: boolean };
 
 export interface GetHeightInfoResponse {
-  height: number;
+  height: bigint;
   isTransactionBlock: boolean | null;
-  prevTransactionBlockHeight: number | null;
-  latestTransactionBlockHeight: number;
+  prevTransactionBlockHeight: bigint | null;
+  latestTransactionBlockHeight: bigint;
   success: boolean;
 }

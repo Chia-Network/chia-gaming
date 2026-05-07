@@ -1,5 +1,6 @@
 import { normalizeCoinStringHex } from '../util';
 import { CoinRecord } from '../types/rpc/CoinRecord';
+import { jsonParse, jsonStringify } from '../util/jsonSafe';
 
 import { BLOCKCHAIN_WS_URL } from '../settings';
 import {
@@ -32,7 +33,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
   private token = '';
   private uniqueId = '';
-  private initialBalance: number | undefined;
+  private initialBalance: bigint | undefined;
   private connectionListeners = new Set<(connected: boolean) => void>();
   private lastConnectedState = false;
   private autoReconnect = false;
@@ -94,14 +95,14 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         if (this.ws !== ws) return;
         const raw = typeof evt === 'string' ? evt : evt.data;
         let data: any;
-        try { data = JSON.parse(raw); } catch { return; }
+        try { data = jsonParse(raw); } catch { return; }
 
         if (data.event === 'block') {
           return;
         }
 
         if (data.id !== undefined) {
-          const p = this.pending.get(data.id);
+          const p = this.pending.get(Number(data.id));
           if (p) {
             this.pending.delete(data.id);
             if (data.error) {
@@ -163,7 +164,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       return Promise.reject(new Error('not connected'));
     }
     const id = this.nextId++;
-    const msg = JSON.stringify({ id, method, params: params ?? {} });
+    const msg = jsonStringify({ id, method, params: params ?? {} });
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
       this.ws!.send(msg);
@@ -181,7 +182,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     this.reconnectAttempt = 0;
   }
 
-  async spend(blob: string, _spendBundle: unknown, _source?: string, _fee?: number): Promise<string> {
+  async spend(blob: string, _spendBundle: unknown, _source?: string, _fee?: bigint): Promise<string> {
     const status_array = await this.sendRequest('spend', { blob });
     if (!Array.isArray(status_array) || status_array.length < 1) {
       throw new Error('status result array was empty');
@@ -196,7 +197,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     return '';
   }
 
-  async getBalance(): Promise<number> {
+  async getBalance(): Promise<bigint> {
     return this.sendRequest('get_balance', { user: this.token });
   }
 
@@ -204,30 +205,30 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     return this.sendRequest('get_puzzle_and_solution', { coin });
   }
 
-  async selectCoins(uniqueId: string, amount: number): Promise<string | null> {
+  async selectCoins(uniqueId: string, amount: bigint): Promise<string | null> {
     if (!this.token) throw new Error('not set up');
     const response = await this.sendRequest('select_coins', { who: uniqueId, amount });
     if (typeof response !== 'string') return response ?? null;
     return normalizeCoinStringHex(response);
   }
 
-  async getHeightInfo(): Promise<number> {
+  async getHeightInfo(): Promise<bigint> {
     return this.sendRequest('get_peak');
   }
 
   async createOfferForIds(
     uniqueId: string,
-    offer: { [walletId: string]: number },
-    extraConditions?: Array<{ opcode: number; args: string[] }>,
+    offer: { [walletId: string]: bigint },
+    extraConditions?: Array<{ opcode: bigint; args: string[] }>,
     coinIds?: string[],
-    _maxHeight?: number,
+    _maxHeight?: bigint,
   ): Promise<any | null> {
     const params: any = { who: uniqueId, offer };
     if (extraConditions) params.extraConditions = extraConditions;
     if (coinIds) params.coinIds = coinIds;
     const raw = await this.sendRequest('create_offer_for_ids', params);
     if (!raw) return null;
-    return typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return typeof raw === 'string' ? jsonParse(raw) : raw;
   }
 
   async getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]> {
@@ -239,7 +240,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     await this.sendRequest('register_remote_coins', { coinIds: names });
   }
 
-  async registerUser(name: string, balance?: number): Promise<string> {
+  async registerUser(name: string, balance?: bigint): Promise<string> {
     log(`[sim-blockchain] registerUser: name=${name} balance=${balance ?? 'default'}`);
     this.uniqueId = name;
     const params: any = { name };
@@ -276,9 +277,9 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     return {
       qrUri: `sim://${this.wsUrl.replace('ws://', '')}/${uniqueId}`,
       fields: {
-        balance: { label: 'Starting balance (mojos)', default: 1_000_000 },
+        balance: { label: 'Starting balance (mojos)', default: 1_000_000n },
       },
-      finalize: async (values?: { balance?: number }) => {
+      finalize: async (values?: { balance?: bigint }) => {
         log('[sim-blockchain] finalize: start');
         this.uniqueId = uniqueId;
         this.initialBalance = values?.balance;

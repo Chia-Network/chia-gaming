@@ -112,7 +112,7 @@ export function getBlobSingleton(
   sessionSave?: SessionState,
   pairingToken?: string,
   perGameAmount?: bigint,
-  getFee?: () => number,
+  getFee?: () => bigint,
 ): { gameObject: WasmBlobWrapper } {
   if (blobSingleton) {
     return { gameObject: blobSingleton };

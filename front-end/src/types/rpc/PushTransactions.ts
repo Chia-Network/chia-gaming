@@ -1,7 +1,7 @@
 export interface CoinsetCoin {
   parent_coin_info: string;
   puzzle_hash: string;
-  amount: number;
+  amount: bigint;
 }
 
 export interface CoinsetCoinSpend {
@@ -16,31 +16,31 @@ export interface WalletSpendBundle {
 }
 
 export interface ConditionValidTimes {
-  min_secs_since_created?: number;
-  min_time?: number;
-  min_blocks_since_created?: number;
-  min_height?: number;
-  max_secs_after_created?: number;
-  max_time?: number;
-  max_blocks_after_created?: number;
-  max_height?: number;
+  min_secs_since_created?: bigint;
+  min_time?: bigint;
+  min_blocks_since_created?: bigint;
+  min_height?: bigint;
+  max_secs_after_created?: bigint;
+  max_time?: bigint;
+  max_blocks_after_created?: bigint;
+  max_height?: bigint;
 }
 
 export interface TransactionRecord {
-  confirmed_at_height: number;
-  created_at_time: number;
+  confirmed_at_height: bigint;
+  created_at_time: bigint;
   to_puzzle_hash: string;
-  amount: number;
-  fee_amount: number;
+  amount: bigint;
+  fee_amount: bigint;
   confirmed: boolean;
-  sent: number;
+  sent: bigint;
   spend_bundle: WalletSpendBundle | null;
   additions: CoinsetCoin[];
   removals: CoinsetCoin[];
-  wallet_id: number;
-  sent_to: Array<[string, number, string | null]>;
+  wallet_id: bigint;
+  sent_to: Array<[string, bigint, string | null]>;
   trade_id: string | null;
-  type: number;
+  type: bigint;
   name: string;
   memos: Record<string, string[]>;
   valid_times: ConditionValidTimes;
@@ -55,7 +55,7 @@ export interface PushTransactionsRequest {
   // game/channel keys the wallet does not own, so we must pass sign=false to
   // avoid a "Pubkey <fingerprint> not found (or path/sum hinted to)" error.
   sign?: boolean;
-  fee?: number;
+  fee?: bigint;
   allowUnsynced?: boolean;
 }
 

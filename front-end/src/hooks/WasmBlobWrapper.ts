@@ -19,6 +19,7 @@ import {
   spend_bundle_to_clvm,
 } from '../util';
 import { log } from '../services/log';
+import { jsonStringify } from '../util/jsonSafe';
 import type { CalpokerHandState } from './save';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
 
@@ -108,7 +109,7 @@ export class WasmBlobWrapper {
   rxjsEmitter: NextObserver<WasmEvent> | undefined;
   private eventQueue: CradleEvent[] = [];
   private drainScheduled = false;
-  private pendingBlockNotification: { peak: number; report: WatchReport } | null = null;
+  private pendingBlockNotification: { peak: bigint; report: WatchReport } | null = null;
   launcherProvided: boolean;
   private lastSelectCoinsValue: string | null = null;
   private lastLauncherCoinId: string | null = null;
@@ -129,7 +130,7 @@ export class WasmBlobWrapper {
   lastOutcomeWin: 'win' | 'lose' | 'tie' | undefined = undefined;
   chatMessages: Array<{ text: string; fromAlias: string; timestamp: number; isMine: boolean }> = [];
   onSaveNeeded: (() => void) | null = null;
-  getFee: () => number = () => 0;
+  getFee: () => bigint = () => 0n;
 
   constructor(
     blockchain: BlockchainPoller,
@@ -279,7 +280,7 @@ export class WasmBlobWrapper {
     this.launcherProvided = true;
 
     try {
-      const coin = await this.blockchain.rpc.selectCoins(this.uniqueId, Number(this.amount));
+      const coin = await this.blockchain.rpc.selectCoins(this.uniqueId, this.amount);
       if (!coin) {
         throw new Error('ASSERT_FAIL: selectCoins returned null for launcher parent coin');
       }
@@ -300,13 +301,13 @@ export class WasmBlobWrapper {
 
   private async handleNeedCoinSpend(request: any) {
     try {
-      const offerAmount = -request.amount;
+      const offerAmount = -BigInt(request.amount);
       const extraConditions = (request.conditions || []).map((c: any) => ({
-        opcode: c.opcode,
+        opcode: BigInt(c.opcode),
         args: c.args,
       }));
       const coinIds = request.coin_id ? [request.coin_id] : undefined;
-      const maxHeight = request.max_height as number | undefined;
+      const maxHeight = request.max_height != null ? BigInt(request.max_height) : undefined;
 
       const bundle = await this.blockchain.rpc.createOfferForIds(
         this.uniqueId,
@@ -325,7 +326,7 @@ export class WasmBlobWrapper {
         console.warn('[wasm] createOfferForIds returned offer string; decoding via bech32 WASM path');
         result = this.cradle?.provide_offer_bech32(bundle);
       } else {
-        const bundleJson = typeof bundle === 'string' ? bundle : JSON.stringify(bundle);
+        const bundleJson = typeof bundle === 'string' ? bundle : jsonStringify(bundle);
         result = this.cradle?.provide_coin_spend_bundle(bundleJson);
       }
       this.processResult(result);
@@ -471,7 +472,7 @@ export class WasmBlobWrapper {
           this.activeGameId = null;
         }
       }
-      this.history.push(JSON.stringify(n));
+      this.history.push(jsonStringify(n));
       this.rxjsEmitter?.next({ type: 'notification', data: n });
     } else if ('ReceiveError' in event) {
       this.rxjsEmitter?.next({ type: 'error', error: event.ReceiveError });
@@ -569,7 +570,7 @@ export class WasmBlobWrapper {
     }
   }
 
-  blockNotification(peak: number, blocks: CoinsetOrgBlockSpend[], reportOrUndefined: WatchReport | undefined) {
+  blockNotification(peak: bigint, blocks: CoinsetOrgBlockSpend[], reportOrUndefined: WatchReport | undefined) {
     let block_report = reportOrUndefined;
     if (block_report === undefined) {
       block_report = {
@@ -599,7 +600,7 @@ export class WasmBlobWrapper {
     this.deliverBlockData(peak, block_report);
   }
 
-  private deliverBlockData(peak: number, block_report: WatchReport) {
+  private deliverBlockData(peak: bigint, block_report: WatchReport) {
     try {
       const result = this.cradle?.block_data(peak, block_report);
       this.processResult(result);
