@@ -102,6 +102,9 @@ function deepNumbersToBigInt(value: unknown): unknown {
   return value;
 }
 
+let wcFaultInjected = false;
+export function injectWcFault() { wcFaultInjected = true; }
+
 function isTransientWalletConnectError(err: unknown): boolean {
   const message = getErrorText(err).toLowerCase();
   return (
@@ -118,6 +121,11 @@ async function request<T, D extends object = object>(
   method: ChiaMethod,
   data: D,
 ): Promise<T> {
+  if (wcFaultInjected) {
+    wcFaultInjected = false;
+    throw new Error('[DEBUG] Simulated WalletConnect RPC failure');
+  }
+
   if (!walletConnectState.getClient())
     throw new Error('WalletConnect is not initialized');
   if (!walletConnectState.getSession())

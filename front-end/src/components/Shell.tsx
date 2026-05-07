@@ -42,7 +42,8 @@ import {
   onFenced,
   offFenced,
 } from '../hooks/save';
-import { blobSingleton, destroyBlobSingleton } from '../hooks/blobSingleton';
+import { blobSingleton, destroyBlobSingleton, injectDaemonError } from '../hooks/blobSingleton';
+import { injectWcFault } from '../hooks/JsonRpcContext';
 import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
 import { realBlockchainInfo } from '../hooks/RealBlockchainInterface';
 import { activate, deactivate, getActiveBlockchain } from '../hooks/activeBlockchain';
@@ -1701,14 +1702,40 @@ const Shell = () => {
         </div>
 
         {/* Log tab */}
-        <div style={{ position: 'absolute', inset: 0, padding: '1rem', display: activeTab === 'log' ? 'block' : 'none' }}>
-          {logLines.length > 0 ? (
-            <LogPanel lines={logLines} />
-          ) : (
-            <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
-              No log entries yet
+        <div style={{ position: 'absolute', inset: 0, padding: '1rem', display: activeTab === 'log' ? 'flex' : 'none', flexDirection: 'column', gap: '0.5rem' }}>
+          <details className='shrink-0 rounded-md border border-canvas-border bg-canvas-bg-subtle'>
+            <summary className='px-3 py-1.5 text-xs font-semibold text-canvas-text-contrast cursor-pointer select-none'>
+              Debug
+            </summary>
+            <div className='flex flex-wrap gap-2 px-3 pb-2 pt-1'>
+              <button
+                onClick={() => { injectWcFault(); log('[debug] WC fault armed — next RPC call will fail'); }}
+                disabled={blockchainType !== 'walletconnect'}
+                className='px-3 py-1.5 text-xs font-medium rounded-md border border-alert-solid text-alert-text hover:bg-alert-solid hover:text-primary-on-primary transition-colors disabled:opacity-40 disabled:cursor-default'
+              >
+                Inject WC Fault
+              </button>
+              <button
+                onClick={() => {
+                  const ok = injectDaemonError();
+                  log(ok ? '[debug] Daemon error injected' : '[debug] No active session — daemon error not injected');
+                }}
+                disabled={!blobSingleton}
+                className='px-3 py-1.5 text-xs font-medium rounded-md border border-alert-solid text-alert-text hover:bg-alert-solid hover:text-primary-on-primary transition-colors disabled:opacity-40 disabled:cursor-default'
+              >
+                Inject Daemon Error
+              </button>
             </div>
-          )}
+          </details>
+          <div className='flex-1 min-h-0'>
+            {logLines.length > 0 ? (
+              <LogPanel lines={logLines} />
+            ) : (
+              <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
+                No log entries yet
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

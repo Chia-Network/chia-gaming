@@ -18,6 +18,15 @@ export function setInitStarted(value: boolean) {
     initStarted = value;
 }
 
+export function injectDaemonError(): boolean {
+    if (!blobSingleton) return false;
+    blobSingleton.rxjsEmitter?.next({
+        type: 'error',
+        error: '[DEBUG] Simulated daemon application error',
+    });
+    return true;
+}
+
 export function destroyBlobSingleton(): void {
     if (blobSingleton) {
         blobSingleton.cleanup();
