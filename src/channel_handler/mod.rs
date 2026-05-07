@@ -1711,9 +1711,7 @@ impl ChannelHandler {
         .into_gen()?;
 
         // SOLUTION: from the preemption source (our newer state).
-        let solution = preempt_source
-            .coin
-            .make_unroll_puzzle_solution(env)?;
+        let solution = preempt_source.coin.make_unroll_puzzle_solution(env)?;
 
         // SIGNATURE: aggregate of both halves from the preemption source.
         let our_half = preempt_source.coin.get_unroll_coin_signature()?;

@@ -465,8 +465,16 @@ impl Referee {
             (waiter_share.clone(), mover_share.clone())
         };
 
-        let mover_payout_ph = if mover_share > Amount::default() { Some(my_ph) } else { None };
-        let waiter_payout_ph = if waiter_share > Amount::default() { Some(their_ph) } else { None };
+        let mover_payout_ph = if mover_share > Amount::default() {
+            Some(my_ph)
+        } else {
+            None
+        };
+        let waiter_payout_ph = if waiter_share > Amount::default() {
+            Some(their_ph)
+        } else {
+            None
+        };
 
         let mut aggregate_signature = Aggsig::default();
         if my_share > Amount::default() {
