@@ -1,5 +1,5 @@
 export interface TradeSummary {
-  fees: number;
+  fees: bigint;
   infos: Record<
     string,
     {
@@ -23,6 +23,6 @@ export interface TradeSummary {
       type: 'singleton';
     }
   >;
-  offered: Record<string, number>;
-  requested: Record<string, number>;
+  offered: Record<string, bigint>;
+  requested: Record<string, bigint>;
 }

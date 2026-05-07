@@ -324,7 +324,7 @@ const Shell = () => {
   const [trackerAlert, setTrackerAlertRaw] = useState(() => getSavedTrackerAlert());
   const setTrackerAlert = useCallback((v: boolean) => { setTrackerAlertRaw(v); saveTrackerAlert(v); }, []);
   const [iframeUrl, setIframeUrl] = useState('about:blank');
-  const [balance, setBalance] = useState<number | undefined>();
+  const [balance, setBalance] = useState<bigint | undefined>();
 
   const [blockchainType, setBlockchainType] = useState<'simulator' | 'walletconnect' | undefined>(() => getBlockchainType());
   const activeBlockchainRef = useRef<InternalBlockchainInterface | null>(null);
@@ -335,15 +335,15 @@ const Shell = () => {
   const [connecting, setConnecting] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState('');
   const wcAbortRef = useRef(false);
-  const [defaultFee, setDefaultFee] = useState<number>(() => getDefaultFee());
+  const [defaultFee, setDefaultFee] = useState<bigint>(() => getDefaultFee());
   const [feeUnit, setFeeUnit] = useState<'mojo' | 'xch'>(() => getFeeUnit());
   const [feeEditing, setFeeEditing] = useState(false);
   const [feeInput, setFeeInput] = useState('');
   const feeInputRef = useRef<HTMLInputElement>(null);
   const [copied, setCopied] = useState(false);
 
-  const mojosToXchStr = (mojos: number): string => {
-    const s = String(mojos).padStart(13, '0');
+  const mojosToXchStr = (mojos: bigint): string => {
+    const s = mojos.toString().padStart(13, '0');
     const whole = s.slice(0, -12).replace(/^0+/, '') || '0';
     const frac = s.slice(-12).replace(/0+$/, '');
     return frac ? `${whole}.${frac}` : whole;
@@ -354,22 +354,20 @@ const Shell = () => {
     return String(defaultFee);
   }, [defaultFee, feeUnit]);
 
-  const parseFeeInput = useCallback((raw: string): number | null => {
-    if (/^\s*$/.test(raw)) return 0;
+  const parseFeeInput = useCallback((raw: string): bigint | null => {
+    if (/^\s*$/.test(raw)) return 0n;
     const trimmed = raw.trim();
     if (feeUnit === 'xch') {
       if (!/^\d+(\.\d+)?$/.test(trimmed)) return null;
       const [whole, frac = ''] = trimmed.split('.');
       if (frac.length > 12) return null;
       const mojoStr = whole + frac.padEnd(12, '0');
-      const mojos = Number(mojoStr);
-      if (!Number.isSafeInteger(mojos) || mojos < 0) return null;
-      return mojos;
+      try { const mojos = BigInt(mojoStr); return mojos < 0n ? null : mojos; }
+      catch { return null; }
     }
     if (!/^\d+$/.test(trimmed)) return null;
-    const n = Number(trimmed);
-    if (!Number.isSafeInteger(n) || n < 0) return null;
-    return n;
+    try { const n = BigInt(trimmed); return n < 0n ? null : n; }
+    catch { return null; }
   }, [feeUnit]);
 
   const feeInputValid = parseFeeInput(feeInput) !== null;

@@ -1,9 +1,7 @@
 export interface GetNextAddressRequest {
-  walletId: number;
+  walletId: bigint;
   newAddress: boolean;
 }
 
-export interface GetNextAddressResponse {
-  address: string;
-  walletId: number;
-}
+// The wallet's transformResponse extracts just the address string.
+export type GetNextAddressResponse = string;

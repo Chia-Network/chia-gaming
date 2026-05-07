@@ -31,7 +31,12 @@ export type CradleEvent =
   | { Log: string }
   | { CoinSolutionRequest: string }
   | { ReceiveError: string }
-  | { NeedCoinSpend: unknown }
+  | { NeedCoinSpend: {
+      amount: bigint;
+      conditions: Array<{ opcode: bigint; args: string[] }>;
+      coin_id?: string;
+      max_height?: bigint;
+    } }
   | { NeedLauncherCoin: boolean }
   | { WatchCoin: { coin_name: string; coin_string: string } };
 
@@ -186,7 +191,7 @@ export interface WasmConnection {
   get_channel_puzzle_hash: (cid: number) => string | null;
   new_block: (
     cid: number,
-    height: number,
+    height: bigint,
     additions: string[],
     removals: string[],
     timed_out: string[],
@@ -230,9 +235,9 @@ export interface WasmConnection {
     solution_hex: string | undefined,
   ) => WasmResult | undefined;
   deliver_message: (cid: number, inbound_message: Uint8Array) => WasmResult | undefined;
-  cradle_amount: (cid: number) => number;
-  cradle_our_share: (cid: number) => number;
-  cradle_their_share: (cid: number) => number;
+  cradle_amount: (cid: number) => bigint;
+  cradle_our_share: (cid: number) => bigint;
+  cradle_their_share: (cid: number) => bigint;
   get_identity: (cid: number) => IChiaIdentity;
   get_game_state_id: (cid: number) => string | undefined;
   serialize_cradle: (cid: number) => Uint8Array;
@@ -272,16 +277,16 @@ export class ChiaGame {
     return this.wasm.cancel_proposal(this.cradle, game_id);
   }
 
-  amount(): number {
-    return this.wasm.cradle_amount(this.cradle);
+  amount(): bigint {
+    return BigInt(this.wasm.cradle_amount(this.cradle));
   }
 
-  our_share(): number {
-    return this.wasm.cradle_our_share(this.cradle);
+  our_share(): bigint {
+    return BigInt(this.wasm.cradle_our_share(this.cradle));
   }
 
-  their_share(): number {
-    return this.wasm.cradle_their_share(this.cradle);
+  their_share(): bigint {
+    return BigInt(this.wasm.cradle_their_share(this.cradle));
   }
 
   get_game_state_id(): string | undefined {
@@ -372,7 +377,7 @@ export class ChiaGame {
     return maybeGet(this.cradle);
   }
 
-  block_data(block_number: number, block_data: WatchReport): WasmResult | undefined {
+  block_data(block_number: bigint, block_data: WatchReport): WasmResult | undefined {
     const arrays = [block_data.created_watched, block_data.deleted_watched, block_data.timed_out];
     for (const arr of arrays) {
       if (!Array.isArray(arr)) {
@@ -551,7 +556,7 @@ export class CalpokerOutcome {
 }
 
 export interface BlockchainReport {
-  peak: number;
+  peak: bigint;
   block: CoinsetOrgBlockSpend[] | undefined;
   report: WatchReport | undefined;
 }
@@ -562,29 +567,29 @@ export interface BlockchainInboundAddressResult {
 
 export interface ConnectionField {
   label: string;
-  default: number;
+  default: bigint;
 }
 
 export interface ConnectionSetup {
   qrUri: string;
   skipQr?: boolean;
   fields?: { balance?: ConnectionField };
-  finalize(values?: { balance?: number }): Promise<void>;
+  finalize(values?: { balance?: bigint }): Promise<void>;
 }
 
 export interface InternalBlockchainInterface {
-  spend(blob: string, spendBundle: unknown, source?: string, fee?: number): Promise<string>;
+  spend(blob: string, spendBundle: unknown, source?: string, fee?: bigint): Promise<string>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
-  getBalance(): Promise<number>;
+  getBalance(): Promise<bigint>;
   getPuzzleAndSolution(coin: string): Promise<string[] | null>;
-  selectCoins(uniqueId: string, amount: number): Promise<string | null>;
-  getHeightInfo(): Promise<number>;
+  selectCoins(uniqueId: string, amount: bigint): Promise<string | null>;
+  getHeightInfo(): Promise<bigint>;
   createOfferForIds(
     uniqueId: string,
-    offer: { [walletId: string]: number },
-    extraConditions?: Array<{ opcode: number; args: string[] }>,
+    offer: { [walletId: string]: bigint },
+    extraConditions?: Array<{ opcode: bigint; args: string[] }>,
     coinIds?: string[],
-    maxHeight?: number,
+    maxHeight?: bigint,
   ): Promise<any | null>;
   getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]>;
   registerCoins(names: string[]): Promise<void>;

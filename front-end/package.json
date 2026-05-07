@@ -7,7 +7,7 @@
   "type": "module",
   "packageManager": "pnpm@10.33.0",
   "scripts": {
-    "build": "pnpm exec tsc --project . && pnpm exec esbuild dist/js/index.js --bundle --outfile=dist/js/index-rollup.js && pnpm exec tailwindcss -i ./src/index.css -o ./dist/css/index.css",
+    "build": "pnpm exec tsc --project . && pnpm exec esbuild dist/js/index.js --bundle --sourcemap --outfile=dist/js/index-rollup.js && pnpm exec tailwindcss -i ./src/index.css -o ./dist/css/index.css",
     "test": "pnpm exec tsc -p tsconfig.json --noEmit && pnpm exec jest --silent=false --useStderr --ci"
   },
   "dependencies": {
@@ -41,6 +41,12 @@
     "tailwindcss": "4.1.17",
     "ts-jest": "29.4.1",
     "typescript": "5.9.3"
+  },
+  "pnpm": {
+    "patchedDependencies": {
+      "@walletconnect/sign-client@2.23.9": "patches/@walletconnect__sign-client@2.23.9.patch",
+      "@walletconnect/safe-json@1.0.2": "patches/@walletconnect__safe-json@1.0.2.patch"
+    }
   },
   "jest": {
     "preset": "ts-jest",

@@ -2,11 +2,11 @@ export interface CoinRecord {
   coin: {
     parentCoinInfo: string;
     puzzleHash: string;
-    amount: number;
+    amount: bigint;
   };
-  confirmedBlockIndex: number;
-  spentBlockIndex: number;
+  confirmedBlockIndex: bigint;
+  spentBlockIndex: bigint;
   spent: boolean;
   coinbase: boolean;
-  timestamp: number;
+  timestamp: bigint;
 }
