@@ -596,6 +596,8 @@ const Shell = () => {
           if (save.log) setLogLines(save.log);
           if (save.chatMessages) setChatMessages(save.chatMessages);
         } else {
+          destroyBlobSingleton();
+          clearSession();
           setHistory([]);
           setChatMessages([]);
           setActiveTab('game');
@@ -936,16 +938,6 @@ const Shell = () => {
     setSessionPhase(phase);
     setSessionError(!!hasError);
   }, []);
-
-  useEffect(() => {
-    if (sessionPhase !== 'resolved') return;
-    clearSession();
-    sessionSaveRef.current = null;
-    destroyBlobSingleton();
-    activePairingTokenRef.current = null;
-    sessionStartedRef.current = false;
-    trackerConnRef.current?.setAvailable(true);
-  }, [sessionPhase]);
 
   useEffect(() => {
     trackerConnRef.current?.setAvailable(sessionPhase === 'none' || sessionPhase === 'resolved');
@@ -1296,7 +1288,7 @@ const Shell = () => {
               }
               break;
             case 'game':
-              if (sessionPhase === 'none') {
+              if (sessionPhase === 'none' || sessionPhase === 'resolved') {
                 dotColor = 'var(--color-canvas-text-subtle)';
               } else if (sessionError) {
                 dotColor = 'var(--color-alert-solid)';
@@ -1603,6 +1595,7 @@ const Shell = () => {
             {keepSession ? (
               <GameSessionErrorBoundary>
                 <GameSession
+                  key={gameParams.pairingToken}
                   params={gameParams}
                   peerConn={peerConn}
                   trackerLiveness={trackerLiveness}

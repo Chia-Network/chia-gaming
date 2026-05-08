@@ -457,13 +457,14 @@ function hasWalletConnectStorage(): boolean {
 }
 
 /**
- * Returns the current state if there's anything worth resuming — our own
- * game state OR leftover WalletConnect storage from a partial connection.
- * Callers check buildNonce themselves.
+ * Returns the current state if there's anything worth resuming — a
+ * serialized cradle or leftover WalletConnect storage from a partial
+ * connection. `blockchainType` alone (preserved across session clears)
+ * does not count as resumable. Callers check buildNonce themselves.
  */
 export function peekSession(): SessionState | null {
   const state = loadState();
-  if (state.blockchainType || state.serializedCradle) return state;
+  if (state.blockchainType || state.serializedCradle || state.pairingToken) return state;
   if (hasWalletConnectStorage()) return state;
   return null;
 }
@@ -486,6 +487,7 @@ export function clearSession(): void {
     unreadGame: prev.unreadGame,
     walletAlert: prev.walletAlert,
     trackerAlert: prev.trackerAlert,
+    blockchainType: prev.blockchainType,
   };
   flushToLocalStorage();
 }
