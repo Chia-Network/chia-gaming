@@ -597,6 +597,7 @@ const Shell = () => {
           if (save.chatMessages) setChatMessages(save.chatMessages);
         } else {
           setHistory([]);
+          setChatMessages([]);
           setActiveTab('game');
         }
       } else {
@@ -713,9 +714,7 @@ const Shell = () => {
         onAck: (_ack: number) => { markPeerActive(); },
         onKeepalive: () => { markPeerActive(); },
         onClosed: () => {
-          console.log('[Shell] tracker connection closed');
-          trackerWsUpRef.current = false;
-          lastTrackerActivityRef.current = 0;
+          console.log('[Shell] peer pairing ended');
           markPeerInactive();
         },
         onTrackerDisconnected: () => {
@@ -942,21 +941,23 @@ const Shell = () => {
     if (sessionPhase !== 'resolved') return;
     clearSession();
     sessionSaveRef.current = null;
-  }, [sessionPhase]);
-
-  const closeResolvedSession = useCallback(() => {
     destroyBlobSingleton();
-    setGameParams(null);
-    setPeerConn(null);
     activePairingTokenRef.current = null;
-    setSessionPhase('none');
-    setSessionError(false);
+    sessionStartedRef.current = false;
     trackerConnRef.current?.setAvailable(true);
-  }, []);
+  }, [sessionPhase]);
 
   useEffect(() => {
     trackerConnRef.current?.setAvailable(sessionPhase === 'none' || sessionPhase === 'resolved');
   }, [sessionPhase]);
+
+  // Cascade rule: off-chain session without a peer must immediately go on-chain.
+  useEffect(() => {
+    if (peerConnected === false && sessionPhase === 'off-chain') {
+      console.log('[Shell] peer lost while off-chain, auto going on-chain');
+      blobSingleton?.goOnChain();
+    }
+  }, [peerConnected, sessionPhase]);
 
   const handleTabChange = useCallback((tabId: TabId) => {
     setActiveTab(tabId);
@@ -1098,26 +1099,6 @@ const Shell = () => {
     }
   }, [sessionPhase, doDisconnectWallet]);
 
-  const doAbandonSession = useCallback(() => {
-    destroyBlobSingleton();
-    clearSession();
-    setGameParams(null);
-    setPeerConn(null);
-    sessionSaveRef.current = null;
-    activePairingTokenRef.current = null;
-    setSessionPhase('none');
-    setSessionError(false);
-    trackerConnRef.current?.setAvailable(true);
-  }, []);
-
-  const handleAbandonSession = useCallback(() => {
-    setConfirmDialog({
-      title: 'Abandon session?',
-      body: 'You will lose any funds locked in this channel. This cannot be undone. Are you sure you want to abandon this session?',
-      onConfirm: () => { setConfirmDialog(null); doAbandonSession(); },
-    });
-  }, [doAbandonSession]);
-
   const doDisconnectTracker = useCallback(() => {
     trackerConnRef.current?.disconnect();
     trackerConnRef.current = null;
@@ -1146,21 +1127,9 @@ const Shell = () => {
     }
   }, [peerConnected, sessionPhase, doDisconnectTracker]);
 
-  const doEndPeerConnection = useCallback(() => {
+  const handleEndPeerConnection = useCallback(() => {
     trackerConnRef.current?.close();
   }, []);
-
-  const handleEndPeerConnection = useCallback(() => {
-    if (sessionPhase === 'off-chain') {
-      setConfirmDialog({
-        title: 'End peer connection?',
-        body: 'This will force your game on-chain.',
-        onConfirm: () => { setConfirmDialog(null); doEndPeerConnection(); },
-      });
-    } else {
-      doEndPeerConnection();
-    }
-  }, [sessionPhase, doEndPeerConnection]);
 
   const handleReconnect = useCallback(() => {
     if (!blockchainType) return;
@@ -1655,35 +1624,6 @@ const Shell = () => {
               </div>
             )}
           </div>
-          {sessionPhase !== 'none' && (
-            <div className='flex items-center gap-2 px-3 py-1.5 border-t border-canvas-border bg-canvas-bg shrink-0 text-xs'>
-              {sessionPhase === 'resolved' ? (
-                <button
-                  onClick={closeResolvedSession}
-                  className='ml-auto px-2 py-0.5 rounded border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors'
-                >
-                  Close Session
-                </button>
-              ) : (
-                <>
-                  {peerConnected && (
-                    <button
-                      onClick={handleEndPeerConnection}
-                      className='px-2 py-0.5 rounded border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors'
-                    >
-                      End Peer
-                    </button>
-                  )}
-                  <button
-                    onClick={handleAbandonSession}
-                    className='ml-auto px-2 py-0.5 rounded border border-alert-solid text-alert-text hover:bg-alert-solid hover:text-primary-on-primary transition-colors'
-                  >
-                    Abandon Session
-                  </button>
-                </>
-              )}
-            </div>
-          )}
         </div>
 
         {/* Chat tab */}
@@ -1692,6 +1632,9 @@ const Shell = () => {
             messages={chatMessages}
             onSend={sendChat}
             myAlias={gameParams?.myAlias ?? 'You'}
+            peerConnected={!!peerConnected}
+            onEndPeer={handleEndPeerConnection}
+            opponentAlias={gameParams?.opponentAlias}
           />
         </div>
 

@@ -469,7 +469,24 @@ export function peekSession(): SessionState | null {
 }
 
 export function clearSession(): void {
-  cached = freshState();
+  const prev = loadState();
+  cached = {
+    version: prev.version,
+    buildNonce: prev.buildNonce,
+    playerId: prev.playerId,
+    sessionId: prev.sessionId,
+    alias: prev.alias,
+    theme: prev.theme,
+    defaultFee: prev.defaultFee,
+    feeUnit: prev.feeUnit,
+    trackerUrl: prev.trackerUrl,
+    savedGames: prev.savedGames,
+    activeTab: prev.activeTab,
+    unreadChat: prev.unreadChat,
+    unreadGame: prev.unreadGame,
+    walletAlert: prev.walletAlert,
+    trackerAlert: prev.trackerAlert,
+  };
   flushToLocalStorage();
 }
 

@@ -437,17 +437,6 @@ function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'c
     sendWs(ws, 'error', { error: 'Unknown challenger. Rejoin lobby and retry.' });
     return;
   }
-  if (senderId && lobby.getPairingForPlayer(senderId)) {
-    logTracker('challenge_drop_sender_playing', { sender_id: senderId, target_id });
-    sendWs(ws, 'error', { error: 'You are already in a game.' });
-    return;
-  }
-  if (lobby.getPairingForPlayer(target_id)) {
-    logTracker('challenge_drop_target_playing', { sender_id: senderId, target_id });
-    sendWs(ws, 'error', { error: 'That player is already in a game.' });
-    sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
-    return;
-  }
   if (!hasActiveGameConnection(target_id)) {
     logTracker('challenge_drop_target_no_game_conn', { sender_id: senderId, target_id });
     sendWs(ws, 'error', { error: 'Peer is not connected.' });
@@ -516,6 +505,16 @@ function onChallengeAccept(ws: WebSocket, msg: Extract<LobbyInboundMessage, { ty
   }
 
   lobby.removeChallenge(challenge_id);
+  for (const pid of [challenge.from_id, challenge.target_id]) {
+    const old = lobby.getPairingForPlayer(pid);
+    if (old) {
+      const oldPeer = old.playerA_id === pid ? old.playerB_id : old.playerA_id;
+      sendGameEvent(oldPeer, 'closed', {});
+      sendGameEvent(pid, 'closed', {});
+      lobby.removePairing(old.token);
+      logTracker('pairing_removed_on_rematch', { token: old.token, player_id: pid, old_peer_id: oldPeer });
+    }
+  }
   const pairing = lobby.createPairing(
     challenge.from_id,
     challenge.target_id,

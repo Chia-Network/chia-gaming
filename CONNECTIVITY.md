@@ -188,7 +188,6 @@ Specific rules:
 |--------|----------|---------|-------------|
 | Go on-chain | When session = off-chain | "Are you sure? Your game will be resolved on the blockchain." | Session transitions to on-chain. Game messages stop. Chat continues. |
 | Clean shutdown | Between hands only, requires peer cooperation | None (it's the graceful path) | Cooperative close. Channel resolves cleanly. |
-| Abandon | When session exists | **"You will lose any funds locked in this channel. This cannot be undone."** | WASM cradle torn down. Session save wiped. Funds at risk. |
 
 ---
 
@@ -228,11 +227,16 @@ state (`ResolvedClean`, `ResolvedUnrolled`, `ResolvedStale`, or `Failed`):
 
 1. The session is done.
 2. Shell is notified (via callback from `useGameSession`).
-3. The session save is cleared.
+3. Internal cleanup runs automatically: session save is cleared, WASM cradle
+   is destroyed, `sessionStartedRef` and `activePairingTokenRef` are reset.
 4. Shell tells the tracker/lobby that the player is available.
 5. The player can accept new challenges.
-6. The old peer connection is not forcibly closed — chat can continue until a
-   new match replaces the pairing or either side sends `close()`.
+6. The game UI remains visible showing the resolved state until a new match
+   replaces it. There is no manual "Close Session" button.
+7. The peer connection is not forcibly closed — chat can continue until a
+   new match replaces the pairing or either side disconnects.
+8. Chat messages persist across session boundaries and are only cleared
+   when a new pairing starts (new match).
 
 ---
 
@@ -317,10 +321,14 @@ iframe-side protocol changes are needed — it is read-only for this signal.
   the `onSessionPhaseChange` callback. Shell tracks this as `sessionPhase`
   and `sessionError` state. (`GameSession.tsx`, `Shell.tsx`)
 
-- **Terminal session detection and cleanup**: When `sessionPhase` becomes
-  `'resolved'` (derived from terminal channel states `ResolvedClean`,
+- **Terminal session detection and auto-cleanup**: When `sessionPhase`
+  becomes `'resolved'` (derived from terminal channel states `ResolvedClean`,
   `ResolvedUnrolled`, `ResolvedStale`, or `Failed`), Shell automatically
-  clears the session save and marks the player as available.
+  clears the session save, destroys the WASM cradle, resets internal refs
+  (`sessionStartedRef`, `activePairingTokenRef`), and marks the player as
+  available. The game UI stays visible showing the resolved state until a
+  new match replaces it. Chat persists across session boundaries and is
+  only cleared when a new pairing starts.
 
 - **Game message filtering on-chain**: `WasmBlobWrapper` has an `onChain`
   flag. When set, `deliverMessage()` acks but does not deliver inbound game
@@ -338,10 +346,6 @@ iframe-side protocol changes are needed — it is read-only for this signal.
   status to `'busy'` or `'waiting'` and broadcasts a lobby update.
   Challenges to/from busy players are rejected. (`lobby-service/src/index.ts`)
 
-- **Session abandon (emergency exit)**: An "Abandon Session" button in the
-  Game tab tears down the WASM cradle, wipes the session save, and accepts
-  fund loss. Gated by a confirmation dialog.
-
 - **Tracker retry budget**: `TrackerConnection` now has a
   `MAX_RECONNECT_ATTEMPTS` budget. After the budget is exhausted, the
   tracker is declared permanently dead and `onClosed` fires.
@@ -350,9 +354,14 @@ iframe-side protocol changes are needed — it is read-only for this signal.
   tracker tab header allows explicit tracker disconnect. Gated by a cascade
   warning if peer/session would be affected.
 
-- **User-initiated peer disconnect**: An "End Peer" button in the Game tab
-  action bar sends `close()` via the tracker. Gated by a cascade warning
-  if an off-chain session would be forced on-chain.
+- **User-initiated peer disconnect**: An "End Peer" button in the Chat tab
+  sends `close()` via the tracker, ending the pairing. If the session is
+  off-chain, losing the peer automatically cascades to on-chain.
+
+- **Automatic peer-loss cascade**: When the peer is lost (via `close()`,
+  liveness timeout, or tracker notification) while the session is off-chain,
+  Shell automatically calls `goOnChain()` on the WASM cradle. No user
+  prompt — this is the cascade rule: off-chain + no peer = on-chain.
 
 - **Cascade warning dialogs**: Confirmation dialogs warn before actions
   that would cascade (e.g., disconnecting tracker while peer is up and
@@ -429,10 +438,10 @@ The frontend uses `game_finished` from `other_params` and the current
 
 - **Disconnect Tracker**: In the tracker tab header strip, right-aligned
   next to the "Connected to {trackerOrigin}" text.
-- **End Peer**: In the Game tab action bar (bottom of the game pane),
-  visible when a peer is connected.
-- **Abandon Session**: In the Game tab action bar (bottom of the game
-  pane), visible when any session exists. Styled as a destructive action.
+- **Disconnect**: In the Chat tab header bar, visible when a peer is
+  connected. Ends the pairing via the tracker; peer loss cascades to
+  on-chain automatically if a session is active. The header also shows
+  the opponent's alias when connected.
 
 ### Not yet implemented
 
