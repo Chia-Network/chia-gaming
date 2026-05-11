@@ -4,13 +4,13 @@ import { TradeStatus } from './TradeStatus';
 import { TradeSummary } from './TradeSummary';
 
 export interface TradeRecord {
-  acceptedAtTime: number | null;
+  acceptedAtTime: bigint | null;
   coinsOfInterest: Coin[];
-  confirmedAtIndex: number;
-  createdAtTime: number;
+  confirmedAtIndex: bigint;
+  createdAtTime: bigint;
   isMyOffer: boolean;
-  pending: Record<string, number>;
-  sent: number;
+  pending: Record<string, bigint>;
+  sent: bigint;
   sentTo: Peer[];
   status: TradeStatus;
   summary: TradeSummary;

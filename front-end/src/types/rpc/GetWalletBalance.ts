@@ -1,7 +1,7 @@
 import { WalletBalance } from '../WalletBalance';
 
 export interface GetWalletBalanceRequest {
-  walletId?: number;
+  walletId?: bigint;
 }
 
 export type GetWalletBalanceResponse = WalletBalance;

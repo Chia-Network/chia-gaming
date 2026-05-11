@@ -1,4 +1,4 @@
-export type PlayerStatus = 'waiting' | 'playing';
+export type PlayerStatus = 'waiting' | 'playing' | 'busy';
 
 export interface Player {
   id: string;

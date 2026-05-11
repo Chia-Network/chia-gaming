@@ -5,6 +5,9 @@ interface ChatPanelProps {
   messages: ChatMessage[];
   onSend: (text: string) => void;
   myAlias: string;
+  peerConnected?: boolean;
+  onEndPeer?: () => void;
+  opponentAlias?: string;
 }
 
 function formatTime(ts: number): string {
@@ -12,7 +15,7 @@ function formatTime(ts: number): string {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-const ChatPanel: React.FC<ChatPanelProps> = ({ messages, onSend, myAlias }) => {
+const ChatPanel: React.FC<ChatPanelProps> = ({ messages, onSend, myAlias, peerConnected, onEndPeer, opponentAlias }) => {
   const [draft, setDraft] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -39,6 +42,21 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ messages, onSend, myAlias }) => {
 
   return (
     <div className='flex flex-col h-full'>
+      <div className='flex-shrink-0 flex items-center justify-between px-4 py-1.5 border-b border-canvas-line bg-canvas-bg-subtle text-sm'>
+        <span className='text-canvas-text'>
+          {peerConnected
+            ? (opponentAlias ? `Chatting with ${opponentAlias}` : 'Peer connected')
+            : 'No peer connected'}
+        </span>
+        {peerConnected && onEndPeer && (
+          <button
+            onClick={onEndPeer}
+            className='px-2 py-0.5 rounded border border-canvas-border text-canvas-text text-xs hover:bg-canvas-bg-hover transition-colors'
+          >
+            Disconnect
+          </button>
+        )}
+      </div>
       {/* Message list */}
       <div
         ref={scrollRef}

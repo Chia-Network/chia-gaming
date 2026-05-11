@@ -1,12 +1,13 @@
 export interface SelectCoinsRequest {
-  walletId: number;
-  amount: number | string;
+  walletId: bigint;
+  amount: bigint;
+  allowUnsynced?: boolean;
 }
 
 export interface SelectCoinsCoin {
   parentCoinInfo: string;
   puzzleHash: string;
-  amount: number;
+  amount: bigint;
 }
 
 export interface SelectCoinsResponse {

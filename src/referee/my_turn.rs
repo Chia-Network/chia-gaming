@@ -20,7 +20,9 @@ use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs,
     OnChainRefereeMoveData, RefereePuzzleArgs, StateUpdateMoveArgs,
 };
-use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RMFixed};
+use crate::referee::types::{
+    GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RMFixed, ValidationInfoHash,
+};
 use crate::referee::Referee;
 
 // Contains a state of the game for use in currying the coin puzzle or for
@@ -178,7 +180,7 @@ impl MyTurnReferee {
         their_reward_puzzle_hash: &PuzzleHash,
         their_reward_payout_signature: &Aggsig,
         reward_puzzle_hash: &PuzzleHash,
-        nonce: usize,
+        nonce: u64,
         agg_sig_me_additional_data: &Hash,
         state_number: usize,
     ) -> Result<(Self, PuzzleHash), Error> {
@@ -297,17 +299,17 @@ impl MyTurnReferee {
             after_args: new_puzzle_args.clone(),
         });
 
-        let new_state = TheirTurnRefereeGameState::AfterOurTurn {
-            their_turn_game_handler: game_handler.clone(),
+        let new_state = TheirTurnRefereeGameState {
+            game_handler: game_handler.clone(),
             their_turn_validation_program: my_turn_result
                 .incoming_move_state_update_program
                 .clone(),
-            my_turn_validation_program: my_turn_result.outgoing_move_state_update_program.clone(),
-            state_after_our_turn: new_state.clone(),
-            state_preceding_our_turn: current_state.clone(),
+            slash_validation_program: my_turn_result.outgoing_move_state_update_program.clone(),
+            current_state: new_state.clone(),
+            slash_state: current_state.clone(),
             create_this_coin: current_puzzle_args,
             spend_this_coin: new_puzzle_args,
-            move_spend,
+            move_spend: Some(move_spend),
         };
 
         let new_parent = MyTurnReferee {
@@ -397,10 +399,10 @@ impl MyTurnReferee {
             result.outgoing_move_state_update_program.clone(),
             state_to_update.clone(),
         );
-        let validation_info_hash = if result.waiting_handler.is_some() {
-            Some(v.hash().clone())
+        let validation_program_hash = if result.waiting_handler.is_some() {
+            ValidationInfoHash::Hash(v.hash().clone())
         } else {
-            None
+            ValidationInfoHash::None
         };
         let game_move_details = GameMoveDetails {
             basic: GameMoveStateInfo {
@@ -408,20 +410,15 @@ impl MyTurnReferee {
                 mover_share: result.mover_share.clone(),
                 max_move_size: result.max_move_size,
             },
-            validation_info_hash,
+            validation_program_hash,
         };
-        let is_initial = matches!(self.state.as_ref(), MyTurnRefereeGameState::Initial { .. });
-        let offchain_prev_hash = if is_initial {
-            None
-        } else {
-            ref_puzzle_args.game_move.validation_info_hash.clone()
-        };
+        let prev_hash = ref_puzzle_args.game_move.validation_program_hash.clone();
         let offchain_puzzle_args = Rc::new(RefereePuzzleArgs {
             mover_pubkey: self.fixed.their_referee_pubkey.clone(),
             waiter_pubkey: self.fixed.my_identity.public_key.clone(),
             game_move: game_move_details.clone(),
             validation_program: result.outgoing_move_state_update_program.clone(),
-            previous_validation_info_hash: offchain_prev_hash,
+            previous_validation_info_hash: prev_hash.clone(),
             ..ref_puzzle_args.clone()
         });
         let new_state_following_my_move = self.run_validator_for_my_move(
@@ -436,7 +433,7 @@ impl MyTurnReferee {
             waiter_pubkey: self.fixed.my_identity.public_key.clone(),
             game_move: game_move_details.clone(),
             validation_program: result.outgoing_move_state_update_program.clone(),
-            previous_validation_info_hash: ref_puzzle_args.game_move.validation_info_hash.clone(),
+            previous_validation_info_hash: prev_hash,
             ..ref_puzzle_args.clone()
         });
 

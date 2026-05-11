@@ -5,11 +5,11 @@ import { CHAIN_ID } from './env';
 export enum ChiaMethod {
   GetWallets = 'chia_getWallets',
   GetWalletBalance = 'chia_getWalletBalance',
-  GetCurrentAddress = 'chia_getCurrentAddress',
+  GetNextAddress = 'chia_getNextAddress',
   GetHeightInfo = 'chia_getHeightInfo',
   SelectCoins = 'chia_selectCoins',
   CreateOfferForIds = 'chia_createOfferForIds',
-  WalletPushTx = 'chia_walletPushTx',
+  PushTransactions = 'chia_pushTransactions',
   CreateNewRemoteWallet = 'chia_createNewRemoteWallet',
   RegisterRemoteCoins = 'chia_registerRemoteCoins',
   GetCoinRecordsByNames = 'chia_getCoinRecordsByNames',

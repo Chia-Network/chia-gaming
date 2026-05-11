@@ -45,7 +45,6 @@ pub struct ChannelHandlerUnrollSpendInfo {
 
 pub struct ChannelHandlerEnv<'a> {
     pub allocator: &'a mut AllocEncoder,
-    pub unroll_metapuzzle: Puzzle,
     pub unroll_puzzle: Puzzle,
 
     pub referee_coin_puzzle: Puzzle,
@@ -63,14 +62,12 @@ impl<'a> ChannelHandlerEnv<'a> {
             allocator,
             "clsp/unroll/unroll_puzzle_state_channel_unrolling.hex",
         )?;
-        let unroll_metapuzzle = read_hex_puzzle(allocator, "clsp/unroll/unroll_meta_puzzle.hex")?;
         let standard_puzzle = get_standard_coin_puzzle(allocator)?;
         let referee_coin_puzzle_hash = referee_coin_puzzle.sha256tree(allocator);
         Ok(ChannelHandlerEnv {
             allocator,
             referee_coin_puzzle,
             referee_coin_puzzle_hash,
-            unroll_metapuzzle,
             unroll_puzzle,
             standard_puzzle,
             agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),

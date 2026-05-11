@@ -13,8 +13,8 @@ export class CoinStateMonitor {
   private registeredCoinNames = new Set<string>();
   private pendingRegistration = new Set<string>();
   private previousCoinStates = new Map<string, boolean>();
-  private peak = 0;
-  private lastEmittedPeak = -1;
+  private peak = 0n;
+  private lastEmittedPeak = -1n;
   private observable = new ReplaySubject<BlockchainReport>(1);
 
   constructor(private backend: CoinStateBackend) {}
@@ -24,10 +24,10 @@ export class CoinStateMonitor {
   }
 
   getRegisteredCoinNames(): string[] {
-    return Array.from(this.registeredCoinNames);
+    return Array.from(this.registeredCoinNames).filter(n => !this.pendingRegistration.has(n));
   }
 
-  getPeak(): number {
+  getPeak(): bigint {
     return this.peak;
   }
 
@@ -57,7 +57,7 @@ export class CoinStateMonitor {
     }
   }
 
-  async receiveCoinStates(peak: number, records: CoinRecord[]) {
+  async receiveCoinStates(peak: bigint, records: CoinRecord[]) {
     if (peak > this.peak) {
       this.peak = peak;
     }

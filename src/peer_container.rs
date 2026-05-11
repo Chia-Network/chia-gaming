@@ -88,6 +88,16 @@ pub trait PeerHandler {
         mover_share: Amount,
         entropy: Hash,
     ) -> Result<Vec<Effect>, Error>;
+    #[cfg(test)]
+    fn self_accept_proposal(
+        &mut self,
+        _env: &mut ChannelHandlerEnv<'_>,
+        _game_id: &GameID,
+    ) -> Result<Vec<Effect>, Error> {
+        Err(Error::StrErr(
+            "self_accept_proposal: not in off-chain phase".to_string(),
+        ))
+    }
     fn take_replacement(&mut self) -> Option<Box<dyn PeerHandler>>;
 
     fn new_block(&mut self, _height: u64) -> Result<Vec<Effect>, Error> {
@@ -410,6 +420,15 @@ pub trait GameCradle {
         mover_share: Amount,
     ) -> Result<(), Error>;
 
+    /// Force a self-accept: bypass the local parity check and send
+    /// AcceptProposal for our own game_id. For testing SEC-975 only.
+    #[cfg(test)]
+    fn self_accept_proposal(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        game_id: &GameID,
+    ) -> Result<(), Error>;
+
     /// Check whether we're on chain.
     fn is_on_chain(&self) -> bool;
 
@@ -442,7 +461,6 @@ pub trait GameCradle {
 
 #[derive(Serialize, Deserialize)]
 struct SynchronousGameCradleState {
-    #[serde(skip)]
     current_height: u64,
     watching_coins: HashMap<CoinString, WatchEntry>,
 
@@ -519,7 +537,6 @@ pub struct SynchronousGameCradle {
     state: SynchronousGameCradleState,
     peer: Box<dyn PeerHandler>,
     amount: Amount,
-    #[serde(skip)]
     last_channel_status: Option<ChannelStatusSnapshot>,
     #[cfg(test)]
     #[serde(skip)]
@@ -1200,6 +1217,20 @@ impl SynchronousGameCradle {
 }
 
 impl GameCradle for SynchronousGameCradle {
+    #[cfg(test)]
+    fn self_accept_proposal(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        game_id: &GameID,
+    ) -> Result<(), Error> {
+        let reported_effects = {
+            let mut env = ChannelHandlerEnv::new(allocator)?;
+            self.peer.self_accept_proposal(&mut env, game_id)?
+        };
+        self.process_effects(reported_effects, allocator)?;
+        Ok(())
+    }
+
     fn cheat(
         &mut self,
         allocator: &mut AllocEncoder,
@@ -1419,6 +1450,14 @@ impl GameCradle for SynchronousGameCradle {
     fn deliver_message(&mut self, inbound_message: &[u8]) -> Result<(), Error> {
         if self.state.peer_disconnected {
             return Ok(());
+        }
+        const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
+        if inbound_message.len() > MAX_MESSAGE_SIZE {
+            return Err(Error::StrErr(format!(
+                "Inbound message size {} exceeds maximum {}",
+                inbound_message.len(),
+                MAX_MESSAGE_SIZE,
+            )));
         }
         self.state
             .inbound_messages

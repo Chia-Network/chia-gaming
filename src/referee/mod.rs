@@ -18,7 +18,7 @@ use crate::referee::their_turn::TheirTurnReferee;
 use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, GameMoveDetails, GameMoveStateInfo,
     GameMoveWireData, OnChainRefereeMoveData, OnChainRefereeSolution, RMFixed, RefereePuzzleArgs,
-    TheirTurnCoinSpentResult, TheirTurnMoveResult,
+    TheirTurnCoinSpentResult, TheirTurnMoveResult, ValidationInfoHash,
 };
 
 pub(crate) struct RefereeInitialSetup {
@@ -38,7 +38,7 @@ pub(crate) fn referee_initial_setup(
     their_reward_puzzle_hash: &PuzzleHash,
     their_reward_payout_signature: &Aggsig,
     reward_puzzle_hash: &PuzzleHash,
-    nonce: usize,
+    nonce: u64,
     agg_sig_me_additional_data: &Hash,
 ) -> Result<RefereeInitialSetup, Error> {
     let initial_move = GameMoveStateInfo {
@@ -73,9 +73,9 @@ pub(crate) fn referee_initial_setup(
         &fixed,
         &GameMoveDetails {
             basic: initial_move,
-            validation_info_hash: Some(vi_hash.hash().clone()),
+            validation_program_hash: ValidationInfoHash::Hash(vi_hash.hash().clone()),
         },
-        None,
+        ValidationInfoHash::Initial,
         ip,
         my_turn,
     ));
@@ -120,7 +120,7 @@ impl Referee {
         their_reward_puzzle_hash: &PuzzleHash,
         their_reward_payout_signature: &Aggsig,
         reward_puzzle_hash: &PuzzleHash,
-        nonce: usize,
+        nonce: u64,
         agg_sig_me_additional_data: &Hash,
         state_number: usize,
     ) -> Result<(Self, PuzzleHash), Error> {
@@ -447,7 +447,7 @@ impl Referee {
         let waiter_share = self.fixed().amount.checked_sub(&mover_share)?;
 
         let i_am_mover = args.mover_pubkey == self.fixed().my_identity.public_key;
-        let (mover_payout_ph, waiter_payout_ph) = if i_am_mover {
+        let (my_ph, their_ph) = if i_am_mover {
             (
                 self.fixed().reward_puzzle_hash.clone(),
                 self.fixed().their_reward_puzzle_hash.clone(),
@@ -463,6 +463,17 @@ impl Referee {
             (mover_share.clone(), waiter_share.clone())
         } else {
             (waiter_share.clone(), mover_share.clone())
+        };
+
+        let mover_payout_ph = if mover_share > Amount::default() {
+            Some(my_ph)
+        } else {
+            None
+        };
+        let waiter_payout_ph = if waiter_share > Amount::default() {
+            Some(their_ph)
+        } else {
+            None
         };
 
         let mut aggregate_signature = Aggsig::default();

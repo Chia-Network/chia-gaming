@@ -97,10 +97,10 @@ mod gaming_wasm {
         | { CoinSolutionRequest: string }
         | { ReceiveError: string }
         | { NeedCoinSpend: {
-            "amount": number,
-            "conditions": Array<{ "opcode": number, "args": Array<string> }>,
+            "amount": bigint,
+            "conditions": Array<{ "opcode": bigint, "args": Array<string> }>,
             "coin_id"?: string,
-            "max_height"?: number,
+            "max_height"?: bigint,
           } }
         | { NeedLauncherCoin: boolean }
         | { WatchCoin: { coin_name: string, coin_string: string } };
@@ -134,8 +134,9 @@ mod gaming_wasm {
 
     #[derive(Serialize, Deserialize)]
     struct JsCradle {
-        #[serde(skip_serializing, skip_deserializing)]
+        #[serde(skip)]
         allocator: AllocEncoder,
+        #[serde(skip)]
         rng: ChaCha8SerializationWrapper,
         cradle: SynchronousGameCradle,
     }
@@ -758,11 +759,14 @@ mod gaming_wasm {
     #[wasm_bindgen]
     pub fn new_block(
         cid: i32,
-        height: usize,
+        height: u64,
         additions: Vec<String>,
         removals: Vec<String>,
         timed_out: Vec<String>,
     ) -> Result<JsValue, JsValue> {
+        let height: usize = std::convert::TryInto::try_into(height)
+            .map_err(|_| types::Error::StrErr(format!("block height {} exceeds usize", height)))
+            .into_js()?;
         let watch_report = watch_report_from_params(additions, removals, timed_out).into_js()?;
         with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle.cradle.new_block(
@@ -1194,9 +1198,10 @@ mod gaming_wasm {
     {
         with_game(cid, move |cradle: &mut JsCradle| {
             if let Err(e) = f(cradle) {
+                let reason = format!("{e:?}");
                 cradle.cradle.push_event(CradleEvent::Notification(
                     GameNotification::ActionFailed {
-                        reason: format!("{e:?}"),
+                        reason,
                     },
                 ));
             }
@@ -1297,7 +1302,7 @@ mod gaming_wasm {
             &chia_dialect(),
             puzzle_reveal_node,
             solution_node,
-            0,
+            11_000_000_000,
         )
         .into_gen()
         .into_js()?;

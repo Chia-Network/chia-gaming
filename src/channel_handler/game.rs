@@ -269,6 +269,9 @@ impl Game {
             Self::run_parser(allocator, parser, wire_data)?
         };
 
+        // Both validation_prog and spec.initial_validation_program_hash originate
+        // from the same local run_make_proposal execution — no peer-supplied hash
+        // is trusted here.  (See HANDLER_GUIDE.md § "Proposal Execution Model".)
         let validation_prog = Rc::new(Program::from_nodeptr(allocator, validator_node)?);
         let initial_validation_program = StateUpdateProgram::new_hash(
             validation_prog,

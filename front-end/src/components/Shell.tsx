@@ -4,7 +4,7 @@ import GameSession from './GameSession';
 import { GameSessionErrorBoundary } from './GameSession';
 import { SimulatorSetupModal } from './SimulatorSetupModal';
 import QRCode from 'qrcode';
-import { GameSessionParams, PeerConnectionResult, ChatMessage, InternalBlockchainInterface, ConnectionSetup, TrackerLiveness } from '../types/ChiaGaming';
+import { GameSessionParams, PeerConnectionResult, ChatMessage, InternalBlockchainInterface, ConnectionSetup, TrackerLiveness, SessionPhase } from '../types/ChiaGaming';
 import { TrackerConnection, MatchedParams, ConnectionStatus } from '../services/TrackerConnection';
 import { subscribeLog } from '../services/log';
 import {
@@ -18,6 +18,7 @@ import {
   clearSession,
   hardReset,
   getBuildNonce,
+  clearWalletConnectStorage,
   SessionState,
   getDefaultFee,
   setDefaultFee as saveDefaultFee,
@@ -41,7 +42,7 @@ import {
   onFenced,
   offFenced,
 } from '../hooks/save';
-import { blobSingleton } from '../hooks/blobSingleton';
+import { blobSingleton, destroyBlobSingleton } from '../hooks/blobSingleton';
 import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
 import { realBlockchainInfo } from '../hooks/RealBlockchainInterface';
 import { activate, deactivate, getActiveBlockchain } from '../hooks/activeBlockchain';
@@ -192,6 +193,7 @@ const Shell = () => {
       );
       clearSession();
       clearLease();
+      clearWalletConnectStorage();
     }
   }
 
@@ -229,6 +231,9 @@ const Shell = () => {
   const [walletConnected, setWalletConnected] = useState(false);
   const [trackerLiveness, setTrackerLiveness] = useState<TrackerLiveness | null>(null);
   const [peerConnected, setPeerConnected] = useState<boolean | null>(null);
+  const [sessionPhase, setSessionPhase] = useState<SessionPhase>('none');
+  const [sessionError, setSessionError] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<{ title: string; body: string; onConfirm: () => void } | null>(null);
   const trackerWsUpRef = useRef(false);
   const lastTrackerActivityRef = useRef(0);
   const lastPeerActivityRef = useRef(0);
@@ -319,7 +324,7 @@ const Shell = () => {
   const [trackerAlert, setTrackerAlertRaw] = useState(() => getSavedTrackerAlert());
   const setTrackerAlert = useCallback((v: boolean) => { setTrackerAlertRaw(v); saveTrackerAlert(v); }, []);
   const [iframeUrl, setIframeUrl] = useState('about:blank');
-  const [balance, setBalance] = useState<number | undefined>();
+  const [balance, setBalance] = useState<bigint | undefined>();
 
   const [blockchainType, setBlockchainType] = useState<'simulator' | 'walletconnect' | undefined>(() => getBlockchainType());
   const activeBlockchainRef = useRef<InternalBlockchainInterface | null>(null);
@@ -330,15 +335,15 @@ const Shell = () => {
   const [connecting, setConnecting] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState('');
   const wcAbortRef = useRef(false);
-  const [defaultFee, setDefaultFee] = useState<number>(() => getDefaultFee());
+  const [defaultFee, setDefaultFee] = useState<bigint>(() => getDefaultFee());
   const [feeUnit, setFeeUnit] = useState<'mojo' | 'xch'>(() => getFeeUnit());
   const [feeEditing, setFeeEditing] = useState(false);
   const [feeInput, setFeeInput] = useState('');
   const feeInputRef = useRef<HTMLInputElement>(null);
   const [copied, setCopied] = useState(false);
 
-  const mojosToXchStr = (mojos: number): string => {
-    const s = String(mojos).padStart(13, '0');
+  const mojosToXchStr = (mojos: bigint): string => {
+    const s = mojos.toString().padStart(13, '0');
     const whole = s.slice(0, -12).replace(/^0+/, '') || '0';
     const frac = s.slice(-12).replace(/0+$/, '');
     return frac ? `${whole}.${frac}` : whole;
@@ -349,22 +354,20 @@ const Shell = () => {
     return String(defaultFee);
   }, [defaultFee, feeUnit]);
 
-  const parseFeeInput = useCallback((raw: string): number | null => {
-    if (/^\s*$/.test(raw)) return 0;
+  const parseFeeInput = useCallback((raw: string): bigint | null => {
+    if (/^\s*$/.test(raw)) return 0n;
     const trimmed = raw.trim();
     if (feeUnit === 'xch') {
       if (!/^\d+(\.\d+)?$/.test(trimmed)) return null;
       const [whole, frac = ''] = trimmed.split('.');
       if (frac.length > 12) return null;
       const mojoStr = whole + frac.padEnd(12, '0');
-      const mojos = Number(mojoStr);
-      if (!Number.isSafeInteger(mojos) || mojos < 0) return null;
-      return mojos;
+      try { const mojos = BigInt(mojoStr); return mojos < 0n ? null : mojos; }
+      catch { return null; }
     }
     if (!/^\d+$/.test(trimmed)) return null;
-    const n = Number(trimmed);
-    if (!Number.isSafeInteger(n) || n < 0) return null;
-    return n;
+    try { const n = BigInt(trimmed); return n < 0n ? null : n; }
+    catch { return null; }
   }, [feeUnit]);
 
   const feeInputValid = parseFeeInput(feeInput) !== null;
@@ -478,7 +481,7 @@ const Shell = () => {
       const now = Date.now();
       const activityFresh = lastTrackerActivityRef.current > 0 && now - lastTrackerActivityRef.current <= 45_000;
       setTrackerLiveness((prev) => {
-        if (prev === 'disconnected') return prev;
+        if (prev === null || prev === 'disconnected') return prev;
         if (!trackerWsUpRef.current) return 'reconnecting';
         return activityFresh ? 'connected' : 'inactive';
       });
@@ -593,7 +596,10 @@ const Shell = () => {
           if (save.log) setLogLines(save.log);
           if (save.chatMessages) setChatMessages(save.chatMessages);
         } else {
+          destroyBlobSingleton();
+          clearSession();
           setHistory([]);
+          setChatMessages([]);
           setActiveTab('game');
         }
       } else {
@@ -601,6 +607,8 @@ const Shell = () => {
         setPeerConn(stablePeerConn);
       }
     };
+
+    setTrackerLiveness('reconnecting');
 
     let conn: TrackerConnection;
     try {
@@ -708,9 +716,7 @@ const Shell = () => {
         onAck: (_ack: number) => { markPeerActive(); },
         onKeepalive: () => { markPeerActive(); },
         onClosed: () => {
-          console.log('[Shell] tracker connection closed');
-          trackerWsUpRef.current = false;
-          lastTrackerActivityRef.current = 0;
+          console.log('[Shell] peer pairing ended');
           markPeerInactive();
         },
         onTrackerDisconnected: () => {
@@ -779,6 +785,24 @@ const Shell = () => {
     }
   }, [uniqueId, sessionId, markPeerActive, markPeerInactive]);
 
+  const requestTrackerConnect = useCallback((origin: string) => {
+    if (peerConnected && sessionPhase === 'off-chain') {
+      setConfirmDialog({
+        title: 'Disconnect from tracker?',
+        body: 'Disconnecting from this tracker will end your peer connection and force your game on-chain.',
+        onConfirm: () => { setConfirmDialog(null); connectToTracker(origin); },
+      });
+    } else if (peerConnected) {
+      setConfirmDialog({
+        title: 'Disconnect from tracker?',
+        body: 'This will end your peer connection.',
+        onConfirm: () => { setConfirmDialog(null); connectToTracker(origin); },
+      });
+    } else {
+      connectToTracker(origin);
+    }
+  }, [peerConnected, sessionPhase, connectToTracker]);
+
   // Auto-connect to saved tracker on reload; otherwise wait for user selection
   useEffect(() => {
     if (!userReady) { console.log('[Shell] tracker-reconnect effect: userReady=false, skipping'); return; }
@@ -835,7 +859,7 @@ const Shell = () => {
       setConnecting(true);
       const setup = await iface.beginConnect(uniqueId);
       if (wcAbortRef.current) return;
-      setConnectionSetup(setup);
+      if (!setup.skipQr) setConnectionSetup(setup);
       if (setup.fields && !silent) {
         setShowSimModal(true);
         setConnecting(false);
@@ -909,6 +933,23 @@ const Shell = () => {
       });
     }
   }, [deferStateUpdate]);
+
+  const handleSessionPhaseChange = useCallback((phase: SessionPhase, hasError?: boolean) => {
+    setSessionPhase(phase);
+    setSessionError(!!hasError);
+  }, []);
+
+  useEffect(() => {
+    trackerConnRef.current?.setAvailable(sessionPhase === 'none' || sessionPhase === 'resolved');
+  }, [sessionPhase]);
+
+  // Cascade rule: off-chain session without a peer must immediately go on-chain.
+  useEffect(() => {
+    if (peerConnected === false && sessionPhase === 'off-chain') {
+      console.log('[Shell] peer lost while off-chain, auto going on-chain');
+      blobSingleton?.goOnChain();
+    }
+  }, [peerConnected, sessionPhase]);
 
   const handleTabChange = useCallback((tabId: TabId) => {
     setActiveTab(tabId);
@@ -1027,7 +1068,7 @@ const Shell = () => {
     window.location.reload();
   }, []);
 
-  const handleDisconnectWallet = useCallback(async () => {
+  const doDisconnectWallet = useCallback(async () => {
     if (activeBlockchainRef.current) {
       try { await activeBlockchainRef.current.disconnect(); } catch (_) {}
     }
@@ -1035,8 +1076,51 @@ const Shell = () => {
     activeBlockchainRef.current = null;
     setWalletConnected(false);
     setBlockchainType(undefined);
-    clearSession();
     setBalance(undefined);
+  }, []);
+
+  const handleDisconnectWallet = useCallback(() => {
+    if (sessionPhase !== 'none') {
+      setConfirmDialog({
+        title: 'Disconnect wallet?',
+        body: 'You are in a session. Blockchain operations will stall until you reconnect a wallet.',
+        onConfirm: () => { setConfirmDialog(null); doDisconnectWallet(); },
+      });
+    } else {
+      doDisconnectWallet();
+    }
+  }, [sessionPhase, doDisconnectWallet]);
+
+  const doDisconnectTracker = useCallback(() => {
+    trackerConnRef.current?.disconnect();
+    trackerConnRef.current = null;
+    saveTrackerUrl(undefined);
+    setTrackerOrigin(null);
+    setIframeUrl('about:blank');
+    setTrackerLiveness(null);
+    markPeerInactive();
+  }, [markPeerInactive]);
+
+  const handleDisconnectTracker = useCallback(() => {
+    if (peerConnected && sessionPhase === 'off-chain') {
+      setConfirmDialog({
+        title: 'Disconnect from tracker?',
+        body: 'Disconnecting from this tracker will end your peer connection and force your game on-chain.',
+        onConfirm: () => { setConfirmDialog(null); doDisconnectTracker(); },
+      });
+    } else if (peerConnected) {
+      setConfirmDialog({
+        title: 'Disconnect from tracker?',
+        body: 'This will end your peer connection.',
+        onConfirm: () => { setConfirmDialog(null); doDisconnectTracker(); },
+      });
+    } else {
+      doDisconnectTracker();
+    }
+  }, [peerConnected, sessionPhase, doDisconnectTracker]);
+
+  const handleEndPeerConnection = useCallback(() => {
+    trackerConnRef.current?.close();
   }, []);
 
   const handleReconnect = useCallback(() => {
@@ -1186,11 +1270,48 @@ const Shell = () => {
             (tab.id === 'wallet' && walletAlert) ||
             (tab.id === 'tracker' && trackerAlert)
           );
+
+          let dotColor: string | null = null;
+          switch (tab.id) {
+            case 'wallet':
+              dotColor = walletConnected ? 'var(--color-success-solid)' : 'var(--color-alert-solid)';
+              break;
+            case 'tracker':
+              if (trackerLiveness === 'connected') {
+                dotColor = 'var(--color-success-solid)';
+              } else if (trackerLiveness === 'reconnecting') {
+                dotColor = 'var(--color-warning-solid)';
+              } else if (trackerLiveness === 'inactive') {
+                dotColor = 'var(--color-alert-solid)';
+              } else {
+                dotColor = 'var(--color-canvas-text-subtle)';
+              }
+              break;
+            case 'game':
+              if (sessionPhase === 'none' || sessionPhase === 'resolved') {
+                dotColor = 'var(--color-canvas-text-subtle)';
+              } else if (sessionError) {
+                dotColor = 'var(--color-alert-solid)';
+              } else if (sessionPhase === 'on-chain') {
+                dotColor = 'var(--color-warning-solid)';
+              } else if (sessionPhase === 'off-chain' && !peerConnected) {
+                dotColor = 'var(--color-alert-solid)';
+              } else if (sessionPhase === 'off-chain' && peerConnected) {
+                dotColor = 'var(--color-success-solid)';
+              } else {
+                dotColor = 'var(--color-canvas-text-subtle)';
+              }
+              break;
+            case 'chat':
+              dotColor = peerConnected ? 'var(--color-success-solid)' : 'var(--color-canvas-text-subtle)';
+              break;
+          }
+
           return (
             <button
               key={tab.id}
               onClick={() => handleTabChange(tab.id)}
-              style={active ? { background: 'var(--canvas-bg-subtle)' } : undefined}
+              style={active ? { background: 'var(--canvas-bg-subtle)', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' } : { display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
               className={
                 'relative px-3 py-1.5 text-sm font-medium rounded-t-md transition-colors ' +
                 (active
@@ -1198,6 +1319,7 @@ const Shell = () => {
                   : 'text-canvas-text hover:text-canvas-text-contrast hover:bg-canvas-bg-hover')
               }
             >
+              {dotColor && <span style={{ width: 8, height: 8, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />}
               {tab.label}
               {showDot && (
                 <span className='absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-alert-text' />
@@ -1446,8 +1568,14 @@ const Shell = () => {
         <div style={{ position: 'absolute', inset: 0, display: activeTab === 'tracker' ? 'flex' : 'none', flexDirection: 'column' }}>
           {trackerOrigin ? (
             <>
-              <div className='flex items-center px-3 py-1 border-b border-canvas-border bg-canvas-bg text-xs text-canvas-text-subtle shrink-0'>
-                Connected to {trackerOrigin}
+              <div className='flex items-center justify-between px-4 py-2 border-b border-canvas-border bg-canvas-bg-subtle text-sm text-canvas-text shrink-0'>
+                <span>Connected to {trackerOrigin}</span>
+                <button
+                  onClick={handleDisconnectTracker}
+                  className='flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors'
+                >
+                  Disconnect
+                </button>
               </div>
               <iframe
                 id='tracker-iframe'
@@ -1457,34 +1585,38 @@ const Shell = () => {
               />
             </>
           ) : (
-            <TrackerPicker onConnect={connectToTracker} />
+            <TrackerPicker onConnect={requestTrackerConnect} />
           )}
         </div>
 
         {/* Game Session tab */}
-        <div style={{ position: 'absolute', inset: 0, overflow: 'auto', visibility: activeTab === 'game' ? 'visible' : 'hidden' }}>
-          {keepSession ? (
-            <GameSessionErrorBoundary>
-              <GameSession
-                params={gameParams}
-                peerConn={peerConn}
-                trackerLiveness={trackerLiveness}
-                peerConnected={peerConnected}
-                registerMessageHandler={registerMessageHandler}
-                appendGameLog={appendHistory}
-                sessionSave={sessionSaveRef.current ?? undefined}
-                onGameActivity={onGameActivity}
-              />
-            </GameSessionErrorBoundary>
-          ) : sessionCanMount ? (
-            <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
-              Restoring session...
-            </div>
-          ) : (
-            <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
-              No active game session
-            </div>
-          )}
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', visibility: activeTab === 'game' ? 'visible' : 'hidden' }}>
+          <div style={{ flex: '1 1 0%', minHeight: 0, overflow: 'auto' }}>
+            {keepSession ? (
+              <GameSessionErrorBoundary>
+                <GameSession
+                  key={gameParams.pairingToken}
+                  params={gameParams}
+                  peerConn={peerConn}
+                  trackerLiveness={trackerLiveness}
+                  peerConnected={peerConnected}
+                  registerMessageHandler={registerMessageHandler}
+                  appendGameLog={appendHistory}
+                  sessionSave={sessionSaveRef.current ?? undefined}
+                  onGameActivity={onGameActivity}
+                  onSessionPhaseChange={handleSessionPhaseChange}
+                />
+              </GameSessionErrorBoundary>
+            ) : sessionCanMount ? (
+              <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
+                Restoring session...
+              </div>
+            ) : (
+              <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
+                No active game session
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Chat tab */}
@@ -1493,6 +1625,9 @@ const Shell = () => {
             messages={chatMessages}
             onSend={sendChat}
             myAlias={gameParams?.myAlias ?? 'You'}
+            peerConnected={!!peerConnected}
+            onEndPeer={handleEndPeerConnection}
+            opponentAlias={gameParams?.opponentAlias}
           />
         </div>
 
@@ -1512,6 +1647,31 @@ const Shell = () => {
           )}
         </div>
       </div>
+
+      {confirmDialog && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'rgba(0,0,0,0.5)' }}>
+          <div style={{
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem',
+            padding: '1.5rem', borderRadius: '0.5rem', border: '1px solid var(--color-canvas-border)',
+            background: 'var(--color-canvas-bg)', maxWidth: '24rem', width: '90%',
+          }}>
+            <p className='text-canvas-text-contrast font-semibold text-lg'>{confirmDialog.title}</p>
+            <p className='text-canvas-text text-sm text-center'>{confirmDialog.body}</p>
+            <button
+              onClick={confirmDialog.onConfirm}
+              className='w-full px-4 py-2 rounded-md font-medium text-sm bg-alert-solid text-primary-on-primary hover:bg-alert-solid-hover transition-colors'
+            >
+              Proceed
+            </button>
+            <button
+              onClick={() => setConfirmDialog(null)}
+              className='w-full px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors'
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
     </div>
   );

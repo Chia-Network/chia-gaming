@@ -124,25 +124,26 @@ describe('flat state', () => {
     expect(getSessionId()).toBe(id);
   });
 
-  it('clearSession generates a new playerId', () => {
+  it('clearSession preserves playerId', () => {
     const oldId = getPlayerId();
     clearSession();
     const newId = getPlayerId();
     expect(newId).toBeTruthy();
-    expect(newId).not.toBe(oldId);
+    expect(newId).toBe(oldId);
   });
 
-  it('clearSession wipes everything', () => {
-    getSessionId();
+  it('clearSession wipes game state but preserves identity, preferences, and blockchainType', () => {
+    const sid = getSessionId();
     saveSession({ ...sampleSession, blockchainType: 'simulator' });
     setAlias('MyName');
 
     clearSession();
 
-    expect(loadAppState().sessionId).toBeUndefined();
-    expect(getBlockchainType()).toBeUndefined();
-    expect(peekSession()).toBeNull();
-    expect(loadAppState().alias).toBeUndefined();
+    expect(loadAppState().sessionId).toBe(sid);
+    expect(getBlockchainType()).toBe('simulator');
+    expect(peekSession()).not.toBeNull();
+    expect(peekSession()!.serializedCradle).toBeUndefined();
+    expect(loadAppState().alias).toBe('MyName');
   });
 
   it('getBlockchainType reads from flat state', () => {

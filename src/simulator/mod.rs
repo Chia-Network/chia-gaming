@@ -456,7 +456,7 @@ impl Simulator {
             .map(|r| (r.coin.clone(), r.created_height, r.spent_height))
     }
 
-    pub fn push_tx(
+    pub fn push_transactions(
         &self,
         allocator: &mut AllocEncoder,
         txs: &[CoinSpend],
@@ -698,7 +698,7 @@ impl Simulator {
             },
         };
 
-        let status = self.push_tx(allocator, &[specific])?;
+        let status = self.push_transactions(allocator, &[specific])?;
         if status.code == 3 {
             return Err(Error::StrErr("failed to spend coin".to_string()));
         }
@@ -760,7 +760,7 @@ impl Simulator {
             },
             coin: source_coin.clone(),
         };
-        let included = self.push_tx(allocator, &[tx])?;
+        let included = self.push_transactions(allocator, &[tx])?;
         if included.code != 1 {
             return Err(Error::StrErr(format!("failed to spend: {included:?}")));
         }
@@ -813,7 +813,7 @@ impl Simulator {
             });
         }
 
-        let included = self.push_tx(allocator, &spends)?;
+        let included = self.push_transactions(allocator, &spends)?;
         if included.code != 1 {
             return Err(Error::StrErr(format!("failed to spend: {included:?}")));
         }

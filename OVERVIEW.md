@@ -111,15 +111,19 @@ payout coins (no unroll needed).
 
 The unroll coin implements the **optimistic rollback** mechanism:
 
-- **Curried parameters:** `SHARED_PUZZLE_HASH`, `OLD_SEQUENCE_NUMBER`,
-`DEFAULT_CONDITIONS_HASH`
-- **Timeout path** (no challenge): After `unroll_timeout` blocks pass, the
-default conditions are revealed and applied. These conditions create the game
-coins and reward coins reflecting the last agreed state.
-- **Preemption path** (challenge): The opponent provides a solution with a
-**higher sequence number** (with correct parity). The unroll puzzle verifies
-the new sequence number is greater than the old one and has the right parity
-bit, then applies the challenger's conditions instead.
+- **Curried parameters:** `SHARED_PUBKEY` (aggregate 2-of-2 unroll public
+key), `OLD_SEQUENCE_NUMBER`, `DEFAULT_CONDITIONS_HASH`
+- **Solution:** The conditions list, passed as the dotted-pair cdr of the
+puzzle args.  Dispatch is via `shatree(conditions) == DEFAULT_CONDITIONS_HASH`.
+- **Timeout path** (hash matches): The conditions are returned as-is.  They
+include `ASSERT_HEIGHT_RELATIVE` so the spend can only land after the
+timeout elapses.  These conditions create the game coins and reward coins
+reflecting the last agreed state.
+- **Preemption path** (hash does not match): The puzzle checks that the
+conditions contain a **higher sequence number** with the correct parity,
+then prepends `AGG_SIG_UNSAFE SHARED_PUBKEY (shatree conditions)` and
+returns.  The aggregate signature from both unroll keys ensures the
+conditions were co-signed.
 
 **Parity rule.** Each player only ever sends half-signed states of one parity
 to the opponent (based on `started_with_potato`), so each player can only
@@ -130,6 +134,20 @@ publish a very old unroll and immediately preempt it with a less-old-but-still-
 stale state of the same parity — one they can fully sign — effectively rolling
 back to a favorable earlier state. The parity constraint means you cannot both
 publish and preempt; only your opponent can preempt your unroll.
+
+**Unroll state tracking.** The code tracks `latest_sent_unroll` (the most
+recent unroll we sent the opponent) and `latest_received_unroll` (the most
+recent unroll received from them).  For preemption, only the latest state
+is needed — it has the highest sequence number and the correct parity.
+However, the opponent can broadcast *any* unroll we ever sent them (all
+carry valid aggregate signatures from the time they were created).  To
+identify these on-chain, the `ChannelHandler` maintains an
+`unroll_puzzle_hash_map` that maps each sent unroll's puzzle hash to its
+full spend info.  This map grows linearly with session length (one entry
+per state transition) but entries are small.  When a channel coin spend
+is detected, the `CREATE_COIN` puzzle hashes in the on-chain conditions
+are matched against this map to identify which unroll landed and retrieve
+the data needed for preemption or timeout.
 
 **Key code:** `src/channel_handler/types/unroll_coin.rs`,
 `clsp/unroll/unroll_puzzle.clsp`
@@ -208,8 +226,10 @@ The receiver processes actions sequentially and rejects the entire batch if any
 action fails validation. Rejection uses a **rollback mechanism**: the
 `ChannelHandler` (which derives `Clone`) is snapshot-cloned before processing
 begins. If any action or signature verification fails, the snapshot is restored,
-undoing all intermediate mutations from earlier actions in the batch. The error
-then triggers go-on-chain (the peer sent a bad batch, so we dispute on-chain).
+undoing all intermediate mutations from earlier actions in the batch — including
+changes to `live_games`, `pending_accept_timeouts`, balances, `state_number`,
+`cached_last_actions`, and every other `ChannelHandler` field. The error then
+triggers go-on-chain (the peer sent a bad batch, so we dispute on-chain).
 
 Because the batch comes with the potato, the sender constructed it while holding
 the definitive state. Every action in the batch should be valid against that
@@ -248,6 +268,11 @@ unified pattern:
 This ensures that multiple user actions between potato receives are
 automatically batched together.
 
+The `game_action_queue` is populated only by local API calls (user/UI
+actions), never by received peer messages. `drain_queue_into_batch` processes
+this local queue when the potato is held; any errors during draining reflect
+bugs in our own queued actions, not adversarial peer data.
+
 ### Non-Potato Messages
 
 `PeerMessage::Message` (for in-game readable messages) remains a separate type
@@ -274,8 +299,8 @@ the same A-F wire messages. Handshake messages are not sent via `Batch`:
 
 | Step | Sender | Message | Payload |
 |------|--------|---------|---------|
-| A | Initiator | `HandshakeA` | Public keys (channel, unroll, referee), reward puzzle hash, reward payout signature |
-| B | Receiver | `HandshakeB` | Public keys (channel, unroll, referee), reward puzzle hash, reward payout signature |
+| A | Initiator | `HandshakeA` | Public keys (channel, unroll, referee), reward puzzle hash, reward payout signature, channel key PoP, unroll key PoP |
+| B | Receiver | `HandshakeB` | Public keys (channel, unroll, referee), reward puzzle hash, reward payout signature, channel key PoP, unroll key PoP |
 | C | Initiator | `HandshakeC` | `CoinString` of the launcher coin (parent + SINGLETON_LAUNCHER_HASH + 0) |
 | D | Receiver | `HandshakeD` | State-0 `PotatoSignatures` (half-sigs for channel and unroll coins) |
 | E | Initiator | `HandshakeE` | Partial `SpendBundle` (wallet spend + launcher spend) + state-0 `PotatoSignatures` |
@@ -349,6 +374,15 @@ after the transition is silently ignored by `PotatoHandler`.
    `ChannelHandler::verify_and_store_initial_peer_signatures` at the first
    point where they receive the peer's state-0 signatures (initiator on D,
    receiver on E), verifying and storing them before proceeding.
+4. **Proof-of-possession (PoP) for aggregate keys:** The channel and unroll
+   coins use simple BLS key aggregation (pk_a + pk_b). Without proof that
+   each party controls the private key behind their public key, a rogue key
+   attack is possible: the responder (who sees the initiator's key first)
+   could craft pk_rogue = G*sk_attacker − pk_honest, making the aggregate
+   entirely controlled by the attacker. To prevent this, each `HandshakeA`/`B`
+   message includes a PoP for both the channel key and the unroll key:
+   `Sign(sk, pk.bytes())`. The receiver verifies these before proceeding.
+   (The referee key already has an implicit PoP via `reward_payout_signature`.)
 
 #### Wallet API interaction
 
@@ -376,8 +410,8 @@ they map to WalletConnect RPCs:
   conditions and amount. The `extraConditions` parameter carries the
   channel-specific assertions; `coinIds` optionally pins the spend to a
   specific coin.
-- `chia_pushTx` — broadcast the final combined `SpendBundle` to the network
-  (both players submit it).
+- `chia_pushTransactions` — broadcast the final combined `SpendBundle` to the
+  network, wrapped in a `TransactionRecord` (both players submit it).
 
 #### Channel coin funding
 

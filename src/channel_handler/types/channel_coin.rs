@@ -1,4 +1,5 @@
 use crate::common::types::{Aggsig, GameID, Program, Spend};
+use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 
 #[derive(Clone, Debug)]
@@ -9,7 +10,7 @@ pub struct ChannelCoinSpentResult {
     pub unrolling_state_number: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChannelCoinSpendInfo {
     pub solution: Rc<Program>,
     pub conditions: Rc<Program>,

@@ -6,7 +6,7 @@ export interface Player {
   session_id: string;
   game: string;
   walletAddress?: string;
-  status: 'waiting' | 'playing';
+  status: 'waiting' | 'playing' | 'busy';
   opponent_alias?: string;
   parameters: any;
 }

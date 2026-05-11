@@ -1,5 +1,5 @@
 export interface Coin {
-  amount: number;
+  amount: bigint;
   parentCoinInfo: string;
   puzzleHash: string;
 }

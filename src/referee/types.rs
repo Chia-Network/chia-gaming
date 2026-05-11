@@ -30,13 +30,39 @@ pub struct GameMoveStateInfo {
     pub max_move_size: usize,
 }
 
+#[derive(Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
+pub enum ValidationInfoHash {
+    None,
+    Initial,
+    Hash(Hash),
+}
+
+impl ValidationInfoHash {
+    pub fn is_some(&self) -> bool {
+        !matches!(self, ValidationInfoHash::None)
+    }
+
+    pub fn is_none(&self) -> bool {
+        matches!(self, ValidationInfoHash::None)
+    }
+}
+
+impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for ValidationInfoHash {
+    fn to_clvm(&self, encoder: &mut E) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
+        match self {
+            ValidationInfoHash::None => encoder.encode_atom(clvm_traits::Atom::Borrowed(&[])),
+            ValidationInfoHash::Initial => {
+                encoder.encode_atom(clvm_traits::Atom::Borrowed(&[0x78]))
+            }
+            ValidationInfoHash::Hash(h) => encoder.encode_atom(clvm_traits::Atom::Borrowed(&h.0)),
+        }
+    }
+}
+
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
 pub struct GameMoveDetails {
     pub basic: GameMoveStateInfo,
-    /// sha256 of the concatenation of two hashes:
-    /// 1 - The next game handler program
-    /// 2 - The game state.
-    pub validation_info_hash: Option<Hash>,
+    pub validation_program_hash: ValidationInfoHash,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,7 +125,7 @@ pub struct RMFixed {
 
     pub timeout: Timeout,
     pub amount: Amount,
-    pub nonce: usize,
+    pub nonce: u64,
 }
 
 // =============================================================================
@@ -163,10 +189,10 @@ pub struct RefereePuzzleArgs {
     pub waiter_pubkey: PublicKey,
     pub timeout: Timeout,
     pub amount: Amount,
-    pub nonce: usize,
+    pub nonce: u64,
     pub game_move: GameMoveDetails,
     pub validation_program: StateUpdateProgram,
-    pub previous_validation_info_hash: Option<Hash>,
+    pub previous_validation_info_hash: ValidationInfoHash,
     pub referee_coin_puzzle_hash: PuzzleHash,
 }
 
@@ -174,7 +200,7 @@ impl RefereePuzzleArgs {
     pub fn new(
         fixed_info: &RMFixed,
         initial_move: &GameMoveDetails,
-        previous_validation_info_hash: Option<&Hash>,
+        previous_validation_info_hash: ValidationInfoHash,
         validation_program: StateUpdateProgram,
         my_turn: bool,
     ) -> Self {
@@ -195,7 +221,7 @@ impl RefereePuzzleArgs {
             validation_program,
             referee_coin_puzzle_hash: fixed_info.referee_coin_puzzle_hash.clone(),
             game_move: initial_move.clone(),
-            previous_validation_info_hash: previous_validation_info_hash.cloned(),
+            previous_validation_info_hash,
         }
     }
 
@@ -232,14 +258,9 @@ where
             self.nonce.to_clvm(encoder)?,
             encoder.encode_atom(clvm_traits::Atom::Borrowed(&self.game_move.basic.move_made))?,
             self.game_move.basic.max_move_size.to_clvm(encoder)?,
-            self.game_move
-                .validation_info_hash
-                .as_ref()
-                .to_clvm(encoder)?,
+            self.game_move.validation_program_hash.to_clvm(encoder)?,
             self.game_move.basic.mover_share.to_clvm(encoder)?,
-            self.previous_validation_info_hash
-                .as_ref()
-                .to_clvm(encoder)?,
+            self.previous_validation_info_hash.to_clvm(encoder)?,
         ]
         .to_clvm(encoder)
     }
@@ -364,7 +385,7 @@ impl OnChainRefereeMoveData {
         fixed: &RMFixed,
         coin_string: &CoinString,
     ) -> Result<OnChainRefereeMove, Error> {
-        let infohash_c: Option<Hash> = if self.new_move.validation_info_hash.is_some() {
+        let infohash_c: Option<Hash> = if self.new_move.validation_program_hash.is_some() {
             let vi = ValidationInfo::new_state_update(
                 allocator,
                 self.validation_program.clone(),
@@ -448,8 +469,8 @@ pub struct OnChainRefereeSlash {
 #[derive(Debug, Clone)]
 pub enum OnChainRefereeSolution {
     Timeout {
-        mover_payout_ph: PuzzleHash,
-        waiter_payout_ph: PuzzleHash,
+        mover_payout_ph: Option<PuzzleHash>,
+        waiter_payout_ph: Option<PuzzleHash>,
         aggregate_signature: Aggsig,
     },
     Move(Rc<OnChainRefereeMove>),
@@ -478,7 +499,7 @@ impl OnChainRefereeSolution {
                 mover_payout_ph,
                 waiter_payout_ph,
                 ..
-            } => (mover_payout_ph.clone(), (waiter_payout_ph.clone(), ()))
+            } => (mover_payout_ph.as_ref(), (waiter_payout_ph.as_ref(), ()))
                 .to_clvm(encoder)
                 .into_gen(),
             OnChainRefereeSolution::Move(refmove) => {
@@ -487,16 +508,17 @@ impl OnChainRefereeSolution {
                         &refmove.game_move.basic.move_made,
                     ))
                     .into_gen()?;
-                let infohash_c: Option<Hash> = if refmove.game_move.validation_info_hash.is_some() {
-                    let vi = ValidationInfo::new_state_update(
-                        encoder,
-                        refmove.validation_program.clone(),
-                        refmove.state.clone(),
-                    );
-                    Some(vi.hash().clone())
-                } else {
-                    None
-                };
+                let infohash_c: Option<Hash> =
+                    if refmove.game_move.validation_program_hash.is_some() {
+                        let vi = ValidationInfo::new_state_update(
+                            encoder,
+                            refmove.validation_program.clone(),
+                            refmove.state.clone(),
+                        );
+                        Some(vi.hash().clone())
+                    } else {
+                        None
+                    };
 
                 (
                     move_atom,

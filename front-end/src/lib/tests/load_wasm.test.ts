@@ -116,7 +116,7 @@ class WasmBlobWrapperAdapter {
     this.waiting_messages = [];
   }
 
-  take_block(peak: number, blocks: CoinsetOrgBlockSpend[], block_report: WatchReport | undefined) {
+  take_block(peak: bigint, blocks: CoinsetOrgBlockSpend[], block_report: WatchReport | undefined) {
     this.blob?.blockNotification(peak, blocks, block_report);
   }
 
@@ -230,7 +230,6 @@ async function initWasmBlobWrapper(
 ) {
   const amount = 100n;
 
-  // Ensure that each user has a wallet (register via WebSocket).
   await fakeBlockchainInfo.registerUser(uniqueId);
   let gameObject = new WasmBlobWrapper(
     blockchain,

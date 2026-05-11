@@ -4,7 +4,9 @@ This document describes the architecture of the frontend JavaScript/TypeScript
 code. It reflects the current implementation unless explicitly marked as a future
 direction.
 
-For the backend/WASM architecture, see `OVERVIEW.md`.
+For the backend/WASM architecture, see `OVERVIEW.md`. For the connectivity
+model (wallet, tracker, peer, session interactions and rollover), see
+`CONNECTIVITY.md`.
 
 ## System-Level View
 
@@ -256,6 +258,41 @@ could be worse than asking.
 
 This is always-on — not a feature the user opts into.
 
+#### WASM–JS trust model
+
+The WASM module and its host JavaScript execute in the **same trust domain** —
+they are served from the same origin, run in the same process, and share the
+same memory. The WASM-to-JS boundary is not a security boundary.
+
+Private keys (channel, unroll, referee) are intentionally included in the
+serialized cradle state. Without them, a deserialized session cannot resume
+signing and the game would be unrecoverable after a page reload. Any
+JavaScript that can call `serialize_cradle()` can equally call every other
+exported WASM function (`make_move`, `go_on_chain`, etc.), so withholding keys
+from the serialized form would not meaningfully limit an attacker who already
+has script execution in the same origin.
+
+The actual security boundaries are:
+
+- **The browser origin** — isolates the player app from other web content.
+- **The WebSocket connection to peers** — all peer messages are untrusted and
+  validated by the WASM engine before acting on them.
+- **The blockchain** — on-chain spends require valid aggregate signatures that
+  only the two channel participants can produce.
+
+#### RNG non-serialization
+
+The game cradle's `ChaCha8Rng` (used for move entropy and identity
+generation) is **not** serialized.  The `ChaCha8SerializationWrapper`
+emits nothing for the RNG field (`#[serde(skip)]`) and deserializes to a
+zeroed placeholder via `Default`.  On restore, `create_serialized_game`
+always takes a fresh `new_seed` parameter from JavaScript, hashes it, and
+creates a brand new `ChaCha8Rng` — the deserialized placeholder is
+immediately overwritten.  This avoids persisting seed material and
+guarantees fresh entropy after every save/restore cycle.  The RNG is used
+only for commit-reveal preimages and initial key generation, not for
+cryptographic nonces or signatures (BLS signatures are deterministic).
+
 #### What is saved (`SessionSave`)
 
 An `appState` key in localStorage holds a JSON-serialized `AppState` object
@@ -457,7 +494,9 @@ on every inbound message delivery, ack reception, and keepalive reception.
 
 Peer liveness is **passive** — there is no automatic `goOnChain()` on timeout.
 Instead, `Shell.tsx` derives two liveness indicators using a 5-second polling
-interval and passes them to `GameSession` for display.
+interval. These feed into the **tab-dot connectivity indicators** — colored
+dots to the left of each tab label showing connection health (green / yellow /
+red / gray). They are also passed to `GameSession` for in-game display.
 
 **Tracker indicator** (`TrackerLiveness`) combines WebSocket connectivity with
 keepalive freshness into four states:
@@ -477,6 +516,12 @@ within the last 60 seconds (`PEER_LIVENESS_MS`) means Active, otherwise
 Inactive. The activity ref is updated by wrapped handlers in
 `registerMessageHandler`, ensuring it stays current even after
 `TrackerConnection.registerMessageHandler` replaces the initial callbacks.
+
+**Action buttons**: The tracker disconnect button lives in the tracker tab
+header strip (right-aligned next to "Connected to {origin}"). Session action
+buttons (End Peer, Abandon Session) live in the Game tab's bottom action bar.
+Both are gated by cascade confirmation dialogs when the action would disrupt
+an active session. See `CONNECTIVITY.md` for the full connectivity model.
 
 #### Reconnect
 
@@ -660,6 +705,60 @@ because there is no external wallet to scan the QR code. This triggers the
 `SimulatorSetupModal` overlay — the only place where Shell's UI differs between
 backends. All other connection logic is shared.
 
+### WalletConnect BigInt Serialization
+
+WalletConnect's internal JSON handling (`@walletconnect/safe-json`) uses a
+custom convention for BigInts: `safeJsonStringify` serializes `BigInt(123)` as
+the string `"123n"`, and `safeJsonParse` converts strings matching `/^\d+n$/`
+back to BigInts. This means BigInt values survive a WC round-trip, but as
+string-encoded values rather than native JSON numbers.
+
+This convention has two bugs that we patch around:
+
+**Bug 1: Negative BigInts.** The parse regex `^\d+n$` doesn't match negative
+values like `"-100n"`. These pass through as plain strings, which downstream
+code (e.g. the Chia daemon) can't parse. We fix this with a **pnpm patch** on
+`@walletconnect/safe-json@1.0.2` (`patches/@walletconnect__safe-json@1.0.2.patch`)
+that changes the regex to `^-?\d+n$`. This patch applies to all WC packages in
+the frontend that depend on safe-json.
+
+**Bug 2: Verify API hashing.** WC's sign-client computes SHA-256 hashes of
+payloads for its Verify API using bare `JSON.stringify`, which throws on
+BigInt values. We fix this with a **pnpm patch** on
+`@walletconnect/sign-client@2.23.9` that injects a `__wcSafe` helper using the
+same `"n"`-suffix convention and replaces the 5 internal `hashMessage(JSON.stringify(...))`
+call sites with `hashMessage(__wcSafe(...))`. This patch is large (280KB)
+because the sign-client ships as a single minified line — the actual change is
+one helper definition and 5 call-site substitutions.
+
+**Wallet GUI side.** The Chia wallet GUI (`chia-blockchain-gui`) has its own
+mitigations since its WC packages are installed via npm (no pnpm patching):
+
+- **`JSON.stringify` monkey-patch** (`packages/gui/src/index.tsx`): Early in
+  the renderer entry point, `JSON.stringify` is replaced with a BigInt-safe
+  version using the `"n"` convention. This covers WC's internal hash
+  computation paths in the renderer process.
+
+- **`deepFixBrokenBigInts`** (`packages/gui/src/electron/permissions/dispatchAsPair.ts`):
+  A recursive post-processor that walks incoming WC params and converts any
+  string matching `/^-?\d+n$/` back to a real BigInt. This runs in the main
+  process before params reach the daemon, catching negative BigInts that
+  `safeJsonParse` failed to convert.
+
+- **Confirm dialog replacer** (`packages/gui/src/electron/dialogs/Confirm/Confirm.tsx`):
+  The "Raw data" display uses `JSON.stringify(data, (_, v) => typeof v === 'bigint' ? String(v) : v, 2)`
+  to avoid crashing when rendered data contains BigInts.
+
+**Frontend (`jsonSafe.ts`).** The player app has its own BigInt-safe JSON
+utilities in `front-end/src/util/jsonSafe.ts`:
+
+- `jsonParse` — uses a `JSON.parse` reviver that converts all integers to
+  BigInt (matching the behavior of the `lossless-json` library previously
+  used). This ensures values from the simulator backend arrive as BigInts.
+- `jsonStringify` — hand-rolled serializer that emits BigInts as bare numeric
+  literals (via `toString()` directly into the JSON string), avoiding both the
+  `JSON.stringify` BigInt crash and the precision loss of `Number()` conversion.
+
 ### Lobby Iframe (Tracker)
 
 The lobby iframe is **untrusted**. It is served by a tracker and provides
@@ -748,6 +847,12 @@ In-game and between-hand events pushed to the game-scoped FIFO queue
 | `game-terminal` | `GameStatus` ended during on-chain flow |
 | `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer` |
 | `insufficient-bal` | `InsufficientBalance` notification |
+
+Timeout terminal labels use `game_finished` from `other_params` and the
+current `turnState` (tracked via `turnStateRef`) to produce context-aware
+messages — see `CONNECTIVITY.md` "Timeout labels" for the full matrix.
+Premature timeouts where we failed to move are flagged as errors via
+`cleanEnd: false` on `GameTerminalInfo`.
 
 ### Game lifecycle (handled internally by session)
 

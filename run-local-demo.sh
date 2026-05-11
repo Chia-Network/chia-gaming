@@ -100,6 +100,7 @@ fi
 echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$GAME_SERVE/build-meta.json"
 GAME_NONCE_DIR="$GAME_SERVE/app/$BUILD_NONCE"
 ln -sf "$FE_DIR/dist/js/index-rollup.js" "$GAME_NONCE_DIR/index.js"
+ln -sf "$FE_DIR/dist/js/index-rollup.js.map" "$GAME_NONCE_DIR/index-rollup.js.map"
 ln -sf "$FE_DIR/dist/css/index.css" "$GAME_NONCE_DIR/index.css"
 ln -sf "$FE_DIR/dist/chia_gaming_wasm.js" "$GAME_NONCE_DIR/chia_gaming_wasm.js"
 ln -sf "$FE_DIR/dist/chia_gaming_wasm_bg.wasm" "$GAME_NONCE_DIR/chia_gaming_wasm_bg.wasm"

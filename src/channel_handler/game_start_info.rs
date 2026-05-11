@@ -93,7 +93,9 @@ impl GameStartInfo {
         let returned_timeout = if lst.len() > required_length + 2 {
             Timeout::from_clvm(allocator, lst[required_length + 1])?
         } else {
-            Timeout::new(0)
+            return Err(Error::StrErr(
+                "game_start_info missing required timeout field".to_string(),
+            ));
         };
 
         Ok(GameStartInfo {

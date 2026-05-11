@@ -2,7 +2,7 @@ use crate::common::types::Timeout;
 use lazy_static::lazy_static;
 
 lazy_static! {
-    pub static ref DEFAULT_UNROLL_TIME_LOCK: Timeout = Timeout::new(5);
+    pub static ref DEFAULT_UNROLL_TIME_LOCK: Timeout = Timeout::new(15);
 }
 
 #[cfg(test)]
@@ -196,11 +196,6 @@ mod sim_tests {
         ProposeNewGameTheirTurn(usize, ProposeTrigger),
         /// Go on chain
         GoOnChain(usize),
-        /// Go on chain and immediately make the next Move in the action
-        /// list before any blockchain events are processed.  This tests
-        /// that moves issued right after go_on_chain get queued and
-        /// replayed once the on-chain transition completes.
-        GoOnChainThenMove(usize),
         /// Wait a number of blocks
         WaitBlocks(usize, usize),
         /// Accept timeout (player, game_id)
@@ -229,6 +224,12 @@ mod sim_tests {
         /// Inject raw bytes into a player's inbound message queue.
         /// Used for testing message validation (e.g. oversized messages).
         InjectRawMessage(usize, Vec<u8>),
+        /// Force a self-accept: bypass local parity check and send
+        /// AcceptProposal for our own game_id (SEC-975). (player, game_id)
+        SelfAcceptProposal(usize, GameID),
+        /// Propose a game but tamper the outbound message to use a game_id
+        /// with the wrong parity. Tests receiver-side parity rejection.
+        WrongParityProposal(usize),
     }
 
     impl std::fmt::Debug for GameAction {
@@ -252,9 +253,6 @@ mod sim_tests {
                     write!(formatter, "ProposeNewGameTheirTurn({p},{t:?})")
                 }
                 GameAction::GoOnChain(p) => write!(formatter, "GoOnChain({p})"),
-                GameAction::GoOnChainThenMove(p) => {
-                    write!(formatter, "GoOnChainThenMove({p})")
-                }
                 GameAction::AcceptTimeout(p, g) => {
                     write!(formatter, "AcceptTimeout({p},{g:?})")
                 }
@@ -276,6 +274,12 @@ mod sim_tests {
                 GameAction::ForceStaleUnroll(p) => write!(formatter, "ForceStaleUnroll({p})"),
                 GameAction::InjectRawMessage(p, data) => {
                     write!(formatter, "InjectRawMessage({p}, {} bytes)", data.len())
+                }
+                GameAction::SelfAcceptProposal(p, g) => {
+                    write!(formatter, "SelfAcceptProposal({p},{g:?})")
+                }
+                GameAction::WrongParityProposal(p) => {
+                    write!(formatter, "WrongParityProposal({p})")
                 }
             }
         }
@@ -381,7 +385,7 @@ mod sim_tests {
             .finish_handshake(env, 0)
             .expect("should finish handshake");
 
-        let timeout = Timeout::new(10);
+        let timeout = Timeout::new(15);
 
         let our_game_start =
             alice_game.game_start(game_id, &contributions[0], &contributions[1], &timeout);

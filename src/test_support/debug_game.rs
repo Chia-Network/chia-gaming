@@ -23,7 +23,7 @@ use crate::common::types::{
     atom_from_clvm, chia_dialect, AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Node,
     Program, ProgramRef, PublicKey, PuzzleHash, Sha256tree, Timeout,
 };
-use crate::referee::types::{GameMoveDetails, GameMoveStateInfo};
+use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, ValidationInfoHash};
 use crate::referee::types::{
     InternalStateUpdateArgs, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
 };
@@ -93,7 +93,7 @@ pub struct BareDebugGameHandler {
 
     move_count: usize,
     mod_hash: PuzzleHash,
-    nonce: usize,
+    nonce: u64,
     timeout: Timeout,
 
     // Live
@@ -120,7 +120,7 @@ impl BareDebugGameHandler {
         allocator: &mut AllocEncoder,
         index: usize,
     ) -> Option<ValidationInfo> {
-        if self.last_validation_data.len() > index {
+        if self.last_validation_data.len() >= index {
             let infohash_a = &self.last_validation_data[self.last_validation_data.len() - index];
             Some(ValidationInfo::new_state_update(
                 allocator,
@@ -135,7 +135,7 @@ impl BareDebugGameHandler {
     fn new_with_contributions(
         allocator: &mut AllocEncoder,
         game_id: GameID,
-        nonce: usize,
+        nonce: u64,
         identities: &[ChiaIdentity],
         referee_coin_puzzle_hash: &PuzzleHash,
         timeout: Timeout,
@@ -307,10 +307,10 @@ impl BareDebugGameHandler {
             ));
         };
 
-        let p_validation_hash = exhaustive_inputs
-            .previous_validation_info
-            .as_ref()
-            .map(|v| v.hash().clone());
+        let p_validation_hash = match exhaustive_inputs.previous_validation_info.as_ref() {
+            Some(v) => ValidationInfoHash::Hash(v.hash().clone()),
+            None => ValidationInfoHash::None,
+        };
         let state_update_result = self.generic_run_state_update(
             allocator,
             exhaustive_inputs.validation_program.clone(),
@@ -336,7 +336,7 @@ impl BareDebugGameHandler {
         &self,
         allocator: &mut AllocEncoder,
         validation_program: StateUpdateProgram,
-        previous_validation_info_hash: Option<Hash>,
+        previous_validation_info_hash: ValidationInfoHash,
         move_to_check: &[u8],
         mover_share: &Amount,
         evidence: Evidence,
@@ -360,7 +360,7 @@ impl BareDebugGameHandler {
                             mover_share: mover_share.clone(),
                             max_move_size: self.max_move_size,
                         },
-                        validation_info_hash: Some(
+                        validation_program_hash: ValidationInfoHash::Hash(
                             ValidationInfo::new_state_update(
                                 allocator,
                                 validation_program.clone(),
@@ -418,7 +418,7 @@ impl BareDebugGameHandler {
                 .map(|v| v.hash().clone()),
             slash: slash,
             opponent_mover_share: mover_share.clone(),
-            previous_validation_info: self.get_validation_info(allocator, 2),
+            previous_validation_info: self.get_validation_info(allocator, 1),
         };
 
         self.prime_my_turn(allocator, &emove)?;
@@ -438,9 +438,10 @@ impl BareDebugGameHandler {
         evidence: Evidence,
     ) -> Result<StateUpdateResult, Error> {
         let vprog = self.validation_program_queue[0].clone();
-        let previous_validation_info_hash = self
-            .get_validation_info(allocator, 1)
-            .map(|v| v.hash().clone());
+        let previous_validation_info_hash = match self.get_validation_info(allocator, 1) {
+            Some(v) => ValidationInfoHash::Hash(v.hash().clone()),
+            None => ValidationInfoHash::None,
+        };
         self.generic_run_state_update(
             allocator,
             vprog,
@@ -460,10 +461,10 @@ impl BareDebugGameHandler {
         assert_eq!(self.validation_program_queue.len(), 1);
         let vprog = self.validation_program_queue.pop_front().unwrap();
         let move_to_check = inputs.to_linear_move(allocator)?;
-        let previous_validation_info_hash = inputs
-            .previous_validation_info
-            .as_ref()
-            .map(|v| v.hash().clone());
+        let previous_validation_info_hash = match inputs.previous_validation_info.as_ref() {
+            Some(v) => ValidationInfoHash::Hash(v.hash().clone()),
+            None => ValidationInfoHash::None,
+        };
         let evidence = Evidence::nil()?;
 
         self.last_validation_data
@@ -502,7 +503,9 @@ impl BareDebugGameHandler {
                                         mover_share: inputs.opponent_mover_share.clone(),
                                         max_move_size: inputs.max_move_size,
                                     },
-                                    validation_info_hash: Some(vprog.hash().clone()),
+                                    validation_program_hash: ValidationInfoHash::Hash(
+                                        vprog.hash().clone(),
+                                    ),
                                 },
                             },
                         )?,
@@ -578,7 +581,7 @@ pub fn make_debug_games(
     allocator: &mut AllocEncoder,
     rng: &mut ChaCha8Rng,
     identities: &[ChiaIdentity],
-    nonce: usize,
+    nonce: u64,
 ) -> Result<[BareDebugGameHandler; 2], Error> {
     make_debug_games_with_contributions(allocator, rng, identities, 100, 100, nonce)
 }
@@ -589,10 +592,10 @@ pub fn make_debug_games_with_contributions(
     identities: &[ChiaIdentity],
     my_contribution: u64,
     their_contribution: u64,
-    nonce: usize,
+    nonce: u64,
 ) -> Result<[BareDebugGameHandler; 2], Error> {
     let rng_seq0: Vec<Hash> = (0..50).map(|_| rng.random()).collect();
-    let gid = GameID(nonce as u64);
+    let gid = GameID(nonce);
     let referee_coin = read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex")?;
     let ref_coin_hash = referee_coin.sha256tree(allocator);
     BareDebugGameHandler::new_with_contributions(
@@ -601,7 +604,7 @@ pub fn make_debug_games_with_contributions(
         nonce,
         identities,
         &ref_coin_hash,
-        Timeout::new(10),
+        Timeout::new(15),
         &rng_seq0,
         my_contribution,
         their_contribution,
@@ -637,7 +640,7 @@ pub struct ExhaustiveMoveInputs {
     max_move_size: usize,
     mover_share: Amount,
     count: usize,
-    nonce: usize,
+    nonce: u64,
     slash: u8,
     opponent_mover_share: Amount,
     previous_validation_info: Option<ValidationInfo>,
@@ -716,7 +719,7 @@ impl ExhaustiveMoveInputs {
         let timeout_atom = at_least_one_byte(allocator, self.timeout.to_u64())?;
         assert_ne!(self.amount, Amount::default());
         let amount_atom = at_least_one_byte(allocator, self.amount.to_u64())?;
-        let nonce_atom = at_least_one_byte(allocator, self.nonce as u64)?;
+        let nonce_atom = at_least_one_byte(allocator, self.nonce)?;
         let max_move_size_atom = at_least_one_byte(allocator, self.max_move_size as u64)?;
         let mover_share_atom = at_least_one_byte(allocator, self.opponent_mover_share.to_u64())?;
         let count_atom = at_least_one_byte(allocator, self.count as u64)?;

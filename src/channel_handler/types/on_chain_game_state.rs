@@ -3,10 +3,6 @@ use crate::common::types::{Amount, GameID, PuzzleHash, Timeout};
 
 use serde::{Deserialize, Serialize};
 
-fn default_game_timeout() -> Timeout {
-    Timeout::new(10)
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OnChainGameState {
     pub game_id: GameID,
@@ -14,28 +10,17 @@ pub struct OnChainGameState {
     pub our_turn: bool,
     pub state_number: usize,
     pub accept: AcceptTransactionState,
-    /// When set, this coin is the result of an opponent's illegal move and we've
-    /// submitted a slash transaction to spend it. If the slash succeeds (coin gets
-    /// spent), we emit WeSlashedOpponent. If it times out, OpponentSuccessfullyCheated.
-    #[serde(default)]
+    /// Set when we've submitted a slash transaction for this coin (opponent made
+    /// an illegal move). WeSlashedOpponent if the slash lands, OpponentSuccessfullyCheated
+    /// if it times out.
     pub pending_slash_amount: Option<Amount>,
     /// The mover_share the opponent claimed in their illegal move. If the slash
     /// times out, this is the amount we actually end up with.
-    #[serde(default)]
     pub cheating_move_mover_share: Option<Amount>,
-    #[serde(default)]
     pub accepted: bool,
-    /// Set when a terminal notification (WeTimedOut, OpponentTimedOut, etc.) has
-    /// already been emitted for this game, to prevent duplicate notifications when
-    /// the same game coin is observed via multiple code paths.
-    #[serde(default)]
     pub notification_sent: bool,
-    /// The game-specific on-chain timeout (ASSERT_HEIGHT_RELATIVE) from the referee puzzle.
-    #[serde(default = "default_game_timeout")]
     pub game_timeout: Timeout,
     /// True when the referee's game handler is None (no further moves possible).
-    /// Used to distinguish "real timeout" from "timeout on a terminal game state"
-    /// so the UX can show "game ended cleanly" instead of a misleading timeout message.
-    #[serde(default)]
+    /// Distinguishes "real timeout" from "timeout on a terminal game state".
     pub game_finished: bool,
 }

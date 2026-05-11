@@ -1,4 +1,5 @@
 import { ChannelStatusPayload } from '../types/ChiaGaming';
+import { jsonParse, jsonStringify } from '../util/jsonSafe';
 
 export function uint8ToBase64(bytes: Uint8Array): string {
   let binary = '';
@@ -141,7 +142,7 @@ export interface SessionState {
 
   // Preferences
   theme?: 'dark' | 'light';
-  defaultFee?: number;
+  defaultFee?: bigint;
   feeUnit?: 'mojo' | 'xch';
   trackerUrl?: string;
   savedGames?: SavedGame[];
@@ -180,6 +181,7 @@ export interface SessionState {
   gameTerminalLabel?: string | null;
   gameTerminalReward?: string | null;
   gameTerminalRewardCoin?: string | null;
+  gameTerminalCleanEnd?: boolean;
   myRunningBalance?: string;
   channelNotifQueue?: Array<{ id: number; kind: string; title: string; message: string }>;
   gameNotifQueue?: Array<{ id: number; kind: string; title: string; message: string }>;
@@ -214,6 +216,22 @@ function deleteIndexedDb(name: string): Promise<void> {
       resolve();
     }
   });
+}
+
+function clearWalletConnectLocalStorageKeys(): void {
+  try {
+    const toRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && isWalletConnectStorageKey(key)) toRemove.push(key);
+    }
+    for (const key of toRemove) localStorage.removeItem(key);
+  } catch { /* ignore */ }
+}
+
+export function clearWalletConnectStorage(): void {
+  clearWalletConnectLocalStorageKeys();
+  void clearWalletConnectIndexedDb();
 }
 
 async function clearWalletConnectIndexedDb(): Promise<void> {
@@ -312,7 +330,7 @@ function flushToLocalStorage(): void {
     persistTimer = null;
   }
   try {
-    localStorage.setItem(STATE_KEY, obfuscate(JSON.stringify(cached)));
+    localStorage.setItem(STATE_KEY, obfuscate(jsonStringify(cached)));
   } catch (e) {
     console.error('[save] failed to persist state:', e);
   }
@@ -351,7 +369,7 @@ if (typeof window !== 'undefined') {
 
 /** @internal — write obfuscated JSON to STATE_KEY (for tests that need to seed localStorage) */
 export function _writeRawState(obj: Record<string, unknown>): void {
-  localStorage.setItem(STATE_KEY, obfuscate(JSON.stringify(obj)));
+  localStorage.setItem(STATE_KEY, obfuscate(jsonStringify(obj)));
 }
 
 /** @internal — reset module state between test cases */
@@ -373,8 +391,8 @@ export function loadState(): SessionState {
     const raw = localStorage.getItem(STATE_KEY);
     if (raw) {
       const json = deobfuscate(raw);
-      const parsed = JSON.parse(json);
-      if (parsed.version === CURRENT_VERSION) {
+      const parsed = jsonParse(json);
+      if (parsed.version == CURRENT_VERSION) {
         cached = parsed as SessionState;
         return cached;
       }
@@ -428,18 +446,49 @@ export function saveSession(fields: Partial<SessionState>): void {
   });
 }
 
+function hasWalletConnectStorage(): boolean {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && isWalletConnectStorageKey(key)) return true;
+    }
+  } catch { /* ignore */ }
+  return false;
+}
+
 /**
- * Returns the current state if it has game-related content (blockchainType
- * or serializedCradle), null otherwise. Callers check buildNonce themselves.
+ * Returns the current state if there's anything worth resuming — a
+ * serialized cradle or leftover WalletConnect storage from a partial
+ * connection. `blockchainType` alone (preserved across session clears)
+ * does not count as resumable. Callers check buildNonce themselves.
  */
 export function peekSession(): SessionState | null {
   const state = loadState();
-  if (state.blockchainType || state.serializedCradle) return state;
+  if (state.blockchainType || state.serializedCradle || state.pairingToken) return state;
+  if (hasWalletConnectStorage()) return state;
   return null;
 }
 
 export function clearSession(): void {
-  cached = freshState();
+  const prev = loadState();
+  cached = {
+    version: prev.version,
+    buildNonce: prev.buildNonce,
+    playerId: prev.playerId,
+    sessionId: prev.sessionId,
+    alias: prev.alias,
+    theme: prev.theme,
+    defaultFee: prev.defaultFee,
+    feeUnit: prev.feeUnit,
+    trackerUrl: prev.trackerUrl,
+    savedGames: prev.savedGames,
+    activeTab: prev.activeTab,
+    unreadChat: prev.unreadChat,
+    unreadGame: prev.unreadGame,
+    walletAlert: prev.walletAlert,
+    trackerAlert: prev.trackerAlert,
+    blockchainType: prev.blockchainType,
+  };
   flushToLocalStorage();
 }
 
@@ -483,11 +532,11 @@ export function setTheme(theme: 'dark' | 'light'): void {
 
 // --- Default fee ---
 
-export function getDefaultFee(): number {
-  return loadState().defaultFee ?? 0;
+export function getDefaultFee(): bigint {
+  return loadState().defaultFee ?? 0n;
 }
 
-export function setDefaultFee(fee: number): void {
+export function setDefaultFee(fee: bigint): void {
   mutate(s => { s.defaultFee = fee; });
 }
 

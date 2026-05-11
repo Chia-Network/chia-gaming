@@ -1,14 +1,14 @@
 import { TradeRecord } from '../TradeRecord';
 
 export interface CreateOfferForIdsRequest {
-  // Wallet RPC transport expects offer deltas as string values.
-  offer: { [walletId: string]: number | string };
+  offer: { [walletId: string]: bigint };
   driverDict?: any;
   validateOnly?: boolean;
   disableJSONFormatting?: boolean;
-  fee?: number;
-  extraConditions?: Array<{ opcode: number; args: any }>;
+  fee?: bigint;
+  extraConditions?: Array<{ opcode: bigint; args: any }>;
   coinIds?: string[];
+  allowUnsynced?: boolean;
 }
 
 export interface CreateOfferForIdsResponse {

@@ -101,9 +101,9 @@ impl LiveGame {
             new_entropy.clone(),
             state_number,
         )?;
+        let new_ph = new_ref.outcome_referee_puzzle_hash(allocator)?;
         self.referee_maker = new_ref;
-        self.last_referee_puzzle_hash =
-            self.referee_maker.outcome_referee_puzzle_hash(allocator)?;
+        self.last_referee_puzzle_hash = new_ph;
         Ok(referee_result)
     }
 
@@ -122,11 +122,11 @@ impl LiveGame {
             self.referee_maker
                 .their_turn_move_off_chain(allocator, game_move, state_number)?;
         if let Some(r) = new_ref {
+            if their_move_result.puzzle_hash_for_unroll.is_some() {
+                let new_ph = r.outcome_referee_puzzle_hash(allocator)?;
+                self.last_referee_puzzle_hash = new_ph;
+            }
             self.referee_maker = r;
-        }
-        if their_move_result.puzzle_hash_for_unroll.is_some() {
-            self.last_referee_puzzle_hash =
-                self.referee_maker.outcome_referee_puzzle_hash(allocator)?;
         }
         Ok(their_move_result)
     }
@@ -169,15 +169,16 @@ impl LiveGame {
             conditions,
             current_state,
         )?;
+        let new_ph = if let TheirTurnCoinSpentResult::Expected(_, ref expected_ph, _, _) = res {
+            expected_ph.clone()
+        } else {
+            let r = new_ref.as_ref().unwrap_or(&self.referee_maker);
+            r.on_chain_referee_puzzle_hash(allocator)?
+        };
         if let Some(r) = new_ref {
             self.referee_maker = r;
         }
-
-        if let TheirTurnCoinSpentResult::Expected(_, ref expected_ph, _, _) = res {
-            self.last_referee_puzzle_hash = expected_ph.clone();
-        } else {
-            self.last_referee_puzzle_hash = self.current_puzzle_hash(allocator)?;
-        }
+        self.last_referee_puzzle_hash = new_ph;
         Ok(res)
     }
 
