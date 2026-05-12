@@ -54,6 +54,15 @@ trap cleanup EXIT
 
 # ── Pre-flight checks ───────────────────────────────────────────────
 
+if ! command -v wasm-pack &>/dev/null; then
+    echo "=== Installing wasm-pack ==="
+    case "$(uname -s)" in
+        Linux*)  cargo install wasm-pack ;;
+        Darwin*) brew install wasm-pack ;;
+        *)       echo "Unsupported OS for automatic wasm-pack install"; exit 1 ;;
+    esac
+fi
+
 # macOS wasm32 clang workaround
 if [ -x /opt/homebrew/opt/llvm/bin/clang ]; then
     export CC_wasm32_unknown_unknown=/opt/homebrew/opt/llvm/bin/clang
