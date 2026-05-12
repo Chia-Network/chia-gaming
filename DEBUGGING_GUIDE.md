@@ -344,6 +344,101 @@ The sim loop panics after 200 iterations with a diagnostic message including
 `move_number`, `can_move`, and the next pending action. If a test stalls, check
 whether the trigger condition for the next action can ever be satisfied.
 
+## Debugging Chialisp (CLVM)
+
+**Note:** This section covers the current state of chialisp debugging,
+which lacks print statements and stack traces. Once those are available,
+prefer them over the technique below.
+
+### The problem
+
+CLVM programs have no print/log facility. When a program crashes (raises,
+returns wrong values, or hits a type error like `Requires Int Argument`),
+the error message gives you the CLVM opcode and a NodePtr but no source
+location or call stack.
+
+### Diagnostic asserts via `(x ...)`
+
+The only way to probe execution is to make the program fail at a known
+point using `(x "MARKER" values...)`. The `x` operator raises an
+exception whose payload appears in the Rust error message as
+`Raise(NodePtr(...))`.
+
+**Critical rule:** You must put the `(x ...)` **in the return path**, not
+in a side binding. The chialisp compiler optimizes away unused bindings,
+so this does nothing:
+
+```clsp
+; WRONG — compiler optimizes this away, never executes
+(assign
+    _dbg (x "HERE")
+    real_result (some_computation)
+    real_result
+)
+```
+
+Instead, replace the return expression itself:
+
+```clsp
+; RIGHT — this is the return value, so it must execute
+(assign
+    intermediate (some_computation)
+    (x "DBG_POINT" intermediate)
+)
+```
+
+### Binary search technique
+
+1. **Pick the midpoint** of the suspected code path.
+2. **Replace the return** at that point with `(x "MID" relevant_values)`.
+3. **Rebuild** (`tools/build-chialisp.sh` + `./cb.sh`; ~70s total).
+4. **Run the failing test** (`./ct.sh -o test_name`).
+5. **Interpret:**
+   - If the error changes to `Raise(...)` with your marker → execution
+     reached that point. The bug is downstream.
+   - If the error stays the same (e.g. `PathIntoAtom`) → the crash is
+     before your marker. The bug is upstream.
+6. **Repeat**, narrowing the range by half each time.
+
+### Checking specific values
+
+Once you've found the crashing expression, you can probe sub-expressions:
+
+```clsp
+; What is this value? Is it an atom or a pair?
+(x "CHECK_VAL" (strlen some_value) some_value)
+```
+
+Or use conditional asserts to test specific properties:
+
+```clsp
+; Only crash if the value is wrong
+(if (= (strlen val) 32)
+    (real_computation val)
+    (x "BAD_LEN" (strlen val) val)
+)
+```
+
+### Chialisp rebuild cycle
+
+Each chialisp change requires:
+1. `rm -f .build-chialisp.cache` (force rebuild)
+2. `bash tools/build-chialisp.sh` (~60–70s)
+3. `./cb.sh` (recompile Rust, picks up new .hex files, ~1–2s incremental)
+4. Run the test
+
+To speed things up, delete only the affected hex files instead of the
+cache:
+```bash
+find clsp -name '*.hex' -path '*/spacepoker/*' -delete
+```
+
+### Cleanup
+
+Remove all diagnostic `(x ...)` calls after the bug is fixed. They are
+not documentation. Search for your marker prefix (e.g. `DBG_`) to find
+them all.
+
 ## Mistakes to Avoid
 
 - **Don't use `cargo test` directly.** Use `./ct.sh`. The script handles
