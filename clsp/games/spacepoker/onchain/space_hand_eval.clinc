@@ -1,40 +1,39 @@
 
-; ranks are 2-14 with 14 being ace
-; there are no suits, flushes, or ace-to-four straights
-; takes a list of card ranks and returns the value of the best poker 
-; hand which can be made with them
-; returned list is hand type followed by cards in descending order
-; all sorting is done highest to lowest
+; Space poker hand evaluator
+;
+; Cards are plain rank integers 2-14 (no suits, 14 = ace).
+; No flushes, no ace-low straights.
+;
+; Hand representations (counts then ranks, boost inserted between):
+;   5 of a kind:  (5 boost rank)
+;   4 of a kind:  (4 1 boost quad_rank kicker)
+;   straight:     (3 3 boost high_card)        -- beats full house (suitless: straights are rarer)
+;   full house:   (3 2 boost set_rank pair_rank)
+;   set:          (3 1 1 boost set_rank k1 k2)
+;   two pair:     (2 2 1 boost hp lp k)
+;   pair:         (2 1 1 1 boost pr k1 k2 k3)
+;   high card:    (1 1 1 1 1 boost h k1 k2 k3 k4)
 
-; Hands are represented:
-; 5 of a kind (5 rank)
-; 4 of a kind  (4 1 quad_rank kicker)
-; full house (3 2 set_rank pair_rank)
-; straight (3 1 2 high_card)
-; set (3 1 1 set_rank first_kicker second_kicker)
-; two pair (2 2 1 high_pair_rank low_pair_rank kicker)
-; pair (2 1 1 1 pair_rank first_kicker second_kicker third_kicker)
-; high card (1 1 1 1 1 high_card first_kicker second_kicker third_kicker fourth_kicker)
-
+(import std.li)
 (import std.map)
+(import std.max)
+(import std.deep_compare)
 (import std.relops)
-(import std.isthere)
 (import std.atomsort)
+(import std.append)
 
 ; returns the high card of a straight or 0 if there isn't any
-(defun straight_high (@ all-args (count1 count2 count3 count4 count5 rank1 rank2 rank3 rank4 rank5))
-    (if (not (= count1 1))
-        0
-        (* (= rank5 (- rank1 4)) rank1)
-    )
+; requires 5 ranks in descending order, all with count 1
+(defun straight_high_inner (r1 r2 r3 r4 r5)
+    (* (= r5 (- r1 4)) r1)
 )
 
 (defun group_by_count_inner (items last count)
     (if (not items)
-        (list (c count last))
+        (list (+ (* 16 count) last))
         (if (= (f items) last)
             (group_by_count_inner (r items) last (+ count 1))
-            (c (c count last) (group_by_count_inner (r items) (f items) 1))
+            (c (+ (* 16 count) last) (group_by_count_inner (r items) (f items) 1))
         )
     )
 )
@@ -43,25 +42,105 @@
     (group_by_count_inner items (f items) 0)
 )
 
-(defun space_hand_eval_inner (cards)
-    (assign-lambda
-        ranks (atomsort cards)
-        raw_groups (atomsort (group_by_count ranks))
-        hand (map (lambda (x) (lsh x -4)) raw_groups (map (lambda (x) (logand x 15)) raw_groups))
-        shigh (straight_high &rest hand)
-        (if shigh
-            (if (logior (< (f hand) 3) (= (f (r hand)) 2))
-                (list 3 1 2 shigh)
-                hand
+(defun extract_counts (groups)
+    (if (not groups) 0
+        (c (lsh (f groups) -4) (extract_counts (r groups)))
+    )
+)
+
+(defun extract_ranks (groups)
+    (if (not groups) 0
+        (c (logand (f groups) 15) (extract_ranks (r groups)))
+    )
+)
+
+; Evaluate a single 5-card hand. Returns (counts... boost ranks...).
+(defun space_hand_eval (cards boost)
+    (assign
+        sorted (atomsort cards)
+        raw_groups (atomsort (group_by_count sorted))
+        counts (extract_counts raw_groups)
+        ranks (extract_ranks raw_groups)
+        num_groups (assign
+            n1 (f counts)
+            r1 (r counts)
+            (if (not r1) 1
+                (assign n2 (f r1) r2 (r r1)
+                    (if (not r2) 2
+                        (assign n3 (f r2) r3 (r r2)
+                            (if (not r3) 3
+                                (assign n4 (f r3) r4 (r r3)
+                                    (if (not r4) 4 5)
+                                )
+                            )
+                        )
+                    )
+                )
             )
-            hand
+        )
+        ; check for straight: exactly 5 groups (all singletons) and consecutive ranks
+        (if (= num_groups 5)
+            (assign
+                r1 (f ranks)
+                r2 (f (r ranks))
+                r3 (f (r (r ranks)))
+                r4 (f (r (r (r ranks))))
+                r5 (f (r (r (r (r ranks)))))
+                shigh (straight_high_inner r1 r2 r3 r4 r5)
+                (if shigh
+                    (list 3 3 boost shigh)
+                    (append counts (c boost ranks))
+                )
+            )
+            (append counts (c boost ranks))
         )
     )
 )
 
-(defun space_hand_eval (cards boosted)
-    (assign 
-        result (space_hand_calc_inner cards)
-        (list (f result) boosted (r result))
+; Enumerate all C(n,5) subsets from a list of cards.
+; Returns list of (selected_cards bitfield count) triples.
+(defun process_subsets (card index entries)
+    (if (not entries)
+        0
+        (assign (sel_cards sel_bits count) (f entries)
+            rest (process_subsets card index (r entries))
+            after_skip (if (> (+ count index) 4) (c (f entries) rest) rest)
+            (if (< count 5)
+                (c (li (c card sel_cards) (logior sel_bits (lsh 1 index)) (+ count 1)) after_skip)
+                after_skip
+            )
+        )
+    )
+)
+
+(defun choose_subsets (index cards)
+    (if (not cards)
+        (li (li 0 0 0))
+        (process_subsets (f cards) index
+            (choose_subsets (+ index 1) (r cards))
+        )
+    )
+)
+
+; Evaluate one subset entry, return (hand_value bitfield)
+(defun eval_subset (boost sel_cards sel_bits count)
+    (li (space_hand_eval sel_cards boost) sel_bits)
+)
+
+; Map eval_subset over all subsets
+(defun eval_all_subsets (boost subsets)
+    (if (not subsets) 0
+        (assign (sel_cards sel_bits count) (f subsets)
+            (c (eval_subset boost sel_cards sel_bits count)
+               (eval_all_subsets boost (r subsets)))
+        )
+    )
+)
+
+; Evaluate all 5-card subsets of the given cards, return (best_value best_bitfield).
+; Follows calpoker's handcalc pattern.
+(defun space_hand_calc (cards boost)
+    (max deep<
+        (eval_all_subsets boost (choose_subsets 0 cards))
     )
 )

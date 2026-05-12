@@ -1,21 +1,22 @@
 (include *standard-cl-23*)
 
-(import onchain.poker.commitB exposing (program_hash as bhash))
-(import std.assert)
+(import games.spacepoker.onchain.commitB exposing (program_hash as commitB_hash))
+(import games.game_codes)
+(import std.and)
+(import std.if_any_fail)
 
-; state is minraise
-; move is alice commit to a salted word
+; state is bet_unit
+; MOVE is Alice's hash-chain tip (image_5), 32 bytes
 ; evidence is empty
-(export (mod_hash (mover_image_5 new_validation_hash max_move_size mover_share previous_validation_hash 
-    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
-    minraise me mover_puzzle solution evidence)
+(export (mod_hash
+    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+        bet_unit previous_validation_program evidence output_conditions)
 
     (if_any_fail
-        (= (strlen move) 32)
-        (= new_validation_hash (sha256 bhash (shatree (li minraise mover_image_5))))
-        (= max_move_size 32)
-        (= mover_share (/ amount 2))
+        (= (strlen MOVE) 32)
+        (= MOVER_SHARE (/ AMOUNT 2))
         0
-        (x)
+        (list commitB_hash (list bet_unit MOVE) 32 "commitA")
     )
 )

@@ -42,6 +42,24 @@ pub fn poker_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, Game
             parser_program: Some(calpoker_parser.to_program()),
         },
     );
+    let spacepoker_make_proposal = read_hex_puzzle(
+        allocator,
+        "clsp/games/spacepoker/spacepoker_include_spacepoker_make_proposal.hex",
+    )
+    .expect("should load");
+    let spacepoker_parser = read_hex_puzzle(
+        allocator,
+        "clsp/games/spacepoker/spacepoker_include_spacepoker_parser.hex",
+    )
+    .expect("should load");
+
+    game_type_map.insert(
+        GameType(b"spacepoker".to_vec()),
+        GameFactory {
+            program: spacepoker_make_proposal.to_program(),
+            parser_program: Some(spacepoker_parser.to_program()),
+        },
+    );
     game_type_map.insert(
         GameType(b"debug".to_vec()),
         GameFactory {

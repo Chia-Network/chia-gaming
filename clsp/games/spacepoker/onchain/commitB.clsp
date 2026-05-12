@@ -1,21 +1,23 @@
 (include *standard-cl-23*)
 
-(import onchain.poker.begin_round exposing (program_hash as beginhash))
-(import std.assert)
+(import games.spacepoker.onchain.begin_round exposing (program_hash as begin_hash))
+(import games.game_codes)
+(import std.and)
+(import std.if_any_fail)
+(import std.li)
 
-; state is (minraise waiter_image_5)
-; move is mover_image_4
+; state is (bet_unit alice_image_5)
+; MOVE is Bob's hash-chain tip (image_4), 32 bytes
 ; evidence is empty
-(export (mod_hash (mover_image_4 new_validation_hash max_move_size mover_share previous_validation_hash 
-    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
-    (minraise waiter_image_5) me mover_puzzle solution evidence)
+(export (mod_hash
+    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+        (bet_unit alice_image_5) previous_validation_program evidence output_conditions)
 
     (if_any_fail
-        (= (strlen move) 32)
-        (= new_validation_hash (sha256 bhash (shatree (li minraise minraise waiter_image_5 mover_image_4 4))))
-        (= max_move_size 42)
-        (= mover_share (- (/ amount 2) minraise))
+        (= (strlen MOVE) 32)
+        (= MOVER_SHARE (- (/ AMOUNT 2) bet_unit))
         0
-        (x)
+        (list begin_hash (li bet_unit bet_unit alice_image_5 MOVE 4) 42 "commitB")
     )
 )

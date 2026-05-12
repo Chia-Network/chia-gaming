@@ -1,33 +1,41 @@
 (include *standard-cl-23*)
 
-(import onchain.poker.mid_round exposing (program_hash as mid_hash))
-(import std.assert)
+(import games.spacepoker.onchain.mid_round exposing (program_hash as mid_hash))
+(import games.game_codes)
+(import std.and)
+(import std.if_any_fail)
+(import std.relops)
+(import std.li)
 
-; state is (minraise half_pot_size mover_image_Nplus1 waiter_image_N N)
-; move is concatenation of mover_image_N and raise amount
+; state is (bet_unit half_pot mover_image_Nplus1 waiter_image_N N)
+; MOVE is mover_image_N (32 bytes) concatenated with raise amount
 ; evidence is empty
-(export (quine_hash (move new_validation_hash max_move_size mover_share previous_validation_hash 
-    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
-    (minraise half_pot_size mover_image_Nplus1 waiter_image_N N) me mover_puzzle solution evidence)
+;
+; Passes mod_hash (= begin_round's own hash) into mid_round's state
+; so mid_round can transition back here for the next street without
+; a circular import.
+(export (mod_hash
+    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+        (bet_unit half_pot mover_image_Nplus1 waiter_image_N N)
+        previous_validation_program evidence output_conditions)
 
-    (if_any_fail
-        (>= (strlen move) 32)
-        (= max_move_size 32)
-        (= mover_share (- (/ amount 2) half_pot))
+    (if (not (>= (strlen MOVE) 32))
+        0
         (assign
-            raise_amount (substr move 32 (strlen move))
-            mover_image_N (substr move 0 32)
+            mover_image_N (substr MOVE 0 32)
+            raise_amount (substr MOVE 32 (strlen MOVE))
             (if_any_fail
-                (= waiter_image_Nplus1 (sha256 waiter_image_N))
+                (= MOVER_SHARE (- (/ AMOUNT 2) half_pot))
+                (= mover_image_Nplus1 (sha256 mover_image_N))
                 (>= raise_amount 0)
-                (<= (+ half_pot_size raise_amount) (/ amount 2))
-                (= new_validation_hash (sha256 mid_hash (shatree (li minraise half_pot_size raise_amount 
-                    waiter_image_N mover_image_N N quine_hash))))
+                (<= (+ half_pot raise_amount) (/ AMOUNT 2))
                 0
-                1
+                (list mid_hash
+                    (li bet_unit half_pot raise_amount
+                        waiter_image_N mover_image_N N mod_hash)
+                    42 "begin_round")
             )
         )
-        0
-        (x)
     )
 )
