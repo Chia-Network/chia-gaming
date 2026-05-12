@@ -35,21 +35,25 @@
                     ; off-chain: nil evidence, accept without checking mover_share
                     (if WAITER_PUBKEY (x "on-chain requires evidence")
                         (list 0 0 0 "end"))
-                    ; on-chain: evidence is waiter's card selection
+                    ; on-chain: evidence is waiter's card selection bitfield.
+                    ; Slash succeeds only if mover takes MORE than deserved.
+                    ; Mover is allowed to be generous (take less).
                     (assert (= (popcount evidence) 5)
                         (assign
                             waiter_selected (pull_from_bitfield waiter_cards evidence)
-                            (!= MOVER_SHARE
-                                (assign result (deep_compare
-                                        (space_hand_eval mover_selected mover_boost)
-                                        (space_hand_eval waiter_selected waiter_boost))
-                                    (if (not result)
-                                        (/ AMOUNT 2)
-                                        (= result 1)
-                                        (- (/ AMOUNT 2) half_pot)
-                                        (+ (/ AMOUNT 2) half_pot)
-                                    )
+                            fair_share (assign result (deep_compare
+                                    (space_hand_eval mover_selected mover_boost)
+                                    (space_hand_eval waiter_selected waiter_boost))
+                                (if (not result)
+                                    (/ AMOUNT 2)
+                                    (= result 1)
+                                    (+ (/ AMOUNT 2) half_pot)
+                                    (- (/ AMOUNT 2) half_pot)
                                 )
+                            )
+                            (if (> MOVER_SHARE fair_share)
+                                0
+                                (list 0 0 0 "end")
                             )
                         )
                     )

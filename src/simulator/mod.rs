@@ -33,6 +33,8 @@ use crate::simulator::tests::potato_handler_sim::test_funs as potato_handler_sim
 use crate::simulator::tests::simulator_tests::test_funs as simulator_tests;
 #[cfg(test)]
 use crate::test_support::calpoker::test_funs as calpoker_tests;
+#[cfg(test)]
+use crate::test_support::spacepoker::test_funs as spacepoker_tests;
 
 #[cfg(test)]
 use crate::common::types::divmod::test_funs as divmod_tests;
@@ -874,6 +876,7 @@ pub fn run_simulation_tests() {
         potato_handler_tests(),
         simulator_tests(),
         calpoker_tests(),
+        spacepoker_tests(),
         potato_handler_sim_tests(),
     ];
 

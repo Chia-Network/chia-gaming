@@ -772,6 +772,128 @@ fn test_evil_path_wrong_mover_share() {
     run_handler_game(&mut allocator, &setup, &moves);
 }
 
+fn run_end_validator_with_evidence(
+    allocator: &mut AllocEncoder,
+    move_bytes: &[u8],
+    mover_share: i64,
+    state: NodePtr,
+    evidence: &[u8],
+) -> MoveCode {
+    use crate::common::types::Sha256tree;
+    let end_puzzle = read_hex_puzzle(
+        allocator,
+        "clsp/games/spacepoker/onchain/end.hex",
+    )
+    .expect("load end validator");
+    let end_hash_bytes = *end_puzzle.sha256tree(allocator).hash().bytes();
+    let end_hash_node = allocator.allocator().new_atom(&end_hash_bytes).unwrap();
+    let move_node = allocator.allocator().new_atom(move_bytes).unwrap();
+    let evidence_node = allocator.allocator().new_atom(evidence).unwrap();
+    let program_node = end_puzzle.to_clvm(allocator).unwrap();
+    let (code, _) = run_validator(
+        allocator,
+        end_hash_node,
+        move_node,
+        mover_share,
+        33,
+        state,
+        program_node,
+        evidence_node,
+    );
+    code
+}
+
+fn test_generous_mover_share_allowed() {
+    let mut allocator = AllocEncoder::new();
+
+    let alice_pre = sha256_bytes(b"alice_entropy_1027");
+    let bob_pre = sha256_bytes(b"bob_entropy_1027");
+    let alice_image_1 = sha256_bytes(&alice_pre);
+    let half_pot: i64 = BET_UNIT;
+
+    let state = {
+        let hp = half_pot.to_clvm(&mut allocator).unwrap();
+        let mi = allocator.allocator().new_atom(&alice_image_1).unwrap();
+        let wp = allocator.allocator().new_atom(&bob_pre).unwrap();
+        let a = allocator.allocator();
+        let tail = a.new_pair(wp, NodePtr::NIL).unwrap();
+        let tail = a.new_pair(mi, tail).unwrap();
+        a.new_pair(hp, tail).unwrap()
+    };
+
+    let mut move_bytes = alice_pre.to_vec();
+    move_bytes.push(0x1F); // select first 5 cards
+
+    let evidence = [0x1F_u8]; // waiter also selects first 5
+
+    // First: verify with correct mover_share (whatever it is) the validator accepts
+    let correct_code = run_end_validator_with_evidence(
+        &mut allocator,
+        &move_bytes,
+        AMOUNT / 2,
+        state,
+        &evidence,
+    );
+    // This should not slash (generous or correct)
+    assert_eq!(
+        correct_code,
+        MoveCode::MakeMove,
+        "correct/generous mover_share should be accepted"
+    );
+
+    // Now try with mover_share = 0 (maximally generous to opponent)
+    let generous_code = run_end_validator_with_evidence(
+        &mut allocator,
+        &move_bytes,
+        0,
+        state,
+        &evidence,
+    );
+    assert_eq!(
+        generous_code,
+        MoveCode::MakeMove,
+        "generous mover_share=0 should be accepted (mover gives everything away)"
+    );
+}
+
+fn test_greedy_mover_share_slashed() {
+    let mut allocator = AllocEncoder::new();
+
+    let alice_pre = sha256_bytes(b"alice_entropy_1027");
+    let bob_pre = sha256_bytes(b"bob_entropy_1027");
+    let alice_image_1 = sha256_bytes(&alice_pre);
+    let half_pot: i64 = BET_UNIT;
+
+    let state = {
+        let hp = half_pot.to_clvm(&mut allocator).unwrap();
+        let mi = allocator.allocator().new_atom(&alice_image_1).unwrap();
+        let wp = allocator.allocator().new_atom(&bob_pre).unwrap();
+        let a = allocator.allocator();
+        let tail = a.new_pair(wp, NodePtr::NIL).unwrap();
+        let tail = a.new_pair(mi, tail).unwrap();
+        a.new_pair(hp, tail).unwrap()
+    };
+
+    let mut move_bytes = alice_pre.to_vec();
+    move_bytes.push(0x1F);
+
+    let evidence = [0x1F_u8];
+
+    // Claim the entire amount — this is greedy (mover takes everything)
+    let greedy_code = run_end_validator_with_evidence(
+        &mut allocator,
+        &move_bytes,
+        AMOUNT,
+        state,
+        &evidence,
+    );
+    assert_eq!(
+        greedy_code,
+        MoveCode::Slash,
+        "greedy mover_share=AMOUNT should be slashed"
+    );
+}
+
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
         (
@@ -829,6 +951,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_evil_path_wrong_mover_share",
             &test_evil_path_wrong_mover_share,
+        ),
+        (
+            "test_generous_mover_share_allowed",
+            &test_generous_mover_share_allowed,
+        ),
+        (
+            "test_greedy_mover_share_slashed",
+            &test_greedy_mover_share_slashed,
         ),
     ]
 }
