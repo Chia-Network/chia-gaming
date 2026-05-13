@@ -24,16 +24,10 @@
 ; MOD_HASH should be the shatree of referee itself.
 ; NONCE is for anti-replay prevention.
 ;
-; Validation programs get passed:
-;
-; (mod_hash
-;     (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
-;         MOVE MAX_MOVE_SIZE INFOHASH_B MOVER_SHARE INFOHASH_A)
-;     previous_state
-;     previous_validation_program
-;     evidence
-;     output_conditions
-; )
+; Validation programs get (mod_hash . all_args) where all_args is
+; (curried_args . slash_solution_args).  The validator should only
+; destructure the fields it needs; the tail beyond evidence is an
+; artifact of passing all_args for efficiency and should be ignored.
 ;
 ; timeout args: (mover_payout_ph waiter_payout_ph)
 ; slash args: (previous_state previous_validation_program evidence mover_payout_ph)
