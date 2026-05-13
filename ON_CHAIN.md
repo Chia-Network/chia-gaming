@@ -2,7 +2,8 @@
 
 For the conceptual overview (state channels, coin hierarchy, potato protocol),
 see `OVERVIEW.md`. For off-chain game proposals and flow, see
-`GAME_LIFECYCLE.md`.
+`GAME_LIFECYCLE.md`. For CLVM denial-of-service analysis (execution cost caps,
+solution constraints, trust categories), see `CLVM_DOS.md`.
 
 ## Table of Contents
 

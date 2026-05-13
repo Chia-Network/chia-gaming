@@ -23,6 +23,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Error, GetCoinStringParts, Hash,
     IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, ToQuotedProgram,
+    MAX_BLOCK_COST_CLVM,
 };
 
 use crate::utils::map_m;
@@ -236,7 +237,7 @@ fn make_sim_consensus_constants() -> ConsensusConstants {
         max_vdf_witness_size: 8,
         mempool_block_buffer: 10,
         max_coin_amount: u64::MAX,
-        max_block_cost_clvm: 11_000_000_000,
+            max_block_cost_clvm: MAX_BLOCK_COST_CLVM,
         cost_per_byte: 12000,
         weight_proof_threshold: 2,
         weight_proof_recent_blocks: 1000,

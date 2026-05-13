@@ -17,6 +17,8 @@ pub fn chia_dialect() -> ChiaDialect {
     ChiaDialect::default()
 }
 
+pub const MAX_BLOCK_COST_CLVM: u64 = 11_000_000_000;
+
 #[derive(Debug, Clone)]
 pub enum CoinCondition {
     AggSigMe(PublicKey, Vec<u8>),
@@ -146,7 +148,7 @@ impl CoinCondition {
             &chia_dialect(),
             run_puzzle,
             run_args,
-            0,
+            MAX_BLOCK_COST_CLVM,
         )
         .into_gen()?;
         Ok(CoinCondition::from_nodeptr(allocator, conditions.1))

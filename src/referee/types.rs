@@ -14,7 +14,8 @@ use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, curry_and_treehash, sign_agg_sig_me, ChiaIdentity,
 };
 use crate::common::types::{
-    chia_dialect, Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, Hash, IntoErr, Node,
+    chia_dialect, Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, Hash, IntoErr,
+    Node, MAX_BLOCK_COST_CLVM,
     Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
 use crate::utils::proper_list;
@@ -360,7 +361,7 @@ impl InternalStateUpdateArgs {
             &chia_dialect(),
             validation_program_nodeptr,
             validator_full_args_node,
-            0,
+            MAX_BLOCK_COST_CLVM,
         )
         .into_gen();
         let raw_result = raw_result_p?;

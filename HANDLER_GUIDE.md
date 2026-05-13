@@ -7,7 +7,8 @@ connect through the referee puzzle.
 
 For the broader architecture (state channels, potato protocol, dispute
 resolution), see `OVERVIEW.md`. For the raw calling conventions, see
-`clsp/handler_api.md`.
+`clsp/handler_api.md`. For DoS considerations (move size bounds, validation
+program cost, argument checking), see `CLVM_DOS.md`.
 
 ## Table of Contents
 

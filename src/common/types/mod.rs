@@ -27,7 +27,7 @@ mod timeout;
 pub use self::aggsig::Aggsig;
 pub use self::alloc_encoder::AllocEncoder;
 pub use self::amount::Amount;
-pub use self::coin_condition::{chia_dialect, CoinCondition};
+pub use self::coin_condition::{chia_dialect, CoinCondition, MAX_BLOCK_COST_CLVM};
 pub use self::coin_id::CoinID;
 pub use self::coin_string::{CoinString, GetCoinStringParts};
 pub use self::divmod::divmod;
