@@ -5,7 +5,7 @@ use crate::utils::proper_list;
 
 use crate::common::constants::{
     AGG_SIG_ME_ATOM, AGG_SIG_UNSAFE_ATOM, ASSERT_COIN_ANNOUNCEMENT_ATOM,
-    ASSERT_HEIGHT_RELATIVE_ATOM, CREATE_COIN_ANNOUNCEMENT_ATOM, CREATE_COIN_ATOM, REM_ATOM,
+    ASSERT_HEIGHT_RELATIVE_ATOM, CREATE_COIN_ANNOUNCEMENT_ATOM, CREATE_COIN_ATOM,
     RESERVE_FEE_ATOM,
 };
 
@@ -26,7 +26,6 @@ pub enum CoinCondition {
     CreateCoin(PuzzleHash, Amount),
     CreateCoinAnnouncement(Vec<u8>),
     AssertCoinAnnouncement(Vec<u8>),
-    Rem(Vec<Vec<u8>>),
     ReserveFee(Amount),
     AssertHeightRelative(u64),
 }
@@ -101,22 +100,6 @@ fn parse_condition(allocator: &AllocEncoder, condition: NodePtr) -> Option<CoinC
             if let Some(val) = u64_from_atom(&arg) {
                 return Some(CoinCondition::ReserveFee(Amount::new(val)));
             }
-        }
-    }
-
-    if !exploded.is_empty()
-        && exploded
-            .iter()
-            .all(|e| matches!(allocator.allocator_ref().sexp(*e), SExp::Atom))
-    {
-        let atoms: Vec<Vec<u8>> = exploded
-            .iter()
-            .map(|a| allocator.allocator_ref().atom(*a).to_vec())
-            .collect();
-        if *atoms[0] == REM_ATOM {
-            return Some(CoinCondition::Rem(
-                atoms.iter().skip(1).map(|a| a.to_vec()).collect(),
-            ));
         }
     }
 

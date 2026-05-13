@@ -8,7 +8,8 @@ use crate::common::types::{
     Timeout,
 };
 use crate::referee::types::{
-    GameMoveDetails, GameMoveWireData, TheirTurnCoinSpentResult, TheirTurnMoveResult,
+    GameMoveDetails, GameMoveWireData, ParsedRefereeSolution, TheirTurnCoinSpentResult,
+    TheirTurnMoveResult,
 };
 use crate::referee::Referee;
 
@@ -162,12 +163,14 @@ impl LiveGame {
         coin_string: &CoinString,
         conditions: &[CoinCondition],
         current_state: usize,
+        parsed_solution: &ParsedRefereeSolution,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
         let (new_ref, res) = self.referee_maker.their_turn_coin_spent(
             allocator,
             coin_string,
             conditions,
             current_state,
+            parsed_solution,
         )?;
         let new_ph = if let TheirTurnCoinSpentResult::Expected(_, ref expected_ph, _, _) = res {
             expected_ph.clone()

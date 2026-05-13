@@ -17,8 +17,9 @@ use crate::referee::my_turn::MyTurnReferee;
 use crate::referee::their_turn::TheirTurnReferee;
 use crate::referee::types::{
     canonical_atom_from_usize, curry_referee_puzzle, curry_referee_puzzle_hash, GameMoveDetails,
-    GameMoveStateInfo, GameMoveWireData, OnChainRefereeMoveData, OnChainRefereeSolution, RMFixed,
-    RefereePuzzleArgs, TheirTurnCoinSpentResult, TheirTurnMoveResult, ValidationInfoHash,
+    GameMoveStateInfo, GameMoveWireData, OnChainRefereeMoveData, OnChainRefereeSolution,
+    ParsedRefereeSolution, RMFixed, RefereePuzzleArgs, TheirTurnCoinSpentResult,
+    TheirTurnMoveResult, ValidationInfoHash,
 };
 
 pub(crate) struct RefereeInitialSetup {
@@ -331,6 +332,7 @@ impl Referee {
         referee_coin_string: &CoinString,
         conditions: &[CoinCondition],
         state_number: usize,
+        parsed_solution: &ParsedRefereeSolution,
     ) -> Result<(Option<Rc<Referee>>, TheirTurnCoinSpentResult), Error> {
         if let Some((_, on_chain_ph, _)) = referee_coin_string.to_parts() {
             if let Some(CoinCondition::CreateCoin(ph, amt)) = conditions
@@ -354,52 +356,44 @@ impl Referee {
             }
         }
 
-        let rem_conditions = if let Some(CoinCondition::Rem(rem_condition)) = conditions
-            .iter()
-            .find(|cond| matches!(cond, CoinCondition::Rem(_)))
-        {
-            rem_condition.to_vec()
-        } else {
-            Vec::default()
-        };
+        match parsed_solution {
+            ParsedRefereeSolution::Timeout | ParsedRefereeSolution::Slash => {
+                let mover_share = self.get_our_current_share()?;
+                let my_reward_coin_string = if mover_share > Amount::default() {
+                    Some(CoinString::from_parts(
+                        &referee_coin_string.to_coin_id(),
+                        &self.fixed().reward_puzzle_hash,
+                        &mover_share,
+                    ))
+                } else {
+                    None
+                };
 
-        let mover_share = self.get_our_current_share()?;
-
-        if rem_conditions.is_empty() {
-            let my_reward_coin_string = if mover_share > Amount::default() {
-                Some(CoinString::from_parts(
-                    &referee_coin_string.to_coin_id(),
-                    &self.fixed().reward_puzzle_hash,
-                    &mover_share,
+                Ok((
+                    Some(Rc::new(self.clone())),
+                    TheirTurnCoinSpentResult::Timedout {
+                        my_reward_coin_string,
+                    },
                 ))
-            } else {
-                None
-            };
-
-            return Ok((
-                Some(Rc::new(self.clone())),
-                TheirTurnCoinSpentResult::Timedout {
-                    my_reward_coin_string,
-                },
-            ));
-        }
-
-        match self {
-            Referee::MyTurn(_) => Err(Error::Channel(
-                "their_turn_coin_spent called on MyTurn referee".to_string(),
-            )),
-
-            Referee::TheirTurn(t) => {
-                let (new_ref, res) = t.their_turn_coin_spent(
-                    allocator,
-                    referee_coin_string,
-                    conditions,
-                    state_number,
-                    &rem_conditions,
-                )?;
-                let new_ref_rc = new_ref.map(Rc::new);
-                Ok((new_ref_rc, res))
             }
+
+            ParsedRefereeSolution::Move { .. } => match self {
+                Referee::MyTurn(_) => Err(Error::Channel(
+                    "their_turn_coin_spent called on MyTurn referee".to_string(),
+                )),
+
+                Referee::TheirTurn(t) => {
+                    let (new_ref, res) = t.their_turn_coin_spent(
+                        allocator,
+                        referee_coin_string,
+                        conditions,
+                        state_number,
+                        parsed_solution,
+                    )?;
+                    let new_ref_rc = new_ref.map(Rc::new);
+                    Ok((new_ref_rc, res))
+                }
+            },
         }
     }
 

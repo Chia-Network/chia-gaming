@@ -154,7 +154,59 @@ pub struct RMFixed {
 // V1-SPECIFIC TYPES
 // =============================================================================
 
-pub const REM_CONDITION_FIELDS: usize = 4;
+/// The three solution shapes the referee puzzle accepts, parsed directly from
+/// the solution rather than from REMARK conditions in the output.
+#[derive(Debug, Clone)]
+pub enum ParsedRefereeSolution {
+    /// `(mover_payout_ph waiter_payout_ph)` — 2 elements
+    Timeout,
+    /// `(new_move infohash_c new_mover_share new_max_move_size)` — 4 atom elements
+    Move {
+        new_move: Vec<u8>,
+        validation_info_hash_raw: Vec<u8>,
+        new_mover_share_raw: Vec<u8>,
+        max_move_size_raw: Vec<u8>,
+    },
+    /// `(previous_state previous_validation_program evidence mover_payout_ph)` —
+    /// second element is a pair (a program)
+    Slash,
+}
+
+impl ParsedRefereeSolution {
+    /// Parse a referee solution using the same dispatch logic as `referee.clsp`:
+    /// - 2 elements -> Timeout
+    /// - 4+ elements, second element is a pair -> Slash
+    /// - 4 elements, second element is an atom -> Move
+    pub fn parse(allocator: &mut AllocEncoder, solution: &Program) -> Result<Self, Error> {
+        let node = solution.to_nodeptr(allocator)?;
+        let elements = proper_list(allocator.allocator(), node, true)
+            .ok_or_else(|| Error::StrErr("referee solution is not a proper list".to_string()))?;
+
+        if elements.len() == 2 {
+            return Ok(ParsedRefereeSolution::Timeout);
+        }
+
+        if elements.len() < 4 {
+            return Err(Error::StrErr(format!(
+                "referee solution has unexpected length {}",
+                elements.len()
+            )));
+        }
+
+        match allocator.allocator().sexp(elements[1]) {
+            clvmr::allocator::SExp::Pair(_, _) => Ok(ParsedRefereeSolution::Slash),
+            clvmr::allocator::SExp::Atom => {
+                let mut get_atom = |idx: usize| allocator.allocator().atom(elements[idx]).to_vec();
+                Ok(ParsedRefereeSolution::Move {
+                    new_move: get_atom(0),
+                    validation_info_hash_raw: get_atom(1),
+                    new_mover_share_raw: get_atom(2),
+                    max_move_size_raw: get_atom(3),
+                })
+            }
+        }
+    }
+}
 
 /// Validator result: `Some(new_state)` for a valid move payload, `None` for slash (`nil`).
 pub type StateUpdateResult = Option<Rc<Program>>;

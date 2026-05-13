@@ -20,7 +20,6 @@ pub const AGG_SIG_ME_ATOM: [u8; 1] = [50];
 pub const CREATE_COIN_ATOM: [u8; 1] = [51];
 pub const CREATE_COIN_ANNOUNCEMENT_ATOM: [u8; 1] = [60];
 pub const ASSERT_COIN_ANNOUNCEMENT_ATOM: [u8; 1] = [61];
-pub const REM_ATOM: [u8; 1] = [1];
 pub const RESERVE_FEE_ATOM: [u8; 1] = [52];
 pub const ASSERT_HEIGHT_RELATIVE_ATOM: [u8; 1] = [82];
 

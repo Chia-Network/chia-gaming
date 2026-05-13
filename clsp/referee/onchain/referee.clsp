@@ -56,7 +56,6 @@
             previous_validation_program_hash (shatree previous_validation_program)
             validator_result (a previous_validation_program (c previous_validation_program_hash all_args))
             payout_conditions (list
-                (list REMARK)
                 (list CREATE_COIN mover_payout_ph AMOUNT)
                 (list AGG_SIG_UNSAFE MOVER_PUBKEY (concat 0x78 mover_payout_ph))
             )
@@ -91,7 +90,7 @@
                 (<= new_mover_share AMOUNT)
                 (>= new_mover_share 0)
                 (logior (not infohash_c) (= 32 (strlen infohash_c)))
-                (li (list REMARK new_move infohash_c new_mover_share new_max_move_size)
+                (list
                         (list ASSERT_BEFORE_HEIGHT_RELATIVE TIMEOUT)
                         (list CREATE_COIN new_puzzle_hash AMOUNT)
                         (list AGG_SIG_ME MOVER_PUBKEY (shatree args)))

@@ -19,7 +19,9 @@ use crate::potato_handler::effects::{
     GameStatusOtherParams, ResyncInfo,
 };
 use crate::potato_handler::types::{GameAction, PotatoState};
-use crate::referee::types::{GameMoveDetails, SlashOutcome, TheirTurnCoinSpentResult};
+use crate::referee::types::{
+    GameMoveDetails, ParsedRefereeSolution, SlashOutcome, TheirTurnCoinSpentResult,
+};
 use crate::referee::Referee;
 
 use std::borrow::Borrow;
@@ -407,6 +409,7 @@ impl OnChainGameHandler {
         game_id: &GameID,
         coin_string: &CoinString,
         conditions: &[CoinCondition],
+        parsed_solution: &ParsedRefereeSolution,
     ) -> Result<CoinSpentInformation, Error> {
         let reward_puzzle_hash = self.reward_puzzle_hash.clone();
 
@@ -457,6 +460,7 @@ impl OnChainGameHandler {
             coin_string,
             conditions,
             state_number,
+            parsed_solution,
         )?;
         Ok(CoinSpentInformation::TheirSpend(spent_result))
     }
@@ -765,7 +769,14 @@ impl OnChainGameHandler {
             return Ok((effects, None));
         }
 
-        let result = self.game_coin_spent(env, &old_definition.game_id, coin_id, &conditions);
+        let parsed_solution = ParsedRefereeSolution::parse(env.allocator, solution)?;
+        let result = self.game_coin_spent(
+            env,
+            &old_definition.game_id,
+            coin_id,
+            &conditions,
+            &parsed_solution,
+        );
 
         let their_turn_result = if let Ok(result) = result {
             result
@@ -906,9 +917,7 @@ impl OnChainGameHandler {
                     .map(|(_, _, amt)| amt.clone())
                     .unwrap_or_default();
                 let is_slash = !old_definition.our_turn
-                    && conditions
-                        .iter()
-                        .any(|c| matches!(c, CoinCondition::Rem(_)));
+                    && matches!(parsed_solution, ParsedRefereeSolution::Slash);
                 let label = if is_slash {
                     "slash-on-chain"
                 } else {
