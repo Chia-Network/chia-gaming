@@ -16,9 +16,10 @@ use crate::channel_handler::types::{
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::puzzle_for_synthetic_public_key;
 use crate::common::types::{
-    Aggsig, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr,
-    Program, ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout,
+    Aggsig, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr, Program,
+    ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout,
 };
+use crate::utils::proper_list;
 use crate::potato_handler::effects::{
     format_coin, CancelReason, ChannelState, ChannelStatusSnapshot, Effect, GameNotification,
     GameStatusKind, GameStatusOtherParams, ResyncInfo,
@@ -690,25 +691,39 @@ impl PotatoHandler {
                 let ch = self.channel_handler_mut()?;
                 let coin = ch.state_channel_coin().clone();
                 let clvm_conditions = conditions.to_nodeptr(env.allocator)?;
-                let want_puzzle_hash = ch.get_reward_puzzle_hash(env)?;
-                let want_amount = ch.my_out_of_game_balance();
-                if want_amount != Amount::default() {
-                    let condition_list =
-                        CoinCondition::from_nodeptr(env.allocator, clvm_conditions);
-                    let found_conditions = condition_list.iter().any(|cond| {
-                        if let CoinCondition::CreateCoin(ph, amt) = cond {
-                            *ph == want_puzzle_hash && *amt >= want_amount
-                        } else {
-                            false
-                        }
-                    });
+                let expected_conditions = get_conditions_with_channel_handler(env, ch)?;
 
-                    if !found_conditions {
-                        return Err(Error::StrErr(
-                            "given conditions don't pay our referee puzzle hash what's expected"
-                                .to_string(),
-                        ));
-                    }
+                let peer_conds = proper_list(env.allocator.allocator_ref(), clvm_conditions, true)
+                    .unwrap_or_default();
+                let expected_conds =
+                    proper_list(env.allocator.allocator_ref(), expected_conditions, true)
+                        .unwrap_or_default();
+                if peer_conds.len() != expected_conds.len() {
+                    return Err(Error::StrErr(
+                        "clean shutdown conditions: wrong number of conditions".to_string(),
+                    ));
+                }
+
+                let mut peer_serialized: Vec<Vec<u8>> = peer_conds
+                    .iter()
+                    .map(|n| Program::from_nodeptr(env.allocator, *n))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .map(|p| p.bytes().to_vec())
+                    .collect();
+                let mut expected_serialized: Vec<Vec<u8>> = expected_conds
+                    .iter()
+                    .map(|n| Program::from_nodeptr(env.allocator, *n))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .map(|p| p.bytes().to_vec())
+                    .collect();
+                peer_serialized.sort();
+                expected_serialized.sort();
+                if peer_serialized != expected_serialized {
+                    return Err(Error::StrErr(
+                        "clean shutdown conditions don't match expected payout".to_string(),
+                    ));
                 }
 
                 let full_spend = ch.received_potato_clean_shutdown(env, sig, clvm_conditions)?;
