@@ -73,7 +73,10 @@
                     payout_conditions
                     (assert
                         (logior
-                            (not (= (sha256 (f validator_result) (shatree (f (r validator_result)))) INFOHASH_B))
+                            (not (= (i (f validator_result)
+                                        (sha256 (f validator_result) (shatree (f (r validator_result))))
+                                        ())
+                                    INFOHASH_B))
                             (not (= (f (r (r validator_result))) MAX_MOVE_SIZE))
                         )
                         payout_conditions

@@ -1417,5 +1417,118 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             "test_move_rejects_when_new_move_exceeds_max_move_size",
             &test_move_rejects_when_new_move_exceeds_max_move_size,
         ),
+        (
+            "test_terminal_coin_nil_infohash_b_slash",
+            &test_terminal_coin_nil_infohash_b_slash,
+        ),
     ]
+}
+
+/// After a valid terminal move (step e) sets infohash_c = nil, the resulting
+/// coin has INFOHASH_B = nil. Slashing this coin should fail because the game
+/// is over and the move was valid. This test confirms whether the referee
+/// puzzle correctly rejects slash on a terminal coin.
+fn test_terminal_coin_nil_infohash_b_slash() {
+    let mut a = AllocEncoder::new();
+    let lib = load_validators(&mut a);
+    let td = build_test_data();
+    let init = initial_move_result(&lib);
+
+    // Play through steps a-d
+    let after_d = run_sequence(&mut a, &lib, &init, &happy_path_through_d(&td)).unwrap();
+
+    // Run step e through the validator to get the result state
+    let e_validator_hash = after_d.next_validator_hash.unwrap();
+    let e_move_bytes = e_move(&td);
+
+    let e_result = run_validator_step(
+        &mut a,
+        &lib,
+        &e_validator_hash,
+        true,
+        &e_move_bytes,
+        after_d.next_max_move_size,
+        100,
+        after_d.state,
+        Some(&td.bob_good_selections),
+    )
+    .expect("step e should succeed");
+    assert_eq!(e_result.move_code, MoveCode::MakeMove);
+
+    // The terminal coin after step e has:
+    //   INFOHASH_A = sha256(e_validator_hash, shatree(state_after_d))
+    //   INFOHASH_B = nil (terminal move)
+    //   MOVE = e_move_bytes
+    //   Players swapped (mover becomes waiter)
+    let state_after_d_hash: [u8; 32] = *Program::from_nodeptr(&a, after_d.state)
+        .expect("state program")
+        .sha256tree(&mut a)
+        .hash()
+        .bytes();
+    let infohash_a = sha256_concat(&[&e_validator_hash, &state_after_d_hash]);
+
+    let referee = load_referee_puzzle(&mut a);
+    let referee_clvm = referee.to_clvm(&mut a).expect("referee to clvm");
+    let referee_hash: [u8; 32] = *referee.sha256tree(&mut a).hash().bytes();
+
+    let e_validator = lib
+        .by_hash
+        .get(&e_validator_hash)
+        .expect("e validator must exist");
+    let e_validator_clvm = e_validator.puzzle.to_clvm(&mut a).expect("e validator to clvm");
+
+    // Curried args for the terminal coin (players swapped from step-d coin)
+    let waiter_pk = a.allocator().new_atom(&[0x11; 48]).expect("pk");
+    let mover_pk = a.allocator().new_atom(&[0x22; 48]).expect("pk");
+    let timeout = 10i64.to_clvm(&mut a).expect("timeout");
+    let amount = AMOUNT.to_clvm(&mut a).expect("amount");
+    let mod_hash = hash_to_node(&mut a, &referee_hash);
+    let nonce = 1i64.to_clvm(&mut a).expect("nonce");
+    let move_node = a
+        .allocator()
+        .new_atom(&e_move_bytes)
+        .expect("move atom");
+    let max_move_size = e_result
+        .next_max_move_size
+        .to_clvm(&mut a)
+        .expect("max_move_size");
+    let infohash_b = NodePtr::NIL; // terminal: nil
+    let mover_share = 100i64.to_clvm(&mut a).expect("mover_share");
+    let infohash_a_node = hash_to_node(&mut a, &infohash_a);
+
+    let curried_args = list_from_nodes(
+        &mut a,
+        &[
+            mover_pk,
+            waiter_pk,
+            timeout,
+            amount,
+            mod_hash,
+            nonce,
+            move_node,
+            max_move_size,
+            infohash_b,
+            mover_share,
+            infohash_a_node,
+        ],
+    );
+
+    // Slash solution: (previous_state previous_validation_program evidence mover_payout_ph)
+    let payout_ph = a.allocator().new_atom(&[0x33; 32]).expect("payout ph");
+    let evidence = a
+        .allocator()
+        .new_atom(&td.bob_good_selections)
+        .expect("evidence");
+    let slash_args = list_from_nodes(&mut a, &[after_d.state, e_validator_clvm, evidence, payout_ph]);
+    let args = a
+        .allocator()
+        .new_pair(curried_args, slash_args)
+        .expect("args");
+
+    let result = run_program(a.allocator(), &chia_dialect(), referee_clvm, args, 0);
+
+    assert!(
+        result.is_err(),
+        "slash must fail on terminal coin with nil INFOHASH_B when the move was valid"
+    );
 }
