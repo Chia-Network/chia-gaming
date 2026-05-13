@@ -21,7 +21,8 @@ use crate::referee::types::{
     OnChainRefereeMoveData, RefereePuzzleArgs, StateUpdateMoveArgs,
 };
 use crate::referee::types::{
-    GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RMFixed, ValidationInfoHash,
+    canonical_atom_from_usize, GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RMFixed,
+    ValidationInfoHash,
 };
 use crate::referee::Referee;
 
@@ -408,6 +409,7 @@ impl MyTurnReferee {
             basic: GameMoveStateInfo {
                 move_made: result.move_bytes.clone(),
                 mover_share: result.mover_share.clone(),
+                max_move_size_raw: canonical_atom_from_usize(result.max_move_size),
                 max_move_size: result.max_move_size,
             },
             validation_program_hash,

@@ -23,7 +23,9 @@ use crate::common::types::{
     atom_from_clvm, chia_dialect, AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Node,
     Program, ProgramRef, PublicKey, PuzzleHash, Sha256tree, Timeout,
 };
-use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, ValidationInfoHash};
+use crate::referee::types::{
+    canonical_atom_from_usize, GameMoveDetails, GameMoveStateInfo, ValidationInfoHash,
+};
 use crate::referee::types::{
     InternalStateUpdateArgs, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
 };
@@ -358,6 +360,7 @@ impl BareDebugGameHandler {
                         basic: GameMoveStateInfo {
                             move_made: move_to_check.to_vec(),
                             mover_share: mover_share.clone(),
+                            max_move_size_raw: canonical_atom_from_usize(self.max_move_size),
                             max_move_size: self.max_move_size,
                         },
                         validation_program_hash: ValidationInfoHash::Hash(
@@ -501,6 +504,7 @@ impl BareDebugGameHandler {
                                     basic: GameMoveStateInfo {
                                         move_made: move_to_check.clone(),
                                         mover_share: inputs.opponent_mover_share.clone(),
+                                        max_move_size_raw: canonical_atom_from_usize(inputs.max_move_size),
                                         max_move_size: inputs.max_move_size,
                                     },
                                     validation_program_hash: ValidationInfoHash::Hash(

@@ -16,9 +16,9 @@ use crate::common::types::{
 use crate::referee::my_turn::MyTurnReferee;
 use crate::referee::their_turn::TheirTurnReferee;
 use crate::referee::types::{
-    curry_referee_puzzle, curry_referee_puzzle_hash, GameMoveDetails, GameMoveStateInfo,
-    GameMoveWireData, OnChainRefereeMoveData, OnChainRefereeSolution, RMFixed, RefereePuzzleArgs,
-    TheirTurnCoinSpentResult, TheirTurnMoveResult, ValidationInfoHash,
+    canonical_atom_from_usize, curry_referee_puzzle, curry_referee_puzzle_hash, GameMoveDetails,
+    GameMoveStateInfo, GameMoveWireData, OnChainRefereeMoveData, OnChainRefereeSolution, RMFixed,
+    RefereePuzzleArgs, TheirTurnCoinSpentResult, TheirTurnMoveResult, ValidationInfoHash,
 };
 
 pub(crate) struct RefereeInitialSetup {
@@ -44,6 +44,7 @@ pub(crate) fn referee_initial_setup(
     let initial_move = GameMoveStateInfo {
         mover_share: game_start_info.initial_mover_share.clone(),
         move_made: game_start_info.initial_move.clone(),
+        max_move_size_raw: canonical_atom_from_usize(game_start_info.initial_max_move_size),
         max_move_size: game_start_info.initial_max_move_size,
     };
     let my_turn = game_start_info.game_handler.is_my_turn();

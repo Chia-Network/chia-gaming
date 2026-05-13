@@ -436,7 +436,8 @@ impl TheirTurnReferee {
                 "mover share wasn't a properly sized atom".to_string(),
             ));
         };
-        let max_move_size = if let Some(mms) = u64_from_atom(&rem_conditions[3]) {
+        let max_move_size_raw = rem_conditions[3].clone();
+        let max_move_size = if let Some(mms) = u64_from_atom(&max_move_size_raw) {
             mms as usize
         } else {
             return Err(Error::StrErr(
@@ -449,6 +450,7 @@ impl TheirTurnReferee {
             basic: GameMoveStateInfo {
                 move_made: new_move.clone(),
                 mover_share: new_mover_share.clone(),
+                max_move_size_raw,
                 max_move_size,
             },
             validation_program_hash: validation_info_hash.clone(),

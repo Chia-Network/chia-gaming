@@ -29,6 +29,27 @@ pub struct GameMoveStateInfo {
     pub move_made: Vec<u8>,
     pub mover_share: Amount,
     pub max_move_size: usize,
+    /// Raw CLVM atom bytes for max_move_size, preserved exactly as seen on-chain.
+    /// Used in to_clvm to ensure curry hashes match the on-chain puzzle hash
+    /// even if the peer used a non-canonical encoding.
+    pub max_move_size_raw: Vec<u8>,
+}
+
+/// Canonical signed big-endian CLVM encoding of a non-negative integer.
+pub fn canonical_atom_from_usize(v: usize) -> Vec<u8> {
+    if v == 0 {
+        return vec![];
+    }
+    let be = (v as u64).to_be_bytes();
+    let start = be.iter().position(|&b| b != 0).unwrap_or(7);
+    if be[start] & 0x80 != 0 {
+        let mut out = Vec::with_capacity(be.len() - start + 1);
+        out.push(0);
+        out.extend_from_slice(&be[start..]);
+        out
+    } else {
+        be[start..].to_vec()
+    }
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
@@ -258,7 +279,7 @@ where
             self.referee_coin_puzzle_hash.to_clvm(encoder)?,
             self.nonce.to_clvm(encoder)?,
             encoder.encode_atom(clvm_traits::Atom::Borrowed(&self.game_move.basic.move_made))?,
-            self.game_move.basic.max_move_size.to_clvm(encoder)?,
+            encoder.encode_atom(clvm_traits::Atom::Borrowed(&self.game_move.basic.max_move_size_raw))?,
             self.game_move.validation_program_hash.to_clvm(encoder)?,
             self.game_move.basic.mover_share.to_clvm(encoder)?,
             self.previous_validation_info_hash.to_clvm(encoder)?,
@@ -396,6 +417,13 @@ impl OnChainRefereeMoveData {
         } else {
             None
         };
+        let max_move_size_node = Node(
+            allocator
+                .encode_atom(clvm_traits::Atom::Borrowed(
+                    &self.new_move.basic.max_move_size_raw,
+                ))
+                .into_gen()?,
+        );
         let solution_args_node = (
             allocator
                 .encode_atom(clvm_traits::Atom::Borrowed(&self.new_move.basic.move_made))
@@ -404,7 +432,7 @@ impl OnChainRefereeMoveData {
                 infohash_c.as_ref(),
                 (
                     self.new_move.basic.mover_share.clone(),
-                    (self.new_move.basic.max_move_size, ()),
+                    (max_move_size_node, ()),
                 ),
             ),
         )
@@ -521,13 +549,20 @@ impl OnChainRefereeSolution {
                         None
                     };
 
+                let max_move_size_node = Node(
+                    encoder
+                        .encode_atom(clvm_traits::Atom::Borrowed(
+                            &refmove.game_move.basic.max_move_size_raw,
+                        ))
+                        .into_gen()?,
+                );
                 (
                     move_atom,
                     (
                         infohash_c.as_ref(),
                         (
                             refmove.game_move.basic.mover_share.clone(),
-                            (refmove.game_move.basic.max_move_size, ()),
+                            (max_move_size_node, ()),
                         ),
                     ),
                 )
