@@ -1,6 +1,7 @@
 (include *standard-cl-23*)
 
 (import games.spacepoker.onchain.begin_round exposing (program_hash as begin_hash))
+(import games.spacepoker.onchain.mid_round exposing (program_hash as mid_hash))
 (import games.game_codes)
 (import std.and)
 (import std.if_any_fail)
@@ -18,6 +19,6 @@
         (= (strlen MOVE) 32)
         (= MOVER_SHARE (- (/ AMOUNT 2) bet_unit))
         0
-        (list begin_hash (li bet_unit bet_unit alice_image_5 MOVE 4) 42 "commitB")
+        (list begin_hash (li bet_unit bet_unit alice_image_5 MOVE 4 mid_hash) 42 "commitB")
     )
 )

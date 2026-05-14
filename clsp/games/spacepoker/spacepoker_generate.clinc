@@ -150,11 +150,11 @@
 )
 
 ; my-turn: Alice opens a betting round
-; state = (bet_unit half_pot mover_image_Nplus1 waiter_image_N N)
+; state = (bet_unit half_pot mover_image_Nplus1 waiter_image_N N mid_hash)
 ; local_move = raise amount (in mojos)
 (defun spacepoker_alice_begin_round (CHAIN BET_UNIT local_move amount state mover_share entropy)
     (assign
-        (bet_unit half_pot mover_image_Nplus1 waiter_image_N N) state
+        (bet_unit half_pot mover_image_Nplus1 waiter_image_N N _mid_hash) state
         image_N (image_at CHAIN N)
         raise_amount (if local_move local_move 0)
         move_bytes (concat image_N raise_amount)
@@ -178,7 +178,7 @@
     (if (= (strlen move) 32)
         ; Bob called — next street or end
         (assign
-            (bet_unit half_pot last_raise waiter_image_N mover_image_N N _begin_hash) pre_state
+            (bet_unit half_pot last_raise waiter_image_N mover_image_N N) pre_state
             (list
                 (list "call" half_pot N)
                 0
@@ -201,11 +201,11 @@
 )
 
 ; my-turn: Alice responds to a raise (raise or call)
-; state = (bet_unit half_pot last_raise_amount mover_image_N waiter_image_N N begin_hash)
+; state = (bet_unit half_pot last_raise_amount mover_image_N waiter_image_N N)
 ; local_move = raise amount (nil to call)
 (defun spacepoker_alice_mid_round (CHAIN BET_UNIT local_move amount state mover_share entropy)
     (assign
-        (bet_unit half_pot last_raise mover_image_Nplus1 waiter_image_N N _begin_hash) state
+        (bet_unit half_pot last_raise mover_image_Nplus1 waiter_image_N N) state
         (if local_move
             ; raise
             (assign
@@ -350,11 +350,11 @@
 )
 
 ; my-turn: Bob responds to a raise (raise or call)
-; state = (bet_unit half_pot last_raise_amount mover_image_N waiter_image_N N begin_hash)
+; state = (bet_unit half_pot last_raise_amount mover_image_N waiter_image_N N)
 ; local_move = raise amount (nil to call)
 (defun spacepoker_bob_mid_round (CHAIN BET_UNIT local_move amount state mover_share entropy)
     (assign
-        (bet_unit half_pot last_raise mover_image_N waiter_image_N N _begin_hash) state
+        (bet_unit half_pot last_raise mover_image_N waiter_image_N N) state
         (if local_move
             ; raise
             (assign
@@ -402,7 +402,7 @@
     (if (= (strlen move) 32)
         ; Alice called — next street or end
         (assign
-            (bet_unit half_pot last_raise waiter_image_N mover_image_N N _begin_hash) pre_state
+            (bet_unit half_pot last_raise waiter_image_N mover_image_N N) pre_state
             (list
                 (list "call" half_pot N)
                 0
@@ -425,11 +425,11 @@
 )
 
 ; my-turn: Bob opens a betting round
-; state = (bet_unit half_pot mover_image_Nplus1 waiter_image_N N)
+; state = (bet_unit half_pot mover_image_Nplus1 waiter_image_N N mid_hash)
 ; local_move = raise amount
 (defun spacepoker_bob_begin_round (CHAIN BET_UNIT local_move amount state mover_share entropy)
     (assign
-        (bet_unit half_pot mover_image_Nplus1 waiter_image_N N) state
+        (bet_unit half_pot mover_image_Nplus1 waiter_image_N N _mid_hash) state
         image_N (image_at CHAIN N)
         raise_amount (if local_move local_move 0)
         move_bytes (concat image_N raise_amount)
