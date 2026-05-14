@@ -27,7 +27,7 @@
         (bet_unit half_pot last_raise_amount mover_image_N waiter_image_N N begin_hash)
         previous_validation_program evidence output_conditions)
 
-    (if (!= (strlen MOVE) 32)
+    (if (> (strlen MOVE) 32)
         ; raise branch
         (assign
             new_raise_amount (substr MOVE 32 (strlen MOVE))
@@ -45,6 +45,7 @@
         )
         ; call branch: MOVE is preimage that hashes to mover_image_N
         (if_any_fail
+            (= (strlen MOVE) 32)
             (= (sha256 MOVE) mover_image_N)
             (= MOVER_SHARE (- (/ AMOUNT 2) (+ half_pot last_raise_amount)))
             0
