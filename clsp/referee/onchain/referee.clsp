@@ -54,7 +54,8 @@
         (assign
             (previous_state previous_validation_program evidence mover_payout_ph) args
             previous_validation_program_hash (shatree previous_validation_program)
-            validator_result (a previous_validation_program (c previous_validation_program_hash all_args))
+            (@ validator_result (next_validator_hash new_state max_move_size))
+                (a previous_validation_program (c previous_validation_program_hash all_args))
             payout_conditions (list
                 (list CREATE_COIN mover_payout_ph AMOUNT)
                 (list AGG_SIG_UNSAFE MOVER_PUBKEY (concat 0x78 mover_payout_ph))
@@ -66,11 +67,12 @@
                     payout_conditions
                     (assert
                         (logior
-                            (not (= (i (f validator_result)
-                                        (sha256 (f validator_result) (shatree (f (r validator_result))))
-                                        ())
+                            (not validator_result)
+                            (not (= (i next_validator_hash
+                                        (sha256 next_validator_hash (shatree new_state))
+                                        0)
                                     INFOHASH_B))
-                            (not (= (f (r (r validator_result))) MAX_MOVE_SIZE))
+                            (not (= max_move_size MAX_MOVE_SIZE))
                         )
                         payout_conditions
                     )

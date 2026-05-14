@@ -364,9 +364,11 @@ play, saving cost and complexity.
 
 **Slash path** -- A player submits evidence along with the previous move's
 validator. The referee runs the validator with the evidence. If the
-validator returns `SLASH` (does not raise), the slash succeeds and the
-slasher takes the full pot. If the validator raises, the slash attempt
-fails.
+validator returns nil (indicating an invalid move) or returns values whose
+infohash or max_move_size don't match the curried commitments, the slash
+succeeds and the slasher takes the full pot. If the validator raises (CLVM
+exception), the slash transaction itself fails to mine — validators must
+handle all inputs without raising.
 
 **Timeout path** -- No validator is involved. The referee simply checks
 that enough time has passed and pays out according to the current mover
