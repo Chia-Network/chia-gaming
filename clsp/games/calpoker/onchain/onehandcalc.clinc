@@ -1,7 +1,6 @@
-; ranks are 2-14 with 2 being two, 13 being king, and 14 being ace
-; suits are 1-4 with no particular labelling
-; takes a list of five cards (rank . suit) and returns the value of the best poker
-; hand which can be made with them
+; Evaluates the best poker hand from 5 cards in mod52 format (0-51).
+; mod52 encoding: card_id = (rank - 2) * 4 + (suit - 1)
+;
 ; Hands are represented:
 ; straight flush (5 high_card)
 ; 4 of a kind  (4 1 quad_rank kicker)
@@ -57,7 +56,11 @@
     (group_by_count_inner items (f items) 0)
 )
 
-(defun onehandcalc ((@ cards ((card1rank . card1suit) (card2rank . card2suit) (card3rank . card3suit)
+(defun onehandcalc (cards)
+    (onehandcalc_inner (map mod52_to_pair cards))
+)
+
+(defun onehandcalc_inner ((@ cards ((card1rank . card1suit) (card2rank . card2suit) (card3rank . card3suit)
             (card4rank . card4suit) (card5rank . card5suit))))
     (assign-lambda
         ranks (atomsort (li card1rank card2rank card3rank card4rank card5rank))

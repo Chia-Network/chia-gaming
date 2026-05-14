@@ -1170,31 +1170,18 @@ fn test_calpoker_e_bob_loss_zero_make_move() {
     );
 }
 
-fn test_calpoker_e_nil_evidence_offchain() {
+fn test_calpoker_e_nil_evidence_exception() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
     let td = build_test_data();
     let init = initial_move_result(&lib);
     let after = run_sequence(&mut a, &lib, &init, &happy_path_through_d(&td)).unwrap();
+    // Nil evidence always causes exception now (no on-chain/off-chain distinction)
     run_step_and_check(
         &mut a,
         &lib,
         &after,
-        &make_step(&e_move(&td), 100, None, MoveCode::MakeMove, false, "e"),
-    );
-}
-
-fn test_calpoker_e_nil_evidence_onchain_exception() {
-    let mut a = AllocEncoder::new();
-    let lib = load_validators(&mut a);
-    let td = build_test_data();
-    let init = initial_move_result(&lib);
-    let after = run_sequence(&mut a, &lib, &init, &happy_path_through_d(&td)).unwrap();
-    run_step_and_check(
-        &mut a,
-        &lib,
-        &after,
-        &make_step(&e_move(&td), 100, None, MoveCode::ClvmException, true, "e"),
+        &make_step(&e_move(&td), 100, None, MoveCode::ClvmException, false, "e"),
     );
 }
 
@@ -1386,12 +1373,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &test_calpoker_e_bob_loss_zero_make_move,
         ),
         (
-            "test_calpoker_e_nil_evidence_offchain",
-            &test_calpoker_e_nil_evidence_offchain,
-        ),
-        (
-            "test_calpoker_e_nil_evidence_onchain_exception",
-            &test_calpoker_e_nil_evidence_onchain_exception,
+            "test_calpoker_e_nil_evidence_exception",
+            &test_calpoker_e_nil_evidence_exception,
         ),
         (
             "test_calpoker_e_bad_evidence_exception",

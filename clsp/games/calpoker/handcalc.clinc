@@ -1,6 +1,4 @@
 
-; ranks are 2-14 with 2 being two, 13 being king, and 14 being ace
-; suits are 1-4 with no particular labelling
 ; takes a list of cards in mod-52 form and returns
 ; (hand_quality indices_of_best_cards) with indices_best_cards in low to high order
 
@@ -9,7 +7,7 @@
 (import std.max)
 (import std.deep_compare)
 (import std.relops)
-(import games.calpoker.onchain.onehandcalc exposing onehandcalc mod52_to_pair)
+(import games.calpoker.onchain.onehandcalc exposing onehandcalc)
 
 (defun process_entries (card index entries)
     (if (not entries)
@@ -25,14 +23,13 @@
     )
 )
 
-; Return all C(n, 5) subsets as (pairs indices count) triples.
+; Return all C(n, 5) subsets as (cards indices count) triples.
 ; Recurses on the tail first so prepending produces ascending indices.
-; Cards are already (rank . suit) pairs.
-(defun choose_hands (index pairs)
-    (if (not pairs)
+(defun choose_hands (index cards)
+    (if (not cards)
         (li (li 0 0 0))
-        (process_entries (f pairs) index
-            (choose_hands (+ index 1) (r pairs))
+        (process_entries (f cards) index
+            (choose_hands (+ index 1) (r cards))
         )
     )
 )
@@ -41,6 +38,6 @@
     (max deep<
         (map (lambda ((sel_cards sel_indices count))
             (li (onehandcalc sel_cards) sel_indices)
-        ) (choose_hands 0 (map mod52_to_pair cards)))
+        ) (choose_hands 0 cards))
     )
 )

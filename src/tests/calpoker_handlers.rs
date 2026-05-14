@@ -439,24 +439,29 @@ fn run_handler_game(allocator: &mut AllocEncoder, setup: &GameSetup, moves: &[Ha
             "step {step_idx}: mover_share mismatch"
         );
 
-        let (code, validator_result) = run_validator(
-            allocator,
-            my_turn.validator_for_my_move_hash,
-            my_turn.move_bytes_node,
-            hm.expected_mover_share,
-            my_turn.max_move_size,
-            state,
-            my_turn.validator_for_my_move,
-            NodePtr::NIL,
-        );
-        assert_eq!(
-            code,
-            MoveCode::MakeMove,
-            "step {step_idx}: validator rejected our move"
-        );
-
-        let validator_items = proper_list(allocator.allocator(), validator_result, true).unwrap();
-        let new_state = validator_items[1];
+        let is_terminal = my_turn.their_turn_handler == NodePtr::NIL;
+        let new_state = if is_terminal {
+            state
+        } else {
+            let (code, validator_result) = run_validator(
+                allocator,
+                my_turn.validator_for_my_move_hash,
+                my_turn.move_bytes_node,
+                hm.expected_mover_share,
+                my_turn.max_move_size,
+                state,
+                my_turn.validator_for_my_move,
+                NodePtr::NIL,
+            );
+            assert_eq!(
+                code,
+                MoveCode::MakeMove,
+                "step {step_idx}: validator rejected our move"
+            );
+            let validator_items =
+                proper_list(allocator.allocator(), validator_result, true).unwrap();
+            validator_items[1]
+        };
 
         // Update mover's state and validators
         if is_alice {
@@ -503,83 +508,131 @@ fn run_handler_game(allocator: &mut AllocEncoder, setup: &GameSetup, moves: &[Ha
             my_turn.new_mover_share
         };
 
-        let (_waiter_code, waiter_validator_result) = run_validator(
-            allocator,
-            waiter_vp_hash,
-            my_turn.move_bytes_node,
-            effective_mover_share,
-            waiter_max_move_size,
-            waiter_state,
-            if is_alice_waiter {
-                alice_their_turn_validator
-            } else {
-                bob_their_turn_validator
-            },
-            NodePtr::NIL,
-        );
+        if is_terminal {
+            // Terminal move: skip waiter validation and their-turn handler.
+            // Pass pre_state to handler since the on-chain validator won't run off-chain.
+            let their_turn = call_their_turn_handler(
+                allocator,
+                waiter_handler,
+                AMOUNT,
+                waiter_state,
+                waiter_state,
+                my_turn.move_bytes_node,
+                waiter_vp_hash,
+                effective_mover_share,
+            );
 
-        let waiter_validator_items =
-            proper_list(allocator.allocator(), waiter_validator_result, true).unwrap();
-        let waiter_new_state = waiter_validator_items[1];
-
-        // Run their_turn handler
-        let their_turn = call_their_turn_handler(
-            allocator,
-            waiter_handler,
-            AMOUNT,
-            waiter_state,
-            waiter_new_state,
-            my_turn.move_bytes_node,
-            waiter_vp_hash,
-            effective_mover_share,
-        );
-
-        // For evil tests, check evidence
-        if matches!(hm.test_type, TestType::CheckForAliceTriesToCheat) {
-            let evidence_items = proper_list(allocator.allocator(), their_turn.evidence_list, true);
-            if let Some(items) = evidence_items {
-                let mut found_slash = false;
-                for ev in &items {
-                    let (ev_code, _) = run_validator(
-                        allocator,
-                        waiter_vp_hash,
-                        my_turn.move_bytes_node,
-                        effective_mover_share,
-                        waiter_max_move_size,
-                        waiter_state,
-                        if is_alice_waiter {
-                            alice_their_turn_validator
-                        } else {
-                            bob_their_turn_validator
-                        },
-                        *ev,
-                    );
-                    if ev_code == MoveCode::Slash {
-                        found_slash = true;
+            if matches!(hm.test_type, TestType::CheckForAliceTriesToCheat) {
+                let evidence_items =
+                    proper_list(allocator.allocator(), their_turn.evidence_list, true);
+                if let Some(items) = evidence_items {
+                    let mut found_slash = false;
+                    for ev in &items {
+                        let (ev_code, _) = run_validator(
+                            allocator,
+                            waiter_vp_hash,
+                            my_turn.move_bytes_node,
+                            effective_mover_share,
+                            waiter_max_move_size,
+                            waiter_state,
+                            if is_alice_waiter {
+                                alice_their_turn_validator
+                            } else {
+                                bob_their_turn_validator
+                            },
+                            *ev,
+                        );
+                        if ev_code == MoveCode::Slash {
+                            found_slash = true;
+                        }
                     }
+                    assert!(found_slash, "step {step_idx}: expected slash evidence");
                 }
-                assert!(found_slash, "step {step_idx}: expected slash evidence");
             }
-        }
 
-        // Update waiter: their_turn produces a my_turn handler for the waiting player
-        if is_alice_waiter {
-            alice_state = waiter_new_state;
-            alice_mover_share = effective_mover_share;
-            alice_my_turn_handler = their_turn.my_turn_handler;
+            if is_alice_waiter {
+                alice_state = waiter_state;
+                alice_mover_share = effective_mover_share;
+            } else {
+                bob_state = waiter_state;
+                bob_mover_share = effective_mover_share;
+            }
         } else {
-            bob_state = waiter_new_state;
-            bob_mover_share = effective_mover_share;
-            bob_my_turn_handler = their_turn.my_turn_handler;
-        }
+            let (_waiter_code, waiter_validator_result) = run_validator(
+                allocator,
+                waiter_vp_hash,
+                my_turn.move_bytes_node,
+                effective_mover_share,
+                waiter_max_move_size,
+                waiter_state,
+                if is_alice_waiter {
+                    alice_their_turn_validator
+                } else {
+                    bob_their_turn_validator
+                },
+                NodePtr::NIL,
+            );
 
-        // States should match
-        let alice_hex = node_to_hex(allocator, alice_state);
-        let bob_hex = node_to_hex(allocator, bob_state);
-        assert_eq!(
-            alice_hex, bob_hex,
-            "step {step_idx}: alice and bob states diverged"
-        );
+            let waiter_validator_items =
+                proper_list(allocator.allocator(), waiter_validator_result, true).unwrap();
+            let waiter_new_state = waiter_validator_items[1];
+
+            let their_turn = call_their_turn_handler(
+                allocator,
+                waiter_handler,
+                AMOUNT,
+                waiter_state,
+                waiter_new_state,
+                my_turn.move_bytes_node,
+                waiter_vp_hash,
+                effective_mover_share,
+            );
+
+            if matches!(hm.test_type, TestType::CheckForAliceTriesToCheat) {
+                let evidence_items =
+                    proper_list(allocator.allocator(), their_turn.evidence_list, true);
+                if let Some(items) = evidence_items {
+                    let mut found_slash = false;
+                    for ev in &items {
+                        let (ev_code, _) = run_validator(
+                            allocator,
+                            waiter_vp_hash,
+                            my_turn.move_bytes_node,
+                            effective_mover_share,
+                            waiter_max_move_size,
+                            waiter_state,
+                            if is_alice_waiter {
+                                alice_their_turn_validator
+                            } else {
+                                bob_their_turn_validator
+                            },
+                            *ev,
+                        );
+                        if ev_code == MoveCode::Slash {
+                            found_slash = true;
+                        }
+                    }
+                    assert!(found_slash, "step {step_idx}: expected slash evidence");
+                }
+            }
+
+            if is_alice_waiter {
+                alice_state = waiter_new_state;
+                alice_mover_share = effective_mover_share;
+                alice_my_turn_handler = their_turn.my_turn_handler;
+            } else {
+                bob_state = waiter_new_state;
+                bob_mover_share = effective_mover_share;
+                bob_my_turn_handler = their_turn.my_turn_handler;
+            }
+
+            let alice_hex = node_to_hex(allocator, alice_state);
+            let bob_hex = node_to_hex(allocator, bob_state);
+            assert_eq!(
+                alice_hex, bob_hex,
+                "step {step_idx}: alice and bob states diverged"
+            );
+        }
     }
 }
 

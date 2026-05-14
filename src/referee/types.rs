@@ -306,11 +306,6 @@ impl RefereePuzzleArgs {
         }
     }
 
-    pub fn off_chain(&self) -> RefereePuzzleArgs {
-        let mut new_result: RefereePuzzleArgs = self.clone();
-        new_result.waiter_pubkey = PublicKey::default();
-        new_result
-    }
 }
 
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for RefereePuzzleArgs
@@ -320,11 +315,7 @@ where
     fn to_clvm(&self, encoder: &mut E) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
         [
             self.mover_pubkey.to_clvm(encoder)?,
-            if self.waiter_pubkey == PublicKey::default() {
-                encoder.encode_atom(clvm_traits::Atom::Borrowed(&[]))?
-            } else {
-                self.waiter_pubkey.to_clvm(encoder)?
-            },
+            self.waiter_pubkey.to_clvm(encoder)?,
             self.timeout.to_clvm(encoder)?,
             self.amount.to_clvm(encoder)?,
             self.referee_coin_puzzle_hash.to_clvm(encoder)?,
@@ -407,7 +398,6 @@ impl InternalStateUpdateArgs {
             validator_mod_hash,
             (
                 self.referee_args
-                    .off_chain()
                     .to_clvm(allocator)
                     .into_gen()?,
                 Node(converted_vma),

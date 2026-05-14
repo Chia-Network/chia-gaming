@@ -373,8 +373,7 @@ impl BareDebugGameHandler {
                             .clone(),
                         ),
                     },
-                }
-                .off_chain(),
+                },
             ),
             state_update_args: StateUpdateMoveArgs {
                 evidence: evidence.to_program(),

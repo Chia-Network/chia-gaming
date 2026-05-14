@@ -1,7 +1,6 @@
 (include *standard-cl-23*)
 
 (import games.spacepoker.onchain.space_hand_eval exposing space_hand_eval)
-(import games.game_codes)
 (import std.and)
 (import std.if_any_fail)
 (import std.assert)
@@ -31,30 +30,24 @@
             mover_selected (pull_from_bitfield mover_cards mover_bitfield)
             (if (!= (popcount mover_bitfield) 5)
                 0
-                (if (not evidence)
-                    ; off-chain: nil evidence, accept without checking mover_share
-                    (if WAITER_PUBKEY (x "on-chain requires evidence")
-                        (list 0 0 0 "end"))
-                    ; on-chain: evidence is waiter's card selection bitfield.
-                    ; Slash succeeds only if mover takes MORE than deserved.
-                    ; Mover is allowed to be generous (take less).
-                    (assert (= (popcount evidence) 5)
-                        (assign
-                            waiter_selected (pull_from_bitfield waiter_cards evidence)
-                            fair_share (assign result (deep_compare
-                                    (space_hand_eval mover_selected mover_boost)
-                                    (space_hand_eval waiter_selected waiter_boost))
-                                (if (not result)
-                                    (/ AMOUNT 2)
-                                    (= result 1)
-                                    (+ (/ AMOUNT 2) half_pot)
-                                    (- (/ AMOUNT 2) half_pot)
-                                )
+                ; evidence is waiter's card selection bitfield (provided by slasher).
+                ; Slash succeeds only if mover takes MORE than deserved.
+                (assert (= (popcount evidence) 5)
+                    (assign
+                        waiter_selected (pull_from_bitfield waiter_cards evidence)
+                        fair_share (assign result (deep_compare
+                                (space_hand_eval mover_selected mover_boost)
+                                (space_hand_eval waiter_selected waiter_boost))
+                            (if (not result)
+                                (/ AMOUNT 2)
+                                (= result 1)
+                                (+ (/ AMOUNT 2) half_pot)
+                                (- (/ AMOUNT 2) half_pot)
                             )
-                            (if (> MOVER_SHARE fair_share)
-                                0
-                                (list 0 0 0 "end")
-                            )
+                        )
+                        (if (> MOVER_SHARE fair_share)
+                            0
+                            (list 0 0 0)
                         )
                     )
                 )
