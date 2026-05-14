@@ -1479,7 +1479,10 @@ fn test_terminal_coin_nil_infohash_b_slash() {
         .by_hash
         .get(&e_validator_hash)
         .expect("e validator must exist");
-    let e_validator_clvm = e_validator.puzzle.to_clvm(&mut a).expect("e validator to clvm");
+    let e_validator_clvm = e_validator
+        .puzzle
+        .to_clvm(&mut a)
+        .expect("e validator to clvm");
 
     // Curried args for the terminal coin (players swapped from step-d coin)
     let waiter_pk = a.allocator().new_atom(&[0x11; 48]).expect("pk");
@@ -1488,10 +1491,7 @@ fn test_terminal_coin_nil_infohash_b_slash() {
     let amount = AMOUNT.to_clvm(&mut a).expect("amount");
     let mod_hash = hash_to_node(&mut a, &referee_hash);
     let nonce = 1i64.to_clvm(&mut a).expect("nonce");
-    let move_node = a
-        .allocator()
-        .new_atom(&e_move_bytes)
-        .expect("move atom");
+    let move_node = a.allocator().new_atom(&e_move_bytes).expect("move atom");
     let max_move_size = e_result
         .next_max_move_size
         .to_clvm(&mut a)
@@ -1523,7 +1523,10 @@ fn test_terminal_coin_nil_infohash_b_slash() {
         .allocator()
         .new_atom(&td.bob_good_selections)
         .expect("evidence");
-    let slash_args = list_from_nodes(&mut a, &[after_d.state, e_validator_clvm, evidence, payout_ph]);
+    let slash_args = list_from_nodes(
+        &mut a,
+        &[after_d.state, e_validator_clvm, evidence, payout_ph],
+    );
     let args = a
         .allocator()
         .new_pair(curried_args, slash_args)
@@ -1581,7 +1584,10 @@ fn test_terminal_coin_nil_infohash_b_slash_invalid_move() {
         .by_hash
         .get(&e_validator_hash)
         .expect("e validator must exist");
-    let e_validator_clvm = e_validator.puzzle.to_clvm(&mut a).expect("e validator to clvm");
+    let e_validator_clvm = e_validator
+        .puzzle
+        .to_clvm(&mut a)
+        .expect("e validator to clvm");
 
     let waiter_pk = a.allocator().new_atom(&[0x11; 48]).expect("pk");
     let mover_pk = a.allocator().new_atom(&[0x22; 48]).expect("pk");
@@ -1589,10 +1595,7 @@ fn test_terminal_coin_nil_infohash_b_slash_invalid_move() {
     let amount = AMOUNT.to_clvm(&mut a).expect("amount");
     let mod_hash = hash_to_node(&mut a, &referee_hash);
     let nonce = 1i64.to_clvm(&mut a).expect("nonce");
-    let move_node = a
-        .allocator()
-        .new_atom(&e_move_bytes)
-        .expect("move atom");
+    let move_node = a.allocator().new_atom(&e_move_bytes).expect("move atom");
     let max_move_size = 0i64.to_clvm(&mut a).expect("max_move_size");
     let infohash_b = NodePtr::NIL;
     let mover_share = 0i64.to_clvm(&mut a).expect("mover_share");
@@ -1620,7 +1623,10 @@ fn test_terminal_coin_nil_infohash_b_slash_invalid_move() {
         .allocator()
         .new_atom(&td.bob_good_selections)
         .expect("evidence");
-    let slash_args = list_from_nodes(&mut a, &[after_d.state, e_validator_clvm, evidence, payout_ph]);
+    let slash_args = list_from_nodes(
+        &mut a,
+        &[after_d.state, e_validator_clvm, evidence, payout_ph],
+    );
     let args = a
         .allocator()
         .new_pair(curried_args, slash_args)

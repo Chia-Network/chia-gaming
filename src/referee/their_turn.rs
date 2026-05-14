@@ -413,7 +413,12 @@ impl TheirTurnReferee {
                 validation_info_hash_raw,
                 new_mover_share_raw,
                 max_move_size_raw,
-            } => (new_move, validation_info_hash_raw, new_mover_share_raw, max_move_size_raw),
+            } => (
+                new_move,
+                validation_info_hash_raw,
+                new_mover_share_raw,
+                max_move_size_raw,
+            ),
             _ => {
                 return Err(Error::StrErr(
                     "their_turn_coin_spent called with non-Move solution".to_string(),

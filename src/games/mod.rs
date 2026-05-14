@@ -65,11 +65,9 @@ pub fn poker_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, Game
         "clsp/games/krunk/krunk_include_krunk_make_proposal.hex",
     )
     .expect("should load");
-    let krunk_parser = read_hex_puzzle(
-        allocator,
-        "clsp/games/krunk/krunk_include_krunk_parser.hex",
-    )
-    .expect("should load");
+    let krunk_parser =
+        read_hex_puzzle(allocator, "clsp/games/krunk/krunk_include_krunk_parser.hex")
+            .expect("should load");
 
     game_type_map.insert(
         GameType(b"krunk".to_vec()),

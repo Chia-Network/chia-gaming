@@ -14,9 +14,8 @@ use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, curry_and_treehash, sign_agg_sig_me, ChiaIdentity,
 };
 use crate::common::types::{
-    chia_dialect, Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, Hash, IntoErr,
-    Node, MAX_BLOCK_COST_CLVM,
-    Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256tree, Timeout,
+    chia_dialect, Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, Hash, IntoErr, Node,
+    Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256tree, Timeout, MAX_BLOCK_COST_CLVM,
 };
 use crate::utils::proper_list;
 
@@ -331,7 +330,9 @@ where
             self.referee_coin_puzzle_hash.to_clvm(encoder)?,
             self.nonce.to_clvm(encoder)?,
             encoder.encode_atom(clvm_traits::Atom::Borrowed(&self.game_move.basic.move_made))?,
-            encoder.encode_atom(clvm_traits::Atom::Borrowed(&self.game_move.basic.max_move_size_raw))?,
+            encoder.encode_atom(clvm_traits::Atom::Borrowed(
+                &self.game_move.basic.max_move_size_raw,
+            ))?,
             self.game_move.validation_program_hash.to_clvm(encoder)?,
             self.game_move.basic.mover_share.to_clvm(encoder)?,
             self.previous_validation_info_hash.to_clvm(encoder)?,
