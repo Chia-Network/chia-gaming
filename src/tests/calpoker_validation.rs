@@ -304,7 +304,7 @@ fn parse_validator_output(allocator: &mut AllocEncoder, result: NodePtr) -> Move
             next_max_move_size: 0,
         }
     } else {
-        assert!(items.len() >= 4, "MAKE_MOVE output too short");
+        assert!(items.len() >= 3, "MAKE_MOVE output too short");
         let hash_bytes = allocator.allocator().atom(items[0]);
         let next_validator_hash = if hash_bytes.is_empty() {
             None

@@ -17,6 +17,6 @@
         (= (strlen MOVE) 32)
         (= MOVER_SHARE (/ AMOUNT 2))
         0
-        (list commitB_hash (list bet_unit MOVE) 32 "commitA")
+        (list commitB_hash (list bet_unit MOVE) 32)
     )
 )

@@ -16,7 +16,7 @@
         MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
         alice_commit previous_validation_program evidence output_conditions)
     (if (= (strlen MOVE) 16)
-        (list chash (list alice_commit MOVE) 48 "B" MOVE)
+        (list chash (list alice_commit MOVE) 48)
         0
     )
 )

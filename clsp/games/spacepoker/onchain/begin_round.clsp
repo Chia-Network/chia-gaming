@@ -32,7 +32,7 @@
                 (list mid_hash
                     (li bet_unit half_pot raise_amount
                         waiter_image_N mover_image_N N)
-                    42 "begin_round")
+                    42)
             )
         )
     )

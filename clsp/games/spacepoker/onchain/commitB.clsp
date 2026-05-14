@@ -19,6 +19,6 @@
         (= (strlen MOVE) 32)
         (= MOVER_SHARE (- (/ AMOUNT 2) bet_unit))
         0
-        (list begin_hash (li bet_unit bet_unit alice_image_5 MOVE 4 mid_hash) 42 "commitB")
+        (list begin_hash (li bet_unit bet_unit alice_image_5 MOVE 4 mid_hash) 42)
     )
 )

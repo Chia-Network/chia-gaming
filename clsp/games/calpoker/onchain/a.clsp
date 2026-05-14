@@ -17,9 +17,8 @@
         previous_state previous_validation_program evidence output_conditions)
 
     ;; First their turn for the second player
-    (if_any_fail
-        (= (strlen MOVE) 32)
+    (if (= (strlen MOVE) 32)
+        (list bhash MOVE 16)
         0
-        (list bhash MOVE 16 "A move")
     )
 )

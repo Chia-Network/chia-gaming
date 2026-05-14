@@ -41,7 +41,7 @@
                 (list mod_hash
                     (li bet_unit half_pot new_raise_amount
                         waiter_image_N mover_image_N N)
-                    42 "mid_round raise")
+                    42)
             )
         )
         ; call branch: MOVE is preimage that hashes to mover_image_N
@@ -53,11 +53,11 @@
             (if (= N 1)
                 (list end_hash
                     (li (+ half_pot last_raise_amount) waiter_image_N MOVE)
-                    33 "mid_round call final")
+                    33)
                 (list begin_hash
                     (li bet_unit (+ half_pot last_raise_amount)
                         waiter_image_N MOVE (- N 1) mod_hash)
-                    42 "mid_round call")
+                    42)
             )
         )
     )

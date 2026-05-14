@@ -23,6 +23,6 @@
         (= (strlen bob_discards) 1)
         (= (popcount bob_discards) 4)
         0
-        (list ehash (list bob_discards alice_cards bob_cards alice_commit) 18 "D")
+        (list ehash (list bob_discards alice_cards bob_cards alice_commit) 18)
     )
 )
