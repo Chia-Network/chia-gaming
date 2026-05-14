@@ -13,6 +13,7 @@
 ; pair (2 1 1 1 pair_rank first_kicker second_kicker third_kicker)
 ; high card (1 1 1 1 1 high_card first_kicker second_kicker third_kicker fourth_kicker)
 
+(import std.li)
 (import std.map)
 (import std.relops)
 (import std.isthere)
@@ -44,7 +45,7 @@
 
 (defun group_by_count_inner (items last count)
     (if (not items)
-        (list (flatten_card (c count last)))
+        (li (flatten_card (c count last)))
         (if (= (f items) last)
             (group_by_count_inner (r items) last (+ count 1))
             (c (flatten_card (c count last)) (group_by_count_inner (r items) (f items) 1))
@@ -56,27 +57,24 @@
     (group_by_count_inner items (f items) 0)
 )
 
-(defun ranks_of_hand (count1 count2 count3 count4 count5 . ranks)
-    ranks
-)
-
 (defun onehandcalc ((@ cards ((card1rank . card1suit) (card2rank . card2suit) (card3rank . card3suit)
             (card4rank . card4suit) (card5rank . card5suit))))
     (assign-lambda
-        ranks (atomsort (list card1rank card2rank card3rank card4rank card5rank))
+        ranks (atomsort (li card1rank card2rank card3rank card4rank card5rank))
         raw_groups (atomsort (group_by_count ranks))
-        hand (map (lambda (x) (lsh x -4)) raw_groups (map (lambda (x) (logand x 15)) raw_groups))
+        (@ hand (first_count second_count arg3 arg4 arg5 . flush_ranks))
+            (map (lambda (x) (lsh x -4)) raw_groups (map (lambda (x) (logand x 15)) raw_groups))
         shigh (straight_high &rest hand)
         (if shigh
             (if (check_flush &rest cards)
-                (list 5 shigh)
-                (if (logior (= (f hand) 4) (logand (= (f hand) 3) (= (f (r hand)) 2)))
+                (li 5 shigh)
+                (if (logior (= first_count 4) (logand (= first_count 3) (= second_count 2)))
                     hand
-                    (list 3 1 2 shigh)
+                    (li 3 1 2 shigh)
                 )
             )
-            (if (logand (check_flush &rest cards) (logior (< (f hand) 3) (logand (= (f hand) 3) (< (f (r hand)) 2))))
-                (c 3 (c 1 (c 3 (ranks_of_hand &rest hand))))
+            (if (logand (check_flush &rest cards) (logior (< first_count 3) (logand (= first_count 3) (< second_count 2))))
+                (li 3 1 3 &rest flush_ranks)
                 hand
             )
         )

@@ -17,12 +17,12 @@ use crate::common::types::{
 use crate::referee::referee_initial_setup;
 use crate::referee::their_turn::{TheirTurnReferee, TheirTurnRefereeGameState};
 use crate::referee::types::{
-    curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs,
-    OnChainRefereeMoveData, RefereePuzzleArgs, StateUpdateMoveArgs,
-};
-use crate::referee::types::{
     canonical_atom_from_usize, GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RMFixed,
     ValidationInfoHash,
+};
+use crate::referee::types::{
+    curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs,
+    OnChainRefereeMoveData, RefereePuzzleArgs, StateUpdateMoveArgs,
 };
 use crate::referee::Referee;
 

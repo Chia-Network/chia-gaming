@@ -1,18 +1,12 @@
 use crate::common::load_clvm::read_hex_puzzle;
-use crate::common::types::{chia_dialect, AllocEncoder, Program, Puzzle, Sha256Input, Sha256tree};
+use crate::common::types::{chia_dialect, AllocEncoder, Puzzle, Sha256Input, Sha256tree};
 use crate::utils::proper_list;
 
 use clvm_traits::ToClvm;
 use clvmr::allocator::{NodePtr, SExp};
 use clvmr::run_program;
 
-const VALIDATOR_NAMES: [&str; 5] = [
-    "commitA",
-    "commitB",
-    "begin_round",
-    "mid_round",
-    "end",
-];
+const VALIDATOR_NAMES: [&str; 5] = ["commitA", "commitB", "begin_round", "mid_round", "end"];
 const AMOUNT: i64 = 200;
 const BET_UNIT: i64 = 10;
 
@@ -20,6 +14,7 @@ const BET_UNIT: i64 = 10;
 enum MoveCode {
     MakeMove = 0,
     Slash = 2,
+    #[allow(dead_code)]
     ClvmException = 6,
 }
 
@@ -274,9 +269,10 @@ fn run_step_and_check(
     }
 }
 
+#[allow(dead_code)]
 fn initial_move_result(lib: &ValidatorLibrary) -> MoveResult {
     let bet_unit_bytes = BET_UNIT.to_be_bytes();
-    let trimmed = &bet_unit_bytes[bet_unit_bytes.iter().position(|&b| b != 0).unwrap_or(7)..];
+    let _trimmed = &bet_unit_bytes[bet_unit_bytes.iter().position(|&b| b != 0).unwrap_or(7)..];
     MoveResult {
         move_code: MoveCode::MakeMove,
         next_validator_hash: Some(lib.hashes[0]),
@@ -303,6 +299,7 @@ fn make_step(
     }
 }
 
+#[allow(dead_code)]
 fn run_sequence(
     allocator: &mut AllocEncoder,
     lib: &ValidatorLibrary,
@@ -346,7 +343,7 @@ fn test_spacepoker_validator_hashes() {
     }
 }
 
-fn test_spacepoker_commitA_happy() {
+fn test_spacepoker_commit_a_happy() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
     let init = make_initial(&mut a, &lib);
@@ -355,12 +352,19 @@ fn test_spacepoker_commitA_happy() {
         &mut a,
         &lib,
         &init,
-        &make_step(&move_bytes, AMOUNT / 2, None, MoveCode::MakeMove, false, "commitA"),
+        &make_step(
+            &move_bytes,
+            AMOUNT / 2,
+            None,
+            MoveCode::MakeMove,
+            false,
+            "commitA",
+        ),
     );
     assert!(result.is_some(), "commitA happy path should succeed");
 }
 
-fn test_spacepoker_commitA_slash_too_short() {
+fn test_spacepoker_commit_a_slash_too_short() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
     let init = make_initial(&mut a, &lib);
@@ -368,11 +372,18 @@ fn test_spacepoker_commitA_slash_too_short() {
         &mut a,
         &lib,
         &init,
-        &make_step(&[0xAA; 31], AMOUNT / 2, None, MoveCode::Slash, false, "commitA"),
+        &make_step(
+            &[0xAA; 31],
+            AMOUNT / 2,
+            None,
+            MoveCode::Slash,
+            false,
+            "commitA",
+        ),
     );
 }
 
-fn test_spacepoker_commitA_slash_too_long() {
+fn test_spacepoker_commit_a_slash_too_long() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
     let init = make_initial(&mut a, &lib);
@@ -380,11 +391,18 @@ fn test_spacepoker_commitA_slash_too_long() {
         &mut a,
         &lib,
         &init,
-        &make_step(&[0xAA; 33], AMOUNT / 2, None, MoveCode::Slash, false, "commitA"),
+        &make_step(
+            &[0xAA; 33],
+            AMOUNT / 2,
+            None,
+            MoveCode::Slash,
+            false,
+            "commitA",
+        ),
     );
 }
 
-fn test_spacepoker_commitA_slash_wrong_mover_share() {
+fn test_spacepoker_commit_a_slash_wrong_mover_share() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
     let init = make_initial(&mut a, &lib);
@@ -396,7 +414,7 @@ fn test_spacepoker_commitA_slash_wrong_mover_share() {
     );
 }
 
-fn test_spacepoker_commitB_happy() {
+fn test_spacepoker_commit_b_happy() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
     let init = make_initial(&mut a, &lib);
@@ -404,7 +422,14 @@ fn test_spacepoker_commitB_happy() {
         &mut a,
         &lib,
         &init,
-        &make_step(&[0xAA; 32], AMOUNT / 2, None, MoveCode::MakeMove, false, "commitA"),
+        &make_step(
+            &[0xAA; 32],
+            AMOUNT / 2,
+            None,
+            MoveCode::MakeMove,
+            false,
+            "commitA",
+        ),
     )
     .unwrap();
     let result = run_step_and_check(
@@ -423,7 +448,7 @@ fn test_spacepoker_commitB_happy() {
     assert!(result.is_some(), "commitB happy path should succeed");
 }
 
-fn test_spacepoker_commitB_slash_too_short() {
+fn test_spacepoker_commit_b_slash_too_short() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
     let init = make_initial(&mut a, &lib);
@@ -431,7 +456,14 @@ fn test_spacepoker_commitB_slash_too_short() {
         &mut a,
         &lib,
         &init,
-        &make_step(&[0xAA; 32], AMOUNT / 2, None, MoveCode::MakeMove, false, "commitA"),
+        &make_step(
+            &[0xAA; 32],
+            AMOUNT / 2,
+            None,
+            MoveCode::MakeMove,
+            false,
+            "commitA",
+        ),
     )
     .unwrap();
     run_step_and_check(
@@ -449,7 +481,7 @@ fn test_spacepoker_commitB_slash_too_short() {
     );
 }
 
-fn test_spacepoker_commitB_slash_wrong_mover_share() {
+fn test_spacepoker_commit_b_slash_wrong_mover_share() {
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
     let init = make_initial(&mut a, &lib);
@@ -457,7 +489,14 @@ fn test_spacepoker_commitB_slash_wrong_mover_share() {
         &mut a,
         &lib,
         &init,
-        &make_step(&[0xAA; 32], AMOUNT / 2, None, MoveCode::MakeMove, false, "commitA"),
+        &make_step(
+            &[0xAA; 32],
+            AMOUNT / 2,
+            None,
+            MoveCode::MakeMove,
+            false,
+            "commitA",
+        ),
     )
     .unwrap();
     run_step_and_check(
@@ -486,7 +525,14 @@ fn test_spacepoker_begin_round_happy() {
         &mut a,
         &lib,
         &init,
-        &make_step(&alice_image_5, AMOUNT / 2, None, MoveCode::MakeMove, false, "commitA"),
+        &make_step(
+            &alice_image_5,
+            AMOUNT / 2,
+            None,
+            MoveCode::MakeMove,
+            false,
+            "commitA",
+        ),
     )
     .unwrap();
     let after_b = run_step_and_check(
@@ -533,7 +579,14 @@ fn test_spacepoker_begin_round_slash_bad_image() {
         &mut a,
         &lib,
         &init,
-        &make_step(&alice_image_5, AMOUNT / 2, None, MoveCode::MakeMove, false, "commitA"),
+        &make_step(
+            &alice_image_5,
+            AMOUNT / 2,
+            None,
+            MoveCode::MakeMove,
+            false,
+            "commitA",
+        ),
     )
     .unwrap();
     let after_b = run_step_and_check(
@@ -576,32 +629,32 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &test_spacepoker_validator_hashes,
         ),
         (
-            "test_spacepoker_commitA_happy",
-            &test_spacepoker_commitA_happy,
+            "test_spacepoker_commit_a_happy",
+            &test_spacepoker_commit_a_happy,
         ),
         (
-            "test_spacepoker_commitA_slash_too_short",
-            &test_spacepoker_commitA_slash_too_short,
+            "test_spacepoker_commit_a_slash_too_short",
+            &test_spacepoker_commit_a_slash_too_short,
         ),
         (
-            "test_spacepoker_commitA_slash_too_long",
-            &test_spacepoker_commitA_slash_too_long,
+            "test_spacepoker_commit_a_slash_too_long",
+            &test_spacepoker_commit_a_slash_too_long,
         ),
         (
-            "test_spacepoker_commitA_slash_wrong_mover_share",
-            &test_spacepoker_commitA_slash_wrong_mover_share,
+            "test_spacepoker_commit_a_slash_wrong_mover_share",
+            &test_spacepoker_commit_a_slash_wrong_mover_share,
         ),
         (
-            "test_spacepoker_commitB_happy",
-            &test_spacepoker_commitB_happy,
+            "test_spacepoker_commit_b_happy",
+            &test_spacepoker_commit_b_happy,
         ),
         (
-            "test_spacepoker_commitB_slash_too_short",
-            &test_spacepoker_commitB_slash_too_short,
+            "test_spacepoker_commit_b_slash_too_short",
+            &test_spacepoker_commit_b_slash_too_short,
         ),
         (
-            "test_spacepoker_commitB_slash_wrong_mover_share",
-            &test_spacepoker_commitB_slash_wrong_mover_share,
+            "test_spacepoker_commit_b_slash_wrong_mover_share",
+            &test_spacepoker_commit_b_slash_wrong_mover_share,
         ),
         (
             "test_spacepoker_begin_round_happy",

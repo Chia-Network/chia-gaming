@@ -16,17 +16,8 @@
 
 (import std.li)
 (import std.map)
-(import std.max)
-(import std.deep_compare)
 (import std.relops)
 (import std.atomsort)
-(import std.append)
-
-; returns the high card of a straight or 0 if there isn't any
-; requires 5 ranks in descending order, all with count 1
-(defun straight_high_inner (r1 r2 r3 r4 r5)
-    (* (= r5 (- r1 4)) r1)
-)
 
 (defun group_by_count_inner (items last count)
     (if (not items)
@@ -42,105 +33,26 @@
     (group_by_count_inner items (f items) 0)
 )
 
-(defun extract_counts (groups)
-    (if (not groups) 0
-        (c (lsh (f groups) -4) (extract_counts (r groups)))
-    )
-)
-
-(defun extract_ranks (groups)
-    (if (not groups) 0
-        (c (logand (f groups) 15) (extract_ranks (r groups)))
-    )
-)
-
 ; Evaluate a single 5-card hand. Returns (counts... boost ranks...).
+; Modeled on calpoker's onehandcalc: map produces a flat hand with
+; boost inserted between counts and ranks via map's tail argument.
 (defun space_hand_eval (cards boost)
     (assign
         sorted (atomsort cards)
         raw_groups (atomsort (group_by_count sorted))
-        counts (extract_counts raw_groups)
-        ranks (extract_ranks raw_groups)
-        num_groups (assign
-            n1 (f counts)
-            r1 (r counts)
-            (if (not r1) 1
-                (assign n2 (f r1) r2 (r r1)
-                    (if (not r2) 2
-                        (assign n3 (f r2) r3 (r r2)
-                            (if (not r3) 3
-                                (assign n4 (f r3) r4 (r r3)
-                                    (if (not r4) 4 5)
-                                )
-                            )
-                        )
-                    )
-                )
-            )
-        )
-        ; check for straight: exactly 5 groups (all singletons) and consecutive ranks
-        (if (= num_groups 5)
+        (@ hand (first_count))
+            (map (lambda (x) (lsh x -4)) raw_groups
+                (c boost (map (lambda (x) (logand x 15)) raw_groups)))
+        (if (not (= first_count 1))
+            hand
             (assign
-                r1 (f ranks)
-                r2 (f (r ranks))
-                r3 (f (r (r ranks)))
-                r4 (f (r (r (r ranks))))
-                r5 (f (r (r (r (r ranks)))))
-                shigh (straight_high_inner r1 r2 r3 r4 r5)
-                (if shigh
-                    (list 3 3 boost shigh)
-                    (append counts (c boost ranks))
+                (_ _ _ _ _ _ r1 _ _ _ r5) hand
+                (if (= r5 (- r1 4))
+                    (li 3 3 boost r1)
+                    hand
                 )
             )
-            (append counts (c boost ranks))
         )
     )
 )
 
-; Enumerate all C(n,5) subsets from a list of cards.
-; Returns list of (selected_cards bitfield count) triples.
-(defun process_subsets (card index entries)
-    (if (not entries)
-        0
-        (assign (sel_cards sel_bits count) (f entries)
-            rest (process_subsets card index (r entries))
-            after_skip (if (> (+ count index) 4) (c (f entries) rest) rest)
-            (if (< count 5)
-                (c (li (c card sel_cards) (logior sel_bits (lsh 1 index)) (+ count 1)) after_skip)
-                after_skip
-            )
-        )
-    )
-)
-
-(defun choose_subsets (index cards)
-    (if (not cards)
-        (li (li 0 0 0))
-        (process_subsets (f cards) index
-            (choose_subsets (+ index 1) (r cards))
-        )
-    )
-)
-
-; Evaluate one subset entry, return (hand_value bitfield)
-(defun eval_subset (boost sel_cards sel_bits count)
-    (li (space_hand_eval sel_cards boost) sel_bits)
-)
-
-; Map eval_subset over all subsets
-(defun eval_all_subsets (boost subsets)
-    (if (not subsets) 0
-        (assign (sel_cards sel_bits count) (f subsets)
-            (c (eval_subset boost sel_cards sel_bits count)
-               (eval_all_subsets boost (r subsets)))
-        )
-    )
-)
-
-; Evaluate all 5-card subsets of the given cards, return (best_value best_bitfield).
-; Follows calpoker's handcalc pattern.
-(defun space_hand_calc (cards boost)
-    (max deep<
-        (eval_all_subsets boost (choose_subsets 0 cards))
-    )
-)

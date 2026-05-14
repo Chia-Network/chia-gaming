@@ -23,6 +23,7 @@ fn run_clvm(allocator: &mut AllocEncoder, program: NodePtr, args: NodePtr) -> No
         .1
 }
 
+#[allow(dead_code)]
 fn atom_bytes(allocator: &mut AllocEncoder, node: NodePtr) -> Vec<u8> {
     match allocator.allocator().sexp(node) {
         SExp::Atom => allocator.allocator().atom(node).to_vec(),
@@ -369,7 +370,13 @@ fn run_handler_game(allocator: &mut AllocEncoder, setup: &GameSetup, moves: &[Ha
         };
 
         let mut my_turn = call_my_turn_handler(
-            allocator, handler, hm.input_move, AMOUNT, state, mover_share, hm.entropy,
+            allocator,
+            handler,
+            hm.input_move,
+            AMOUNT,
+            state,
+            mover_share,
+            hm.entropy,
         );
 
         let original_mover_share = my_turn.new_mover_share;
@@ -465,7 +472,8 @@ fn run_handler_game(allocator: &mut AllocEncoder, setup: &GameSetup, moves: &[Ha
 
         if matches!(hm.test_type, TestType::MutateMoverShare) {
             assert_eq!(
-                waiter_code, MoveCode::Slash,
+                waiter_code,
+                MoveCode::Slash,
                 "step {step_idx}: expected slash for mutated mover_share"
             );
             return;
@@ -622,7 +630,10 @@ fn test_hand_eval_high_card() {
     let mut a = AllocEncoder::new();
     let result = run_hand_eval(&mut a, &[14, 10, 7, 5, 3], 0);
     assert_eq!(result[0], 1, "high card should have type prefix 1");
-    assert!(result.len() >= 6, "high card should have 5 count elements + boost + ranks");
+    assert!(
+        result.len() >= 6,
+        "high card should have 5 count elements + boost + ranks"
+    );
 }
 
 fn test_hand_eval_pair() {
@@ -676,13 +687,14 @@ fn test_straight_beats_full_house() {
     let mut a = AllocEncoder::new();
     let straight = run_hand_eval(&mut a, &[10, 9, 8, 7, 6], 0);
     let full_house = run_hand_eval(&mut a, &[14, 14, 14, 13, 13], 0);
-    let s_node = straight.to_clvm(&mut a).unwrap();
-    let f_node = full_house.to_clvm(&mut a).unwrap();
+    let _s_node = straight.to_clvm(&mut a).unwrap();
+    let _f_node = full_house.to_clvm(&mut a).unwrap();
     // Load deep_compare — we can just compare the vectors lexicographically
     assert!(
         straight > full_house,
         "straight {:?} should beat full house {:?} in suitless poker",
-        straight, full_house
+        straight,
+        full_house
     );
 }
 
@@ -693,7 +705,8 @@ fn test_boosted_set_does_not_beat_unboosted_full_house() {
     assert!(
         unboosted_fh > boosted_set,
         "unboosted full house {:?} should beat boosted set {:?}",
-        unboosted_fh, boosted_set
+        unboosted_fh,
+        boosted_set
     );
 }
 
@@ -704,7 +717,8 @@ fn test_boost_wins_within_same_hand_type() {
     assert!(
         boosted_pair > unboosted_pair,
         "boosted pair {:?} should beat same unboosted pair {:?}",
-        boosted_pair, unboosted_pair
+        boosted_pair,
+        unboosted_pair
     );
 }
 
@@ -780,11 +794,8 @@ fn run_end_validator_with_evidence(
     evidence: &[u8],
 ) -> MoveCode {
     use crate::common::types::Sha256tree;
-    let end_puzzle = read_hex_puzzle(
-        allocator,
-        "clsp/games/spacepoker/onchain/end.hex",
-    )
-    .expect("load end validator");
+    let end_puzzle = read_hex_puzzle(allocator, "clsp/games/spacepoker/onchain/end.hex")
+        .expect("load end validator");
     let end_hash_bytes = *end_puzzle.sha256tree(allocator).hash().bytes();
     let end_hash_node = allocator.allocator().new_atom(&end_hash_bytes).unwrap();
     let move_node = allocator.allocator().new_atom(move_bytes).unwrap();
@@ -827,13 +838,8 @@ fn test_generous_mover_share_allowed() {
     let evidence = [0x1F_u8]; // waiter also selects first 5
 
     // First: verify with correct mover_share (whatever it is) the validator accepts
-    let correct_code = run_end_validator_with_evidence(
-        &mut allocator,
-        &move_bytes,
-        AMOUNT / 2,
-        state,
-        &evidence,
-    );
+    let correct_code =
+        run_end_validator_with_evidence(&mut allocator, &move_bytes, AMOUNT / 2, state, &evidence);
     // This should not slash (generous or correct)
     assert_eq!(
         correct_code,
@@ -842,13 +848,8 @@ fn test_generous_mover_share_allowed() {
     );
 
     // Now try with mover_share = 0 (maximally generous to opponent)
-    let generous_code = run_end_validator_with_evidence(
-        &mut allocator,
-        &move_bytes,
-        0,
-        state,
-        &evidence,
-    );
+    let generous_code =
+        run_end_validator_with_evidence(&mut allocator, &move_bytes, 0, state, &evidence);
     assert_eq!(
         generous_code,
         MoveCode::MakeMove,
@@ -880,13 +881,8 @@ fn test_greedy_mover_share_slashed() {
     let evidence = [0x1F_u8];
 
     // Claim the entire amount — this is greedy (mover takes everything)
-    let greedy_code = run_end_validator_with_evidence(
-        &mut allocator,
-        &move_bytes,
-        AMOUNT,
-        state,
-        &evidence,
-    );
+    let greedy_code =
+        run_end_validator_with_evidence(&mut allocator, &move_bytes, AMOUNT, state, &evidence);
     assert_eq!(
         greedy_code,
         MoveCode::Slash,
@@ -896,38 +892,17 @@ fn test_greedy_mover_share_slashed() {
 
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
-        (
-            "test_spacepoker_setup_game",
-            &test_spacepoker_setup_game,
-        ),
+        ("test_spacepoker_setup_game", &test_spacepoker_setup_game),
         (
             "test_spacepoker_happy_path_all_calls",
             &test_spacepoker_happy_path_all_calls,
         ),
-        (
-            "test_hand_eval_high_card",
-            &test_hand_eval_high_card,
-        ),
-        (
-            "test_hand_eval_pair",
-            &test_hand_eval_pair,
-        ),
-        (
-            "test_hand_eval_two_pair",
-            &test_hand_eval_two_pair,
-        ),
-        (
-            "test_hand_eval_set",
-            &test_hand_eval_set,
-        ),
-        (
-            "test_hand_eval_straight",
-            &test_hand_eval_straight,
-        ),
-        (
-            "test_hand_eval_full_house",
-            &test_hand_eval_full_house,
-        ),
+        ("test_hand_eval_high_card", &test_hand_eval_high_card),
+        ("test_hand_eval_pair", &test_hand_eval_pair),
+        ("test_hand_eval_two_pair", &test_hand_eval_two_pair),
+        ("test_hand_eval_set", &test_hand_eval_set),
+        ("test_hand_eval_straight", &test_hand_eval_straight),
+        ("test_hand_eval_full_house", &test_hand_eval_full_house),
         (
             "test_hand_eval_four_of_a_kind",
             &test_hand_eval_four_of_a_kind,

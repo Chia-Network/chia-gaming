@@ -6,7 +6,7 @@ use crate::common::types::{AllocEncoder, Program};
 use crate::peer_container::SynchronousGameCradle;
 use crate::test_support::game::GameAction;
 
-pub fn prefix_test_moves(allocator: &mut AllocEncoder, game_id: GameID) -> Vec<GameAction> {
+pub fn prefix_test_moves(_allocator: &mut AllocEncoder, game_id: GameID) -> Vec<GameAction> {
     let nil_move = Program::from_hex("80").expect("should build nil move");
     let zero_raise = Program::from_hex("80").expect("should build zero raise");
 
@@ -69,8 +69,7 @@ mod sim_tests {
     use super::*;
 
     use crate::simulator::tests::potato_handler_sim::{
-        run_spacepoker_container_with_action_list_with_success_predicate,
-        GameRunOutcome,
+        run_spacepoker_container_with_action_list_with_success_predicate, GameRunOutcome,
     };
     use crate::test_support::game::ProposeTrigger;
 

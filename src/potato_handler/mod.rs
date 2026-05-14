@@ -19,12 +19,12 @@ use crate::common::types::{
     Aggsig, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr, Program,
     ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout,
 };
-use crate::utils::proper_list;
 use crate::potato_handler::effects::{
     format_coin, CancelReason, ChannelState, ChannelStatusSnapshot, Effect, GameNotification,
     GameStatusKind, GameStatusOtherParams, ResyncInfo,
 };
 use crate::shutdown::get_conditions_with_channel_handler;
+use crate::utils::proper_list;
 
 use crate::peer_container::PeerHandler;
 use crate::potato_handler::types::{

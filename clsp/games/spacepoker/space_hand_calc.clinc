@@ -1,0 +1,57 @@
+
+; Space poker best-hand selector (off-chain only).
+; Enumerates all C(n,5) subsets, evaluates each, returns the best.
+; Mirrors calpoker's handcalc.clinc.
+
+(import std.li)
+(import std.max)
+(import std.deep_compare)
+(import std.relops)
+(import games.spacepoker.onchain.space_hand_eval exposing space_hand_eval)
+
+; Enumerate all C(n,5) subsets from a list of cards.
+; Returns list of (selected_cards bitfield count) triples.
+(defun process_subsets (card index entries)
+    (if (not entries)
+        0
+        (assign (sel_cards sel_bits count) (f entries)
+            rest (process_subsets card index (r entries))
+            after_skip (if (> (+ count index) 4) (c (f entries) rest) rest)
+            (if (< count 5)
+                (c (li (c card sel_cards) (logior sel_bits (lsh 1 index)) (+ count 1)) after_skip)
+                after_skip
+            )
+        )
+    )
+)
+
+(defun choose_subsets (index cards)
+    (if (not cards)
+        (li (li 0 0 0))
+        (process_subsets (f cards) index
+            (choose_subsets (+ index 1) (r cards))
+        )
+    )
+)
+
+; Evaluate one subset entry, return (hand_value bitfield)
+(defun eval_subset (boost sel_cards sel_bits count)
+    (li (space_hand_eval sel_cards boost) sel_bits)
+)
+
+; Map eval_subset over all subsets
+(defun eval_all_subsets (boost subsets)
+    (if (not subsets) 0
+        (assign (sel_cards sel_bits count) (f subsets)
+            (c (eval_subset boost sel_cards sel_bits count)
+               (eval_all_subsets boost (r subsets)))
+        )
+    )
+)
+
+; Evaluate all 5-card subsets of the given cards, return (best_value best_bitfield).
+(defun space_hand_calc (cards boost)
+    (max deep<
+        (eval_all_subsets boost (choose_subsets 0 cards))
+    )
+)

@@ -48,13 +48,13 @@ use crate::tests::calpoker_handlers::test_funs as calpoker_handler_tests;
 #[cfg(test)]
 use crate::tests::calpoker_validation::test_funs as calpoker_validation_tests;
 #[cfg(test)]
-use crate::tests::spacepoker_validation::test_funs as spacepoker_validation_tests;
-#[cfg(test)]
-use crate::tests::spacepoker_handlers::test_funs as spacepoker_handler_tests;
-#[cfg(test)]
 use crate::tests::channel_handler::test_funs as channel_handler_tests;
 #[cfg(test)]
 use crate::tests::chialisp::test_funs as chialisp_tests;
+#[cfg(test)]
+use crate::tests::spacepoker_handlers::test_funs as spacepoker_handler_tests;
+#[cfg(test)]
+use crate::tests::spacepoker_validation::test_funs as spacepoker_validation_tests;
 #[cfg(test)]
 use crate::tests::standard_coin::test_funs as standard_coin_tests;
 
@@ -237,7 +237,7 @@ fn make_sim_consensus_constants() -> ConsensusConstants {
         max_vdf_witness_size: 8,
         mempool_block_buffer: 10,
         max_coin_amount: u64::MAX,
-            max_block_cost_clvm: MAX_BLOCK_COST_CLVM,
+        max_block_cost_clvm: MAX_BLOCK_COST_CLVM,
         cost_per_byte: 12000,
         weight_proof_threshold: 2,
         weight_proof_recent_blocks: 1000,
