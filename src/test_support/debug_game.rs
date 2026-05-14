@@ -504,7 +504,9 @@ impl BareDebugGameHandler {
                                     basic: GameMoveStateInfo {
                                         move_made: move_to_check.clone(),
                                         mover_share: inputs.opponent_mover_share.clone(),
-                                        max_move_size_raw: canonical_atom_from_usize(inputs.max_move_size),
+                                        max_move_size_raw: canonical_atom_from_usize(
+                                            inputs.max_move_size,
+                                        ),
                                         max_move_size: inputs.max_move_size,
                                     },
                                     validation_program_hash: ValidationInfoHash::Hash(

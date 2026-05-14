@@ -69,8 +69,7 @@ mod sim_tests {
     use super::*;
 
     use crate::simulator::tests::potato_handler_sim::{
-        run_spacepoker_container_with_action_list_with_success_predicate,
-        GameRunOutcome,
+        run_spacepoker_container_with_action_list_with_success_predicate, GameRunOutcome,
     };
     use crate::test_support::game::ProposeTrigger;
 

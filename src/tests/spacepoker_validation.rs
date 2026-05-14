@@ -6,13 +6,7 @@ use clvm_traits::ToClvm;
 use clvmr::allocator::{NodePtr, SExp};
 use clvmr::run_program;
 
-const VALIDATOR_NAMES: [&str; 5] = [
-    "commitA",
-    "commitB",
-    "begin_round",
-    "mid_round",
-    "end",
-];
+const VALIDATOR_NAMES: [&str; 5] = ["commitA", "commitB", "begin_round", "mid_round", "end"];
 const AMOUNT: i64 = 200;
 const BET_UNIT: i64 = 10;
 
@@ -355,7 +349,14 @@ fn test_spacepoker_commitA_happy() {
         &mut a,
         &lib,
         &init,
-        &make_step(&move_bytes, AMOUNT / 2, None, MoveCode::MakeMove, false, "commitA"),
+        &make_step(
+            &move_bytes,
+            AMOUNT / 2,
+            None,
+            MoveCode::MakeMove,
+            false,
+            "commitA",
+        ),
     );
     assert!(result.is_some(), "commitA happy path should succeed");
 }
@@ -368,7 +369,14 @@ fn test_spacepoker_commitA_slash_too_short() {
         &mut a,
         &lib,
         &init,
-        &make_step(&[0xAA; 31], AMOUNT / 2, None, MoveCode::Slash, false, "commitA"),
+        &make_step(
+            &[0xAA; 31],
+            AMOUNT / 2,
+            None,
+            MoveCode::Slash,
+            false,
+            "commitA",
+        ),
     );
 }
 
@@ -380,7 +388,14 @@ fn test_spacepoker_commitA_slash_too_long() {
         &mut a,
         &lib,
         &init,
-        &make_step(&[0xAA; 33], AMOUNT / 2, None, MoveCode::Slash, false, "commitA"),
+        &make_step(
+            &[0xAA; 33],
+            AMOUNT / 2,
+            None,
+            MoveCode::Slash,
+            false,
+            "commitA",
+        ),
     );
 }
 
@@ -404,7 +419,14 @@ fn test_spacepoker_commitB_happy() {
         &mut a,
         &lib,
         &init,
-        &make_step(&[0xAA; 32], AMOUNT / 2, None, MoveCode::MakeMove, false, "commitA"),
+        &make_step(
+            &[0xAA; 32],
+            AMOUNT / 2,
+            None,
+            MoveCode::MakeMove,
+            false,
+            "commitA",
+        ),
     )
     .unwrap();
     let result = run_step_and_check(
@@ -431,7 +453,14 @@ fn test_spacepoker_commitB_slash_too_short() {
         &mut a,
         &lib,
         &init,
-        &make_step(&[0xAA; 32], AMOUNT / 2, None, MoveCode::MakeMove, false, "commitA"),
+        &make_step(
+            &[0xAA; 32],
+            AMOUNT / 2,
+            None,
+            MoveCode::MakeMove,
+            false,
+            "commitA",
+        ),
     )
     .unwrap();
     run_step_and_check(
@@ -457,7 +486,14 @@ fn test_spacepoker_commitB_slash_wrong_mover_share() {
         &mut a,
         &lib,
         &init,
-        &make_step(&[0xAA; 32], AMOUNT / 2, None, MoveCode::MakeMove, false, "commitA"),
+        &make_step(
+            &[0xAA; 32],
+            AMOUNT / 2,
+            None,
+            MoveCode::MakeMove,
+            false,
+            "commitA",
+        ),
     )
     .unwrap();
     run_step_and_check(
@@ -486,7 +522,14 @@ fn test_spacepoker_begin_round_happy() {
         &mut a,
         &lib,
         &init,
-        &make_step(&alice_image_5, AMOUNT / 2, None, MoveCode::MakeMove, false, "commitA"),
+        &make_step(
+            &alice_image_5,
+            AMOUNT / 2,
+            None,
+            MoveCode::MakeMove,
+            false,
+            "commitA",
+        ),
     )
     .unwrap();
     let after_b = run_step_and_check(
@@ -533,7 +576,14 @@ fn test_spacepoker_begin_round_slash_bad_image() {
         &mut a,
         &lib,
         &init,
-        &make_step(&alice_image_5, AMOUNT / 2, None, MoveCode::MakeMove, false, "commitA"),
+        &make_step(
+            &alice_image_5,
+            AMOUNT / 2,
+            None,
+            MoveCode::MakeMove,
+            false,
+            "commitA",
+        ),
     )
     .unwrap();
     let after_b = run_step_and_check(

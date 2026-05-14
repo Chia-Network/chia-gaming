@@ -1,54 +1,27 @@
 (include *standard-cl-23*)
 
-(export clue_validate)
-(import std.assert_fail)
-(import onchain.krunk.krunk_make_clue exposing make_clue)
-
 ; Bob challenging
-; state is (bob_guesses alice_clues guess_validate_hash dictionary_key alice_commit)
-; move is an Alice clue or word reveal if hit
-; evidence can be index where clue is wrong
-; evidence can be exclusion range if Alice's committed word is not in the dictionary
-(defun clue_validate (mod_hash (move new_validation_hash mover_share previous_validation_hash
-    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash)
-    (bob_guesses alice_clues guess_validation_hash @ tail (dictionary_key alice_commit))
-    me previous_calidation_program mover_puzzle solution evidence)
+; state is (bob_guesses alice_clues dictionary_public_key alice_commit)
+; MOVE is either:
+;   - a 1-byte clue (Alice's colored response to Bob's last guess), or
+;   - a 21-byte reveal: 16-byte salt || 5-byte word
+; evidence may be:
+;   - an index where the clue is provably wrong, or
+;   - an exclusion range proving Alice's committed word is not in the dictionary
+;
+; TODO: validator body not yet implemented. When filled in, this should:
+;   - on clue path: check `(strlen MOVE) == 1`, append clue to alice_clues,
+;     return (list guess_hash <next_state> 5 "clue").
+;   - on reveal path: check `(strlen MOVE) == 21`, verify the commit matches,
+;     compute the payout based on which guess (if any) matched the revealed
+;     word using the (li 100 100 20 5 1) schedule, return terminal
+;     (list 0 0 0 "clue reveal") or similar.
+;   - on slash paths: support clue-correctness slash (evidence is an index)
+;     and dictionary-exclusion slash (evidence is the BLS exclusion range).
+(export (mod_hash
+    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+        state previous_validation_program evidence output_conditions)
 
-    (if (= (strlen move)) 1
-        ; alice gave a clue
-        (if_any_fail
-            (= new_validation hash (sha256 guess_validation_hash (shatree
-                (li bob_guesses (c move alice_clues) &rest tail))))
-            (!= (len clues) 4)
-            (= max_move_size 5)
-            0
-            (x)
-        )
-        ; alice did a reveal
-        (if (= (strlen evidence) 1)
-            ; index of wrong clue
-            (assert (!= (make_clue (index bob_guesses evidence)) (index alice_clues evidence)) 0)
-            evidence
-            ; proof
-            (assert
-                (>= (substr move 0 5) (substr evidence 0 5))
-                (<= (substr move 0 5) (substr evidence 5 10))
-                (li (li AGGSIG_UNSAFE dictionary_key evidence))
-            )
-            (if_any_fail
-                (= (strlen move) 21)
-                (! new_validation_hash)
-                (! max_move_size)
-                (= alice_commit (sha256 move))
-                (= mover_share
-                    (if (= (f bob_guesses) (substr move 0 5))
-                        (index (len bob_guesses) (li 100 100 20 5 1))
-                        (assert (= (len bob_guesses 5)) 0)
-                    )
-                )
-                0
-                (x)
-            )
-        )
-    )
+    (x "TODO: krunk clue_validate not implemented")
 )
