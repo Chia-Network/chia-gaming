@@ -321,7 +321,7 @@ impl TheirTurnReferee {
         });
         let is_terminal = details.validation_program_hash == ValidationInfoHash::None;
         let new_state: Rc<Program> = if is_terminal {
-            state.clone()
+            Program(vec![0x80]).into()
         } else {
             let state_update = self.run_state_update(
                 allocator,

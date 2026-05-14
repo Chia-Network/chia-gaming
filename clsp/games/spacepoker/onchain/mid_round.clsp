@@ -27,7 +27,7 @@
     (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
         MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
         (bet_unit half_pot last_raise_amount mover_image_N waiter_image_N N)
-        previous_validation_program evidence output_conditions)
+        previous_validation_program evidence)
 
     (if (> (strlen MOVE) 32)
         ; raise branch

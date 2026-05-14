@@ -224,11 +224,9 @@ pub fn parse_validator_result(
         return Ok(None);
     }
 
-    if lst.len() < 3 {
-        return Err(Error::StrErr("short list for make move".to_string()));
-    }
-
-    Ok(Some(Rc::new(Program::from_nodeptr(allocator, lst[1])?)))
+    // Terminal validators may return just (list 0) -- next_validator_hash=nil with no state.
+    let state_node = if lst.len() > 1 { lst[1] } else { NodePtr::NIL };
+    Ok(Some(Rc::new(Program::from_nodeptr(allocator, state_node)?)))
 }
 
 /// Adjudicates a two player turn based game

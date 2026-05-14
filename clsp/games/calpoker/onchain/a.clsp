@@ -14,7 +14,7 @@
 (export (mod_hash
     (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
         MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-        previous_state previous_validation_program evidence output_conditions)
+        previous_state previous_validation_program evidence)
 
     ;; First their turn for the second player
     (if (= (strlen MOVE) 32)

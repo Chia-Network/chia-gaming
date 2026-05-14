@@ -16,7 +16,7 @@
     (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
         MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
         (bet_unit half_pot mover_image_Nplus1 waiter_image_N N mid_hash)
-        previous_validation_program evidence output_conditions)
+        previous_validation_program evidence)
 
     (if (not (>= (strlen MOVE) 32))
         0

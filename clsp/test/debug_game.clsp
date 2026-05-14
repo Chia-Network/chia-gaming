@@ -70,7 +70,6 @@
      state
      this_validation_program
      evidence
-     output_conditions
      )
   (assign
    pv_hash (validator-hash curry-args)

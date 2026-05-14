@@ -466,7 +466,7 @@ fn run_handler_game(allocator: &mut AllocEncoder, setup: &GameSetup, moves: &[Ha
                 waiter_handler,
                 AMOUNT,
                 waiter_state,
-                waiter_state,
+                NodePtr::NIL,
                 my_turn.move_bytes_node,
                 waiter_vp_hash,
                 effective_mover_share,

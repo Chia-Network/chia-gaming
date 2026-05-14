@@ -304,7 +304,7 @@ fn parse_validator_output(allocator: &mut AllocEncoder, result: NodePtr) -> Move
             next_max_move_size: 0,
         }
     } else {
-        assert!(items.len() >= 3, "MAKE_MOVE output too short");
+        assert!(!items.is_empty(), "MAKE_MOVE output too short");
         let hash_bytes = allocator.allocator().atom(items[0]);
         let next_validator_hash = if hash_bytes.is_empty() {
             None
@@ -313,11 +313,16 @@ fn parse_validator_output(allocator: &mut AllocEncoder, result: NodePtr) -> Move
             h.copy_from_slice(hash_bytes.as_ref());
             Some(h)
         };
-        let max_move_size = int_from_atom(allocator, items[2]);
+        let state = if items.len() > 1 { items[1] } else { NodePtr::NIL };
+        let max_move_size = if items.len() > 2 {
+            int_from_atom(allocator, items[2])
+        } else {
+            0
+        };
         MoveResult {
             move_code: MoveCode::MakeMove,
             next_validator_hash,
-            state: items[1],
+            state,
             next_max_move_size: max_move_size,
         }
     }

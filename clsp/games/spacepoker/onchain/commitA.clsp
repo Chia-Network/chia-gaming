@@ -11,7 +11,7 @@
 (export (mod_hash
     (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
         MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-        bet_unit previous_validation_program evidence output_conditions)
+        bet_unit previous_validation_program evidence)
 
     (if_any_fail
         (= (strlen MOVE) 32)

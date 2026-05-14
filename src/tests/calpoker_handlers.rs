@@ -510,13 +510,12 @@ fn run_handler_game(allocator: &mut AllocEncoder, setup: &GameSetup, moves: &[Ha
 
         if is_terminal {
             // Terminal move: skip waiter validation and their-turn handler.
-            // Pass pre_state to handler since the on-chain validator won't run off-chain.
             let their_turn = call_their_turn_handler(
                 allocator,
                 waiter_handler,
                 AMOUNT,
                 waiter_state,
-                waiter_state,
+                NodePtr::NIL,
                 my_turn.move_bytes_node,
                 waiter_vp_hash,
                 effective_mover_share,

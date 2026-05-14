@@ -18,7 +18,7 @@
 (export (mod_hash
     (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
         bob_discards MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-        (@ state (alice_commit alice_cards bob_cards)) previous_validation_program evidence output_conditions)
+        (@ state (alice_commit alice_cards bob_cards)) previous_validation_program evidence)
     (if_any_fail
         (= (strlen bob_discards) 1)
         (= (popcount bob_discards) 4)
