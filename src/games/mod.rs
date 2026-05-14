@@ -60,6 +60,24 @@ pub fn poker_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, Game
             parser_program: Some(spacepoker_parser.to_program()),
         },
     );
+    let krunk_make_proposal = read_hex_puzzle(
+        allocator,
+        "clsp/games/krunk/krunk_include_krunk_make_proposal.hex",
+    )
+    .expect("should load");
+    let krunk_parser = read_hex_puzzle(
+        allocator,
+        "clsp/games/krunk/krunk_include_krunk_parser.hex",
+    )
+    .expect("should load");
+
+    game_type_map.insert(
+        GameType(b"krunk".to_vec()),
+        GameFactory {
+            program: krunk_make_proposal.to_program(),
+            parser_program: Some(krunk_parser.to_program()),
+        },
+    );
     game_type_map.insert(
         GameType(b"debug".to_vec()),
         GameFactory {

@@ -1,28 +1,20 @@
 (include *standard-cl-23*)
 
-(export commit)
-(import onchain.krunk.guess exposing guess_validate_hash)
-(import std.assert)
-
 ; Bob challenging
 ; state is nil
-; move is an Alice commit to a salted word
+; MOVE is Alice's commit to a salted word, 32 bytes
 ; evidence is empty
-(defun commit_validate (mod_hash (move new_validation_hash mover_share previous_validation_hash
-    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash)
-    state me previous_calidation_program mover_puzzle solution evidence)
+;
+; TODO: validator body not yet implemented. Intended chain:
+;   commit -> guess -> clue (alternating until reveal or 5 guesses elapsed).
+; When implemented, this should check `(strlen MOVE) == 32`, verify
+; MOVER_SHARE, and return a tuple like
+;   (list guess_hash (li 0 0 dictionary_public_key MOVE) 5 "commit")
+; pointing at the guess validator with the initial krunk state.
+(export (mod_hash
+    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+        state previous_validation_program evidence output_conditions)
 
-    ; check move length is 32
-    ; check state is (0 0 dictionary_public_key alice_commit)
-    ; check max_move_size, mover_share
-    (if_any_fail
-        (= (strlen move) 32)
-        (= next_validation_hash (sha256 guess_validate_hash (shatree (li 0 0 dictionary_key move))))
-        (= max_move_size 5)
-        0
-        (x)
-    )
+    (x "TODO: krunk commit_validate not implemented")
 )
-
-
-
