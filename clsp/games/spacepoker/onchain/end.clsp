@@ -10,7 +10,7 @@
 (import std.li)
 
 ; state is (half_pot mover_image waiter_preimage)
-; MOVE is mover's preimage (32 bytes) concatenated with card selection bitfield (1 byte)
+; MOVE is mover's preimage (16 bytes) concatenated with card selection bitfield (1 byte)
 ; evidence is waiter's card selection bitfield
 (export (mod_hash
     (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
@@ -19,14 +19,14 @@
         previous_validation_program evidence)
 
     (if_any_fail
-        (= (strlen MOVE) 33)
+        (= (strlen MOVE) 17)
         (not VALIDATION_INFO_HASH)
-        (= mover_image (sha256 (substr MOVE 0 32)))
+        (= mover_image (sha256 (substr MOVE 0 16)))
         0
         (assign
-            mover_bitfield (substr MOVE 32 33)
+            mover_bitfield (substr MOVE 16 17)
             (mover_cards waiter_cards mover_boost waiter_boost)
-                (make_all_cards (substr MOVE 0 32) waiter_preimage)
+                (make_all_cards (substr MOVE 0 16) waiter_preimage)
             mover_selected (pull_from_bitfield mover_cards mover_bitfield)
             (if (!= (popcount mover_bitfield) 5)
                 0

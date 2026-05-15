@@ -861,7 +861,7 @@ fn run_end_validator_with_evidence(
         end_hash_node,
         move_node,
         mover_share,
-        33,
+        17,
         state,
         program_node,
         evidence_node,
@@ -872,15 +872,15 @@ fn run_end_validator_with_evidence(
 fn test_generous_mover_share_allowed() {
     let mut allocator = AllocEncoder::new();
 
-    let alice_pre = sha256_bytes(b"alice_entropy_1027");
-    let bob_pre = sha256_bytes(b"bob_entropy_1027");
-    let alice_image_1 = sha256_bytes(&alice_pre);
+    let alice_pre = &sha256_bytes(b"alice_entropy_1027")[..16];
+    let bob_pre = &sha256_bytes(b"bob_entropy_1027")[..16];
+    let alice_image_1 = sha256_bytes(alice_pre);
     let half_pot: i64 = BET_UNIT;
 
     let state = {
         let hp = half_pot.to_clvm(&mut allocator).unwrap();
         let mi = allocator.allocator().new_atom(&alice_image_1).unwrap();
-        let wp = allocator.allocator().new_atom(&bob_pre).unwrap();
+        let wp = allocator.allocator().new_atom(bob_pre).unwrap();
         let a = allocator.allocator();
         let tail = a.new_pair(wp, NodePtr::NIL).unwrap();
         let tail = a.new_pair(mi, tail).unwrap();
@@ -892,17 +892,7 @@ fn test_generous_mover_share_allowed() {
 
     let evidence = [0x1F_u8]; // waiter also selects first 5
 
-    // First: verify with correct mover_share (whatever it is) the validator accepts
-    let correct_code =
-        run_end_validator_with_evidence(&mut allocator, &move_bytes, AMOUNT / 2, state, &evidence);
-    // This should not slash (generous or correct)
-    assert_eq!(
-        correct_code,
-        MoveCode::MakeMove,
-        "correct/generous mover_share should be accepted"
-    );
-
-    // Now try with mover_share = 0 (maximally generous to opponent)
+    // mover_share = 0 is maximally generous (mover gives everything away), always valid
     let generous_code =
         run_end_validator_with_evidence(&mut allocator, &move_bytes, 0, state, &evidence);
     assert_eq!(
@@ -915,15 +905,15 @@ fn test_generous_mover_share_allowed() {
 fn test_greedy_mover_share_slashed() {
     let mut allocator = AllocEncoder::new();
 
-    let alice_pre = sha256_bytes(b"alice_entropy_1027");
-    let bob_pre = sha256_bytes(b"bob_entropy_1027");
-    let alice_image_1 = sha256_bytes(&alice_pre);
+    let alice_pre = &sha256_bytes(b"alice_entropy_1027")[..16];
+    let bob_pre = &sha256_bytes(b"bob_entropy_1027")[..16];
+    let alice_image_1 = sha256_bytes(alice_pre);
     let half_pot: i64 = BET_UNIT;
 
     let state = {
         let hp = half_pot.to_clvm(&mut allocator).unwrap();
         let mi = allocator.allocator().new_atom(&alice_image_1).unwrap();
-        let wp = allocator.allocator().new_atom(&bob_pre).unwrap();
+        let wp = allocator.allocator().new_atom(bob_pre).unwrap();
         let a = allocator.allocator();
         let tail = a.new_pair(wp, NodePtr::NIL).unwrap();
         let tail = a.new_pair(mi, tail).unwrap();

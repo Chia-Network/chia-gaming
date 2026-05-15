@@ -119,7 +119,7 @@
 ; state = bet_unit, local_move = nil (automatic)
 (defun spacepoker_alice_commitA (local_move amount state mover_share entropy)
     (assign
-        pre entropy
+        pre (substr entropy 0 16)
         chain (build_image_chain pre)
         image_5 (image_at chain 5)
         (list
@@ -175,7 +175,7 @@
 
 ; their-turn: Alice receives Bob's mid_round response (raise or call)
 (defun spacepoker_alice_handler_mid_round_their (CHAIN BET_UNIT amount pre_state state move validation_info_hash mover_share)
-    (if (= (strlen move) 32)
+    (if (<= (strlen move) 32)
         ; Bob called — next street or end
         (assign
             (bet_unit half_pot last_raise waiter_image_N mover_image_N N) pre_state
@@ -236,7 +236,7 @@
                     mid_hash
                     (if (= N 1) val_end val_begin)
                     (if (= N 1) end_hash begin_hash)
-                    (if (= N 1) 33 42)
+                    (if (= N 1) 17 42)
                     new_mover_share
                     (if (= N 1)
                         (curry spacepoker_alice_handler_end_their CHAIN)
@@ -297,7 +297,7 @@
 (defun spacepoker_alice_handler_end_their (CHAIN amount pre_state state move validation_info_hash mover_share)
     (assign
         pre (image_at CHAIN 0)
-        bob_preimage (substr move 0 32)
+        bob_preimage (substr move 0 16)
         (mover_cards waiter_cards mover_boost waiter_boost) (derive_all_cards bob_preimage pre)
         (waiter_hand waiter_bitfield) (space_hand_calc waiter_cards waiter_boost)
         (list
@@ -319,7 +319,7 @@
 ; state = (bet_unit alice_image_5)
 (defun spacepoker_bob_commitB (local_move amount state mover_share entropy)
     (assign
-        pre entropy
+        pre (substr entropy 0 16)
         chain (build_image_chain pre)
         image_4 (image_at chain 4)
         (bet_unit alice_image_5) state
@@ -385,7 +385,7 @@
                     mid_hash
                     (if (= N 1) val_end val_begin)
                     (if (= N 1) end_hash begin_hash)
-                    (if (= N 1) 33 42)
+                    (if (= N 1) 17 42)
                     new_mover_share
                     (if (= N 1)
                         (curry spacepoker_bob_handler_end_their CHAIN)
@@ -399,7 +399,7 @@
 
 ; their-turn: Bob receives Alice's mid_round response
 (defun spacepoker_bob_handler_mid_round_their (CHAIN BET_UNIT amount pre_state state move validation_info_hash mover_share)
-    (if (= (strlen move) 32)
+    (if (<= (strlen move) 32)
         ; Alice called — next street or end
         (assign
             (bet_unit half_pot last_raise waiter_image_N mover_image_N N) pre_state
@@ -485,7 +485,7 @@
 (defun spacepoker_bob_handler_end_their (CHAIN amount pre_state state move validation_info_hash mover_share)
     (assign
         pre (image_at CHAIN 0)
-        alice_preimage (substr move 0 32)
+        alice_preimage (substr move 0 16)
         (mover_cards waiter_cards mover_boost waiter_boost) (derive_all_cards alice_preimage pre)
         (waiter_hand waiter_bitfield) (space_hand_calc waiter_cards waiter_boost)
         (list

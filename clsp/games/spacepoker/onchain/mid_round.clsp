@@ -20,8 +20,8 @@
 ; as (mover_image, waiter_image) since the mover/waiter roles alternate.
 ;
 ; MOVE is either:
-;   - a raise: >= 33 bytes, first 32 bytes ignored, rest is raise amount
-;   - a call: exactly 32 bytes, preimage that hashes to mover_image_N
+;   - a raise: > 32 bytes, first 32 bytes ignored, rest is raise amount
+;   - a call: preimage that hashes to mover_image_N (16 bytes at N=1, 32 otherwise)
 ; evidence is empty
 (export (mod_hash
     (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
@@ -46,14 +46,14 @@
         )
         ; call branch: MOVE is preimage that hashes to mover_image_N
         (if_any_fail
-            (= (strlen MOVE) 32)
+            (= (strlen MOVE) (i (= N 1) 16 32))
             (= (sha256 MOVE) mover_image_N)
             (= MOVER_SHARE (- (/ AMOUNT 2) (+ half_pot last_raise_amount)))
             0
             (if (= N 1)
                 (list end_hash
                     (li (+ half_pot last_raise_amount) waiter_image_N MOVE)
-                    33)
+                    17)
                 (list begin_hash
                     (li bet_unit (+ half_pot last_raise_amount)
                         waiter_image_N MOVE (- N 1) mod_hash)
