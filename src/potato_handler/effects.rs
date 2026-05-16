@@ -3,8 +3,8 @@ use std::collections::VecDeque;
 use crate::channel_handler::types::PotatoSignatures;
 use crate::channel_handler::types::ReadableMove;
 use crate::common::types::{
-    Aggsig, Amount, CoinID, CoinSpend, CoinString, GameID, ProgramRef, PuzzleHash, SpendBundle,
-    Timeout,
+    Aggsig, Amount, CoinID, CoinSpend, CoinString, GameID, GameType, Hash, ProgramRef, PuzzleHash,
+    SpendBundle, Timeout,
 };
 use crate::potato_handler::handshake::{CoinSpendRequest, HandshakeB, HandshakeC, HandshakeD};
 use crate::potato_handler::types::{BatchAction, PeerMessage};
@@ -123,6 +123,8 @@ pub enum GameNotification {
         id: GameID,
         my_contribution: Amount,
         their_contribution: Amount,
+        initial_validation_program_hash: Hash,
+        game_type: GameType,
     },
     ProposalAccepted {
         id: GameID,

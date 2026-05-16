@@ -8,6 +8,7 @@ import { getPlayerId } from '../hooks/save';
 import { CalpokerOutcome, ChannelState, SessionPhase } from '../types/ChiaGaming';
 import { WasmBlobWrapper } from '../hooks/WasmBlobWrapper';
 import Calpoker from '../features/calPoker';
+import { GAME_REGISTRY, gameDisplayName } from '../lib/gameRegistry';
 
 import { motion, useMotionValue, useDragControls } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
@@ -461,7 +462,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
             </div>
             <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
               <span className='text-canvas-text'>Game terms:</span>
-              <span className='font-medium'>California Poker</span>
+              <span className='font-medium'>{gameDisplayName(session.activeGameType)}</span>
               <span className='text-canvas-solid'>·</span>
               <span className='text-canvas-text'>Game size:</span>
               <span className='font-medium'>{formatMojos(session.currentHandAmount * 2n)}</span>
@@ -526,32 +527,39 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
         {/* Game area — z-0 creates a stacking context so card zIndexes (up to 100) can't escape */}
           <div ref={gameAreaRef} className='relative overflow-hidden z-0'>
           {showGameInterface && (
-            <CalpokerHand
-              key={session.handKey}
-              gameObject={session.gameObject}
-              gameId={session.activeGameId ?? session.displayGameId ?? ''}
-              iStarted={session.iStarted}
-              playerNumber={session.playerNumber}
-              gameplayEvent$={session.gameplayEvent$}
-              onOutcome={session.onHandOutcome}
-              onTurnChanged={session.onTurnChanged}
-              appendGameLog={session.appendGameLog}
-              perGameAmount={session.currentHandAmount}
-              initialHandState={session.handKey === 1 && sessionSave?.handState ? sessionSave.handState : undefined}
-              myName={params.myAlias}
-              opponentName={params.opponentAlias}
-            />
+            session.activeGameType === 'calpoker' ? (
+              <CalpokerHand
+                key={session.handKey}
+                gameObject={session.gameObject}
+                gameId={session.activeGameId ?? session.displayGameId ?? ''}
+                iStarted={session.iStarted}
+                playerNumber={session.playerNumber}
+                gameplayEvent$={session.gameplayEvent$}
+                onOutcome={session.onHandOutcome}
+                onTurnChanged={session.onTurnChanged}
+                appendGameLog={session.appendGameLog}
+                perGameAmount={session.currentHandAmount}
+                initialHandState={session.handKey === 1 && sessionSave?.handState ? sessionSave.handState : undefined}
+                myName={params.myAlias}
+                opponentName={params.opponentAlias}
+              />
+            ) : (
+              <div className='flex items-center justify-center py-20'>
+                <p className='text-canvas-text'>
+                  Game not supported: {gameDisplayName(session.activeGameType)}
+                </p>
+              </div>
+            )
           )}
 
-          {/* Waiting for first hand */}
           {!handEverStarted && (
             <div className='flex items-center justify-center py-20'>
-              <p className='text-canvas-text'>Waiting for game to start…</p>
+              <p className='text-canvas-text'>Setting up channel…</p>
             </div>
           )}
           {handEverStarted && !session.displayGameId && !session.betweenHands && (
             <div className='flex items-center justify-center py-20'>
-              <p className='text-canvas-text'>Waiting for game to start…</p>
+              <p className='text-canvas-text'>Waiting for next hand…</p>
             </div>
           )}
 
@@ -588,6 +596,23 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
               <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4'>
                 <div className='flex flex-col gap-3'>
                   <p className='text-sm text-canvas-text-contrast'>Propose terms for the next hand.</p>
+                  <div className='flex flex-col gap-1'>
+                    <label className='text-xs font-medium text-canvas-text'>Game</label>
+                    <div className='flex flex-wrap gap-2'>
+                      {GAME_REGISTRY.map(({ gameType, displayName }) => (
+                        <Button
+                          key={gameType}
+                          variant={session.composeGameType === gameType ? 'solid' : 'outline'}
+                          color={session.composeGameType === gameType ? 'primary' : 'neutral'}
+                          size='sm'
+                          disabled={session.composeProposalSent}
+                          onClick={() => session.setComposeGameType(gameType)}
+                        >
+                          {displayName}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
                   <AmountInput
                     valueMojos={session.composePerHandAmount}
                     onChange={session.setComposePerHandAmount}
@@ -598,7 +623,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
                     exceedsLabel='Exceeds available reserve.'
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !session.composeProposalSent && session.composePerHandAmount > 0n) {
-                        session.submitComposedProposal(session.composePerHandAmount);
+                        session.submitComposedProposal(session.composePerHandAmount, session.composeGameType);
                       }
                     }}
                   />
@@ -608,7 +633,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
                       color='primary'
                       size='sm'
                       disabled={session.composeProposalSent || session.composePerHandAmount <= 0n}
-                      onClick={() => session.submitComposedProposal(session.composePerHandAmount)}
+                      onClick={() => session.submitComposedProposal(session.composePerHandAmount, session.composeGameType)}
                     >
                       {session.composeProposalSent ? 'Proposal Sent' : 'Send Proposal'}
                     </Button>
@@ -624,6 +649,9 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
               <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4'>
                 <div className='flex flex-col gap-3'>
                   <p className='text-sm text-canvas-text-contrast'>Do you want to accept this hand?</p>
+                  <p className='text-xs text-canvas-text'>
+                    Game: {gameDisplayName(session.reviewPeerProposal.terms.gameType)}
+                  </p>
                   <p className='text-xs text-canvas-text'>
                     Per-player stake: {formatMojos(session.reviewPeerProposal.terms.myContribution)}
                   </p>

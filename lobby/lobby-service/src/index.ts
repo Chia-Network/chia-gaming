@@ -34,7 +34,7 @@ type RelayPayload =
 type LobbyInboundMessage =
   | { type: 'join'; id: string; alias?: string; session_id?: string }
   | { type: 'leave'; id: string }
-  | { type: 'challenge'; from_id: string; target_id: string; game?: string; amount?: string; per_game?: string }
+  | { type: 'challenge'; from_id: string; target_id: string; amount?: string }
   | { type: 'challenge_accept'; challenge_id: string; accepter_id: string }
   | { type: 'challenge_decline'; challenge_id: string }
   | { type: 'challenge_cancel'; from_id: string }
@@ -208,9 +208,7 @@ function replayPendingChallengesToPlayer(playerId: string): void {
       challenge_id: challenge.id,
       from_id: challenge.from_id,
       from_alias: fromAlias,
-      game: challenge.game,
       amount: challenge.amount,
-      per_game: challenge.per_game,
     });
   }
 }
@@ -349,9 +347,7 @@ function completeGameRegistration(playerId: string): void {
     sendGameEvent(playerId, 'connection_status', {
       has_pairing: true,
       token: pairing.token,
-      game_type: pairing.game_type,
       amount: pairing.amount,
-      per_game: pairing.per_game,
       i_am_initiator: pairing.playerA_id === playerId,
       peer_connected: peerConnected,
       my_alias: myAlias,
@@ -421,14 +417,12 @@ function getLobbySenderId(ws: WebSocket): string | undefined {
 
 function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'challenge' }>): void {
   const senderId = getLobbySenderId(ws) ?? msg.from_id;
-  const { target_id, game, amount, per_game } = msg;
+  const { target_id, amount } = msg;
   logTracker('challenge_received', {
     ws_id: wsId(ws),
     sender_id: senderId ?? null,
     target_id,
-    game: game ?? 'calpoker',
     amount: amount ?? '100',
-    per_game: per_game ?? '10',
   });
   const fromPlayer = senderId ? lobby.players[senderId] : undefined;
   if (!fromPlayer) {
@@ -459,18 +453,14 @@ function onChallenge(ws: WebSocket, msg: Extract<LobbyInboundMessage, { type: 'c
   const challenge = lobby.createChallenge(
     fromPlayer.id,
     target_id,
-    game || 'calpoker',
     amount || '100',
-    per_game || '10',
   );
 
   sendLobbyEvent(target_id, 'challenge_received', {
     challenge_id: challenge.id,
     from_id: fromPlayer.id,
     from_alias: fromPlayer.alias,
-    game: challenge.game,
     amount: challenge.amount,
-    per_game: challenge.per_game,
   });
   sendGameEvent(target_id, 'lobby_attention', {});
 }
@@ -518,18 +508,14 @@ function onChallengeAccept(ws: WebSocket, msg: Extract<LobbyInboundMessage, { ty
   const pairing = lobby.createPairing(
     challenge.from_id,
     challenge.target_id,
-    challenge.game,
     challenge.amount,
-    challenge.per_game,
   );
   logTracker('pairing_created', {
     challenge_id,
     token: pairing.token,
     challenger_id: challenge.from_id,
     accepter_id: challenge.target_id,
-    game_type: challenge.game,
     amount: challenge.amount,
-    per_game: challenge.per_game,
   });
 
   const challengerAlias = lobby.players[challenge.from_id]?.alias ?? challenge.from_id;
@@ -547,9 +533,7 @@ function onChallengeAccept(ws: WebSocket, msg: Extract<LobbyInboundMessage, { ty
   });
   const matchedBase = {
     token: pairing.token,
-    game_type: challenge.game,
     amount: challenge.amount,
-    per_game: challenge.per_game,
   };
 
   sendGameEvent(challenge.from_id, 'matched', {

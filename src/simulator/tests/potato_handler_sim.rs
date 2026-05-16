@@ -1506,6 +1506,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 timeout: Timeout::new(15),
                                 my_turn,
                                 parameters: extras.clone(),
+                                initial_validation_program_hash: None,
+                                initial_state: None,
+                                initial_max_move_size: None,
+                                initial_mover_share: None,
                             },
                         )?;
                         local_uis[*who]
@@ -1683,6 +1687,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                                 timeout: Timeout::new(15),
                                 my_turn: true,
                                 parameters: extras.clone(),
+                                initial_validation_program_hash: None,
+                                initial_state: None,
+                                initial_max_move_size: None,
+                                initial_mover_share: None,
                             },
                         )?;
                         cradles[*who].flush_pending(allocator)?;
@@ -3432,6 +3440,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 timeout: Timeout::new(15),
                 my_turn: true,
                 parameters: borrowed.clone(),
+                initial_validation_program_hash: None,
+                initial_state: None,
+                initial_max_move_size: None,
+                initial_mover_share: None,
             },
         );
 
@@ -3446,6 +3458,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                 timeout: Timeout::new(15),
                 my_turn: true,
                 parameters: borrowed.clone(),
+                initial_validation_program_hash: None,
+                initial_state: None,
+                initial_max_move_size: None,
+                initial_mover_share: None,
             },
         );
 

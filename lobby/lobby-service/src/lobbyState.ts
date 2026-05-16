@@ -43,14 +43,12 @@ export class Lobby {
     return listOfObject(this.players);
   }
 
-  createChallenge(fromId: string, targetId: string, game: string, amount: string, perGame: string): Challenge {
+  createChallenge(fromId: string, targetId: string, amount: string): Challenge {
     const challenge: Challenge = {
       id: randomHex(),
       from_id: fromId,
       target_id: targetId,
-      game,
       amount,
-      per_game: perGame,
     };
     this.challenges.set(challenge.id, challenge);
     return challenge;
@@ -64,15 +62,13 @@ export class Lobby {
     this.challenges.delete(challengeId);
   }
 
-  createPairing(playerAId: string, playerBId: string, gameType: string, amount: string, perGame: string): Pairing {
+  createPairing(playerAId: string, playerBId: string, amount: string): Pairing {
     const token = randomHex();
     const pairing: Pairing = {
       playerA_id: playerAId,
       playerB_id: playerBId,
       token,
-      game_type: gameType,
       amount,
-      per_game: perGame,
     };
     this.pairings.set(token, pairing);
     this.playerToPairing.set(playerAId, token);
