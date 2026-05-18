@@ -134,9 +134,8 @@ export function useSpacepokerHand(
 
   // Place community cards into the fixed 5-slot array at the right indices.
   // pos=3 → flop (slots 0-2, 3 cards), pos=2 → turn (slot 3), pos=1 → river (slot 4).
-  function placeCards(pos: number, cards: number[], source: string) {
+  function placeCards(pos: number, cards: number[]) {
     const startIdx = pos === 3 ? 0 : pos === 2 ? 3 : 4;
-    log(`DBG_CT: placeCards pos=${pos} start=${startIdx} cards=[${cards}] from=${source}`);
     setCommunityCards(prev => {
       const next = [...prev];
       for (let i = 0; i < cards.length; i++) {
@@ -147,7 +146,6 @@ export function useSpacepokerHand(
   }
 
   function transition(next: SpGameState) {
-    log(`DBG_CT: transition ${SpHandler[gsRef.current.handler]}(my=${gsRef.current.myTurn},N=${gsRef.current.N}) -> ${SpHandler[next.handler]}(my=${next.myTurn},N=${next.N})`);
     gsRef.current = next;
     setGs(next);
     onTurnChanged(next.myTurn);
@@ -171,17 +169,12 @@ export function useSpacepokerHand(
 
           const tag = clvmTag(items);
           const cur = gsRef.current;
-          log(`DBG_CT: OpponentMoved tag=${tag} items=${items.length} handler=${SpHandler[cur.handler]} N=${cur.N}`);
 
           // nil readable: opponent committed (commitA or commitB).
-          // My handler advances to the next commit step.
           if (!tag) {
             if (cur.handler === SpHandler.CommitA) {
               transition({ handler: SpHandler.CommitB, myTurn: true, N: 4 });
             } else {
-              // Shouldn't get nil readable outside commit phase.
-              // Log and advance to CommitB as a fallback.
-              log(`DBG_CT: unexpected nil readable in ${SpHandler[cur.handler]}`);
               transition({ handler: SpHandler.CommitB, myTurn: true, N: 4 });
             }
             return;
@@ -229,7 +222,7 @@ export function useSpacepokerHand(
               setPlayerBoost(items[4].toInt() !== 0);
             } else if (items.length > 2 && cur.N < 4) {
               // N<4 open — extra items are community cards at position cur.N
-              placeCards(cur.N, items.slice(2).map(p => p.toInt()), 'open');
+              placeCards(cur.N, items.slice(2).map(p => p.toInt()));
             }
 
             setPot(prevPot => prevPot + raiseUnits);
@@ -299,7 +292,7 @@ export function useSpacepokerHand(
             }
 
             if (items.length > 3) {
-              placeCards(N - 1, items.slice(3).map(p => p.toInt()), 'call');
+              placeCards(N - 1, items.slice(3).map(p => p.toInt()));
             }
             transition({ handler: SpHandler.BeginRound, myTurn: true, N: N - 1 });
             return;
@@ -327,8 +320,6 @@ export function useSpacepokerHand(
             return;
           }
 
-          log(`DBG_CT: UNHANDLED OpponentMoved tag=${tag}`);
-
         } else if ('GameMessage' in evt) {
           // Messages are advisory — display data only, no state change.
           let items: Program[] = [];
@@ -338,7 +329,6 @@ export function useSpacepokerHand(
           } catch { return; }
 
           const tag = clvmTag(items);
-          log(`DBG_CT: GameMessage tag=${tag} items=${items.length}`);
 
           if (tag === 'deal' && items.length >= 4) {
             setPlayerHoleCards([items[1].toInt(), items[2].toInt()]);
@@ -349,11 +339,11 @@ export function useSpacepokerHand(
           } else if (tag === 'cards' && items.length > 1) {
             const newCards = items.slice(1).map(p => p.toInt());
             const pos = newCards.length === 3 ? 3 : communityCardsRef.current[3] === null ? 2 : 1;
-            placeCards(pos, newCards, 'cards-msg');
+            placeCards(pos, newCards);
           } else if (tag === 'call' && items.length > 3) {
             const N = items[2].toInt();
             if (N > 1) {
-              placeCards(N - 1, items.slice(3).map(p => p.toInt()), 'call-msg');
+              placeCards(N - 1, items.slice(3).map(p => p.toInt()));
             }
           }
 
@@ -383,40 +373,31 @@ export function useSpacepokerHand(
     if (!go || !gid) return;
 
     if (handler === SpHandler.CommitA || handler === SpHandler.CommitB) {
-      log(`DBG_CT: AUTO-PLAY commit ${SpHandler[handler]}`);
       try {
         go.makeMove(gid, null);
         transition({ ...gs, myTurn: false });
-      } catch (e) {
-        log(`DBG_CT: AUTO-PLAY commit FAILED: ${e}`);
-      }
+      } catch {}
       return;
     }
 
     if (handler === SpHandler.BeginRound && N === 4 && coinTossIOpen === false) {
-      log(`DBG_CT: AUTO-PLAY pong (coinTossIOpen=false)`);
       try {
         go.makeMove(gid, null);
         transition({ ...gs, myTurn: false });
-      } catch (e) {
-        log(`DBG_CT: AUTO-PLAY pong FAILED: ${e}`);
-      }
+      } catch {}
       return;
     }
 
     if (handler === SpHandler.End && outcome) {
-      log(`DBG_CT: AUTO-PLAY end result=${outcome.result}`);
       handFinishedRef.current = true;
       if (outcome.result >= 0) {
-        try { go.makeMove(gid, null); } catch (e) { log(`DBG_CT: end reveal FAILED: ${e}`); }
+        try { go.makeMove(gid, null); } catch {}
       } else {
-        try { go.acceptTimeout(gid); } catch (e) { log(`DBG_CT: end fold FAILED: ${e}`); }
+        try { go.acceptTimeout(gid); } catch {}
       }
       transition({ handler: SpHandler.Showdown, myTurn: false, N });
       return;
     }
-
-    log(`DBG_CT: WAITING for user ${SpHandler[handler]} N=${N}`);
   }, [gs, outcome, coinTossIOpen]);
 
   const handleCheck = useCallback(() => {
@@ -424,7 +405,6 @@ export function useSpacepokerHand(
     const gid = gameIdRef.current;
     if (!go || !gid) return;
     const cur = gsRef.current;
-    log(`DBG_CT: USER check ${SpHandler[cur.handler]} N=${cur.N}`);
     go.makeMove(gid, Program.fromInt(0));
     setHandHistory(prev => [...prev, { player: 'you', action: 'check' }]);
     transition({ handler: SpHandler.MidRound, myTurn: false, N: cur.N });
@@ -436,7 +416,6 @@ export function useSpacepokerHand(
     if (!go || !gid) return;
     const cur = gsRef.current;
     const mojoAmount = Math.round(units * betUnit);
-    log(`DBG_CT: USER raise ${units}u ${mojoAmount}mj ${SpHandler[cur.handler]} N=${cur.N}`);
     go.makeMove(gid, Program.fromInt(mojoAmount));
     setHandHistory(prev => [...prev, { player: 'you', action: 'raise', units }]);
     transition({ handler: SpHandler.MidRound, myTurn: false, N: cur.N });
@@ -447,7 +426,6 @@ export function useSpacepokerHand(
     const gid = gameIdRef.current;
     if (!go || !gid) return;
     const cur = gsRef.current;
-    log(`DBG_CT: USER call ${SpHandler[cur.handler]} N=${cur.N}`);
     go.makeMove(gid, null);
     setHandHistory(prev => [...prev, { player: 'you', action: 'call' }]);
     if (cur.N === 1) {
@@ -462,7 +440,6 @@ export function useSpacepokerHand(
     const gid = gameIdRef.current;
     if (!go || !gid) return;
     const cur = gsRef.current;
-    log(`DBG_CT: USER fold ${SpHandler[cur.handler]} N=${cur.N}`);
     go.acceptTimeout(gid);
     setHandHistory(prev => [...prev, { player: 'you', action: 'fold' }]);
     handFinishedRef.current = true;

@@ -1140,8 +1140,6 @@ fn test_spacepoker_open_readable_has_cards_and_message_parser() {
 
     let mut alice_state = setup.initial_state;
     let mut bob_state = setup.initial_state;
-    let mut alice_waiter_vp_hash = setup.initial_validator_hash;
-    let mut alice_waiter_validator = setup.alice_validator;
     let mut bob_waiter_vp_hash = setup.initial_validator_hash;
     let mut bob_waiter_validator = setup.bob_validator;
 
@@ -1168,8 +1166,8 @@ fn test_spacepoker_open_readable_has_cards_and_message_parser() {
         bob_pre_state, bob_state,
         a_commit.move_bytes_node, bob_waiter_vp_hash, a_commit.new_mover_share,
     );
-    alice_waiter_vp_hash = a_commit.validator_for_their_move_hash;
-    alice_waiter_validator = a_commit.validator_for_their_next_move;
+    let mut alice_waiter_vp_hash = a_commit.validator_for_their_move_hash;
+    let mut alice_waiter_validator = a_commit.validator_for_their_next_move;
 
     // Step 1: Bob commitB
     let b_commit = call_my_turn_handler(
