@@ -47,6 +47,36 @@ fn sha256_bytes(data: &[u8]) -> [u8; 32] {
     *Sha256Input::Bytes(data).hash().bytes()
 }
 
+// Replicates the CLVM coin toss in begin_round.clsp:
+// (= (> mover_image_N waiter_image_N) (logand (logxor mover_image_N waiter_image_N) 1))
+// CLVM `>` is signed two's-complement integer comparison; we replicate it
+// here by comparing as signed values.
+fn compute_mover_opens(mover_i4: &[u8; 32], waiter_i4: &[u8; 32]) -> bool {
+    let m_neg = mover_i4[0] & 0x80 != 0;
+    let w_neg = waiter_i4[0] & 0x80 != 0;
+    let greater = if m_neg != w_neg {
+        !m_neg
+    } else {
+        mover_i4 > waiter_i4
+    };
+    let xor_bit = (mover_i4[31] ^ waiter_i4[31]) & 1 != 0;
+    greater == xor_bit
+}
+
+// Find an arbitrary 32-byte value (suitable as a stand-in for bob_image_4 at
+// the begin_round validator level, where no chain consistency is checked yet)
+// such that the coin toss with the given mover image yields the desired
+// outcome.
+fn find_waiter_value_for_outcome(mover_i4: &[u8; 32], mover_opens: bool) -> [u8; 32] {
+    for seed in 0u64..1_000_000 {
+        let candidate = sha256_bytes(&seed.to_be_bytes());
+        if compute_mover_opens(mover_i4, &candidate) == mover_opens {
+            return candidate;
+        }
+    }
+    panic!("could not find waiter value for mover_opens={mover_opens}");
+}
+
 fn int_from_atom(allocator: &mut AllocEncoder, node: NodePtr) -> i64 {
     match allocator.allocator().sexp(node) {
         SExp::Atom => {
@@ -519,16 +549,21 @@ fn test_spacepoker_commit_b_slash_wrong_mover_share() {
     );
 }
 
-fn test_spacepoker_begin_round_happy() {
-    let mut a = AllocEncoder::new();
-    let lib = load_validators(&mut a);
-    let init = make_initial(&mut a, &lib);
-    let alice_image_4 = sha256_bytes(&[0x11; 16]);
-    let alice_image_5 = sha256_bytes(&alice_image_4);
+// Helper: drive the validator chain from initial state through commitA and
+// commitB to a state ready for begin_round, with the given alice preimage
+// and bob "image_4" stand-in.
+fn drive_to_begin_round(
+    a: &mut AllocEncoder,
+    lib: &ValidatorLibrary,
+    alice_image_4: &[u8; 32],
+    bob_image_4: &[u8; 32],
+) -> MoveResult {
+    let alice_image_5 = sha256_bytes(alice_image_4);
+    let init = make_initial(a, lib);
 
     let after_a = run_step_and_check(
-        &mut a,
-        &lib,
+        a,
+        lib,
         &init,
         &make_step(
             &alice_image_5,
@@ -540,12 +575,12 @@ fn test_spacepoker_begin_round_happy() {
         ),
     )
     .unwrap();
-    let after_b = run_step_and_check(
-        &mut a,
-        &lib,
+    run_step_and_check(
+        a,
+        lib,
         &after_a,
         &make_step(
-            &[0xBB; 32],
+            bob_image_4,
             AMOUNT / 2 - BET_UNIT,
             None,
             MoveCode::MakeMove,
@@ -553,7 +588,16 @@ fn test_spacepoker_begin_round_happy() {
             "commitB",
         ),
     )
-    .unwrap();
+    .unwrap()
+}
+
+fn test_spacepoker_begin_round_happy() {
+    let mut a = AllocEncoder::new();
+    let lib = load_validators(&mut a);
+    let alice_image_4 = sha256_bytes(&[0x11; 16]);
+    // Pick a waiter value for which the coin toss says Alice opens.
+    let bob_image_4 = find_waiter_value_for_outcome(&alice_image_4, true);
+    let after_b = drive_to_begin_round(&mut a, &lib, &alice_image_4, &bob_image_4);
 
     let mut move_bytes = alice_image_4.to_vec();
     move_bytes.push(0); // raise 0
@@ -627,6 +671,197 @@ fn test_spacepoker_begin_round_slash_bad_image() {
     );
 }
 
+// Coin toss says mover opens: open path with bare 32-byte move (check).
+fn test_spacepoker_begin_round_coin_toss_mover_opens_check() {
+    let mut a = AllocEncoder::new();
+    let lib = load_validators(&mut a);
+    let alice_image_4 = sha256_bytes(&[0x22; 16]);
+    let bob_image_4 = find_waiter_value_for_outcome(&alice_image_4, true);
+    let after_b = drive_to_begin_round(&mut a, &lib, &alice_image_4, &bob_image_4);
+
+    let move_bytes = alice_image_4.to_vec(); // exactly 32 bytes -> check (raise=0)
+
+    let result = run_step_and_check(
+        &mut a,
+        &lib,
+        &after_b,
+        &make_step(
+            &move_bytes,
+            AMOUNT / 2 - BET_UNIT,
+            None,
+            MoveCode::MakeMove,
+            false,
+            "begin_round",
+        ),
+    );
+    let r = result.expect("32-byte check should succeed when mover opens");
+    let info = lib.by_hash.get(&r.next_validator_hash.unwrap()).unwrap();
+    assert_eq!(info.name, "mid_round", "open transitions to mid_round");
+}
+
+// Coin toss says mover must pong: bare 32-byte move is accepted as pong,
+// transitions back to begin_round with images swapped.
+fn test_spacepoker_begin_round_coin_toss_pong() {
+    let mut a = AllocEncoder::new();
+    let lib = load_validators(&mut a);
+    let alice_image_4 = sha256_bytes(&[0x33; 16]);
+    let bob_image_4 = find_waiter_value_for_outcome(&alice_image_4, false);
+    let after_b = drive_to_begin_round(&mut a, &lib, &alice_image_4, &bob_image_4);
+
+    let move_bytes = alice_image_4.to_vec();
+
+    let result = run_step_and_check(
+        &mut a,
+        &lib,
+        &after_b,
+        &make_step(
+            &move_bytes,
+            AMOUNT / 2 - BET_UNIT,
+            None,
+            MoveCode::MakeMove,
+            false,
+            "begin_round",
+        ),
+    );
+    let r = result.expect("pong should succeed when mover_opens=false");
+    let info = lib.by_hash.get(&r.next_validator_hash.unwrap()).unwrap();
+    assert_eq!(info.name, "begin_round", "pong loops back to begin_round");
+}
+
+// Coin toss says mover must pong, but mover tries to open by appending a
+// raise amount. Must slash.
+fn test_spacepoker_begin_round_coin_toss_slash_open_when_should_pong() {
+    let mut a = AllocEncoder::new();
+    let lib = load_validators(&mut a);
+    let alice_image_4 = sha256_bytes(&[0x44; 16]);
+    let bob_image_4 = find_waiter_value_for_outcome(&alice_image_4, false);
+    let after_b = drive_to_begin_round(&mut a, &lib, &alice_image_4, &bob_image_4);
+
+    let mut move_bytes = alice_image_4.to_vec();
+    move_bytes.push(0); // raise=0 appended
+
+    run_step_and_check(
+        &mut a,
+        &lib,
+        &after_b,
+        &make_step(
+            &move_bytes,
+            AMOUNT / 2 - BET_UNIT,
+            None,
+            MoveCode::Slash,
+            false,
+            "begin_round",
+        ),
+    );
+}
+
+// After a pong, the next begin_round has swapped images. The new mover
+// must always open (the coin toss flips on swap). Verify the full
+// pong-then-open sequence.
+fn test_spacepoker_begin_round_pong_then_open() {
+    let mut a = AllocEncoder::new();
+    let lib = load_validators(&mut a);
+    let alice_image_4 = sha256_bytes(&[0x55; 16]);
+    let bob_image_4 = find_waiter_value_for_outcome(&alice_image_4, false);
+    let after_b = drive_to_begin_round(&mut a, &lib, &alice_image_4, &bob_image_4);
+
+    // Alice pongs (sends bare 32-byte image_4).
+    let pong_move = alice_image_4.to_vec();
+    let after_pong = run_step_and_check(
+        &mut a,
+        &lib,
+        &after_b,
+        &make_step(
+            &pong_move,
+            AMOUNT / 2 - BET_UNIT,
+            None,
+            MoveCode::MakeMove,
+            false,
+            "begin_round",
+        ),
+    )
+    .expect("pong must succeed");
+
+    // The new mover (Bob) opens. Bob reveals his image_4 again (which the
+    // validator accepts because sha256(bob_image_4) matches the new
+    // mover_image_Nplus1 that the pong transition put in state).
+    let mut bob_open = bob_image_4.to_vec();
+    bob_open.push(0); // raise 0
+
+    let result = run_step_and_check(
+        &mut a,
+        &lib,
+        &after_pong,
+        &make_step(
+            &bob_open,
+            AMOUNT / 2 - BET_UNIT,
+            None,
+            MoveCode::MakeMove,
+            false,
+            "begin_round",
+        ),
+    );
+    let r = result.expect("post-pong open should succeed");
+    let info = lib.by_hash.get(&r.next_validator_hash.unwrap()).unwrap();
+    assert_eq!(
+        info.name, "mid_round",
+        "post-pong open should transition to mid_round"
+    );
+}
+
+// After a pong, the new mover cannot pong again - the coin toss has flipped
+// so they must open. A bare 32-byte move from the new mover... wait, that
+// is a check (raise=0), which is a valid open. So this test verifies that
+// a bare 32-byte move after a pong is correctly interpreted as a check
+// (not as another pong).
+fn test_spacepoker_begin_round_pong_then_check_is_open() {
+    let mut a = AllocEncoder::new();
+    let lib = load_validators(&mut a);
+    let alice_image_4 = sha256_bytes(&[0x66; 16]);
+    let bob_image_4 = find_waiter_value_for_outcome(&alice_image_4, false);
+    let after_b = drive_to_begin_round(&mut a, &lib, &alice_image_4, &bob_image_4);
+
+    let pong_move = alice_image_4.to_vec();
+    let after_pong = run_step_and_check(
+        &mut a,
+        &lib,
+        &after_b,
+        &make_step(
+            &pong_move,
+            AMOUNT / 2 - BET_UNIT,
+            None,
+            MoveCode::MakeMove,
+            false,
+            "begin_round",
+        ),
+    )
+    .expect("pong must succeed");
+
+    // Bob sends bare 32 bytes (his image_4). Coin toss now says he opens,
+    // so this should be interpreted as a check (open with raise=0), not as
+    // another pong.
+    let bob_check = bob_image_4.to_vec();
+    let result = run_step_and_check(
+        &mut a,
+        &lib,
+        &after_pong,
+        &make_step(
+            &bob_check,
+            AMOUNT / 2 - BET_UNIT,
+            None,
+            MoveCode::MakeMove,
+            false,
+            "begin_round",
+        ),
+    );
+    let r = result.expect("post-pong bare 32-byte move should succeed as check");
+    let info = lib.by_hash.get(&r.next_validator_hash.unwrap()).unwrap();
+    assert_eq!(
+        info.name, "mid_round",
+        "post-pong check should transition to mid_round"
+    );
+}
+
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
         (
@@ -668,6 +903,26 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_spacepoker_begin_round_slash_bad_image",
             &test_spacepoker_begin_round_slash_bad_image,
+        ),
+        (
+            "test_spacepoker_begin_round_coin_toss_mover_opens_check",
+            &test_spacepoker_begin_round_coin_toss_mover_opens_check,
+        ),
+        (
+            "test_spacepoker_begin_round_coin_toss_pong",
+            &test_spacepoker_begin_round_coin_toss_pong,
+        ),
+        (
+            "test_spacepoker_begin_round_coin_toss_slash_open_when_should_pong",
+            &test_spacepoker_begin_round_coin_toss_slash_open_when_should_pong,
+        ),
+        (
+            "test_spacepoker_begin_round_pong_then_open",
+            &test_spacepoker_begin_round_pong_then_open,
+        ),
+        (
+            "test_spacepoker_begin_round_pong_then_check_is_open",
+            &test_spacepoker_begin_round_pong_then_check_is_open,
         ),
     ]
 }

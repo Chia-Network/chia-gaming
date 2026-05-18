@@ -1,0 +1,492 @@
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Program } from 'clvm-lib';
+import { Observable } from 'rxjs';
+import { WasmBlobWrapper } from './WasmBlobWrapper';
+import { GameplayEvent } from './useGameSession';
+import { log } from '../services/log';
+
+// These mirror the handler names in the Chialisp. The UX tracks which
+// handler is currently active; every OpponentMoved advances it to the
+// next state in the sequence. myTurn is implicit: an OpponentMoved
+// means it's now my turn; a makeMove means it's now theirs.
+export enum SpHandler {
+  CommitA,    // my-turn: auto-play nil
+  CommitB,    // my-turn: auto-play nil
+  BeginRound, // my-turn: user opens (or auto-pong at N=4)
+  MidRound,   // my-turn: user raises or calls
+  End,        // my-turn: auto-play reveal/fold
+  Showdown,   // terminal
+  Folded,     // terminal
+}
+
+export interface SpGameState {
+  handler: SpHandler;
+  myTurn: boolean;
+  N: number;
+}
+
+export interface SpHandEntry {
+  player: 'you' | 'opponent';
+  action: 'check' | 'raise' | 'call' | 'fold';
+  units?: number;
+}
+
+export interface SpOutcome {
+  result: number;
+  playerHandCards: number[];
+  playerHandEval: number[];
+  opponentHandCards: number[] | null;
+  opponentHandEval: number[] | null;
+}
+
+export interface UseSpacepokerHandResult {
+  gameState: SpGameState;
+  playerHoleCards: [number, number] | null;
+  playerBoost: boolean;
+  opponentHoleCards: [number, number] | null;
+  opponentBoost: boolean | null;
+  communityCards: (number | null)[];
+  pot: number;
+  playerStack: number;
+  opponentStack: number;
+  betUnit: number;
+  handHistory: SpHandEntry[];
+  outcome: SpOutcome | null;
+  lastRaise: number;
+  coinTossIOpen: boolean | null;
+
+  handleCheck: () => void;
+  handleRaise: (units: number) => void;
+  handleCall: () => void;
+  handleFold: () => void;
+}
+
+function clvmListToInts(prog: Program): number[] {
+  try {
+    return prog.toList().map(p => p.toInt());
+  } catch {
+    return [];
+  }
+}
+
+function clvmTag(items: Program[]): string | null {
+  if (items.length === 0) return null;
+  const atom = items[0].atom;
+  if (!atom) return null;
+  return new TextDecoder().decode(atom);
+}
+
+export function useSpacepokerHand(
+  _gameObject: WasmBlobWrapper,
+  _gameId: string,
+  _iStarted: boolean,
+  gameplayEvent$: Observable<GameplayEvent>,
+  betSize: bigint,
+  onTurnChanged: (isMyTurn: boolean) => void,
+): UseSpacepokerHandResult {
+  const betUnit = Number(betSize) / 10;
+  const stackSize = 10;
+  const anteUnits = 1;
+
+  // The game always starts with CommitA as the first my-turn handler
+  // for whoever goes first. The protocol tells us via the first
+  // OpponentMoved whether we go first or second — we don't need to
+  // remember iStarted. Start with myTurn=false and let the first event
+  // (either OpponentMoved giving us the turn, or the auto-play effect
+  // for commitA) sort it out.
+  //
+  // Actually: the protocol fires the first my-turn handler immediately
+  // after proposal acceptance, before any OpponentMoved arrives. So
+  // the auto-play effect for CommitA needs to fire. We set myTurn
+  // based on iStarted just for the initial commitA, but after that the
+  // state is driven entirely by events.
+  const [gs, setGs] = useState<SpGameState>({
+    handler: SpHandler.CommitA,
+    myTurn: !_iStarted,
+    N: 4,
+  });
+  const [playerHoleCards, setPlayerHoleCards] = useState<[number, number] | null>(null);
+  const [playerBoost, setPlayerBoost] = useState(false);
+  const [opponentHoleCards, setOpponentHoleCards] = useState<[number, number] | null>(null);
+  const [opponentBoost, setOpponentBoost] = useState<boolean | null>(null);
+  const [communityCards, setCommunityCards] = useState<(number | null)[]>([null, null, null, null, null]);
+  const [pot, setPot] = useState(anteUnits * 2);
+  const [playerStack, setPlayerStack] = useState(stackSize - anteUnits);
+  const [opponentStack, setOpponentStack] = useState(stackSize - anteUnits);
+  const [handHistory, setHandHistory] = useState<SpHandEntry[]>([]);
+  const [outcome, setOutcome] = useState<SpOutcome | null>(null);
+  const [lastRaise, setLastRaise] = useState(0);
+  // Coin toss result: true = I open, false = opponent opens, null = not yet known
+  const [coinTossIOpen, setCoinTossIOpen] = useState<boolean | null>(null);
+
+  const gsRef = useRef(gs);
+  const gameObjectRef = useRef(_gameObject);
+  const gameIdRef = useRef(_gameId);
+  const handFinishedRef = useRef(false);
+  const coinTossIOpenRef = useRef(coinTossIOpen);
+  const communityCardsRef = useRef(communityCards);
+
+  gsRef.current = gs;
+  gameObjectRef.current = _gameObject;
+  gameIdRef.current = _gameId;
+  coinTossIOpenRef.current = coinTossIOpen;
+  communityCardsRef.current = communityCards;
+
+  // Place community cards into the fixed 5-slot array at the right indices.
+  // pos=3 → flop (slots 0-2, 3 cards), pos=2 → turn (slot 3), pos=1 → river (slot 4).
+  function placeCards(pos: number, cards: number[], source: string) {
+    const startIdx = pos === 3 ? 0 : pos === 2 ? 3 : 4;
+    log(`DBG_CT: placeCards pos=${pos} start=${startIdx} cards=[${cards}] from=${source}`);
+    setCommunityCards(prev => {
+      const next = [...prev];
+      for (let i = 0; i < cards.length; i++) {
+        next[startIdx + i] = cards[i];
+      }
+      return next;
+    });
+  }
+
+  function transition(next: SpGameState) {
+    log(`DBG_CT: transition ${SpHandler[gsRef.current.handler]}(my=${gsRef.current.myTurn},N=${gsRef.current.N}) -> ${SpHandler[next.handler]}(my=${next.myTurn},N=${next.N})`);
+    gsRef.current = next;
+    setGs(next);
+    onTurnChanged(next.myTurn);
+  }
+
+  // ── OpponentMoved: the opponent made a move, it's now my turn ──
+  // Dispatch based on the readable tag. The tag tells us what the
+  // handler computed; it's the single source of truth for what happened.
+  useEffect(() => {
+    const sub = gameplayEvent$.subscribe({
+      next: (evt: GameplayEvent) => {
+        if (handFinishedRef.current) return;
+
+        if ('OpponentMoved' in evt) {
+          const readable = evt.OpponentMoved.readable;
+          let items: Program[] = [];
+          try {
+            const prog = Program.deserialize(Uint8Array.from(readable));
+            items = prog.toList();
+          } catch { /* nil readable from commit steps */ }
+
+          const tag = clvmTag(items);
+          const cur = gsRef.current;
+          log(`DBG_CT: OpponentMoved tag=${tag} items=${items.length} handler=${SpHandler[cur.handler]} N=${cur.N}`);
+
+          // nil readable: opponent committed (commitA or commitB).
+          // My handler advances to the next commit step.
+          if (!tag) {
+            if (cur.handler === SpHandler.CommitA) {
+              transition({ handler: SpHandler.CommitB, myTurn: true, N: 4 });
+            } else {
+              // Shouldn't get nil readable outside commit phase.
+              // Log and advance to CommitB as a fallback.
+              log(`DBG_CT: unexpected nil readable in ${SpHandler[cur.handler]}`);
+              transition({ handler: SpHandler.CommitB, myTurn: true, N: 4 });
+            }
+            return;
+          }
+
+          // "deal": their-turn handler for commitB computed our hole
+          // cards and the coin toss result. Next my-turn handler is
+          // begin_round. The coin toss tells us if we auto-pong or
+          // wait for user input.
+          if (tag === 'deal') {
+            const c1 = items[1].toInt();
+            const c2 = items[2].toInt();
+            const boost = items[3].toInt() !== 0;
+            const iOpen = items.length >= 5 ? items[4].toInt() !== 0 : true;
+            setPlayerHoleCards([c1, c2]);
+            setPlayerBoost(boost);
+            setCoinTossIOpen(iOpen);
+            transition({ handler: SpHandler.BeginRound, myTurn: true, N: 4 });
+            return;
+          }
+
+          // "pong": opponent ponged the coin toss. We're now the
+          // opener. The pong readable has our hole cards.
+          if (tag === 'pong') {
+            if (items.length >= 4) {
+              setPlayerHoleCards([items[1].toInt(), items[2].toInt()]);
+              setPlayerBoost(items[3].toInt() !== 0);
+            }
+            setCoinTossIOpen(true);
+            transition({ handler: SpHandler.BeginRound, myTurn: true, N: 4 });
+            return;
+          }
+
+          // "open": opponent opened a betting round. We respond in
+          // mid_round. Extra items depend on context:
+          //   N=4 first open: ("open" raise hole1 hole2 boost) — 5 items
+          //   N<4: ("open" raise card...) — community cards appended
+          if (tag === 'open') {
+            const raiseAmt = Number(items[1].toBigInt());
+            const raiseUnits = Math.round(raiseAmt / betUnit);
+
+            if (items.length > 2 && cur.N === 4) {
+              // Pre-flop open — extra items are hole cards + boost
+              setPlayerHoleCards([items[2].toInt(), items[3].toInt()]);
+              setPlayerBoost(items[4].toInt() !== 0);
+            } else if (items.length > 2 && cur.N < 4) {
+              // N<4 open — extra items are community cards at position cur.N
+              placeCards(cur.N, items.slice(2).map(p => p.toInt()), 'open');
+            }
+
+            setPot(prevPot => prevPot + raiseUnits);
+            setOpponentStack(prevStack => prevStack - raiseUnits);
+            setLastRaise(raiseUnits);
+            if (raiseUnits > 0) {
+              setHandHistory(prev => [...prev, { player: 'opponent', action: 'raise', units: raiseUnits }]);
+            } else {
+              setHandHistory(prev => [...prev, { player: 'opponent', action: 'check' }]);
+            }
+            transition({ handler: SpHandler.MidRound, myTurn: true, N: cur.N });
+            return;
+          }
+
+          // "raise": opponent raised in mid_round.
+          if (tag === 'raise') {
+            const raiseAmt = Number(items[1].toBigInt());
+            const raiseUnits = Math.round(raiseAmt / betUnit);
+            setLastRaise(raiseUnits);
+            setHandHistory(prev => [...prev, { player: 'opponent', action: 'raise', units: raiseUnits }]);
+            transition({ handler: SpHandler.MidRound, myTurn: true, N: cur.N });
+            return;
+          }
+
+          // "call": opponent called. The readable carries the half_pot
+          // and current N. If N=1 and full hand data is present, we
+          // have showdown info.
+          if (tag === 'call') {
+            const halfPot = Number(items[1].toBigInt());
+            const N = items[2].toInt();
+            setHandHistory(prev => [...prev, { player: 'opponent', action: 'call' }]);
+
+            const halfPotUnits = Math.round(halfPot / betUnit);
+            setPot(halfPotUnits * 2);
+            setPlayerStack(stackSize - halfPotUnits);
+            setOpponentStack(stackSize - halfPotUnits);
+            setLastRaise(0);
+
+            if (N === 1 && items.length > 3) {
+              const yourCards = clvmListToInts(items[3]);
+              const yourBoost = items[4].toInt() !== 0;
+              const oppCards = clvmListToInts(items[5]);
+              const oppBoost = items[6].toInt() !== 0;
+              const yourSelected = clvmListToInts(items[7]);
+              const yourEval = clvmListToInts(items[8]);
+              const oppSelected = clvmListToInts(items[9]);
+              const oppEval = clvmListToInts(items[10]);
+              const result = items[11].toInt();
+
+              setOpponentHoleCards([oppCards[0], oppCards[1]]);
+              setOpponentBoost(oppBoost);
+              setCommunityCards(yourCards.slice(2, 7));
+              setOutcome({
+                result,
+                playerHandCards: yourSelected,
+                playerHandEval: yourEval,
+                opponentHandCards: oppSelected,
+                opponentHandEval: oppEval,
+              });
+              transition({ handler: SpHandler.End, myTurn: true, N: 1 });
+              return;
+            }
+
+            if (N === 1) {
+              transition({ handler: SpHandler.End, myTurn: true, N: 1 });
+              return;
+            }
+
+            if (items.length > 3) {
+              placeCards(N - 1, items.slice(3).map(p => p.toInt()), 'call');
+            }
+            transition({ handler: SpHandler.BeginRound, myTurn: true, N: N - 1 });
+            return;
+          }
+
+          // "end": opponent made the final reveal.
+          if (tag === 'end') {
+            handFinishedRef.current = true;
+            const yourSelected = clvmListToInts(items[1]);
+            const yourEval = clvmListToInts(items[2]);
+            const oppSelected = clvmListToInts(items[3]);
+            const oppEval = clvmListToInts(items[4]);
+            const result = items[5].toInt();
+            if (oppSelected.length >= 2) {
+              setOpponentHoleCards([oppSelected[0], oppSelected[1]]);
+            }
+            setOutcome({
+              result,
+              playerHandCards: yourSelected,
+              playerHandEval: yourEval,
+              opponentHandCards: oppSelected,
+              opponentHandEval: oppEval,
+            });
+            transition({ handler: SpHandler.Showdown, myTurn: false, N: 0 });
+            return;
+          }
+
+          log(`DBG_CT: UNHANDLED OpponentMoved tag=${tag}`);
+
+        } else if ('GameMessage' in evt) {
+          // Messages are advisory — display data only, no state change.
+          let items: Program[] = [];
+          try {
+            const prog = Program.deserialize(Uint8Array.from(evt.GameMessage.readable));
+            items = prog.toList();
+          } catch { return; }
+
+          const tag = clvmTag(items);
+          log(`DBG_CT: GameMessage tag=${tag} items=${items.length}`);
+
+          if (tag === 'deal' && items.length >= 4) {
+            setPlayerHoleCards([items[1].toInt(), items[2].toInt()]);
+            setPlayerBoost(items[3].toInt() !== 0);
+            if (items.length >= 5) {
+              setCoinTossIOpen(items[4].toInt() !== 0);
+            }
+          } else if (tag === 'cards' && items.length > 1) {
+            const newCards = items.slice(1).map(p => p.toInt());
+            const pos = newCards.length === 3 ? 3 : communityCardsRef.current[3] === null ? 2 : 1;
+            placeCards(pos, newCards, 'cards-msg');
+          } else if (tag === 'call' && items.length > 3) {
+            const N = items[2].toInt();
+            if (N > 1) {
+              placeCards(N - 1, items.slice(3).map(p => p.toInt()), 'call-msg');
+            }
+          }
+
+        } else if ('_terminal' in evt) {
+          if (!handFinishedRef.current) {
+            handFinishedRef.current = true;
+            if (gsRef.current.handler !== SpHandler.Showdown) {
+              transition({ handler: SpHandler.Folded, myTurn: false, N: gsRef.current.N });
+            }
+          }
+        }
+      },
+    });
+
+    return () => sub.unsubscribe();
+  }, [gameplayEvent$, betUnit, onTurnChanged, stackSize]);
+
+  // ── Auto-play: moves that don't need user input ──
+  // CommitA, CommitB: always auto-play nil.
+  // BeginRound N=4 when coin toss says opponent opens: auto-play nil (pong).
+  // End: auto-play reveal or fold.
+  useEffect(() => {
+    const { handler, myTurn, N } = gs;
+    if (!myTurn) return;
+    const go = gameObjectRef.current;
+    const gid = gameIdRef.current;
+    if (!go || !gid) return;
+
+    if (handler === SpHandler.CommitA || handler === SpHandler.CommitB) {
+      log(`DBG_CT: AUTO-PLAY commit ${SpHandler[handler]}`);
+      try {
+        go.makeMove(gid, null);
+        transition({ ...gs, myTurn: false });
+      } catch (e) {
+        log(`DBG_CT: AUTO-PLAY commit FAILED: ${e}`);
+      }
+      return;
+    }
+
+    if (handler === SpHandler.BeginRound && N === 4 && coinTossIOpen === false) {
+      log(`DBG_CT: AUTO-PLAY pong (coinTossIOpen=false)`);
+      try {
+        go.makeMove(gid, null);
+        transition({ ...gs, myTurn: false });
+      } catch (e) {
+        log(`DBG_CT: AUTO-PLAY pong FAILED: ${e}`);
+      }
+      return;
+    }
+
+    if (handler === SpHandler.End && outcome) {
+      log(`DBG_CT: AUTO-PLAY end result=${outcome.result}`);
+      handFinishedRef.current = true;
+      if (outcome.result >= 0) {
+        try { go.makeMove(gid, null); } catch (e) { log(`DBG_CT: end reveal FAILED: ${e}`); }
+      } else {
+        try { go.acceptTimeout(gid); } catch (e) { log(`DBG_CT: end fold FAILED: ${e}`); }
+      }
+      transition({ handler: SpHandler.Showdown, myTurn: false, N });
+      return;
+    }
+
+    log(`DBG_CT: WAITING for user ${SpHandler[handler]} N=${N}`);
+  }, [gs, outcome, coinTossIOpen]);
+
+  const handleCheck = useCallback(() => {
+    const go = gameObjectRef.current;
+    const gid = gameIdRef.current;
+    if (!go || !gid) return;
+    const cur = gsRef.current;
+    log(`DBG_CT: USER check ${SpHandler[cur.handler]} N=${cur.N}`);
+    go.makeMove(gid, Program.fromInt(0));
+    setHandHistory(prev => [...prev, { player: 'you', action: 'check' }]);
+    transition({ handler: SpHandler.MidRound, myTurn: false, N: cur.N });
+  }, []);
+
+  const handleRaise = useCallback((units: number) => {
+    const go = gameObjectRef.current;
+    const gid = gameIdRef.current;
+    if (!go || !gid) return;
+    const cur = gsRef.current;
+    const mojoAmount = Math.round(units * betUnit);
+    log(`DBG_CT: USER raise ${units}u ${mojoAmount}mj ${SpHandler[cur.handler]} N=${cur.N}`);
+    go.makeMove(gid, Program.fromInt(mojoAmount));
+    setHandHistory(prev => [...prev, { player: 'you', action: 'raise', units }]);
+    transition({ handler: SpHandler.MidRound, myTurn: false, N: cur.N });
+  }, [betUnit]);
+
+  const handleCall = useCallback(() => {
+    const go = gameObjectRef.current;
+    const gid = gameIdRef.current;
+    if (!go || !gid) return;
+    const cur = gsRef.current;
+    log(`DBG_CT: USER call ${SpHandler[cur.handler]} N=${cur.N}`);
+    go.makeMove(gid, null);
+    setHandHistory(prev => [...prev, { player: 'you', action: 'call' }]);
+    if (cur.N === 1) {
+      transition({ handler: SpHandler.End, myTurn: false, N: 1 });
+    } else {
+      transition({ handler: SpHandler.BeginRound, myTurn: false, N: cur.N - 1 });
+    }
+  }, []);
+
+  const handleFold = useCallback(() => {
+    const go = gameObjectRef.current;
+    const gid = gameIdRef.current;
+    if (!go || !gid) return;
+    const cur = gsRef.current;
+    log(`DBG_CT: USER fold ${SpHandler[cur.handler]} N=${cur.N}`);
+    go.acceptTimeout(gid);
+    setHandHistory(prev => [...prev, { player: 'you', action: 'fold' }]);
+    handFinishedRef.current = true;
+    transition({ handler: SpHandler.Folded, myTurn: false, N: cur.N });
+  }, []);
+
+  return {
+    gameState: gs,
+    playerHoleCards,
+    playerBoost,
+    opponentHoleCards,
+    opponentBoost,
+    communityCards,
+    pot,
+    playerStack,
+    opponentStack,
+    betUnit,
+    handHistory,
+    outcome,
+    lastRaise,
+    coinTossIOpen,
+    handleCheck,
+    handleRaise,
+    handleCall,
+    handleFold,
+  };
+}
