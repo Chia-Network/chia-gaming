@@ -1,0 +1,154 @@
+#!/bin/bash
+# Build all deployable artifacts and package them into tarballs.
+#
+# Outputs (in the repo root):
+#   chia-gaming-YYYYMMDD-HASH.tgz       — player app (static files)
+#   chia-gaming-lobby-YYYYMMDD-HASH.tgz  — lobby frontend + service
+#
+# See DEPLOYING.md for the full build/deploy guide.
+set -e
+
+SELF="$(basename "$0")"
+ARGS="$*"
+ABORTED=1
+on_exit() {
+    if [ "$ABORTED" -eq 1 ]; then
+        echo "$SELF aborted."
+    else
+        echo "$SELF $ARGS complete."
+    fi
+}
+trap on_exit EXIT
+
+for arg in "$@"; do
+    case "$arg" in
+        --debug) set -x ;;
+        *) echo "Unknown argument: $arg"; exit 1 ;;
+    esac
+done
+
+if ! command -v pnpm; then
+    echo ""
+    exit 1
+fi
+
+source ~/.nvm/nvm.sh
+
+nvm install 22.13
+nvm use 22.13
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+FE_DIR="$ROOT_DIR/front-end"
+WASM_DIR="$ROOT_DIR/wasm"
+LOBBY_DIR="$ROOT_DIR/lobby"
+LOBBY_FRONTEND_DIR="$LOBBY_DIR/lobby-frontend"
+LOBBY_SERVICE_DIR="$LOBBY_DIR/lobby-service"
+CLSP_DIR="$ROOT_DIR/clsp"
+
+DATE=$(date +%Y%m%d)
+HASH=$(git -C "$ROOT_DIR" rev-parse --short=6 HEAD)
+GAME_TARBALL="chia-gaming-${DATE}-${HASH}.tgz"
+LOBBY_TARBALL="chia-gaming-lobby-${DATE}-${HASH}.tgz"
+
+# macOS wasm32 clang workaround
+if [ -x /opt/homebrew/opt/llvm/bin/clang ]; then
+    export CC_wasm32_unknown_unknown=/opt/homebrew/opt/llvm/bin/clang
+    export AR_wasm32_unknown_unknown=/opt/homebrew/opt/llvm/bin/llvm-ar
+elif [ -x /usr/local/opt/llvm/bin/clang ]; then
+    export CC_wasm32_unknown_unknown=/usr/local/opt/llvm/bin/clang
+    export AR_wasm32_unknown_unknown=/usr/local/opt/llvm/bin/llvm-ar
+fi
+
+# ── 1. Chialisp ──────────────────────────────────────────────────────
+
+echo "=== Building chialisp (.hex files) ==="
+find "$CLSP_DIR" -name '*.hex' -delete
+cp "$ROOT_DIR/build.rs.disabled" "$ROOT_DIR/build.rs"
+(cd "$ROOT_DIR" && cargo build)
+
+# ── 2. WASM (release, browser target) ────────────────────────────────
+
+echo "=== Building WASM (web target, release) ==="
+(cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/dist" --release --target=web)
+
+# ── 3. Player app ────────────────────────────────────────────────────
+
+echo "=== Building player app ==="
+(cd "$FE_DIR" && pnpm install --frozen-lockfile && pnpm run build)
+
+# ── 4. Lobby frontend ────────────────────────────────────────────────
+
+echo "=== Building lobby frontend ==="
+# --ignore-scripts: skip native build scripts (esbuild, @parcel/watcher) that
+# pnpm 10+ blocks by default. These packages ship pre-built binaries, so the
+# scripts are unnecessary and their absence avoids ERR_PNPM_IGNORED_BUILDS.
+(cd "$LOBBY_DIR" && pnpm install --frozen-lockfile --ignore-scripts)
+(cd "$LOBBY_DIR" && pnpm --filter chia-gaming-lobby-frontend run build)
+
+# ── 5. Lobby service ─────────────────────────────────────────────────
+
+echo "=== Building lobby service ==="
+(cd "$LOBBY_DIR" && pnpm --filter chia-gaming-lobby-service run build)
+
+# ── Assemble player app staging tree ─────────────────────────────────
+
+BUILD_NONCE=$(date +%s%3N)
+echo "=== Assembling player app (nonce: $BUILD_NONCE) ==="
+
+GAME_STAGE=$(mktemp -d)
+NONCE_DIR="$GAME_STAGE/app/$BUILD_NONCE"
+mkdir -p "$NONCE_DIR"
+
+cp "$FE_DIR/public/index.html" "$GAME_STAGE/index.html"
+[ -f "$FE_DIR/public/favicon.svg" ] && cp "$FE_DIR/public/favicon.svg" "$GAME_STAGE/favicon.svg"
+echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$GAME_STAGE/build-meta.json"
+
+cp "$FE_DIR/dist/js/index-rollup.js"          "$NONCE_DIR/index.js"
+cp "$FE_DIR/dist/css/index.css"                "$NONCE_DIR/index.css"
+cp "$FE_DIR/dist/chia_gaming_wasm.js"          "$NONCE_DIR/chia_gaming_wasm.js"
+cp "$FE_DIR/dist/chia_gaming_wasm_bg.wasm"     "$NONCE_DIR/chia_gaming_wasm_bg.wasm"
+[ -f "$FE_DIR/dist/js/index-rollup.js.map" ] && cp "$FE_DIR/dist/js/index-rollup.js.map" "$NONCE_DIR/index-rollup.js.map"
+[ -d "$FE_DIR/public/images" ] && cp -r "$FE_DIR/public/images" "$NONCE_DIR/images"
+
+mkdir -p "$NONCE_DIR/clsp"
+find "$CLSP_DIR" -name '*.hex' | while read -r hex; do
+    rel="${hex#"$CLSP_DIR/"}"
+    mkdir -p "$NONCE_DIR/clsp/$(dirname "$rel")"
+    cp "$hex" "$NONCE_DIR/clsp/$rel"
+done
+
+echo "=== Creating $GAME_TARBALL ==="
+tar -czf "$ROOT_DIR/$GAME_TARBALL" -C "$GAME_STAGE" .
+rm -rf "$GAME_STAGE"
+
+# ── Assemble lobby staging tree ──────────────────────────────────────
+
+echo "=== Assembling lobby (nonce: $BUILD_NONCE) ==="
+
+LOBBY_STAGE=$(mktemp -d)
+LOBBY_NONCE_DIR="$LOBBY_STAGE/app/$BUILD_NONCE"
+mkdir -p "$LOBBY_NONCE_DIR"
+
+cp "$LOBBY_FRONTEND_DIR/public/index.html" "$LOBBY_STAGE/index.html"
+echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$LOBBY_STAGE/build-meta.json"
+
+cp "$LOBBY_FRONTEND_DIR/public/index.js"       "$LOBBY_NONCE_DIR/index.js"
+cp "$LOBBY_FRONTEND_DIR/dist/css/index.css"    "$LOBBY_NONCE_DIR/index.css"
+
+cp "$LOBBY_SERVICE_DIR/dist/index-rollup.cjs"  "$LOBBY_STAGE/service.js"
+
+echo "=== Creating $LOBBY_TARBALL ==="
+tar -czf "$ROOT_DIR/$LOBBY_TARBALL" -C "$LOBBY_STAGE" .
+rm -rf "$LOBBY_STAGE"
+
+# ── Done ─────────────────────────────────────────────────────────────
+
+echo ""
+echo "════════════════════════════════════════════════════════"
+echo "  Artifacts:"
+echo "    $ROOT_DIR/$GAME_TARBALL"
+echo "    $ROOT_DIR/$LOBBY_TARBALL"
+echo "════════════════════════════════════════════════════════"
+
+ABORTED=0
