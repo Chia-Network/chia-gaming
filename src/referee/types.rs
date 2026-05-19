@@ -303,7 +303,6 @@ impl RefereePuzzleArgs {
             ..self.clone()
         }
     }
-
 }
 
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for RefereePuzzleArgs
@@ -395,9 +394,7 @@ impl InternalStateUpdateArgs {
         (
             validator_mod_hash,
             (
-                self.referee_args
-                    .to_clvm(allocator)
-                    .into_gen()?,
+                self.referee_args.to_clvm(allocator).into_gen()?,
                 Node(converted_vma),
             ),
         )

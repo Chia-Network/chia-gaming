@@ -313,7 +313,11 @@ fn parse_validator_output(allocator: &mut AllocEncoder, result: NodePtr) -> Move
             h.copy_from_slice(hash_bytes.as_ref());
             Some(h)
         };
-        let state = if items.len() > 1 { items[1] } else { NodePtr::NIL };
+        let state = if items.len() > 1 {
+            items[1]
+        } else {
+            NodePtr::NIL
+        };
         let max_move_size = if items.len() > 2 {
             int_from_atom(allocator, items[2])
         } else {

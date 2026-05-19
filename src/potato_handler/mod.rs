@@ -604,8 +604,7 @@ impl PotatoHandler {
                         }));
                     }
 
-                    let (gsi, resolved_game_type) =
-                        self.hydrate_wire_proposal(env, wire)?;
+                    let (gsi, resolved_game_type) = self.hydrate_wire_proposal(env, wire)?;
                     let ch = self.channel_handler_mut()?;
                     ch.apply_received_proposal(env, &gsi)?;
                     let game_id = gsi.game_id;
@@ -1490,8 +1489,7 @@ impl FromLocalUI for PotatoHandler {
             let mut wire_start = game.clone();
             wire_start.initial_validation_program_hash =
                 Some(mine.initial_validation_program.hash().clone());
-            wire_start.initial_state =
-                Some(Program::from_bytes(mine.initial_state.pref().bytes()));
+            wire_start.initial_state = Some(Program::from_bytes(mine.initial_state.pref().bytes()));
             wire_start.initial_max_move_size = Some(mine.initial_max_move_size);
             wire_start.initial_mover_share = Some(mine.initial_mover_share.clone());
             let wire = WireProposeGame {
