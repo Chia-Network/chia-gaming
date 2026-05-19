@@ -20,22 +20,30 @@ on_exit() {
 }
 trap on_exit EXIT
 
+PLATFORM=""
 for arg in "$@"; do
     case "$arg" in
         --debug) set -x ;;
+        --platform=*) PLATFORM="${arg#--platform=}" ;;
         *) echo "Unknown argument: $arg"; exit 1 ;;
     esac
 done
 
-if ! command -v pnpm; then
-    echo ""
-    exit 1
+if ! command -v node &>/dev/null; then
+    if [ -f ~/.nvm/nvm.sh ]; then
+        source ~/.nvm/nvm.sh
+        nvm install 22.13
+        nvm use 22.13
+    else
+        echo "Error: node not found and nvm not available"
+        exit 1
+    fi
 fi
 
-source ~/.nvm/nvm.sh
-
-nvm install 22.13
-nvm use 22.13
+if ! command -v pnpm &>/dev/null; then
+    corepack enable
+    corepack prepare pnpm@10.33.0 --activate
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -48,8 +56,9 @@ CLSP_DIR="$ROOT_DIR/clsp"
 
 DATE=$(date +%Y%m%d)
 HASH=$(git -C "$ROOT_DIR" rev-parse --short=6 HEAD)
-GAME_TARBALL="chia-gaming-${DATE}-${HASH}.tgz"
-LOBBY_TARBALL="chia-gaming-lobby-${DATE}-${HASH}.tgz"
+TAG="${PLATFORM:+${PLATFORM}-}${DATE}-${HASH}"
+GAME_TARBALL="chia-gaming-${TAG}.tgz"
+LOBBY_TARBALL="chia-gaming-lobby-${TAG}.tgz"
 
 # macOS wasm32 clang workaround
 if [ -x /opt/homebrew/opt/llvm/bin/clang ]; then
