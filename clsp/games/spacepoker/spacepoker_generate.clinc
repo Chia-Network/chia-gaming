@@ -194,7 +194,7 @@
             (assign
                 raise_amount (if local_move local_move 0)
                 move_bytes (concat image_N raise_amount)
-                new_mover_share (- (/ amount 2) half_pot raise_amount)
+                new_mover_share (- (/ amount 2) half_pot)
                 (list
                     "spacepoker_alice_begin_round"
                     move_bytes
@@ -231,6 +231,7 @@
         ; Bob called — next street or end
         (assign
             (bet_unit half_pot last_raise waiter_image_N mover_image_N N) pre_state
+            new_half_pot (+ half_pot last_raise)
             readable (if (= N 1)
                 ; N=1 call: both preimages known — derive all cards and hands
                 (assign
@@ -242,7 +243,7 @@
                     alice_selected (pull_cards alice_cards alice_bitfield)
                     bob_selected (pull_cards bob_cards bob_bitfield)
                     result (deep_compare alice_hand bob_hand)
-                    (list "call" half_pot N
+                    (list "call" new_half_pot N
                         alice_cards alice_boost
                         bob_cards bob_boost
                         alice_selected alice_hand
@@ -252,7 +253,7 @@
                 ; N>1 call: derive newly revealed community cards
                 (assign
                     new_cards (community_cards_for_pos (image_at CHAIN (- N 1)) move (- N 1))
-                    (c "call" (c half_pot (c N new_cards)))
+                    (c "call" (c new_half_pot (c N new_cards)))
                 )
             )
             (if (= N 1)
@@ -271,9 +272,10 @@
         )
         ; Bob raised — we need to respond
         (assign
+            (_bet_unit _half_pot _last_raise . _rest) pre_state
             new_raise (substr move 32 (strlen move))
             (list
-                (list "raise" new_raise)
+                (list "raise" new_raise (+ _half_pot _last_raise))
                 0
                 (curry spacepoker_alice_mid_round CHAIN BET_UNIT)
             )
@@ -293,7 +295,7 @@
                 raise_amount local_move
                 padding (substr entropy 0 32)
                 move_bytes (concat padding raise_amount)
-                new_mover_share (- (/ amount 2) (+ half_pot last_raise raise_amount))
+                new_mover_share (- (/ amount 2) (+ half_pot last_raise))
                 (list
                     "spacepoker_alice_mid_round raise"
                     move_bytes
@@ -343,8 +345,8 @@
         mover_image_N (substr move 0 32)
         raise_amount (substr move 32 (strlen move))
         readable (if (= N 4)
-            (list "open" raise_amount)
-            (c "open" (c raise_amount (community_cards_for_pos (image_at CHAIN N) mover_image_N N)))
+            (list "open" raise_amount _half_pot)
+            (c "open" (c raise_amount (c _half_pot (community_cards_for_pos (image_at CHAIN N) mover_image_N N))))
         )
         (list
             readable
@@ -504,9 +506,9 @@
                         bob_pre (image_at CHAIN 0)
                         (bh1 bh2) (make_cards_pair bob_pre mover_image_N 2)
                         bob_boost (not (% (sha256 (logxor bob_pre mover_image_N)) 3))
-                        (list "open" raise_amount bh1 bh2 bob_boost)
+                        (list "open" raise_amount _half_pot bh1 bh2 bob_boost)
                     )
-                    (c "open" (c raise_amount (community_cards_for_pos (image_at CHAIN N) mover_image_N N)))
+                    (c "open" (c raise_amount (c _half_pot (community_cards_for_pos (image_at CHAIN N) mover_image_N N))))
                 )
                 (list
                     readable
@@ -540,7 +542,7 @@
                 raise_amount local_move
                 padding (substr entropy 0 32)
                 move_bytes (concat padding raise_amount)
-                new_mover_share (- (/ amount 2) (+ half_pot last_raise raise_amount))
+                new_mover_share (- (/ amount 2) (+ half_pot last_raise))
                 (list
                     "spacepoker_bob_mid_round raise"
                     move_bytes
@@ -586,6 +588,7 @@
         ; Alice called — next street or end
         (assign
             (bet_unit half_pot last_raise waiter_image_N mover_image_N N) pre_state
+            new_half_pot (+ half_pot last_raise)
             readable (if (= N 1)
                 ; N=1 call: both preimages known — derive all cards and hands
                 (assign
@@ -597,7 +600,7 @@
                     bob_selected (pull_cards bob_cards bob_bitfield)
                     alice_selected (pull_cards alice_cards alice_bitfield)
                     result (deep_compare bob_hand alice_hand)
-                    (list "call" half_pot N
+                    (list "call" new_half_pot N
                         bob_cards bob_boost
                         alice_cards alice_boost
                         bob_selected bob_hand
@@ -607,7 +610,7 @@
                 ; N>1 call: derive newly revealed community cards
                 (assign
                     new_cards (community_cards_for_pos move (image_at CHAIN (- N 1)) (- N 1))
-                    (c "call" (c half_pot (c N new_cards)))
+                    (c "call" (c new_half_pot (c N new_cards)))
                 )
             )
             (if (= N 1)
@@ -626,9 +629,10 @@
         )
         ; Alice raised — we need to respond
         (assign
+            (_bet_unit _half_pot _last_raise . _rest) pre_state
             new_raise (substr move 32 (strlen move))
             (list
-                (list "raise" new_raise)
+                (list "raise" new_raise (+ _half_pot _last_raise))
                 0
                 (curry spacepoker_bob_mid_round CHAIN BET_UNIT)
             )
@@ -654,7 +658,7 @@
             (assign
                 raise_amount (if local_move local_move 0)
                 move_bytes (concat image_N raise_amount)
-                new_mover_share (- (/ amount 2) half_pot raise_amount)
+                new_mover_share (- (/ amount 2) half_pot)
                 (list
                     "spacepoker_bob_begin_round"
                     move_bytes

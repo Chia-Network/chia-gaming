@@ -1,11 +1,10 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, type ReactNode } from 'react';
 import { Observable } from 'rxjs';
 import { WasmBlobWrapper } from '../hooks/WasmBlobWrapper';
 import {
   useSpacepokerHand,
   SpHandler,
   SpHandEntry,
-  SpOutcome,
   UseSpacepokerHandResult,
 } from '../hooks/useSpacepokerHand';
 import { GameplayEvent } from '../hooks/useGameSession';
@@ -85,43 +84,21 @@ function describeHand(eval_: number[]): string {
   return eval_.join(' ');
 }
 
-const STREET_LABELS: Record<number, string> = {
-  4: 'Pre-Flop',
-  3: 'Flop',
-  2: 'Turn',
-  1: 'River',
-};
-
-function phaseLabel(handler: SpHandler, N: number): string {
-  if (handler === SpHandler.CommitA || handler === SpHandler.CommitB) return 'Shuffling\u2026';
-  if (handler === SpHandler.Showdown) return 'Showdown';
-  if (handler === SpHandler.Folded) return 'Folded';
-  if (handler === SpHandler.End) return 'Revealing\u2026';
-  return STREET_LABELS[N] ?? 'Pre-Flop';
-}
-
 const SEL_BAR = 'w-full h-1 rounded-full';
 const SEL_VIS = `${SEL_BAR} bg-canvas-text-contrast`;
 const SEL_HIDDEN = `${SEL_BAR} bg-transparent`;
 
-function SpCard({ rank, faceDown, boost }: {
-  rank?: number;
-  faceDown?: boolean;
-  boost?: boolean;
-}) {
+function SpCard({ rank, faceDown }: { rank?: number; faceDown?: boolean }) {
   const base = 'inline-flex items-center justify-center rounded border text-lg font-bold select-none';
   const size = 'w-10 h-14 sm:w-12 sm:h-16';
   if (faceDown) {
     return (
-      <div className={`${base} ${size} bg-canvas-solid border-canvas-line text-canvas-bg`}>
-        ?
-      </div>
+      <div className={`${base} ${size} bg-canvas-solid border-canvas-line text-canvas-bg`}>?</div>
     );
   }
   return (
-    <div className={`${base} ${size} bg-canvas-bg border-canvas-line text-canvas-text-contrast relative`}>
+    <div className={`${base} ${size} bg-canvas-bg border-canvas-line text-canvas-text-contrast`}>
       {rank != null ? rankLabel(rank) : ''}
-      {boost && <span className='absolute top-0.5 right-0.5 text-[10px] leading-none text-yellow-400'>&#9733;</span>}
     </div>
   );
 }
@@ -132,6 +109,45 @@ function CardSlot() {
   );
 }
 
+function CardColumn({
+  topSel,
+  bottomSel,
+  children,
+}: {
+  topSel?: boolean;
+  bottomSel?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className='flex flex-col items-center gap-0.5'>
+      <div className={topSel ? SEL_VIS : SEL_HIDDEN} />
+      {children}
+      <div className={bottomSel ? SEL_VIS : SEL_HIDDEN} />
+    </div>
+  );
+}
+
+function HoleCardsGroup({ boosted, children }: { boosted?: boolean; children: ReactNode }) {
+  return (
+    <div className='relative inline-flex items-center'>
+      <div className='flex gap-2 items-center'>{children}</div>
+      {boosted && (
+        <span className='absolute left-full top-1/2 -translate-y-1/2 ml-1 text-2xl font-bold text-canvas-text-contrast leading-none'>
+          +
+        </span>
+      )}
+    </div>
+  );
+}
+
+function AmountBadge({ children }: { children: ReactNode }) {
+  return (
+    <span className='font-bold text-lg text-canvas-text-contrast tabular-nums'>
+      {children}
+    </span>
+  );
+}
+
 function entrySymbol(entry: SpHandEntry): string {
   if (entry.action === 'check') return '\u2705';
   if (entry.action === 'call') return '\u270B';
@@ -139,26 +155,16 @@ function entrySymbol(entry: SpHandEntry): string {
   return String(entry.units ?? '');
 }
 
-// Group history entries into rows pairing one action from each player.
-// Within a single betting round, actions alternate between players, so
-// consecutive pairs form one complete exchange. If a row's first entry
-// is "you", the partner (if present) is the opponent's response, and
-// vice versa.
-interface HistoryRow {
-  you: SpHandEntry | null;
-  opponent: SpHandEntry | null;
-}
-
-function buildHistoryRows(history: SpHandEntry[]): HistoryRow[] {
-  const rows: HistoryRow[] = [];
-  let current: HistoryRow | null = null;
-  for (const entry of history) {
-    const slot: keyof HistoryRow = entry.player === 'you' ? 'you' : 'opponent';
-    if (!current || current[slot] != null) {
-      current = { you: null, opponent: null };
-      rows.push(current);
-    }
-    current[slot] = entry;
+function buildHistoryRows(history: SpHandEntry[]): [SpHandEntry | null, SpHandEntry | null][] {
+  if (history.length === 0) return [];
+  const rows: [SpHandEntry | null, SpHandEntry | null][] = [];
+  let i = 0;
+  if (history[0].player === 'opponent') {
+    rows.push([null, history[0]]);
+    i = 1;
+  }
+  for (; i < history.length; i += 2) {
+    rows.push([history[i], history[i + 1] ?? null]);
   }
   return rows;
 }
@@ -167,28 +173,20 @@ function HandHistoryPanel({ history }: { history: SpHandEntry[] }) {
   if (history.length === 0) return null;
   const rows = buildHistoryRows(history);
   return (
-    <div className='w-full max-w-xs mx-auto'>
-      <table className='w-full text-xs'>
-        <thead>
-          <tr className='text-canvas-text'>
-            <th className='text-left font-medium px-1'>You</th>
-            <th className='text-right font-medium px-1'>Opponent</th>
+    <table className='text-base mx-auto'>
+      <tbody>
+        {rows.map(([left, right], i) => (
+          <tr key={i} className={i > 0 ? 'border-t border-canvas-line' : ''}>
+            <td className='px-3 py-1 text-canvas-text-contrast text-center w-12'>
+              {left ? entrySymbol(left) : ''}
+            </td>
+            <td className='px-3 py-1 text-canvas-text-contrast text-center w-12'>
+              {right ? entrySymbol(right) : ''}
+            </td>
           </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, i) => (
-            <tr key={i} className='border-t border-canvas-line'>
-              <td className='px-1 py-0.5 text-canvas-text-contrast'>
-                {row.you ? entrySymbol(row.you) : ''}
-              </td>
-              <td className='px-1 py-0.5 text-canvas-text-contrast text-right'>
-                {row.opponent ? entrySymbol(row.opponent) : ''}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -199,38 +197,29 @@ function ActionBar({ sp }: { sp: UseSpacepokerHandResult }) {
   const maxRaise = sp.playerStack - (sp.lastRaise > 0 ? sp.lastRaise : 0);
   const isBeginRound = handler === SpHandler.BeginRound;
   const autoPong = isBeginRound && N === 4 && sp.coinTossIOpen === false;
+  const actionsEnabled = myTurn && inBetting && !autoPong;
 
   const doRaise = useCallback(() => {
-    if (raiseAmount < 1 || raiseAmount > maxRaise) return;
+    if (!actionsEnabled || raiseAmount < 1 || raiseAmount > maxRaise) return;
     sp.handleRaise(raiseAmount);
-  }, [raiseAmount, maxRaise, sp]);
+  }, [actionsEnabled, raiseAmount, maxRaise, sp]);
 
-  if (!myTurn || !inBetting || autoPong) return null;
+  const btnClass =
+    'px-3 py-1.5 rounded bg-primary-solid text-primary-on-primary text-sm font-medium hover:bg-primary-solid-hover disabled:opacity-40';
 
   return (
-    <div className='flex flex-wrap items-center gap-2'>
-      {isBeginRound && (
-        <button
-          onClick={sp.handleCheck}
-          className='px-3 py-1.5 rounded bg-canvas-solid text-canvas-bg text-sm font-medium hover:opacity-90'
-        >
+    <div className='flex flex-wrap items-center justify-center gap-2'>
+      {isBeginRound ? (
+        <button onClick={sp.handleCheck} disabled={!actionsEnabled} className={`${btnClass} w-16`}>
           Check
         </button>
-      )}
-      {!isBeginRound && (
-        <button
-          onClick={sp.handleCall}
-          className='px-3 py-1.5 rounded bg-green-600 text-white text-sm font-medium hover:opacity-90'
-        >
+      ) : (
+        <button onClick={sp.handleCall} disabled={!actionsEnabled} className={`${btnClass} w-16`}>
           Call
         </button>
       )}
       <div className='flex items-center gap-1'>
-        <button
-          onClick={doRaise}
-          disabled={maxRaise < 1}
-          className='px-3 py-1.5 rounded bg-blue-600 text-white text-sm font-medium hover:opacity-90 disabled:opacity-40'
-        >
+        <button onClick={doRaise} disabled={!actionsEnabled || maxRaise < 1} className={btnClass}>
           Raise
         </button>
         <input
@@ -239,14 +228,12 @@ function ActionBar({ sp }: { sp: UseSpacepokerHandResult }) {
           max={Math.max(1, maxRaise)}
           value={Math.min(raiseAmount, Math.max(1, maxRaise))}
           onChange={(e) => setRaiseAmount(parseInt(e.target.value))}
-          className='w-20 sm:w-32'
+          disabled={!actionsEnabled}
+          className='w-20 sm:w-32 disabled:opacity-40'
         />
         <span className='text-xs text-canvas-text-contrast w-6 text-center'>{raiseAmount}</span>
       </div>
-      <button
-        onClick={sp.handleFold}
-        className='px-3 py-1.5 rounded bg-red-600 text-white text-sm font-medium hover:opacity-90'
-      >
+      <button onClick={sp.handleFold} disabled={!actionsEnabled || isBeginRound} className={btnClass}>
         Fold
       </button>
     </div>
@@ -284,125 +271,130 @@ export default function SpacePoker({
   const oppName = opponentName ?? 'Opponent';
 
   const inBetting = handler === SpHandler.BeginRound || handler === SpHandler.MidRound;
-  const isSetup = handler === SpHandler.CommitA || handler === SpHandler.CommitB;
 
-  const showdownResult = sp.outcome
-    ? sp.outcome.result > 0
-      ? `${playerName} wins!`
-      : sp.outcome.result < 0
-        ? `${oppName} wins!`
-        : 'Tie!'
-    : '';
+  const oppHandDesc =
+    sp.outcome?.opponentHandEval && sp.outcome.opponentHandEval.length > 0
+      ? describeHand(sp.outcome.opponentHandEval)
+      : '';
+  const playerHandDesc =
+    sp.outcome?.playerHandEval && sp.outcome.playerHandEval.length > 0
+      ? describeHand(sp.outcome.playerHandEval)
+      : '';
+
+  const finished = handler === SpHandler.Showdown || handler === SpHandler.Folded;
+  let playerIndicator = '';
+  let oppIndicator = '';
+  if (finished && sp.outcome) {
+    playerIndicator = sp.outcome.result > 0 ? ' \u2705' : sp.outcome.result < 0 ? ' \u274C' : '';
+    oppIndicator = sp.outcome.result < 0 ? ' \u2705' : sp.outcome.result > 0 ? ' \u274C' : '';
+  } else if (handler === SpHandler.Folded) {
+    const lastEntry = sp.handHistory[sp.handHistory.length - 1];
+    const youFolded = lastEntry?.player === 'you' && lastEntry?.action === 'fold';
+    playerIndicator = youFolded ? ' \u274C' : ' \u2705';
+    oppIndicator = youFolded ? ' \u2705' : ' \u274C';
+  }
+
+  let turnLine = '';
+  if (myTurn && inBetting && !(handler === SpHandler.BeginRound && N === 4 && sp.coinTossIOpen === false)) {
+    turnLine =
+      handler === SpHandler.MidRound && sp.lastRaise > 0
+        ? `Your turn, ${sp.lastRaise} to call`
+        : 'Your turn';
+  } else if (myTurn && handler === SpHandler.BeginRound && N === 4 && sp.coinTossIOpen === false) {
+    turnLine = 'Coin toss: opponent opens\u2026';
+  } else if (!myTurn && inBetting) {
+    turnLine = 'Waiting for opponent\u2026';
+  }
 
   return (
-    <div className='flex flex-col items-center gap-3 py-4 w-full max-w-lg mx-auto text-canvas-text'>
-      {/* Status bar */}
-      <div className='flex w-full items-center justify-between text-sm'>
-        <div className='flex flex-col items-start'>
-          <span className='text-xs text-canvas-text'>{playerName}</span>
-          <span className='font-semibold text-canvas-text-contrast'>{sp.playerStack} units</span>
+    <div className='flex flex-col items-center gap-1.5 py-4 w-full max-w-lg mx-auto text-canvas-text'>
+      {/* Opponent name */}
+      <AmountBadge>{oppName}{oppIndicator}</AmountBadge>
+
+      {/* Opponent cards row with stack on left */}
+      <div className='relative flex justify-center w-full'>
+        <div className='absolute left-0 top-1/2 -translate-y-1/2'>
+          <AmountBadge>{sp.opponentStack}</AmountBadge>
         </div>
-        <div className='flex flex-col items-center'>
-          <span className='text-xs text-canvas-text'>Pot</span>
-          <span className='font-bold text-lg text-canvas-text-contrast'>{sp.pot}</span>
-          <span className='text-xs text-canvas-text'>{phaseLabel(handler, N)}</span>
-        </div>
-        <div className='flex flex-col items-end'>
-          <span className='text-xs text-canvas-text'>{oppName}</span>
-          <span className='font-semibold text-canvas-text-contrast'>{sp.opponentStack} units</span>
-        </div>
+        <HoleCardsGroup boosted={sp.opponentHoleCards ? sp.opponentBoost ?? false : false}>
+          {sp.opponentHoleCards ? (
+            sp.opponentHoleCards.map((c, i) => (
+              <CardColumn key={i} topSel={sp.outcome?.opponentHandCards?.includes(c)}>
+                <SpCard rank={c} />
+              </CardColumn>
+            ))
+          ) : (
+            <>
+              <CardColumn><SpCard faceDown /></CardColumn>
+              <CardColumn><SpCard faceDown /></CardColumn>
+            </>
+          )}
+        </HoleCardsGroup>
       </div>
 
-      {/* Opponent hole cards */}
-      <div className='flex gap-2 items-center'>
-        <span className='text-xs text-canvas-text mr-1'>{oppName}</span>
-        {sp.opponentHoleCards ? (
-          <>
-            {sp.opponentHoleCards.map((c, i) => (
-              <div key={i} className='flex flex-col items-center gap-0.5'>
-                <div className={sp.outcome?.opponentHandCards?.includes(c) ? SEL_VIS : SEL_HIDDEN} />
-                <SpCard rank={c} boost={sp.opponentBoost ?? false} />
-              </div>
-            ))}
-          </>
-        ) : (
-          <>
-            <SpCard faceDown />
-            <SpCard faceDown />
-          </>
-        )}
-      </div>
+      {/* Opponent hand description — reserved height */}
+      <p className='text-xs text-canvas-text-contrast text-center min-h-4'>{oppHandDesc}</p>
 
-      {/* Opponent hand description at showdown */}
-      {sp.outcome && sp.outcome.opponentHandEval && sp.outcome.opponentHandEval.length > 0 && (
-        <p className='text-xs text-canvas-text-contrast'>{describeHand(sp.outcome.opponentHandEval)}</p>
-      )}
-
-      {/* Community cards */}
-      <div className='flex gap-1.5 items-center py-2'>
-        {Array.from({ length: communitySlots }).map((_, i) => {
-          const card = communityReversed[i];
-          if (card != null) {
-            const inOpp = sp.outcome?.opponentHandCards?.includes(card);
-            const inPlayer = sp.outcome?.playerHandCards?.includes(card);
+      {/* Community cards row with pot on left */}
+      <div className='relative flex justify-center w-full'>
+        <div className='absolute left-0 top-1/2 -translate-y-1/2'>
+          <AmountBadge>{sp.pot}</AmountBadge>
+        </div>
+        <div className='flex gap-1.5 items-center'>
+          {Array.from({ length: communitySlots }).map((_, i) => {
+            const card = communityReversed[i];
+            if (card != null) {
+              return (
+                <CardColumn
+                  key={i}
+                  topSel={sp.outcome?.opponentHandCards?.includes(card)}
+                  bottomSel={sp.outcome?.playerHandCards?.includes(card)}
+                >
+                  <SpCard rank={card} />
+                </CardColumn>
+              );
+            }
             return (
-              <div key={i} className='flex flex-col items-center gap-0.5'>
-                <div className={inOpp ? SEL_VIS : SEL_HIDDEN} />
-                <SpCard rank={card} />
-                <div className={inPlayer ? SEL_VIS : SEL_HIDDEN} />
-              </div>
+              <CardColumn key={i}>
+                <CardSlot />
+              </CardColumn>
             );
-          }
-          return <CardSlot key={i} />;
-        })}
+          })}
+        </div>
       </div>
 
-      {/* Player hand description at showdown */}
-      {sp.outcome && sp.outcome.playerHandEval && sp.outcome.playerHandEval.length > 0 && (
-        <p className='text-xs text-canvas-text-contrast'>{describeHand(sp.outcome.playerHandEval)}</p>
-      )}
+      {/* Player hand description — reserved height */}
+      <p className='text-xs text-canvas-text-contrast text-center min-h-4'>{playerHandDesc}</p>
 
-      {/* Player hole cards */}
-      <div className='flex gap-2 items-center'>
-        <span className='text-xs text-canvas-text mr-1'>{playerName}</span>
-        {sp.playerHoleCards ? (
-          <>
-            {sp.playerHoleCards.map((c, i) => (
-              <div key={i} className='flex flex-col items-center gap-0.5'>
-                <SpCard rank={c} boost={sp.playerBoost} />
-                <div className={sp.outcome?.playerHandCards?.includes(c) ? SEL_VIS : SEL_HIDDEN} />
-              </div>
-            ))}
-          </>
-        ) : (
-          <>
-            <CardSlot />
-            <CardSlot />
-          </>
-        )}
+      {/* Player cards row with stack on left */}
+      <div className='relative flex justify-center w-full'>
+        <div className='absolute left-0 top-1/2 -translate-y-1/2'>
+          <AmountBadge>{sp.playerStack}</AmountBadge>
+        </div>
+        <HoleCardsGroup boosted={sp.playerHoleCards ? sp.playerBoost : false}>
+          {sp.playerHoleCards ? (
+            sp.playerHoleCards.map((c, i) => (
+              <CardColumn key={i} bottomSel={sp.outcome?.playerHandCards?.includes(c)}>
+                <SpCard rank={c} />
+              </CardColumn>
+            ))
+          ) : (
+            <>
+              <CardColumn><CardSlot /></CardColumn>
+              <CardColumn><CardSlot /></CardColumn>
+            </>
+          )}
+        </HoleCardsGroup>
       </div>
 
-      {/* Showdown result */}
-      {handler === SpHandler.Showdown && showdownResult && (
-        <p className='text-base font-bold text-canvas-text-contrast'>{showdownResult}</p>
-      )}
-      {handler === SpHandler.Folded && (
-        <p className='text-base font-bold text-canvas-text-contrast'>Hand folded</p>
-      )}
+      {/* Player name */}
+      <AmountBadge>{playerName}{playerIndicator}</AmountBadge>
 
       {/* Action bar */}
       <ActionBar sp={sp} />
 
-      {/* Turn indicator */}
-      {myTurn && inBetting && !(handler === SpHandler.BeginRound && N === 4 && sp.coinTossIOpen === false) && (
-        <p className='text-sm text-canvas-text-contrast font-medium'>Your turn</p>
-      )}
-      {myTurn && handler === SpHandler.BeginRound && N === 4 && sp.coinTossIOpen === false && (
-        <p className='text-sm text-canvas-text'>{'Coin toss: opponent opens\u2026'}</p>
-      )}
-      {!myTurn && inBetting && (
-        <p className='text-sm text-canvas-text'>{'Waiting for opponent\u2026'}</p>
-      )}
+      {/* Turn indicator — reserved height */}
+      <p className='text-sm text-canvas-text-contrast font-medium text-center min-h-5'>{turnLine}</p>
 
       {/* Hand history */}
       <HandHistoryPanel history={sp.handHistory} />

@@ -1438,6 +1438,217 @@ fn test_spacepoker_open_readable_has_cards_and_message_parser() {
     );
 }
 
+// Alice opens with a raise, Bob calls. Exercises the raise path which
+// requires mover_share to remain unchanged on the initial open (the bet
+// only commits once the opponent responds).
+fn test_spacepoker_raise_and_call() {
+    let mut allocator = AllocEncoder::new();
+    let setup = setup_game(&mut allocator);
+    let (entropy_alice, entropy_bob) =
+        find_bob_seed_for_outcome(&mut allocator, "alice_opens_seed", true);
+
+    let bet_unit = BET_UNIT;
+    let mover_share_betting = AMOUNT / 2 - bet_unit;
+    let raise_1 = bet_unit.to_clvm(&mut allocator).unwrap();
+
+    let mut moves = vec![
+        // 0: Alice commitA
+        HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_alice,
+            expected_mover_share: Some(AMOUNT / 2),
+            test_type: TestType::Normal,
+        },
+        // 1: Bob commitB
+        HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_bob,
+            expected_mover_share: Some(AMOUNT / 2 - bet_unit),
+            test_type: TestType::Normal,
+        },
+        // 2: Alice opens with a raise of 1 unit
+        HandlerMove {
+            input_move: raise_1,
+            entropy: entropy_alice,
+            expected_mover_share: Some(mover_share_betting),
+            test_type: TestType::Normal,
+        },
+        // 3: Bob calls (nil = call in mid_round)
+        HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_bob,
+            expected_mover_share: Some(mover_share_betting - bet_unit),
+            test_type: TestType::Normal,
+        },
+    ];
+    // Remaining streets: open with check, call
+    for _street in 1..4 {
+        let zero_raise = 0i64.to_clvm(&mut allocator).unwrap();
+        moves.push(HandlerMove {
+            input_move: zero_raise,
+            entropy: entropy_alice,
+            expected_mover_share: Some(mover_share_betting - bet_unit),
+            test_type: TestType::Normal,
+        });
+        moves.push(HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_bob,
+            expected_mover_share: Some(mover_share_betting - bet_unit),
+            test_type: TestType::Normal,
+        });
+    }
+    // Final reveal
+    moves.push(HandlerMove {
+        input_move: NodePtr::NIL,
+        entropy: entropy_alice,
+        expected_mover_share: None,
+        test_type: TestType::Normal,
+    });
+
+    run_handler_game(&mut allocator, &setup, &moves);
+}
+
+// Alice raises, Bob re-raises, Alice calls. Exercises the mid_round
+// re-raise path and subsequent call. On re-raise the prior raise commits
+// to the pot for both players (half_pot += last_raise).
+fn test_spacepoker_reraise_and_call() {
+    let mut allocator = AllocEncoder::new();
+    let setup = setup_game(&mut allocator);
+    let (entropy_alice, entropy_bob) =
+        find_bob_seed_for_outcome(&mut allocator, "alice_opens_seed", true);
+
+    let bet_unit = BET_UNIT;
+    let mover_share_betting = AMOUNT / 2 - bet_unit;
+    let raise_1 = bet_unit.to_clvm(&mut allocator).unwrap();
+
+    // After Alice opens with raise: mid_round state half_pot=10, last_raise=10
+    // Bob re-raises: validator check = 100 - (10+10) = 80; new state half_pot=20, last_raise=10
+    // Alice calls: validator check = 100 - (20+10) = 70; new half_pot = 30
+    let mover_share_bob_reraise = AMOUNT / 2 - (bet_unit + bet_unit); // 80
+    let mover_share_alice_calls = AMOUNT / 2 - (2 * bet_unit + bet_unit); // 70
+    let mover_share_after_street1 = AMOUNT / 2 - 3 * bet_unit; // 70
+
+    let mut moves = vec![
+        // 0: Alice commitA
+        HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_alice,
+            expected_mover_share: Some(AMOUNT / 2),
+            test_type: TestType::Normal,
+        },
+        // 1: Bob commitB
+        HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_bob,
+            expected_mover_share: Some(mover_share_betting),
+            test_type: TestType::Normal,
+        },
+        // 2: Alice opens with raise of 1 unit (mover_share unchanged per poker rules)
+        HandlerMove {
+            input_move: raise_1,
+            entropy: entropy_alice,
+            expected_mover_share: Some(mover_share_betting),
+            test_type: TestType::Normal,
+        },
+        // 3: Bob re-raises 1 unit — prior raise commits to pot
+        HandlerMove {
+            input_move: raise_1,
+            entropy: entropy_bob,
+            expected_mover_share: Some(mover_share_bob_reraise),
+            test_type: TestType::Normal,
+        },
+        // 4: Alice calls — prior raise commits to pot
+        HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_alice,
+            expected_mover_share: Some(mover_share_alice_calls),
+            test_type: TestType::Normal,
+        },
+    ];
+    // Remaining streets: check/check (half_pot is now 3*bet_unit = 30)
+    for _street in 1..4 {
+        let zero_raise = 0i64.to_clvm(&mut allocator).unwrap();
+        moves.push(HandlerMove {
+            input_move: zero_raise,
+            entropy: entropy_alice,
+            expected_mover_share: Some(mover_share_after_street1),
+            test_type: TestType::Normal,
+        });
+        moves.push(HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_bob,
+            expected_mover_share: Some(mover_share_after_street1),
+            test_type: TestType::Normal,
+        });
+    }
+    // Final reveal
+    moves.push(HandlerMove {
+        input_move: NodePtr::NIL,
+        entropy: entropy_alice,
+        expected_mover_share: None,
+        test_type: TestType::Normal,
+    });
+
+    run_handler_game(&mut allocator, &setup, &moves);
+}
+
+// Alice raises, Bob calls on street 1. Then Alice raises again on street 2,
+// Bob calls again. Exercises repeated raise+call across multiple streets.
+fn test_spacepoker_raise_call_multiple_streets() {
+    let mut allocator = AllocEncoder::new();
+    let setup = setup_game(&mut allocator);
+    let (entropy_alice, entropy_bob) =
+        find_bob_seed_for_outcome(&mut allocator, "alice_opens_seed", true);
+
+    let bet_unit = BET_UNIT;
+    let mover_share_betting = AMOUNT / 2 - bet_unit;
+    let raise_1 = bet_unit.to_clvm(&mut allocator).unwrap();
+
+    let mut moves = vec![
+        // 0: Alice commitA
+        HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_alice,
+            expected_mover_share: Some(AMOUNT / 2),
+            test_type: TestType::Normal,
+        },
+        // 1: Bob commitB
+        HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_bob,
+            expected_mover_share: Some(mover_share_betting),
+            test_type: TestType::Normal,
+        },
+    ];
+    // Each street: Alice raises 1, Bob calls
+    let mut current_share = mover_share_betting;
+    for _street in 0..4 {
+        moves.push(HandlerMove {
+            input_move: raise_1,
+            entropy: entropy_alice,
+            expected_mover_share: Some(current_share),
+            test_type: TestType::Normal,
+        });
+        // After call, half_pot increases by bet_unit
+        current_share -= bet_unit;
+        moves.push(HandlerMove {
+            input_move: NodePtr::NIL,
+            entropy: entropy_bob,
+            expected_mover_share: Some(current_share),
+            test_type: TestType::Normal,
+        });
+    }
+    // Final reveal
+    moves.push(HandlerMove {
+        input_move: NodePtr::NIL,
+        entropy: entropy_alice,
+        expected_mover_share: None,
+        test_type: TestType::Normal,
+    });
+
+    run_handler_game(&mut allocator, &setup, &moves);
+}
+
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
         ("test_spacepoker_setup_game", &test_spacepoker_setup_game),
@@ -1452,6 +1663,18 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_spacepoker_happy_path_alice_pongs",
             &test_spacepoker_happy_path_alice_pongs,
+        ),
+        (
+            "test_spacepoker_raise_and_call",
+            &test_spacepoker_raise_and_call,
+        ),
+        (
+            "test_spacepoker_reraise_and_call",
+            &test_spacepoker_reraise_and_call,
+        ),
+        (
+            "test_spacepoker_raise_call_multiple_streets",
+            &test_spacepoker_raise_call_multiple_streets,
         ),
         ("test_hand_eval_high_card", &test_hand_eval_high_card),
         ("test_hand_eval_pair", &test_hand_eval_pair),
