@@ -361,8 +361,10 @@ function ComposeProposalDialog({
   maxPerHandMojos: bigint | null;
 }) {
   const isSpacepoker = session.composeGameType === 'spacepoker';
-  const [spUnitSize, setSpUnitSize] = useState<bigint>(1n);
-  const [spStackSize, setSpStackSize] = useState<number>(10);
+  const [spUnitSizeStr, setSpUnitSizeStr] = useState('1');
+  const [spStackSizeStr, setSpStackSizeStr] = useState('10');
+  const spUnitSize = (() => { try { const v = BigInt(spUnitSizeStr); return v > 0n ? v : 0n; } catch { return 0n; } })();
+  const spStackSize = parseInt(spStackSizeStr) || 0;
 
   const spBetSize = isSpacepoker ? spUnitSize * BigInt(spStackSize) : 0n;
   const spTotalGame = spBetSize * 2n;
@@ -406,12 +408,9 @@ function ComposeProposalDialog({
                 type='number'
                 min={1}
                 className='w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid'
-                value={String(spUnitSize)}
+                value={spUnitSizeStr}
                 disabled={session.composeProposalSent}
-                onChange={(e) => {
-                  const v = BigInt(Math.max(1, parseInt(e.target.value) || 1));
-                  setSpUnitSize(v);
-                }}
+                onChange={(e) => setSpUnitSizeStr(e.target.value.replace(/[^0-9]/g, ''))}
                 onKeyDown={(e) => { if (e.key === 'Enter' && spValid) submit(); }}
               />
             </div>
@@ -421,9 +420,9 @@ function ComposeProposalDialog({
                 type='number'
                 min={1}
                 className='w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid'
-                value={spStackSize}
+                value={spStackSizeStr}
                 disabled={session.composeProposalSent}
-                onChange={(e) => setSpStackSize(Math.max(1, parseInt(e.target.value) || 1))}
+                onChange={(e) => setSpStackSizeStr(e.target.value.replace(/[^0-9]/g, ''))}
                 onKeyDown={(e) => { if (e.key === 'Enter' && spValid) submit(); }}
               />
             </div>
