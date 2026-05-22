@@ -404,7 +404,8 @@
             (list "end"
                 alice_selected alice_hand
                 bob_selected bob_hand
-                result)
+                result
+                (f bob_cards) (f (r bob_cards)) bob_boost)
             (list alice_bitfield)
             0
         )
@@ -737,7 +738,8 @@
             (list "end"
                 bob_selected bob_hand
                 alice_selected alice_hand
-                result)
+                result
+                (f alice_cards) (f (r alice_cards)) alice_boost)
             (list bob_bitfield)
             0
         )

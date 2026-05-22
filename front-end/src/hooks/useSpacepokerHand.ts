@@ -303,6 +303,7 @@ export function useSpacepokerHand(
           }
 
           // "end": opponent made the final reveal.
+          // Format: ("end" yourSelected yourEval oppSelected oppEval result oppHole1 oppHole2 oppBoost)
           if (tag === 'end') {
             handFinishedRef.current = true;
             const yourSelected = clvmListToInts(items[1]);
@@ -310,8 +311,9 @@ export function useSpacepokerHand(
             const oppSelected = clvmListToInts(items[3]);
             const oppEval = clvmListToInts(items[4]);
             const result = items[5].toInt();
-            if (oppSelected.length >= 2) {
-              setOpponentHoleCards([oppSelected[0], oppSelected[1]]);
+            if (items.length > 7) {
+              setOpponentHoleCards([items[6].toInt(), items[7].toInt()]);
+              setOpponentBoost(items[8].toInt() !== 0);
             }
             setOutcome({
               result,
