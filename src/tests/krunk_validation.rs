@@ -7,6 +7,7 @@ use clvmr::allocator::{NodePtr, SExp};
 use clvmr::run_program;
 
 const AMOUNT: i64 = 200;
+const BASE_UNIT: i64 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MoveCode {
@@ -95,8 +96,9 @@ fn run_validator_step(
     }
 }
 
-/// Build state: (dict_pubkey bob_guesses alice_clues alice_commit clue_hash)
+/// Build state: (dict_pubkey base_unit bob_guesses alice_clues alice_commit clue_hash)
 fn make_state_after_commit(allocator: &mut AllocEncoder, dict_pubkey: NodePtr, commit: [u8; 32]) -> NodePtr {
+    let base_unit_node = BASE_UNIT.to_clvm(allocator).unwrap();
     let a = allocator.allocator();
     let commit_node = a.new_atom(&commit).unwrap();
     let dummy_clue_hash = a.new_atom(&[0xEE; 32]).unwrap();
@@ -104,10 +106,11 @@ fn make_state_after_commit(allocator: &mut AllocEncoder, dict_pubkey: NodePtr, c
     let tail = a.new_pair(commit_node, tail).unwrap();
     let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
     let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
+    let tail = a.new_pair(base_unit_node, tail).unwrap();
     a.new_pair(dict_pubkey, tail).unwrap()
 }
 
-/// Build state with guesses: (dict_pubkey bob_guesses alice_clues alice_commit clue_hash)
+/// Build state with guesses: (dict_pubkey base_unit bob_guesses alice_clues alice_commit clue_hash)
 fn make_state_with_guesses(
     allocator: &mut AllocEncoder,
     dict_pubkey: NodePtr,
@@ -115,6 +118,7 @@ fn make_state_with_guesses(
     alice_clues: NodePtr,
     commit: [u8; 32],
 ) -> NodePtr {
+    let base_unit_node = BASE_UNIT.to_clvm(allocator).unwrap();
     let a = allocator.allocator();
     let commit_node = a.new_atom(&commit).unwrap();
     let dummy_clue_hash = a.new_atom(&[0xEE; 32]).unwrap();
@@ -122,6 +126,7 @@ fn make_state_with_guesses(
     let tail = a.new_pair(commit_node, tail).unwrap();
     let tail = a.new_pair(alice_clues, tail).unwrap();
     let tail = a.new_pair(bob_guesses, tail).unwrap();
+    let tail = a.new_pair(base_unit_node, tail).unwrap();
     a.new_pair(dict_pubkey, tail).unwrap()
 }
 
@@ -144,6 +149,12 @@ fn test_krunk_commit_happy() {
     let mut allocator = AllocEncoder::new();
     let commit = read_hex_puzzle(&mut allocator, "clsp/games/krunk/onchain/commit.hex").unwrap();
     let dict_pubkey = make_dict_pubkey(&mut allocator);
+    let base_unit_node = BASE_UNIT.to_clvm(&mut allocator).unwrap();
+    let initial_state = {
+        let a = allocator.allocator();
+        let tail = a.new_pair(base_unit_node, NodePtr::NIL).unwrap();
+        a.new_pair(dict_pubkey, tail).unwrap()
+    };
     let move_bytes = [0xAB; 32];
     let (code, result) = run_validator_step(
         &mut allocator,
@@ -151,7 +162,7 @@ fn test_krunk_commit_happy() {
         &move_bytes,
         32,
         0,
-        dict_pubkey,
+        initial_state,
         NodePtr::NIL,
     ).unwrap();
     assert_eq!(code, MoveCode::MakeMove);
@@ -163,13 +174,19 @@ fn test_krunk_commit_slash_bad_move_size() {
     let mut allocator = AllocEncoder::new();
     let commit = read_hex_puzzle(&mut allocator, "clsp/games/krunk/onchain/commit.hex").unwrap();
     let dict_pubkey = make_dict_pubkey(&mut allocator);
+    let base_unit_node = BASE_UNIT.to_clvm(&mut allocator).unwrap();
+    let initial_state = {
+        let a = allocator.allocator();
+        let tail = a.new_pair(base_unit_node, NodePtr::NIL).unwrap();
+        a.new_pair(dict_pubkey, tail).unwrap()
+    };
     let result = run_validator_step(
         &mut allocator,
         &commit,
         b"short",
         32,
         0,
-        dict_pubkey,
+        initial_state,
         NodePtr::NIL,
     );
     assert!(result.is_err() || result.unwrap().0 == MoveCode::Slash);

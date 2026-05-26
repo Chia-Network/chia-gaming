@@ -7,8 +7,7 @@
 (import std.li)
 
 ; Bob challenging Alice's commit.
-; previous_state is DICT_PUBKEY (the initial game state contains only the
-; aggregate dictionary signing key for both players).
+; previous_state is (dict_pubkey base_unit).
 ; MOVE is sha256(salt || word), 32 bytes.
 ;
 ; clue_hash is threaded through state so that guess.clsp can transition
@@ -18,12 +17,12 @@
 (export (mod_hash
     (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
         MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-    previous_state previous_validation_program evidence)
+    (dict_pubkey base_unit) previous_validation_program evidence)
 
     (if_any_fail
         (= (strlen MOVE) 32)
         (= MOVER_SHARE 0)
         0
-        (list guess_hash (li previous_state 0 0 MOVE clue_hash) 5)
+        (list guess_hash (li dict_pubkey base_unit 0 0 MOVE clue_hash) 5)
     )
 )

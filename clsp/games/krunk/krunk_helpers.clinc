@@ -16,8 +16,8 @@
     )
 )
 
-(defun krunk_payout_share (amount n)
-    (* (/ amount 100) (f (drop (- n 1) KRUNK_PAYOUTS)))
+(defun krunk_payout_share (base_unit n)
+    (* base_unit (f (drop (- n 1) KRUNK_PAYOUTS)))
 )
 
 (defun drop (n lst)
@@ -39,9 +39,9 @@
     (concat salt word)
 )
 
-(defun krunk_reveal_mover_share (amount bob_guesses word)
+(defun krunk_reveal_mover_share (base_unit bob_guesses word)
     (if (= (f bob_guesses) word)
-        (krunk_payout_share amount (len bob_guesses))
+        (krunk_payout_share base_unit (len bob_guesses))
         (if (= (len bob_guesses) 5)
             0
             (x "krunk_reveal_mover_share: not terminal")

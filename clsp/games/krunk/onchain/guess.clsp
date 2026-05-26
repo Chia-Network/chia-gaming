@@ -8,7 +8,7 @@
 (import std.condition_codes)
 
 ; Alice challenging Bob's guess.
-; state is (dict_pubkey bob_guesses alice_clues alice_commit clue_hash)
+; state is (dict_pubkey base_unit bob_guesses alice_clues alice_commit clue_hash)
 ; MOVE is Bob's 5-letter guess.
 ; evidence is a 10-byte atom (begin_range || end_range) when Alice slashes
 ; an out-of-dictionary guess. A condition (AGG_SIG_UNSAFE dict_pubkey evidence)
@@ -16,7 +16,7 @@
 (export (mod_hash
     (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
         MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-    (dict_pubkey bob_guesses alice_clues alice_commit clue_hash)
+    (dict_pubkey base_unit bob_guesses alice_clues alice_commit clue_hash)
     previous_validation_program evidence)
 
     (if evidence
@@ -25,7 +25,7 @@
             (>= MOVE (substr evidence 0 5))
             (<= MOVE (substr evidence 5 10))
             (list clue_hash
-                (li dict_pubkey (c MOVE bob_guesses) alice_clues alice_commit clue_hash)
+                (li dict_pubkey base_unit (c MOVE bob_guesses) alice_clues alice_commit clue_hash)
                 21
                 (list AGG_SIG_UNSAFE dict_pubkey evidence))
         )
@@ -34,7 +34,7 @@
             (= MOVER_SHARE 0)
             0
             (list clue_hash
-                (li dict_pubkey (c MOVE bob_guesses) alice_clues alice_commit clue_hash)
+                (li dict_pubkey base_unit (c MOVE bob_guesses) alice_clues alice_commit clue_hash)
                 21)
         )
     )
