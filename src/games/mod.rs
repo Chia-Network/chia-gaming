@@ -3,9 +3,48 @@ use clvm_traits::{clvm_curried_args, ToClvm};
 use clvm_utils::CurriedProgram;
 
 use crate::common::load_clvm::read_hex_puzzle;
-use crate::common::types::{AllocEncoder, GameType, Program};
+use crate::common::types::{AllocEncoder, Error, GameType, Program};
 use crate::potato_handler::types::GameFactory;
 use std::collections::BTreeMap;
+
+/// Curry the supplied dictionary into the raw krunk `make_proposal` and
+/// `parser` hexes, returning a pair of programs in the layout expected by
+/// the GameFactory registry. The dictionary is the first (compile-time)
+/// argument of both programs (see `krunk_generate.clinc`).
+///
+/// `dictionary` must be a list of single-atom 5-byte words. Use
+/// [`Bytes`] (not `Vec<u8>`) to ensure each word encodes as one atom and
+/// not as a list of single-byte atoms.
+pub fn curry_krunk_programs(
+    allocator: &mut AllocEncoder,
+    dictionary: &[Bytes],
+) -> Result<(Program, Program), Error> {
+    let make_proposal_raw = read_hex_puzzle(
+        allocator,
+        "clsp/games/krunk/krunk_include_krunk_make_proposal.hex",
+    )?;
+    let parser_raw =
+        read_hex_puzzle(allocator, "clsp/games/krunk/krunk_include_krunk_parser.hex")?;
+
+    let dict_vec = dictionary.to_vec();
+    let make_proposal_node = CurriedProgram {
+        program: make_proposal_raw,
+        args: clvm_curried_args!(dict_vec.clone()),
+    }
+    .to_clvm(allocator)
+    .map_err(|e| Error::StrErr(format!("curry krunk make_proposal: {e:?}")))?;
+    let make_proposal = Program::from_nodeptr(allocator, make_proposal_node)?;
+
+    let parser_node = CurriedProgram {
+        program: parser_raw,
+        args: clvm_curried_args!(dict_vec),
+    }
+    .to_clvm(allocator)
+    .map_err(|e| Error::StrErr(format!("curry krunk parser: {e:?}")))?;
+    let parser = Program::from_nodeptr(allocator, parser_node)?;
+
+    Ok((make_proposal, parser))
+}
 
 /// Loads the krunk dictionary from `krunkwords.txt`, embedded at compile time.
 /// Words are 5 ASCII letters; one per line. Used to curry into the krunk
@@ -76,37 +115,13 @@ pub fn poker_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, Game
         },
     );
 
-    // Krunk: load the proposal/parser, curry the dictionary as the first
-    // (compile-time) argument of each program. After currying the runtime
-    // arg layout matches calpoker/spacepoker (bet_size for make_proposal,
-    // wire_data for parser); see krunk_generate.clinc.
+    // Krunk: load the proposal/parser and curry the bundled dictionary as
+    // the first (compile-time) argument of each program. After currying
+    // the runtime arg layout matches calpoker/spacepoker (bet_size for
+    // make_proposal, wire_data for parser); see krunk_generate.clinc.
     let dictionary = krunk_dictionary();
-    let krunk_make_proposal_raw = read_hex_puzzle(
-        allocator,
-        "clsp/games/krunk/krunk_include_krunk_make_proposal.hex",
-    )
-    .expect("should load");
-    let krunk_make_proposal_node = CurriedProgram {
-        program: krunk_make_proposal_raw.clone(),
-        args: clvm_curried_args!(dictionary.clone()),
-    }
-    .to_clvm(allocator)
-    .expect("curry");
-    let krunk_make_proposal =
-        Program::from_nodeptr(allocator, krunk_make_proposal_node).expect("ok");
-
-    let krunk_parser_raw = read_hex_puzzle(
-        allocator,
-        "clsp/games/krunk/krunk_include_krunk_parser.hex",
-    )
-    .expect("should load");
-    let krunk_parser_node = CurriedProgram {
-        program: krunk_parser_raw.clone(),
-        args: clvm_curried_args!(dictionary),
-    }
-    .to_clvm(allocator)
-    .expect("curry");
-    let krunk_parser = Program::from_nodeptr(allocator, krunk_parser_node).expect("ok");
+    let (krunk_make_proposal, krunk_parser) =
+        curry_krunk_programs(allocator, &dictionary).expect("curry krunk");
 
     game_type_map.insert(
         GameType(b"krunk".to_vec()),

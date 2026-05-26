@@ -9,7 +9,13 @@ import { CalpokerOutcome, ChannelState, SessionPhase } from '../types/ChiaGaming
 import { WasmBlobWrapper } from '../hooks/WasmBlobWrapper';
 import Calpoker from '../features/calPoker';
 import SpacePoker from './SpacePoker';
+import Krunk from './Krunk';
 import { GAME_REGISTRY, gameDisplayName } from '../lib/gameRegistry';
+import {
+  countValidKrunkWords,
+  fetchDefaultKrunkDictionary,
+  normaliseKrunkWords,
+} from '../lib/krunkDictionary';
 
 import { motion, useMotionValue, useDragControls } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
@@ -353,6 +359,65 @@ function CalpokerHand({
   );
 }
 
+function KrunkDictionaryEditor({
+  raw,
+  setRaw,
+  disabled,
+  status,
+}: {
+  raw: string;
+  setRaw: (s: string) => void;
+  disabled: boolean;
+  status: { wordCount: number; invalidCount: number; error?: string | null } | null;
+}) {
+  const loadDefault = useCallback(async () => {
+    try {
+      const text = await fetchDefaultKrunkDictionary();
+      setRaw(text);
+    } catch (e) {
+      console.error('failed to load default krunk dictionary', e);
+    }
+  }, [setRaw]);
+
+  return (
+    <div className='flex flex-col gap-1'>
+      <div className='flex items-center justify-between'>
+        <label className='text-xs font-medium text-canvas-text'>
+          Dictionary (one 5-letter word per line)
+        </label>
+        <Button
+          variant='outline'
+          color='neutral'
+          size='sm'
+          disabled={disabled}
+          onClick={loadDefault}
+        >
+          Use default
+        </Button>
+      </div>
+      <textarea
+        className='w-full h-32 rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-xs font-mono text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid'
+        value={raw}
+        spellCheck={false}
+        disabled={disabled}
+        onChange={(e) => setRaw(e.target.value)}
+        placeholder='CRANE&#10;SLATE&#10;TRAIN&#10;...'
+      />
+      {status && (
+        <div className='text-[11px] text-canvas-text flex flex-wrap gap-x-3'>
+          <span>Valid words: {status.wordCount}</span>
+          {status.invalidCount > 0 && (
+            <span className='text-alert-text'>
+              Ignored (non-5-letter / non-alpha): {status.invalidCount}
+            </span>
+          )}
+          {status.error && <span className='text-alert-text'>{status.error}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ComposeProposalDialog({
   session,
   maxPerHandMojos,
@@ -361,8 +426,40 @@ function ComposeProposalDialog({
   maxPerHandMojos: bigint | null;
 }) {
   const isSpacepoker = session.composeGameType === 'spacepoker';
+  const isKrunk = session.composeGameType === 'krunk';
   const [spUnitSize, setSpUnitSize] = useState<bigint>(1n);
   const [spStackSize, setSpStackSize] = useState<number>(10);
+
+  const [krunkDictRaw, setKrunkDictRaw] = useState<string>('');
+  const [krunkError, setKrunkError] = useState<string | null>(null);
+
+  // Lazily load the default dictionary the first time the user picks
+  // krunk. We don't pre-fetch on mount because the user may never open
+  // the krunk option.
+  useEffect(() => {
+    if (!isKrunk || krunkDictRaw.length > 0) return;
+    let cancelled = false;
+    fetchDefaultKrunkDictionary()
+      .then((text) => {
+        if (!cancelled) setKrunkDictRaw(text);
+      })
+      .catch((e) => {
+        if (!cancelled)
+          setKrunkError(`Failed to load default dictionary: ${(e as Error).message}`);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isKrunk, krunkDictRaw.length]);
+
+  const krunkValidation = (() => {
+    if (!isKrunk) return null;
+    const normalised = normaliseKrunkWords(krunkDictRaw);
+    const { valid, invalid } = countValidKrunkWords(normalised);
+    return { words: valid, invalidCount: invalid.length };
+  })();
+
+  const krunkWordsValid = !isKrunk || (krunkValidation && krunkValidation.words.length > 0);
 
   const spBetSize = isSpacepoker ? spUnitSize * BigInt(spStackSize) : 0n;
   const spTotalGame = spBetSize * 2n;
@@ -373,6 +470,19 @@ function ComposeProposalDialog({
 
   const submit = () => {
     if (perHandAmount <= 0n || session.composeProposalSent) return;
+    if (isKrunk) {
+      if (!krunkValidation || krunkValidation.words.length === 0) {
+        setKrunkError('Need at least one valid 5-letter word.');
+        return;
+      }
+      try {
+        session.registerKrunkAndPropose(krunkValidation.words, perHandAmount);
+      } catch (e) {
+        setKrunkError((e as Error).message || 'Failed to register krunk game.');
+        return;
+      }
+      return;
+    }
     session.submitComposedProposal(perHandAmount, session.composeGameType);
   };
 
@@ -449,18 +559,145 @@ function ComposeProposalDialog({
           />
         )}
 
+        {isKrunk && (
+          <KrunkDictionaryEditor
+            raw={krunkDictRaw}
+            setRaw={(s) => { setKrunkDictRaw(s); setKrunkError(null); }}
+            disabled={session.composeProposalSent}
+            status={
+              krunkValidation
+                ? { wordCount: krunkValidation.words.length, invalidCount: krunkValidation.invalidCount, error: krunkError }
+                : null
+            }
+          />
+        )}
+
         <div className='flex flex-wrap items-center gap-3'>
           <Button
             variant='solid'
             color='primary'
             size='sm'
-            disabled={session.composeProposalSent || perHandAmount <= 0n || (isSpacepoker && !spValid)}
+            disabled={
+              session.composeProposalSent ||
+              perHandAmount <= 0n ||
+              (isSpacepoker && !spValid) ||
+              (isKrunk && !krunkWordsValid)
+            }
             onClick={submit}
           >
             {session.composeProposalSent ? 'Proposal Sent' : 'Send Proposal'}
           </Button>
           <Button variant='solid' size='sm' onClick={session.startCleanShutdown}>
             Start Clean Shutdown
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReviewProposalDialog({
+  session,
+}: {
+  session: import('../hooks/useGameSession').UseGameSessionResult;
+}) {
+  const review = session.reviewPeerProposal;
+  const isKrunk = review?.terms.gameType === 'krunk';
+
+  const [krunkDictRaw, setKrunkDictRaw] = useState<string>('');
+  const [krunkError, setKrunkError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isKrunk || krunkDictRaw.length > 0) return;
+    let cancelled = false;
+    fetchDefaultKrunkDictionary()
+      .then((text) => {
+        if (!cancelled) setKrunkDictRaw(text);
+      })
+      .catch((e) => {
+        if (!cancelled)
+          setKrunkError(`Failed to load default dictionary: ${(e as Error).message}`);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isKrunk, krunkDictRaw.length]);
+
+  const krunkValidation = (() => {
+    if (!isKrunk) return null;
+    const normalised = normaliseKrunkWords(krunkDictRaw);
+    const { valid, invalid } = countValidKrunkWords(normalised);
+    return { words: valid, invalidCount: invalid.length };
+  })();
+
+  if (!review) return null;
+
+  const accept = () => {
+    if (isKrunk) {
+      if (!krunkValidation || krunkValidation.words.length === 0) {
+        setKrunkError('Need at least one valid 5-letter word to accept.');
+        return;
+      }
+      try {
+        session.acceptReviewedKrunkProposal(krunkValidation.words);
+      } catch (e) {
+        setKrunkError((e as Error).message || 'Failed to register krunk game.');
+      }
+      return;
+    }
+    session.acceptReviewedProposal();
+  };
+
+  return (
+    <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4'>
+      <div className='flex flex-col gap-3'>
+        <p className='text-sm text-canvas-text-contrast'>Do you want to accept this hand?</p>
+        <p className='text-xs text-canvas-text'>
+          Game: {gameDisplayName(review.terms.gameType)}
+        </p>
+        <p className='text-xs text-canvas-text'>
+          Per-player stake: {formatMojos(review.terms.myContribution)}
+        </p>
+        {review.terms.gameType === 'spacepoker' && (() => {
+          const betSize = review.terms.myContribution;
+          const betUnit = betSize / 10n;
+          return betUnit > 0n ? (
+            <p className='text-xs text-canvas-text'>
+              Unit size: {formatMojos(betUnit)} · Stack: 10 units
+            </p>
+          ) : null;
+        })()}
+        {isKrunk && (
+          <>
+            <p className='text-[11px] text-canvas-text'>
+              Both players must paste the same dictionary. If your list
+              differs from the proposer&apos;s, the protocol will reject the
+              proposal automatically.
+            </p>
+            <KrunkDictionaryEditor
+              raw={krunkDictRaw}
+              setRaw={(s) => { setKrunkDictRaw(s); setKrunkError(null); }}
+              disabled={false}
+              status={
+                krunkValidation
+                  ? { wordCount: krunkValidation.words.length, invalidCount: krunkValidation.invalidCount, error: krunkError }
+                  : null
+              }
+            />
+          </>
+        )}
+        <div className='flex flex-wrap items-center gap-3'>
+          <Button
+            variant='solid'
+            color='primary'
+            size='sm'
+            disabled={isKrunk && (!krunkValidation || krunkValidation.words.length === 0)}
+            onClick={accept}
+          >
+            Yes
+          </Button>
+          <Button variant='solid' size='sm' onClick={session.rejectReviewedProposal}>
+            No
           </Button>
         </div>
       </div>
@@ -671,6 +908,18 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
                 myName={params.myAlias}
                 opponentName={params.opponentAlias}
               />
+            ) : session.activeGameType === 'krunk' ? (
+              <Krunk
+                key={session.handKey}
+                gameObject={session.gameObject}
+                gameId={session.activeGameId ?? session.displayGameId ?? ''}
+                iStarted={session.iStarted}
+                gameplayEvent$={session.gameplayEvent$}
+                betSize={session.currentHandAmount}
+                onTurnChanged={session.onTurnChanged}
+                myName={params.myAlias}
+                opponentName={params.opponentAlias}
+              />
             ) : (
               <div className='flex items-center justify-center py-20'>
                 <p className='text-canvas-text'>
@@ -728,34 +977,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
             )}
 
             {session.betweenHandMode === 'review-incoming-proposal' && session.reviewPeerProposal && (
-              <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4'>
-                <div className='flex flex-col gap-3'>
-                  <p className='text-sm text-canvas-text-contrast'>Do you want to accept this hand?</p>
-                  <p className='text-xs text-canvas-text'>
-                    Game: {gameDisplayName(session.reviewPeerProposal.terms.gameType)}
-                  </p>
-                  <p className='text-xs text-canvas-text'>
-                    Per-player stake: {formatMojos(session.reviewPeerProposal.terms.myContribution)}
-                  </p>
-                  {session.reviewPeerProposal.terms.gameType === 'spacepoker' && (() => {
-                    const betSize = session.reviewPeerProposal!.terms.myContribution;
-                    const betUnit = betSize / 10n;
-                    return betUnit > 0n ? (
-                      <p className='text-xs text-canvas-text'>
-                        Unit size: {formatMojos(betUnit)} · Stack: 10 units
-                      </p>
-                    ) : null;
-                  })()}
-                  <div className='flex flex-wrap items-center gap-3'>
-                    <Button variant='solid' color='primary' size='sm' onClick={session.acceptReviewedProposal}>
-                      Yes
-                    </Button>
-                    <Button variant='solid' size='sm' onClick={session.rejectReviewedProposal}>
-                      No
-                    </Button>
-                  </div>
-                </div>
-              </div>
+              <ReviewProposalDialog session={session} />
             )}
           </>
         )}

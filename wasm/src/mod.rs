@@ -185,6 +185,93 @@ mod gaming_wasm {
         wasm_deposit_file(name, data);
     }
 
+    /// Curry a krunk dictionary (list of UTF-8 word strings) into the raw
+    /// krunk make_proposal and parser programs. The resulting curried hex
+    /// is what gets registered as a GameFactory before proposing a krunk
+    /// game.
+    ///
+    /// Returns `{ proposal_hex, parser_hex, dict_hash }`. `dict_hash` is
+    /// the sha256 of the words joined with `\n`, lowercased -- useful for
+    /// out-of-band verification that both players curried the same list.
+    #[wasm_bindgen]
+    pub fn curry_krunk_programs(words: JsValue) -> Result<JsValue, JsValue> {
+        let word_list: Vec<String> = serde_wasm_bindgen::from_value(words).into_js()?;
+        let mut normalized: Vec<Vec<u8>> = word_list
+            .iter()
+            .map(|w| w.trim().to_ascii_uppercase().into_bytes())
+            .filter(|b| !b.is_empty())
+            .collect();
+        // Sort for a canonical dict_hash that is independent of the
+        // input ordering. The dictionary curried into the program keeps
+        // its original (sorted) order; both peers must use the same one.
+        normalized.sort();
+        normalized.dedup();
+
+        let dict_bytes: Vec<chia_protocol::Bytes> = normalized
+            .iter()
+            .map(|w| chia_protocol::Bytes::from(w.clone()))
+            .collect();
+
+        let mut allocator = AllocEncoder::new();
+        let (make_proposal, parser) =
+            chia_gaming::games::curry_krunk_programs(&mut allocator, &dict_bytes).into_js()?;
+
+        let joined: Vec<u8> = normalized
+            .iter()
+            .flat_map(|w| {
+                let mut v = w.clone();
+                v.push(b'\n');
+                v
+            })
+            .collect();
+        let hash = Sha256Input::Bytes(&joined).hash();
+
+        let obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(
+            &obj,
+            &"proposal_hex".into(),
+            &JsValue::from_str(&make_proposal.to_hex()),
+        );
+        let _ = js_sys::Reflect::set(
+            &obj,
+            &"parser_hex".into(),
+            &JsValue::from_str(&parser.to_hex()),
+        );
+        let _ = js_sys::Reflect::set(
+            &obj,
+            &"dict_hash".into(),
+            &JsValue::from_str(&hex::encode(hash.bytes())),
+        );
+        let _ = js_sys::Reflect::set(
+            &obj,
+            &"word_count".into(),
+            &JsValue::from_f64(normalized.len() as f64),
+        );
+        Ok(obj.into())
+    }
+
+    /// Add or replace a game type in an existing cradle's handler.
+    /// Required for games like krunk whose factory depends on
+    /// session-specific data that isn't known at cradle construction
+    /// time (krunk's dictionary).
+    #[wasm_bindgen]
+    pub fn register_game_type(
+        cid: i32,
+        name: &str,
+        hex_str: &str,
+        parser_hex: Option<String>,
+    ) -> Result<JsValue, JsValue> {
+        let js_factory = JsGameFactory {
+            hex: hex_str.to_string(),
+            parser_hex,
+        };
+        let (game_type, factory) = convert_game_factory(name, &js_factory)?;
+        with_game(cid, move |cradle: &mut JsCradle| {
+            cradle.cradle.register_game_type(game_type, factory);
+            Ok(JsValue::UNDEFINED)
+        })
+    }
+
     fn get_next_id() -> i32 {
         NEXT_ID.with(|n| n.fetch_add(1, Ordering::SeqCst))
     }

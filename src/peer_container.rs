@@ -194,6 +194,11 @@ pub trait PeerHandler {
         None
     }
 
+    /// Add or replace a game type in this handler's `game_types` map.
+    /// Default impl is a no-op: handlers that don't own game_types
+    /// (e.g. on-chain, spend-channel) ignore registration silently.
+    fn register_game_type(&mut self, _game_type: GameType, _factory: GameFactory) {}
+
     fn as_any(&self) -> &dyn std::any::Any;
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }
@@ -663,6 +668,15 @@ impl SynchronousGameCradle {
     pub fn new<R: Rng>(rng: &mut R, config: SynchronousGameCradleConfig) -> Self {
         let private_keys: ChannelHandlerPrivateKeys = rng.random();
         SynchronousGameCradle::new_with_keys(config, private_keys)
+    }
+
+    /// Add or replace a game type in the underlying peer handler's game
+    /// types map. Used by hosts (e.g. WASM) that need to register games
+    /// whose factories depend on session-specific data (Krunk's dictionary
+    /// is curried at proposal time, so its factory can't be supplied at
+    /// cradle construction).
+    pub fn register_game_type(&mut self, game_type: GameType, factory: GameFactory) {
+        self.peer.register_game_type(game_type, factory);
     }
 }
 

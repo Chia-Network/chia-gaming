@@ -80,6 +80,11 @@ export class WasmStateInit {
       'clsp/games/calpoker/calpoker_include_calpoker_parser.hex',
       'clsp/games/spacepoker/spacepoker_include_spacepoker_make_proposal.hex',
       'clsp/games/spacepoker/spacepoker_include_spacepoker_parser.hex',
+      // Krunk hex is deposited so curry_krunk_programs (which calls
+      // read_hex_puzzle on these paths) can produce a dictionary-curried
+      // factory at proposal time.
+      'clsp/games/krunk/krunk_include_krunk_make_proposal.hex',
+      'clsp/games/krunk/krunk_include_krunk_parser.hex',
     ];
     this.wasmConnection = cg;
     await this.loadPresets(presetFiles);

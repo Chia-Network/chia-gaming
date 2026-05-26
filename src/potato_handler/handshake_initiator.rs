@@ -880,6 +880,9 @@ impl PeerHandler for HandshakeInitiatorHandler {
     fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
         HandshakeInitiatorHandler::channel_handler(self)
     }
+    fn register_game_type(&mut self, game_type: GameType, factory: GameFactory) {
+        self.game_types.insert(game_type, factory);
+    }
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
