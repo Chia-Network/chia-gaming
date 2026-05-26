@@ -5,7 +5,6 @@
 (import std.if_any_fail)
 (import std.assert)
 (import std.and)
-(import std.or)
 (import std.relops)
 (import std.li)
 (import std.len)
@@ -40,6 +39,7 @@
         (if_any_fail
             (= MOVER_SHARE 0)
             (< (len alice_clues) 4)
+            (> 0x72 MOVE)
             0
             (list guess_hash
                 (li dict_pubkey base_unit bob_guesses (c MOVE alice_clues) alice_commit clue_hash)
@@ -59,14 +59,9 @@
             (if (= (strlen evidence) 1)
                 ; Slash: Alice gave a provably wrong clue at index evidence.
                 (assert
-                    (or
-                        (and (> evidence 0)
-                            (= (f (drop evidence bob_guesses))
-                                (substr MOVE 16 21)))
-                        (!= (make_clue (substr MOVE 16 21)
-                                (f (drop evidence bob_guesses)))
-                            (f (drop evidence alice_clues)))
-                    )
+                    (!= (make_clue (substr MOVE 16 21)
+                            (f (drop evidence bob_guesses)))
+                        (f (drop evidence alice_clues)))
                     0
                 )
                 (if_any_fail
