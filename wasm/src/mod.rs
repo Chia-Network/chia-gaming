@@ -213,8 +213,9 @@ mod gaming_wasm {
             .collect();
 
         let mut allocator = AllocEncoder::new();
+        let placeholder_pubkey = [0u8; 48];
         let (make_proposal, parser) =
-            chia_gaming::games::curry_krunk_programs(&mut allocator, &dict_bytes).into_js()?;
+            chia_gaming::games::curry_krunk_programs(&mut allocator, &dict_bytes, &placeholder_pubkey).into_js()?;
 
         let joined: Vec<u8> = normalized
             .iter()

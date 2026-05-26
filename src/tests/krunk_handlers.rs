@@ -198,10 +198,9 @@ struct GameSetup {
     initial_mover_share: i64,
 }
 
-/// Sets up a krunk game by currying the supplied dictionary into the
-/// proposal/parser puzzles (matches what `poker_collection` does at
-/// registration time), then running them to extract the initial state,
-/// handlers, and validators.
+/// Sets up a krunk game by currying the supplied dictionary and a
+/// placeholder dict_pubkey into the proposal/parser puzzles, then running
+/// them to extract the initial state, handlers, and validators.
 fn setup_game(allocator: &mut AllocEncoder, dictionary: Vec<Bytes>) -> GameSetup {
     let make_proposal_raw = read_hex_puzzle(
         allocator,
@@ -214,15 +213,16 @@ fn setup_game(allocator: &mut AllocEncoder, dictionary: Vec<Bytes>) -> GameSetup
     )
     .expect("load parser");
 
+    let dict_pubkey = Bytes::from(vec![0xAA; 48]);
     let make_proposal_curried = CurriedProgram {
         program: make_proposal_raw,
-        args: clvm_curried_args!(dictionary.clone()),
+        args: clvm_curried_args!(dictionary.clone(), dict_pubkey.clone()),
     }
     .to_clvm(allocator)
     .unwrap();
     let parser_curried = CurriedProgram {
         program: parser_raw,
-        args: clvm_curried_args!(dictionary),
+        args: clvm_curried_args!(dictionary, dict_pubkey),
     }
     .to_clvm(allocator)
     .unwrap();
@@ -419,11 +419,12 @@ fn test_krunk_bob_invalid_guess_slash() {
 
     let evidence_items =
         proper_list(allocator.allocator(), alice_their.evidence_list, true).unwrap();
-    assert!(!evidence_items.is_empty());
+    assert!(!evidence_items.is_empty(), "handler should produce evidence for invalid guess");
 
     let guess_clvm = guess_validator.to_clvm(&mut allocator).unwrap();
 
-    let (code, _) = run_validator(
+    // With range evidence, the validator returns a 4-element list (conditional slash)
+    let (code, result) = run_validator(
         &mut allocator,
         guess_hash,
         bad_guess,
@@ -433,7 +434,11 @@ fn test_krunk_bob_invalid_guess_slash() {
         guess_clvm,
         evidence_items[0],
     );
-    assert_eq!(code, MoveCode::Slash);
+    assert_eq!(code, MoveCode::MakeMove, "conditional slash returns non-empty list");
+    let items = proper_list(allocator.allocator(), result, true).unwrap();
+    assert_eq!(items.len(), 4, "should have vh + state + mms + AGG_SIG condition");
+    let condition = proper_list(allocator.allocator(), items[3], true).unwrap();
+    assert_eq!(int_from_node(&mut allocator, condition[0]), 49, "AGG_SIG_UNSAFE code");
 }
 
 fn validator_hash_node(allocator: &mut AllocEncoder, puzzle: &Puzzle) -> NodePtr {
@@ -442,6 +447,319 @@ fn validator_hash_node(allocator: &mut AllocEncoder, puzzle: &Puzzle) -> NodePtr
         .allocator()
         .new_atom(hash.hash().bytes())
         .unwrap()
+}
+
+fn test_krunk_multi_guess_game() {
+    let mut allocator = AllocEncoder::new();
+    let setup = setup_game(&mut allocator, test_dictionary());
+
+    let alice_word = atom(&mut allocator, b"world");
+    let entropy = make_entropy(&mut allocator, "multi_guess_salt");
+
+    // Alice commits
+    let alice_commit = call_my_turn_handler(
+        &mut allocator,
+        setup.alice_handler,
+        alice_word,
+        AMOUNT,
+        setup.initial_state,
+        0,
+        entropy,
+    );
+    let (_, val_result) = run_validator(
+        &mut allocator,
+        alice_commit.validator_for_my_move_hash,
+        alice_commit.move_bytes_node,
+        0,
+        32,
+        setup.initial_state,
+        alice_commit.validator_for_my_move,
+        NodePtr::NIL,
+    );
+    let mut state = proper_list(allocator.allocator(), val_result, true).unwrap()[1];
+
+    // Bob receives commit
+    let bob_receive = call_their_turn_handler(
+        &mut allocator,
+        setup.bob_handler,
+        AMOUNT,
+        setup.initial_state,
+        state,
+        alice_commit.move_bytes_node,
+        alice_commit.validator_for_my_move_hash,
+        0,
+    );
+
+    let mut alice_handler = alice_commit.their_turn_handler;
+    let mut bob_handler = bob_receive.my_turn_handler;
+    let wrong_guesses: [&[u8; 5]; 3] = [b"crane", b"slate", b"trace"];
+
+    // 3 wrong guesses
+    for (i, guess_word) in wrong_guesses.iter().enumerate() {
+        let bob_entropy = make_entropy(&mut allocator, &format!("bob_g{i}"));
+        let bob_guess_node = atom(&mut allocator, guess_word.as_slice());
+
+        let bob_move = call_my_turn_handler(
+            &mut allocator,
+            bob_handler,
+            bob_guess_node,
+            AMOUNT,
+            state,
+            0,
+            bob_entropy,
+        );
+
+        let (_, after_guess) = run_validator(
+            &mut allocator,
+            bob_move.validator_for_my_move_hash,
+            bob_move.move_bytes_node,
+            0,
+            bob_move.max_move_size,
+            state,
+            bob_move.validator_for_my_move,
+            NodePtr::NIL,
+        );
+        let new_state = proper_list(allocator.allocator(), after_guess, true).unwrap()[1];
+
+        let alice_receive = call_their_turn_handler(
+            &mut allocator,
+            alice_handler,
+            AMOUNT,
+            state,
+            new_state,
+            bob_move.move_bytes_node,
+            bob_move.validator_for_my_move_hash,
+            0,
+        );
+        state = new_state;
+
+        // Alice gives a clue
+        let alice_clue_entropy = make_entropy(&mut allocator, &format!("alice_c{i}"));
+        let alice_clue = call_my_turn_handler(
+            &mut allocator,
+            alice_receive.my_turn_handler,
+            NodePtr::NIL,
+            AMOUNT,
+            state,
+            0,
+            alice_clue_entropy,
+        );
+
+        let (_, after_clue) = run_validator(
+            &mut allocator,
+            alice_clue.validator_for_my_move_hash,
+            alice_clue.move_bytes_node,
+            0,
+            alice_clue.max_move_size,
+            state,
+            alice_clue.validator_for_my_move,
+            NodePtr::NIL,
+        );
+        let clue_state = proper_list(allocator.allocator(), after_clue, true).unwrap()[1];
+
+        let bob_clue_receive = call_their_turn_handler(
+            &mut allocator,
+            bob_move.their_turn_handler,
+            AMOUNT,
+            state,
+            clue_state,
+            alice_clue.move_bytes_node,
+            alice_clue.validator_for_my_move_hash,
+            0,
+        );
+        state = clue_state;
+        alice_handler = alice_clue.their_turn_handler;
+        bob_handler = bob_clue_receive.my_turn_handler;
+    }
+
+    // 4th guess is correct: "world"
+    let bob_entropy = make_entropy(&mut allocator, "bob_final");
+    let bob_guess_node = atom(&mut allocator, b"world");
+    let bob_move = call_my_turn_handler(
+        &mut allocator,
+        bob_handler,
+        bob_guess_node,
+        AMOUNT,
+        state,
+        0,
+        bob_entropy,
+    );
+
+    let (_, after_guess) = run_validator(
+        &mut allocator,
+        bob_move.validator_for_my_move_hash,
+        bob_move.move_bytes_node,
+        0,
+        bob_move.max_move_size,
+        state,
+        bob_move.validator_for_my_move,
+        NodePtr::NIL,
+    );
+    let new_state = proper_list(allocator.allocator(), after_guess, true).unwrap()[1];
+
+    let alice_receive = call_their_turn_handler(
+        &mut allocator,
+        alice_handler,
+        AMOUNT,
+        state,
+        new_state,
+        bob_move.move_bytes_node,
+        bob_move.validator_for_my_move_hash,
+        0,
+    );
+    state = new_state;
+
+    // Alice reveals (correct guess triggers reveal)
+    let alice_reveal_entropy = make_entropy(&mut allocator, "alice_reveal_multi");
+    let alice_reveal = call_my_turn_handler(
+        &mut allocator,
+        alice_receive.my_turn_handler,
+        NodePtr::NIL,
+        AMOUNT,
+        state,
+        0,
+        alice_reveal_entropy,
+    );
+    // 4th guess payout: 5% of amount = 10 (from KRUNK_PAYOUTS = (100 100 20 5 1))
+    assert_eq!(alice_reveal.new_mover_share, 10, "4th guess payout = 5% of 200 = 10");
+}
+
+fn test_krunk_5_wrong_guesses_alice_wins() {
+    let mut allocator = AllocEncoder::new();
+    let setup = setup_game(&mut allocator, test_dictionary());
+
+    let alice_word = atom(&mut allocator, b"world");
+    let entropy = make_entropy(&mut allocator, "five_wrong_salt");
+
+    // Alice commits
+    let alice_commit = call_my_turn_handler(
+        &mut allocator,
+        setup.alice_handler,
+        alice_word,
+        AMOUNT,
+        setup.initial_state,
+        0,
+        entropy,
+    );
+    let (_, val_result) = run_validator(
+        &mut allocator,
+        alice_commit.validator_for_my_move_hash,
+        alice_commit.move_bytes_node,
+        0,
+        32,
+        setup.initial_state,
+        alice_commit.validator_for_my_move,
+        NodePtr::NIL,
+    );
+    let mut state = proper_list(allocator.allocator(), val_result, true).unwrap()[1];
+
+    let bob_receive = call_their_turn_handler(
+        &mut allocator,
+        setup.bob_handler,
+        AMOUNT,
+        setup.initial_state,
+        state,
+        alice_commit.move_bytes_node,
+        alice_commit.validator_for_my_move_hash,
+        0,
+    );
+
+    let mut alice_handler = alice_commit.their_turn_handler;
+    let mut bob_handler = bob_receive.my_turn_handler;
+    let wrong_guesses: [&[u8; 5]; 5] = [b"crane", b"slate", b"trace", b"zzzzz", b"crane"];
+
+    // 5 wrong guesses
+    for (i, guess_word) in wrong_guesses.iter().enumerate() {
+        let bob_entropy = make_entropy(&mut allocator, &format!("bob5_g{i}"));
+        let bob_guess_node = atom(&mut allocator, guess_word.as_slice());
+
+        let bob_move = call_my_turn_handler(
+            &mut allocator,
+            bob_handler,
+            bob_guess_node,
+            AMOUNT,
+            state,
+            0,
+            bob_entropy,
+        );
+
+        let (_, after_guess) = run_validator(
+            &mut allocator,
+            bob_move.validator_for_my_move_hash,
+            bob_move.move_bytes_node,
+            0,
+            bob_move.max_move_size,
+            state,
+            bob_move.validator_for_my_move,
+            NodePtr::NIL,
+        );
+        let new_state = proper_list(allocator.allocator(), after_guess, true).unwrap()[1];
+
+        let alice_receive = call_their_turn_handler(
+            &mut allocator,
+            alice_handler,
+            AMOUNT,
+            state,
+            new_state,
+            bob_move.move_bytes_node,
+            bob_move.validator_for_my_move_hash,
+            0,
+        );
+        state = new_state;
+
+        if i < 4 {
+            // Alice gives a clue
+            let alice_clue_entropy = make_entropy(&mut allocator, &format!("alice5_c{i}"));
+            let alice_clue = call_my_turn_handler(
+                &mut allocator,
+                alice_receive.my_turn_handler,
+                NodePtr::NIL,
+                AMOUNT,
+                state,
+                0,
+                alice_clue_entropy,
+            );
+
+            let (_, after_clue) = run_validator(
+                &mut allocator,
+                alice_clue.validator_for_my_move_hash,
+                alice_clue.move_bytes_node,
+                0,
+                alice_clue.max_move_size,
+                state,
+                alice_clue.validator_for_my_move,
+                NodePtr::NIL,
+            );
+            let clue_state = proper_list(allocator.allocator(), after_clue, true).unwrap()[1];
+
+            let bob_clue_receive = call_their_turn_handler(
+                &mut allocator,
+                bob_move.their_turn_handler,
+                AMOUNT,
+                state,
+                clue_state,
+                alice_clue.move_bytes_node,
+                alice_clue.validator_for_my_move_hash,
+                0,
+            );
+            state = clue_state;
+            alice_handler = alice_clue.their_turn_handler;
+            bob_handler = bob_clue_receive.my_turn_handler;
+        } else {
+            // 5th wrong guess triggers reveal with mover_share = 0
+            let alice_reveal_entropy = make_entropy(&mut allocator, "alice5_reveal");
+            let alice_reveal = call_my_turn_handler(
+                &mut allocator,
+                alice_receive.my_turn_handler,
+                NodePtr::NIL,
+                AMOUNT,
+                state,
+                0,
+                alice_reveal_entropy,
+            );
+            assert_eq!(alice_reveal.new_mover_share, 0, "5 wrong guesses → alice keeps all");
+        }
+    }
 }
 
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
@@ -454,6 +772,14 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_krunk_bob_invalid_guess_slash",
             &test_krunk_bob_invalid_guess_slash,
+        ),
+        (
+            "test_krunk_multi_guess_game",
+            &test_krunk_multi_guess_game,
+        ),
+        (
+            "test_krunk_5_wrong_guesses_alice_wins",
+            &test_krunk_5_wrong_guesses_alice_wins,
         ),
     ]
 }

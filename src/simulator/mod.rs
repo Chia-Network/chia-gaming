@@ -58,6 +58,8 @@ use crate::tests::krunk_handlers::test_funs as krunk_handler_tests;
 #[cfg(test)]
 use crate::tests::krunk_validation::test_funs as krunk_validation_tests;
 #[cfg(test)]
+use crate::tests::referee_conditions::test_funs as referee_conditions_tests;
+#[cfg(test)]
 use crate::tests::spacepoker_handlers::test_funs as spacepoker_handler_tests;
 #[cfg(test)]
 use crate::tests::spacepoker_validation::test_funs as spacepoker_validation_tests;
@@ -877,6 +879,7 @@ pub fn run_simulation_tests() {
         calpoker_validation_tests(),
         spacepoker_validation_tests(),
         krunk_validation_tests(),
+        referee_conditions_tests(),
         spacepoker_handler_tests(),
         calpoker_handler_tests(),
         krunk_handler_tests(),

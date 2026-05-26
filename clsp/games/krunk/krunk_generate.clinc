@@ -1,7 +1,8 @@
 (include *standard-cl-23*)
 
 (import games.krunk.krunk_helpers exposing
-    assert_word_in_dictionary
+    find_gap_evidence
+    word_in_dictionary
     expand_clue
     krunk_should_reveal
     krunk_reveal_move
@@ -17,23 +18,22 @@
 
 ; --- proposal factory / parser ---
 ;
-; DICTIONARY is a list of valid 5-letter words. It is curried into the
-; proposal program and the parser program at registration time
-; (see src/games/mod.rs), so both peers' factory invocations share the
-; same dictionary. The dictionary is also passed through the initial
-; state so the first move validator (commit) sees it as previous_state.
+; DICTIONARY is a list of valid 5-letter words curried into handlers at
+; registration time. DICT_PUBKEY is the aggregate BLS key for dictionary
+; range signing (both players' keys combined). The on-chain initial state
+; is just DICT_PUBKEY; the full dictionary stays off-chain.
 
 (import games.krunk.onchain.commit exposing (program as val_commit) (program_hash as commit_hash))
 (import games.krunk.onchain.guess exposing (program as val_guess) (program_hash as guess_hash))
 (import games.krunk.onchain.clue exposing (program as val_clue) (program_hash as clue_hash))
 
-(defun krunk_make_proposal (DICTIONARY bet_size)
+(defun krunk_make_proposal (DICTIONARY DICT_PUBKEY bet_size)
     (li
         (li
             bet_size
             bet_size
             (li
-                (li (* 2 bet_size) 1 commit_hash 0 32 DICTIONARY 0)
+                (li (* 2 bet_size) 1 commit_hash 0 32 DICT_PUBKEY 0)
             )
         )
         (li
@@ -43,14 +43,13 @@
 )
 
 ; Parser is called as run_program(parser_clvm, wire_data) so wire_data is
-; the entire env. After currying with DICTIONARY at registration time,
-; the env becomes (DICTIONARY . wire_data); the (DICTIONARY . wire_data)
-; pattern binds DICTIONARY to the curried head and wire_data to the rest.
-(defun krunk_parser (DICTIONARY . wire_data)
+; the entire env. After currying with DICTIONARY and DICT_PUBKEY at
+; registration time, the env becomes (DICTIONARY DICT_PUBKEY . wire_data).
+(defun krunk_parser (DICTIONARY DICT_PUBKEY . wire_data)
     (assign
         bet_size (f wire_data)
         (assert
-            (deep= wire_data (f (krunk_make_proposal DICTIONARY bet_size)))
+            (deep= wire_data (f (krunk_make_proposal DICTIONARY DICT_PUBKEY bet_size)))
             (li bet_size (li (li val_commit (curry krunk_bob_handler_commit DICTIONARY))))
         )
     )
@@ -61,11 +60,10 @@
 (defun krunk_alice_handler_commit (DICTIONARY local_move amount state mover_share entropy)
     (assign
         word local_move
-        exclusion (assert_word_in_dictionary DICTIONARY word)
         salt (substr entropy 0 16)
         move (sha256 salt word)
         (assert
-            (not exclusion)
+            (word_in_dictionary DICTIONARY word)
             (list
                 "krunk_alice_handler_commit"
                 move
@@ -84,10 +82,9 @@
 
 (defun krunk_alice_handler_guess (SALT WORD DICTIONARY amount pre_state state move validation_info_hash mover_share)
     (assign
-        (bob_guesses alice_clues alice_commit . _rest) state
-        exclusion (assert_word_in_dictionary DICTIONARY move)
-        (if exclusion
-            (list 0 (li exclusion) 0)
+        (dict_pubkey bob_guesses alice_clues alice_commit . _rest) state
+        (if (not (word_in_dictionary DICTIONARY move))
+            (list 0 (li (find_gap_evidence DICTIONARY move)) 0)
             (assign
                 clue (make_clue WORD move)
                 (list
@@ -102,7 +99,7 @@
 
 (defun krunk_alice_handler_clue (SALT WORD CLUE DICTIONARY local_move amount state mover_share entropy)
     (assign
-        (bob_guesses alice_clues alice_commit . _rest) state
+        (dict_pubkey bob_guesses alice_clues alice_commit . _rest) state
         num_guesses (len bob_guesses)
         latest_guess (f bob_guesses)
         (if (krunk_should_reveal latest_guess WORD num_guesses)
@@ -150,11 +147,10 @@
 
 (defun krunk_bob_handler_guess (DICTIONARY local_move amount state mover_share entropy)
     (assign
-        (bob_guesses alice_clues alice_commit . _rest) state
+        (dict_pubkey bob_guesses alice_clues alice_commit . _rest) state
         guess local_move
-        exclusion (assert_word_in_dictionary DICTIONARY guess)
         (assert
-            (not exclusion)
+            (word_in_dictionary DICTIONARY guess)
             (list
                 "krunk_bob_handler_guess"
                 guess
@@ -175,7 +171,7 @@
 
 (defun krunk_bob_handler_clue (DICTIONARY amount pre_state state move validation_info_hash mover_share)
     (assign
-        (bob_guesses alice_clues alice_commit . _rest) state
+        (dict_pubkey bob_guesses alice_clues alice_commit . _rest) state
         (if (= (strlen move) 1)
             (list
                 (expand_clue move)
@@ -184,13 +180,17 @@
             )
             (assign
                 word (substr move 16 21)
-                exclusion (assert_word_in_dictionary DICTIONARY word)
-                (if exclusion
-                    (list 0 (li exclusion) 0)
+                (if (not (word_in_dictionary DICTIONARY word))
                     (list
                         (li word (make_clue word (f bob_guesses)))
+                        (li (find_gap_evidence DICTIONARY word))
                         0
+                        0
+                    )
+                    (list
+                        (li word (make_clue word (f bob_guesses)))
                         KRUNK_EVIDENCE_INDICES
+                        0
                         0
                     )
                 )

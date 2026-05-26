@@ -2,7 +2,6 @@
 
 (import games.krunk.onchain.guess exposing (program_hash as guess_hash))
 (import games.krunk.onchain.krunk_make_clue exposing make_clue)
-(import games.krunk.krunk_helpers exposing list_contains)
 (import std.if_any_fail)
 (import std.assert)
 (import std.and)
@@ -10,6 +9,7 @@
 (import std.relops)
 (import std.li)
 (import std.len)
+(import std.condition_codes)
 
 (defconst KRUNK_PAYOUTS (li 100 100 20 5 1))
 
@@ -25,32 +25,36 @@
 )
 
 ; Bob challenging Alice's clue or reveal.
-; state is (bob_guesses alice_clues alice_commit clue_hash)
+; state is (dict_pubkey bob_guesses alice_clues alice_commit clue_hash)
 ; MOVE is either a 1-byte clue or a 21-byte salt||word reveal.
 ; On a continue (clue), we transition back to guess. guess_hash is imported
 ; directly from games.krunk.onchain.guess.
 (export (mod_hash
     (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
         MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-    (bob_guesses alice_clues alice_commit clue_hash)
+    (dict_pubkey bob_guesses alice_clues alice_commit clue_hash)
     previous_validation_program evidence)
 
     (if (= (strlen MOVE) 1)
         ; Alice gave a clue for Bob's latest guess.
         (if_any_fail
             (= MOVER_SHARE 0)
-            (= (len alice_clues) 4)
+            (< (len alice_clues) 4)
             0
             (list guess_hash
-                (li bob_guesses (c MOVE alice_clues) alice_commit clue_hash)
+                (li dict_pubkey bob_guesses (c MOVE alice_clues) alice_commit clue_hash)
                 5)
         )
         ; Alice revealed salt||word.
-        (if (l evidence)
-            ; Slash: Alice's committed word is outside the supplied dictionary.
-            (assert
-                (not (list_contains (substr MOVE 16 21) evidence))
-                0
+        (if (= (strlen evidence) 10)
+            ; Slash: Alice's committed word is outside a signed dictionary range.
+            (assign
+                revealed_word (substr MOVE 16 21)
+                (assert
+                    (>= revealed_word (substr evidence 0 5))
+                    (<= revealed_word (substr evidence 5 10))
+                    (list 0 0 0 (list AGG_SIG_UNSAFE dict_pubkey evidence))
+                )
             )
             (if (= (strlen evidence) 1)
                 ; Slash: Alice gave a provably wrong clue at index evidence.

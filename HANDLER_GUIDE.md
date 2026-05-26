@@ -330,27 +330,61 @@ A validator takes the move and current state and returns a tagged result:
 ### Validator Return: Valid Move
 
 ```
-(new_validation_info_hash new_state max_move_size mover_share ...)
+(new_validation_info_hash new_state max_move_size)
 ```
 
-Tag `0` (`MAKE_MOVE`) means the move is legal. The returned values are used
-in two places:
+These three elements describe the new game state after the move. They are
+used in two places:
 
-- **On-chain**: The referee curries them into the new referee coin
-  (next validation hash, state, max move size, mover share).
+- **On-chain**: The referee checks that these values match the commitments
+  in the coin's curried state (infohash and max_move_size). If they align,
+  the move is valid and the slash attempt fails.
 - **Off-chain**: The Rust code extracts `new_state` so the handler can
   determine the next game state without duplicating that logic.
 
-### Validator Return: Invalid Move (SLASH)
+Note: `mover_share` is **not** in the validator's return value. It is part
+of the referee's curried arguments and is checked separately by the
+`if_any_fail` / `assert` logic within each validator.
+
+### Validator Return: Valid Move with Conditions (Conditional Slash)
+
+```
+(new_validation_info_hash new_state max_move_size condition1 condition2 ...)
+```
+
+Elements beyond the first three are **conditions** that the referee must
+emit for the slash to succeed. This enables "conditional slashing" where
+a move is provably invalid but the proof requires an external cryptographic
+check (e.g. verifying that a dictionary range was signed by both players).
+
+The referee prepends these conditions to its standard payout conditions.
+Example: a Krunk dictionary range slash returns
+`(AGG_SIG_UNSAFE dict_pubkey evidence)` as the 4th element, which the
+referee emits so the blockchain verifies the BLS signature on the range.
+
+If values align with commitments but no conditions are present (list ends
+at element 3), the move is valid and the slash attempt fails (assert
+aborts the spend).
+
+### Validator Return: Invalid Move (Unconditional Slash)
 
 ```
 ()
 ```
 
-Nil (`SLASH`) means the move is illegal. On-chain, the referee emits a reward coin giving
-the full game amount to the slasher. Off-chain, the Rust code represents
-validator results as `Option<Rc<Program>>` — `Some(new_state)` for
-valid payloads, `None` for slash — and initiates a slash when it gets `None`.
+Nil means the move is unconditionally illegal. On-chain, the referee emits
+payout conditions giving the full game amount to the slasher without
+requiring any additional cryptographic proof.
+
+Off-chain, the Rust code represents validator results as
+`Option<Rc<Program>>` — `Some(result)` for non-nil payloads,
+`None` for slash — and initiates a slash when it gets `None`.
+
+A slash also succeeds when the validator returns non-nil values that
+**don't align** with the referee's committed infohash or max_move_size.
+This covers cases where the validator deliberately returns mismatched
+values to signal fraud provable from game state alone (no external
+conditions needed).
 
 ### How the On-Chain Referee Uses Validators
 
@@ -365,12 +399,21 @@ can slash them. This avoids running validation logic on-chain during honest
 play, saving cost and complexity.
 
 **Slash path** -- A player submits evidence along with the previous move's
-validator. The referee runs the validator with the evidence. If the
-validator returns nil (indicating an invalid move) or returns values whose
-infohash or max_move_size don't match the curried commitments, the slash
-succeeds and the slasher takes the full pot. If the validator raises (CLVM
-exception), the slash transaction itself fails to mine — validators must
-handle all inputs without raising.
+validator. The referee runs the validator with the evidence. Slash succeeds
+in three cases:
+1. The validator returns nil — unconditional slash (move is definitely illegal).
+2. The validator returns non-nil values whose infohash or max_move_size
+   don't match the curried commitments — unconditional slash (misalignment
+   proves fraud from game state alone).
+3. The validator returns values that DO align with commitments AND includes
+   extra conditions beyond the 3rd element — conditional slash. The referee
+   emits these conditions (e.g. `AGG_SIG_UNSAFE` for signed range proofs)
+   alongside the payout conditions; the blockchain enforces them.
+
+If the validator returns aligned values with no extra conditions (list ends
+at element 3), the move was valid and the slash attempt fails (the spend
+aborts). If the validator raises (CLVM exception), the slash transaction
+fails to mine — validators must handle all inputs without raising.
 
 **Timeout path** -- No validator is involved. The referee simply checks
 that enough time has passed and pays out according to the current mover

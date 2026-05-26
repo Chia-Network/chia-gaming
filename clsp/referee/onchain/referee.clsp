@@ -5,6 +5,7 @@
 (import std.relops)
 (import std.condition_codes)
 (import std.li)
+(import std.append)
 
 ;
 ; Adjudicates a two-player turn-based game.
@@ -16,9 +17,17 @@
 ;   sha256(validation_program_hash, shatree(state))
 ;
 ; In slash, this puzzle runs previous_validation_program against all_args.
-; Slash succeeds if validator_result is nil (0), or if validator_result encodes
-; next values that misalign with this coin's commitments (infohash or
-; max_move_size mismatch).
+; Slash succeeds in three cases:
+;   1. validator_result is nil (0) — unconditional slash.
+;   2. validator_result is non-nil but its (next_validator_hash, new_state,
+;      max_move_size) misalign with this coin's commitments — unconditional.
+;   3. validator_result is non-nil, values align with commitments, AND there
+;      are extra conditions beyond element 3 — conditional slash. The extra
+;      conditions are prepended to payout_conditions (e.g. AGG_SIG_UNSAFE
+;      for signed dictionary range proofs).
+; If validator_result is non-nil, values align, and there are no extra
+; conditions (list ends at element 3), the move was valid and the slash
+; attempt fails (assert aborts the spend).
 ;
 ; MOVER_SHARE is how much the mover gets if they fold/accept timeout.
 ; MOD_HASH should be the shatree of referee itself.
@@ -54,7 +63,7 @@
         (assign
             (previous_state previous_validation_program evidence mover_payout_ph) args
             previous_validation_program_hash (shatree previous_validation_program)
-            (@ validator_result (next_validator_hash new_state max_move_size))
+            (@ validator_result (next_validator_hash new_state max_move_size . extra_conditions))
                 (a previous_validation_program (c previous_validation_program_hash all_args))
             payout_conditions (list
                 (list CREATE_COIN mover_payout_ph AMOUNT)
@@ -65,16 +74,16 @@
                 (= INFOHASH_A (sha256 previous_validation_program_hash (shatree previous_state)))
                 (if (not validator_result)
                     payout_conditions
-                    (assert
-                        (logior
-                            (not validator_result)
-                            (not (= (i next_validator_hash
-                                        (sha256 next_validator_hash (shatree new_state))
-                                        0)
-                                    INFOHASH_B))
-                            (not (= max_move_size MAX_MOVE_SIZE))
-                        )
+                    (if (not (logand
+                            (= (i next_validator_hash
+                                    (sha256 next_validator_hash (shatree new_state))
+                                    0)
+                                INFOHASH_B)
+                            (= max_move_size MAX_MOVE_SIZE)))
                         payout_conditions
+                        (assert extra_conditions
+                            (append extra_conditions payout_conditions)
+                        )
                     )
                 )
             )

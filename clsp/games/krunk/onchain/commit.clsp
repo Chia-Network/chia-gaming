@@ -7,7 +7,8 @@
 (import std.li)
 
 ; Bob challenging Alice's commit.
-; previous_state is the dictionary (used as a slash witness in guess).
+; previous_state is DICT_PUBKEY (the initial game state contains only the
+; aggregate dictionary signing key for both players).
 ; MOVE is sha256(salt || word), 32 bytes.
 ;
 ; clue_hash is threaded through state so that guess.clsp can transition
@@ -23,6 +24,6 @@
         (= (strlen MOVE) 32)
         (= MOVER_SHARE 0)
         0
-        (list guess_hash (li 0 0 MOVE clue_hash) 5)
+        (list guess_hash (li previous_state 0 0 MOVE clue_hash) 5)
     )
 )
