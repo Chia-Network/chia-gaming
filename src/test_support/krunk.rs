@@ -1,0 +1,118 @@
+use std::rc::Rc;
+
+use clvm_traits::ClvmEncoder;
+
+use crate::channel_handler::types::ReadableMove;
+use crate::common::types::GameID;
+use crate::common::types::{AllocEncoder, Program};
+use crate::peer_container::SynchronousGameCradle;
+use crate::test_support::game::GameAction;
+
+/// Build a Program holding a single 5-byte atom (a krunk word).
+fn word_program(allocator: &mut AllocEncoder, word: &[u8; 5]) -> Program {
+    let node = allocator
+        .encode_atom(clvm_traits::Atom::Borrowed(word))
+        .expect("encode word atom");
+    Program::from_nodeptr(allocator, node).expect("word -> program")
+}
+
+/// Happy-path krunk moves: Alice commits "crane", Bob guesses "crane",
+/// Alice's clue handler auto-detects the match and reveals.
+pub fn prefix_test_moves(allocator: &mut AllocEncoder, game_id: GameID) -> Vec<GameAction> {
+    // Dictionary entries are uppercase (see krunkwords.txt).
+    let alice_word = word_program(allocator, b"CRANE");
+    let bob_guess = word_program(allocator, b"CRANE");
+    let nil_move = Program::from_hex("80").expect("nil move");
+
+    vec![
+        // Move 0: Alice commits her secret word.
+        GameAction::Move(
+            0,
+            game_id,
+            ReadableMove::from_program(Rc::new(alice_word)),
+            true,
+        ),
+        // Move 1: Bob guesses (he picks "crane" and wins on first try).
+        GameAction::Move(
+            1,
+            game_id,
+            ReadableMove::from_program(Rc::new(bob_guess)),
+            true,
+        ),
+        // Move 2: Alice's handler sees the matching guess and reveals
+        // automatically; local_move is unused for the terminal reveal path.
+        GameAction::Move(
+            0,
+            game_id,
+            ReadableMove::from_program(Rc::new(nil_move)),
+            true,
+        ),
+    ]
+}
+
+#[allow(clippy::type_complexity)]
+pub fn krunk_ran_all_the_moves_predicate(
+    want_move_number: usize,
+) -> Box<dyn Fn(usize, &[SynchronousGameCradle]) -> bool> {
+    Box::new(move |move_number: usize, _: &[SynchronousGameCradle]| move_number >= want_move_number)
+}
+
+#[cfg(feature = "sim-tests")]
+mod sim_tests {
+    use super::*;
+
+    use crate::simulator::tests::potato_handler_sim::{
+        run_krunk_container_with_action_list_with_success_predicate, GameRunOutcome,
+    };
+    use crate::test_support::game::ProposeTrigger;
+
+    fn assert_stayed_off_chain(outcome: &GameRunOutcome, test_name: &str) {
+        for (who, ui) in outcome.local_uis.iter().enumerate() {
+            assert!(
+                !ui.go_on_chain,
+                "{test_name}: player {who} unexpectedly entered on-chain mode; got_error={} notifications={:?}",
+                ui.got_error,
+                ui.notifications
+            );
+            assert!(
+                !ui.got_error,
+                "{test_name}: player {who} reported an on-chain/error transition; go_on_chain={} notifications={:?}",
+                ui.go_on_chain,
+                ui.notifications
+            );
+        }
+    }
+
+    pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
+        let mut res: Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> = Vec::new();
+
+        res.push(("test_play_krunk_happy_path", &|| {
+            let mut allocator = AllocEncoder::new();
+            let mut moves = vec![
+                GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                GameAction::AcceptProposal(1, GameID(1)),
+            ];
+            moves.extend(prefix_test_moves(&mut allocator, GameID(1)));
+            let num_moves = moves.len();
+            let result = run_krunk_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &moves,
+                Some(&krunk_ran_all_the_moves_predicate(num_moves)),
+                None,
+            );
+            match result {
+                Ok(outcome) => {
+                    assert_stayed_off_chain(&outcome, "test_play_krunk_happy_path");
+                }
+                Err(e) => {
+                    panic!("krunk happy path failed; error={e:?}");
+                }
+            }
+        }));
+
+        res
+    }
+}
+
+#[cfg(feature = "sim-tests")]
+pub use sim_tests::test_funs;

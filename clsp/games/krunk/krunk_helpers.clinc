@@ -1,0 +1,66 @@
+(import std.li)
+(import std.len)
+(import std.or)
+
+(defconst KRUNK_PAYOUTS (li 100 100 20 5 1))
+
+(defun list_contains (item mylist)
+    (if (not mylist)
+        0
+        (if (= item (f mylist))
+            1
+            (list_contains item (r mylist))
+        )
+    )
+)
+
+(defun assert_word_in_dictionary (dictionary word)
+    (if (list_contains word dictionary)
+        0
+        dictionary
+    )
+)
+
+(defun expand_clue (clue_byte)
+    (expand_clue_inner (+ clue_byte 128) 5)
+)
+
+(defun expand_clue_inner (val n)
+    (if (= n 0)
+        0
+        (c (% val 3) (expand_clue_inner (/ val 3) (- n 1)))
+    )
+)
+
+(defun krunk_payout_share (amount n)
+    (* (/ amount 100) (f (drop (- n 1) KRUNK_PAYOUTS)))
+)
+
+(defun drop (n lst)
+    (if (= n 0)
+        lst
+        (drop (- n 1) (r lst))
+    )
+)
+
+(defun guess_matches_word (guess word)
+    (= guess word)
+)
+
+(defun krunk_should_reveal (guess word num_guesses)
+    (or (guess_matches_word guess word) (= num_guesses 5))
+)
+
+(defun krunk_reveal_move (salt word)
+    (concat salt word)
+)
+
+(defun krunk_reveal_mover_share (amount bob_guesses word)
+    (if (= (f bob_guesses) word)
+        (krunk_payout_share amount (len bob_guesses))
+        (if (= (len bob_guesses) 5)
+            0
+            (x "krunk_reveal_mover_share: not terminal")
+        )
+    )
+)

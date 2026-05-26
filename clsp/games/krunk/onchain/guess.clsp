@@ -1,31 +1,36 @@
 (include *standard-cl-23*)
 
-(export guess)
-(import onchain.krunk.clue exposing clue_validate_hash)
+(import games.krunk.krunk_helpers exposing list_contains)
+(import std.if_any_fail)
 (import std.assert)
+(import std.and)
+(import std.li)
 
-; Alice challenging
-; state is a (bob_guesses alice_clues dictionary_public_key alice_commit)
-; move is a Bob guess
-; evidence may be range of exclusion if Alice is showing Bob's word is invalid
-(defun guess_validate (mod_hash (move new_validation_hash mover_share previous_validation_hash
-    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash)
-    (bob_guesses alice_clues @ tail (dictionary_public_key alice_commit)) me
-    previous_validation_program mover_puzzle solution evidence)
+; Alice challenging Bob's guess.
+; state is (bob_guesses alice_clues alice_commit clue_hash)
+;   clue_hash is threaded through the state so guess can transition to
+;   clue without importing clue.clsp (this breaks the import cycle:
+;   clue imports guess directly).
+; MOVE is Bob's 5-letter guess.
+; evidence is the dictionary list when Alice slashes an out-of-dictionary guess.
+(export (mod_hash
+    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+    (bob_guesses alice_clues alice_commit clue_hash)
+    previous_validation_program evidence)
 
     (if evidence
         (assert
-            (>=s move (substr evidence 0 5))
-            (<=s move (substr evidence 5 10))
-            (list (list AGG_SIG_UNSAFE evidence dictionary_key))
+            (not (list_contains MOVE evidence))
+            0
         )
         (if_any_fail
-            (= (strlen move) 5)
-            (= next_validation_hash (sha256 clue_validation_hash (shatree
-                (li (c move bob_guesses) alice_clues mod_hash &rest tail))))
-            (= max_move_size 21)
+            (= (strlen MOVE) 5)
+            (= MOVER_SHARE 0)
             0
-            (x)
+            (list clue_hash
+                (li (c MOVE bob_guesses) alice_clues alice_commit clue_hash)
+                21)
         )
     )
 )

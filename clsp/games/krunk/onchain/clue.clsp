@@ -1,53 +1,85 @@
 (include *standard-cl-23*)
 
-(export clue_validate)
-(import std.assert_fail)
-(import onchain.krunk.krunk_make_clue exposing make_clue)
+(import games.krunk.onchain.guess exposing (program_hash as guess_hash))
+(import games.krunk.onchain.krunk_make_clue exposing make_clue)
+(import games.krunk.krunk_helpers exposing list_contains)
+(import std.if_any_fail)
+(import std.assert)
+(import std.and)
+(import std.or)
+(import std.relops)
+(import std.li)
+(import std.len)
 
-; Bob challenging
-; state is (bob_guesses alice_clues guess_validate_hash dictionary_key alice_commit)
-; move is an Alice clue or word reveal if hit
-; evidence can be index where clue is wrong
-; evidence can be exclusion range if Alice's committed word is not in the dictionary
-(defun clue_validate (mod_hash (move new_validation_hash mover_share previous_validation_hash
-    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash)
-    (bob_guesses alice_clues guess_validation_hash @ tail (dictionary_key alice_commit))
-    me previous_calidation_program mover_puzzle solution evidence)
+(defconst KRUNK_PAYOUTS (li 100 100 20 5 1))
 
-    (if (= (strlen move)) 1
-        ; alice gave a clue
+(defun krunk_payout_share (amount n)
+    (* (/ amount 100) (f (drop (- n 1) KRUNK_PAYOUTS)))
+)
+
+(defun drop (n lst)
+    (if (= n 0)
+        lst
+        (drop (- n 1) (r lst))
+    )
+)
+
+; Bob challenging Alice's clue or reveal.
+; state is (bob_guesses alice_clues alice_commit clue_hash)
+; MOVE is either a 1-byte clue or a 21-byte salt||word reveal.
+; On a continue (clue), we transition back to guess. guess_hash is imported
+; directly from games.krunk.onchain.guess.
+(export (mod_hash
+    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+    (bob_guesses alice_clues alice_commit clue_hash)
+    previous_validation_program evidence)
+
+    (if (= (strlen MOVE) 1)
+        ; Alice gave a clue for Bob's latest guess.
         (if_any_fail
-            (= new_validation hash (sha256 guess_validation_hash (shatree
-                (li bob_guesses (c move alice_clues) &rest tail))))
-            (!= (len clues) 4)
-            (= max_move_size 5)
+            (= MOVER_SHARE 0)
+            (= (len alice_clues) 4)
             0
-            (x)
+            (list guess_hash
+                (li bob_guesses (c MOVE alice_clues) alice_commit clue_hash)
+                5)
         )
-        ; alice did a reveal
-        (if (= (strlen evidence) 1)
-            ; index of wrong clue
-            (assert (!= (make_clue (index bob_guesses evidence)) (index alice_clues evidence)) 0)
-            evidence
-            ; proof
+        ; Alice revealed salt||word.
+        (if (l evidence)
+            ; Slash: Alice's committed word is outside the supplied dictionary.
             (assert
-                (>= (substr move 0 5) (substr evidence 0 5))
-                (<= (substr move 0 5) (substr evidence 5 10))
-                (li (li AGGSIG_UNSAFE dictionary_key evidence))
-            )
-            (if_any_fail
-                (= (strlen move) 21)
-                (! new_validation_hash)
-                (! max_move_size)
-                (= alice_commit (sha256 move))
-                (= mover_share
-                    (if (= (f bob_guesses) (substr move 0 5))
-                        (index (len bob_guesses) (li 100 100 20 5 1))
-                        (assert (= (len bob_guesses 5)) 0)
-                    )
-                )
+                (not (list_contains (substr MOVE 16 21) evidence))
                 0
-                (x)
+            )
+            (if (= (strlen evidence) 1)
+                ; Slash: Alice gave a provably wrong clue at index evidence.
+                (assert
+                    (or
+                        (and (> evidence 0)
+                            (= (f (drop evidence bob_guesses))
+                                (substr MOVE 16 21)))
+                        (!= (make_clue (substr MOVE 16 21)
+                                (f (drop evidence bob_guesses)))
+                            (f (drop evidence alice_clues)))
+                    )
+                    0
+                )
+                (if_any_fail
+                    (= (strlen MOVE) 21)
+                    (= alice_commit (sha256 (substr MOVE 0 16) (substr MOVE 16 21)))
+                    (= MOVER_SHARE
+                        (if (= (f bob_guesses) (substr MOVE 16 21))
+                            (krunk_payout_share AMOUNT (len bob_guesses))
+                            (if (= (len bob_guesses) 5)
+                                0
+                                (x "clue reveal before terminal")
+                            )
+                        )
+                    )
+                    0
+                    (list 0 0 0)
+                )
             )
         )
     )
