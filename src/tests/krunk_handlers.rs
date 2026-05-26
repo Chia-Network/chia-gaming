@@ -2,6 +2,7 @@
 
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::types::{chia_dialect, AllocEncoder, Puzzle, Sha256Input, Sha256tree};
+use crate::games::krunk_dict_tree::build_dict_tree_from_bytes;
 use crate::utils::proper_list;
 
 use chia_protocol::Bytes;
@@ -198,9 +199,9 @@ struct GameSetup {
     initial_mover_share: i64,
 }
 
-/// Sets up a krunk game by currying the supplied dictionary and a
-/// placeholder dict_pubkey into the proposal/parser puzzles, then running
-/// them to extract the initial state, handlers, and validators.
+/// Sets up a krunk game by building a dict tree from the supplied dictionary,
+/// currying it with a placeholder dict_pubkey into the proposal/parser puzzles,
+/// then running them to extract the initial state, handlers, and validators.
 fn setup_game(allocator: &mut AllocEncoder, dictionary: Vec<Bytes>) -> GameSetup {
     let make_proposal_raw = read_hex_puzzle(
         allocator,
@@ -213,16 +214,17 @@ fn setup_game(allocator: &mut AllocEncoder, dictionary: Vec<Bytes>) -> GameSetup
     )
     .expect("load parser");
 
+    let dict_tree = build_dict_tree_from_bytes(allocator, &dictionary).expect("build dict tree");
     let dict_pubkey = Bytes::from(vec![0xAA; 48]);
     let make_proposal_curried = CurriedProgram {
         program: make_proposal_raw,
-        args: clvm_curried_args!(dictionary.clone(), dict_pubkey.clone()),
+        args: clvm_curried_args!(dict_tree, dict_pubkey.clone()),
     }
     .to_clvm(allocator)
     .unwrap();
     let parser_curried = CurriedProgram {
         program: parser_raw,
-        args: clvm_curried_args!(dictionary, dict_pubkey),
+        args: clvm_curried_args!(dict_tree, dict_pubkey),
     }
     .to_clvm(allocator)
     .unwrap();

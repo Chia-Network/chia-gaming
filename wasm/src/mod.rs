@@ -213,9 +213,12 @@ mod gaming_wasm {
             .collect();
 
         let mut allocator = AllocEncoder::new();
+        let dict_tree =
+            chia_gaming::games::krunk_dict_tree::build_dict_tree_from_bytes(&mut allocator, &dict_bytes)
+                .map_err(|e| JsValue::from_str(&format!("build dict tree: {e:?}")))?;
         let placeholder_pubkey = [0u8; 48];
         let (make_proposal, parser) =
-            chia_gaming::games::curry_krunk_programs(&mut allocator, &dict_bytes, &placeholder_pubkey).into_js()?;
+            chia_gaming::games::curry_krunk_programs(&mut allocator, dict_tree, &placeholder_pubkey).into_js()?;
 
         let joined: Vec<u8> = normalized
             .iter()

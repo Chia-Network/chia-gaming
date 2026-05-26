@@ -1,0 +1,27 @@
+(import std.relops)
+(import std.li)
+
+; Balanced BST dictionary lookup.
+;
+; Tree structure (built in Rust, curried into handlers):
+;   Interior node: (left_child word right_child)
+;   Leaf: () (nil atom marking a gap between dictionary words)
+;
+; Returns:
+;   () — word IS in the dictionary
+;   (left_bound right_bound) — word is NOT in the dictionary;
+;       left_bound and right_bound are the adjacent dictionary words
+;       (or sentinels) bracketing the gap where word falls.
+
+(defun dict_lookup (tree word left_bound right_bound)
+    (if (l tree)
+        (if (= word (f (r tree)))
+            ()
+            (if (> word (f (r tree)))
+                (dict_lookup (f (r (r tree))) word (f (r tree)) right_bound)
+                (dict_lookup (f tree) word left_bound (f (r tree)))
+            )
+        )
+        (li left_bound right_bound)
+    )
+)

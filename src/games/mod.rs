@@ -1,24 +1,26 @@
+pub mod krunk_dict_tree;
+
 use chia_protocol::Bytes;
 use clvm_traits::{clvm_curried_args, ToClvm};
 use clvm_utils::CurriedProgram;
+use clvmr::allocator::NodePtr;
 
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::types::{AllocEncoder, Error, GameType, Program};
 use crate::potato_handler::types::GameFactory;
 use std::collections::BTreeMap;
 
-/// Curry the supplied dictionary and dict_pubkey into the raw krunk
+/// Curry the supplied dict tree and dict_pubkey into the raw krunk
 /// `make_proposal` and `parser` hexes, returning a pair of programs in the
-/// layout expected by the GameFactory registry. DICTIONARY and DICT_PUBKEY
+/// layout expected by the GameFactory registry. DICT_TREE and DICT_PUBKEY
 /// are the first two curried arguments of both programs (see
 /// `krunk_generate.clinc`).
 ///
-/// `dictionary` must be a list of single-atom 5-byte words. Use
-/// [`Bytes`] (not `Vec<u8>`) to ensure each word encodes as one atom and
-/// not as a list of single-byte atoms.
+/// `dict_tree` is a pre-built balanced BST as a CLVM NodePtr (produced by
+/// `krunk_dict_tree::build_dict_tree`).
 pub fn curry_krunk_programs(
     allocator: &mut AllocEncoder,
-    dictionary: &[Bytes],
+    dict_tree: NodePtr,
     dict_pubkey: &[u8; 48],
 ) -> Result<(Program, Program), Error> {
     let make_proposal_raw = read_hex_puzzle(
@@ -28,11 +30,10 @@ pub fn curry_krunk_programs(
     let parser_raw =
         read_hex_puzzle(allocator, "clsp/games/krunk/krunk_include_krunk_parser.hex")?;
 
-    let dict_vec = dictionary.to_vec();
     let pk = Bytes::from(dict_pubkey.to_vec());
     let make_proposal_node = CurriedProgram {
         program: make_proposal_raw,
-        args: clvm_curried_args!(dict_vec.clone(), pk.clone()),
+        args: clvm_curried_args!(dict_tree, pk.clone()),
     }
     .to_clvm(allocator)
     .map_err(|e| Error::StrErr(format!("curry krunk make_proposal: {e:?}")))?;
@@ -40,7 +41,7 @@ pub fn curry_krunk_programs(
 
     let parser_node = CurriedProgram {
         program: parser_raw,
-        args: clvm_curried_args!(dict_vec, pk),
+        args: clvm_curried_args!(dict_tree, pk),
     }
     .to_clvm(allocator)
     .map_err(|e| Error::StrErr(format!("curry krunk parser: {e:?}")))?;
@@ -118,13 +119,15 @@ pub fn poker_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, Game
         },
     );
 
-    // Krunk: load the proposal/parser and curry the bundled dictionary and
+    // Krunk: load the proposal/parser and curry the bundled dictionary tree and
     // a placeholder dict_pubkey. The real pubkey would come from the handshake
     // (aggregate of both players' dictionary signing keys).
     let dictionary = krunk_dictionary();
+    let dict_tree = krunk_dict_tree::build_dict_tree_from_bytes(allocator, &dictionary)
+        .expect("build krunk dict tree");
     let placeholder_pubkey = [0u8; 48];
     let (krunk_make_proposal, krunk_parser) =
-        curry_krunk_programs(allocator, &dictionary, &placeholder_pubkey).expect("curry krunk");
+        curry_krunk_programs(allocator, dict_tree, &placeholder_pubkey).expect("curry krunk");
 
     game_type_map.insert(
         GameType(b"krunk".to_vec()),

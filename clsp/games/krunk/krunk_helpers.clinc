@@ -5,34 +5,6 @@
 
 (defconst KRUNK_PAYOUTS (li 100 100 20 5 1))
 
-(defun word_in_dictionary (dictionary word)
-    (if (not dictionary)
-        0
-        (if (= word (f dictionary))
-            1
-            (word_in_dictionary (r dictionary) word)
-        )
-    )
-)
-
-(defun find_gap_evidence (dictionary word)
-    ; Returns 10-byte atom: prev_word || next_word bracketing `word`.
-    ; Walks the sorted dictionary to find two adjacent entries where
-    ; prev_word < word < next_word (or boundary cases at start/end).
-    ; Used off-chain by handlers to produce slash evidence.
-    (find_gap_inner dictionary word 0x8000000000 0x7fffffffff)
-)
-
-(defun find_gap_inner (dictionary word lower upper)
-    (if (not dictionary)
-        (concat lower upper)
-        (if (> (f dictionary) word)
-            (concat lower (f dictionary))
-            (find_gap_inner (r dictionary) word (f dictionary) upper)
-        )
-    )
-)
-
 (defun expand_clue (clue_byte)
     (expand_clue_inner (+ clue_byte 128) 5)
 )

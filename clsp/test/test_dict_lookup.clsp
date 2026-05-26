@@ -1,0 +1,9 @@
+(include *standard-cl-23*)
+
+(import games.krunk.krunk_dict_tree exposing dict_lookup)
+
+; Args: (tree word left_sentinel right_sentinel)
+; Returns dict_lookup result: () if in dict, (left right) if not.
+(export (tree word left_sentinel right_sentinel)
+    (dict_lookup tree word left_sentinel right_sentinel)
+)
