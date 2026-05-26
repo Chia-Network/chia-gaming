@@ -1,20 +1,33 @@
 (include *standard-cl-23*)
 
-; Alice challenging
-; state is (bob_guesses alice_clues dictionary_public_key alice_commit)
-; MOVE is Bob's 5-letter guess word
-; evidence may be a range of exclusion if Alice is showing Bob's word is invalid
-;
-; TODO: validator body not yet implemented. When filled in, this should:
-;   - on slash-with-evidence: verify Bob's word is outside the dictionary using
-;     an AGG_SIG_UNSAFE proof against the curried dictionary public key.
-;   - on normal move: check `(strlen MOVE) == 5`, verify MOVER_SHARE, and
-;     return (list clue_hash (li (c MOVE bob_guesses) alice_clues
-;                                dictionary_public_key alice_commit) 21 "guess").
+(import games.krunk.onchain.krunk_validator_hashes exposing clue_hash)
+(import games.krunk.krunk_helpers exposing list_contains)
+(import std.if_any_fail)
+(import std.li)
+
+; Alice challenging Bob's guess.
+; state is (bob_guesses alice_clues alice_commit)
+; MOVE is Bob's 5-letter guess.
+; evidence is the dictionary list when Alice slashes an out-of-dictionary guess.
 (export (mod_hash
     (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
         MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-        state previous_validation_program evidence output_conditions)
+    (bob_guesses alice_clues alice_commit)
+    previous_validation_program evidence output_conditions)
 
-    (x "TODO: krunk guess_validate not implemented")
+    (if evidence
+        (assert
+            (not (list_contains MOVE evidence))
+            0
+        )
+        (if_any_fail
+            (= (strlen MOVE) 5)
+            (= MOVER_SHARE 0)
+            0
+            (list clue_hash
+                (li (c MOVE bob_guesses) alice_clues alice_commit)
+                21
+                "guess")
+        )
+    )
 )

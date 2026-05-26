@@ -1,0 +1,4 @@
+; Mutual validator hashes (guess <-> clue). Updated by tools/compile-krunk-only.sh
+; fixed-point iteration; do not import guess.clsp or clue.clsp from here.
+(defconstant clue_hash 0x0000000000000000000000000000000000000000000000000000000000000000)
+(defconstant guess_hash 0x0000000000000000000000000000000000000000000000000000000000000000)

@@ -1,27 +1,81 @@
 (include *standard-cl-23*)
 
-; Bob challenging
-; state is (bob_guesses alice_clues dictionary_public_key alice_commit)
-; MOVE is either:
-;   - a 1-byte clue (Alice's colored response to Bob's last guess), or
-;   - a 21-byte reveal: 16-byte salt || 5-byte word
-; evidence may be:
-;   - an index where the clue is provably wrong, or
-;   - an exclusion range proving Alice's committed word is not in the dictionary
-;
-; TODO: validator body not yet implemented. When filled in, this should:
-;   - on clue path: check `(strlen MOVE) == 1`, append clue to alice_clues,
-;     return (list guess_hash <next_state> 5 "clue").
-;   - on reveal path: check `(strlen MOVE) == 21`, verify the commit matches,
-;     compute the payout based on which guess (if any) matched the revealed
-;     word using the (li 100 100 20 5 1) schedule, return terminal
-;     (list 0 0 0 "clue reveal") or similar.
-;   - on slash paths: support clue-correctness slash (evidence is an index)
-;     and dictionary-exclusion slash (evidence is the BLS exclusion range).
+(import games.krunk.onchain.krunk_validator_hashes exposing guess_hash)
+(import games.krunk.onchain.krunk_make_clue exposing make_clue)
+(import games.krunk.krunk_helpers exposing list_contains)
+(import std.if_any_fail)
+(import std.li)
+(import std.len)
+
+(defconst KRUNK_PAYOUTS (li 100 100 20 5 1))
+
+(defun krunk_payout_share (amount n)
+    (* (/ amount 100) (f (drop (- n 1) KRUNK_PAYOUTS)))
+)
+
+(defun drop (n lst)
+    (if (= n 0)
+        lst
+        (drop (- n 1) (r lst))
+    )
+)
+
+; Bob challenging Alice's clue or reveal.
+; state is (bob_guesses alice_clues alice_commit)
+; MOVE is either a 1-byte clue or a 21-byte salt||word reveal.
 (export (mod_hash
     (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
         MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-        state previous_validation_program evidence output_conditions)
+    (bob_guesses alice_clues alice_commit)
+    previous_validation_program evidence output_conditions)
 
-    (x "TODO: krunk clue_validate not implemented")
+    (if (= (strlen MOVE) 1)
+        ; Alice gave a clue for Bob's latest guess.
+        (if_any_fail
+            (= MOVER_SHARE 0)
+            (= (len alice_clues) 4)
+            0
+            (list guess_hash
+                (li bob_guesses (c MOVE alice_clues) alice_commit)
+                5
+                "clue")
+        )
+        ; Alice revealed salt||word.
+        (if (l evidence)
+            ; Slash: Alice's committed word is outside the supplied dictionary.
+            (assert
+                (not (list_contains (substr MOVE 16 21) evidence))
+                0
+            )
+            (if (= (strlen evidence) 1)
+                ; Slash: Alice gave a provably wrong clue at index evidence.
+                (assert
+                    (or
+                        (and (> evidence 0)
+                            (= (f (drop evidence bob_guesses))
+                                (substr MOVE 16 21)))
+                        (!= (make_clue (substr MOVE 16 21)
+                                (f (drop evidence bob_guesses)))
+                            (f (drop evidence alice_clues)))
+                    )
+                    0
+                )
+                (if_any_fail
+                    (= (strlen MOVE) 21)
+                    (= alice_commit (sha256 (substr MOVE 0 16) (substr MOVE 16 21)))
+                    (= MOVER_SHARE
+                        (if (= (f bob_guesses) (substr MOVE 16 21))
+                            (krunk_payout_share AMOUNT (len bob_guesses))
+                            (if (= (len bob_guesses) 5)
+                                0
+                                (x "clue reveal before terminal")
+                            )
+                        )
+                    )
+                    0
+                    (list 0 0 0 "clue reveal")
+                )
+            )
+        )
+    )
 )

@@ -4,6 +4,7 @@ pub mod channel_handler;
 pub mod chialisp;
 pub mod constants;
 pub mod krunk_handlers;
+pub mod krunk_validation;
 pub mod spacepoker_handlers;
 pub mod spacepoker_validation;
 pub mod standard_coin;

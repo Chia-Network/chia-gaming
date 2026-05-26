@@ -1,102 +1,197 @@
 (include *standard-cl-23*)
 
-(import games.krunk.onchain.commit exposing (program as val_commit) (program_hash as commit_hash))
-(import games.krunk.onchain.guess exposing (program as val_guess) (program_hash as guess_hash))
-(import games.krunk.onchain.clue exposing (program as val_clue) (program_hash as clue_hash))
+(import games.krunk.krunk_helpers exposing
+    assert_word_in_dictionary
+    expand_clue
+    krunk_should_reveal
+    krunk_reveal_move
+    krunk_reveal_mover_share
+)
+(import games.krunk.onchain.krunk_make_clue exposing make_clue)
 
 (import std.li)
 (import std.curry)
 (import std.assert)
 (import std.deep_compare)
-(import std.relops)
+(import std.len)
 
-; ─── proposal factory / parser ───────────────────────────────────────
-
-; proposal factory: (bet_size) -> (wire_data local_data)
-; wire_data = (my_contribution their_contribution [(amount we_go_first
-;              initial_validator_hash initial_move initial_max_move_size
-;              initial_state initial_mover_share)])
-; local_data = [(initial_handler initial_validator)]
+; --- proposal factory / parser ---
 ;
-; Alice (proposer) commits to a salted 5-letter word; Bob (responder) guesses.
-(defun krunk_make_proposal (bet_size)
+; dictionary is a user-supplied list of valid 5-letter words. Both players
+; pass the same list to make_proposal and parser when negotiating a hand.
+
+(import games.krunk.onchain.commit exposing (program as val_commit) (program_hash as commit_hash))
+(import games.krunk.onchain.guess exposing (program as val_guess) (program_hash as guess_hash))
+(import games.krunk.onchain.clue exposing (program as val_clue) (program_hash as clue_hash))
+
+(defun krunk_make_proposal (bet_size dictionary)
     (li
         (li
             bet_size
             bet_size
             (li
-                (li (* 2 bet_size) 1 commit_hash 0 32 0 0)
+                (li (* 2 bet_size) 1 commit_hash 0 32 dictionary 0)
             )
         )
         (li
-            (li krunk_alice_handler_commit val_commit)
+            (li (curry krunk_alice_handler_commit dictionary) val_commit)
         )
     )
 )
 
-; parser: (wire_data) -> (readable [(initial_validator initial_handler)])
+(defun krunk_game_spec_from_wire (args)
+    (f (f (r (r args))))
+)
+
+(defun krunk_dictionary_from_wire (args)
+    (f (r (r (r (r (r (krunk_game_spec_from_wire args)))))))
+)
+
 (defun krunk_parser (@ args (bet_size))
-    (assert (deep= args (f (krunk_make_proposal bet_size)))
-        (li bet_size (li (li val_commit krunk_bob_handler_commit)))
+    (assign
+        dictionary (krunk_dictionary_from_wire args)
+        (assert
+            (deep= args (f (krunk_make_proposal bet_size dictionary)))
+            (li bet_size (li (li val_commit (curry krunk_bob_handler_commit dictionary))))
+        )
     )
 )
 
-; ─── Alice handlers (proposer, picks the word) ───────────────────────
+; --- Alice handlers ---
 
-; my-turn: Alice commits to a salted word.
-; local_move is the picked word. It needs to be in the dictionary.
-; Next turn handler is a curried alice_handler_guess.
-;
-; TODO: not implemented. When filled in, should produce
-;   move = sha256(salt || word), set up the next handler with PREIMAGE = (salt word),
-;   and return the 10-element my-turn tuple.
-(defun krunk_alice_handler_commit (local_move amount state mover_share entropy)
-    (x "TODO: krunk_alice_handler_commit not implemented")
+(defun krunk_alice_handler_commit (DICTIONARY local_move amount state mover_share entropy)
+    (assign
+        word local_move
+        exclusion (assert_word_in_dictionary DICTIONARY word)
+        (assert (not exclusion) (x "word not in dictionary"))
+        salt (substr entropy 0 16)
+        move (sha256 salt word)
+        (list
+            "krunk_alice_handler_commit"
+            move
+            val_commit
+            commit_hash
+            val_guess
+            guess_hash
+            32
+            0
+            (curry krunk_alice_handler_guess salt word DICTIONARY)
+            0
+        )
+    )
 )
 
-; their-turn: Alice processes Bob's guess.
-; Special check is Bob's guess being in dictionary; readable_move is Bob's guess.
-; Next turn handler is alice_handler_clue (or nil if Bob guessed right / ran out).
-;
-; TODO: not implemented.
-(defun krunk_alice_handler_guess (PREIMAGE amount pre_state state move validation_info_hash mover_share)
-    (x "TODO: krunk_alice_handler_guess not implemented")
+(defun krunk_alice_handler_guess (SALT WORD DICTIONARY amount pre_state state move validation_info_hash mover_share)
+    (assign
+        (bob_guesses alice_clues alice_commit) state
+        exclusion (assert_word_in_dictionary DICTIONARY move)
+        (if exclusion
+            (list 0 (li exclusion) 0)
+            (assign
+                clue (make_clue WORD move)
+                (list
+                    (li move (expand_clue clue))
+                    0
+                    (curry krunk_alice_handler_clue SALT WORD clue DICTIONARY)
+                )
+            )
+        )
+    )
 )
 
-; my-turn: Alice sends a clue (or reveals her word if Bob is done).
-; local_move is nil (should be called immediately after Bob's guess).
-; Next turn handler is alice_handler_guess (or nil on terminal reveal).
-;
-; TODO: not implemented.
-(defun krunk_alice_handler_clue (PREIMAGE local_move amount state mover_share entropy)
-    (x "TODO: krunk_alice_handler_clue not implemented")
+(defun krunk_alice_handler_clue (SALT WORD CLUE DICTIONARY local_move amount state mover_share entropy)
+    (assign
+        (bob_guesses alice_clues alice_commit) state
+        num_guesses (len bob_guesses)
+        latest_guess (f bob_guesses)
+        (if (krunk_should_reveal latest_guess WORD num_guesses)
+            (assign
+                reveal (krunk_reveal_move SALT WORD)
+                payout (krunk_reveal_mover_share amount bob_guesses WORD)
+                (list
+                    "krunk_alice_handler_clue reveal"
+                    reveal
+                    val_clue
+                    clue_hash
+                    0
+                    0
+                    0
+                    payout
+                    0
+                    0
+                )
+            )
+            (list
+                "krunk_alice_handler_clue"
+                CLUE
+                val_clue
+                clue_hash
+                val_guess
+                guess_hash
+                5
+                0
+                (curry krunk_alice_handler_guess SALT WORD DICTIONARY)
+                0
+            )
+        )
+    )
 )
 
-; ─── Bob handlers (responder, guesses) ────────────────────────────────
+; --- Bob handlers ---
 
-; their-turn: Bob processes Alice's commit. No special checks.
-; readable_move is nil. Next turn handler is bob_handler_guess.
-;
-; TODO: not implemented.
-(defun krunk_bob_handler_commit (amount pre_state state move validation_info_hash mover_share)
-    (x "TODO: krunk_bob_handler_commit not implemented")
+(defun krunk_bob_handler_commit (DICTIONARY amount pre_state state move validation_info_hash mover_share)
+    (list
+        0
+        0
+        (curry krunk_bob_handler_guess DICTIONARY)
+    )
 )
 
-; my-turn: Bob makes a guess word. Must be in the dictionary.
-; Next turn handler is bob_handler_clue.
-;
-; TODO: not implemented.
-(defun krunk_bob_handler_guess (local_move amount state mover_share entropy)
-    (x "TODO: krunk_bob_handler_guess not implemented")
+(defun krunk_bob_handler_guess (DICTIONARY local_move amount state mover_share entropy)
+    (assign
+        (bob_guesses alice_clues alice_commit) state
+        guess local_move
+        exclusion (assert_word_in_dictionary DICTIONARY guess)
+        (assert (not exclusion) (x "guess not in dictionary"))
+        (list
+            "krunk_bob_handler_guess"
+            guess
+            val_guess
+            guess_hash
+            val_clue
+            clue_hash
+            21
+            0
+            (curry krunk_bob_handler_clue DICTIONARY)
+            0
+        )
+    )
 )
 
-; their-turn: Bob processes Alice's clue (or reveal). When there's a reveal,
-; the special check is Alice's word being in the dictionary; possible evidence
-; is indices of provably-wrong Alice clues. readable_move is the clue (and
-; optionally Alice's word on reveal). Next turn handler is bob_handler_guess
-; or nil if done.
-;
-; TODO: not implemented.
-(defun krunk_bob_handler_clue (amount pre_state state move validation_info_hash mover_share)
-    (x "TODO: krunk_bob_handler_clue not implemented")
+(defconst KRUNK_EVIDENCE_INDICES (li 0 1 2 3 4))
+
+(defun krunk_bob_handler_clue (DICTIONARY amount pre_state state move validation_info_hash mover_share)
+    (assign
+        (bob_guesses alice_clues alice_commit) state
+        (if (= (strlen move) 1)
+            (list
+                (expand_clue move)
+                0
+                (curry krunk_bob_handler_guess DICTIONARY)
+            )
+            (assign
+                word (substr move 16 21)
+                exclusion (assert_word_in_dictionary DICTIONARY word)
+                (if exclusion
+                    (list 0 (li exclusion) 0)
+                    (list
+                        (li word (make_clue word (f bob_guesses)))
+                        0
+                        KRUNK_EVIDENCE_INDICES
+                        0
+                    )
+                )
+            )
+        )
+    )
 )
