@@ -226,6 +226,8 @@ export class WasmBlobWrapper {
 
   getWasmConnection(): WasmConnection | undefined { return this.wc; }
 
+  hasCradle(): boolean { return this.cradle !== undefined; }
+
   isChannelReady(): boolean { return this.channelReady; }
 
   getObservable() {

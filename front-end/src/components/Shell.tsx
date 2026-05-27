@@ -953,6 +953,24 @@ const Shell = () => {
     }
   }, [peerConnected, sessionPhase, gameParams?.restoring]);
 
+  // Clear `restoring` once the WASM cradle has been (re)attached. After this
+  // moment the cascade rule above is safe to fire on a genuine peer loss.
+  useEffect(() => {
+    if (!gameParams?.restoring) return;
+    const clearIfReady = () => {
+      if (blobSingleton?.hasCradle()) {
+        setGameParams(prev => (prev ? { ...prev, restoring: false } : prev));
+        return true;
+      }
+      return false;
+    };
+    if (clearIfReady()) return;
+    const id = setInterval(() => {
+      if (clearIfReady()) clearInterval(id);
+    }, 200);
+    return () => clearInterval(id);
+  }, [gameParams?.restoring]);
+
   const handleTabChange = useCallback((tabId: TabId) => {
     setActiveTab(tabId);
     if (tabId === 'chat') setUnreadChat(false);
