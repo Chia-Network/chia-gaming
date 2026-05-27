@@ -2,8 +2,8 @@
 # Build all deployable artifacts and package them into tarballs.
 #
 # Outputs (in the repo root):
-#   chia-gaming-YYYYMMDD-HASH.tgz       — player app (static files)
-#   chia-gaming-lobby-YYYYMMDD-HASH.tgz  — lobby frontend + service
+#   chia-gaming-YYYYMMDD-HASH.tgz/.zip       — player app (static files)
+#   chia-gaming-lobby-YYYYMMDD-HASH.tgz/.zip — lobby frontend + service
 #
 # See DEPLOYING.md for the full build/deploy guide.
 set -e
@@ -58,7 +58,9 @@ DATE=$(date +%Y%m%d)
 HASH=$(git -C "$ROOT_DIR" rev-parse --short=6 HEAD)
 TAG="${PLATFORM:+${PLATFORM}-}${DATE}-${HASH}"
 GAME_TARBALL="chia-gaming-${TAG}.tgz"
+GAME_ZIP="chia-gaming-${TAG}.zip"
 LOBBY_TARBALL="chia-gaming-lobby-${TAG}.tgz"
+LOBBY_ZIP="chia-gaming-lobby-${TAG}.zip"
 
 # macOS wasm32 clang workaround
 if [ -x /opt/homebrew/opt/llvm/bin/clang ]; then
@@ -127,8 +129,9 @@ find "$CLSP_DIR" -name '*.hex' | while read -r hex; do
     cp "$hex" "$NONCE_DIR/clsp/$rel"
 done
 
-echo "=== Creating $GAME_TARBALL ==="
+echo "=== Creating $GAME_TARBALL and $GAME_ZIP ==="
 tar -czf "$ROOT_DIR/$GAME_TARBALL" -C "$GAME_STAGE" .
+(cd "$GAME_STAGE" && zip -rq "$ROOT_DIR/$GAME_ZIP" .)
 rm -rf "$GAME_STAGE"
 
 # ── Assemble lobby staging tree ──────────────────────────────────────
@@ -147,8 +150,9 @@ cp "$LOBBY_FRONTEND_DIR/dist/css/index.css"    "$LOBBY_NONCE_DIR/index.css"
 
 cp "$LOBBY_SERVICE_DIR/dist/index-rollup.cjs"  "$LOBBY_STAGE/service.js"
 
-echo "=== Creating $LOBBY_TARBALL ==="
+echo "=== Creating $LOBBY_TARBALL and $LOBBY_ZIP ==="
 tar -czf "$ROOT_DIR/$LOBBY_TARBALL" -C "$LOBBY_STAGE" .
+(cd "$LOBBY_STAGE" && zip -rq "$ROOT_DIR/$LOBBY_ZIP" .)
 rm -rf "$LOBBY_STAGE"
 
 # ── Done ─────────────────────────────────────────────────────────────
@@ -157,7 +161,9 @@ echo ""
 echo "════════════════════════════════════════════════════════"
 echo "  Artifacts:"
 echo "    $ROOT_DIR/$GAME_TARBALL"
+echo "    $ROOT_DIR/$GAME_ZIP"
 echo "    $ROOT_DIR/$LOBBY_TARBALL"
+echo "    $ROOT_DIR/$LOBBY_ZIP"
 echo "════════════════════════════════════════════════════════"
 
 ABORTED=0

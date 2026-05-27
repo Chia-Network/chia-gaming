@@ -101,14 +101,18 @@ jobs:
           export PATH=~/.cargo/bin:$PATH
           tools/build-deploy.sh --platform=macos
 
-      - name: Upload player app tarball
+      - name: Upload player app artifacts
         uses: actions/upload-artifact@v4
         with:
           name: chia-gaming-macos
-          path: chia-gaming-macos-*.tgz
+          path: |
+            chia-gaming-macos-*.tgz
+            chia-gaming-macos-*.zip
 
-      - name: Upload lobby tarball
+      - name: Upload lobby artifacts
         uses: actions/upload-artifact@v4
         with:
           name: chia-gaming-lobby-macos
-          path: chia-gaming-lobby-macos-*.tgz
+          path: |
+            chia-gaming-lobby-macos-*.tgz
+            chia-gaming-lobby-macos-*.zip

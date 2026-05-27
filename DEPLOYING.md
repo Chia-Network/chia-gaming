@@ -51,15 +51,19 @@ Press Ctrl-C to stop all services.
 
 ## Building Tarballs
 
-`tools/build-deploy.sh` runs all build steps below and packages two tarballs:
+`tools/build-deploy.sh` runs all build steps below and packages the results:
 
 ```bash
 ./tools/build-deploy.sh
 ```
 
-This produces `chia-gaming-YYYYMMDD-HASH.tgz` (player app) and
-`chia-gaming-lobby-YYYYMMDD-HASH.tgz` (lobby frontend + service) in the repo
-root, ready to extract onto their respective servers.
+This produces four files in the repo root (tgz and zip of each artifact):
+
+- `chia-gaming-YYYYMMDD-HASH.tgz` / `.zip` — player app
+- `chia-gaming-lobby-YYYYMMDD-HASH.tgz` / `.zip` — lobby frontend + service
+
+Both formats have identical contents, ready to extract onto their respective
+servers.
 
 ## Building Step by Step
 
