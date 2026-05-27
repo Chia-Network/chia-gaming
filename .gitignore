@@ -33,6 +33,10 @@ target/
 .pnpm-store/
 pnpm-store/
 
+# Deploy output
+deploy_player_app/
+deploy_tracker/
+
 # macos
 .DS_Store
 

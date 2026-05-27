@@ -131,8 +131,9 @@ find "$CLSP_DIR" -name '*.hex' | while read -r hex; do
 done
 
 echo "=== Creating $GAME_TARBALL and $GAME_ZIP ==="
-tar -czf "$ROOT_DIR/$GAME_TARBALL" -C "$GAME_STAGE" .
-(cd "$GAME_STAGE" && zip -rq "$ROOT_DIR/$GAME_ZIP" .)
+mkdir -p "$ROOT_DIR/deploy_player_app"
+tar -czf "$ROOT_DIR/deploy_player_app/$GAME_TARBALL" -C "$GAME_STAGE" .
+(cd "$GAME_STAGE" && zip -rq "$ROOT_DIR/deploy_player_app/$GAME_ZIP" .)
 rm -rf "$GAME_STAGE"
 
 # ── Assemble lobby staging tree ──────────────────────────────────────
@@ -152,8 +153,9 @@ cp "$LOBBY_FRONTEND_DIR/dist/css/index.css"    "$LOBBY_NONCE_DIR/index.css"
 cp "$LOBBY_SERVICE_DIR/dist/index-rollup.cjs"  "$LOBBY_STAGE/service.js"
 
 echo "=== Creating $LOBBY_TARBALL and $LOBBY_ZIP ==="
-tar -czf "$ROOT_DIR/$LOBBY_TARBALL" -C "$LOBBY_STAGE" .
-(cd "$LOBBY_STAGE" && zip -rq "$ROOT_DIR/$LOBBY_ZIP" .)
+mkdir -p "$ROOT_DIR/deploy_tracker"
+tar -czf "$ROOT_DIR/deploy_tracker/$LOBBY_TARBALL" -C "$LOBBY_STAGE" .
+(cd "$LOBBY_STAGE" && zip -rq "$ROOT_DIR/deploy_tracker/$LOBBY_ZIP" .)
 rm -rf "$LOBBY_STAGE"
 
 # ── Done ─────────────────────────────────────────────────────────────
@@ -161,10 +163,10 @@ rm -rf "$LOBBY_STAGE"
 echo ""
 echo "════════════════════════════════════════════════════════"
 echo "  Artifacts:"
-echo "    $ROOT_DIR/$GAME_TARBALL"
-echo "    $ROOT_DIR/$GAME_ZIP"
-echo "    $ROOT_DIR/$LOBBY_TARBALL"
-echo "    $ROOT_DIR/$LOBBY_ZIP"
+echo "    $ROOT_DIR/deploy_player_app/$GAME_TARBALL"
+echo "    $ROOT_DIR/deploy_player_app/$GAME_ZIP"
+echo "    $ROOT_DIR/deploy_tracker/$LOBBY_TARBALL"
+echo "    $ROOT_DIR/deploy_tracker/$LOBBY_ZIP"
 echo "════════════════════════════════════════════════════════"
 
 ABORTED=0

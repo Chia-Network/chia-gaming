@@ -60,10 +60,10 @@ Press Ctrl-C to stop all services.
 ./tools/build-deploy.sh
 ```
 
-This produces four files in the repo root (tgz and zip of each artifact):
+This produces four files in subdirectories (tgz and zip of each artifact):
 
-- `chia-gaming-YYYYMMDD-HASH.tgz` / `.zip` — player app
-- `chia-gaming-lobby-YYYYMMDD-HASH.tgz` / `.zip` — lobby frontend + service
+- `deploy_player_app/chia-gaming-YYYYMMDD-HASH.tgz` / `.zip` — player app
+- `deploy_tracker/chia-gaming-lobby-YYYYMMDD-HASH.tgz` / `.zip` — lobby frontend + service
 
 Both formats have identical contents, ready to extract onto their respective
 servers.
@@ -220,14 +220,16 @@ PORT=3003 node lobby/lobby-service/dist/index-rollup.cjs \
 | `PORT`      | no       | Listen port (default `5801` — conflicts with the simulator; always override when running both) |
 
 
-### Simulator (development only)
+### Simulator (development only, from repo checkout)
 
 ```bash
 ./target/debug/chia-gaming-sim
 ```
 
-Ports 5800 (HTTP) and 5801 (WebSocket) are hardcoded. Not used in production;
-players connect to a real Chia wallet via WalletConnect.
+Ports 5800 (HTTP) and 5801 (WebSocket) are hardcoded. The simulator binary
+is built by `cargo build --features sim-server` and is not included in the
+tarballs. Not used in production; players connect to a real Chia wallet via
+WalletConnect.
 
 ## Production Notes
 
