@@ -4,10 +4,10 @@ This guide covers building and running the two deployable artifacts:
 
 1. **Player app** — fully static HTML/JS/CSS/WASM served from any web server.
 2. **Tracker** — Express + WebSocket service that provides the lobby UI (iframe)
-   and relays game messages between peers.
+  and relays game messages between peers.
 
-For architecture details, see [`FRONTEND_ARCHITECTURE.md`](FRONTEND_ARCHITECTURE.md).
-For the Rust test suite, see [`DEBUGGING_GUIDE.md`](DEBUGGING_GUIDE.md).
+For architecture details, see `[FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md)`.
+For the Rust test suite, see `[DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)`.
 
 ## Prerequisites
 
@@ -21,13 +21,13 @@ For the Rust test suite, see [`DEBUGGING_GUIDE.md`](DEBUGGING_GUIDE.md).
   ```
 - **Node 20+** and **pnpm 10.33**:
   ```bash
-  corepack enable
-  corepack prepare pnpm@10.33.0 --activate
+  brew install node@20        # or download from https://nodejs.org
+  npm install -g pnpm@10.33.0
   ```
 - **macOS only** — Homebrew LLVM for WASM builds. If present, build scripts
-  automatically set `CC_wasm32_unknown_unknown` and `AR_wasm32_unknown_unknown`
-  to the Homebrew LLVM paths. Install with `brew install llvm` if WASM builds
-  fail with clang errors.
+automatically set `CC_wasm32_unknown_unknown` and `AR_wasm32_unknown_unknown`
+to the Homebrew LLVM paths. Install with `brew install llvm` if WASM builds
+fail with clang errors.
 
 ## Quick Start (Local Demo)
 
@@ -37,13 +37,16 @@ For the Rust test suite, see [`DEBUGGING_GUIDE.md`](DEBUGGING_GUIDE.md).
 ./run-local-demo.sh
 ```
 
-| Service    | Default URL              | Override env var |
-|------------|--------------------------|------------------|
-| Player app | `http://localhost:3002`  | `GAME_PORT`      |
-| Tracker    | `http://localhost:3003`  | `TRACKER_PORT`   |
-| Simulator  | `http://localhost:5800`  | (hardcoded)      |
+
+| Service    | Default URL             | Override env var |
+| ---------- | ----------------------- | ---------------- |
+| Player app | `http://localhost:3002` | `GAME_PORT`      |
+| Tracker    | `http://localhost:3003` | `TRACKER_PORT`   |
+| Simulator  | `http://localhost:5800` | (hardcoded)      |
+
 
 Flags:
+
 - `--skip-build` — skip all build steps, use existing artifacts.
 - `--force-build` — `cargo clean` before building.
 
@@ -69,7 +72,7 @@ servers.
 
 For CI, production, or partial rebuilds. Run commands from the repo root
 unless noted. The CI workflow
-[`.github/workflows/frontend.yml`](.github/workflows/frontend.yml) is the
+`[.github/workflows/frontend.yml](.github/workflows/frontend.yml)` is the
 canonical reference for the full build sequence.
 
 ### 1. Chialisp (.hex files)
@@ -137,38 +140,38 @@ trees; for production, copy the files instead.
 ### Player app
 
 ```
-serve/
-  index.html              ← front-end/public/index.html
-  build-meta.json         ← {"basePath":"/app/NONCE/"}
-  favicon.svg             ← front-end/public/favicon.svg (if present)
-  app/
-    NONCE/
-      index.js            ← front-end/dist/js/index-rollup.js
-      index.css           ← front-end/dist/css/index.css
-      chia_gaming_wasm.js ← front-end/dist/chia_gaming_wasm.js
-      chia_gaming_wasm_bg.wasm ← front-end/dist/chia_gaming_wasm_bg.wasm
-      clsp/               ← clsp/ directory (compiled .hex files)
-      images/             ← front-end/public/images/ (if present)
+index.html              ← front-end/public/index.html
+local-static-test-server.js ← local-static-test-server.js
+build-meta.json         ← {"basePath":"/app/NONCE/"}
+favicon.svg             ← front-end/public/favicon.svg (if present)
+app/
+  NONCE/
+    index.js            ← front-end/dist/js/index-rollup.js
+    index.css           ← front-end/dist/css/index.css
+    chia_gaming_wasm.js ← front-end/dist/chia_gaming_wasm.js
+    chia_gaming_wasm_bg.wasm ← front-end/dist/chia_gaming_wasm_bg.wasm
+    clsp/               ← clsp/ directory (compiled .hex files)
+    images/             ← front-end/public/images/ (if present)
 ```
 
 ### Lobby
 
 ```
-serve/
-  index.html              ← lobby/lobby-frontend/public/index.html
-  build-meta.json         ← {"basePath":"/app/NONCE/"}
-  app/
-    NONCE/
-      index.js            ← lobby/lobby-frontend/public/index.js
-      index.css           ← lobby/lobby-frontend/dist/css/index.css
+index.html              ← lobby/lobby-frontend/public/index.html
+build-meta.json         ← {"basePath":"/app/NONCE/"}
+service.js              ← lobby/lobby-service/dist/index-rollup.cjs
+app/
+  NONCE/
+    index.js            ← lobby/lobby-frontend/public/index.js
+    index.css           ← lobby/lobby-frontend/dist/css/index.css
 ```
 
 ### Caching rules
 
-- `index.html` and `build-meta.json`: **`Cache-Control: no-store`** (must
-  always be fresh so the app picks up new nonces).
-- Everything under `/app/`: **`Cache-Control: public, max-age=31536000, immutable`**
-  (content-addressed by nonce, never changes).
+- `index.html` and `build-meta.json`: `**Cache-Control: no-store**` (must
+always be fresh so the app picks up new nonces).
+- Everything under `/app/`: `**Cache-Control: public, max-age=31536000, immutable**`
+(content-addressed by nonce, never changes).
 
 ## Running the Services
 
@@ -176,14 +179,21 @@ serve/
 
 Any static file server. No server-side logic required.
 For example:
-`bash
-cd player/serve
-python3 -m http.server 8080
-`
 
-**Development:**
 ```bash
-node local-static-test-server.js /path/to/player-serve 3002
+python3 -m http.server 8080
+```
+
+**Development (from repo checkout):**
+
+```bash
+node local-static-test-server.js front-end/serve 3002
+```
+
+**Development (from extracted tarball):**
+
+```bash
+node local-static-test-server.js . 3002
 ```
 
 **Production:** Serve the staging directory with nginx, Caddy,
@@ -191,19 +201,30 @@ S3 + CloudFront, or any static host. Apply the caching rules above.
 
 ### Tracker (lobby service)
 
+From an extracted lobby tarball:
+
+```bash
+PORT=3003 node service.js \
+  --self 'http://localhost:3003' \
+  --dir .
+```
+
+Or from the repo checkout:
+
 ```bash
 PORT=3003 node lobby/lobby-service/dist/index-rollup.cjs \
   --self 'http://localhost:3003' \
-  --dir /path/to/lobby-serve
+  --dir lobby/lobby-frontend/serve
 ```
 
-| Flag / env  | Required | Purpose |
-|-------------|----------|---------|
-| `--self`    | yes      | Public HTTP origin of this tracker (used for CSP headers and WebSocket URL derivation) |
-| `--dir`     | yes      | Root directory to serve static lobby files from |
-| `--sim`     | no       | Simulator URL, default `http://localhost:5800` |
-| `--verbose` | no       | Verbose logging |
+
+| Flag / env  | Required | Purpose                                                                                        |
+| ----------- | -------- | ---------------------------------------------------------------------------------------------- |
+| `--self`    | yes      | Public HTTP origin of this tracker (used for WebSocket URL derivation)                         |
+| `--dir`     | yes      | Root directory to serve static lobby files from                                                |
+| `--verbose` | no       | Verbose logging                                                                                |
 | `PORT`      | no       | Listen port (default `5801` — conflicts with the simulator; always override when running both) |
+
 
 ### Simulator (development only)
 
@@ -217,26 +238,22 @@ players connect to a real Chia wallet via WalletConnect.
 ## Production Notes
 
 - **Separate origins.** The player app and tracker must be served from
-  different origins. The lobby loads inside an iframe from the tracker's
-  origin; same-origin would break the security boundary.
-
+different origins. The lobby loads inside an iframe from the tracker's
+origin; same-origin would break the security boundary.
 - **Asset co-location.** WASM files and `.hex` chialisp files must be
-  under the same `basePath` as `index.js`. The WASM module fetches `.hex`
-  files via relative HTTP paths at runtime.
-
-- **`--self` must match the public URL.** The tracker uses it to generate
-  CSP headers and derive WebSocket URLs. Mismatches cause connection
-  failures or blocked frames.
-
+under the same `basePath` as `index.js`. The WASM module fetches `.hex`
+files via relative HTTP paths at runtime.
+- `**--self` must match the public URL.** The tracker uses it to generate
+CSP headers and derive WebSocket URLs. Mismatches cause connection
+failures or blocked frames.
 - **No simulator.** In production there is no simulator. Players connect
-  their Chia wallet via WalletConnect and play against real XCH.
-
+their Chia wallet via WalletConnect and play against real XCH.
 - **CI artifacts.** The
-  [frontend workflow](.github/workflows/frontend.yml) produces two
-  downloadable artifacts on each build:
+[frontend workflow](.github/workflows/frontend.yml) produces two
+downloadable artifacts on each build:
   - `chia-gaming-frontend` — player app files (`dist/`, `public/`, `clsp/`)
   - `chia-gaming-lobby` — lobby frontend files (`public/`, `dist/css/`) and
-    the tracker service (`service.js`, a copy of `index-rollup.cjs`)
+  the tracker service (`service.js`, a copy of `index-rollup.cjs`)
 
 ## Troubleshooting
 

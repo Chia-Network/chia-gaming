@@ -113,6 +113,7 @@ mkdir -p "$NONCE_DIR"
 
 cp "$FE_DIR/public/index.html" "$GAME_STAGE/index.html"
 [ -f "$FE_DIR/public/favicon.svg" ] && cp "$FE_DIR/public/favicon.svg" "$GAME_STAGE/favicon.svg"
+cp "$ROOT_DIR/local-static-test-server.js" "$GAME_STAGE/local-static-test-server.js"
 echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$GAME_STAGE/build-meta.json"
 
 cp "$FE_DIR/dist/js/index-rollup.js"          "$NONCE_DIR/index.js"

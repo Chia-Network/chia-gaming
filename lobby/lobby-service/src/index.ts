@@ -2,7 +2,6 @@ import { createServer } from 'http';
 
 import cors from 'cors';
 import express from 'express';
-import helmet from 'helmet';
 import minimist from 'minimist';
 import { WebSocketServer, WebSocket } from 'ws';
 
@@ -22,9 +21,6 @@ function parseArgs() {
 }
 
 const args = parseArgs();
-const selfWs = String(args.self).replace(/^http/i, 'ws');
-const simUrl = String(args.sim || 'http://localhost:5800');
-const simWsUrl = simUrl.replace(/^http/i, 'ws').replace(/:5800\b/, ':5801');
 const verbose = Boolean(args.verbose);
 
 type RelayPayload =
@@ -118,35 +114,6 @@ function relayPayloadKind(data: RelayPayload): 'keepalive' | 'ack' {
   if ('keepalive' in data) return 'keepalive';
   return 'ack';
 }
-
-app.use(
-  helmet({
-    frameguard: false,
-    crossOriginOpenerPolicy: false,
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'", 'https://explorer-api.walletconnect.com'],
-        scriptSrc: ["'self'", "'wasm-unsafe-eval'", "'unsafe-inline'"],
-        connectSrc: [
-          "'self'",
-          'https://explorer-api.walletconnect.com',
-          'wss://relay.walletconnect.com',
-          'https://verify.walletconnect.org',
-          'https://api.coinset.org',
-          'wss://api.coinset.org',
-          simUrl,
-          simWsUrl,
-          'wss://relay.walletconnect.org',
-          args.self,
-          selfWs,
-        ],
-        frameSrc: ["'self'", 'https://verify.walletconnect.org', args.self],
-        frameAncestors: ["'self'", '*'],
-        upgradeInsecureRequests: null,
-      },
-    },
-  }),
-);
 
 app.use(
   cors({
