@@ -943,12 +943,15 @@ const Shell = () => {
   }, [sessionPhase]);
 
   // Cascade rule: off-chain session without a peer must immediately go on-chain.
+  // Suppress during restoration: the WASM cradle isn't ready yet, and the
+  // peerConnected=false / off-chain combo is a transient artifact of resume,
+  // not a real peer loss.
   useEffect(() => {
-    if (peerConnected === false && sessionPhase === 'off-chain') {
+    if (peerConnected === false && sessionPhase === 'off-chain' && !gameParams?.restoring) {
       console.log('[Shell] peer lost while off-chain, auto going on-chain');
       blobSingleton?.goOnChain();
     }
-  }, [peerConnected, sessionPhase]);
+  }, [peerConnected, sessionPhase, gameParams?.restoring]);
 
   const handleTabChange = useCallback((tabId: TabId) => {
     setActiveTab(tabId);
