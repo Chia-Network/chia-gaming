@@ -88,7 +88,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     echo "=== Building gaming frontend ==="
     (cd "$FE_DIR" && pnpm install --frozen-lockfile && pnpm run build)
     echo "=== Building lobby-frontend ==="
-    (cd "$SCRIPT_DIR/lobby" && pnpm install --frozen-lockfile)
+    (cd "$SCRIPT_DIR/lobby" && pnpm install --frozen-lockfile --ignore-scripts)
     (cd "$LOBBY_FRONTEND_DIR" && pnpm run build)
     echo "=== Building lobby-service ==="
     (cd "$LOBBY_SERVICE_DIR" && pnpm run build)

@@ -68,7 +68,7 @@ This produces four files in the repo root (tgz and zip of each artifact):
 Both formats have identical contents, ready to extract onto their respective
 servers.
 
-## Building Step by Step
+## Building Step by Steppr
 
 For CI, production, or partial rebuilds. Run commands from the repo root
 unless noted. The CI workflow
@@ -166,13 +166,6 @@ app/
     index.css           ← lobby/lobby-frontend/dist/css/index.css
 ```
 
-### Caching rules
-
-- `index.html` and `build-meta.json`: `**Cache-Control: no-store**` (must
-always be fresh so the app picks up new nonces).
-- Everything under `/app/`: `**Cache-Control: public, max-age=31536000, immutable**`
-(content-addressed by nonce, never changes).
-
 ## Running the Services
 
 ### Player app
@@ -181,7 +174,7 @@ Any static file server. No server-side logic required.
 For example:
 
 ```bash
-python3 -m http.server 8080
+python3 -m http.server 3002
 ```
 
 **Development (from repo checkout):**
@@ -197,7 +190,8 @@ node local-static-test-server.js . 3002
 ```
 
 **Production:** Serve the staging directory with nginx, Caddy,
-S3 + CloudFront, or any static host. Apply the caching rules above.
+S3 + CloudFront, or any static host. Apply the caching rules in
+[Production Notes](#production-notes).
 
 ### Tracker (lobby service)
 
@@ -243,9 +237,16 @@ origin; same-origin would break the security boundary.
 - **Asset co-location.** WASM files and `.hex` chialisp files must be
 under the same `basePath` as `index.js`. The WASM module fetches `.hex`
 files via relative HTTP paths at runtime.
-- `**--self` must match the public URL.** The tracker uses it to generate
-CSP headers and derive WebSocket URLs. Mismatches cause connection
-failures or blocked frames.
+- `**--self` must match the public URL.** The tracker uses it to derive
+WebSocket URLs. Mismatches cause connection failures.
+- **Caching rules.** Configure your production web server (nginx, Caddy,
+CloudFront, etc.) with these headers. The dev servers
+(`local-static-test-server.js` and the tracker service) already apply
+them automatically.
+  - `index.html` and `build-meta.json`: `**Cache-Control: no-store`** (must
+  always be fresh so the app picks up new nonces).
+  - Everything under `/app/`: `**Cache-Control: public, max-age=31536000, immutable**`
+  (content-addressed by nonce, never changes).
 - **No simulator.** In production there is no simulator. Players connect
 their Chia wallet via WalletConnect and play against real XCH.
 - **CI artifacts.** The
