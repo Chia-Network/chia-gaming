@@ -175,6 +175,11 @@ serve/
 ### Player app
 
 Any static file server. No server-side logic required.
+For example:
+`bash
+cd player/serve
+python3 -m http.server 8080
+`
 
 **Development:**
 ```bash
