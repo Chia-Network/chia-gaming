@@ -82,6 +82,7 @@ fi
 if [ "$SKIP_BUILD" -eq 0 ]; then
     echo "=== Building simulator + chialisp (if needed) ==="
     cargo build --features sim-server --bin chia-gaming-sim
+    ./tools/build-chialisp.sh
     echo "=== Building WASM (web target) ==="
     (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/dist" --dev --target=web)
     echo "=== Building gaming frontend ==="
@@ -98,37 +99,40 @@ fi
 BUILD_NONCE=$(date +%s%3N)
 echo "=== Build nonce: $BUILD_NONCE ==="
 
-echo "=== Assembling player app staging directory (symlinks) ==="
+echo "=== Assembling player app staging directory ==="
 GAME_SERVE="$FE_DIR/serve"
 rm -rf "$GAME_SERVE"
 mkdir -p "$GAME_SERVE/app/$BUILD_NONCE"
-ln -sf "$FE_DIR/public/index.html" "$GAME_SERVE/index.html"
+cp "$FE_DIR/public/index.html" "$GAME_SERVE/index.html"
 if [ -f "$FE_DIR/public/favicon.svg" ]; then
-    ln -sf "$FE_DIR/public/favicon.svg" "$GAME_SERVE/favicon.svg"
+    cp "$FE_DIR/public/favicon.svg" "$GAME_SERVE/favicon.svg"
 fi
 echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$GAME_SERVE/build-meta.json"
 GAME_NONCE_DIR="$GAME_SERVE/app/$BUILD_NONCE"
-ln -sf "$FE_DIR/dist/js/index-rollup.js" "$GAME_NONCE_DIR/index.js"
-ln -sf "$FE_DIR/dist/js/index-rollup.js.map" "$GAME_NONCE_DIR/index-rollup.js.map"
-ln -sf "$FE_DIR/dist/css/index.css" "$GAME_NONCE_DIR/index.css"
-ln -sf "$FE_DIR/dist/chia_gaming_wasm.js" "$GAME_NONCE_DIR/chia_gaming_wasm.js"
-ln -sf "$FE_DIR/dist/chia_gaming_wasm_bg.wasm" "$GAME_NONCE_DIR/chia_gaming_wasm_bg.wasm"
+cp "$FE_DIR/dist/js/index-rollup.js" "$GAME_NONCE_DIR/index.js"
+cp "$FE_DIR/dist/js/index-rollup.js.map" "$GAME_NONCE_DIR/index-rollup.js.map"
+cp "$FE_DIR/dist/css/index.css" "$GAME_NONCE_DIR/index.css"
+cp "$FE_DIR/dist/chia_gaming_wasm.js" "$GAME_NONCE_DIR/chia_gaming_wasm.js"
+cp "$FE_DIR/dist/chia_gaming_wasm_bg.wasm" "$GAME_NONCE_DIR/chia_gaming_wasm_bg.wasm"
 echo '{"version":3,"sources":[],"mappings":""}' > "$GAME_NONCE_DIR/chia_gaming_wasm_bg.wasm.map"
 echo "{\"tracker\": \"http://localhost:$TRACKER_PORT\"}" > "$GAME_NONCE_DIR/urls"
-ln -sf "$CLSP_DIR" "$GAME_NONCE_DIR/clsp"
+(cd "$CLSP_DIR" && find . -name '*.hex' | while read -r f; do
+    mkdir -p "$GAME_NONCE_DIR/clsp/$(dirname "$f")"
+    cp "$f" "$GAME_NONCE_DIR/clsp/$f"
+done)
 if [ -d "$FE_DIR/public/images" ]; then
-    ln -sf "$FE_DIR/public/images" "$GAME_NONCE_DIR/images"
+    cp -r "$FE_DIR/public/images" "$GAME_NONCE_DIR/images"
 fi
 
-echo "=== Assembling lobby-frontend staging directory (symlinks) ==="
+echo "=== Assembling lobby-frontend staging directory ==="
 LOBBY_SERVE="$LOBBY_FRONTEND_DIR/serve"
 rm -rf "$LOBBY_SERVE"
 mkdir -p "$LOBBY_SERVE/app/$BUILD_NONCE"
-ln -sf "$LOBBY_FRONTEND_DIR/public/index.html" "$LOBBY_SERVE/index.html"
+cp "$LOBBY_FRONTEND_DIR/public/index.html" "$LOBBY_SERVE/index.html"
 echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$LOBBY_SERVE/build-meta.json"
 LOBBY_NONCE_DIR="$LOBBY_SERVE/app/$BUILD_NONCE"
-ln -sf "$LOBBY_FRONTEND_DIR/public/index.js" "$LOBBY_NONCE_DIR/index.js"
-ln -sf "$LOBBY_FRONTEND_DIR/dist/css/index.css" "$LOBBY_NONCE_DIR/index.css"
+cp "$LOBBY_FRONTEND_DIR/public/index.js" "$LOBBY_NONCE_DIR/index.js"
+cp "$LOBBY_FRONTEND_DIR/dist/css/index.css" "$LOBBY_NONCE_DIR/index.css"
 
 # ── Start services ──────────────────────────────────────────────────
 

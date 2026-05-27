@@ -142,9 +142,7 @@ describe('event routing', () => {
 
     const params: MatchedParams = {
       token: 'tok',
-      game_type: 'calpoker',
       amount: '100',
-      per_game: '10',
       i_am_initiator: true,
     };
     MockWebSocket.instance!._fire({ type: 'matched', ...params });

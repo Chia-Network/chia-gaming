@@ -16,7 +16,7 @@ import { Subscription } from 'rxjs';
 import {
   WasmStateInit,
   storeInitArgs,
-  loadCalpoker,
+  loadGameHexes,
 } from '../../hooks/WasmStateInit';
 import { getSearchParams, empty, getRandomInt, getEvenHexString } from '../../util';
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
@@ -238,8 +238,8 @@ async function initWasmBlobWrapper(
     peer_conn,
   );
 
-  let calpokerHexes = await loadCalpoker(fetchHex);
-  await configGameObject(gameObject, iStarted, wasmStateInit, calpokerHexes, blockchain, uniqueId, amount);
+  let gameHexes = await loadGameHexes(fetchHex);
+  await configGameObject(gameObject, iStarted, wasmStateInit, gameHexes, blockchain, uniqueId, amount);
 
   return gameObject;
 }

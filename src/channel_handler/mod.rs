@@ -35,7 +35,7 @@ use crate::common::types::{
     CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey, Puzzle,
     PuzzleHash, Sha256tree, Spend, Timeout,
 };
-use crate::referee::types::{GameMoveDetails, TheirTurnCoinSpentResult};
+use crate::referee::types::{GameMoveDetails, ParsedRefereeSolution, TheirTurnCoinSpentResult};
 use crate::referee::Referee;
 
 /// A channel handler runs the game by facilitating the phases of game startup
@@ -1993,6 +1993,7 @@ impl ChannelHandler {
         game_id: &GameID,
         coin_string: &CoinString,
         conditions: &[CoinCondition],
+        parsed_solution: &ParsedRefereeSolution,
     ) -> Result<CoinSpentInformation, Error> {
         let reward_puzzle_hash = self.get_reward_puzzle_hash(env)?;
 
@@ -2041,6 +2042,7 @@ impl ChannelHandler {
             coin_string,
             conditions,
             state_number,
+            parsed_solution,
         )?;
         Ok(CoinSpentInformation::TheirSpend(spent_result))
     }

@@ -283,6 +283,7 @@ function isTerminalStatus(status: GameStatusState): boolean {
 }
 
 export interface HandTerms {
+  gameType: string;
   myContribution: bigint;
   theirContribution: bigint;
 }
@@ -298,10 +299,27 @@ export type BetweenHandMode =
   | 'review-incoming-proposal';
 
 function termsEqual(a: HandTerms | null, b: HandTerms | null): boolean {
-  return !!a && !!b && a.myContribution === b.myContribution && a.theirContribution === b.theirContribution;
+  return !!a && !!b && a.gameType === b.gameType && a.myContribution === b.myContribution && a.theirContribution === b.theirContribution;
 }
 
-function parseTermsFromNotificationValue(value: unknown): HandTerms | null {
+function hexToString(hex: string): string {
+  const bytes = [];
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes.push(parseInt(hex.substring(i, i + 2), 16));
+  }
+  return String.fromCharCode(...bytes);
+}
+
+function parseGameTypeFromNotification(value: Record<string, unknown>): string {
+  const raw = value.game_type;
+  if (typeof raw === 'string' && raw.length > 0) {
+    if (/^[0-9a-f]+$/i.test(raw)) return hexToString(raw);
+    return raw;
+  }
+  return 'calpoker';
+}
+
+function parseTermsFromNotificationValue(value: unknown, gameType?: string): HandTerms | null {
   if (typeof value !== 'object' || value === null) return null;
   const obj = value as Record<string, unknown>;
   const mine = parseAmount(obj.my_contribution);
@@ -309,6 +327,7 @@ function parseTermsFromNotificationValue(value: unknown): HandTerms | null {
   if (!mine || !theirs) return null;
   try {
     return {
+      gameType: gameType ?? parseGameTypeFromNotification(obj),
       myContribution: BigInt(mine),
       theirContribution: BigInt(theirs),
     };
@@ -321,7 +340,8 @@ function parseIncomingProposal(value: unknown): BetweenHandProposal | null {
   if (typeof value !== 'object' || value === null) return null;
   const obj = value as Record<string, unknown>;
   const idRaw = obj.id;
-  const terms = parseTermsFromNotificationValue(value);
+  const gameType = parseGameTypeFromNotification(obj);
+  const terms = parseTermsFromNotificationValue(value, gameType);
   if (!terms || (typeof idRaw !== 'number' && typeof idRaw !== 'string')) return null;
   return {
     id: String(idRaw),
@@ -342,6 +362,7 @@ export interface UseGameSessionResult {
   gameTerminal: GameTerminalInfo;
   handKey: number;
   activeGameId: string | null;
+  activeGameType: string;
   displayGameId: string | null;
   gameObject: WasmBlobWrapper;
   gameplayEvent$: Observable<GameplayEvent>;
@@ -356,9 +377,11 @@ export interface UseGameSessionResult {
   chooseDoNotUseCurrentProposal: () => void;
   openComposeProposal: () => void;
   setComposePerHandAmount: (value: bigint) => void;
+  composeGameType: string;
+  setComposeGameType: (value: string) => void;
   composeProposalSent: boolean;
   newHandRequested: boolean;
-  submitComposedProposal: (perHandAmount: bigint) => void;
+  submitComposedProposal: (perHandAmount: bigint, gameType: string) => void;
   acceptReviewedProposal: () => void;
   rejectReviewedProposal: () => void;
   startCleanShutdown: () => void;
@@ -500,6 +523,9 @@ export function useGameSession(
   const [lastDisplayedGameId, setLastDisplayedGameId] = useState<string | null>(() =>
     sessionSave?.activeGameId ?? null
   );
+  const [activeGameType, setActiveGameType] = useState<string>(() =>
+    sessionSave?.activeGameType ?? 'calpoker'
+  );
   const [lastOutcome, setLastOutcome] = useState<CalpokerOutcome | undefined>(undefined);
   const restoredOutcomeWin = sessionSave?.lastOutcomeWin;
   const [betweenHandMode, setBetweenHandMode] = useState<BetweenHandMode>(() => {
@@ -516,6 +542,7 @@ export function useGameSession(
       return {
         id: saved.id,
         terms: {
+          gameType: saved.game_type ?? 'calpoker',
           myContribution: BigInt(saved.my_contribution),
           theirContribution: BigInt(saved.their_contribution),
         },
@@ -531,6 +558,7 @@ export function useGameSession(
       return {
         id: saved.id,
         terms: {
+          gameType: saved.game_type ?? 'calpoker',
           myContribution: BigInt(saved.my_contribution),
           theirContribution: BigInt(saved.their_contribution),
         },
@@ -544,6 +572,7 @@ export function useGameSession(
     if (!saved) return null;
     try {
       return {
+        gameType: saved.game_type ?? 'calpoker',
         myContribution: BigInt(saved.my_contribution),
         theirContribution: BigInt(saved.their_contribution),
       };
@@ -556,6 +585,7 @@ export function useGameSession(
     if (saved) {
       try {
         return {
+          gameType: saved.game_type ?? 'calpoker',
           myContribution: BigInt(saved.my_contribution),
           theirContribution: BigInt(saved.their_contribution),
         };
@@ -564,6 +594,7 @@ export function useGameSession(
       }
     }
     return {
+      gameType: 'calpoker',
       myContribution: perGameAmount,
       theirContribution: perGameAmount,
     };
@@ -577,6 +608,9 @@ export function useGameSession(
       return perGameAmount;
     }
   });
+  const [composeGameType, setComposeGameType] = useState<string>(() =>
+    sessionSave?.betweenHandComposeGameType ?? lastHandTerms.gameType
+  );
 
   const lastOutcomeRef = useRef<CalpokerOutcome | undefined>(undefined);
   const handKeyRef = useRef<number>((sessionSave?.activeGameId || sessionSave?.handState) ? 1 : 0);
@@ -645,6 +679,7 @@ export function useGameSession(
       history: wasm.history,
       log: wasm.log,
       activeGameId: wasm.activeGameId,
+      activeGameType,
       handState: wasm.handState,
       channelStatus: wasm.channelStatus,
       myAlias: wasm.myAlias,
@@ -668,14 +703,17 @@ export function useGameSession(
       dismissedChannelState: dismissedChannelState ?? undefined,
       betweenHandMode: betweenHandMode ?? undefined,
       betweenHandComposePerHand: composePerHandAmount.toString(),
+      betweenHandComposeGameType: composeGameType,
       betweenHandLastTerms: {
         my_contribution: lastHandTerms.myContribution.toString(),
         their_contribution: lastHandTerms.theirContribution.toString(),
+        game_type: lastHandTerms.gameType,
       },
       betweenHandRejectedOnceTerms: rejectedOnceTerms
         ? {
             my_contribution: rejectedOnceTerms.myContribution.toString(),
             their_contribution: rejectedOnceTerms.theirContribution.toString(),
+            game_type: rejectedOnceTerms.gameType,
           }
         : undefined,
       betweenHandCachedPeerProposal: cachedPeerProposal
@@ -683,6 +721,7 @@ export function useGameSession(
             id: cachedPeerProposal.id,
             my_contribution: cachedPeerProposal.terms.myContribution.toString(),
             their_contribution: cachedPeerProposal.terms.theirContribution.toString(),
+            game_type: cachedPeerProposal.terms.gameType,
           }
         : undefined,
       betweenHandReviewPeerProposal: reviewPeerProposal
@@ -690,13 +729,15 @@ export function useGameSession(
             id: reviewPeerProposal.id,
             my_contribution: reviewPeerProposal.terms.myContribution.toString(),
             their_contribution: reviewPeerProposal.terms.theirContribution.toString(),
+            game_type: reviewPeerProposal.terms.gameType,
           }
         : undefined,
     };
     saveSession(save);
   }, [
     gameCoin, gameTerminal, myRunningBalance, betweenHandMode,
-    composePerHandAmount, lastHandTerms, rejectedOnceTerms,
+    composePerHandAmount, composeGameType, lastHandTerms, rejectedOnceTerms,
+    activeGameType,
     cachedPeerProposal, reviewPeerProposal,
     channelQueue, dismissedChannelState, gameQueue,
   ]);
@@ -724,7 +765,7 @@ export function useGameSession(
     log(`[notify] proposeNewGame sending proposal myContrib=${terms.myContribution} theirContrib=${terms.theirContribution}`);
     try {
       const ids = go.proposeGame({
-        game_type: '63616c706f6b6572',
+        game_type: terms.gameType,
         timeout: 15,
         amount: terms.myContribution + terms.theirContribution,
         my_contribution: terms.myContribution,
@@ -819,9 +860,13 @@ export function useGameSession(
       if (cs.state === 'Active' && gameConnectionState.stateIdentifier !== 'running') {
         setGameConnectionState({ stateIdentifier: 'running', stateDetail: [] });
       }
-      if (cs.state === 'Active' && !firstGameAcceptedRef.current && iStarted) {
+      if (cs.state === 'Active' && !firstGameAcceptedRef.current) {
         firstGameAcceptedRef.current = true;
-        proposeNewGame(lastHandTermsRef.current);
+        if (handKeyRef.current === 0) {
+          setHandKey(1);
+          handKeyRef.current = 1;
+        }
+        setBetweenHandMode('compose-proposal');
       }
       return;
     }
@@ -835,17 +880,6 @@ export function useGameSession(
         return;
       }
       proposalTermsByIdRef.current[incoming.id] = incoming.terms;
-
-      if (!firstGameAcceptedRef.current && !iStarted) {
-        log(`[notify] ProposalMade id=${incoming.id} auto-accepting first hand`);
-        firstGameAcceptedRef.current = true;
-        try {
-          go?.acceptProposal(incoming.id);
-        } catch (e) {
-          console.error('acceptProposal failed:', e);
-        }
-        return;
-      }
 
       const betweenHandsNow = handKeyRef.current > 0 && gameIdsRef.current.length === 0;
       if (!betweenHandsNow) {
@@ -957,6 +991,7 @@ export function useGameSession(
       if (acceptedTerms) {
         setLastHandTerms(acceptedTerms);
         setComposePerHandAmount(acceptedTerms.myContribution);
+        setActiveGameType(acceptedTerms.gameType);
       }
       go?.setHandState(null);
       setHandKey(prev => prev + 1);
@@ -1229,14 +1264,16 @@ export function useGameSession(
   const openComposeProposal = useCallback(() => {
     setComposeProposalSent(false);
     setComposePerHandAmount(lastHandTermsRef.current.myContribution);
+    setComposeGameType(lastHandTermsRef.current.gameType);
     setBetweenHandMode('compose-proposal');
   }, []);
 
   const [composeProposalSent, setComposeProposalSent] = useState(false);
   const [newHandRequested, setNewHandRequested] = useState(false);
-  const submitComposedProposal = useCallback((perHandAmount: bigint) => {
+  const submitComposedProposal = useCallback((perHandAmount: bigint, gameType: string) => {
     if (perHandAmount <= 0n) return;
     proposeNewGame({
+      gameType,
       myContribution: perHandAmount,
       theirContribution: perHandAmount,
     });
@@ -1289,6 +1326,7 @@ export function useGameSession(
     gameTerminal,
     handKey,
     activeGameId: gameIds[0] ?? null,
+    activeGameType,
     displayGameId: gameIds[0] ?? lastDisplayedGameId,
     gameObject,
     gameplayEvent$: gameplayEventSubject.asObservable(),
@@ -1299,6 +1337,8 @@ export function useGameSession(
     cachedPeerProposal,
     reviewPeerProposal,
     composePerHandAmount,
+    composeGameType,
+    setComposeGameType,
     composeProposalSent,
     newHandRequested,
     chooseNewHandSameTerms,

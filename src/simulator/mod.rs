@@ -23,6 +23,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Error, GetCoinStringParts, Hash,
     IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, ToQuotedProgram,
+    MAX_BLOCK_COST_CLVM,
 };
 
 use crate::utils::map_m;
@@ -33,6 +34,8 @@ use crate::simulator::tests::potato_handler_sim::test_funs as potato_handler_sim
 use crate::simulator::tests::simulator_tests::test_funs as simulator_tests;
 #[cfg(test)]
 use crate::test_support::calpoker::test_funs as calpoker_tests;
+#[cfg(test)]
+use crate::test_support::spacepoker::test_funs as spacepoker_tests;
 
 #[cfg(test)]
 use crate::common::types::divmod::test_funs as divmod_tests;
@@ -48,6 +51,10 @@ use crate::tests::calpoker_validation::test_funs as calpoker_validation_tests;
 use crate::tests::channel_handler::test_funs as channel_handler_tests;
 #[cfg(test)]
 use crate::tests::chialisp::test_funs as chialisp_tests;
+#[cfg(test)]
+use crate::tests::spacepoker_handlers::test_funs as spacepoker_handler_tests;
+#[cfg(test)]
+use crate::tests::spacepoker_validation::test_funs as spacepoker_validation_tests;
 #[cfg(test)]
 use crate::tests::standard_coin::test_funs as standard_coin_tests;
 
@@ -230,7 +237,7 @@ fn make_sim_consensus_constants() -> ConsensusConstants {
         max_vdf_witness_size: 8,
         mempool_block_buffer: 10,
         max_coin_amount: u64::MAX,
-        max_block_cost_clvm: 11_000_000_000,
+        max_block_cost_clvm: MAX_BLOCK_COST_CLVM,
         cost_per_byte: 12000,
         weight_proof_threshold: 2,
         weight_proof_recent_blocks: 1000,
@@ -862,12 +869,15 @@ pub fn run_simulation_tests() {
         standard_coin_tests(),
         chialisp_tests(),
         calpoker_validation_tests(),
+        spacepoker_validation_tests(),
+        spacepoker_handler_tests(),
         calpoker_handler_tests(),
         channel_handler_tests(),
         debug_game_tests(),
         potato_handler_tests(),
         simulator_tests(),
         calpoker_tests(),
+        spacepoker_tests(),
         potato_handler_sim_tests(),
     ];
 

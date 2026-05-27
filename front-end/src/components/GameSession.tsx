@@ -8,6 +8,8 @@ import { getPlayerId } from '../hooks/save';
 import { CalpokerOutcome, ChannelState, SessionPhase } from '../types/ChiaGaming';
 import { WasmBlobWrapper } from '../hooks/WasmBlobWrapper';
 import Calpoker from '../features/calPoker';
+import SpacePoker from './SpacePoker';
+import { GAME_REGISTRY, gameDisplayName } from '../lib/gameRegistry';
 
 import { motion, useMotionValue, useDragControls } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
@@ -351,6 +353,120 @@ function CalpokerHand({
   );
 }
 
+function ComposeProposalDialog({
+  session,
+  maxPerHandMojos,
+}: {
+  session: import('../hooks/useGameSession').UseGameSessionResult;
+  maxPerHandMojos: bigint | null;
+}) {
+  const isSpacepoker = session.composeGameType === 'spacepoker';
+  const [spUnitSizeStr, setSpUnitSizeStr] = useState('1');
+  const [spStackSizeStr, setSpStackSizeStr] = useState('10');
+  const spUnitSize = (() => { try { const v = BigInt(spUnitSizeStr); return v > 0n ? v : 0n; } catch { return 0n; } })();
+  const spStackSize = parseInt(spStackSizeStr) || 0;
+
+  const spBetSize = isSpacepoker ? spUnitSize * BigInt(spStackSize) : 0n;
+  const spTotalGame = spBetSize * 2n;
+  const spExceedsBalance = maxPerHandMojos != null && spBetSize > maxPerHandMojos;
+  const spValid = isSpacepoker && spUnitSize > 0n && spStackSize > 0 && !spExceedsBalance;
+
+  const perHandAmount = isSpacepoker ? spBetSize : session.composePerHandAmount;
+
+  const submit = () => {
+    if (perHandAmount <= 0n || session.composeProposalSent) return;
+    session.submitComposedProposal(perHandAmount, session.composeGameType);
+  };
+
+  return (
+    <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4'>
+      <div className='flex flex-col gap-3'>
+        <p className='text-sm text-canvas-text-contrast'>Propose terms for the next hand.</p>
+        <div className='flex flex-col gap-1'>
+          <label className='text-xs font-medium text-canvas-text'>Game</label>
+          <div className='flex flex-wrap gap-2'>
+            {GAME_REGISTRY.map(({ gameType, displayName }) => (
+              <Button
+                key={gameType}
+                variant={session.composeGameType === gameType ? 'solid' : 'outline'}
+                color={session.composeGameType === gameType ? 'primary' : 'neutral'}
+                size='sm'
+                disabled={session.composeProposalSent}
+                onClick={() => session.setComposeGameType(gameType)}
+              >
+                {displayName}
+              </Button>
+            ))}
+          </div>
+        </div>
+
+        {isSpacepoker ? (
+          <>
+            <div className='flex flex-col gap-1'>
+              <label className='text-xs font-medium text-canvas-text'>Unit size (mojos)</label>
+              <input
+                type='number'
+                min={1}
+                className='w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid'
+                value={spUnitSizeStr}
+                disabled={session.composeProposalSent}
+                onChange={(e) => setSpUnitSizeStr(e.target.value.replace(/[^0-9]/g, ''))}
+                onKeyDown={(e) => { if (e.key === 'Enter' && spValid) submit(); }}
+              />
+            </div>
+            <div className='flex flex-col gap-1'>
+              <label className='text-xs font-medium text-canvas-text'>Stack size (units per player)</label>
+              <input
+                type='number'
+                min={1}
+                className='w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid'
+                value={spStackSizeStr}
+                disabled={session.composeProposalSent}
+                onChange={(e) => setSpStackSizeStr(e.target.value.replace(/[^0-9]/g, ''))}
+                onKeyDown={(e) => { if (e.key === 'Enter' && spValid) submit(); }}
+              />
+            </div>
+            <div className='text-xs text-canvas-text'>
+              Per-player stake: {formatMojos(spBetSize)} · Total game size: {formatMojos(spTotalGame)}
+            </div>
+            {spExceedsBalance && (
+              <p className='text-xs text-alert-text'>Exceeds available reserve.</p>
+            )}
+          </>
+        ) : (
+          <AmountInput
+            valueMojos={session.composePerHandAmount}
+            onChange={session.setComposePerHandAmount}
+            maxMojos={maxPerHandMojos}
+            onUseMax={maxPerHandMojos != null ? () => session.setComposePerHandAmount(maxPerHandMojos) : undefined}
+            disabled={session.composeProposalSent}
+            label='Per-player stake'
+            exceedsLabel='Exceeds available reserve.'
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !session.composeProposalSent && session.composePerHandAmount > 0n) submit();
+            }}
+          />
+        )}
+
+        <div className='flex flex-wrap items-center gap-3'>
+          <Button
+            variant='solid'
+            color='primary'
+            size='sm'
+            disabled={session.composeProposalSent || perHandAmount <= 0n || (isSpacepoker && !spValid)}
+            onClick={submit}
+          >
+            {session.composeProposalSent ? 'Proposal Sent' : 'Send Proposal'}
+          </Button>
+          <Button variant='solid' size='sm' onClick={session.startCleanShutdown}>
+            Start Clean Shutdown
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export interface GameSessionProps {
   params: import('../types/ChiaGaming').GameSessionParams;
   peerConn: import('../types/ChiaGaming').PeerConnectionResult;
@@ -461,7 +577,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
             </div>
             <div className='flex flex-wrap items-center gap-x-2 gap-y-0.5'>
               <span className='text-canvas-text'>Game terms:</span>
-              <span className='font-medium'>California Poker</span>
+              <span className='font-medium'>{gameDisplayName(session.activeGameType)}</span>
               <span className='text-canvas-solid'>·</span>
               <span className='text-canvas-text'>Game size:</span>
               <span className='font-medium'>{formatMojos(session.currentHandAmount * 2n)}</span>
@@ -526,32 +642,51 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
         {/* Game area — z-0 creates a stacking context so card zIndexes (up to 100) can't escape */}
           <div ref={gameAreaRef} className='relative overflow-hidden z-0'>
           {showGameInterface && (
-            <CalpokerHand
-              key={session.handKey}
-              gameObject={session.gameObject}
-              gameId={session.activeGameId ?? session.displayGameId ?? ''}
-              iStarted={session.iStarted}
-              playerNumber={session.playerNumber}
-              gameplayEvent$={session.gameplayEvent$}
-              onOutcome={session.onHandOutcome}
-              onTurnChanged={session.onTurnChanged}
-              appendGameLog={session.appendGameLog}
-              perGameAmount={session.currentHandAmount}
-              initialHandState={session.handKey === 1 && sessionSave?.handState ? sessionSave.handState : undefined}
-              myName={params.myAlias}
-              opponentName={params.opponentAlias}
-            />
+            session.activeGameType === 'calpoker' ? (
+              <CalpokerHand
+                key={session.handKey}
+                gameObject={session.gameObject}
+                gameId={session.activeGameId ?? session.displayGameId ?? ''}
+                iStarted={session.iStarted}
+                playerNumber={session.playerNumber}
+                gameplayEvent$={session.gameplayEvent$}
+                onOutcome={session.onHandOutcome}
+                onTurnChanged={session.onTurnChanged}
+                appendGameLog={session.appendGameLog}
+                perGameAmount={session.currentHandAmount}
+                initialHandState={session.handKey === 1 && sessionSave?.handState ? sessionSave.handState : undefined}
+                myName={params.myAlias}
+                opponentName={params.opponentAlias}
+              />
+            ) : session.activeGameType === 'spacepoker' ? (
+              <SpacePoker
+                key={session.handKey}
+                gameObject={session.gameObject}
+                gameId={session.activeGameId ?? session.displayGameId ?? ''}
+                iStarted={session.iStarted}
+                gameplayEvent$={session.gameplayEvent$}
+                betSize={session.currentHandAmount}
+                onTurnChanged={session.onTurnChanged}
+                myName={params.myAlias}
+                opponentName={params.opponentAlias}
+              />
+            ) : (
+              <div className='flex items-center justify-center py-20'>
+                <p className='text-canvas-text'>
+                  Game not supported: {gameDisplayName(session.activeGameType)}
+                </p>
+              </div>
+            )
           )}
 
-          {/* Waiting for first hand */}
           {!handEverStarted && (
             <div className='flex items-center justify-center py-20'>
-              <p className='text-canvas-text'>Waiting for game to start…</p>
+              <p className='text-canvas-text'>Setting up channel…</p>
             </div>
           )}
           {handEverStarted && !session.displayGameId && !session.betweenHands && (
             <div className='flex items-center justify-center py-20'>
-              <p className='text-canvas-text'>Waiting for game to start…</p>
+              <p className='text-canvas-text'>Waiting for next hand…</p>
             </div>
           )}
 
@@ -585,39 +720,10 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
             )}
 
             {session.betweenHandMode === 'compose-proposal' && (
-              <div className='mx-auto w-full max-w-xl rounded-md border border-canvas-line bg-canvas-bg p-4'>
-                <div className='flex flex-col gap-3'>
-                  <p className='text-sm text-canvas-text-contrast'>Propose terms for the next hand.</p>
-                  <AmountInput
-                    valueMojos={session.composePerHandAmount}
-                    onChange={session.setComposePerHandAmount}
-                    maxMojos={maxPerHandMojos}
-                    onUseMax={maxPerHandMojos != null ? () => session.setComposePerHandAmount(maxPerHandMojos) : undefined}
-                    disabled={session.composeProposalSent}
-                    label='Per-player stake'
-                    exceedsLabel='Exceeds available reserve.'
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !session.composeProposalSent && session.composePerHandAmount > 0n) {
-                        session.submitComposedProposal(session.composePerHandAmount);
-                      }
-                    }}
-                  />
-                  <div className='flex flex-wrap items-center gap-3'>
-                    <Button
-                      variant='solid'
-                      color='primary'
-                      size='sm'
-                      disabled={session.composeProposalSent || session.composePerHandAmount <= 0n}
-                      onClick={() => session.submitComposedProposal(session.composePerHandAmount)}
-                    >
-                      {session.composeProposalSent ? 'Proposal Sent' : 'Send Proposal'}
-                    </Button>
-                    <Button variant='solid' size='sm' onClick={session.startCleanShutdown}>
-                      Start Clean Shutdown
-                    </Button>
-                  </div>
-                </div>
-              </div>
+              <ComposeProposalDialog
+                session={session}
+                maxPerHandMojos={maxPerHandMojos}
+              />
             )}
 
             {session.betweenHandMode === 'review-incoming-proposal' && session.reviewPeerProposal && (
@@ -625,8 +731,20 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
                 <div className='flex flex-col gap-3'>
                   <p className='text-sm text-canvas-text-contrast'>Do you want to accept this hand?</p>
                   <p className='text-xs text-canvas-text'>
+                    Game: {gameDisplayName(session.reviewPeerProposal.terms.gameType)}
+                  </p>
+                  <p className='text-xs text-canvas-text'>
                     Per-player stake: {formatMojos(session.reviewPeerProposal.terms.myContribution)}
                   </p>
+                  {session.reviewPeerProposal.terms.gameType === 'spacepoker' && (() => {
+                    const betSize = session.reviewPeerProposal!.terms.myContribution;
+                    const betUnit = betSize / 10n;
+                    return betUnit > 0n ? (
+                      <p className='text-xs text-canvas-text'>
+                        Unit size: {formatMojos(betUnit)} · Stack: 10 units
+                      </p>
+                    ) : null;
+                  })()}
                   <div className='flex flex-wrap items-center gap-3'>
                     <Button variant='solid' color='primary' size='sm' onClick={session.acceptReviewedProposal}>
                       Yes

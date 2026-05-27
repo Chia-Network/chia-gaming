@@ -79,9 +79,7 @@ const LobbyScreen = () => {
   }
 
   const [challengeTarget, setChallengeTarget] = useState<{ id: string; alias: string } | null>(null);
-  const [challengeGame, setChallengeGame] = useState('calpoker');
   const [challengeAmount, setChallengeAmount] = useState('100');
-  const [challengePerGame, setChallengePerGame] = useState('10');
 
   function openChallengeDialog(targetId: string, targetAlias: string) {
     setChallengeTarget({ id: targetId, alias: targetAlias });
@@ -89,7 +87,7 @@ const LobbyScreen = () => {
 
   function submitChallenge() {
     if (!challengeTarget) return;
-    sendChallenge(challengeTarget.id, challengeGame, challengeAmount, challengePerGame);
+    sendChallenge(challengeTarget.id, challengeAmount);
     setChallengeTarget(null);
   }
 
@@ -202,32 +200,12 @@ const LobbyScreen = () => {
           </p>
           <div className="space-y-2">
             <label className="block text-sm text-canvas-text">
-              Game
-              <select
-                value={challengeGame}
-                onChange={(e) => setChallengeGame(e.target.value)}
-                className="mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
-              >
-                <option value="calpoker">California Poker</option>
-              </select>
-            </label>
-            <label className="block text-sm text-canvas-text">
               Total buy-in (mojos)
               <input
                 type="number"
                 min="1"
                 value={challengeAmount}
                 onChange={(e) => setChallengeAmount(e.target.value)}
-                className="mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
-              />
-            </label>
-            <label className="block text-sm text-canvas-text">
-              Per-hand amount (mojos)
-              <input
-                type="number"
-                min="1"
-                value={challengePerGame}
-                onChange={(e) => setChallengePerGame(e.target.value)}
                 className="mt-1 block w-full px-3 py-2 rounded bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
               />
             </label>
@@ -346,11 +324,10 @@ function IncomingChallengeDialog({
   return (
     <div className="mb-4 p-4 rounded-lg theme-force-light bg-white border border-canvas-border">
       <p className="text-canvas-text-contrast font-medium mb-2">
-        <strong>{challenge.from_alias}</strong> challenges you to{' '}
-        <strong>{challenge.game}</strong>
+        <strong>{challenge.from_alias}</strong> challenges you
       </p>
       <p className="text-sm text-canvas-text mb-3">
-        Buy-in: {challenge.amount} mojos &middot; Per hand: {challenge.per_game} mojos
+        Buy-in: {challenge.amount} mojos
       </p>
       <div className="flex gap-2">
         <Button variant="solid" color="primary" size="sm" onClick={onAccept}>

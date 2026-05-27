@@ -1,33 +1,75 @@
 (include *standard-cl-23*)
 
-(import onchain.poker.mid_round exposing (program_hash as mid_hash))
-(import std.assert)
+(import games.game_codes)
+(import std.and)
+(import std.if_any_fail)
+(import std.relops)
+(import std.li)
 
-; state is (minraise half_pot_size mover_image_Nplus1 waiter_image_N N)
-; move is concatenation of mover_image_N and raise amount
+; state is (bet_unit half_pot mover_image_Nplus1 waiter_image_N N mid_hash)
+; mid_hash is curried into begin_round's state by commitB (and by mid_round
+; on callback), avoiding a circular import: mid_round imports begin_round
+; directly, and begin_round gets mid_hash from state instead.
+;
+; At N=4, a coin toss decides who opens the first betting round. With both
+; image_4s revealed, the toss is:
+;   mover_opens = (> mover_image_N waiter_image_N) ==
+;                 (logand (logxor mover_image_N waiter_image_N) 1)
+; The xor bit is invariant under mover/waiter swap, while (>) flips, so
+; the toss flips exactly under swap -- after a pong, the new mover always
+; opens.
+;
+; The coin toss decides interpretation of MOVE BEFORE move shape is
+; inspected. A bare 32-byte move is ambiguous (could be "check" or "pong");
+; the toss disambiguates so the mover cannot ignore an unfavorable toss
+; by opening with a check.
+;
+; MOVE is either:
+;   - open: mover_image_N (32 bytes) concatenated with raise amount
+;     (>=0 bytes). Valid only when mover_opens.
+;   - pong: mover_image_N (exactly 32 bytes). Valid only at N=4 when
+;     mover_opens is false. Transitions back to begin_round with
+;     mover/waiter images swapped and N still 4.
 ; evidence is empty
-(export (quine_hash (move new_validation_hash max_move_size mover_share previous_validation_hash 
-    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
-    (minraise half_pot_size mover_image_Nplus1 waiter_image_N N) me mover_puzzle solution evidence)
+(export (mod_hash
+    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+        (bet_unit half_pot mover_image_Nplus1 waiter_image_N N mid_hash)
+        previous_validation_program evidence)
 
-    (if_any_fail
-        (>= (strlen move) 32)
-        (= max_move_size 32)
-        (= mover_share (- (/ amount 2) half_pot))
+    (if (not (>= (strlen MOVE) 32))
+        0
         (assign
-            raise_amount (substr move 32 (strlen move))
-            mover_image_N (substr move 0 32)
-            (if_any_fail
-                (= waiter_image_Nplus1 (sha256 waiter_image_N))
-                (>= raise_amount 0)
-                (<= (+ half_pot_size raise_amount) (/ amount 2))
-                (= new_validation_hash (sha256 mid_hash (shatree (li minraise half_pot_size raise_amount 
-                    waiter_image_N mover_image_N N quine_hash))))
-                0
+            mover_image_N (substr MOVE 0 32)
+            raise_amount (substr MOVE 32 (strlen MOVE))
+            mover_opens (if (= N 4)
+                (= (> mover_image_N waiter_image_N)
+                   (logand (logxor mover_image_N waiter_image_N) 1))
                 1
             )
+            (if_any_fail
+                (= MOVER_SHARE (- (/ AMOUNT 2) half_pot))
+                (= mover_image_Nplus1 (sha256 mover_image_N))
+                0
+                (if mover_opens
+                    (if_any_fail
+                        (>= raise_amount 0)
+                        (<= (+ half_pot raise_amount) (/ AMOUNT 2))
+                        0
+                        (list mid_hash
+                            (li bet_unit half_pot raise_amount
+                                waiter_image_N mover_image_N N)
+                            42)
+                    )
+                    (if (= (strlen MOVE) 32)
+                        (list mod_hash
+                            (li bet_unit half_pot
+                                (sha256 waiter_image_N) mover_image_N N mid_hash)
+                            42)
+                        0
+                    )
+                )
+            )
         )
-        0
-        (x)
     )
 )

@@ -17,11 +17,12 @@ use crate::common::types::{
 use crate::referee::referee_initial_setup;
 use crate::referee::their_turn::{TheirTurnReferee, TheirTurnRefereeGameState};
 use crate::referee::types::{
-    curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs,
-    OnChainRefereeMoveData, RefereePuzzleArgs, StateUpdateMoveArgs,
+    canonical_atom_from_usize, GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RMFixed,
+    ValidationInfoHash,
 };
 use crate::referee::types::{
-    GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RMFixed, ValidationInfoHash,
+    curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs,
+    OnChainRefereeMoveData, RefereePuzzleArgs, StateUpdateMoveArgs,
 };
 use crate::referee::Referee;
 
@@ -408,6 +409,7 @@ impl MyTurnReferee {
             basic: GameMoveStateInfo {
                 move_made: result.move_bytes.clone(),
                 mover_share: result.mover_share.clone(),
+                max_move_size_raw: canonical_atom_from_usize(result.max_move_size),
                 max_move_size: result.max_move_size,
             },
             validation_program_hash,
@@ -421,12 +423,16 @@ impl MyTurnReferee {
             previous_validation_info_hash: prev_hash.clone(),
             ..ref_puzzle_args.clone()
         });
-        let new_state_following_my_move = self.run_validator_for_my_move(
-            allocator,
-            offchain_puzzle_args,
-            state_to_update.clone(),
-            Evidence::nil()?,
-        )?;
+        let new_state_following_my_move = if result.waiting_handler.is_some() {
+            self.run_validator_for_my_move(
+                allocator,
+                offchain_puzzle_args,
+                state_to_update.clone(),
+                Evidence::nil()?,
+            )?
+        } else {
+            state_to_update.clone()
+        };
 
         let rc_puzzle_args = Rc::new(RefereePuzzleArgs {
             mover_pubkey: self.fixed.their_referee_pubkey.clone(),

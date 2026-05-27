@@ -804,12 +804,16 @@ mod gaming_wasm {
         let parameters_program = Program::from_bytes(parameters);
         with_game(cid, move |cradle: &mut JsCradle| {
             let game_start = GameStart {
-                game_type: GameType(hex::decode(&js_game_start.game_type).into_gen()?),
+                game_type: GameType(js_game_start.game_type.as_bytes().to_vec()),
                 timeout: Timeout::new(js_game_start.timeout),
                 amount: Amount::new(js_game_start.amount),
                 my_contribution: Amount::new(js_game_start.my_contribution),
                 my_turn: js_game_start.my_turn,
                 parameters: parameters_program,
+                initial_validation_program_hash: None,
+                initial_state: None,
+                initial_max_move_size: None,
+                initial_mover_share: None,
             };
             let ids = cradle.cradle.propose_game(
                 &mut cradle.allocator,

@@ -1,5 +1,5 @@
 import { WasmBlobWrapper } from './WasmBlobWrapper';
-import { WasmStateInit, loadCalpoker } from './WasmStateInit';
+import { WasmStateInit, loadGameHexes, GameHexes } from './WasmStateInit';
 import {
   PeerConnectionResult,
 } from '../types/ChiaGaming';
@@ -38,7 +38,7 @@ export async function configGameObject(
   gameObject: WasmBlobWrapper,
   iStarted: boolean,
   wasmStateInit: WasmStateInit,
-  calpokerHexes: {proposalHex: string, parserHex: string},
+  gameHexes: GameHexes,
   blockchain: BlockchainPoller,
   uniqueId: string,
   amount: bigint,
@@ -51,7 +51,7 @@ export async function configGameObject(
   let rngId = wasmConnection.create_rng(seedHex);
   let address = await blockchain.rpc.getAddress();
   gameObject.setBlockchainAddress(address);
-  let { game: cradle, puzzleHash } = wasmStateInit.createGame(calpokerHexes.proposalHex, calpokerHexes.parserHex, rngId, wasmConnection, iStarted, amount, amount, address.puzzleHash);
+  let { game: cradle, puzzleHash } = wasmStateInit.createGame(gameHexes, rngId, wasmConnection, iStarted, amount, amount, address.puzzleHash);
   gameObject.setGameCradle(cradle);
   log('[wasm] activateSpend');
   gameObject.activateSpend();
@@ -160,12 +160,12 @@ export function getBlobSingleton(
     const newSession = async () => {
       try {
         startNewSession();
-        const calpokerHexes = await loadCalpoker(fetchHex);
+        const gameHexes = await loadGameHexes(fetchHex);
         await configGameObject(
           blobSingleton!,
           iStarted,
           wasmStateInit,
-          calpokerHexes,
+          gameHexes,
           blockchain,
           uniqueId,
           amount,

@@ -3,9 +3,7 @@ import { log } from './log';
 
 export interface MatchedParams {
   token: string;
-  game_type: string;
   amount: string;
-  per_game: string;
   i_am_initiator: boolean;
   my_alias?: string;
   peer_alias?: string;
@@ -14,9 +12,7 @@ export interface MatchedParams {
 export interface ConnectionStatus {
   has_pairing: boolean;
   token?: string;
-  game_type?: string;
   amount?: string;
-  per_game?: string;
   i_am_initiator?: boolean;
   peer_connected?: boolean;
   my_alias?: string;
@@ -44,8 +40,8 @@ export type MessagePayload =
   | { keepalive: true };
 
 type TrackerEnvelope =
-  | { type: 'connection_status'; has_pairing: boolean; token?: string; game_type?: string; amount?: string; per_game?: string; i_am_initiator?: boolean; peer_connected?: boolean; my_alias?: string; peer_alias?: string }
-  | { type: 'matched'; token: string; game_type: string; amount: string; per_game: string; i_am_initiator: boolean; my_alias?: string; peer_alias?: string }
+  | { type: 'connection_status'; has_pairing: boolean; token?: string; amount?: string; i_am_initiator?: boolean; peer_connected?: boolean; my_alias?: string; peer_alias?: string }
+  | { type: 'matched'; token: string; amount: string; i_am_initiator: boolean; my_alias?: string; peer_alias?: string }
   | { type: 'message'; data?: unknown }
   | { type: 'chat'; text: string; from_alias: string; timestamp: number }
   | { type: 'peer_reconnected' }
@@ -196,9 +192,7 @@ export class TrackerConnection {
           const status: ConnectionStatus = {
             has_pairing: msg.has_pairing,
             token: msg.token,
-            game_type: msg.game_type,
             amount: msg.amount,
-            per_game: msg.per_game,
             i_am_initiator: msg.i_am_initiator,
             peer_connected: msg.peer_connected,
             my_alias: msg.my_alias,
@@ -211,9 +205,7 @@ export class TrackerConnection {
         case 'matched': {
           const params: MatchedParams = {
             token: msg.token,
-            game_type: msg.game_type,
             amount: msg.amount,
-            per_game: msg.per_game,
             i_am_initiator: msg.i_am_initiator,
             my_alias: msg.my_alias,
             peer_alias: msg.peer_alias,

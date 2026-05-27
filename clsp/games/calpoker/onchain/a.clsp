@@ -14,12 +14,11 @@
 (export (mod_hash
     (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
         MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-        previous_state previous_validation_program evidence output_conditions)
+        previous_state previous_validation_program evidence)
 
     ;; First their turn for the second player
-    (if_any_fail
-        (= (strlen MOVE) 32)
+    (if (= (strlen MOVE) 32)
+        (list bhash MOVE 16)
         0
-        (list bhash MOVE 16 "A move")
     )
 )
