@@ -24,16 +24,10 @@
 ; MOD_HASH should be the shatree of referee itself.
 ; NONCE is for anti-replay prevention.
 ;
-; Validation programs get passed:
-;
-; (mod_hash
-;     (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
-;         MOVE MAX_MOVE_SIZE INFOHASH_B MOVER_SHARE INFOHASH_A)
-;     previous_state
-;     previous_validation_program
-;     evidence
-;     output_conditions
-; )
+; Validation programs get (mod_hash . all_args) where all_args is
+; (curried_args . slash_solution_args).  The validator should only
+; destructure the fields it needs; the tail beyond evidence is an
+; artifact of passing all_args for efficiency and should be ignored.
 ;
 ; timeout args: (mover_payout_ph waiter_payout_ph)
 ; slash args: (previous_state previous_validation_program evidence mover_payout_ph)
@@ -60,9 +54,9 @@
         (assign
             (previous_state previous_validation_program evidence mover_payout_ph) args
             previous_validation_program_hash (shatree previous_validation_program)
-            validator_result (a previous_validation_program (c previous_validation_program_hash all_args))
+            (@ validator_result (next_validator_hash new_state max_move_size))
+                (a previous_validation_program (c previous_validation_program_hash all_args))
             payout_conditions (list
-                (list REMARK)
                 (list CREATE_COIN mover_payout_ph AMOUNT)
                 (list AGG_SIG_UNSAFE MOVER_PUBKEY (concat 0x78 mover_payout_ph))
             )
@@ -73,8 +67,12 @@
                     payout_conditions
                     (assert
                         (logior
-                            (not (= (sha256 (f validator_result) (shatree (f (r validator_result)))) INFOHASH_B))
-                            (not (= (f (r (r validator_result))) MAX_MOVE_SIZE))
+                            (not validator_result)
+                            (not (= (i next_validator_hash
+                                        (sha256 next_validator_hash (shatree new_state))
+                                        0)
+                                    INFOHASH_B))
+                            (not (= max_move_size MAX_MOVE_SIZE))
                         )
                         payout_conditions
                     )
@@ -94,7 +92,7 @@
                 (<= new_mover_share AMOUNT)
                 (>= new_mover_share 0)
                 (logior (not infohash_c) (= 32 (strlen infohash_c)))
-                (li (list REMARK new_move infohash_c new_mover_share new_max_move_size)
+                (list
                         (list ASSERT_BEFORE_HEIGHT_RELATIVE TIMEOUT)
                         (list CREATE_COIN new_puzzle_hash AMOUNT)
                         (list AGG_SIG_ME MOVER_PUBKEY (shatree args)))

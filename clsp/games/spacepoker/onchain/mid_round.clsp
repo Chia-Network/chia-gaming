@@ -1,38 +1,64 @@
 (include *standard-cl-23*)
 
-(import onchain.poker.end exposing (program_hash as end_hash))
-(import std.assert)
+(import games.spacepoker.onchain.begin_round exposing (program_hash as begin_hash))
+(import games.spacepoker.onchain.end exposing (program_hash as end_hash))
+(import games.game_codes)
+(import std.and)
+(import std.if_any_fail)
+(import std.relops)
+(import std.li)
 
-; state is (minraise half_pot raise_amount mover_image_N waiter_image_N begin_round_hash)
-; move is concatenation of mover_image_N and raise amount
+; state is (bet_unit half_pot last_raise_amount mover_image_N waiter_image_N N)
+;
+; begin_hash is imported directly (begin_round does not import mid_round,
+; so there is no circular dependency). mod_hash (mid_round's own hash) is
+; used for the raise self-loop and passed into begin_round's state on
+; callback so begin_round can transition here without importing mid_round.
+;
+; Image positions swap perspective each turn: begin_round outputs
+; (waiter_image, mover_image) from its own view, which mid_round reads
+; as (mover_image, waiter_image) since the mover/waiter roles alternate.
+;
+; MOVE is either:
+;   - a raise: > 32 bytes, first 32 bytes ignored, rest is raise amount
+;   - a call: preimage that hashes to mover_image_N (16 bytes at N=1, 32 otherwise)
 ; evidence is empty
-(export (quine_hash (move new_validation_hash max_move_size mover_share previous_validation_hash 
-    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
-    (minraise half_pot_size last_raise_amount mover_image_N waiter_image_N N begin_round_hash) me mover_puzzle solution evidence)
+(export (mod_hash
+    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+        (bet_unit half_pot last_raise_amount mover_image_N waiter_image_N N)
+        previous_validation_program evidence)
 
-    (if (!= (strlen move) 32)
-        (if_any_fail
-            (= max_move_size 32)
-            (= mover_share (- (/ amount 2) (+ half_pot raise_amount)))
-            (= waiter_image_Nplus1 (sha256 waiter_image_N))
-            (>= move minraise)
-            (<= (+ half_pot_size raise_amount move) (/ amount 2))
-            (= new_validation_hash (sha256 quine_hash (shatree (li minraise (half_pot_size raise_amount) move 
-                waiter_image_N mover_image_N N begin_round_hash))))
-            0
-            (x)
+    (if (> (strlen MOVE) 32)
+        ; raise branch — prior raise commits to pot for both players
+        (assign
+            new_raise_amount (substr MOVE 32 (strlen MOVE))
+            (if_any_fail
+                (= MOVER_SHARE (- (/ AMOUNT 2) (+ half_pot last_raise_amount)))
+                (>= new_raise_amount 0)
+                (<= (+ half_pot last_raise_amount new_raise_amount) (/ AMOUNT 2))
+                0
+                (list mod_hash
+                    (li bet_unit (+ half_pot last_raise_amount) new_raise_amount
+                        waiter_image_N mover_image_N N)
+                    42)
+            )
         )
+        ; call branch: MOVE is preimage that hashes to mover_image_N
         (if_any_fail
-            (= (sha256 move) mover_image_N)
-            (= max_move_size 33)
-            (= new_validation_hash 
-                (if (= N 1)
-                    (sha256 end_hash (shatree (li half_pot_size waiter_image_N move)))
-                    (sha256 begin_round_hash (shatree (li minraise (+ half_pot_size last_raise_amount) 
-                        waiter_image_N move (- N 1)))))
-                )
+            (= (strlen MOVE) (i (= N 1) 16 32))
+            (= (sha256 MOVE) mover_image_N)
+            (= MOVER_SHARE (- (/ AMOUNT 2) (+ half_pot last_raise_amount)))
             0
-            (x)
+            (if (= N 1)
+                (list end_hash
+                    (li (+ half_pot last_raise_amount) waiter_image_N MOVE)
+                    17)
+                (list begin_hash
+                    (li bet_unit (+ half_pot last_raise_amount)
+                        waiter_image_N MOVE (- N 1) mod_hash)
+                    42)
+            )
         )
     )
 )

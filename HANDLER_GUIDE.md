@@ -7,7 +7,8 @@ connect through the referee puzzle.
 
 For the broader architecture (state channels, potato protocol, dispute
 resolution), see `OVERVIEW.md`. For the raw calling conventions, see
-`clsp/handler_api.md`.
+`clsp/handler_api.md`. For DoS considerations (move size bounds, validation
+program cost, argument checking), see `CLVM_DOS.md`.
 
 ## Table of Contents
 
@@ -22,6 +23,8 @@ resolution), see `OVERVIEW.md`. For the raw calling conventions, see
 - [Validator Chaining](#validator-chaining)
 - [On-Chain vs Off-Chain](#on-chain-vs-off-chain)
 - [Message Parsers](#message-parsers)
+- [Nil Moves (Automatic Moves)](#nil-moves-automatic-moves)
+- [Messages as Pre-Reveals](#messages-as-pre-reveals)
 - [Worked Example: Calpoker](#worked-example-calpoker)
 
 ---
@@ -363,9 +366,11 @@ play, saving cost and complexity.
 
 **Slash path** -- A player submits evidence along with the previous move's
 validator. The referee runs the validator with the evidence. If the
-validator returns `SLASH` (does not raise), the slash succeeds and the
-slasher takes the full pot. If the validator raises, the slash attempt
-fails.
+validator returns nil (indicating an invalid move) or returns values whose
+infohash or max_move_size don't match the curried commitments, the slash
+succeeds and the slasher takes the full pot. If the validator raises (CLVM
+exception), the slash transaction itself fails to mine — validators must
+handle all inputs without raising.
 
 **Timeout path** -- No validator is involved. The referee simply checks
 that enough time has passed and pays out according to the current mover
@@ -490,6 +495,110 @@ her send Bob the card information right away, so he can start thinking about
 discards while Alice is still deciding her move. The message is purely
 advisory -- Bob will independently derive the same information when Alice's
 real move arrives.
+
+---
+
+## Nil Moves (Automatic Moves)
+
+A `local_move` of nil (null from JavaScript) means the player isn't providing
+any input -- the handler is fully responsible for computing the move. The
+frontend just triggers the handler; it doesn't supply data.
+
+### When to Use Nil Moves
+
+Nil moves are appropriate when:
+
+- **The move is deterministic and requires no user choice.** The handler
+  generates the move entirely from internal state and entropy. Example:
+  commit steps where the handler builds a hash chain from entropy and sends
+  the chain tip.
+
+- **The move involves secret data the handler manages internally.** The
+  handler knows the preimage/bitfield and constructs the reveal. The
+  frontend doesn't have this data and shouldn't need it. Example: the final
+  reveal in space poker, where the handler concatenates the base preimage
+  with the optimal card selection computed by `space_hand_calc`.
+
+- **The move is purely mechanical acknowledgment.** The handler auto-fills
+  a response that advances the protocol without any strategic decision.
+
+### Examples
+
+**Calpoker commitA** (step a): Alice's handler generates a preimage from
+entropy, hashes it, and sends the hash. The frontend calls
+`makeMove(gameId, null)` -- no user input is needed.
+
+**Calpoker commitB** (step b): Bob's handler generates his seed from
+entropy and sends it. Same nil pattern.
+
+**Space poker commitA/commitB**: Both handlers build a 5-element hash chain
+from 16 bytes of entropy and send the chain tip. The frontend auto-fires
+these during the "Shuffling..." phase.
+
+**Space poker end reveal**: The mover's handler has the base preimage from
+its curried chain and computes the optimal 5-card selection via
+`space_hand_calc`. It concatenates `preimage || bitfield` and sends it.
+The frontend calls `makeMove(gameId, null)` -- the handler fills in the
+actual 17-byte move. On-chain, this move is validated by `end.clsp` which
+independently derives all cards and checks the hand evaluation.
+
+### Frontend Pattern
+
+The frontend detects automatic moves by checking the game phase. During
+setup phases (commits), it calls `makeMove(gameId, null)` as soon as it's
+the player's turn, without waiting for user interaction. The UI shows a
+status message like "Shuffling..." while these automatic moves fire.
+
+```typescript
+// Auto-play commit steps
+if (phase === 'setup' && isMyTurn) {
+  gameObject.makeMove(gameId, null);
+}
+```
+
+---
+
+## Messages as Pre-Reveals
+
+Messages let a player pre-reveal a preimage they're committed to revealing
+on their next move anyway. The opponent can then derive information early
+rather than waiting for the formal move to arrive.
+
+### Why Pre-Reveal?
+
+In commit-reveal protocols, the reveal happens as part of a formal move.
+But after the commit step, the revealing player may need time to make a
+strategic decision (e.g. choosing discards in calpoker). Meanwhile, the
+opponent is waiting with no useful information to act on.
+
+If the revealer has no reason to withhold the preimage -- they're going to
+reveal it on their next move regardless, and there's no scenario where
+they'd fold instead -- they can send it ahead as a message. The opponent
+derives the information immediately and can start thinking about their
+response.
+
+### Calpoker Example
+
+After Bob sends his seed (step b), Alice processes it in her their-turn
+handler and can immediately derive the cards. She pre-reveals her preimage
+as a message. Bob's message parser decodes it and shows him the cards while
+Alice is still deciding her discards. When Alice's formal move (step c)
+arrives, Bob independently verifies the same information.
+
+### Mechanics
+
+1. A **my-turn handler** returns a `message_parser` at position 9. This
+   parser knows how to decode messages for the current game state.
+
+2. The **their-turn handler** processing the opponent's reply returns an
+   optional `message` at position 3. This message is sent out-of-band to
+   the opponent.
+
+3. The opponent's `message_parser` decodes the raw bytes into readable data
+   for the UI.
+
+Messages arrive as `GameMessage` events in the frontend, distinct from
+`OpponentMoved` events which come from the formal move protocol.
 
 ---
 

@@ -10,7 +10,7 @@ use crate::channel_handler::game_start_info::GameStartInfo;
 use crate::channel_handler::types::StateUpdateProgram;
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
-    GameID, Hash, IntoErr, Program, Puzzle, Timeout,
+    GameID, Hash, IntoErr, Program, Puzzle, Timeout, MAX_BLOCK_COST_CLVM,
 };
 
 struct ProposalGameSpec {
@@ -131,7 +131,7 @@ impl Game {
             &chia_dialect(),
             proposal_clvm,
             args,
-            0,
+            MAX_BLOCK_COST_CLVM,
         )
         .into_gen()
         .map_err(|e| {
@@ -218,7 +218,7 @@ impl Game {
             &chia_dialect(),
             parser_clvm,
             wire_data,
-            0,
+            MAX_BLOCK_COST_CLVM,
         )
         .into_gen()
         .map_err(|e| Error::StrErr(format!("parser failed: error={e:?}")))?
@@ -314,7 +314,7 @@ impl Game {
             &chia_dialect(),
             poker_generator_clvm,
             args,
-            0,
+            MAX_BLOCK_COST_CLVM,
         )
         .into_gen()
         {

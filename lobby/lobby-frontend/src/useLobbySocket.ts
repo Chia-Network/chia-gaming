@@ -4,7 +4,6 @@ export interface Player {
   id: string;
   alias: string;
   session_id: string;
-  game: string;
   walletAddress?: string;
   status: 'waiting' | 'playing' | 'busy';
   opponent_alias?: string;
@@ -15,14 +14,12 @@ export interface ChallengeReceived {
   challenge_id: string;
   from_id: string;
   from_alias: string;
-  game: string;
   amount: string;
-  per_game: string;
 }
 
 type InboundMessage =
   | { type: 'lobby_update'; players: Player[] }
-  | { type: 'challenge_received'; challenge_id: string; from_id: string; from_alias: string; game: string; amount: string; per_game: string }
+  | { type: 'challenge_received'; challenge_id: string; from_id: string; from_alias: string; amount: string }
   | { type: 'challenge_resolved'; challenge_id: string | null; accepted: boolean }
   | { type: 'alias_result'; alias: string | null }
   | { type: 'keepalive' }
@@ -335,14 +332,12 @@ export function useLobbySocket(
   );
 
   const sendChallenge = useCallback(
-    (targetId: string, game: string, amount: string, perGame: string) => {
+    (targetId: string, amount: string) => {
       send({
         type: 'challenge',
         from_id: uniqueIdRef.current,
         target_id: targetId,
-        game,
         amount,
-        per_game: perGame,
       });
       setChallengeSent(true);
     },

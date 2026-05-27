@@ -1,1 +1,6 @@
-(mod () (include *standard-cl-23*) (include space_poker.clinc) ())
+(include *standard-cl-23*)
+
+(import games.spacepoker.spacepoker_generate exposing spacepoker_make_proposal spacepoker_parser)
+
+(export spacepoker_make_proposal)
+(export spacepoker_parser)

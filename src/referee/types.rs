@@ -15,7 +15,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     chia_dialect, Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, Hash, IntoErr, Node,
-    Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256tree, Timeout,
+    Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256tree, Timeout, MAX_BLOCK_COST_CLVM,
 };
 use crate::utils::proper_list;
 
@@ -28,6 +28,27 @@ pub struct GameMoveStateInfo {
     pub move_made: Vec<u8>,
     pub mover_share: Amount,
     pub max_move_size: usize,
+    /// Raw CLVM atom bytes for max_move_size, preserved exactly as seen on-chain.
+    /// Used in to_clvm to ensure curry hashes match the on-chain puzzle hash
+    /// even if the peer used a non-canonical encoding.
+    pub max_move_size_raw: Vec<u8>,
+}
+
+/// Canonical signed big-endian CLVM encoding of a non-negative integer.
+pub fn canonical_atom_from_usize(v: usize) -> Vec<u8> {
+    if v == 0 {
+        return vec![];
+    }
+    let be = (v as u64).to_be_bytes();
+    let start = be.iter().position(|&b| b != 0).unwrap_or(7);
+    if be[start] & 0x80 != 0 {
+        let mut out = Vec::with_capacity(be.len() - start + 1);
+        out.push(0);
+        out.extend_from_slice(&be[start..]);
+        out
+    } else {
+        be[start..].to_vec()
+    }
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
@@ -132,7 +153,59 @@ pub struct RMFixed {
 // V1-SPECIFIC TYPES
 // =============================================================================
 
-pub const REM_CONDITION_FIELDS: usize = 4;
+/// The three solution shapes the referee puzzle accepts, parsed directly from
+/// the solution rather than from REMARK conditions in the output.
+#[derive(Debug, Clone)]
+pub enum ParsedRefereeSolution {
+    /// `(mover_payout_ph waiter_payout_ph)` — 2 elements
+    Timeout,
+    /// `(new_move infohash_c new_mover_share new_max_move_size)` — 4 atom elements
+    Move {
+        new_move: Vec<u8>,
+        validation_info_hash_raw: Vec<u8>,
+        new_mover_share_raw: Vec<u8>,
+        max_move_size_raw: Vec<u8>,
+    },
+    /// `(previous_state previous_validation_program evidence mover_payout_ph)` —
+    /// second element is a pair (a program)
+    Slash,
+}
+
+impl ParsedRefereeSolution {
+    /// Parse a referee solution using the same dispatch logic as `referee.clsp`:
+    /// - 2 elements -> Timeout
+    /// - 4+ elements, second element is a pair -> Slash
+    /// - 4 elements, second element is an atom -> Move
+    pub fn parse(allocator: &mut AllocEncoder, solution: &Program) -> Result<Self, Error> {
+        let node = solution.to_nodeptr(allocator)?;
+        let elements = proper_list(allocator.allocator(), node, true)
+            .ok_or_else(|| Error::StrErr("referee solution is not a proper list".to_string()))?;
+
+        if elements.len() == 2 {
+            return Ok(ParsedRefereeSolution::Timeout);
+        }
+
+        if elements.len() < 4 {
+            return Err(Error::StrErr(format!(
+                "referee solution has unexpected length {}",
+                elements.len()
+            )));
+        }
+
+        match allocator.allocator().sexp(elements[1]) {
+            clvmr::allocator::SExp::Pair(_, _) => Ok(ParsedRefereeSolution::Slash),
+            clvmr::allocator::SExp::Atom => {
+                let mut get_atom = |idx: usize| allocator.allocator().atom(elements[idx]).to_vec();
+                Ok(ParsedRefereeSolution::Move {
+                    new_move: get_atom(0),
+                    validation_info_hash_raw: get_atom(1),
+                    new_mover_share_raw: get_atom(2),
+                    max_move_size_raw: get_atom(3),
+                })
+            }
+        }
+    }
+}
 
 /// Validator result: `Some(new_state)` for a valid move payload, `None` for slash (`nil`).
 pub type StateUpdateResult = Option<Rc<Program>>;
@@ -151,11 +224,9 @@ pub fn parse_validator_result(
         return Ok(None);
     }
 
-    if lst.len() < 3 {
-        return Err(Error::StrErr("short list for make move".to_string()));
-    }
-
-    Ok(Some(Rc::new(Program::from_nodeptr(allocator, lst[1])?)))
+    // Terminal validators may return just (list 0) -- next_validator_hash=nil with no state.
+    let state_node = if lst.len() > 1 { lst[1] } else { NodePtr::NIL };
+    Ok(Some(Rc::new(Program::from_nodeptr(allocator, state_node)?)))
 }
 
 /// Adjudicates a two player turn based game
@@ -232,12 +303,6 @@ impl RefereePuzzleArgs {
             ..self.clone()
         }
     }
-
-    pub fn off_chain(&self) -> RefereePuzzleArgs {
-        let mut new_result: RefereePuzzleArgs = self.clone();
-        new_result.waiter_pubkey = PublicKey::default();
-        new_result
-    }
 }
 
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for RefereePuzzleArgs
@@ -247,17 +312,15 @@ where
     fn to_clvm(&self, encoder: &mut E) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
         [
             self.mover_pubkey.to_clvm(encoder)?,
-            if self.waiter_pubkey == PublicKey::default() {
-                encoder.encode_atom(clvm_traits::Atom::Borrowed(&[]))?
-            } else {
-                self.waiter_pubkey.to_clvm(encoder)?
-            },
+            self.waiter_pubkey.to_clvm(encoder)?,
             self.timeout.to_clvm(encoder)?,
             self.amount.to_clvm(encoder)?,
             self.referee_coin_puzzle_hash.to_clvm(encoder)?,
             self.nonce.to_clvm(encoder)?,
             encoder.encode_atom(clvm_traits::Atom::Borrowed(&self.game_move.basic.move_made))?,
-            self.game_move.basic.max_move_size.to_clvm(encoder)?,
+            encoder.encode_atom(clvm_traits::Atom::Borrowed(
+                &self.game_move.basic.max_move_size_raw,
+            ))?,
             self.game_move.validation_program_hash.to_clvm(encoder)?,
             self.game_move.basic.mover_share.to_clvm(encoder)?,
             self.previous_validation_info_hash.to_clvm(encoder)?,
@@ -331,10 +394,7 @@ impl InternalStateUpdateArgs {
         (
             validator_mod_hash,
             (
-                self.referee_args
-                    .off_chain()
-                    .to_clvm(allocator)
-                    .into_gen()?,
+                self.referee_args.to_clvm(allocator).into_gen()?,
                 Node(converted_vma),
             ),
         )
@@ -360,7 +420,7 @@ impl InternalStateUpdateArgs {
             &chia_dialect(),
             validation_program_nodeptr,
             validator_full_args_node,
-            0,
+            MAX_BLOCK_COST_CLVM,
         )
         .into_gen();
         let raw_result = raw_result_p?;
@@ -395,6 +455,13 @@ impl OnChainRefereeMoveData {
         } else {
             None
         };
+        let max_move_size_node = Node(
+            allocator
+                .encode_atom(clvm_traits::Atom::Borrowed(
+                    &self.new_move.basic.max_move_size_raw,
+                ))
+                .into_gen()?,
+        );
         let solution_args_node = (
             allocator
                 .encode_atom(clvm_traits::Atom::Borrowed(&self.new_move.basic.move_made))
@@ -403,7 +470,7 @@ impl OnChainRefereeMoveData {
                 infohash_c.as_ref(),
                 (
                     self.new_move.basic.mover_share.clone(),
-                    (self.new_move.basic.max_move_size, ()),
+                    (max_move_size_node, ()),
                 ),
             ),
         )
@@ -520,13 +587,20 @@ impl OnChainRefereeSolution {
                         None
                     };
 
+                let max_move_size_node = Node(
+                    encoder
+                        .encode_atom(clvm_traits::Atom::Borrowed(
+                            &refmove.game_move.basic.max_move_size_raw,
+                        ))
+                        .into_gen()?,
+                );
                 (
                     move_atom,
                     (
                         infohash_c.as_ref(),
                         (
                             refmove.game_move.basic.mover_share.clone(),
-                            (refmove.game_move.basic.max_move_size, ()),
+                            (max_move_size_node, ()),
                         ),
                     ),
                 )

@@ -18,8 +18,8 @@ use crate::referee::my_turn::{MyTurnReferee, MyTurnRefereeGameState};
 use crate::referee::referee_initial_setup;
 use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs,
-    OnChainRefereeMoveData, OnChainRefereeSlash, OnChainRefereeSolution, RefereePuzzleArgs,
-    StateUpdateMoveArgs, StateUpdateResult, REM_CONDITION_FIELDS,
+    OnChainRefereeMoveData, OnChainRefereeSlash, OnChainRefereeSolution, ParsedRefereeSolution,
+    RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
 };
 use crate::referee::types::{
     GameMoveDetails, GameMoveStateInfo, RMFixed, SlashOutcome, TheirTurnCoinSpentResult,
@@ -319,26 +319,30 @@ impl TheirTurnReferee {
             previous_validation_info_hash: prev_hash,
             ..ref_puzzle_args.clone()
         });
-        let state_update = self.run_state_update(
-            allocator,
-            offchain_puzzle_args.clone(),
-            state.clone(),
-            evidence,
-        )?;
-
-        let new_state: Rc<Program> = match state_update {
-            Some(state) => state,
-            None => {
-                return Ok((
-                    None,
-                    TheirTurnMoveResult {
-                        puzzle_hash_for_unroll: None,
-                        readable_move: Program(vec![0x80]).into(),
-                        mover_share: details.basic.mover_share.clone(),
-                        message: vec![],
-                        slash: Some(Evidence::nil()?),
-                    },
-                ));
+        let is_terminal = details.validation_program_hash == ValidationInfoHash::None;
+        let new_state: Rc<Program> = if is_terminal {
+            Program(vec![0x80]).into()
+        } else {
+            let state_update = self.run_state_update(
+                allocator,
+                offchain_puzzle_args.clone(),
+                state.clone(),
+                evidence,
+            )?;
+            match state_update {
+                Some(state) => state,
+                None => {
+                    return Ok((
+                        None,
+                        TheirTurnMoveResult {
+                            puzzle_hash_for_unroll: None,
+                            readable_move: Program(vec![0x80]).into(),
+                            mover_share: details.basic.mover_share.clone(),
+                            message: vec![],
+                            slash: Some(Evidence::nil()?),
+                        },
+                    ));
+                }
             }
         };
 
@@ -405,23 +409,35 @@ impl TheirTurnReferee {
         referee_coin_string: &CoinString,
         conditions: &[CoinCondition],
         state_number: usize,
-        rem_conditions: &[Vec<u8>],
+        parsed_solution: &ParsedRefereeSolution,
     ) -> Result<(Option<Referee>, TheirTurnCoinSpentResult), Error> {
-        if rem_conditions.len() != REM_CONDITION_FIELDS {
-            return Err(Error::StrErr(
-                "rem condition should have the right number of fields".to_string(),
-            ));
-        }
+        let (new_move, vih_raw, ms_raw, mms_raw) = match parsed_solution {
+            ParsedRefereeSolution::Move {
+                new_move,
+                validation_info_hash_raw,
+                new_mover_share_raw,
+                max_move_size_raw,
+            } => (
+                new_move,
+                validation_info_hash_raw,
+                new_mover_share_raw,
+                max_move_size_raw,
+            ),
+            _ => {
+                return Err(Error::StrErr(
+                    "their_turn_coin_spent called with non-Move solution".to_string(),
+                ));
+            }
+        };
 
-        let new_move = &rem_conditions[0];
-        let validation_info_hash = if rem_conditions[1].is_empty() {
+        let validation_info_hash = if vih_raw.is_empty() {
             ValidationInfoHash::None
-        } else if rem_conditions[1] == [0x78] {
+        } else if *vih_raw == [0x78] {
             ValidationInfoHash::Initial
         } else {
-            ValidationInfoHash::Hash(Hash::from_slice(&rem_conditions[1])?)
+            ValidationInfoHash::Hash(Hash::from_slice(vih_raw)?)
         };
-        let new_mover_share = if let Some(share) = u64_from_atom(&rem_conditions[2]) {
+        let new_mover_share = if let Some(share) = u64_from_atom(ms_raw) {
             let amt = Amount::new(share);
             if amt > self.fixed.amount {
                 return Err(Error::StrErr(format!(
@@ -436,7 +452,8 @@ impl TheirTurnReferee {
                 "mover share wasn't a properly sized atom".to_string(),
             ));
         };
-        let max_move_size = if let Some(mms) = u64_from_atom(&rem_conditions[3]) {
+        let max_move_size_raw = mms_raw.clone();
+        let max_move_size = if let Some(mms) = u64_from_atom(&max_move_size_raw) {
             mms as usize
         } else {
             return Err(Error::StrErr(
@@ -444,11 +461,11 @@ impl TheirTurnReferee {
             ));
         };
 
-        // reconstruct details of an off-chain move
         let details = GameMoveDetails {
             basic: GameMoveStateInfo {
                 move_made: new_move.clone(),
                 mover_share: new_mover_share.clone(),
+                max_move_size_raw,
                 max_move_size,
             },
             validation_program_hash: validation_info_hash.clone(),

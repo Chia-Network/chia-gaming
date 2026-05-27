@@ -10,7 +10,7 @@ use clvmr::NodePtr;
 use crate::channel_handler::types::{Evidence, ReadableMove, StateUpdateProgram};
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
-    Hash, IntoErr, Node, Program, ProgramRef,
+    Hash, IntoErr, Node, Program, ProgramRef, MAX_BLOCK_COST_CLVM,
 };
 use crate::referee::types::GameMoveDetails;
 
@@ -75,9 +75,15 @@ pub struct TheirTurnInputs<'a> {
 }
 
 fn run_code(allocator: &mut AllocEncoder, code: NodePtr, env: NodePtr) -> Result<NodePtr, Error> {
-    run_program(allocator.allocator(), &chia_dialect(), code, env, 0)
-        .into_gen()
-        .map(|r| r.1)
+    run_program(
+        allocator.allocator(),
+        &chia_dialect(),
+        code,
+        env,
+        MAX_BLOCK_COST_CLVM,
+    )
+    .into_gen()
+    .map(|r| r.1)
 }
 
 fn get_state_update_program(

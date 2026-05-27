@@ -573,6 +573,10 @@ pub fn test_peer_smoke() {
                     timeout: Timeout::new(15),
                     my_turn: true,
                     parameters: nil,
+                    initial_validation_program_hash: None,
+                    initial_state: None,
+                    initial_max_move_size: None,
+                    initial_mover_share: None,
                 },
             )
             .expect("should run");

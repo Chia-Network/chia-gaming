@@ -1,40 +1,30 @@
 
-; ranks are 2-14 with 14 being ace
-; there are no suits, flushes, or ace-to-four straights
-; takes a list of card ranks and returns the value of the best poker 
-; hand which can be made with them
-; returned list is hand type followed by cards in descending order
-; all sorting is done highest to lowest
+; Space poker hand evaluator
+;
+; Cards are plain rank integers 2-14 (no suits, 14 = ace).
+; No flushes, no ace-low straights.
+;
+; Hand representations (counts then ranks, boost inserted between):
+;   5 of a kind:  (5 boost rank)
+;   4 of a kind:  (4 1 boost quad_rank kicker)
+;   straight:     (3 3 boost high_card)        -- beats full house (suitless: straights are rarer)
+;   full house:   (3 2 boost set_rank pair_rank)
+;   set:          (3 1 1 boost set_rank k1 k2)
+;   two pair:     (2 2 1 boost hp lp k)
+;   pair:         (2 1 1 1 boost pr k1 k2 k3)
+;   high card:    (1 1 1 1 1 boost h k1 k2 k3 k4)
 
-; Hands are represented:
-; 5 of a kind (5 rank)
-; 4 of a kind  (4 1 quad_rank kicker)
-; full house (3 2 set_rank pair_rank)
-; straight (3 1 2 high_card)
-; set (3 1 1 set_rank first_kicker second_kicker)
-; two pair (2 2 1 high_pair_rank low_pair_rank kicker)
-; pair (2 1 1 1 pair_rank first_kicker second_kicker third_kicker)
-; high card (1 1 1 1 1 high_card first_kicker second_kicker third_kicker fourth_kicker)
-
+(import std.li)
 (import std.map)
 (import std.relops)
-(import std.isthere)
 (import std.atomsort)
-
-; returns the high card of a straight or 0 if there isn't any
-(defun straight_high (@ all-args (count1 count2 count3 count4 count5 rank1 rank2 rank3 rank4 rank5))
-    (if (not (= count1 1))
-        0
-        (* (= rank5 (- rank1 4)) rank1)
-    )
-)
 
 (defun group_by_count_inner (items last count)
     (if (not items)
-        (list (c count last))
+        (list (+ (* 16 count) last))
         (if (= (f items) last)
             (group_by_count_inner (r items) last (+ count 1))
-            (c (c count last) (group_by_count_inner (r items) (f items) 1))
+            (c (+ (* 16 count) last) (group_by_count_inner (r items) (f items) 1))
         )
     )
 )
@@ -43,25 +33,26 @@
     (group_by_count_inner items (f items) 0)
 )
 
-(defun space_hand_eval_inner (cards)
-    (assign-lambda
-        ranks (atomsort cards)
-        raw_groups (atomsort (group_by_count ranks))
-        hand (map (lambda (x) (lsh x -4)) raw_groups (map (lambda (x) (logand x 15)) raw_groups))
-        shigh (straight_high &rest hand)
-        (if shigh
-            (if (logior (< (f hand) 3) (= (f (r hand)) 2))
-                (list 3 1 2 shigh)
-                hand
-            )
+; Evaluate a single 5-card hand. Returns (counts... boost ranks...).
+; Modeled on calpoker's onehandcalc: map produces a flat hand with
+; boost inserted between counts and ranks via map's tail argument.
+(defun space_hand_eval (cards boost)
+    (assign
+        sorted (atomsort cards)
+        raw_groups (atomsort (group_by_count sorted))
+        (@ hand (first_count))
+            (map (lambda (x) (lsh x -4)) raw_groups
+                (c boost (map (lambda (x) (logand x 15)) raw_groups)))
+        (if (not (= first_count 1))
             hand
+            (assign
+                (_ _ _ _ _ _ r1 _ _ _ r5) hand
+                (if (= r5 (- r1 4))
+                    (li 3 3 boost r1)
+                    hand
+                )
+            )
         )
     )
 )
 
-(defun space_hand_eval (cards boosted)
-    (assign 
-        result (space_hand_calc_inner cards)
-        (list (f result) boosted (r result))
-    )
-)

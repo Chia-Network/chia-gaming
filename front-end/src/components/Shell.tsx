@@ -620,9 +620,8 @@ const Shell = () => {
           // Treat successful tracker match as immediate peer activity for UX.
           markPeerActive();
           let amount: bigint;
-          let perGame: bigint;
           try { amount = BigInt(matched.amount); } catch { amount = FALLBACK_AMOUNT; }
-          try { perGame = BigInt(matched.per_game); } catch { perGame = FALLBACK_PER_GAME; }
+          const perGame = amount / 10n || 1n;
           startSession(conn, matched.i_am_initiator, amount, perGame, matched.token, null, matched.my_alias, matched.peer_alias);
         },
         onConnectionStatus: (status: ConnectionStatus) => {

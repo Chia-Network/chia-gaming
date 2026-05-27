@@ -23,7 +23,9 @@ use crate::common::types::{
     atom_from_clvm, chia_dialect, AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Node,
     Program, ProgramRef, PublicKey, PuzzleHash, Sha256tree, Timeout,
 };
-use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, ValidationInfoHash};
+use crate::referee::types::{
+    canonical_atom_from_usize, GameMoveDetails, GameMoveStateInfo, ValidationInfoHash,
+};
 use crate::referee::types::{
     InternalStateUpdateArgs, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
 };
@@ -344,35 +346,33 @@ impl BareDebugGameHandler {
         let (mover_pk, waiter_pk) = self.get_mover_and_waiter_pubkey();
 
         let update_args = InternalStateUpdateArgs {
-            referee_args: Rc::new(
-                RefereePuzzleArgs {
-                    nonce: self.nonce,
-                    validation_program: validation_program.clone(),
-                    previous_validation_info_hash,
-                    referee_coin_puzzle_hash: self.mod_hash.clone(),
-                    timeout: self.timeout.clone(),
-                    mover_pubkey: mover_pk.clone(),
-                    waiter_pubkey: waiter_pk.clone(),
-                    amount: self.start.amount.clone(),
-                    game_move: GameMoveDetails {
-                        basic: GameMoveStateInfo {
-                            move_made: move_to_check.to_vec(),
-                            mover_share: mover_share.clone(),
-                            max_move_size: self.max_move_size,
-                        },
-                        validation_program_hash: ValidationInfoHash::Hash(
-                            ValidationInfo::new_state_update(
-                                allocator,
-                                validation_program.clone(),
-                                self.state.p(),
-                            )
-                            .hash()
-                            .clone(),
-                        ),
+            referee_args: Rc::new(RefereePuzzleArgs {
+                nonce: self.nonce,
+                validation_program: validation_program.clone(),
+                previous_validation_info_hash,
+                referee_coin_puzzle_hash: self.mod_hash.clone(),
+                timeout: self.timeout.clone(),
+                mover_pubkey: mover_pk.clone(),
+                waiter_pubkey: waiter_pk.clone(),
+                amount: self.start.amount.clone(),
+                game_move: GameMoveDetails {
+                    basic: GameMoveStateInfo {
+                        move_made: move_to_check.to_vec(),
+                        mover_share: mover_share.clone(),
+                        max_move_size_raw: canonical_atom_from_usize(self.max_move_size),
+                        max_move_size: self.max_move_size,
                     },
-                }
-                .off_chain(),
-            ),
+                    validation_program_hash: ValidationInfoHash::Hash(
+                        ValidationInfo::new_state_update(
+                            allocator,
+                            validation_program.clone(),
+                            self.state.p(),
+                        )
+                        .hash()
+                        .clone(),
+                    ),
+                },
+            }),
             state_update_args: StateUpdateMoveArgs {
                 evidence: evidence.to_program(),
                 state: self.state.p(),
@@ -501,6 +501,9 @@ impl BareDebugGameHandler {
                                     basic: GameMoveStateInfo {
                                         move_made: move_to_check.clone(),
                                         mover_share: inputs.opponent_mover_share.clone(),
+                                        max_move_size_raw: canonical_atom_from_usize(
+                                            inputs.max_move_size,
+                                        ),
                                         max_move_size: inputs.max_move_size,
                                     },
                                     validation_program_hash: ValidationInfoHash::Hash(

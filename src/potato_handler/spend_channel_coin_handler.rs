@@ -8,7 +8,7 @@ use crate::channel_handler::types::{ChannelCoinSpendInfo, ChannelHandlerEnv, Rea
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
     chia_dialect, Aggsig, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash,
-    IntoErr, Program, ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout,
+    IntoErr, Program, ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout, MAX_BLOCK_COST_CLVM,
 };
 use crate::peer_container::PeerHandler;
 use crate::potato_handler::effects::{
@@ -588,7 +588,7 @@ impl SpendChannelCoinHandler {
             &chia_dialect(),
             run_puzzle,
             run_args,
-            0,
+            MAX_BLOCK_COST_CLVM,
         )
         .into_gen()?;
         let conditions_nodeptr = conditions_result.1;

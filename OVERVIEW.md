@@ -683,4 +683,5 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | [`clsp/handler_api.md`](clsp/handler_api.md) | CLVM calling conventions for handler functions |
 | [`DEBUGGING_GUIDE.md`](DEBUGGING_GUIDE.md) | Debugging, testing, `./cb.sh` / `./ct.sh` usage |
 | [`FRONTEND_ARCHITECTURE.md`](FRONTEND_ARCHITECTURE.md) | React frontend, WASM bridge, tracker relay, session persistence |
+| [`CLVM_DOS.md`](CLVM_DOS.md) | CLVM denial-of-service vectors: ladder bombs, execution cost, trust categories per call site, solution constraints |
 

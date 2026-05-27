@@ -2,7 +2,8 @@
 
 For the conceptual overview (state channels, coin hierarchy, potato protocol),
 see `OVERVIEW.md`. For off-chain game proposals and flow, see
-`GAME_LIFECYCLE.md`.
+`GAME_LIFECYCLE.md`. For CLVM denial-of-service analysis (execution cost caps,
+solution constraints, trust categories), see `CLVM_DOS.md`.
 
 ## Table of Contents
 
@@ -553,8 +554,12 @@ The referee puzzle (`referee.clsp`) accepts three types of solutions:
   - Requires `AGG_SIG_ME MOVER_PUBKEY (shatree args)` on the move args
 3. **Slash** (`args = (previous_state, previous_validation_program, evidence, mover_payout_ph)`):
   - Proves a previous move was invalid by running the validation program
-  - If validation raises, the slash succeeds: creates `CREATE_COIN mover_payout_ph AMOUNT`
-  (the slasher takes the full game amount)
+  - Slash succeeds (creates `CREATE_COIN mover_payout_ph AMOUNT`, slasher
+  takes the full game amount) when the validator returns nil *or* returns
+  values whose infohash or max_move_size don't match the curried commitments
+  - If the validator *raises* (CLVM exception), the slash transaction itself
+  fails to mine — this is why validators must handle all input lengths and
+  formats without raising (see `CLVM_DOS.md`, "Game-Specific Responsibilities")
   - Requires `AGG_SIG_UNSAFE MOVER_PUBKEY ("x" || mover_payout_ph)` — the same
   pre-signed payout authorization used by timeouts, so no additional signing
   is needed at slash time

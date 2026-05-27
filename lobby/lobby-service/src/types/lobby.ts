@@ -14,16 +14,12 @@ export interface Challenge {
   id: string;
   from_id: string;
   target_id: string;
-  game: string;
   amount: string;
-  per_game: string;
 }
 
 export interface Pairing {
   playerA_id: string;
   playerB_id: string;
   token: string;
-  game_type: string;
   amount: string;
-  per_game: string;
 }
