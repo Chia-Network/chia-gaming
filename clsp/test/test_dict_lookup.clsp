@@ -3,7 +3,7 @@
 (import games.krunk.krunk_dict_tree exposing dict_lookup)
 
 ; Args: (tree word left_sentinel right_sentinel)
-; Returns dict_lookup result: () if in dict, (left right) if not.
+; Returns dict_lookup result: () if in dict, (left_bound right_bound signature) if not.
 (export (tree word left_sentinel right_sentinel)
-    (dict_lookup tree word left_sentinel right_sentinel)
+    (dict_lookup left_sentinel right_sentinel word tree)
 )

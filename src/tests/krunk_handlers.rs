@@ -1,8 +1,8 @@
 #![allow(non_snake_case)]
 
 use crate::common::load_clvm::read_hex_puzzle;
-use crate::common::types::{chia_dialect, AllocEncoder, Puzzle, Sha256Input, Sha256tree};
-use crate::games::krunk_dict_tree::build_dict_tree_from_bytes;
+use crate::common::types::{chia_dialect, Aggsig, AllocEncoder, Puzzle, Sha256Input, Sha256tree};
+use crate::games::krunk_dict_tree::build_signed_dict_tree_from_bytes;
 use crate::utils::proper_list;
 
 use chia_protocol::Bytes;
@@ -214,7 +214,10 @@ fn setup_game(allocator: &mut AllocEncoder, dictionary: Vec<Bytes>) -> GameSetup
     )
     .expect("load parser");
 
-    let dict_tree = build_dict_tree_from_bytes(allocator, &dictionary).expect("build dict tree");
+    let n_words = dictionary.len();
+    let sigs: Vec<Aggsig> = (0..=n_words).map(|_| Aggsig::default()).collect();
+    let dict_tree =
+        build_signed_dict_tree_from_bytes(allocator, &dictionary, &sigs).expect("build dict tree");
     let dict_pubkey = Bytes::from(vec![0xAA; 48]);
     let make_proposal_curried = CurriedProgram {
         program: make_proposal_raw,

@@ -69,7 +69,7 @@
         salt (substr entropy 0 16)
         move (sha256 salt word)
         (assert
-            (not (dict_lookup DICT_TREE word MIN_WORD MAX_WORD))
+            (not (dict_lookup MIN_WORD MAX_WORD word DICT_TREE))
             (list
                 "krunk_alice_handler_commit"
                 move
@@ -89,7 +89,7 @@
 (defun krunk_alice_handler_guess (SALT WORD DICT_TREE amount pre_state state move validation_info_hash mover_share)
     (assign
         (dict_pubkey base_unit bob_guesses alice_clues alice_commit . _rest) state
-        lookup_result (dict_lookup DICT_TREE move MIN_WORD MAX_WORD)
+        lookup_result (dict_lookup MIN_WORD MAX_WORD move DICT_TREE)
         (if lookup_result
             (list 0 (li (concat (f lookup_result) (f (r lookup_result)))) 0)
             (assign
@@ -157,7 +157,7 @@
         (dict_pubkey base_unit bob_guesses alice_clues alice_commit . _rest) state
         guess local_move
         (assert
-            (not (dict_lookup DICT_TREE guess MIN_WORD MAX_WORD))
+            (not (dict_lookup MIN_WORD MAX_WORD guess DICT_TREE))
             (list
                 "krunk_bob_handler_guess"
                 guess
@@ -187,7 +187,7 @@
             )
             (assign
                 word (substr move 16 21)
-                lookup_result (dict_lookup DICT_TREE word MIN_WORD MAX_WORD)
+                lookup_result (dict_lookup MIN_WORD MAX_WORD word DICT_TREE)
                 (if lookup_result
                     (list
                         (li word (make_clue word (f bob_guesses)))

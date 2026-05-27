@@ -1,6 +1,6 @@
 use crate::common::load_clvm::read_hex_puzzle;
-use crate::common::types::{chia_dialect, AllocEncoder};
-use crate::games::krunk_dict_tree::build_dict_tree;
+use crate::common::types::{chia_dialect, Aggsig, AllocEncoder};
+use crate::games::krunk_dict_tree::{build_signed_dict_tree, word_add_one, word_sub_one};
 use crate::utils::proper_list;
 
 use clvm_traits::ToClvm;
@@ -53,10 +53,16 @@ fn atom_to_vec(allocator: &mut AllocEncoder, node: NodePtr) -> Vec<u8> {
     }
 }
 
+fn make_test_tree(allocator: &mut AllocEncoder, words: &[&[u8]]) -> NodePtr {
+    let n = words.len();
+    let sigs: Vec<Aggsig> = (0..=n).map(|_| Aggsig::default()).collect();
+    build_signed_dict_tree(allocator, words, &sigs).unwrap()
+}
+
 fn test_dict_lookup_finds_word_in_dictionary() {
     let mut alloc = AllocEncoder::new();
     let words: Vec<&[u8]> = vec![b"crane", b"slate", b"trace", b"world", b"zzzzz"];
-    let tree = build_dict_tree(&mut alloc, &words).unwrap();
+    let tree = make_test_tree(&mut alloc, &words);
 
     for &word in &words {
         let result = run_dict_lookup(&mut alloc, tree, word);
@@ -71,68 +77,79 @@ fn test_dict_lookup_finds_word_in_dictionary() {
 fn test_dict_lookup_gap_before_first_word() {
     let mut alloc = AllocEncoder::new();
     let words: Vec<&[u8]> = vec![b"crane", b"slate", b"trace", b"world", b"zzzzz"];
-    let tree = build_dict_tree(&mut alloc, &words).unwrap();
+    let tree = make_test_tree(&mut alloc, &words);
 
     // "apple" < "crane" — should fall in the gap before the first word
     let result = run_dict_lookup(&mut alloc, tree, b"apple");
     assert!(!is_nil(&mut alloc, result), "expected non-nil for gap word");
     let items = proper_list(alloc.allocator(), result, true).unwrap();
-    assert_eq!(items.len(), 2);
+    assert_eq!(items.len(), 3);
     let left = atom_to_vec(&mut alloc, items[0]);
     let right = atom_to_vec(&mut alloc, items[1]);
-    assert_eq!(left, MIN_SENTINEL);
-    assert_eq!(right, b"crane");
+    // Bounds are adjusted: left stays MIN_WORD, right is (crane - 1)
+    assert_eq!(left.as_slice(), MIN_SENTINEL.as_slice());
+    assert_eq!(right, word_sub_one(b"crane"));
+    // Third element is the signature atom (96 bytes)
+    let sig = atom_to_vec(&mut alloc, items[2]);
+    assert_eq!(sig.len(), 96);
 }
 
 fn test_dict_lookup_gap_after_last_word() {
     let mut alloc = AllocEncoder::new();
     let words: Vec<&[u8]> = vec![b"crane", b"slate", b"trace", b"world", b"zzzzz"];
-    let tree = build_dict_tree(&mut alloc, &words).unwrap();
+    let tree = make_test_tree(&mut alloc, &words);
 
-    // Words in this dict use ASCII uppercase? No, lowercase here.
-    // "zzzzz" is the last word. Anything after it in sort order would need
-    // to be > "zzzzz". Let's use bytes [0x7a, 0x7a, 0x7a, 0x7a, 0x7b]
+    // After "zzzzz": use [0x7a, 0x7a, 0x7a, 0x7a, 0x7b]
     let after_last: &[u8] = &[0x7a, 0x7a, 0x7a, 0x7a, 0x7b];
     let result = run_dict_lookup(&mut alloc, tree, after_last);
     assert!(!is_nil(&mut alloc, result));
     let items = proper_list(alloc.allocator(), result, true).unwrap();
-    assert_eq!(items.len(), 2);
+    assert_eq!(items.len(), 3);
     let left = atom_to_vec(&mut alloc, items[0]);
     let right = atom_to_vec(&mut alloc, items[1]);
-    assert_eq!(left, b"zzzzz");
-    assert_eq!(right, MAX_SENTINEL);
+    // left is (zzzzz + 1), right stays MAX_WORD
+    assert_eq!(left, word_add_one(b"zzzzz"));
+    assert_eq!(right.as_slice(), MAX_SENTINEL.as_slice());
+    let sig = atom_to_vec(&mut alloc, items[2]);
+    assert_eq!(sig.len(), 96);
 }
 
 fn test_dict_lookup_gap_between_words() {
     let mut alloc = AllocEncoder::new();
     let words: Vec<&[u8]> = vec![b"crane", b"slate", b"trace", b"world", b"zzzzz"];
-    let tree = build_dict_tree(&mut alloc, &words).unwrap();
+    let tree = make_test_tree(&mut alloc, &words);
 
     // "sharp" is between "crane" and "slate"
     let result = run_dict_lookup(&mut alloc, tree, b"sharp");
     assert!(!is_nil(&mut alloc, result));
     let items = proper_list(alloc.allocator(), result, true).unwrap();
-    assert_eq!(items.len(), 2);
+    assert_eq!(items.len(), 3);
     let left = atom_to_vec(&mut alloc, items[0]);
     let right = atom_to_vec(&mut alloc, items[1]);
-    assert_eq!(left, b"crane");
-    assert_eq!(right, b"slate");
+    // left is (crane + 1), right is (slate - 1)
+    assert_eq!(left, word_add_one(b"crane"));
+    assert_eq!(right, word_sub_one(b"slate"));
+    let sig = atom_to_vec(&mut alloc, items[2]);
+    assert_eq!(sig.len(), 96);
 }
 
 fn test_dict_lookup_gap_xyzzy() {
     let mut alloc = AllocEncoder::new();
     let words: Vec<&[u8]> = vec![b"crane", b"slate", b"trace", b"world", b"zzzzz"];
-    let tree = build_dict_tree(&mut alloc, &words).unwrap();
+    let tree = make_test_tree(&mut alloc, &words);
 
     // "xyzzy" is between "world" and "zzzzz"
     let result = run_dict_lookup(&mut alloc, tree, b"xyzzy");
     assert!(!is_nil(&mut alloc, result));
     let items = proper_list(alloc.allocator(), result, true).unwrap();
-    assert_eq!(items.len(), 2);
+    assert_eq!(items.len(), 3);
     let left = atom_to_vec(&mut alloc, items[0]);
     let right = atom_to_vec(&mut alloc, items[1]);
-    assert_eq!(left, b"world");
-    assert_eq!(right, b"zzzzz");
+    // left is (world + 1), right is (zzzzz - 1)
+    assert_eq!(left, word_add_one(b"world"));
+    assert_eq!(right, word_sub_one(b"zzzzz"));
+    let sig = atom_to_vec(&mut alloc, items[2]);
+    assert_eq!(sig.len(), 96);
 }
 
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
