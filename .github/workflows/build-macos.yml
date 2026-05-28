@@ -8,6 +8,8 @@ on:
       - dev
     tags:
       - "**"
+  release:
+    types: [published]
   pull_request:
     branches:
       - "**"
@@ -55,3 +57,62 @@ jobs:
           cargo test --no-run
           # Run simulator tests (matches local ct.sh)
           cargo test --lib --features sim-tests -- --nocapture
+
+  release:
+    name: Build deploy tarballs (macOS)
+    if: github.event_name == 'release'
+    needs: [test_macos_arm]
+    runs-on: [macos-13-arm64]
+    steps:
+      - uses: Chia-Network/actions/clean-workspace@main
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rust.sh
+          sh rust.sh -y
+
+      - name: Add wasm32 target
+        run: |
+          export PATH=~/.cargo/bin:$PATH
+          rustup target add wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: |
+          export PATH=~/.cargo/bin:$PATH
+          cargo install wasm-pack --version 0.13.1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.33.0 --activate
+
+      - name: Build deploy tarballs
+        run: |
+          export PATH=~/.cargo/bin:$PATH
+          tools/build-deploy.sh --platform=macos
+
+      - name: Upload player app artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: chia-gaming-macos
+          path: |
+            chia-gaming-macos-*.tgz
+            chia-gaming-macos-*.zip
+
+      - name: Upload lobby artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: chia-gaming-lobby-macos
+          path: |
+            chia-gaming-lobby-macos-*.tgz
+            chia-gaming-lobby-macos-*.zip

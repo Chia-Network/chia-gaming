@@ -89,6 +89,54 @@ jobs:
           # Run simulator tests (matches local ct.sh)
           cargo test --lib --features sim-tests,sim-server -- --nocapture
 
+  release:
+    runs-on: ubuntu-22.04
+    name: Build deploy tarballs (Linux)
+    if: github.event_name == 'release'
+    needs: [unit_tests]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --version 0.13.1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.33.0 --activate
+
+      - name: Build deploy tarballs
+        run: tools/build-deploy.sh --platform=linux
+
+      - name: Upload player app artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: chia-gaming-linux
+          path: |
+            chia-gaming-linux-*.tgz
+            chia-gaming-linux-*.zip
+
+      - name: Upload lobby artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: chia-gaming-lobby-linux
+          path: |
+            chia-gaming-lobby-linux-*.tgz
+            chia-gaming-lobby-linux-*.zip
+
   coverage:
     needs: [fmt, clippy]
     runs-on: ubuntu-latest

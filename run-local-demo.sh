@@ -81,14 +81,13 @@ fi
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
     echo "=== Building simulator + chialisp (if needed) ==="
-    cargo build --features sim-server --bin chia-gaming-sim
     ./tools/build-chialisp.sh
     echo "=== Building WASM (web target) ==="
     (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/dist" --dev --target=web)
     echo "=== Building gaming frontend ==="
     (cd "$FE_DIR" && pnpm install --frozen-lockfile && pnpm run build)
     echo "=== Building lobby-frontend ==="
-    (cd "$SCRIPT_DIR/lobby" && pnpm install --frozen-lockfile)
+    (cd "$SCRIPT_DIR/lobby" && pnpm install --frozen-lockfile --ignore-scripts)
     (cd "$LOBBY_FRONTEND_DIR" && pnpm run build)
     echo "=== Building lobby-service ==="
     (cd "$LOBBY_SERVICE_DIR" && pnpm run build)
