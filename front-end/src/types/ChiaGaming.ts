@@ -606,7 +606,7 @@ export interface InternalBlockchainInterface {
   registerCoins(names: string[]): Promise<void>;
   startMonitoring(): Promise<void>;
 
-  beginConnect(uniqueId: string): Promise<ConnectionSetup>;
+  beginConnect(uniqueId: string, fresh?: boolean): Promise<ConnectionSetup>;
   disconnect(): Promise<void>;
   isConnected(): boolean;
   onConnectionChange(cb: (connected: boolean) => void): () => void;

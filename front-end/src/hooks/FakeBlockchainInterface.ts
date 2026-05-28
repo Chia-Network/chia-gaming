@@ -273,7 +273,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     }
   }
 
-  async beginConnect(uniqueId: string): Promise<ConnectionSetup> {
+  async beginConnect(uniqueId: string, _fresh = false): Promise<ConnectionSetup> {
     return {
       qrUri: `sim://${this.wsUrl.replace('ws://', '')}/${uniqueId}`,
       fields: {

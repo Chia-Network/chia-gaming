@@ -12,6 +12,7 @@ import { normalizeHexString, toUint8, toHexString } from '../util';
 import { decodeBech32mPuzzleHash, encodePuzzleHashToBech32m } from '../util/bech32m';
 import { TransactionRecord, WalletSpendBundle } from '../types/rpc/PushTransactions';
 import { walletConnectState } from './useWalletConnect';
+import { clearWalletConnectStorage } from './save';
 import { jsonStringify } from '../util/jsonSafe';
 
 const PUSH_RETRY_DELAY = 30000;
@@ -431,7 +432,11 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     });
   }
 
-  async beginConnect(_uniqueId: string): Promise<ConnectionSetup> {
+  async beginConnect(_uniqueId: string, fresh = false): Promise<ConnectionSetup> {
+    if (fresh) {
+      await clearWalletConnectStorage();
+      walletConnectState.reset();
+    }
     await walletConnectState.init();
     this.subscribeToWcEvents();
 

@@ -231,9 +231,9 @@ function clearWalletConnectLocalStorageKeys(): void {
   } catch { /* ignore */ }
 }
 
-export function clearWalletConnectStorage(): void {
+export async function clearWalletConnectStorage(): Promise<void> {
   clearWalletConnectLocalStorageKeys();
-  void clearWalletConnectIndexedDb();
+  await clearWalletConnectIndexedDb();
 }
 
 async function clearWalletConnectIndexedDb(): Promise<void> {

@@ -193,7 +193,7 @@ const Shell = () => {
       );
       clearSession();
       clearLease();
-      clearWalletConnectStorage();
+      void clearWalletConnectStorage();
     }
   }
 
@@ -848,15 +848,16 @@ const Shell = () => {
 
   // --- Unified connection flow ---
   // silent: skip the modal on reconnect (e.g. auto-reconnect after completed connection)
-  const handleConnect = useCallback(async (bcType: 'simulator' | 'walletconnect', silent = false) => {
-    log(`[Shell] handleConnect: bcType=${bcType} silent=${silent}`);
+  // fresh: wipe stale WC storage before connecting (user explicitly starting a new pairing)
+  const handleConnect = useCallback(async (bcType: 'simulator' | 'walletconnect', silent = false, fresh = false) => {
+    log(`[Shell] handleConnect: bcType=${bcType} silent=${silent} fresh=${fresh}`);
     wcAbortRef.current = false;
     const { iface, pollMs } = getInterface(bcType);
     try {
       saveSession({ blockchainType: bcType });
       setBlockchainType(bcType);
       setConnecting(true);
-      const setup = await iface.beginConnect(uniqueId);
+      const setup = await iface.beginConnect(uniqueId, fresh);
       if (wcAbortRef.current) return;
       if (!setup.skipQr) setConnectionSetup(setup);
       if (setup.fields && !silent) {
@@ -1568,7 +1569,7 @@ const Shell = () => {
             <div className='flex flex-col justify-center items-center w-full px-4 py-6 gap-4'>
               <p className='text-lg font-semibold text-canvas-text-contrast'>Choose Connection</p>
               <div className='w-full max-w-sm flex flex-col gap-3'>
-                <Button variant='solid' fullWidth onClick={() => handleConnect('simulator')}>
+                <Button variant='solid' fullWidth onClick={() => handleConnect('simulator', false, true)}>
                   Continue with Simulator
                 </Button>
                 <div className='flex items-center gap-2'>
@@ -1576,7 +1577,7 @@ const Shell = () => {
                   <span className='text-canvas-text font-medium text-sm'>OR</span>
                   <div className='flex-1 border-t border-canvas-border' />
                 </div>
-                <Button variant='solid' fullWidth onClick={() => handleConnect('walletconnect')}>
+                <Button variant='solid' fullWidth onClick={() => handleConnect('walletconnect', false, true)}>
                   Link Wallet
                 </Button>
               </div>
