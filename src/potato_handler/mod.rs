@@ -16,8 +16,8 @@ use crate::channel_handler::types::{
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::puzzle_for_synthetic_public_key;
 use crate::common::types::{
-    Aggsig, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr, Program,
-    ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout,
+    Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr,
+    Program, ProgramRef, PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::potato_handler::effects::{
     format_coin, CancelReason, ChannelState, ChannelStatusSnapshot, Effect, GameNotification,
@@ -1083,7 +1083,8 @@ impl PotatoHandler {
         game_id: &GameID,
         game_start: &GameStart,
     ) -> Result<GameStartInfoPair, Error> {
-        let starter = if let Some(starter) = self.game_types.get(&game_start.game_type) {
+        let starter = if let Some(starter) = self.game_types.get_mut(&game_start.game_type) {
+            starter.ensure_built(env.allocator)?;
             starter
         } else {
             return Err(Error::StrErr(format!(
@@ -1094,12 +1095,20 @@ impl PotatoHandler {
 
         let their_contribution = game_start.amount.checked_sub(&game_start.my_contribution)?;
 
+        let starter_program = starter
+            .program
+            .as_ref()
+            .ok_or_else(|| Error::StrErr(
+                "GameFactory program missing after ensure_built".to_string(),
+            ))?
+            .clone();
+
         if let Some(parser_prog) = &starter.parser_program {
             let alice_game = game::Game::new_from_proposal(
                 env.allocator,
                 i_initiated,
                 game_id,
-                starter.program.clone().into(),
+                starter_program.clone().into(),
                 Some(parser_prog.clone().into()),
                 &game_start.my_contribution,
             )?;
@@ -1120,7 +1129,7 @@ impl PotatoHandler {
                 env.allocator,
                 !i_initiated,
                 game_id,
-                starter.program.clone().into(),
+                starter_program.clone().into(),
                 Some(parser_prog.clone().into()),
                 &game_start.my_contribution,
             )?;
@@ -1153,7 +1162,7 @@ impl PotatoHandler {
                 env.allocator,
                 i_initiated,
                 game_id,
-                starter.program.clone().into(),
+                starter_program.clone().into(),
                 params_prog.clone(),
             )?;
             let alice_result: Vec<Rc<GameStartInfo>> = alice_game
@@ -1173,7 +1182,7 @@ impl PotatoHandler {
                 env.allocator,
                 !i_initiated,
                 game_id,
-                starter.program.clone().into(),
+                starter_program.clone().into(),
                 params_prog,
             )?;
             let bob_result: Vec<Rc<GameStartInfo>> = bob_game
@@ -1743,6 +1752,12 @@ impl PeerHandler for PotatoHandler {
     }
     fn register_game_type(&mut self, game_type: GameType, factory: GameFactory) {
         self.game_types.insert(game_type, factory);
+    }
+    fn rehydrate_game_types(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
+        for factory in self.game_types.values_mut() {
+            factory.ensure_built(allocator)?;
+        }
+        Ok(())
     }
     fn as_any(&self) -> &dyn std::any::Any {
         self

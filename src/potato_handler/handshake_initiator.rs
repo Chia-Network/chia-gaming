@@ -15,8 +15,8 @@ use crate::common::standard_coin::{
     verify_reward_payout_signature,
 };
 use crate::common::types::{
-    Aggsig, Amount, CoinID, CoinSpend, CoinString, Error, GameID, GameType, GetCoinStringParts,
-    Hash, IntoErr, Program, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
+    Aggsig, AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Error, GameID, GameType,
+    GetCoinStringParts, Hash, IntoErr, Program, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
     SpendBundle, Timeout,
 };
 use crate::games::krunk_dict_tree::{generate_gap_evidence, sign_gap_evidence, sigs_from_bytes, sigs_to_bytes, verify_gap_signatures};
@@ -105,6 +105,14 @@ pub struct HandshakeInitiatorHandler {
 const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 
 impl HandshakeInitiatorHandler {
+    /// Test-only accessor for the registered game-type map. Used to verify
+    /// that `rehydrate_game_types` reconstructs curried programs after a
+    /// cradle round-trip.
+    #[cfg(test)]
+    pub fn game_types_for_test(&self) -> &BTreeMap<GameType, GameFactory> {
+        &self.game_types
+    }
+
     pub fn new(phi: PotatoHandlerInit) -> Self {
         HandshakeInitiatorHandler {
             state: InitiatorState::WaitingForStart,
@@ -937,6 +945,12 @@ impl PeerHandler for HandshakeInitiatorHandler {
     }
     fn register_game_type(&mut self, game_type: GameType, factory: GameFactory) {
         self.game_types.insert(game_type, factory);
+    }
+    fn rehydrate_game_types(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
+        for factory in self.game_types.values_mut() {
+            factory.ensure_built(allocator)?;
+        }
+        Ok(())
     }
     fn as_any(&self) -> &dyn std::any::Any {
         self

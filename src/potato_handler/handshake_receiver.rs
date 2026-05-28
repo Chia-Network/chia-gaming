@@ -13,8 +13,8 @@ use crate::common::standard_coin::{
     private_to_public_key, sign_reward_payout, verify_reward_payout_signature,
 };
 use crate::common::types::{
-    Amount, CoinID, CoinString, Error, GameID, GameType, GetCoinStringParts, Hash, IntoErr,
-    Program, PuzzleHash, Sha256Input, Sha256tree, SpendBundle, Timeout,
+    AllocEncoder, Amount, CoinID, CoinString, Error, GameID, GameType, GetCoinStringParts, Hash,
+    IntoErr, Program, PuzzleHash, Sha256Input, Sha256tree, SpendBundle, Timeout,
 };
 use crate::games::krunk_dict_tree::{generate_gap_evidence, sign_gap_evidence, sigs_from_bytes, sigs_to_bytes, verify_gap_signatures};
 use crate::games::krunk_dictionary;
@@ -884,6 +884,12 @@ impl PeerHandler for HandshakeReceiverHandler {
     }
     fn register_game_type(&mut self, game_type: GameType, factory: GameFactory) {
         self.game_types.insert(game_type, factory);
+    }
+    fn rehydrate_game_types(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
+        for factory in self.game_types.values_mut() {
+            factory.ensure_built(allocator)?;
+        }
+        Ok(())
     }
     fn as_any(&self) -> &dyn std::any::Any {
         self

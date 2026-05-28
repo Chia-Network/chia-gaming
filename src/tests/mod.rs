@@ -6,7 +6,6 @@ pub mod constants;
 pub mod dict_tree_lookup;
 pub mod krunk_handlers;
 pub mod krunk_validation;
-pub mod referee_conditions;
 pub mod spacepoker_handlers;
 pub mod spacepoker_validation;
 pub mod standard_coin;

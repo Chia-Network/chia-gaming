@@ -37,7 +37,18 @@ mod gaming_wasm {
     use chia_gaming::potato_handler::effects::{CradleEvent, GameNotification};
     use chia_gaming::potato_handler::handshake::{CoinSpendRequest, RawCoinCondition};
     use chia_gaming::potato_handler::start::GameStart;
-    use chia_gaming::potato_handler::types::{GameFactory, ToLocalUI};
+    use chia_gaming::potato_handler::types::{GameFactory, GameFactoryRebuild, ToLocalUI};
+
+    thread_local! {
+        /// Map from `(proposal_hex, parser_hex)` produced by
+        /// `curry_krunk_programs` to the rebuild recipe describing how to
+        /// re-curry them. Populated by `curry_krunk_programs` and consumed
+        /// by `convert_game_factory` so that the resulting `GameFactory`
+        /// carries a `GameFactoryRebuild::Krunk` recipe even though the
+        /// front-end only forwards hex blobs back to `register_game_type`.
+        static KRUNK_RECIPE_CACHE: RefCell<HashMap<(String, String), GameFactoryRebuild>> =
+            RefCell::new(HashMap::new());
+    }
 
     struct NullLocalUI;
     impl ToLocalUI for NullLocalUI {
@@ -219,6 +230,27 @@ mod gaming_wasm {
         let placeholder_pubkey = [0u8; 48];
         let (make_proposal, parser) =
             chia_gaming::games::curry_krunk_programs(&mut allocator, dict_tree, &placeholder_pubkey).into_js()?;
+        let proposal_hex = make_proposal.to_hex();
+        let parser_hex = parser.to_hex();
+        let word_refs: Vec<&[u8]> = dict_bytes.iter().map(|b| b.as_ref()).collect();
+        let reachable_count = chia_gaming::games::krunk_dict_tree::reachable_gap_mask(&word_refs)
+            .iter()
+            .filter(|r| **r)
+            .count();
+        let placeholder_reachable: Vec<Aggsig> =
+            (0..reachable_count).map(|_| Aggsig::default()).collect();
+        let recipe = GameFactoryRebuild::Krunk {
+            words: dict_bytes.iter().map(|b| b.as_ref().to_vec()).collect(),
+            aggregated_sigs: chia_gaming::games::krunk_dict_tree::sigs_to_bytes(
+                &placeholder_reachable,
+            ),
+            dict_pubkey: placeholder_pubkey.to_vec(),
+        };
+        KRUNK_RECIPE_CACHE.with(|cache| {
+            cache
+                .borrow_mut()
+                .insert((proposal_hex.clone(), parser_hex.clone()), recipe);
+        });
 
         let joined: Vec<u8> = normalized
             .iter()
@@ -234,12 +266,12 @@ mod gaming_wasm {
         let _ = js_sys::Reflect::set(
             &obj,
             &"proposal_hex".into(),
-            &JsValue::from_str(&make_proposal.to_hex()),
+            &JsValue::from_str(&proposal_hex),
         );
         let _ = js_sys::Reflect::set(
             &obj,
             &"parser_hex".into(),
-            &JsValue::from_str(&parser.to_hex()),
+            &JsValue::from_str(&parser_hex),
         );
         let _ = js_sys::Reflect::set(
             &obj,
@@ -335,11 +367,26 @@ mod gaming_wasm {
         } else {
             None
         };
+        // For factories registered via the WASM `curry_krunk_programs` path,
+        // recover the rebuild recipe from the cache so the resulting
+        // `GameFactory` carries a slim rebuild recipe instead of forcing the
+        // full curried programs to live in the serialized cradle.
+        let rebuild = if let Some(ref parser_hex) = js_factory.parser_hex {
+            KRUNK_RECIPE_CACHE.with(|cache| {
+                cache
+                    .borrow()
+                    .get(&(js_factory.hex.clone(), parser_hex.clone()))
+                    .cloned()
+            })
+        } else {
+            None
+        };
         Ok((
             name_data,
             GameFactory {
-                program: Program::from_bytes(&byte_data).into(),
+                program: Some(Program::from_bytes(&byte_data).into()),
                 parser_program,
+                rebuild,
             },
         ))
     }
@@ -505,6 +552,13 @@ mod gaming_wasm {
     pub fn create_serialized_game(data: &[u8], new_seed: &str) -> Result<i32, JsValue> {
         let mut cradle: JsCradle = bencodex::from_slice::<JsCradle>(data)
             .map_err(|e| types::Error::StrErr(e.to_string()))
+            .into_js()?;
+        // Programs in `game_types` are skipped during serde to keep the
+        // serialized cradle small. Reconstruct them from the rebuild
+        // recipes before the cradle is used.
+        cradle
+            .cradle
+            .rehydrate_game_types(&mut cradle.allocator)
             .into_js()?;
         let hashed = Sha256Input::Bytes(new_seed.as_bytes()).hash();
         cradle.rng = ChaCha8SerializationWrapper(ChaCha8Rng::from_seed(*hashed.bytes()));

@@ -7,7 +7,8 @@ use clvmr::allocator::NodePtr;
 
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::types::{Aggsig, AllocEncoder, Error, GameType, Program, PublicKey};
-use crate::potato_handler::types::GameFactory;
+use crate::games::krunk_dict_tree::sigs_to_bytes;
+use crate::potato_handler::types::{GameFactory, GameFactoryRebuild};
 use std::collections::BTreeMap;
 
 /// Curry the supplied dict tree and dict_pubkey into the raw krunk
@@ -96,9 +97,64 @@ pub fn build_krunk_game_factory(
     let pk_bytes: [u8; 48] = aggregate_dict_pubkey.bytes();
     let (make_proposal, parser) = curry_krunk_programs(allocator, dict_tree, &pk_bytes)?;
     Ok(GameFactory {
-        program: make_proposal.into(),
+        program: Some(make_proposal.into()),
         parser_program: Some(parser.into()),
+        rebuild: Some(GameFactoryRebuild::Krunk {
+            words: dictionary.iter().map(|b| b.as_ref().to_vec()).collect(),
+            aggregated_sigs: sigs_to_bytes(&aggregated_reachable),
+            dict_pubkey: pk_bytes.to_vec(),
+        }),
     })
+}
+
+impl GameFactory {
+    /// If `program`/`parser_program` are missing but a `rebuild` recipe is
+    /// present, reconstruct them. Used after deserializing a cradle: heavy
+    /// curried CLVM is not serialized, only the small recipe.
+    pub fn ensure_built(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
+        if self.program.is_some() {
+            return Ok(());
+        }
+        let rebuild = match self.rebuild.as_ref() {
+            Some(r) => r,
+            // No programs and no recipe: leave alone. Either this factory
+            // will be replaced (e.g. unsigned Krunk placeholder before user
+            // selects a dictionary) or the caller will hit a clear error
+            // when it tries to use the program.
+            None => return Ok(()),
+        };
+        match rebuild {
+            GameFactoryRebuild::Krunk {
+                words,
+                aggregated_sigs,
+                dict_pubkey,
+            } => {
+                if dict_pubkey.len() != 48 {
+                    return Err(Error::StrErr(format!(
+                        "GameFactoryRebuild::Krunk dict_pubkey length {} != 48",
+                        dict_pubkey.len(),
+                    )));
+                }
+                let mut pk_arr = [0u8; 48];
+                pk_arr.copy_from_slice(dict_pubkey);
+                let words_b: Vec<chia_protocol::Bytes> = words
+                    .iter()
+                    .map(|w| chia_protocol::Bytes::from(w.clone()))
+                    .collect();
+                let reachable_sigs = krunk_dict_tree::sigs_from_bytes(aggregated_sigs)?;
+                let word_refs: Vec<&[u8]> = words_b.iter().map(|b| b.as_ref()).collect();
+                let expanded =
+                    krunk_dict_tree::expand_signatures_for_tree(&word_refs, &reachable_sigs);
+                let dict_tree = krunk_dict_tree::build_signed_dict_tree_from_bytes(
+                    allocator, &words_b, &expanded,
+                )?;
+                let (mp, pp) = curry_krunk_programs(allocator, dict_tree, &pk_arr)?;
+                self.program = Some(mp.into());
+                self.parser_program = Some(pp.into());
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The `GameType` key for krunk in the game type map.
@@ -131,15 +187,17 @@ pub fn poker_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, Game
     game_type_map.insert(
         GameType(b"calpoker".to_vec()),
         GameFactory {
-            program: calpoker_make_proposal.to_program(),
+            program: Some(calpoker_make_proposal.to_program()),
             parser_program: Some(calpoker_parser.to_program()),
+            rebuild: None,
         },
     );
     game_type_map.insert(
         GameType(b"ca1poker".to_vec()),
         GameFactory {
-            program: calpoker_make_proposal.to_program(),
+            program: Some(calpoker_make_proposal.to_program()),
             parser_program: Some(calpoker_parser.to_program()),
+            rebuild: None,
         },
     );
     let spacepoker_make_proposal = read_hex_puzzle(
@@ -156,39 +214,161 @@ pub fn poker_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, Game
     game_type_map.insert(
         GameType(b"spacepoker".to_vec()),
         GameFactory {
-            program: spacepoker_make_proposal.to_program(),
+            program: Some(spacepoker_make_proposal.to_program()),
             parser_program: Some(spacepoker_parser.to_program()),
+            rebuild: None,
         },
     );
 
     // Krunk: load the proposal/parser and curry the bundled dictionary tree and
     // a placeholder dict_pubkey. The real pubkey would come from the handshake
     // (aggregate of both players' dictionary signing keys).
-    let dictionary = krunk_dictionary();
-    let n_words = dictionary.len();
-    let placeholder_sigs: Vec<crate::common::types::Aggsig> =
-        (0..=n_words).map(|_| crate::common::types::Aggsig::default()).collect();
-    let dict_tree =
-        krunk_dict_tree::build_signed_dict_tree_from_bytes(allocator, &dictionary, &placeholder_sigs)
-            .expect("build krunk dict tree");
-    let placeholder_pubkey = [0u8; 48];
-    let (krunk_make_proposal, krunk_parser) =
-        curry_krunk_programs(allocator, dict_tree, &placeholder_pubkey).expect("curry krunk");
-
     game_type_map.insert(
         GameType(b"krunk".to_vec()),
-        GameFactory {
-            program: krunk_make_proposal.into(),
-            parser_program: Some(krunk_parser.into()),
-        },
+        build_placeholder_krunk_game_factory(allocator).expect("build krunk placeholder"),
     );
 
     game_type_map.insert(
         GameType(b"debug".to_vec()),
         GameFactory {
-            program: debug_game.into(),
+            program: Some(debug_game.into()),
             parser_program: None,
+            rebuild: None,
         },
     );
     game_type_map
+}
+
+/// Build a Krunk `GameFactory` with all-default placeholder signatures and a
+/// zero dict pubkey. Used as the initial registry entry before a real
+/// dictionary handshake replaces it. Includes a `rebuild` recipe so the
+/// factory can be slimmed during cradle serialize/deserialize.
+pub fn build_placeholder_krunk_game_factory(
+    allocator: &mut AllocEncoder,
+) -> Result<GameFactory, Error> {
+    let dictionary = krunk_dictionary();
+    let word_refs: Vec<&[u8]> = dictionary.iter().map(|b| b.as_ref()).collect();
+    let reachable_count = krunk_dict_tree::reachable_gap_mask(&word_refs)
+        .iter()
+        .filter(|r| **r)
+        .count();
+    let placeholder_reachable: Vec<Aggsig> =
+        (0..reachable_count).map(|_| Aggsig::default()).collect();
+    let expanded =
+        krunk_dict_tree::expand_signatures_for_tree(&word_refs, &placeholder_reachable);
+    let dict_tree =
+        krunk_dict_tree::build_signed_dict_tree_from_bytes(allocator, &dictionary, &expanded)?;
+    let placeholder_pubkey = [0u8; 48];
+    let (mp, pp) = curry_krunk_programs(allocator, dict_tree, &placeholder_pubkey)?;
+    Ok(GameFactory {
+        program: Some(mp.into()),
+        parser_program: Some(pp.into()),
+        rebuild: Some(GameFactoryRebuild::Krunk {
+            words: dictionary.iter().map(|b| b.as_ref().to_vec()).collect(),
+            aggregated_sigs: sigs_to_bytes(&placeholder_reachable),
+            dict_pubkey: placeholder_pubkey.to_vec(),
+        }),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::types::Sha256tree;
+
+    /// Round-trip a Krunk `GameFactory`:
+    /// 1. Build the placeholder factory (programs populated, recipe present).
+    /// 2. Capture the puzzle hashes of `program` and `parser_program`.
+    /// 3. Drop the programs (simulating `#[serde(skip)]` on serialize).
+    /// 4. Call `ensure_built` to rebuild from the recipe.
+    /// 5. Assert the rebuilt programs hash identically.
+    #[test]
+    fn krunk_factory_rebuild_round_trip() {
+        let mut allocator = AllocEncoder::new();
+        let mut factory = build_placeholder_krunk_game_factory(&mut allocator)
+            .expect("build placeholder factory");
+
+        let original_program_hash = factory
+            .program
+            .as_ref()
+            .expect("program present")
+            .sha256tree(&mut allocator);
+        let original_parser_hash = factory
+            .parser_program
+            .as_ref()
+            .expect("parser present")
+            .sha256tree(&mut allocator);
+
+        factory.program = None;
+        factory.parser_program = None;
+
+        factory
+            .ensure_built(&mut allocator)
+            .expect("rebuild from recipe");
+
+        let rebuilt_program_hash = factory
+            .program
+            .as_ref()
+            .expect("program rebuilt")
+            .sha256tree(&mut allocator);
+        let rebuilt_parser_hash = factory
+            .parser_program
+            .as_ref()
+            .expect("parser rebuilt")
+            .sha256tree(&mut allocator);
+
+        assert_eq!(rebuilt_program_hash, original_program_hash);
+        assert_eq!(rebuilt_parser_hash, original_parser_hash);
+    }
+
+    /// Same round-trip but going through bencodex serialization to confirm
+    /// that the slim recipe survives the wire format and the rebuilt
+    /// factory matches the originals.
+    #[test]
+    fn krunk_factory_bencodex_round_trip() {
+        let mut allocator = AllocEncoder::new();
+        let factory = build_placeholder_krunk_game_factory(&mut allocator)
+            .expect("build placeholder factory");
+
+        let original_program_hash = factory
+            .program
+            .as_ref()
+            .expect("program present")
+            .sha256tree(&mut allocator);
+        let original_parser_hash = factory
+            .parser_program
+            .as_ref()
+            .expect("parser present")
+            .sha256tree(&mut allocator);
+
+        let bytes = bencodex::to_vec(&factory).expect("serialize");
+        let mut roundtripped: GameFactory =
+            bencodex::from_slice(&bytes).expect("deserialize");
+        assert!(roundtripped.program.is_none(), "program is skipped on serde");
+        assert!(
+            roundtripped.parser_program.is_none(),
+            "parser is skipped on serde"
+        );
+        assert!(
+            roundtripped.rebuild.is_some(),
+            "rebuild recipe survives serde"
+        );
+        roundtripped
+            .ensure_built(&mut allocator)
+            .expect("rebuild after deserialize");
+
+        let rebuilt_program_hash = roundtripped
+            .program
+            .as_ref()
+            .expect("program rebuilt")
+            .sha256tree(&mut allocator);
+        let rebuilt_parser_hash = roundtripped
+            .parser_program
+            .as_ref()
+            .expect("parser rebuilt")
+            .sha256tree(&mut allocator);
+
+        assert_eq!(rebuilt_program_hash, original_program_hash);
+        assert_eq!(rebuilt_parser_hash, original_parser_hash);
+    }
 }
