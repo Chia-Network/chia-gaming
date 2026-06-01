@@ -42,7 +42,7 @@ configured, with at least 1000 mojos in your wallet.
   ```bash
   cargo install wasm-pack --version 0.13.1
   ```
-- **Node 20+** and **pnpm 10.33**:
+- **Node 20+** and **pnpm 10.33** and [Node Version Manager](https://nvmnode.com/):
   ```bash
   brew install node@20        # or download from https://nodejs.org
   npm install -g pnpm@10.33.0
@@ -51,6 +51,26 @@ configured, with at least 1000 mojos in your wallet.
 automatically set `CC_wasm32_unknown_unknown` and `AR_wasm32_unknown_unknown`
 to the Homebrew LLVM paths. Install with `brew install llvm` if WASM builds
 fail with clang errors.
+
+## Building & Testing
+
+```bash
+# Build test binaries (no test execution)
+./cb.sh
+
+# Run full default test flow:
+# - rust + chialisp build
+# - rust sim tests
+# - JS/WASM integration tests
+./ct.sh
+
+# Run only sim test(s) matching 'accept_finished' (while debugging)
+./ct.sh -o accept_finished
+
+# Run JS/WASM integration tests (builds WASM, starts simulator, runs Jest)
+./tools/local-wasm-tests.sh
+```
+
 
 # Deployment
 
