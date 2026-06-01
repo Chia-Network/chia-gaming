@@ -8,15 +8,22 @@ closing, or resolving disputes.
 The reference game implementation is **Calpoker** — a poker variant using
 commit-reveal randomness.
 
+For production builds, deployment tarballs, and step-by-step build instructions,
+see **[DEVELOPMENT.md](DEVELOPMENT.md)**.
+
+
 ## Documentation
 
 - **[OVERVIEW.md](OVERVIEW.md)** — How state channels, the referee, the
   potato protocol, and Calpoker work. Links to detailed docs.
 - **[DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)** — How to build, run tests, read
   output, and debug failures.
+- **[DEVELOPMENT.md](DEVELOPMENT.md)** — Build, debug and deploy the player app and lobby
+  tracker locally or to production.
 - **[FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md)** — Player app and
   tracker: React components, WASM bridge, WebSocket relay protocol.
-## Quick Start
+
+## Building & Testing
 
 ```bash
 # Build test binaries (no test execution)
@@ -28,11 +35,8 @@ commit-reveal randomness.
 # - JS/WASM integration tests
 ./ct.sh
 
-# Run only matching sim test(s) while debugging
+# Run only sim test(s) matching 'accept_finished' (while debugging)
 ./ct.sh -o accept_finished
-
-# Start full suite from first matching test name (wraparound)
-./ct.sh accept_finished
 
 # Run JS/WASM integration tests (builds WASM, starts simulator, runs Jest)
 ./tools/local-wasm-tests.sh
@@ -44,7 +48,7 @@ commit-reveal randomness.
 - **Node.js** and **pnpm** — for JS/WASM integration tests
 - **wasm-pack** — for building the WASM package (`cargo install wasm-pack`)
 - **LLVM** (Homebrew) — on macOS, needed for compiling `blst` to wasm (`brew install llvm`)
-
+- **NVM**  https://nvmnode.com
 ### JS Package Manager Policy
 
 Use **pnpm** for repository JS package workflows and lockfiles. Avoid mixing package

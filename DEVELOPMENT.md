@@ -1,13 +1,18 @@
-# Deploying
+# Development
 
-This guide covers building and running the two deployable artifacts:
+## Quick Start
 
-1. **Player app** — fully static HTML/JS/CSS/WASM served from any web server.
-2. **Tracker** — Express + WebSocket service that provides the lobby UI (iframe)
-  and relays game messages between peers.
+Run the full local stack — player app, lobby tracker, and blockchain simulator:
 
-For architecture details, see `[FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md)`.
-For the Rust test suite, see `[DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)`.
+```bash
+./run-local-demo.sh
+```
+
+This will run the player app on localhost:3002 and the tracker on localhost:3003
+
+There are two game modes: playing on a simulated blockchain, or on Chia's mainnet.
+To play on mainnet, you must have the Chia Wallet 2.7.1 or later running and
+configured, with at least 1000 mojos in your wallet.
 
 ## Prerequisites
 
@@ -52,6 +57,17 @@ Flags:
 
 Press Ctrl-C to stop all services.
 
+# Deployment
+
+This guide covers building and running the two deployable artifacts:
+
+1. **Player app** — fully static HTML/JS/CSS/WASM served from any web server.
+2. **Tracker** — Express + WebSocket service that provides the lobby UI (iframe)
+  and relays game messages between peers.
+
+For architecture details, see `[FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md)`.
+For the Rust test suite, see `[DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)`.
+
 ## Building Tarballs
 
 `tools/build-deploy.sh` runs all build steps below and packages the results:
@@ -68,12 +84,18 @@ This produces four files in subdirectories (tgz and zip of each artifact):
 Both formats have identical contents, ready to extract onto their respective
 servers.
 
-## Building Step by Steppr
+# Build Details
 
-For CI, production, or partial rebuilds. Run commands from the repo root
-unless noted. The CI workflow
+## Building in CI
+
+The CI workflow
 `[.github/workflows/frontend.yml](.github/workflows/frontend.yml)` is the
 canonical reference for the full build sequence.
+
+
+## Building Locally
+
+Run commands from the repo root unless noted.
 
 ### 1. Chialisp (.hex files)
 
