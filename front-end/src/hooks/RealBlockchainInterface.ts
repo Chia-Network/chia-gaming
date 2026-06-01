@@ -384,6 +384,11 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     return balance;
   }
 
+  async getFullNodePeerCount(): Promise<bigint> {
+    const result = await rpc.getFullNodePeerCount({});
+    return result?.peerCount ?? 0n;
+  }
+
   async getPuzzleAndSolution(coin: string): Promise<string[] | null> {
     try {
       const coinBytes = toUint8(coin);
