@@ -4,8 +4,7 @@ This project enables two-player games for real money over Chia state channels, w
 messages (the "potato protocol"). The blockchain is only touched for opening,
 closing, or resolving disputes.
 
-The reference game implementation is **Calpoker** — a poker variant using
-commit-reveal randomness.
+The reference games are **California Poker** — a poker variant using commit-reveal randomness, and **Space Poker**, a Texas Hold'em variant.
 
 For production builds, deployment tarballs, and step-by-step build instructions,
 see **[DEVELOPMENT.md](DEVELOPMENT.md)**.
