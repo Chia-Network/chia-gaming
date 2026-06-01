@@ -60,8 +60,8 @@ This guide covers building and running the two deployable artifacts:
 2. **Tracker** — Express + WebSocket service that provides the lobby UI (iframe)
   and relays game messages between peers.
 
-For architecture details, see `[FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md)`.
-For the Rust test suite, see `[DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)`.
+For architecture details, see [FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md).
+For the Rust test suite, see [DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md).
 
 ## Building Tarballs
 
@@ -83,8 +83,7 @@ servers.
 
 ## Building in CI
 
-The CI workflow
-`[.github/workflows/frontend.yml](.github/workflows/frontend.yml)` is the
+The CI workflow [.github/workflows/frontend.yml](.github/workflows/frontend.yml) is the
 canonical reference for the full build sequence.
 
 
