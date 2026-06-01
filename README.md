@@ -6,16 +6,16 @@ closing, or resolving disputes.
 
 The reference games are **California Poker** — a poker variant using commit-reveal randomness, and **Space Poker**, a Texas Hold'em variant.
 
-For production builds, deployment tarballs, and step-by-step build instructions,
-see **[DEVELOPMENT.md](DEVELOPMENT.md)**.
+For production builds, tarballs, and step-by-step build instructions, see
+**[DEVELOPMENT.md](DEVELOPMENT.md)**.
 
 
 ## Documentation
 
 - **[OVERVIEW.md](OVERVIEW.md)** — How state channels, the referee, the
   potato protocol, and Calpoker work. Links to detailed docs.
-- **[DEVELOPMENT.md](DEVELOPMENT.md)** — Build, debug and deploy the player app and lobby
-  tracker locally or to production.
+- **[DEVELOPMENT.md](DEVELOPMENT.md)** — Build, debug, and run the player app and lobby
+  tracker locally or in production.
 - **[FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md)** — Player app and
   tracker: React components, WASM bridge, WebSocket relay protocol.
 

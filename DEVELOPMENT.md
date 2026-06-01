@@ -72,9 +72,9 @@ fail with clang errors.
 ```
 
 
-# Deployment
+# Production
 
-This guide covers building and running the two deployable artifacts:
+This guide covers building and running the two production artifacts:
 
 1. **Player app** — fully static HTML/JS/CSS/WASM served from any web server.
 2. **Tracker** — Express + WebSocket service that provides the lobby UI (iframe)
@@ -204,49 +204,44 @@ app/
 
 ## Running the Services
 
-### Player app
+### Development
 
-Any static file server. No server-side logic required.
-For example:
+Run from a repo checkout. See [Quick Start](#quick-start) for the full local
+stack (`./run-local-demo.sh` starts the player app, tracker, and simulator).
 
-```bash
-python3 -m http.server 3002
-```
-
-**Development (from repo checkout):**
+#### Player app
 
 ```bash
 node local-static-test-server.js front-end/serve 3002
 ```
 
-**Development (from extracted tarball):**
+Open `http://localhost:3002`. `local-static-test-server.js` is a
+zero-dependency Node server that sets correct MIME types (including `.wasm`)
+and cache headers. Do not use `python3 -m http.server` — it does not
+reliably serve `.wasm` with the correct MIME type.
+
+To smoke-test a production tarball locally (after `./tools/build-deploy.sh`):
 
 ```bash
+mkdir chia-gaming-player
+tar -xzf deploy_player_app/chia-gaming-YYYYMMDD-HASH.tgz -C chia-gaming-player
+# unzip deploy_player_app/chia-gaming-YYYYMMDD-HASH.zip -d chia-gaming-player
+
+cd chia-gaming-player
 node local-static-test-server.js . 3002
 ```
 
-**Production:** Serve the staging directory with nginx, Caddy,
-S3 + CloudFront, or any static host. Apply the caching rules in
-[Production Notes](#production-notes).
+The `.` argument is the extracted root (the directory that contains
+`index.html`, `build-meta.json`, and `app/`). Production tarballs include
+`local-static-test-server.js` for this purpose.
 
-### Tracker (lobby service)
-
-From an extracted lobby tarball:
-
-```bash
-PORT=3003 node service.js \
-  --self 'http://localhost:3003' \
-  --dir .
-```
-
-Or from the repo checkout:
+#### Tracker
 
 ```bash
 PORT=3003 node lobby/lobby-service/dist/index-rollup.cjs \
   --self 'http://localhost:3003' \
   --dir lobby/lobby-frontend/serve
 ```
-
 
 | Flag / env  | Required | Purpose                                                                                        |
 | ----------- | -------- | ---------------------------------------------------------------------------------------------- |
@@ -255,19 +250,47 @@ PORT=3003 node lobby/lobby-service/dist/index-rollup.cjs \
 | `--verbose` | no       | Verbose logging                                                                                |
 | `PORT`      | no       | Listen port (default `5801` — conflicts with the simulator; always override when running both) |
 
-
-### Simulator (development only, from repo checkout)
+#### Simulator
 
 ```bash
 ./target/debug/chia-gaming-sim
 ```
 
-Ports 5800 (HTTP) and 5801 (WebSocket) are hardcoded. The simulator binary
-is built by `cargo build --features sim-server` and is not included in the
-tarballs. Not used in production; players connect to a real Chia wallet via
-WalletConnect.
+Ports 5800 (HTTP) and 5801 (WebSocket) are hardcoded. Built by
+`cargo build --features sim-server --bin chia-gaming-sim`. Not included in
+production tarballs.
 
-## Production Notes
+### Production
+
+#### Player app
+
+No server-side logic required. Extract the player app tarball/zip onto your
+static host and serve the staging directory with nginx, Caddy, S3 +
+CloudFront, or any static file server:
+
+```bash
+mkdir -p /var/www/chia-gaming-player
+tar -xzf chia-gaming-YYYYMMDD-HASH.tgz -C /var/www/chia-gaming-player
+# unzip chia-gaming-YYYYMMDD-HASH.zip -d /var/www/chia-gaming-player
+```
+
+See [Staging (Asset Layout)](#staging-asset-layout) for the directory
+structure. Apply the caching and origin rules below.
+
+#### Tracker
+
+Extract the lobby tarball, then run the bundled service:
+
+```bash
+PORT=443 node service.js \
+  --self 'https://tracker.example.com' \
+  --dir .
+```
+
+Set `--self` to the tracker's public URL. The same `--dir`, `--self`,
+`--verbose`, and `PORT` flags apply as in development (see table above).
+
+#### Production notes
 
 - **Separate origins.** The player app and tracker must be served from
 different origins. The lobby loads inside an iframe from the tracker's
