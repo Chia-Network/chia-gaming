@@ -1,6 +1,6 @@
 # chia-gaming
 
-Two-player games over Chia state channels. Players fund a shared channel coin on
+This project enables two-player games for real money over Chia state channels, with no trusted intermediary. Players fund a shared channel coin on
 the Chia blockchain, then play games entirely off-chain by exchanging signed
 messages (the "potato protocol"). The blockchain is only touched for opening,
 closing, or resolving disputes.
