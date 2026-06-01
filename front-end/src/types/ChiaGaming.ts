@@ -594,6 +594,7 @@ export interface InternalBlockchainInterface {
   getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]>;
   registerCoins(names: string[]): Promise<void>;
   startMonitoring(): Promise<void>;
+  getFullNodePeerCount(): Promise<bigint>;
 
   beginConnect(uniqueId: string): Promise<ConnectionSetup>;
   disconnect(): Promise<void>;
