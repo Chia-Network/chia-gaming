@@ -271,7 +271,9 @@ CloudFront, or any static file server:
 ```bash
 mkdir -p /var/www/chia-gaming-player
 tar -xzf chia-gaming-YYYYMMDD-HASH.tgz -C /var/www/chia-gaming-player
-# unzip chia-gaming-YYYYMMDD-HASH.zip -d /var/www/chia-gaming-player
+# or, unzip chia-gaming-YYYYMMDD-HASH.zip -d /var/www/chia-gaming-player
+cd /var/www/chia-gaming-player
+caddy file-server --listen :3002
 ```
 
 See [Staging (Asset Layout)](#staging-asset-layout) for the directory
