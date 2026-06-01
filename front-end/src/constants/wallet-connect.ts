@@ -14,6 +14,7 @@ export enum ChiaMethod {
   RegisterRemoteCoins = 'chia_registerRemoteCoins',
   GetCoinRecordsByNames = 'chia_getCoinRecordsByNames',
   GetPuzzleAndSolution = 'chia_getPuzzleAndSolution',
+  GetFullNodePeerCount = 'chia_getFullNodePeerCount',
 }
 
 export const REQUIRED_NAMESPACES: ProposalTypes.RequiredNamespaces = {
