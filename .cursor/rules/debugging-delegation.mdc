@@ -1,0 +1,161 @@
+---
+description: >-
+  Protocol for delegating debugging work to sub-agents. Complements
+  the debugging techniques rule with operational guidance on when and
+  how to hand off diagnostic work.
+alwaysApply: true
+---
+
+# Debugging Delegation Protocol
+
+This protocol works alongside the debugging techniques rule. That
+rule covers *how* to debug; this one covers *when and how to delegate*
+debugging to a sub-agent, and what to do with the results.
+
+## Why Delegate
+
+Delegate debugging to a sub-agent rather than doing it inline for
+two reasons:
+
+1. **Context window hygiene.** Diagnostic cycles produce noise --
+   test output, debug prints, intermediate hypotheses, failed
+   attempts. That noise accumulates in the parent's context window
+   and degrades its ability to reason about the original task. A
+   sub-agent's context is disposable; the parent only sees the
+   result.
+
+2. **Preventing revert spirals.** Without delegation, an agent can
+   end up four levels deep: fix A unmasks B, fix B unmasks C, and
+   now the agent has a complex stack of changes it only half
+   understands and starts desperately wanting to revert everything.
+   With delegation, each fix is an isolated unit of work. If the
+   sub-agent fixes A and reports that B was unmasked, the parent
+   spawns a fresh sub-agent for B with a clean slate.
+
+## When to Delegate
+
+When a test fails, first try to trace the execution path mentally
+from the test input to the point of failure. If this produces a
+high-confidence diagnosis -- you can identify the specific line or
+condition that's wrong and articulate *why* -- fix it directly.
+
+If the mental trace does not yield a confident diagnosis, **delegate
+to a sub-agent.** Do not start speculative investigation in the
+parent context.
+
+## What to Provide
+
+Spawn a `generalPurpose` sub-agent with three things:
+
+1. **Context:** What the code is supposed to do. Relevant files,
+   modules, and recent changes. Enough for the sub-agent to
+   understand the area without exploring the whole codebase.
+
+2. **Symptoms:** The exact error output -- not paraphrased. Which
+   test failed, what the expected vs actual behavior was.
+
+3. **Repro:** The specific command to reproduce the failure (e.g.
+   `./ct.sh test_name`). The sub-agent must be able to run it
+   immediately.
+
+The sub-agent has the debugging techniques rule in its context
+automatically (it's always-applied). You do not need to restate
+the debugging methodology, but you should remind it to follow
+structured diagnosis and not speculate.
+
+## Sub-agent Responsibilities
+
+The sub-agent follows the debugging techniques rule: structured
+diagnosis, targeted diagnostics, root-cause fixes. It must report
+back with one of the following outcomes.
+
+### Outcome 1: Fixed the bug (common case)
+
+The sub-agent identified the root cause, fixed it, and the failing
+test now passes. Before reporting back:
+
+- Remove all diagnostic output (search for the `DBG_` prefix).
+- Run the full test suite to check for regressions.
+- Report the root cause, the fix, and the test results.
+
+The diff should be minimal and surgical. Every changed line should
+trace to the root cause.
+
+### Outcome 2: Test needed modification
+
+Rarely, the test itself encodes a requirement that no longer
+applies. The sub-agent may modify a test, but must justify it by
+articulating exactly which **requirement** changed and why the old
+assertion is wrong. "The code does something different now" is not
+a justification -- it's a restatement of the bug.
+
+### Outcome 3: Extensive rewrite required
+
+If the fix turns out to require non-trivial restructuring -- not a
+surgical bug fix but a significant rewrite -- the sub-agent should
+**revert all its changes** and report back with:
+
+- The diagnosed root cause.
+- Why a surgical fix isn't sufficient.
+- A proposed approach for the rewrite.
+
+The parent or user decides whether to proceed. Debugging sub-agents
+are scoped to bug fixes, not redesigns.
+
+### Outcome 4: Unmasked another bug
+
+The sub-agent's fix is correct, but test results got worse because
+a previously-masked bug is now visible. The sub-agent should:
+
+- **Leave its fix in place** (reverting would re-hide the second
+  bug).
+- Justify why its changes are correct: show that the new failure
+  has a different root cause, ideally on a different code path.
+- Clearly identify the new failure for the parent to act on.
+
+Heuristic for "did I break it or unmask it?": if the new failure's
+error or stack trace is on a completely different code path from
+what you changed, it's almost certainly unmasked. If it's on the
+same code path, you more likely introduced it. When genuinely
+uncertain, report both possibilities.
+
+### Outcome 5: Cannot fix (rare)
+
+The sub-agent exhausted structured diagnosis and cannot identify the
+root cause. Report:
+
+- What was tried and what was learned.
+- Which hypotheses were eliminated and what evidence eliminated them.
+- Where the investigation dead-ended.
+
+This should be uncommon. Clean up all diagnostics before reporting.
+
+## Parent Responsibilities
+
+When the sub-agent reports back:
+
+1. **Review the diff.** Does every changed line trace to the
+   diagnosed root cause? Is the fix minimal? Are diagnostics
+   cleaned up?
+
+2. **Evaluate the explanation.** Does the root-cause narrative make
+   sense? Can you follow the causal chain from the bug to the
+   symptom?
+
+3. **Check test results.** If the suite is fully green, the fix is
+   likely good. If new failures appeared, decide whether they were
+   unmasked (spawn another sub-agent) or introduced (the fix is
+   wrong).
+
+4. **Handle remaining failures.** If the sub-agent reported
+   unmasked bugs or the suite has other failures, spawn a new
+   sub-agent for each distinct failure. Do not pile multiple
+   unrelated bugs into one sub-agent.
+
+5. **Don't ignore "pre-existing" failures.** If the test suite had
+   other failures before this debugging round, those are your
+   responsibility too. Spawn sub-agents for them.
+
+Do not accept a fix on faith. The sub-agent's context is gone; the
+diff and its explanation are all you have. If something doesn't add
+up, investigate further.

@@ -1,0 +1,15 @@
+(include *standard-cl-23*)
+
+; Mock validator for referee tests.
+; Returns `previous_state` — the test controls the return value by putting
+; whatever it wants in the previous_state slot.
+;
+; Arg layout from referee: (mod_hash curried_args previous_state ...)
+;
+; The body uses (c (f previous_state) (r previous_state)) which is identity
+; on pairs and will fail on atoms — but for the nil case we use (i ...).
+; The (i ...) here ensures the compiled program is a cons pair, which is
+; required for the referee's slash dispatcher ((l (f (r args))) must be true).
+(export (mod_hash curried_args previous_state . rest)
+    (i previous_state previous_state previous_state)
+)
