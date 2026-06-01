@@ -2,11 +2,29 @@
 
 ## Quick Start
 
-Run the full local stack — player app, lobby tracker, and blockchain simulator:
+Run the full local stack locally — player app, lobby tracker, and blockchain simulator:
 
 ```bash
 ./run-local-demo.sh
 ```
+
+`run-local-demo.sh` builds everything and starts three services:
+
+| Service    | Default URL             | Override env var |
+| ---------- | ----------------------- | ---------------- |
+| Player app | `http://localhost:3002` | `GAME_PORT`      |
+| Tracker    | `http://localhost:3003` | `TRACKER_PORT`   |
+| Simulator  | `http://localhost:5800` | (hardcoded)      |
+
+
+`run-local-demo.sh` Flags:
+
+- `--skip-build` — skip all build steps, use existing artifacts.
+- `--force-build` — `cargo clean` before building.
+
+Press Ctrl-C to stop all services.
+
+You can use either the simulator, or mainnnet with the files hosted locally.
 
 This will run the player app on localhost:3002 and the tracker on localhost:3003
 
@@ -33,29 +51,6 @@ configured, with at least 1000 mojos in your wallet.
 automatically set `CC_wasm32_unknown_unknown` and `AR_wasm32_unknown_unknown`
 to the Homebrew LLVM paths. Install with `brew install llvm` if WASM builds
 fail with clang errors.
-
-## Quick Start (Local Demo)
-
-`run-local-demo.sh` builds everything and starts three services:
-
-```bash
-./run-local-demo.sh
-```
-
-
-| Service    | Default URL             | Override env var |
-| ---------- | ----------------------- | ---------------- |
-| Player app | `http://localhost:3002` | `GAME_PORT`      |
-| Tracker    | `http://localhost:3003` | `TRACKER_PORT`   |
-| Simulator  | `http://localhost:5800` | (hardcoded)      |
-
-
-Flags:
-
-- `--skip-build` — skip all build steps, use existing artifacts.
-- `--force-build` — `cargo clean` before building.
-
-Press Ctrl-C to stop all services.
 
 # Deployment
 

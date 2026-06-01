@@ -48,7 +48,7 @@ see **[DEVELOPMENT.md](DEVELOPMENT.md)**.
 - **Node.js** and **pnpm** — for JS/WASM integration tests
 - **wasm-pack** — for building the WASM package (`cargo install wasm-pack`)
 - **LLVM** (Homebrew) — on macOS, needed for compiling `blst` to wasm (`brew install llvm`)
-- **NVM**  https://nvmnode.com
+- **NVM**  - install instructions at https://nvmnode.com
 ### JS Package Manager Policy
 
 Use **pnpm** for repository JS package workflows and lockfiles. Avoid mixing package
