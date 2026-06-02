@@ -204,7 +204,7 @@ app/
 
 ## Running the Services
 
-### Development
+### Running from Checkout
 
 Run from a repo checkout. See [Quick Start](#quick-start) for the full local
 stack (`./run-local-demo.sh` starts the player app, tracker, and simulator).
@@ -260,7 +260,7 @@ Ports 5800 (HTTP) and 5801 (WebSocket) are hardcoded. Built by
 `cargo build --features sim-server --bin chia-gaming-sim`. Not included in
 production tarballs.
 
-### Production
+### Running from tarball or zipfile
 
 #### Player app
 
@@ -290,7 +290,7 @@ PORT=443 node service.js \
 ```
 
 Set `--self` to the tracker's public URL. The same `--dir`, `--self`,
-`--verbose`, and `PORT` flags apply as in development (see table above).
+`--verbose`, and `PORT` flags apply as when running from checkout (see table above).
 
 #### Production notes
 
