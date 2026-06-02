@@ -138,7 +138,6 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         push: true,
         sign: false,
         fee: feeValue || undefined,
-        allowUnsynced: true,
       });
       log(`[wc-blockchain] pushTransactions submitted #${seq} result=${jsonStringify(result)}`);
       return result as unknown as string;
@@ -178,7 +177,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   async selectCoins(_uniqueId: string, amount: bigint): Promise<string | null> {
     try {
-      const result = await rpc.selectCoins({ walletId: 1n, amount, allowUnsynced: true });
+      const result = await rpc.selectCoins({ walletId: 1n, amount });
       if (!result?.coins?.length) return null;
       console.log('[wc-blockchain] <<< selectCoins raw', result);
       console.log('[wc-blockchain] <<< selectCoins raw(json)', jsonStringify(result));
@@ -266,7 +265,6 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         driverDict: {},
         extraConditions: normalizedConditions.length ? normalizedConditions : undefined,
         coinIds,
-        allowUnsynced: true,
       };
       console.log('[wc-blockchain] >>> createOfferForIds payload', payload);
       console.log('[wc-blockchain] >>> createOfferForIds payload(json)', jsonStringify(payload));
@@ -331,7 +329,6 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         const resp = await rpc.getCoinRecordsByNames({
           names: [name],
           includeSpentCoins: true,
-          allowUnsynced: true,
         });
         if ((resp as any)?.error) {
           const msg = String((resp as any).error);
@@ -379,7 +376,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
           console.log(`[wc-blockchain] found existing remote wallet id=${remote.id}`);
         } else {
           console.log('[wc-blockchain] no remote wallet found, creating...');
-          rpc.createNewRemoteWallet({ allowUnsynced: true })
+          rpc.createNewRemoteWallet({})
             .then((created) => {
               this.remoteWalletId = created.walletId;
               this.remoteWalletPending = false;
