@@ -13,6 +13,7 @@ import { decodeBech32mPuzzleHash, encodePuzzleHashToBech32m } from '../util/bech
 import { TransactionRecord, WalletSpendBundle } from '../types/rpc/PushTransactions';
 import { walletConnectState } from './useWalletConnect';
 import { jsonStringify } from '../util/jsonSafe';
+import { normalizeWalletRpcError, walletErrorForDisplay } from '../util/walletError';
 
 const PUSH_RETRY_DELAY = 30000;
 const ASSERT_BEFORE_HEIGHT_ABSOLUTE = 87n;
@@ -277,10 +278,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       if ((response as any)?.error) {
         const errMsg = (response as any).error;
         log(`[wc-blockchain] createOfferForIds daemon error: ${errMsg}`);
-        if (/insufficient funds/i.test(String(errMsg))) {
-          throw new Error(String(errMsg));
-        }
-        return null;
+        throw new Error(walletErrorForDisplay({ message: String(errMsg), data: response }));
       }
       const offerStr = (response as any)?.offer;
       if (typeof offerStr === 'string' && offerStr.startsWith('offer')) {
@@ -290,37 +288,22 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       log(`[wc-blockchain] createOfferForIds returned non-offer payload type=${typeof response}`);
       return response;
     } catch (e) {
-      let parsedError: unknown = undefined;
-      if (e instanceof Error) {
-        try {
-          parsedError = JSON.parse(e.message);
-        } catch {
-          parsedError = undefined;
-        }
-      }
       console.error('[wc-blockchain] createOfferForIds error', {
         error: e,
-        parsedError,
         offer,
         extraConditions,
         coinIds,
         maxHeight,
       });
       log(
-        `[wc-blockchain] createOfferForIds error: ${String(e)} payload=${jsonStringify({
+        `[wc-blockchain] createOfferForIds error: ${normalizeWalletRpcError(e)} payload=${jsonStringify({
           offer,
           extraConditions,
           coinIds,
           maxHeight,
         })}`,
       );
-      const errorMsg = (parsedError as any)?.data?.error
-        ?? (parsedError as any)?.data?.structuredError?.message
-        ?? '';
-      if (/insufficient funds/i.test(errorMsg)) {
-        throw new Error(errorMsg);
-      }
-      return null;
+      throw new Error(walletErrorForDisplay(e));
     }
   }
 
