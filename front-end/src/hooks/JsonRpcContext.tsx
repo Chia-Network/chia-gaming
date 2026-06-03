@@ -41,6 +41,7 @@ import {
 } from '../types/rpc/SelectCoins';
 import { log } from '../services/log';
 import { jsonStringify } from '../util/jsonSafe';
+import { normalizeWalletRpcError } from '../util/walletError';
 
 import { walletConnectState } from './useWalletConnect';
 
@@ -172,7 +173,7 @@ async function request<T, D extends object = object>(
       );
       console.error(`[WC RPC error] ${method} paramKeys=[${paramKeys}]`, e);
       if (!isRetryable) {
-        throw e;
+        throw new Error(normalizeWalletRpcError(e));
       }
       console.warn(`[WC] ${method} transient failure, retrying once...`, e);
       await delay(WC_RETRY_DELAY_MS);
@@ -186,7 +187,10 @@ async function request<T, D extends object = object>(
     const trace = new Error().stack?.split('\n').slice(1, 6).join('\n') ?? '';
     console.error(`[WC RPC rejected] method=${method} paramKeys=[${paramKeys}]\n  error: ${errorText}\n${trace}`);
     log(`[WC RPC rejected] method=${method} paramKeys=[${paramKeys}] error=${errorText}`);
-    throw new Error(errorText);
+    throw new Error(normalizeWalletRpcError({
+      message: errorText,
+      data: { error: result.error, ...result },
+    }));
   }
 
   if (result?.data !== undefined) return result.data as T;

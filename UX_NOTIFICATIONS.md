@@ -305,7 +305,7 @@ failures, and general errors.
 | `channel-state` | `ChannelStatus` in `ATTENTION_STATES` | **Replaceable slot**: a new channel-state entry replaces any prior undismissed channel-state entry rather than stacking. Always floats to position 0 in the queue. |
 | `session-over` | Balance exhausted (cooperative shutdown) | Queued as a normal FIFO entry. |
 | `action-failed` | `ActionFailed` notification (WASM `Err`) | Also logged to diagnostics. |
-| `infra-error` | `ReceiveError`, tx submit failures, general `error` events | Catch-all for infrastructure errors. |
+| `infra-error` | `ReceiveError`, tx submit failures, general `error` events, WalletConnect/daemon wallet RPC failures (normalized via `walletError.ts`, including insufficient funds) | Catch-all for infrastructure errors. |
 
 ### Game-Scoped Queue
 

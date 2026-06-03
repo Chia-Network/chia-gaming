@@ -20,6 +20,7 @@ import {
 } from '../util';
 import { log } from '../services/log';
 import { jsonStringify } from '../util/jsonSafe';
+import { walletErrorForDisplay } from '../util/walletError';
 import type { CalpokerHandState } from './save';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
 
@@ -64,23 +65,6 @@ function combine_reports(old_report: WatchReport, new_report: WatchReport) {
 
 const SAVE_DEBOUNCE_MS = 500;
 const KEEPALIVE_INTERVAL_MS = 15_000;
-
-function extractErrorMessage(e: unknown): string {
-  if (e instanceof Error) {
-    try {
-      const parsed = JSON.parse(e.message);
-      if (parsed?.data?.error) return parsed.data.error;
-      if (parsed?.data?.structuredError?.message) return parsed.data.structuredError.message;
-    } catch { /* not JSON */ }
-    return e.stack || e.message;
-  }
-  if (e && typeof e === 'object') {
-    if ('message' in e && typeof (e as any).message === 'string') return (e as any).message;
-    if (e instanceof Event) return e.type || 'unknown event';
-    try { return JSON.stringify(e); } catch { /* fall through */ }
-  }
-  return String(e);
-}
 
 export class WasmBlobWrapper {
   amount: bigint;
@@ -295,7 +279,7 @@ export class WasmBlobWrapper {
       this.launcherProvided = false;
       console.error('[wasm] handleNeedLauncherCoin error:', e);
       log(`[wasm] handleNeedLauncherCoin error: ${String(e)}`);
-      this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
+      this.rxjsEmitter?.next({ type: 'error', error: walletErrorForDisplay(e) });
     }
   }
 
@@ -318,6 +302,10 @@ export class WasmBlobWrapper {
       );
       if (!bundle) {
         console.error('[wasm] createOfferForIds returned null');
+        this.rxjsEmitter?.next({
+          type: 'error',
+          error: 'Wallet did not return a spend bundle. Check your wallet for errors and try again.',
+        });
         return;
       }
 
@@ -333,11 +321,7 @@ export class WasmBlobWrapper {
     } catch (e) {
       console.error('[wasm] handleNeedCoinSpend error:', e);
       log(`[wasm] handleNeedCoinSpend error: ${String(e)}`);
-      let msg = extractErrorMessage(e);
-      if (/insufficient funds/i.test(msg)) {
-        msg = 'Wallet reports insufficient funds. It may be that your wallet has enough balance but some coins are locked. Free up locked coins in your wallet and try again.';
-      }
-      this.rxjsEmitter?.next({ type: 'error', error: msg });
+      this.rxjsEmitter?.next({ type: 'error', error: walletErrorForDisplay(e) });
     }
   }
 
@@ -377,7 +361,7 @@ export class WasmBlobWrapper {
     }).catch(e => {
       console.error('[wasm] submitTransaction failed:', e);
       log(`[wasm] submitTransaction failed: ${String(e)}`);
-      this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
+      this.rxjsEmitter?.next({ type: 'error', error: walletErrorForDisplay(e) });
       const idx = this.pendingTransactions.indexOf(blob);
       if (idx !== -1) {
         this.pendingTransactions.splice(idx, 1);
@@ -403,7 +387,7 @@ export class WasmBlobWrapper {
       }).catch(e => {
         console.error('[wasm] resubmitPendingTransactions failed:', e);
         log(`[wasm] resubmitPendingTransactions failed: ${String(e)}`);
-        this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
+        this.rxjsEmitter?.next({ type: 'error', error: walletErrorForDisplay(e) });
         const idx = this.pendingTransactions.indexOf(blob);
         if (idx !== -1) {
           this.pendingTransactions.splice(idx, 1);
@@ -434,7 +418,7 @@ export class WasmBlobWrapper {
           this.dispatchEvent(event);
         } catch (e) {
           console.error('[wasm] dispatchEvent error:', e);
-          this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
+          this.rxjsEmitter?.next({ type: 'error', error: walletErrorForDisplay(e) });
         }
         this.scheduleSave();
       }
@@ -504,7 +488,7 @@ export class WasmBlobWrapper {
     } catch (e) {
       console.error('[wasm] puzzle/solution fetch failed:', e);
       log(`[wasm] puzzle/solution fetch failed: ${String(e)}`);
-      this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
+      this.rxjsEmitter?.next({ type: 'error', error: walletErrorForDisplay(e) });
     }
   }
 
@@ -540,7 +524,7 @@ export class WasmBlobWrapper {
       this.processResult(result);
     } catch (e) {
       console.error('[wasm] deliver_message failed:', e);
-      this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
+      this.rxjsEmitter?.next({ type: 'error', error: walletErrorForDisplay(e) });
     }
     this.sendAck(msgno);
   }
