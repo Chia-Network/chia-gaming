@@ -1,4 +1,4 @@
-# Development
+# Running from Checkout
 
 ## Quick Start
 
@@ -72,7 +72,7 @@ fail with clang errors.
 ```
 
 
-# Production
+# Running from tarball or zipfile
 
 This guide covers building and running the two production artifacts:
 
