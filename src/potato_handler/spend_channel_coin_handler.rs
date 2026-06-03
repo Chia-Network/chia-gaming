@@ -353,47 +353,6 @@ impl SpendChannelCoinHandler {
         Ok(effects)
     }
 
-    pub fn coin_timeout_reached(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
-        coin_id: &CoinString,
-    ) -> Result<Vec<Effect>, Error> {
-        let mut effects = Vec::new();
-
-        let unroll_timed_out = match &self.state {
-            SpendChannelCoinState::UnrollTimeoutOrSpend {
-                unroll_coin,
-                state_number,
-            } if coin_id == unroll_coin => Some(*state_number),
-            SpendChannelCoinState::UnrollSpend {
-                unroll_coin,
-                state_number,
-                ..
-            } if coin_id == unroll_coin => Some(*state_number),
-            _ => None,
-        };
-
-        if let Some(on_chain_state) = unroll_timed_out {
-            effects.push(Effect::Log(format!(
-                "[unroll-timeout] state={on_chain_state}",
-            )));
-            match self.do_unroll_spend_to_games(env, coin_id, on_chain_state) {
-                Ok(effect) => {
-                    effects.extend(effect);
-                }
-                Err(e) => {
-                    let reason = format!("timeout unroll failed for state {on_chain_state}: {e:?}");
-                    effects.push(Effect::Log(format!("[unroll-error] {reason}")));
-                    effects.extend(self.base.emit_failure_cleanup());
-                    self.advisory = Some(reason);
-                    self.transition_to_failed_terminal();
-                }
-            }
-        }
-
-        Ok(effects)
-    }
-
     pub fn coin_created(
         &mut self,
         _env: &mut ChannelHandlerEnv<'_>,
@@ -499,43 +458,37 @@ impl SpendChannelCoinHandler {
         self.replacement = Some(Box::new(on_chain));
     }
 
-    fn do_unroll_spend_to_games(
-        &mut self,
+    /// Build the unroll-via-timeout spend for `unroll_coin` at `on_chain_state`.
+    /// Pure: does not mutate handler state or submit.  The transaction manager
+    /// holds the returned bundle and submits it once the unroll coin reaches its
+    /// relative timeout age (and resubmits it across reorgs).
+    fn build_unroll_timeout_spend(
+        &self,
         env: &mut ChannelHandlerEnv<'_>,
         unroll_coin: &CoinString,
         on_chain_state: usize,
-    ) -> Result<Vec<Effect>, Error> {
-        let spend_bundle = {
-            let player_ch = self.base.channel_handler()?;
-            let matching_unroll = player_ch.get_unroll_for_state(on_chain_state)?;
-            let curried_unroll_puzzle = matching_unroll
-                .coin
-                .make_curried_unroll_puzzle(env, &player_ch.get_aggregate_unroll_public_key())?;
-            let curried_unroll_program =
-                crate::common::types::Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?;
-            let timeout_solution = matching_unroll.coin.make_timeout_unroll_solution(env)?;
-            let timeout_solution_program = Program::from_nodeptr(env.allocator, timeout_solution)?;
+    ) -> Result<SpendBundle, Error> {
+        let player_ch = self.base.channel_handler()?;
+        let matching_unroll = player_ch.get_unroll_for_state(on_chain_state)?;
+        let curried_unroll_puzzle = matching_unroll
+            .coin
+            .make_curried_unroll_puzzle(env, &player_ch.get_aggregate_unroll_public_key())?;
+        let curried_unroll_program =
+            crate::common::types::Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?;
+        let timeout_solution = matching_unroll.coin.make_timeout_unroll_solution(env)?;
+        let timeout_solution_program = Program::from_nodeptr(env.allocator, timeout_solution)?;
 
-            SpendBundle {
-                name: Some("create unroll (timeout)".to_string()),
-                spends: vec![CoinSpend {
-                    bundle: Spend {
-                        puzzle: curried_unroll_program,
-                        solution: timeout_solution_program.into(),
-                        signature: Aggsig::default(),
-                    },
-                    coin: unroll_coin.clone(),
-                }],
-            }
-        };
-
-        self.state = SpendChannelCoinState::UnrollSpend {
-            unroll_coin: unroll_coin.clone(),
-            state_number: on_chain_state,
-            reward_coin: None,
-        };
-
-        Ok(vec![Effect::SpendTransaction(spend_bundle)])
+        Ok(SpendBundle {
+            name: Some("create unroll (timeout)".to_string()),
+            spends: vec![CoinSpend {
+                bundle: Spend {
+                    puzzle: curried_unroll_program,
+                    solution: timeout_solution_program.into(),
+                    signature: Aggsig::default(),
+                },
+                coin: unroll_coin.clone(),
+            }],
+        })
     }
 
     fn handle_channel_coin_spent(
@@ -686,18 +639,37 @@ impl SpendChannelCoinHandler {
                     coin: unroll_coin.clone(),
                     timeout: self.base.unroll_timeout.clone(),
                     name: Some("unroll"),
+                    spend: None,
                 });
             }
             UnrollOutcome::WaitForTimeout => {
-                self.state = SpendChannelCoinState::UnrollTimeoutOrSpend {
-                    unroll_coin: unroll_coin.clone(),
-                    state_number: on_chain_state,
-                };
-                effects.push(Effect::RegisterCoin {
-                    coin: unroll_coin.clone(),
-                    timeout: self.base.unroll_timeout.clone(),
-                    name: Some("unroll"),
-                });
+                // Build the unroll-via-timeout claim up front and hand it to the
+                // transaction manager, which submits it once the unroll coin
+                // reaches its relative timeout age (and resubmits across reorgs).
+                // We stay in UnrollTimeoutOrSpend until the coin is actually
+                // spent; `coin_spent` then drives the confirmation path.
+                match self.build_unroll_timeout_spend(env, unroll_coin, on_chain_state) {
+                    Ok(spend) => {
+                        self.state = SpendChannelCoinState::UnrollTimeoutOrSpend {
+                            unroll_coin: unroll_coin.clone(),
+                            state_number: on_chain_state,
+                        };
+                        effects.push(Effect::RegisterCoin {
+                            coin: unroll_coin.clone(),
+                            timeout: self.base.unroll_timeout.clone(),
+                            name: Some("unroll"),
+                            spend: Some(spend),
+                        });
+                    }
+                    Err(e) => {
+                        let reason =
+                            format!("timeout unroll build failed for state {on_chain_state}: {e:?}");
+                        effects.push(Effect::Log(format!("[unroll-error] {reason}")));
+                        effects.extend(self.base.emit_failure_cleanup());
+                        self.advisory = Some(reason);
+                        self.transition_to_failed_terminal();
+                    }
+                }
             }
             UnrollOutcome::Unrecoverable(reason) => {
                 effects.push(Effect::Log(format!("[unroll-error] {reason}",)));
@@ -917,11 +889,9 @@ impl SpendChannelCoinHandler {
                 reason: None,
                 other_params: None,
             }));
-            effects.push(Effect::RegisterCoin {
-                coin: coin.clone(),
-                timeout: state.game_timeout.clone(),
-                name: Some("game coin"),
-            });
+            // The wallet registration (with the eager timeout claim) is emitted
+            // below by the constructed OnChainGameHandler, which owns the
+            // live games needed to build each claim.
         }
 
         let mut pending_moves: HashMap<CoinString, PendingMoveSavedState> = HashMap::new();
@@ -1018,6 +988,7 @@ impl SpendChannelCoinHandler {
         });
         self.replacement = Some(Box::new(on_chain));
         if let Some(on_chain) = self.replacement.as_mut() {
+            effects.extend(on_chain.register_initial_game_coins(env)?);
             effects.extend(on_chain.next_action(env)?);
         }
 
@@ -1039,13 +1010,6 @@ impl SpendWalletReceiver for SpendChannelCoinHandler {
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
         SpendChannelCoinHandler::coin_spent(self, env, coin_id)
-    }
-    fn coin_timeout_reached(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
-        coin_id: &CoinString,
-    ) -> Result<Vec<Effect>, Error> {
-        SpendChannelCoinHandler::coin_timeout_reached(self, env, coin_id)
     }
     fn coin_puzzle_and_solution(
         &mut self,
@@ -1081,13 +1045,6 @@ impl PeerHandler for SpendChannelCoinHandler {
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
         SpendChannelCoinHandler::coin_spent(self, env, coin_id)
-    }
-    fn coin_timeout_reached(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
-        coin_id: &CoinString,
-    ) -> Result<Vec<Effect>, Error> {
-        SpendChannelCoinHandler::coin_timeout_reached(self, env, coin_id)
     }
     fn coin_created(
         &mut self,

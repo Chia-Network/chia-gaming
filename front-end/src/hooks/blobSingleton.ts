@@ -63,7 +63,6 @@ async function restoreSession(
   gameObject: WasmBlobWrapper,
   save: SessionState,
   wasmStateInit: WasmStateInit,
-  blockchain: BlockchainPoller,
 ): Promise<void> {
   if (!save.serializedCradle) {
     throw new Error('restoreSession called without serializedCradle');
@@ -75,11 +74,8 @@ async function restoreSession(
   const cradle = wasmStateInit.deserializeGame(wasmConnection, cradleBytes);
   gameObject.setGameCradle(cradle);
 
-  const watchedCoins = cradle.get_watching_coins();
-  for (const { coin_name, coin_string } of watchedCoins) {
-    blockchain.registerCoin(coin_name, coin_string);
-  }
-  log(`[restore] re-registered ${watchedCoins.length} watched coins`);
+  // The transaction manager (in the deserialized cradle) already knows which
+  // coins to watch; the poller will pick them up via get_coins_to_poll.
 
   gameObject.messageNumber = save.messageNumber ?? 1;
   gameObject.remoteNumber = save.remoteNumber ?? 0;
@@ -87,7 +83,6 @@ async function restoreSession(
   gameObject.iStarted = save.iStarted ?? false;
   gameObject.pairingToken = save.pairingToken ?? '';
   gameObject.unackedMessages = (save.unackedMessages ?? []).map(m => ({ msgno: m.msgno, msg: base64ToUint8(m.msg) }));
-  gameObject.pendingTransactions = [...(save.pendingTransactions ?? [])];
   gameObject.history = [...(save.history ?? [])];
   gameObject.logHistory = [...(save.log ?? [])];
   gameObject.activeGameId = save.activeGameId ?? null;
@@ -149,7 +144,7 @@ export function getBlobSingleton(
   if (sessionSave) {
     const doRestore = async () => {
       try {
-        await restoreSession(blobSingleton!, sessionSave, wasmStateInit, blockchain);
+        await restoreSession(blobSingleton!, sessionSave, wasmStateInit);
       } catch (e) {
         console.error('[blobSingleton] restoreSession error:', e);
         log(`[blobSingleton] restoreSession error: ${String(e)}`);

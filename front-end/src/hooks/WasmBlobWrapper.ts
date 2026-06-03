@@ -6,15 +6,14 @@ import {
   PeerConnectionResult,
   WasmConnection,
   ChiaGame,
-  WatchReport,
+  CoinStateRecord,
   WasmResult,
   SpendBundle,
-  CoinsetOrgBlockSpend,
   ProposeGameParams,
   BlockchainInboundAddressResult,
   WasmEvent,
 } from '../types/ChiaGaming';
-import { BlockchainPoller } from './BlockchainPoller';
+import { BlockchainPoller, PollingCradle } from './BlockchainPoller';
 import {
   spend_bundle_to_clvm,
 } from '../util';
@@ -32,7 +31,6 @@ export interface WasmFields {
   iStarted: boolean;
   amount: string;
   perGameAmount: string;
-  pendingTransactions: string[];
   unackedMessages: Array<{ msgno: number; msg: Uint8Array }>;
   history: string[];
   log: string[];
@@ -48,18 +46,6 @@ export interface WasmFields {
 function clvmToBytes(value: Program | null): Uint8Array {
   if (value === null || value === undefined) return new Uint8Array([0x80]);
   return value.serialize();
-}
-
-function combine_reports(old_report: WatchReport, new_report: WatchReport) {
-  for (const item of new_report.created_watched) {
-    old_report.created_watched.push(item);
-  }
-  for (const item of new_report.deleted_watched) {
-    old_report.deleted_watched.push(item);
-  }
-  for (const item of new_report.timed_out) {
-    old_report.timed_out.push(item);
-  }
 }
 
 const SAVE_DEBOUNCE_MS = 500;
@@ -82,7 +68,7 @@ function extractErrorMessage(e: unknown): string {
   return String(e);
 }
 
-export class WasmBlobWrapper {
+export class WasmBlobWrapper implements PollingCradle {
   amount: bigint;
   perGameAmount: bigint;
   wc: WasmConnection | undefined;
@@ -109,13 +95,12 @@ export class WasmBlobWrapper {
   rxjsEmitter: NextObserver<WasmEvent> | undefined;
   private eventQueue: CradleEvent[] = [];
   private drainScheduled = false;
-  private pendingBlockNotification: { peak: bigint; report: WatchReport } | null = null;
+  private pendingCoinStates: { peak: bigint; records: CoinStateRecord[] } | null = null;
   launcherProvided: boolean;
   private lastSelectCoinsValue: string | null = null;
   private lastLauncherCoinId: string | null = null;
 
   unackedMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
-  pendingTransactions: string[] = [];
   history: string[] = [];
   logHistory: string[] = [];
   private reorderQueue: Map<number, Uint8Array> = new Map();
@@ -245,17 +230,15 @@ export class WasmBlobWrapper {
     if (this.restoredSession) {
       this.restoredSession = false;
       this.resendUnacked();
-      this.resubmitPendingTransactions();
+      // Transactions the manager captured before the reload remain in the
+      // (serialized) WASM state; drain and resubmit them now.
+      this.drainAndSubmitTransactions();
     }
   }
 
   setGameCradle(cradle: ChiaGame) {
     this.cradle = cradle;
-    if (this.pendingBlockNotification) {
-      const { peak, report } = this.pendingBlockNotification;
-      this.pendingBlockNotification = null;
-      this.deliverBlockData(peak, report);
-    }
+    this.flushPendingCoinStates();
     this.spillStoredMessages();
   }
 
@@ -263,12 +246,16 @@ export class WasmBlobWrapper {
     if (!this.wc) { throw new Error("this.wc is falsey") }
     const result = this.cradle?.start_handshake();
     this.processResult(result);
-    if (this.pendingBlockNotification) {
-      const { peak, report } = this.pendingBlockNotification;
-      this.pendingBlockNotification = null;
-      this.deliverBlockData(peak, report);
-    }
+    this.flushPendingCoinStates();
     this.spillStoredMessages();
+  }
+
+  private flushPendingCoinStates() {
+    if (this.pendingCoinStates) {
+      const { peak, records } = this.pendingCoinStates;
+      this.pendingCoinStates = null;
+      this.deliverCoinStates(peak, records);
+    }
   }
 
   getChannelPuzzleHash(): string | null {
@@ -361,55 +348,35 @@ export class WasmBlobWrapper {
   }
 
   private submitTransaction(tx: SpendBundle) {
-    const blob = spend_bundle_to_clvm(tx);
-    this.pendingTransactions.push(blob);
-    this.scheduleSave();
     if (this.transactionPublishNerfed) return;
+    const blob = spend_bundle_to_clvm(tx);
     const spendBundle = this.wc?.convert_spend_to_coinset_org(blob);
     const fee = this.getFee();
     log(`[wasm] submitTransaction blobLen=${blob.length}`);
-    this.blockchain.rpc.spend(blob, spendBundle, 'submitTransaction', fee || undefined).then(() => {
-      const idx = this.pendingTransactions.indexOf(blob);
-      if (idx !== -1) {
-        this.pendingTransactions.splice(idx, 1);
-        this.scheduleSave();
-      }
-    }).catch(e => {
+    this.blockchain.rpc.spend(blob, spendBundle, 'submitTransaction', fee || undefined).catch(e => {
       console.error('[wasm] submitTransaction failed:', e);
       log(`[wasm] submitTransaction failed: ${String(e)}`);
       this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
-      const idx = this.pendingTransactions.indexOf(blob);
-      if (idx !== -1) {
-        this.pendingTransactions.splice(idx, 1);
-        this.scheduleSave();
-      }
     });
   }
 
-  private resubmitPendingTransactions() {
-    if (this.pendingTransactions.length === 0) return;
-    log(`[wasm] resubmitting ${this.pendingTransactions.length} pending transactions`);
-    const blobs = [...this.pendingTransactions];
-    for (const blob of blobs) {
-      if (this.transactionPublishNerfed) return;
-      const spendBundle = this.wc?.convert_spend_to_coinset_org(blob);
-      const fee = this.getFee();
-      this.blockchain.rpc.spend(blob, spendBundle, 'resubmitPendingTransactions', fee || undefined).then(() => {
-        const idx = this.pendingTransactions.indexOf(blob);
-        if (idx !== -1) {
-          this.pendingTransactions.splice(idx, 1);
-          this.scheduleSave();
-        }
-      }).catch(e => {
-        console.error('[wasm] resubmitPendingTransactions failed:', e);
-        log(`[wasm] resubmitPendingTransactions failed: ${String(e)}`);
-        this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
-        const idx = this.pendingTransactions.indexOf(blob);
-        if (idx !== -1) {
-          this.pendingTransactions.splice(idx, 1);
-          this.scheduleSave();
-        }
-      });
+  /**
+   * Drain the transactions the transaction manager captured (intercepted from
+   * the cradle) and submit each to the wallet/network.  Called after every
+   * action that drains the cradle.
+   */
+  private drainAndSubmitTransactions() {
+    if (!this.cradle) return;
+    let bundles: SpendBundle[];
+    try {
+      bundles = this.cradle.drain_submissions();
+    } catch (e) {
+      console.error('[wasm] drain_submissions failed:', e);
+      log(`[wasm] drain_submissions failed: ${String(e)}`);
+      return;
+    }
+    for (const tx of bundles) {
+      this.submitTransaction(tx);
     }
   }
 
@@ -420,6 +387,7 @@ export class WasmBlobWrapper {
       this.eventQueue.push(event);
     }
 
+    this.drainAndSubmitTransactions();
     this.scheduleDrain();
   }
 
@@ -448,8 +416,6 @@ export class WasmBlobWrapper {
       const msgno = this.messageNumber++;
       this.unackedMessages.push({ msgno, msg: event.OutboundMessage });
       this.sendMessage(msgno, event.OutboundMessage);
-    } else if ('OutboundTransaction' in event) {
-      this.submitTransaction(event.OutboundTransaction);
     } else if ('Notification' in event) {
       const n = event.Notification;
       const tag = typeof n === 'object' && n !== null ? Object.keys(n)[0] : String(n);
@@ -485,10 +451,6 @@ export class WasmBlobWrapper {
       this.handleNeedLauncherCoin();
     } else if ('NeedCoinSpend' in event) {
       this.handleNeedCoinSpend(event.NeedCoinSpend);
-    } else if ('WatchCoin' in event) {
-      const { coin_name, coin_string } = event.WatchCoin;
-      log(`[wasm] WatchCoin name=${coin_name}`);
-      this.blockchain.registerCoin(coin_name, coin_string);
     }
   }
 
@@ -570,43 +532,34 @@ export class WasmBlobWrapper {
     }
   }
 
-  blockNotification(peak: bigint, blocks: CoinsetOrgBlockSpend[], reportOrUndefined: WatchReport | undefined) {
-    let block_report = reportOrUndefined;
-    if (block_report === undefined) {
-      block_report = {
-        created_watched: [],
-        deleted_watched: [],
-        timed_out: [],
-      };
-      for (const block of blocks) {
-        const one_report =
-          this.wc?.convert_coinset_org_block_spend_to_watch_report(
-            block.coin.parent_coin_info,
-            block.coin.puzzle_hash,
-            block.coin.amount.toString(),
-            block.puzzle_reveal,
-            block.solution,
-          );
-        if (one_report) {
-          combine_reports(block_report, one_report);
-        }
-      }
+  // --- PollingCradle: driven by the BlockchainPoller ---
+
+  getCoinsToPoll(): Array<{ coin_name: string; coin_string: string }> {
+    if (!this.cradle) return [];
+    try {
+      return this.cradle.get_coins_to_poll();
+    } catch (e) {
+      console.error('[wasm] get_coins_to_poll failed:', e);
+      return [];
     }
-    log(`[wasm] block height=${peak} created=${block_report.created_watched.length} deleted=${block_report.deleted_watched.length} timed_out=${block_report.timed_out.length}`);
-    if (!this.cradle) {
-      this.pendingBlockNotification = { peak, report: block_report };
-      return;
-    }
-    this.deliverBlockData(peak, block_report);
   }
 
-  private deliverBlockData(peak: bigint, block_report: WatchReport) {
+  reportCoinStates(peak: bigint, records: CoinStateRecord[]) {
+    if (!this.cradle) {
+      this.pendingCoinStates = { peak, records };
+      return;
+    }
+    this.deliverCoinStates(peak, records);
+  }
+
+  private deliverCoinStates(peak: bigint, records: CoinStateRecord[]) {
+    log(`[wasm] coin states height=${peak} coins=${records.length}`);
     try {
-      const result = this.cradle?.block_data(peak, block_report);
+      const result = this.cradle?.report_coin_states(peak, records);
       this.processResult(result);
     } catch (e) {
-      console.error('[wasm] block_data failed:', e);
-      log(`[wasm] block_data failed: ${String(e)}`);
+      console.error('[wasm] report_coin_states failed:', e);
+      log(`[wasm] report_coin_states failed: ${String(e)}`);
     }
   }
 
@@ -643,7 +596,6 @@ export class WasmBlobWrapper {
         iStarted: this.iStarted,
         amount: this.amount.toString(),
         perGameAmount: this.perGameAmount.toString(),
-        pendingTransactions: [...this.pendingTransactions],
         unackedMessages: [...this.unackedMessages],
         history: [...this.history],
         log: [...this.logHistory],

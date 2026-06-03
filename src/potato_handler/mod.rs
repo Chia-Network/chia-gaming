@@ -1571,14 +1571,6 @@ impl SpendWalletReceiver for PotatoHandler {
         Ok(effects)
     }
 
-    fn coin_timeout_reached(
-        &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
-        _coin_id: &CoinString,
-    ) -> Result<Vec<Effect>, Error> {
-        Ok(vec![])
-    }
-
     fn coin_puzzle_and_solution(
         &mut self,
         _env: &mut ChannelHandlerEnv<'_>,
@@ -1613,13 +1605,6 @@ impl PeerHandler for PotatoHandler {
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
         <Self as SpendWalletReceiver>::coin_spent(self, env, coin_id)
-    }
-    fn coin_timeout_reached(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
-        coin_id: &CoinString,
-    ) -> Result<Vec<Effect>, Error> {
-        <Self as SpendWalletReceiver>::coin_timeout_reached(self, env, coin_id)
     }
     fn coin_created(
         &mut self,

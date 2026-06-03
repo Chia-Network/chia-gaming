@@ -40,6 +40,46 @@ timeout = current height). The simulator enforces this by panicking if a
 transaction with an unsatisfied `ASSERT_HEIGHT_RELATIVE` is submitted to the
 mempool.
 
+### Eager Timeout Submission and Confirmation-Driven Notifications
+
+Timeout handling is split into two decoupled responsibilities: the
+`TransactionManager` owns **submission** (and its timing), while the handlers
+own **notification**, driven by observing the resulting on-chain spend. There is
+no maturity callback into the handlers — `coin_timeout_reached` was removed.
+
+**Eager claim, registered up front.** When a coin that can be claimed on timeout
+is registered, the handler pre-builds the claim `SpendBundle` and attaches it to
+the registration. The plumbing carries it end to end:
+`Effect::RegisterCoin { spend: Option<SpendBundle>, .. }` →
+`CradleEvent::WatchCoin { spend, .. }` →
+`WalletSpendInterface::register_coin(.., spend)`. There are three eager-claim
+sites:
+
+- the unroll-via-timeout claim, built at `WaitForTimeout` registration
+(`build_unroll_timeout_spend`);
+- the per-game-coin timeout claim, built when game coins are first registered
+(`build_timeout_claim` / `register_initial_game_coins`).
+
+A claim is attached **only when the timeout pays us**; otherwise the field is
+`None` and the manager submits nothing on our behalf.
+
+**The manager is the sole submitter.** Each `WatchedCoin` stores the optional
+`timeout_spend` plus a reorg-aware `birthday` and a `claim_submitted` flag. On
+every block the manager submits a stored claim once the coin reaches
+`birthday + timeout_blocks` while it is still unspent, setting `claim_submitted`.
+A reorg that rolls back or shifts the coin's birthday re-arms `claim_submitted`,
+so the claim is resubmitted. This replaced the old lazy "build and submit at the
+moment the timeout fires" logic in the handlers.
+
+**Notifications ride the observed spend.** Terminal notifications are emitted
+from `handle_game_coin_spent` (via the `coin_spent` → `coin_puzzle_and_solution`
+pipeline) by interpreting what the observed spend created — our reward coin
+(we claimed) vs. the opponent's reward coin (they moved or claimed). In the
+common opponent-moved case our eager claim simply never confirms and the game
+advances; nothing is pre-emptively notified. See
+[On-Chain Step 5](ON_CHAIN.md#step-5-timeout-resolution) for the full outcome
+table.
+
 ---
 
 ## Peer Disconnect Invariant

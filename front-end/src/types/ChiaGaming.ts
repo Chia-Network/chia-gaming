@@ -24,6 +24,14 @@ export interface SpendBundle {
   spends: CoinSpend[];
 }
 
+/** Raw per-coin chain state fed to the transaction manager's `report_coin_states`. */
+export interface CoinStateRecord {
+  /** Full coin string, hex-encoded. */
+  coin: string;
+  created_height: number | null;
+  spent_height: number | null;
+}
+
 export type CradleEvent =
   | { OutboundMessage: Uint8Array }
   | { OutboundTransaction: SpendBundle }
@@ -194,8 +202,10 @@ export interface WasmConnection {
     height: bigint,
     additions: string[],
     removals: string[],
-    timed_out: string[],
   ) => WasmResult | undefined;
+  report_coin_states: (cid: number, height: bigint, records_json: string) => WasmResult | undefined;
+  get_coins_to_poll: (cid: number) => Array<{ coin_name: string; coin_string: string }>;
+  drain_submissions: (cid: number) => SpendBundle[];
   convert_coinset_org_block_spend_to_watch_report: (
     parent_coin_info: string,
     puzzle_hash: string,
@@ -377,28 +387,19 @@ export class ChiaGame {
     return maybeGet(this.cradle);
   }
 
-  block_data(block_number: bigint, block_data: WatchReport): WasmResult | undefined {
-    const arrays = [block_data.created_watched, block_data.deleted_watched, block_data.timed_out];
-    for (const arr of arrays) {
-      if (!Array.isArray(arr)) {
-        console.error('[wasm] block_data: non-array field in WatchReport:', block_data);
-        return undefined;
-      }
-      for (const s of arr) {
-        if (typeof s !== 'string' || s.length % 2 !== 0) {
-          console.error('[wasm] block_data: bad hex element:', JSON.stringify(s),
-            'type:', typeof s, 'in report:', JSON.stringify(block_data));
-          return undefined;
-        }
-      }
-    }
-    return this.wasm.new_block(
-      this.cradle,
-      block_number,
-      block_data.created_watched,
-      block_data.deleted_watched,
-      block_data.timed_out,
-    );
+  /** Report raw per-coin chain state; the manager computes the diff internally. */
+  report_coin_states(height: bigint, records: CoinStateRecord[]): WasmResult | undefined {
+    return this.wasm.report_coin_states(this.cradle, height, JSON.stringify(records));
+  }
+
+  /** Coins the host should poll for on-chain state. */
+  get_coins_to_poll(): Array<{ coin_name: string; coin_string: string }> {
+    return this.wasm.get_coins_to_poll(this.cradle);
+  }
+
+  /** Spend bundles the manager captured and the host should submit. */
+  drain_submissions(): SpendBundle[] {
+    return this.wasm.drain_submissions(this.cradle);
   }
 }
 
@@ -415,7 +416,6 @@ export class RngId {
 export interface WatchReport {
   created_watched: string[];
   deleted_watched: string[];
-  timed_out: string[];
 }
 
 function select_cards_using_bits<T>(card: T[], mask: number): T[][] {

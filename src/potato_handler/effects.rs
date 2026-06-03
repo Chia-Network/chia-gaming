@@ -180,6 +180,10 @@ pub enum CradleEvent {
     WatchCoin {
         coin_name: CoinID,
         coin_string: CoinString,
+        timeout: Timeout,
+        /// Eagerly-built spend to submit once this coin reaches its relative
+        /// timeout age.  `None` for coins with no timeout claim.
+        spend: Option<SpendBundle>,
     },
 }
 
@@ -221,6 +225,10 @@ pub enum Effect {
         coin: CoinString,
         timeout: Timeout,
         name: Option<&'static str>,
+        /// Eagerly-built spend the transaction manager should submit once this
+        /// coin reaches its relative timeout age.  `None` when there is no
+        /// timeout claim to make for this coin.
+        spend: Option<SpendBundle>,
     },
     RequestPuzzleAndSolution(CoinString),
 
@@ -297,8 +305,9 @@ pub fn apply_effects(
                 coin,
                 timeout,
                 name,
+                spend,
             } => {
-                system.register_coin(&coin, &timeout, name)?;
+                system.register_coin(&coin, &timeout, name, spend)?;
             }
             Effect::RequestPuzzleAndSolution(coin) => {
                 system.request_puzzle_and_solution(&coin)?;

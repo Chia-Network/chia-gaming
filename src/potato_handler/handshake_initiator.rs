@@ -599,17 +599,6 @@ impl SpendWalletReceiver for HandshakeInitiatorHandler {
         ))])
     }
 
-    fn coin_timeout_reached(
-        &mut self,
-        _env: &mut ChannelHandlerEnv<'_>,
-        coin_id: &CoinString,
-    ) -> Result<Vec<Effect>, Error> {
-        Ok(vec![Effect::Log(format!(
-            "[initiator-handshake:coin-timeout] {}",
-            format_coin(coin_id),
-        ))])
-    }
-
     fn coin_puzzle_and_solution(
         &mut self,
         _env: &mut ChannelHandlerEnv<'_>,
@@ -650,13 +639,6 @@ impl PeerHandler for HandshakeInitiatorHandler {
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
         <Self as SpendWalletReceiver>::coin_spent(self, env, coin_id)
-    }
-    fn coin_timeout_reached(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
-        coin_id: &CoinString,
-    ) -> Result<Vec<Effect>, Error> {
-        <Self as SpendWalletReceiver>::coin_timeout_reached(self, env, coin_id)
     }
     fn coin_created(
         &mut self,
@@ -780,6 +762,7 @@ impl PeerHandler for HandshakeInitiatorHandler {
                 coin: channel_coin,
                 timeout: Timeout::new(1_000_000),
                 name: Some("channel"),
+                spend: None,
             },
             Effect::PeerHandshakeC(HandshakeC { launcher_coin }),
         ])

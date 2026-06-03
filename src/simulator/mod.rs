@@ -371,6 +371,42 @@ impl Simulator {
         self.state.borrow_mut().farm_block_inner(puzzle_hash);
     }
 
+    /// Roll the chain back by `depth` blocks, modelling a reorganization:
+    /// coins minted above the new tip are un-created, spends recorded above the
+    /// new tip are reverted, and the peak height is lowered.  Rolled-back
+    /// transactions become eligible for re-inclusion.
+    pub fn reorg(&self, depth: u32) {
+        let mut state = self.state.borrow_mut();
+        let new_height = state.height.saturating_sub(depth);
+
+        let removed: Vec<CoinID> = state
+            .coins
+            .iter()
+            .filter(|(_, r)| r.created_height > new_height)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &removed {
+            state.coins.remove(id);
+            state.spent_puzzle_solutions.remove(id);
+        }
+
+        let mut unspent = Vec::new();
+        for (id, record) in state.coins.iter_mut() {
+            if matches!(record.spent_height, Some(h) if h > new_height) {
+                record.spent_height = None;
+                unspent.push(id.clone());
+            }
+        }
+        for id in &unspent {
+            state.spent_puzzle_solutions.remove(id);
+        }
+
+        // A rolled-back transaction must be re-includable; drop the dedup set so
+        // resubmissions are accepted.
+        state.confirmed_spend_fingerprints.clear();
+        state.height = new_height;
+    }
+
     pub fn get_current_height(&self) -> usize {
         self.state.borrow().height as usize
     }
@@ -461,6 +497,45 @@ impl Simulator {
             .coins
             .get(coin_id)
             .map(|r| (r.coin.clone(), r.created_height, r.spent_height))
+    }
+
+    /// Records for the full live coin set (unspent, non-coinbase), mirroring
+    /// the previous `FullCoinSetAdapter` input.  The `TransactionManager`
+    /// diffs this against its previous view to derive created/deleted coins.
+    pub fn get_all_coin_states(&self) -> Vec<crate::transaction_manager::CoinStateRecord> {
+        let state = self.state.borrow();
+        state
+            .coins
+            .values()
+            .filter(|r| r.spent_height.is_none() && !r.coinbase)
+            .map(|r| crate::transaction_manager::CoinStateRecord {
+                coin: r.coin.clone(),
+                created_height: Some(r.created_height as u64),
+                spent_height: None,
+            })
+            .collect()
+    }
+
+    /// Per-coin on-chain state for the requested coins, mirroring what a real
+    /// node's `getCoinRecordsByNames` returns.  Unknown coins yield a record
+    /// with `created_height: None` (not yet observed).  Consumed by the
+    /// `TransactionManager` to compute the created/deleted diff.
+    pub fn get_coin_states(
+        &self,
+        coins: &[CoinString],
+    ) -> Vec<crate::transaction_manager::CoinStateRecord> {
+        let state = self.state.borrow();
+        coins
+            .iter()
+            .map(|coin| {
+                let rec = state.coins.get(&coin.to_coin_id());
+                crate::transaction_manager::CoinStateRecord {
+                    coin: coin.clone(),
+                    created_height: rec.map(|r| r.created_height as u64),
+                    spent_height: rec.and_then(|r| r.spent_height.map(|h| h as u64)),
+                }
+            })
+            .collect()
     }
 
     pub fn push_transactions(

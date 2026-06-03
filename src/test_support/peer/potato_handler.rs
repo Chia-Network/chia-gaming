@@ -113,6 +113,7 @@ impl WalletSpendInterface for Pipe {
         coin_id: &CoinString,
         timeout: &Timeout,
         _name: Option<&'static str>,
+        _spend: Option<SpendBundle>,
     ) -> Result<(), Error> {
         self.registered_coins
             .insert(coin_id.clone(), timeout.clone());

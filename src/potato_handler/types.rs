@@ -61,11 +61,6 @@ pub trait SpendWalletReceiver {
         env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error>;
-    fn coin_timeout_reached(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
-        coin_id: &CoinString,
-    ) -> Result<Vec<Effect>, Error>;
     fn coin_puzzle_and_solution(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
@@ -86,6 +81,7 @@ pub trait WalletSpendInterface {
         coin_id: &CoinString,
         timeout: &Timeout,
         name: Option<&'static str>,
+        spend: Option<SpendBundle>,
     ) -> Result<(), Error>;
 
     /// Request the puzzle and solution for a spent coin

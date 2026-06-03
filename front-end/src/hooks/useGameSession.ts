@@ -4,7 +4,6 @@ import {
   GameConnectionState,
   GameSessionParams,
   CalpokerOutcome,
-  BlockchainReport,
   PeerConnectionResult,
   WasmEvent,
   WasmNotification,
@@ -674,7 +673,6 @@ export function useGameSession(
       iStarted: wasm.iStarted,
       amount: wasm.amount,
       perGameAmount: wasm.perGameAmount,
-      pendingTransactions: wasm.pendingTransactions,
       unackedMessages: wasm.unackedMessages.map(m => ({ msgno: m.msgno, msg: uint8ToBase64(m.msg) })),
       history: wasm.history,
       log: wasm.log,
@@ -1194,16 +1192,13 @@ export function useGameSession(
     };
   }, [gameObject, handleNotification, pushChannel]);
 
-  // Subscribe to blockchain block data
+  // Drive the cradle's coin polling: the poller asks the cradle which coins to
+  // watch and feeds raw chain state back via report_coin_states.
   useEffect(() => {
-    const subscription = blockchain.getObservable().subscribe({
-      next: (e: BlockchainReport) => {
-        gameObject?.blockNotification(e.peak, e.block ?? [], e.report);
-      },
-    });
-
+    if (!gameObject) return;
+    blockchain.attachCradle(gameObject);
     return () => {
-      subscription.unsubscribe();
+      blockchain.detachCradle(gameObject);
     };
   }, [gameObject, blockchain]);
 

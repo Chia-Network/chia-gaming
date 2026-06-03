@@ -53,11 +53,6 @@ pub trait PeerHandler {
         env: &mut ChannelHandlerEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error>;
-    fn coin_timeout_reached(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
-        coin_id: &CoinString,
-    ) -> Result<Vec<Effect>, Error>;
     fn coin_created(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
@@ -213,13 +208,6 @@ impl SpendWalletReceiver for Box<dyn PeerHandler> {
     ) -> Result<Vec<Effect>, Error> {
         (**self).coin_spent(env, coin_id)
     }
-    fn coin_timeout_reached(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
-        coin_id: &CoinString,
-    ) -> Result<Vec<Effect>, Error> {
-        (**self).coin_timeout_reached(env, coin_id)
-    }
     fn coin_puzzle_and_solution(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
@@ -247,8 +235,9 @@ pub trait MessagePeerQueue {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WatchEntry {
+    /// Relative timeout age (in blocks).  The transaction manager combines this
+    /// with the coin's reorg-aware birthday to decide ripeness.
     pub timeout_blocks: Timeout,
-    pub timeout_at: Option<u64>,
     pub name: Option<String>,
 }
 
@@ -256,7 +245,6 @@ pub struct WatchEntry {
 pub struct WatchReport {
     pub created_watched: HashSet<CoinString>,
     pub deleted_watched: HashSet<CoinString>,
-    pub timed_out: HashSet<CoinString>,
 }
 
 pub enum WalletBootstrapState {
@@ -294,7 +282,6 @@ impl FullCoinSetAdapter {
         Ok(WatchReport {
             created_watched: created_coins,
             deleted_watched: deleted_coins,
-            timed_out: HashSet::default(),
         })
     }
 }
@@ -505,12 +492,11 @@ impl WalletSpendInterface for SynchronousGameCradleState {
         coin_id: &CoinString,
         timeout: &Timeout,
         name: Option<&'static str>,
+        spend: Option<SpendBundle>,
     ) -> Result<(), Error> {
-        let timeout_at = timeout.to_u64() + self.current_height;
         self.watching_coins.insert(
             coin_id.clone(),
             WatchEntry {
-                timeout_at: Some(timeout_at),
                 timeout_blocks: timeout.clone(),
                 name: name.map(|s| s.to_string()),
             },
@@ -519,6 +505,8 @@ impl WalletSpendInterface for SynchronousGameCradleState {
         self.events.push_back(CradleEvent::WatchCoin {
             coin_name: coin_id.to_coin_id(),
             coin_string: coin_id.clone(),
+            timeout: timeout.clone(),
+            spend,
         });
 
         Ok(())
@@ -699,10 +687,6 @@ pub fn report_coin_changes_to_peer<P: SpendWalletReceiver>(
     let mut effects = Vec::new();
     for d in watch_report.deleted_watched.iter() {
         effects.extend(peer.coin_spent(env, d)?);
-    }
-
-    for t in watch_report.timed_out.iter() {
-        effects.extend(peer.coin_timeout_reached(env, t)?);
     }
 
     for c in watch_report.created_watched.iter() {
@@ -1174,7 +1158,7 @@ impl SynchronousGameCradle {
         self.state.channel_puzzle_hash.clone()
     }
 
-    fn filter_coin_report(&mut self, block: u64, watch_report: &WatchReport) -> WatchReport {
+    fn filter_coin_report(&mut self, watch_report: &WatchReport) -> WatchReport {
         // Pass on creates and deletes that are being watched.
         let deleted_watched: HashSet<CoinString> = watch_report
             .deleted_watched
@@ -1191,27 +1175,10 @@ impl SynchronousGameCradle {
             .filter(|c| self.state.watching_coins.contains_key(c))
             .cloned()
             .collect();
-        for c in created_watched.iter() {
-            if let Some(w) = self.state.watching_coins.get_mut(c) {
-                w.timeout_at = Some(w.timeout_blocks.to_u64() + block);
-            }
-        }
-
-        // Get timeouts
-        let mut timed_out = HashSet::new();
-        for (k, w) in self.state.watching_coins.iter_mut() {
-            if let Some(t) = w.timeout_at {
-                if t <= block {
-                    w.timeout_at = None;
-                    timed_out.insert(k.clone());
-                }
-            }
-        }
 
         WatchReport {
             created_watched,
             deleted_watched,
-            timed_out,
         }
     }
 }
@@ -1435,7 +1402,7 @@ impl GameCradle for SynchronousGameCradle {
         report: &WatchReport,
     ) -> Result<(), Error> {
         self.state.current_height = height as u64;
-        let filtered_report = self.filter_coin_report(self.state.current_height, report);
+        let filtered_report = self.filter_coin_report(report);
         let reported_effects = {
             let mut env = ChannelHandlerEnv::new(allocator)?;
             report_coin_changes_to_peer(&mut env, &mut self.peer, &filtered_report)?

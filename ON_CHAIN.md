@@ -103,25 +103,50 @@ on-chain confirmation arrives.
 
 ### Step 5: Timeout Resolution
 
-Once the game coin is at the latest known state, `coin_timeout_reached`
-handles resolution when the `game_timeout` relative timelock expires. The
-behavior depends on whose turn it is:
+Timeout resolution is split into two decoupled halves: **eager submission** of
+the timeout claim, and **confirmation-driven** notification when a spend is
+actually observed. There is no longer a maturity callback (`coin_timeout_reached`
+has been removed); reaching the timelock no longer triggers a spend or a
+notification directly.
 
-- **Our turn, already accepted off-chain** (`accepted == true`): We already
-decided to accept the current `mover_share` split. A timeout transaction is
-submitted (if our reward is nonzero) and `WeTimedOut` is emitted. The
-`WeTimedOut` notification fires here, not when accept_timeout was originally
-called — the off-chain call only records intent.
-- **Our turn, not yet accepted**: The game waits for a local `AcceptTimeout`
-action from the UI before submitting.
-- **Opponent's turn**: The opponent hasn't moved within the timelock. We claim
-the timeout by submitting the timeout transaction (if our reward is nonzero)
-and `OpponentTimedOut` is emitted.
+**Eager submission.** When a game coin is registered with the wallet (via
+`register_initial_game_coins`), the handler pre-builds the timeout claim with
+`build_timeout_claim` and attaches it to the `Effect::RegisterCoin`'s
+`spend: Option<SpendBundle>`. `build_timeout_claim` returns the bundle **only
+when the timeout transaction pays us** (the spend creates a coin to our reward
+puzzle hash); otherwise it returns `None` and nothing is submitted on our
+behalf. The `TransactionManager` then becomes the **sole submitter**: it tracks
+each coin's reorg-aware birthday and submits the stored claim once the coin
+reaches `birthday + game_timeout`, resubmitting across reorgs (see
+[Eager Timeout Submission](INTERNALS.md#eager-timeout-submission-and-confirmation-driven-notifications)).
+Handlers never build or submit timeout transactions at maturity.
 
-**Zero-reward skip**: In both our-turn and opponent-turn cases, if our reward
-is zero the timeout transaction is not submitted (avoiding a pointless
-transaction fee). The notification still fires so the game lifecycle is cleanly
-resolved; the opponent is expected to claim their reward.
+**Confirmation-driven notification.** Terminal notifications are emitted from
+`handle_game_coin_spent` (reached via the `coin_spent` → `coin_puzzle_and_solution`
+pipeline) when the game coin's *actual* spend is observed, by interpreting what
+the spend created:
+
+- **Our timeout claim confirmed** (spend pays our reward puzzle hash): we won the
+timeout — `WeTimedOut` (or `WeSlashedOpponent` on the slash path).
+- **Opponent moved/claimed** (spend pays *their* reward puzzle hash): in the
+common case our eager claim simply never confirms because the opponent spent
+the coin first (a normal move advances the game; a timeout claim against our
+pending move yields `OpponentTimedOut`, or `OpponentSuccessfullyCheated` when
+we were attempting to slash).
+
+Because notification rides the observed spend rather than the timelock, the
+expected "opponent moved instead of timing out" case requires no special
+handling — our unconfirmed claim is just dropped and the game advances.
+
+**Accepted games** (`accepted == true`, set by an `AcceptTimeout` action): the
+off-chain/​on-chain accept only records intent. The eager claim is registered
+like any other, and `WeTimedOut` is emitted when the resulting reward-coin spend
+is observed — not at accept time.
+
+**Zero-reward skip**: when the timeout would not pay us, `build_timeout_claim`
+returns `None`, so the manager submits nothing (avoiding a pointless fee). The
+terminal status still resolves from the observed spend: the opponent claims
+their reward, and we notify off their confirmed spend.
 
 ### Step 6: Clean Shutdown
 
@@ -133,9 +158,10 @@ emitted and the channel can be closed.
 - `src/potato_handler/mod.rs` — `go_on_chain`
 - `src/potato_handler/spend_channel_coin_handler.rs` — `handle_channel_coin_spent`,
 `finish_on_chain_transition`
-- `src/potato_handler/on_chain.rs` — `OnChainGameHandler`
-- `src/channel_handler/mod.rs` — `set_state_for_coins`,
-`accept_or_timeout_game_on_chain`, `game_coin_spent`
+- `src/potato_handler/on_chain.rs` — `OnChainGameHandler`,
+`build_timeout_claim`, `register_initial_game_coins`, `handle_game_coin_spent`
+- `src/transaction_manager.rs` — `TransactionManager` (eager claim submission)
+- `src/channel_handler/mod.rs` — `set_state_for_coins`, `game_coin_spent`
 
 ---
 
@@ -714,33 +740,39 @@ this case, `game_is_my_turn()` returns `false` (the referee thinks it is the
 opponent's turn), but on-chain it is actually *our* turn to submit the redo.
 
 When a redo is generated via `take_cached_move_for_game`, `our_turn` is set to
-`true` to reflect the on-chain reality. Without this correction, a timeout on
-the intermediate redo coin would emit `OpponentTimedOut` instead of
-`WeTimedOut`, producing wrong notifications.
+`true` to reflect the on-chain reality. Without this correction, the spend that
+resolves the intermediate redo coin would be misread (see below), producing
+wrong notifications.
 
-### How our_turn Determines Timeout Notifications
+### How our_turn and the Observed Spend Determine Notifications
 
-When `coin_timeout_reached` fires on a game coin:
+Notifications are **confirmation-driven**: they are emitted from
+`handle_game_coin_spent` when the game coin's actual spend is observed, not when
+the timelock matures. `our_turn` records whose move the on-chain state is
+waiting on, and the handler combines it with what the *observed spend* created
+to decide the terminal status:
 
-```
-primarily:
-if old_definition.our_turn →  GameNotification::WeTimedOut
-else                        →  GameNotification::OpponentTimedOut
-```
+- **Spend pays our reward puzzle hash** → our claim confirmed
+(`WeTimedOut`, or `WeSlashedOpponent` on the slash path).
+- **Spend pays the opponent's reward puzzle hash** → the opponent acted first:
+a normal move advances the game, a timeout claim against our pending move
+yields `OpponentTimedOut`, and a timeout claim while we were attempting to
+slash yields `OpponentSuccessfullyCheated`.
 
-`our_turn` is the primary signal, but not the only branch input. On-chain
-timeout handling also considers accepted-state and accept-transaction/slash
-state. In particular, accepted games can resolve through the "we timed out"
-path even when the simple two-branch sketch above would be ambiguous.
+`our_turn` is a key input, but not the only one: the accepted-state and the
+pending-slash / pending-move bookkeeping on `OnChainGameState` also steer the
+branch. In particular, an opponent's timeout claim against our pending `OurMove`
+coin drives `WeTimedOut` directly (rather than being misread as a win against a
+stale, optimistically-advanced referee state).
 
 Both players maintain independent `game_map`s, and both should have
 complementary `our_turn` values for the same game coin.
 
 ### Moves for Finished Games Are Discarded
 
-When a game coin times out, the game is removed from `game_map` and
-`live_games`. If a user-queued `Move` for that game is still on the
-`game_action_queue`, it is discarded when popped: `do_on_chain_action` checks
+When a game coin's resolving spend is observed, the game is removed from
+`game_map` and `live_games`. If a user-queued `Move` for that game is still on
+the `game_action_queue`, it is discarded when popped: `do_on_chain_action` checks
 `get_current_coin` and falls through to `next_action` if the game is gone, and
 `do_on_chain_move` checks `my_move_in_game` — returning `None` (game absent)
 causes a discard, while `Some(false)` (game alive, not our turn) causes a
