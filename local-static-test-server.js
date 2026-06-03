@@ -14,6 +14,17 @@ if (!SERVE_DIR) {
   process.exit(1);
 }
 
+const ROOT = path.resolve(SERVE_DIR);
+
+function resolveUnderRoot(urlPathname) {
+  const rel = urlPathname.replace(/^\/+/, '');
+  const filePath = path.resolve(ROOT, rel);
+  if (filePath !== ROOT && !filePath.startsWith(ROOT + path.sep)) {
+    return null;
+  }
+  return filePath;
+}
+
 const MIME = {
   '.html': 'text/html',
   '.js': 'application/javascript',
@@ -36,10 +47,8 @@ const server = http.createServer((req, res) => {
   let pathname = new URL(req.url, 'http://localhost').pathname;
   if (pathname === '/') pathname = '/index.html';
 
-  const filePath = path.join(SERVE_DIR, pathname);
-
-  // Prevent directory traversal
-  if (!filePath.startsWith(path.resolve(SERVE_DIR))) {
+  const filePath = resolveUnderRoot(pathname);
+  if (!filePath) {
     res.writeHead(403);
     return res.end('Forbidden');
   }
@@ -48,7 +57,7 @@ const server = http.createServer((req, res) => {
     if (err) {
       // SPA fallback: serve index.html for missing files
       if (err.code === 'ENOENT' && !path.extname(pathname)) {
-        return fs.readFile(path.join(SERVE_DIR, 'index.html'), (err2, html) => {
+        return fs.readFile(path.join(ROOT, 'index.html'), (err2, html) => {
           if (err2) { res.writeHead(404); return res.end('Not found'); }
           res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
           res.end(html);
@@ -72,7 +81,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`Static server: http://${HOST}:${PORT} -> ${SERVE_DIR}`);
+  console.log(`Static server: http://${HOST}:${PORT} -> ${ROOT}`);
 });
 
 server.on('error', (e) => {

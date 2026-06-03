@@ -1,13 +1,36 @@
-# Deploying
+# Running from Checkout
 
-This guide covers building and running the two deployable artifacts:
+## Quick Start
 
-1. **Player app** — fully static HTML/JS/CSS/WASM served from any web server.
-2. **Tracker** — Express + WebSocket service that provides the lobby UI (iframe)
-  and relays game messages between peers.
+Run the full local stack locally — player app, lobby tracker, and blockchain simulator:
 
-For architecture details, see `[FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md)`.
-For the Rust test suite, see `[DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)`.
+```bash
+./run-local-demo.sh
+```
+
+`run-local-demo.sh` builds everything and starts three services:
+
+| Service    | Default URL             | Override env var |
+| ---------- | ----------------------- | ---------------- |
+| Player app | `http://localhost:3002` | `GAME_PORT`      |
+| Tracker    | `http://localhost:3003` | `TRACKER_PORT`   |
+| Simulator  | `http://localhost:5800` | (hardcoded)      |
+
+
+`run-local-demo.sh` Flags:
+
+- `--skip-build` — skip all build steps, use existing artifacts.
+- `--force-build` — `cargo clean` before building.
+
+Press Ctrl-C to stop all services.
+
+You can use either the simulator, or mainnnet with the files hosted locally.
+
+This will run the player app on localhost:3002 and the tracker on localhost:3003
+
+There are two game modes: playing on a simulated blockchain, or on Chia's mainnet.
+To play on mainnet, you must have the Chia Wallet 2.7.1 or later running and
+configured, with at least 1000 mojos in your wallet.
 
 ## Prerequisites
 
@@ -19,7 +42,7 @@ For the Rust test suite, see `[DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)`.
   ```bash
   cargo install wasm-pack --version 0.13.1
   ```
-- **Node 20+** and **pnpm 10.33**:
+- **Node 20+** and **pnpm 10.33** and [Node Version Manager](https://nvmnode.com/):
   ```bash
   brew install node@20        # or download from https://nodejs.org
   npm install -g pnpm@10.33.0
@@ -29,28 +52,36 @@ automatically set `CC_wasm32_unknown_unknown` and `AR_wasm32_unknown_unknown`
 to the Homebrew LLVM paths. Install with `brew install llvm` if WASM builds
 fail with clang errors.
 
-## Quick Start (Local Demo)
-
-`run-local-demo.sh` builds everything and starts three services:
+## Building & Testing
 
 ```bash
-./run-local-demo.sh
+# Build test binaries (no test execution)
+./cb.sh
+
+# Run full default test flow:
+# - rust + chialisp build
+# - rust sim tests
+# - JS/WASM integration tests
+./ct.sh
+
+# Run only sim test(s) matching 'accept_finished' (while debugging)
+./ct.sh -o accept_finished
+
+# Run JS/WASM integration tests (builds WASM, starts simulator, runs Jest)
+./tools/local-wasm-tests.sh
 ```
 
 
-| Service    | Default URL             | Override env var |
-| ---------- | ----------------------- | ---------------- |
-| Player app | `http://localhost:3002` | `GAME_PORT`      |
-| Tracker    | `http://localhost:3003` | `TRACKER_PORT`   |
-| Simulator  | `http://localhost:5800` | (hardcoded)      |
+# Running from tarball or zipfile
 
+This guide covers building and running the two production artifacts:
 
-Flags:
+1. **Player app** — fully static HTML/JS/CSS/WASM served from any web server.
+2. **Tracker** — Express + WebSocket service that provides the lobby UI (iframe)
+  and relays game messages between peers.
 
-- `--skip-build` — skip all build steps, use existing artifacts.
-- `--force-build` — `cargo clean` before building.
-
-Press Ctrl-C to stop all services.
+For architecture details, see [FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md).
+For the Rust test suite, see [DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md).
 
 ## Building Tarballs
 
@@ -68,12 +99,17 @@ This produces four files in subdirectories (tgz and zip of each artifact):
 Both formats have identical contents, ready to extract onto their respective
 servers.
 
-## Building Step by Steppr
+# Build Details
 
-For CI, production, or partial rebuilds. Run commands from the repo root
-unless noted. The CI workflow
-`[.github/workflows/frontend.yml](.github/workflows/frontend.yml)` is the
+## Building in CI
+
+The CI workflow [.github/workflows/frontend.yml](.github/workflows/frontend.yml) is the
 canonical reference for the full build sequence.
+
+
+## Building Locally
+
+Run commands from the repo root unless noted.
 
 ### 1. Chialisp (.hex files)
 
@@ -168,49 +204,44 @@ app/
 
 ## Running the Services
 
-### Player app
+### Running from Checkout
 
-Any static file server. No server-side logic required.
-For example:
+Run from a repo checkout. See [Quick Start](#quick-start) for the full local
+stack (`./run-local-demo.sh` starts the player app, tracker, and simulator).
 
-```bash
-python3 -m http.server 3002
-```
-
-**Development (from repo checkout):**
+#### Player app
 
 ```bash
 node local-static-test-server.js front-end/serve 3002
 ```
 
-**Development (from extracted tarball):**
+Open `http://localhost:3002`. `local-static-test-server.js` is a
+zero-dependency Node server that sets correct MIME types (including `.wasm`)
+and cache headers. Do not use `python3 -m http.server` — it does not
+reliably serve `.wasm` with the correct MIME type.
+
+To smoke-test a production tarball locally (after `./tools/build-deploy.sh`):
 
 ```bash
+mkdir chia-gaming-player
+tar -xzf deploy_player_app/chia-gaming-YYYYMMDD-HASH.tgz -C chia-gaming-player
+# unzip deploy_player_app/chia-gaming-YYYYMMDD-HASH.zip -d chia-gaming-player
+
+cd chia-gaming-player
 node local-static-test-server.js . 3002
 ```
 
-**Production:** Serve the staging directory with nginx, Caddy,
-S3 + CloudFront, or any static host. Apply the caching rules in
-[Production Notes](#production-notes).
+The `.` argument is the extracted root (the directory that contains
+`index.html`, `build-meta.json`, and `app/`). Production tarballs include
+`local-static-test-server.js` for this purpose.
 
-### Tracker (lobby service)
-
-From an extracted lobby tarball:
-
-```bash
-PORT=3003 node service.js \
-  --self 'http://localhost:3003' \
-  --dir .
-```
-
-Or from the repo checkout:
+#### Tracker
 
 ```bash
 PORT=3003 node lobby/lobby-service/dist/index-rollup.cjs \
   --self 'http://localhost:3003' \
   --dir lobby/lobby-frontend/serve
 ```
-
 
 | Flag / env  | Required | Purpose                                                                                        |
 | ----------- | -------- | ---------------------------------------------------------------------------------------------- |
@@ -219,19 +250,49 @@ PORT=3003 node lobby/lobby-service/dist/index-rollup.cjs \
 | `--verbose` | no       | Verbose logging                                                                                |
 | `PORT`      | no       | Listen port (default `5801` — conflicts with the simulator; always override when running both) |
 
-
-### Simulator (development only, from repo checkout)
+#### Simulator
 
 ```bash
 ./target/debug/chia-gaming-sim
 ```
 
-Ports 5800 (HTTP) and 5801 (WebSocket) are hardcoded. The simulator binary
-is built by `cargo build --features sim-server` and is not included in the
-tarballs. Not used in production; players connect to a real Chia wallet via
-WalletConnect.
+Ports 5800 (HTTP) and 5801 (WebSocket) are hardcoded. Built by
+`cargo build --features sim-server --bin chia-gaming-sim`. Not included in
+production tarballs.
 
-## Production Notes
+### Running from tarball or zipfile
+
+#### Player app
+
+No server-side logic required. Extract the player app tarball/zip onto your
+static host and serve the staging directory with nginx, Caddy, S3 +
+CloudFront, or any static file server:
+
+```bash
+mkdir -p /var/www/chia-gaming-player
+tar -xzf chia-gaming-YYYYMMDD-HASH.tgz -C /var/www/chia-gaming-player
+# or, unzip chia-gaming-YYYYMMDD-HASH.zip -d /var/www/chia-gaming-player
+cd /var/www/chia-gaming-player
+caddy file-server --listen :3002
+```
+
+See [Staging (Asset Layout)](#staging-asset-layout) for the directory
+structure. Apply the caching and origin rules below.
+
+#### Tracker
+
+Extract the lobby tarball, then run the bundled service:
+
+```bash
+PORT=443 node service.js \
+  --self 'https://tracker.example.com' \
+  --dir .
+```
+
+Set `--self` to the tracker's public URL. The same `--dir`, `--self`,
+`--verbose`, and `PORT` flags apply as when running from checkout (see table above).
+
+#### Production notes
 
 - **Separate origins.** The player app and tracker must be served from
 different origins. The lobby loads inside an iframe from the tracker's
