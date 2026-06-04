@@ -3,6 +3,12 @@
   "version": "1.0.0",
   "license": "Apache-2.0",
   "description": "Chia Gaming player app packaged as a standalone Electron application",
+  "homepage": "https://github.com/Chia-Network/chia-gaming",
+  "author": {
+    "name": "Matt Howard",
+    "email": "matt@chia.net"
+  },
+
   "main": "src/main.cjs",
   "packageManager": "pnpm@10.33.0",
   "scripts": {
