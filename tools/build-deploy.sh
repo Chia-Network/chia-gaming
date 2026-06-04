@@ -5,6 +5,9 @@
 #   chia-gaming-YYYYMMDD-HASH.tgz/.zip       — player app (static files)
 #   chia-gaming-lobby-YYYYMMDD-HASH.tgz/.zip — lobby frontend + service
 #
+# The player-app static bundle is produced by tools/build-static-bundle.sh
+# (shared with tools/build-electron.sh).
+#
 # See DEVELOPMENT.md for the full build/deploy guide.
 set -e
 
@@ -21,9 +24,10 @@ on_exit() {
 trap on_exit EXIT
 
 PLATFORM=""
+BUNDLE_ARGS=()
 for arg in "$@"; do
     case "$arg" in
-        --debug) set -x ;;
+        --debug) set -x; BUNDLE_ARGS+=(--debug) ;;
         --platform=*) PLATFORM="${arg#--platform=}" ;;
         *) echo "Unknown argument: $arg"; exit 1 ;;
     esac
@@ -48,11 +52,9 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 FE_DIR="$ROOT_DIR/front-end"
-WASM_DIR="$ROOT_DIR/wasm"
 LOBBY_DIR="$ROOT_DIR/lobby"
 LOBBY_FRONTEND_DIR="$LOBBY_DIR/lobby-frontend"
 LOBBY_SERVICE_DIR="$LOBBY_DIR/lobby-service"
-CLSP_DIR="$ROOT_DIR/clsp"
 
 DATE=$(date +%Y%m%d)
 HASH=$(git -C "$ROOT_DIR" rev-parse --short=6 HEAD)
@@ -62,33 +64,21 @@ GAME_ZIP="chia-gaming-${TAG}.zip"
 LOBBY_TARBALL="chia-gaming-lobby-${TAG}.tgz"
 LOBBY_ZIP="chia-gaming-lobby-${TAG}.zip"
 
-# macOS wasm32 clang workaround
-if [ -x /opt/homebrew/opt/llvm/bin/clang ]; then
-    export CC_wasm32_unknown_unknown=/opt/homebrew/opt/llvm/bin/clang
-    export AR_wasm32_unknown_unknown=/opt/homebrew/opt/llvm/bin/llvm-ar
-elif [ -x /usr/local/opt/llvm/bin/clang ]; then
-    export CC_wasm32_unknown_unknown=/usr/local/opt/llvm/bin/clang
-    export AR_wasm32_unknown_unknown=/usr/local/opt/llvm/bin/llvm-ar
-fi
+# ── 1. Player app static bundle ──────────────────────────────────────
 
-# ── 1. Chialisp ──────────────────────────────────────────────────────
+GAME_STAGE=$(mktemp -d)
+"$SCRIPT_DIR/build-static-bundle.sh" --dest="$GAME_STAGE" "${BUNDLE_ARGS[@]}"
 
-echo "=== Building chialisp (.hex files) ==="
-find "$CLSP_DIR" -name '*.hex' -delete
-cp "$ROOT_DIR/build.rs.disabled" "$ROOT_DIR/build.rs"
-(cd "$ROOT_DIR" && cargo build)
+# Web deployments ship a small static test server alongside the bundle.
+cp "$ROOT_DIR/local-static-test-server.js" "$GAME_STAGE/local-static-test-server.js"
 
-# ── 2. WASM (release, browser target) ────────────────────────────────
+echo "=== Creating $GAME_TARBALL and $GAME_ZIP ==="
+mkdir -p "$ROOT_DIR/deploy_player_app"
+tar -czf "$ROOT_DIR/deploy_player_app/$GAME_TARBALL" -C "$GAME_STAGE" .
+(cd "$GAME_STAGE" && zip -rq "$ROOT_DIR/deploy_player_app/$GAME_ZIP" .)
+rm -rf "$GAME_STAGE"
 
-echo "=== Building WASM (web target, release) ==="
-(cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/dist" --release --target=web)
-
-# ── 3. Player app ────────────────────────────────────────────────────
-
-echo "=== Building player app ==="
-(cd "$FE_DIR" && pnpm install --frozen-lockfile && pnpm run build)
-
-# ── 4. Lobby frontend ────────────────────────────────────────────────
+# ── 2. Lobby frontend ────────────────────────────────────────────────
 
 echo "=== Building lobby frontend ==="
 # --ignore-scripts: skip native build scripts (esbuild, @parcel/watcher) that
@@ -97,47 +87,14 @@ echo "=== Building lobby frontend ==="
 (cd "$LOBBY_DIR" && pnpm install --frozen-lockfile --ignore-scripts)
 (cd "$LOBBY_DIR" && pnpm --filter chia-gaming-lobby-frontend run build)
 
-# ── 5. Lobby service ─────────────────────────────────────────────────
+# ── 3. Lobby service ─────────────────────────────────────────────────
 
 echo "=== Building lobby service ==="
 (cd "$LOBBY_DIR" && pnpm --filter chia-gaming-lobby-service run build)
 
-# ── Assemble player app staging tree ─────────────────────────────────
-
-BUILD_NONCE=$(date +%s%3N)
-echo "=== Assembling player app (nonce: $BUILD_NONCE) ==="
-
-GAME_STAGE=$(mktemp -d)
-NONCE_DIR="$GAME_STAGE/app/$BUILD_NONCE"
-mkdir -p "$NONCE_DIR"
-
-cp "$FE_DIR/public/index.html" "$GAME_STAGE/index.html"
-[ -f "$FE_DIR/public/favicon.svg" ] && cp "$FE_DIR/public/favicon.svg" "$GAME_STAGE/favicon.svg"
-cp "$ROOT_DIR/local-static-test-server.js" "$GAME_STAGE/local-static-test-server.js"
-echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$GAME_STAGE/build-meta.json"
-
-cp "$FE_DIR/dist/js/index-rollup.js"          "$NONCE_DIR/index.js"
-cp "$FE_DIR/dist/css/index.css"                "$NONCE_DIR/index.css"
-cp "$FE_DIR/dist/chia_gaming_wasm.js"          "$NONCE_DIR/chia_gaming_wasm.js"
-cp "$FE_DIR/dist/chia_gaming_wasm_bg.wasm"     "$NONCE_DIR/chia_gaming_wasm_bg.wasm"
-[ -f "$FE_DIR/dist/js/index-rollup.js.map" ] && cp "$FE_DIR/dist/js/index-rollup.js.map" "$NONCE_DIR/index-rollup.js.map"
-[ -d "$FE_DIR/public/images" ] && cp -r "$FE_DIR/public/images" "$NONCE_DIR/images"
-
-mkdir -p "$NONCE_DIR/clsp"
-find "$CLSP_DIR" -name '*.hex' | while read -r hex; do
-    rel="${hex#"$CLSP_DIR/"}"
-    mkdir -p "$NONCE_DIR/clsp/$(dirname "$rel")"
-    cp "$hex" "$NONCE_DIR/clsp/$rel"
-done
-
-echo "=== Creating $GAME_TARBALL and $GAME_ZIP ==="
-mkdir -p "$ROOT_DIR/deploy_player_app"
-tar -czf "$ROOT_DIR/deploy_player_app/$GAME_TARBALL" -C "$GAME_STAGE" .
-(cd "$GAME_STAGE" && zip -rq "$ROOT_DIR/deploy_player_app/$GAME_ZIP" .)
-rm -rf "$GAME_STAGE"
-
 # ── Assemble lobby staging tree ──────────────────────────────────────
 
+BUILD_NONCE=$(date +%s%3N)
 echo "=== Assembling lobby (nonce: $BUILD_NONCE) ==="
 
 LOBBY_STAGE=$(mktemp -d)

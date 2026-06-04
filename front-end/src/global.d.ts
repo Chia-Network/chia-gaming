@@ -4,5 +4,6 @@ declare global {
   interface Window {
     loadWasm?: (init: WasmInitFn, cg: WasmConnection) => void;
     __buildNonce?: string;
+    __chiaDistribution?: string;
   }
 }

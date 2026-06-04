@@ -48,6 +48,7 @@ import { realBlockchainInfo } from '../hooks/RealBlockchainInterface';
 import { activate, deactivate, getActiveBlockchain } from '../hooks/activeBlockchain';
 import { useThemeSyncToIframe } from '../hooks/useThemeSyncToIframe';
 import { log } from '../services/log';
+import { isElectronDistribution } from '../util/distribution';
 import { Button } from './button';
 
 import ChatPanel from './ChatPanel';
@@ -965,7 +966,7 @@ const Shell = () => {
   // Hydrate local UI state from a SessionState and kick off a backend connect.
   // Called only after the user has consented (Resume button) and the lease is ours.
   const performResume = useCallback(async (save: SessionState) => {
-    const bcType = save.blockchainType ?? 'simulator';
+    const bcType = save.blockchainType ?? (isElectronDistribution() ? 'walletconnect' : 'simulator');
     console.log('[Shell] performResume: bcType=%s token=%s', bcType, save.pairingToken ?? 'none');
     setResuming(true);
 
@@ -1520,11 +1521,13 @@ const Shell = () => {
               </div>
               <p className='text-sm text-canvas-text animate-pulse'>Waiting for wallet to connect…</p>
               <Button variant='solid' onClick={handleCancelConnect}>Cancel</Button>
-              <SimulatorSetupModal
-                open={showSimModal}
-                onConnect={handleFinalize}
-                connecting={connecting}
-              />
+              {!isElectronDistribution() && (
+                <SimulatorSetupModal
+                  open={showSimModal}
+                  onConnect={handleFinalize}
+                  connecting={connecting}
+                />
+              )}
             </div>
           ) : !walletConnected && activeBlockchainRef.current ? (
             <div className='flex flex-col items-center gap-4 p-6 max-w-md w-full'>
@@ -1547,14 +1550,18 @@ const Shell = () => {
             <div className='flex flex-col justify-center items-center w-full px-4 py-6 gap-4'>
               <p className='text-lg font-semibold text-canvas-text-contrast'>Choose Connection</p>
               <div className='w-full max-w-sm flex flex-col gap-3'>
-                <Button variant='solid' fullWidth onClick={() => handleConnect('simulator')}>
-                  Continue with Simulator
-                </Button>
-                <div className='flex items-center gap-2'>
-                  <div className='flex-1 border-t border-canvas-border' />
-                  <span className='text-canvas-text font-medium text-sm'>OR</span>
-                  <div className='flex-1 border-t border-canvas-border' />
-                </div>
+                {!isElectronDistribution() && (
+                  <>
+                    <Button variant='solid' fullWidth onClick={() => handleConnect('simulator')}>
+                      Continue with Simulator
+                    </Button>
+                    <div className='flex items-center gap-2'>
+                      <div className='flex-1 border-t border-canvas-border' />
+                      <span className='text-canvas-text font-medium text-sm'>OR</span>
+                      <div className='flex-1 border-t border-canvas-border' />
+                    </div>
+                  </>
+                )}
                 <Button variant='solid' fullWidth onClick={() => handleConnect('walletconnect')}>
                   Link Wallet
                 </Button>
