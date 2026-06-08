@@ -102,6 +102,17 @@ export interface QueuedNotification {
   payload?: ChannelStatusInfo | GameTerminalAttentionInfo;
 }
 
+function normalizeQueuedNotifications(raw: unknown): QueuedNotification[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((n) => {
+    const item = n as QueuedNotification & { id?: number | bigint };
+    return {
+      ...item,
+      id: typeof item.id === 'bigint' ? Number(item.id) : Number(item.id ?? 0),
+    };
+  });
+}
+
 export interface ChannelStatusInfo {
   state: ChannelState;
   advisory: string | null;
@@ -452,16 +463,16 @@ export function useGameSession(
   dismissedChannelStateRef.current = dismissedChannelState;
 
   const [channelQueue, setChannelQueue] = useState<QueuedNotification[]>(() =>
-    (sessionSave?.channelNotifQueue ?? []) as QueuedNotification[]
+    normalizeQueuedNotifications(sessionSave?.channelNotifQueue)
   );
   const [gameQueue, setGameQueue] = useState<QueuedNotification[]>(() =>
-    (sessionSave?.gameNotifQueue ?? []) as QueuedNotification[]
+    normalizeQueuedNotifications(sessionSave?.gameNotifQueue)
   );
   const notifIdRef = useRef(
     Math.max(
       0,
-      ...(sessionSave?.channelNotifQueue ?? []).map(n => n.id),
-      ...(sessionSave?.gameNotifQueue ?? []).map(n => n.id),
+      ...normalizeQueuedNotifications(sessionSave?.channelNotifQueue).map(n => n.id),
+      ...normalizeQueuedNotifications(sessionSave?.gameNotifQueue).map(n => n.id),
     )
   );
 

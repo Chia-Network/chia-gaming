@@ -2,7 +2,7 @@ import { Component, useCallback, useEffect, useRef, useState, type RefObject, ty
 import { Observable } from 'rxjs';
 import { useGameSession, ChannelStatusInfo, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, isWindingDown, deriveSessionPhase, QueuedNotification } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
-import { CalpokerHandState, CalpokerDisplaySnapshot } from '../hooks/save';
+import { CalpokerHandState, CalpokerDisplaySnapshot, SessionState } from '../hooks/save';
 import { formatMojos, formatAmount } from '../util';
 import { getPlayerId } from '../hooks/save';
 import { CalpokerOutcome, ChannelState, SessionPhase } from '../types/ChiaGaming';
@@ -771,5 +771,26 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
     </div>
   );
 };
+
+export function FinishedGameSession({ save }: { save: SessionState }) {
+  const channelState = save.channelStatus?.state ?? 'Failed';
+  const channelStateLabel = CHANNEL_STATE_LABELS[channelState] ?? channelState;
+  const resultLabel = save.gameTerminalLabel ?? 'Session complete';
+  const reward = formatOptionalMojos(save.gameTerminalReward ?? null);
+
+  return (
+    <div className='w-full h-full flex items-center justify-center bg-canvas-bg-subtle text-canvas-text p-6'>
+      <div className='max-w-md rounded-md border border-canvas-line bg-canvas-bg p-4 text-sm space-y-2'>
+        <p className='font-semibold text-canvas-text-contrast'>Final Session State</p>
+        <p>Channel: {channelStateLabel}</p>
+        <p>Result: {resultLabel}</p>
+        <p>My reward: {reward}</p>
+        <p className='text-xs text-canvas-solid'>
+          This saved session is complete. Start a new challenge from the tracker to replace it.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 export default GameSession;
