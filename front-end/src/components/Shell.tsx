@@ -1670,7 +1670,7 @@ const Shell = () => {
             <p className='text-canvas-text text-sm text-center'>{confirmDialog.body}</p>
             <button
               onClick={confirmDialog.onConfirm}
-              className='w-full px-4 py-2 rounded-md font-medium text-sm bg-alert-solid text-primary-on-primary hover:bg-alert-solid-hover transition-colors'
+              className='w-full px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors'
             >
               Proceed
             </button>
