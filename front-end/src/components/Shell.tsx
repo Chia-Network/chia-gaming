@@ -1,10 +1,10 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 
-import GameSession, { FinishedGameSession } from './GameSession';
+import GameSession from './GameSession';
 import { GameSessionErrorBoundary } from './GameSession';
 import { SimulatorSetupModal } from './SimulatorSetupModal';
 import QRCode from 'qrcode';
-import { GameSessionParams, PeerConnectionResult, ChatMessage, InternalBlockchainInterface, ConnectionSetup, TrackerLiveness, SessionPhase, ChannelState } from '../types/ChiaGaming';
+import { GameSessionParams, PeerConnectionResult, ChatMessage, InternalBlockchainInterface, ConnectionSetup, TrackerLiveness, SessionPhase } from '../types/ChiaGaming';
 import { TrackerConnection, MatchedParams, ConnectionStatus } from '../services/TrackerConnection';
 import { subscribeLog } from '../services/log';
 import {
@@ -74,16 +74,6 @@ const TAB_DEFS: { id: TabId; label: string }[] = [
 
 const FALLBACK_AMOUNT = 100n;
 const FALLBACK_PER_GAME = 10n;
-const TERMINAL_CHANNEL_STATES: ReadonlySet<ChannelState> = new Set([
-  'ResolvedClean',
-  'ResolvedUnrolled',
-  'ResolvedStale',
-  'Failed',
-]);
-
-function isTerminalSessionSave(save: SessionState | null | undefined): boolean {
-  return !!save?.channelStatus?.state && TERMINAL_CHANNEL_STATES.has(save.channelStatus.state);
-}
 
 function HistoryPanel({ lines }: { lines: string[] }) {
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -222,7 +212,6 @@ const Shell = () => {
   }, []);
   const [gameParams, setGameParams] = useState<GameSessionParams | null>(null);
   const [peerConn, setPeerConn] = useState<PeerConnectionResult | null>(null);
-  const [finishedSessionSave, setFinishedSessionSave] = useState<SessionState | null>(null);
 
   const peerConnTargetRef = useRef<PeerConnectionResult>({
     sendMessage: () => {},
@@ -586,7 +575,6 @@ const Shell = () => {
     ) => {
       console.log('[Shell] startSession: iStarted=%s amount=%s token=%s hasSave=%s', iStarted, amount, token, !!save);
       sessionFinishedCleanupRef.current = false;
-      setFinishedSessionSave(null);
       activePairingTokenRef.current = token;
       peerConnTargetRef.current = conn.getPeerConnection();
 
@@ -663,17 +651,6 @@ const Shell = () => {
           }
 
           const save = peekSession();
-          if (save && isTerminalSessionSave(save)) {
-            console.log('[Shell] connection_status: terminal save, keeping display-only session');
-            setFinishedSessionSave(save);
-            sessionSaveRef.current = null;
-            activePairingTokenRef.current = null;
-            if (save.history) setHistory(save.history);
-            if (save.log) setLogLines(save.log);
-            if (save.chatMessages) setChatMessages(save.chatMessages);
-            return;
-          }
-
           if (status.has_pairing && status.token) {
             if (save && save.pairingToken === status.token) {
               let amount: bigint;
@@ -791,15 +768,6 @@ const Shell = () => {
     }
 
     const initialSave = peekSession();
-    if (initialSave && isTerminalSessionSave(initialSave)) {
-      setFinishedSessionSave(initialSave);
-      sessionSaveRef.current = null;
-      activePairingTokenRef.current = null;
-      if (initialSave.history) setHistory(initialSave.history);
-      if (initialSave.log) setLogLines(initialSave.log);
-      if (initialSave.chatMessages) setChatMessages(initialSave.chatMessages);
-      return;
-    }
     if (initialSave && initialSave.pairingToken) {
       let amount: bigint;
       let perGame: bigint;
@@ -1010,35 +978,6 @@ const Shell = () => {
     const bcType = save.blockchainType ?? 'simulator';
     console.log('[Shell] performResume: bcType=%s token=%s', bcType, save.pairingToken ?? 'none');
     setResuming(true);
-
-    if (isTerminalSessionSave(save)) {
-      const terminalState = save.channelStatus?.state;
-      console.log('[Shell] performResume: terminal save, restoring display-only state');
-      setFinishedSessionSave(save);
-      sessionSaveRef.current = null;
-      activePairingTokenRef.current = null;
-      setGameParams(null);
-      setPeerConn(null);
-      setSessionPhase('resolved');
-      setSessionError(terminalState === 'Failed' || terminalState === 'ResolvedStale');
-      if (save.history) setHistory(save.history);
-      if (save.log) setLogLines(save.log);
-      if (save.chatMessages) setChatMessages(save.chatMessages);
-      setBlockchainType(bcType);
-
-      const { iface, pollMs } = getInterface(bcType);
-      try {
-        const setup = await iface.beginConnect(uniqueId);
-        await setup.finalize();
-        completeConnection(iface, bcType, pollMs);
-      } catch (err) {
-        console.warn('[Shell] performResume terminal connect failed, falling back', err);
-        setUserReady(true);
-      }
-      console.log('[Shell] performResume: terminal display-only done');
-      setResuming(false);
-      return;
-    }
 
     sessionSaveRef.current = save;
     let amount: bigint;
@@ -1679,8 +1618,6 @@ const Shell = () => {
                   onSessionPhaseChange={handleSessionPhaseChange}
                 />
               </GameSessionErrorBoundary>
-            ) : finishedSessionSave ? (
-              <FinishedGameSession save={finishedSessionSave} />
             ) : sessionCanMount ? (
               <div className='w-full h-full flex items-center justify-center text-canvas-solid'>
                 Restoring session...
