@@ -337,7 +337,7 @@ impl HandshakeInitiatorHandler {
             &channel_puzzle_hash,
             &total_amount,
         )?;
-        let per_player = Amount::new(total_amount.to_u64() / 2);
+        let per_player = self.my_contribution.clone();
 
         let launcher_ph_bytes = crate::common::constants::SINGLETON_LAUNCHER_HASH.to_vec();
         let zero_bytes = Self::encode_u64_as_clvm_int(0);

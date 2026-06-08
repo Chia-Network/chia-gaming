@@ -5,7 +5,7 @@
 #   chia-gaming-YYYYMMDD-HASH.tgz/.zip       — player app (static files)
 #   chia-gaming-lobby-YYYYMMDD-HASH.tgz/.zip — lobby frontend + service
 #
-# See DEPLOYING.md for the full build/deploy guide.
+# See DEVELOPMENT.md for the full build/deploy guide.
 set -e
 
 SELF="$(basename "$0")"
