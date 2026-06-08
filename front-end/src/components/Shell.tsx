@@ -1059,12 +1059,14 @@ const Shell = () => {
     setBootState({ kind: 'tabDead' });
   }, []);
 
-  const handleStartOver = useCallback(async () => {
-    if (activeBlockchainRef.current) {
-      try { await activeBlockchainRef.current.disconnect(); } catch (_) {}
+  const handleStartOver = useCallback(() => {
+    try {
+      hardReset();
+    } catch (e) {
+      console.error('[Shell] start over hard reset failed:', e);
+    } finally {
+      window.location.reload();
     }
-    await hardReset();
-    window.location.reload();
   }, []);
 
   const doDisconnectWallet = useCallback(async () => {
