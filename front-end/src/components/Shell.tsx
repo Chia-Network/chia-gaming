@@ -424,6 +424,7 @@ const Shell = () => {
   activeTabRef.current = activeTab;
   const sessionSaveRef = useRef<SessionState | null>(null);
   const sessionStartedRef = useRef(false);
+  const sessionFinishedCleanupRef = useRef(false);
   const activePairingTokenRef = useRef<string | null>(null);
   const balanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -573,6 +574,7 @@ const Shell = () => {
       opponentAlias?: string,
     ) => {
       console.log('[Shell] startSession: iStarted=%s amount=%s token=%s hasSave=%s', iStarted, amount, token, !!save);
+      sessionFinishedCleanupRef.current = false;
       activePairingTokenRef.current = token;
       peerConnTargetRef.current = conn.getPeerConnection();
 
@@ -936,6 +938,20 @@ const Shell = () => {
   const handleSessionPhaseChange = useCallback((phase: SessionPhase, hasError?: boolean) => {
     setSessionPhase(phase);
     setSessionError(!!hasError);
+
+    if (phase !== 'resolved' || sessionFinishedCleanupRef.current) return;
+
+    console.log('[Shell] session resolved; clearing active session state');
+    sessionFinishedCleanupRef.current = true;
+    trackerConnRef.current?.setAvailable(true);
+    clearSession();
+    destroyBlobSingleton();
+    sessionSaveRef.current = null;
+    activePairingTokenRef.current = null;
+    sessionStartedRef.current = false;
+    pendingMsgHandlerRef.current = null;
+    setGameParams(null);
+    setPeerConn(null);
   }, []);
 
   useEffect(() => {
