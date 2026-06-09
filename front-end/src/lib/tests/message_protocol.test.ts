@@ -50,6 +50,7 @@ function makeMockCradle(
     report_coin_states: jest.fn(() => ({ events: [] } as WasmResult)),
     get_coins_to_poll: jest.fn(() => []),
     drain_submissions: jest.fn(() => []),
+    resubmit_submitted: jest.fn(),
     serialize: jest.fn(() => new Uint8Array([0])),
     go_on_chain: jest.fn(() => ({ events: [] } as WasmResult)),
     cradle: 0,

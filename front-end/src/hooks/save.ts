@@ -164,7 +164,6 @@ export interface SessionState {
   iStarted?: boolean;
   amount?: string;
   perGameAmount?: string;
-  pendingTransactions?: string[];
   unackedMessages?: Array<{ msgno: number; msg: string }>;
   history?: string[];
   log?: string[];

@@ -84,10 +84,11 @@ export class BlockchainPoller {
     const names = [...allNames];
     await this.ensureRegistered(names);
 
+    // Report the latest height even when it decreases: a drop signals a reorg,
+    // which the transaction manager detects via height < last_height.  Clamping
+    // this monotonically would hide reorgs from the manager.
     const height = await this.rpc.getHeightInfo();
-    if (height > this.peak) {
-      this.peak = height;
-    }
+    this.peak = height;
 
     const records = names.length > 0 ? await this.rpc.getCoinRecordsByNames(names) : [];
     const recordByName = new Map<string, CoinRecord>();
@@ -105,6 +106,10 @@ export class BlockchainPoller {
         const spent = rec.spent || rec.spentBlockIndex > 0n ? Number(rec.spentBlockIndex) : null;
         csr.push({ coin: coin_string, created_height: created, spent_height: spent });
       }
+      // Sort by coin so the dedup key is independent of the order coins come
+      // back in (get_coins_to_poll iterates a HashMap, whose order can shift on
+      // mutation or after a reload re-seeds the map).
+      csr.sort((a, b) => a.coin.localeCompare(b.coin));
       const key = `${this.peak}:${JSON.stringify(csr)}`;
       if (this.lastReported.get(c) === key) continue;
       this.lastReported.set(c, key);

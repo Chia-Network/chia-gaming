@@ -230,8 +230,10 @@ export class WasmBlobWrapper implements PollingCradle {
     if (this.restoredSession) {
       this.restoredSession = false;
       this.resendUnacked();
-      // Transactions the manager captured before the reload remain in the
-      // (serialized) WASM state; drain and resubmit them now.
+      // A transaction drained to the host before the reload may not have
+      // reached the network.  Re-queue the manager's retained submission set,
+      // then drain and submit so any in-flight transaction is resent.
+      this.cradle?.resubmit_submitted();
       this.drainAndSubmitTransactions();
     }
   }

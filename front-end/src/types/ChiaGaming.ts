@@ -206,6 +206,7 @@ export interface WasmConnection {
   report_coin_states: (cid: number, height: bigint, records_json: string) => WasmResult | undefined;
   get_coins_to_poll: (cid: number) => Array<{ coin_name: string; coin_string: string }>;
   drain_submissions: (cid: number) => SpendBundle[];
+  resubmit_submitted: (cid: number) => void;
   convert_coinset_org_block_spend_to_watch_report: (
     parent_coin_info: string,
     puzzle_hash: string,
@@ -400,6 +401,11 @@ export class ChiaGame {
   /** Spend bundles the manager captured and the host should submit. */
   drain_submissions(): SpendBundle[] {
     return this.wasm.drain_submissions(this.cradle);
+  }
+
+  /** Re-queue all retained submissions for resubmission (call after reload). */
+  resubmit_submitted(): void {
+    this.wasm.resubmit_submitted(this.cradle);
   }
 }
 

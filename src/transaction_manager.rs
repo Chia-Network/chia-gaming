@@ -255,6 +255,18 @@ impl<C> TransactionManager<C> {
         out
     }
 
+    /// Re-queue every retained submission for resubmission.  Used on reload: a
+    /// transaction drained to the host before a reload may not have reached the
+    /// network, and the manager's reorg-vanish path only replays a transaction
+    /// once one of its outputs is observed and then rolled back.  Replaying the
+    /// full retained set on restore covers the in-flight gap; on-chain
+    /// submission is idempotent, so already-confirmed transactions are harmless.
+    pub fn requeue_submitted(&mut self) {
+        for tx in self.submitted.iter() {
+            self.pending_submissions.push(tx.bundle.clone());
+        }
+    }
+
     /// Register (or refresh) a watched coin, its timeout, and the eager spend to
     /// submit when it matures.  A `None` spend on a refresh leaves any existing
     /// eager spend in place.
@@ -470,7 +482,11 @@ impl<C: ManagedCradle> TransactionManager<C> {
 
     /// Drop coins whose confirmed spend is buried at least `confirmation_depth`
     /// blocks deep, so a reorg can no longer revert it.  Stops the host from
-    /// polling terminal coins.
+    /// polling terminal coins, and prunes any retained submission that spends a
+    /// now-irreversibly-spent coin: once a coin's spend is buried, every tracked
+    /// transaction spending that coin is terminal -- either it is our own spend
+    /// (it succeeded) or a conflicting spend won (ours can never be included) --
+    /// so it never needs resubmission again.
     fn evict_confirmed_spends(&mut self, height: u64) {
         let depth = self.confirmation_depth;
         let mut evicted = Vec::new();
@@ -484,6 +500,9 @@ impl<C: ManagedCradle> TransactionManager<C> {
         for coin in evicted {
             self.present_coins.remove(&coin);
             self.vanished_coins.remove(&coin);
+            let coin_id = coin.to_coin_id();
+            self.submitted
+                .retain(|tx| !tx.spent_coin_ids.contains(&coin_id));
         }
     }
 
@@ -1049,5 +1068,77 @@ mod tests {
         // Subsequent drains do not repeat the resync.
         let drain = mgr.flush_and_collect(&mut allocator).expect("drain");
         assert_eq!(drain.resync, None);
+    }
+
+    #[test]
+    fn requeue_submitted_replays_retained_transactions() {
+        let mut allocator = AllocEncoder::new();
+        let mut mock = MockGameCradle::default();
+        mock.queue_drain(vec![CradleEvent::OutboundTransaction(test_bundle("tx-a"))]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("drain");
+
+        // The host drains it once; the manager retains it for replay.
+        assert_eq!(mgr.drain_submissions().len(), 1);
+        // A fresh drain is empty -- the pending buffer was emptied.
+        assert!(mgr.drain_submissions().is_empty());
+
+        // On reload, requeue replays the retained set so any transaction that
+        // was drained but may not have reached the network is submitted again.
+        mgr.requeue_submitted();
+        let replay = mgr.drain_submissions();
+        assert_eq!(replay.len(), 1);
+        assert_eq!(replay[0].name.as_deref(), Some("tx-a"));
+    }
+
+    #[test]
+    fn buried_spend_prunes_retained_submission() {
+        use crate::common::types::{CoinSpend, Spend};
+
+        let mut allocator = AllocEncoder::new();
+        let coin = test_coin(30);
+        // A transaction that spends the watched coin.
+        let spend_tx = SpendBundle {
+            name: Some("spend-coin".to_string()),
+            spends: vec![CoinSpend {
+                coin: coin.clone(),
+                bundle: Spend::default(),
+            }],
+        };
+        let mut mock = MockGameCradle::default();
+        mock.queue_drain(vec![
+            watch_event(&coin, 50),
+            CradleEvent::OutboundTransaction(spend_tx.clone()),
+        ]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("drain");
+
+        // Host submits the spend; the manager retains it.
+        assert_eq!(mgr.drain_submissions().len(), 1);
+        let depth = mgr.confirmation_depth();
+
+        // The coin is created at 10 and spent at 12 (shallow).  The retained tx
+        // still replays because the spend can still be reorged out.
+        mgr.report_coin_states(
+            &mut allocator,
+            12,
+            &[CoinStateRecord {
+                coin: coin.clone(),
+                created_height: Some(10),
+                spent_height: Some(12),
+            }],
+        )
+        .expect("report");
+        mgr.requeue_submitted();
+        assert_eq!(mgr.drain_submissions().len(), 1);
+
+        // Once the spend is buried confirmation_depth deep the coin is evicted
+        // and the retained tx spending it is pruned: it can never be included
+        // again, so replay must produce nothing.
+        mgr.report_coin_states(&mut allocator, 12 + depth, &[])
+            .expect("report");
+        assert!(mgr.watched_coin(&coin).is_none());
+        mgr.requeue_submitted();
+        assert!(mgr.drain_submissions().is_empty());
     }
 }

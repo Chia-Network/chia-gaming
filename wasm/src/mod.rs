@@ -474,10 +474,10 @@ mod gaming_wasm {
     }
 
     /// Spend bundles the manager captured and the hosting layer should submit to
-    /// the wallet/network.  Returns the same `SpendBundle` shape carried by
-    /// `OutboundTransaction` events.  In phase 1 the WASM drain re-emits these as
-    /// `OutboundTransaction` events for the unchanged JS layer, so this returns
-    /// empty until the JS-simplification step switches over.
+    /// the wallet/network.  Returns the same `SpendBundle` shape that the old
+    /// `OutboundTransaction` events carried; the manager intercepts those events
+    /// into its submission buffer, so the host should call this after each drain
+    /// to pick up newly captured transactions.
     #[wasm_bindgen]
     pub fn drain_submissions(cid: i32) -> Result<JsValue, JsValue> {
         let result = with_game(cid, move |cradle: &mut JsCradle| {
@@ -489,6 +489,18 @@ mod gaming_wasm {
                 .collect::<Vec<_>>())
         })?;
         serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Re-queue every transaction the manager has retained for resubmission.
+    /// Called on session restore so transactions that were drained but may not
+    /// have reached the network before a reload are submitted again.  The host
+    /// should call `drain_submissions` afterwards to pick them up.
+    #[wasm_bindgen]
+    pub fn resubmit_submitted(cid: i32) -> Result<(), JsValue> {
+        with_game(cid, move |cradle: &mut JsCradle| {
+            cradle.cradle.requeue_submitted();
+            Ok(())
+        })
     }
 
     #[derive(Deserialize)]

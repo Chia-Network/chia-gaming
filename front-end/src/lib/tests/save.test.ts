@@ -49,7 +49,6 @@ const sampleSession: Partial<SessionState> = {
   iStarted: true,
   amount: '100',
   perGameAmount: '10',
-  pendingTransactions: ['tx1'],
   unackedMessages: [{ msgno: 4, msg: 'hello' }],
   history: ['log1'],
   log: ['dbg1'],
