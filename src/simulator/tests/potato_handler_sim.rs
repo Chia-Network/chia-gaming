@@ -1163,6 +1163,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     let mut nerf_transactions_for: u8 = 0;
     let mut nerfed_tx_backlog: Vec<SpendBundle> = Vec::new();
     let mut nerf_messages_for: u8 = 0;
+    let mut blocked_coin_reports_for: u8 = 0;
     let mut start_step = 0;
     let mut num_steps = 0;
     let mut logs: [Vec<String>; 2] = [Vec::new(), Vec::new()];
@@ -1184,6 +1185,8 @@ fn run_game_container_with_action_list_with_success_predicate(
                     | GameAction::ForceDestroyCoin(_, _)
                     | GameAction::NerfTransactions(_)
                     | GameAction::UnNerfTransactions(_)
+                    | GameAction::BlockCoinReports(_)
+                    | GameAction::UnblockCoinReports(_)
                     | GameAction::CancelProposal(_, _)
                     | GameAction::CorruptStateNumber(_, _)
                     | GameAction::ForceUnroll(_)
@@ -1272,7 +1275,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 records.retain(|rec| !forced_destroyed.contains(&rec.coin));
             }
 
-            if reports_blocked(i, &wait_blocks) {
+            if reports_blocked(i, &wait_blocks) || blocked_coin_reports_for & (1 << i) != 0 {
                 report_backlogs[i].push((current_height, records));
             } else {
                 let t_nb = std::time::Instant::now();
@@ -1649,6 +1652,27 @@ fn run_game_container_with_action_list_with_success_predicate(
                             }
                         } else {
                             nerfed_tx_backlog.clear();
+                        }
+                    }
+                    GameAction::BlockCoinReports(who) => {
+                        blocked_coin_reports_for |= 1 << *who;
+                    }
+                    GameAction::UnblockCoinReports(replay) => {
+                        blocked_coin_reports_for = 0;
+                        if *replay {
+                            #[allow(clippy::needless_range_loop)]
+                            for i in 0..=1 {
+                                for (backlog_height, backlog_records) in report_backlogs[i].iter() {
+                                    cradles[i].report_coin_states(
+                                        allocator,
+                                        *backlog_height as u64,
+                                        backlog_records,
+                                    )?;
+                                }
+                                report_backlogs[i].clear();
+                            }
+                        } else {
+                            report_backlogs = [Vec::default(), Vec::default()];
                         }
                     }
                     GameAction::NerfMessages(who) => {
@@ -5420,6 +5444,50 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     // ──────────────────────────────────────────────────────────────────
     // Proposal lifecycle tests
     // ──────────────────────────────────────────────────────────────────
+
+    res.push(("test_proposal_received_before_channel_coin_report", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        // Bob's peer messages still arrive, but his watched coin reports are
+        // delayed. Alice can observe the channel coin first, enter Active, and
+        // send a proposal batch while Bob is still in the handshake handler.
+        // Replaying Bob's coin reports must transition him to PotatoHandler and
+        // process the queued proposal.
+        let moves = vec![
+            GameAction::BlockCoinReports(1),
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::UnblockCoinReports(true),
+            GameAction::CleanShutdown(0),
+        ];
+
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
+
+        let p1_notifs = &outcome.local_uis[1].notifications;
+        assert!(
+            p1_notifs
+                .iter()
+                .any(|n| matches!(n, GameNotification::ProposalMade { .. })),
+            "Bob should process the queued proposal after channel coin report, got: {p1_notifs:?}"
+        );
+        assert!(
+            !p1_notifs.iter().any(|n| {
+                matches!(
+                    n,
+                    GameNotification::ChannelStatus {
+                        state: ChannelState::Failed,
+                        ..
+                    }
+                )
+            }),
+            "Bob should not fail when proposal arrives before channel coin report, got: {p1_notifs:?}"
+        );
+    }));
 
     res.push(("test_proposal_cancel_by_receiver", &|| {
         let mut allocator = AllocEncoder::new();
