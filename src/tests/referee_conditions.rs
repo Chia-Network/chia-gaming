@@ -64,7 +64,9 @@ fn run_referee_slash_with_mock(
     let referee_hash: [u8; 32] = *referee.sha256tree(allocator).hash().bytes();
 
     let mock_validator = load_mock_validator(allocator);
-    let mock_validator_clvm = mock_validator.to_clvm(allocator).expect("mock validator to clvm");
+    let mock_validator_clvm = mock_validator
+        .to_clvm(allocator)
+        .expect("mock validator to clvm");
     let mock_validator_hash: [u8; 32] = *mock_validator.sha256tree(allocator).hash().bytes();
 
     // previous_state IS the validator_return value (mock just returns it)
@@ -72,8 +74,14 @@ fn run_referee_slash_with_mock(
     let previous_state_hash = shatree_of(allocator, previous_state);
     let infohash_a = sha256_concat(&[&mock_validator_hash, &previous_state_hash]);
 
-    let mover_pk = allocator.allocator().new_atom(&[0x11; 48]).expect("mover pk");
-    let waiter_pk = allocator.allocator().new_atom(&[0x22; 48]).expect("waiter pk");
+    let mover_pk = allocator
+        .allocator()
+        .new_atom(&[0x11; 48])
+        .expect("mover pk");
+    let waiter_pk = allocator
+        .allocator()
+        .new_atom(&[0x22; 48])
+        .expect("waiter pk");
     let timeout = 10i64.to_clvm(allocator).expect("timeout");
     let amount = AMOUNT.to_clvm(allocator).expect("amount");
     let mod_hash = hash_to_node(allocator, &referee_hash);
@@ -85,13 +93,25 @@ fn run_referee_slash_with_mock(
     let infohash_a_node = hash_to_node(allocator, &infohash_a);
 
     let evidence = NodePtr::NIL;
-    let payout_ph = allocator.allocator().new_atom(&[0x33; 32]).expect("payout ph");
+    let payout_ph = allocator
+        .allocator()
+        .new_atom(&[0x33; 32])
+        .expect("payout ph");
 
     let curried_args = list_from_nodes(
         allocator,
         &[
-            mover_pk, waiter_pk, timeout, amount, mod_hash, nonce, move_node, max_move_size,
-            infohash_b, mover_share, infohash_a_node,
+            mover_pk,
+            waiter_pk,
+            timeout,
+            amount,
+            mod_hash,
+            nonce,
+            move_node,
+            max_move_size,
+            infohash_b,
+            mover_share,
+            infohash_a_node,
         ],
     );
     let slash_args = list_from_nodes(
@@ -118,12 +138,7 @@ fn run_referee_slash_with_mock(
 /// Validator returns nil → unconditional slash, output = payout_conditions only
 fn test_slash_succeeds_nil() {
     let mut allocator = AllocEncoder::new();
-    let result = run_referee_slash_with_mock(
-        &mut allocator,
-        NodePtr::NIL,
-        &[0x00; 32],
-        5,
-    );
+    let result = run_referee_slash_with_mock(&mut allocator, NodePtr::NIL, &[0x00; 32], 5);
     let output = result.expect("slash with nil validator_result should succeed");
     let items = proper_list(allocator.allocator(), output, true).unwrap();
     assert_eq!(items.len(), 2, "should have 2 payout conditions");
@@ -133,18 +148,16 @@ fn test_slash_succeeds_nil() {
 fn test_slash_succeeds_misaligned_no_conditions() {
     let mut allocator = AllocEncoder::new();
 
-    let wrong_vh = allocator.allocator().new_atom(&[0xAA; 32]).expect("wrong vh");
+    let wrong_vh = allocator
+        .allocator()
+        .new_atom(&[0xAA; 32])
+        .expect("wrong vh");
     let state = allocator.allocator().new_atom(&[0xBB; 8]).expect("state");
     let mms = 5i64.to_clvm(&mut allocator).expect("mms");
     let validator_return = list_from_nodes(&mut allocator, &[wrong_vh, state, mms]);
 
     // committed_infohash_b won't match sha256(wrong_vh, shatree(state))
-    let result = run_referee_slash_with_mock(
-        &mut allocator,
-        validator_return,
-        &[0xFF; 32],
-        5,
-    );
+    let result = run_referee_slash_with_mock(&mut allocator, validator_return, &[0xFF; 32], 5);
     let output = result.expect("slash with misaligned values should succeed");
     let items = proper_list(allocator.allocator(), output, true).unwrap();
     assert_eq!(items.len(), 2, "should have 2 payout conditions (no extra)");
@@ -155,8 +168,14 @@ fn test_slash_succeeds_aligned_with_conditions() {
     let mut allocator = AllocEncoder::new();
 
     // Build a state and compute the correct infohash_b
-    let next_vh = allocator.allocator().new_atom(&[0xCC; 32]).expect("next vh");
-    let new_state = allocator.allocator().new_atom(&[0xDD; 8]).expect("new state");
+    let next_vh = allocator
+        .allocator()
+        .new_atom(&[0xCC; 32])
+        .expect("next vh");
+    let new_state = allocator
+        .allocator()
+        .new_atom(&[0xDD; 8])
+        .expect("new state");
     let mms = 5i64.to_clvm(&mut allocator).expect("mms");
 
     let new_state_hash = shatree_of(&mut allocator, new_state);
@@ -166,7 +185,10 @@ fn test_slash_succeeds_aligned_with_conditions() {
     // Build an extra condition: (AGG_SIG_UNSAFE pubkey msg)
     let agg_sig_code = AGG_SIG_UNSAFE_CODE.to_clvm(&mut allocator).expect("code");
     let pubkey = allocator.allocator().new_atom(&[0xEE; 48]).expect("pubkey");
-    let msg = allocator.allocator().new_atom(b"test_evidence").expect("msg");
+    let msg = allocator
+        .allocator()
+        .new_atom(b"test_evidence")
+        .expect("msg");
     let condition = list_from_nodes(&mut allocator, &[agg_sig_code, pubkey, msg]);
 
     // validator_return = (next_vh new_state mms condition)
@@ -179,25 +201,30 @@ fn test_slash_succeeds_aligned_with_conditions() {
         a.new_pair(next_vh, tail).unwrap()
     };
 
-    let result = run_referee_slash_with_mock(
-        &mut allocator,
-        validator_return,
-        &infohash_b,
-        5,
-    );
+    let result = run_referee_slash_with_mock(&mut allocator, validator_return, &infohash_b, 5);
     let output = result.expect("conditional slash should succeed");
     let items = proper_list(allocator.allocator(), output, true).unwrap();
     // extra_conditions is ((AGG_SIG_UNSAFE ...)), appended to payout_conditions (2 items)
     // Result: ((AGG_SIG_UNSAFE ...) (CREATE_COIN ...) (AGG_SIG_UNSAFE ...))
-    assert_eq!(items.len(), 3, "should have 1 extra condition + 2 payout conditions");
+    assert_eq!(
+        items.len(),
+        3,
+        "should have 1 extra condition + 2 payout conditions"
+    );
 }
 
 /// Validator returns (correct_vh state mms) — aligned, no conditions → move valid, slash fails
 fn test_slash_fails_aligned_no_conditions() {
     let mut allocator = AllocEncoder::new();
 
-    let next_vh = allocator.allocator().new_atom(&[0xCC; 32]).expect("next vh");
-    let new_state = allocator.allocator().new_atom(&[0xDD; 8]).expect("new state");
+    let next_vh = allocator
+        .allocator()
+        .new_atom(&[0xCC; 32])
+        .expect("next vh");
+    let new_state = allocator
+        .allocator()
+        .new_atom(&[0xDD; 8])
+        .expect("new state");
     let mms = 5i64.to_clvm(&mut allocator).expect("mms");
 
     let new_state_hash = shatree_of(&mut allocator, new_state);
@@ -207,12 +234,7 @@ fn test_slash_fails_aligned_no_conditions() {
     // validator_return = (next_vh new_state mms) — only 3 elements, no extra_conditions
     let validator_return = list_from_nodes(&mut allocator, &[next_vh, new_state, mms]);
 
-    let result = run_referee_slash_with_mock(
-        &mut allocator,
-        validator_return,
-        &infohash_b,
-        5,
-    );
+    let result = run_referee_slash_with_mock(&mut allocator, validator_return, &infohash_b, 5);
     assert!(
         result.is_err(),
         "slash should fail when move is valid (aligned, no conditions)"
