@@ -99,17 +99,18 @@ maps session → player internally.
 | Event | Payload | Purpose |
 |-------|---------|---------|
 | `alias_result` | `{ alias }` | Response to `get_alias` or `set_alias` (`alias` is `null` if no alias is saved) |
-| `lobby_update` | `Player[]` | Current list of players in the lobby (broadcast on changes). Each `Player` includes `status` (`'waiting'` or `'playing'`) and, when playing, `opponent_alias`. |
+| `lobby_update` | `Player[]` | Current list of players in the lobby (broadcast on changes). Each `Player` includes `status` (`'waiting'`, `'playing'`, or `'busy'`) and, when playing, `opponent_alias`. |
 | `challenge_received` | `{ challenge_id, from_id, from_alias, amount }` | Someone challenged you |
 | `challenge_resolved` | `{ challenge_id, accepted }` | Your outgoing challenge was accepted or declined |
 
 When a challenge is accepted, the tracker creates a **pairing** (two player IDs
 linked by a random token) and emits `matched` to both players' game channels.
 Both players' status is set to `'playing'` with the opponent's alias, and any
-pending challenges involving either player are cancelled. The tracker rejects
-new challenges sent to or from a player whose status is `'playing'`. When the
-pairing ends (game close or connection sweep), both players revert to
-`'waiting'`.
+pending challenges involving either player are cancelled. Separately, the player
+app can mark itself `'busy'` when it has an unresolved session obligation and
+should not receive challenges. When the app later reports that it is available,
+the tracker sets the player back to `'waiting'`; an old pairing/chat may still
+exist until a new session replaces it.
 
 #### Game channel events
 
@@ -117,10 +118,12 @@ pairing ends (game close or connection sweep), both players revert to
 
 | Event | Payload | Purpose |
 |-------|---------|---------|
-| `identify` | `{ session_id }` | Sent immediately after the game channel opens. Links this channel to the player's lobby session. |
-| `message` | `{ session_id, data }` | Send opaque bytes to the paired peer. The tracker relays verbatim. |
+| `identify` | `{ session_id, available }` | Sent immediately after the game channel opens. Links this channel to the player's lobby session and reports whether the player can accept new matches. |
+| binary frame | `uint32be msgno || bytes` | Send an authoritative game-protocol byte blob to the paired peer. The tracker relays the binary frame verbatim. |
+| `message` | `{ session_id, data }` | Send JSON relay-control payloads such as `{ ack }` and `{ keepalive: true }` to the paired peer. |
 | `chat` | `{ session_id, text }` | Send chat text to the paired peer. |
 | `close` | `{ session_id }` | Request to end the relay session. |
+| `set_status` | `{ session_id, available }` | Update lobby availability as the local session phase changes. `available: false` maps to lobby `busy`; `true` maps to `waiting`. |
 
 **Tracker → Player App:**
 
@@ -129,14 +132,15 @@ pairing ends (game close or connection sweep), both players revert to
 | `matched` | `{ token, amount, i_am_initiator, my_alias?, peer_alias? }` | A fresh match has been made (challenge accepted for the first time). `amount` is the channel buy-in. |
 | `connection_status` | `{ has_pairing, token?, amount?, i_am_initiator?, peer_connected?, my_alias?, peer_alias? }` | Definitive status report sent on `identify`. The player app uses this to reconcile tracker state against its local save (see [Reconnect Reconciliation](#reconnect-reconciliation)). |
 | `peer_reconnected` | `{}` | The other player's game channel just re-registered. Tells this side to re-send un-acked messages. |
-| `message` | `{ data }` | A message from the paired peer, relayed verbatim. The payload is either a data message (`{ msgno, msg }`) or an ack (`{ ack }`), discriminated client-side (see [Peer Message Reliability](#peer-message-reliability)). |
+| binary frame | `uint32be msgno || bytes` | An authoritative game-protocol byte blob from the paired peer, relayed verbatim. |
+| `message` | `{ data }` | A JSON relay-control payload from the paired peer, currently ack or keepalive data (see [Peer Message Reliability](#peer-message-reliability)). |
 | `closed` | `{}` | The relay session is over. Sent to the peer when the other side sends `close`, AND echoed back to the sender of `close` as confirmation. |
 
 **Connection lifecycle:**
 
 1. Player opens a WebSocket connection to the tracker game channel.
 2. Player sends `identify` with the session token (the same token passed to the
-   lobby iframe via URL parameter).
+   lobby iframe via URL parameter) and current availability.
 3. The tracker associates this game channel with the lobby session. If a
    previous game channel exists for this player, the tracker closes it and
    replaces it.
@@ -148,7 +152,8 @@ pairing ends (game close or connection sweep), both players revert to
 6. When a challenge is accepted in the lobby, the tracker sends `matched` to
    both players' game channels. The player app starts the WASM cradle and game
    session.
-7. Both players exchange `message` events through the tracker relay.
+7. Both players exchange binary game frames and JSON relay-control messages
+   through the tracker relay.
 8. Either player can send `close` to end the session. The tracker sends `closed`
    to the other player **and** echoes `closed` back to the sender as
    confirmation. The client sets a `closePending` flag and ignores incoming
@@ -216,19 +221,21 @@ All three WebSocket clients — `FakeBlockchainInterface` (simulator),
 `TrackerConnection` (game channel), and `useLobbySocket` (lobby iframe) —
 follow the same connection discipline:
 
-1. **Exponential backoff with jitter on reconnect.** A shared delay schedule
-   `[1s, 2s, 4s, 8s, 15s, 30s]` governs retry intervals. Each attempt picks a
-   random jitter factor (0.75–1.25× the base delay). The attempt counter resets
-   to zero on a successful `onopen`.
+1. **Exponential backoff with jitter on reconnect.** `TrackerConnection` and
+   `useLobbySocket` use `[1s, 2s, 4s, 8s, 15s, 30s]`; the simulator blockchain
+   client extends the same shape to 60s. Each attempt picks a random jitter
+   factor (0.75-1.25x the base delay). The attempt counter resets to zero on a
+   successful `onopen`.
 
 2. **Connection timeout.** Each `new WebSocket()` is given 10 seconds to reach
    `OPEN`. If `readyState` is still `CONNECTING` after 10 seconds, the socket
    is closed, which triggers `onclose` and feeds into the backoff reconnect.
 
-3. **Deferred WebSocket ref assignment.** The WebSocket reference (used by
-   `send`, `close`, and stale-check guards) is only assigned after `onopen`
-   fires. Before that, the in-flight socket is tracked separately so cleanup
-   can abort a pending connection attempt without leaking it.
+3. **Avoid using unopened sockets as the active connection.** The lobby and game
+   clients track in-flight sockets separately from active sockets, and the
+   simulator blockchain client only assigns its active socket after `onopen`.
+   This lets cleanup abort a pending connection attempt without treating it as
+   usable.
 
 These properties are critical for local development, where all three clients
 target the same host (`127.0.0.1`). Without backoff and timeouts, aggressive
@@ -299,48 +306,76 @@ cryptographic nonces or signatures (BLS signatures are deterministic).
 
 #### What is saved (`SessionState`)
 
-An `appState` key in localStorage holds one flat JSON-serialized `SessionState`
-object. The current schema version is `3`; because the project is still alpha,
-older versions are wiped rather than migrated. The `version` field is kept as a
-future migration hook for when there is an installed base to preserve. All
-game-specific fields are optional — a save may contain only `blockchainType`
-(pre-game state) or the full set (mid-game state):
+An `appState` key in localStorage holds one flat `SessionState` object. The
+object is JSON-serialized and then obfuscated before storage. This is
+obfuscation, not encryption: it keeps raw localStorage less readable, but it is
+not a security boundary and does not change the same-origin trust model
+described above.
+
+The current schema version is `3`; because the project is still alpha, older
+versions are wiped rather than migrated. The `version` field is kept as a future
+migration hook for when there is an installed base to preserve. All game-specific
+fields are optional — a save may contain only pre-game connection state or the
+full mid-game session state:
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `buildNonce` | `string?` | Build nonce stamped on every save; used for stale detection |
-| `blockchainType` | `'simulator' \| 'walletconnect'?` | Which wallet backend is active |
-| `serializedCradle` | `string?` | Full WASM cradle state via `cradle.serialize()` |
-| `pairingToken` | `string?` | Tracker pairing token, for reconciliation on reconnect |
-| `messageNumber` | `number?` | Next outbound message sequence number |
-| `remoteNumber` | `number?` | Last delivered inbound message sequence number |
-| `channelReady` | `boolean?` | Whether the channel has been created |
-| `iStarted` | `boolean?` | Whether this player was the initiator |
-| `amount` | `string?` | Channel buy-in (bigint as string) |
-| `perGameAmount` | `string?` | Per-hand amount (bigint as string) |
-| `unackedMessages` | `Array<{ msgno, msg }>?` | Outbound messages not yet acknowledged by the peer |
-| `history` | `string[]?` | Game notification log |
-| `log` | `string[]?` | Log history |
-| `activeGameId` | `string \| null?` | Current game ID |
-| `handState` | `CalpokerHandState?` | Card state snapshot for mid-hand restore |
-| `channelStatus` | `ChannelStatusPayload?` | Last channel status for coin watching |
-| `myAlias` | `string?` | Local player display name |
-| `opponentAlias` | `string?` | Opponent display name |
-| `channelNotifQueue` | `QueuedNotification[]?` | Persisted channel-scope notification queue |
-| `gameNotifQueue` | `QueuedNotification[]?` | Persisted game-scope notification queue |
-| `lastOutcomeWin` | `'win' \| 'lose' \| 'tie'?` | Last hand result |
-| `dismissedChannelState` | `string?` | Last dismissed channel-state notification value |
-| `betweenHandMode` | `string?` | Between-hand overlay state |
-| `betweenHandComposePerHand` | `string?` | Proposed per-hand amount in compose overlay |
-| `betweenHandLastTerms` | `{ my_contribution, their_contribution }?` | Last agreed hand terms |
-| `gameCoinHex` | `string?` | Current game coin ID |
-| `gameTurnState` | `string?` | Whose turn it is |
-| `myRunningBalance` | `string?` | Running balance delta from initial amount |
+| `version` | `number` | Save schema version; currently `3`. |
+| `buildNonce` | `string?` | Build nonce stamped on every save; used for stale-build detection. |
+| `playerId` | `string` | Stable local lobby/player identity for this browser state. |
+| `sessionId` | `string?` | Stable token linking the lobby iframe and game-channel WebSocket. |
+| `alias` | `string?` | Local lobby display alias preference. |
+| `theme` | `'dark' \| 'light'?` | Persisted player app theme. |
+| `defaultFee` | `bigint?` | Default transaction fee preference. |
+| `feeUnit` | `'mojo' \| 'xch'?` | Display/editing unit for the transaction fee preference. |
+| `trackerUrl` | `string?` | Last selected tracker origin for reconnect on reload. |
+| `savedGames` | `SavedGame[]?` | Older saved-game list used by legacy helpers. |
+| `activeTab` | `string?` | Last selected top-level tab. |
+| `unreadChat` | `boolean?` | Whether the Chat tab has unread activity. |
+| `unreadGame` | `boolean?` | Whether the Game tab has unread activity. |
+| `walletAlert` | `boolean?` | Whether the Wallet tab should show an alert dot. |
+| `trackerAlert` | `boolean?` | Whether the Tracker tab should show an alert dot. |
+| `blockchainType` | `'simulator' \| 'walletconnect'?` | Which wallet backend is active or should be reconnected. |
+| `serializedCradle` | `string?` | Base64-encoded WASM cradle state via `cradle.serialize()`. |
+| `pairingToken` | `string?` | Tracker pairing token, for reconciliation on reconnect. |
+| `messageNumber` | `number?` | Next outbound game-message sequence number. |
+| `remoteNumber` | `number?` | Last delivered inbound game-message sequence number. |
+| `channelReady` | `boolean?` | Whether the channel has been created and peer keepalives can start. |
+| `iStarted` | `boolean?` | Whether this player was the channel/session initiator. |
+| `amount` | `string?` | Channel buy-in amount as a decimal bigint string. |
+| `perGameAmount` | `string?` | Default per-hand amount as a decimal bigint string. |
+| `unackedMessages` | `Array<{ msgno, msg }>?` | Outbound binary game messages, with `msg` base64-encoded for JSON storage, that have not been acknowledged by the peer. |
+| `history` | `string[]?` | Game notification log. |
+| `log` | `string[]?` | Diagnostic log history. |
+| `activeGameId` | `string \| null?` | Current live game ID, if any. |
+| `activeGameType` | `string?` | Current game type (`calpoker`, `spacepoker`, etc.). |
+| `handState` | `CalpokerHandState \| null?` | Calpoker display/state snapshot for mid-hand restore. |
+| `channelStatus` | `ChannelStatusPayload \| null?` | Last channel status for UI restore and coin watching. |
+| `myAlias` | `string?` | Local player display name for the active pairing/session. |
+| `opponentAlias` | `string?` | Opponent display name for the active pairing/session. |
+| `lastOutcomeWin` | `'win' \| 'lose' \| 'tie'?` | Last hand result classification. |
+| `chatMessages` | `ChatMessage[]?` | Persisted peer chat messages for the current/lingering pairing. |
+| `gameCoinHex` | `string \| null?` | Current game coin or reward coin ID shown in the Game tab. |
+| `gameTurnState` | `string?` | Current game turn state used for restore and timeout labels. |
+| `gameTerminalType` | `string?` | Last terminal game status category. |
+| `gameTerminalLabel` | `string \| null?` | Human-readable terminal label shown after game completion. |
+| `gameTerminalReward` | `string \| null?` | Terminal reward amount as a decimal string. |
+| `gameTerminalRewardCoin` | `string \| null?` | Terminal reward coin ID, if any. |
+| `gameTerminalCleanEnd` | `boolean?` | Whether the terminal game outcome was considered a clean end. |
+| `myRunningBalance` | `string?` | Running balance delta from the initial amount. |
+| `channelNotifQueue` | `QueuedNotification[]?` | Persisted channel-scope notification queue, without non-serializable payloads. |
+| `gameNotifQueue` | `QueuedNotification[]?` | Persisted game-scope notification queue, without non-serializable payloads. |
+| `dismissedChannelState` | `string?` | Last dismissed channel-state notification value. |
+| `betweenHandMode` | `string?` | Between-hand overlay state. |
+| `betweenHandComposePerHand` | `string?` | Proposed per-hand amount in compose overlay. |
+| `betweenHandComposeGameType` | `string?` | Proposed game type in compose overlay. |
+| `betweenHandLastTerms` | `{ my_contribution, their_contribution, game_type? }?` | Last agreed hand terms. |
+| `betweenHandRejectedOnceTerms` | `{ my_contribution, their_contribution, game_type? }?` | Terms already rejected once, used to avoid repeated automatic retries. |
+| `betweenHandCachedPeerProposal` | `{ id, my_contribution, their_contribution, game_type? }?` | Peer proposal cached while the between-hand UI decides how to present it. |
+| `betweenHandReviewPeerProposal` | `{ id, my_contribution, their_contribution, game_type? }?` | Peer proposal currently shown in the review UI. |
 
-The same flat `SessionState` also holds app-level fields such as `playerId`,
-`sessionId`, `alias`, `theme`, `activeTab`, `defaultFee`, `feeUnit`,
-`trackerUrl`, and `savedGames`. The old `SessionSave` name is now only a
-deprecated TypeScript alias for `SessionState`.
+The old `SessionSave` name is now only a deprecated TypeScript alias for
+`SessionState`.
 
 #### Save architecture
 
@@ -477,27 +512,36 @@ This is only a reset broadcast, not a graceful coordination protocol.
 
 ### Peer Message Reliability
 
-All peer messages use a numbered ack protocol to guarantee exactly-once ordered
-delivery across reconnects. The tracker relays messages verbatim — it does not
-understand message numbers or acks.
+Authoritative game messages use a numbered ack protocol to guarantee
+exactly-once ordered delivery across reconnects. The tracker relays frames and
+relay-control messages verbatim — it does not understand message numbers or
+acks.
 
 #### Wire format
 
-Messages are JSON strings inside the tracker's `{ data }` envelope:
+Authoritative game messages are binary WebSocket frames, not JSON. The frame is:
 
-- **Data message:** `{ "msgno": <number>, "msg": <string> }`
-- **Ack message:** `{ "ack": <number> }`
+- **Data frame:** 4-byte big-endian `msgno`, followed by the opaque WASM peer
+  message bytes.
 
-`TrackerConnection` discriminates inbound messages by checking for the `ack`
-field. Data messages are routed to the message handler; acks are routed to the
-ack handler.
+Relay-control messages remain JSON today:
+
+- **Ack message:** `{ "type": "message", "session_id": "...", "data": { "ack": <number> } }`
+- **Keepalive message:** `{ "type": "message", "session_id": "...", "data": { "keepalive": true } }`
+
+This split keeps the authoritative game protocol in an efficient byte-oriented
+format. JSON is natively Unicode and is a poor fit for packing opaque protocol
+blobs without extra encoding. The current JSON control-plane pieces are a
+description of today's implementation, not a promise that future tracker formats
+will stay JSON; formats controlled by this project can move further toward
+binary over time.
 
 #### Outbound
 
-Every outbound message (including handshake messages) is assigned a monotonically
-increasing `messageNumber`, stored in `unackedMessages`, and sent via the
-tracker. On receiving an ack with number N, all entries with `msgno <= N` are
-pruned from the log.
+Every outbound game message (including handshake messages) is assigned a
+monotonically increasing `messageNumber`, stored in `unackedMessages`, and sent
+as a binary frame via the tracker. On receiving an ack with number N, all
+entries with `msgno <= N` are pruned from the log.
 
 #### Inbound
 
@@ -550,11 +594,13 @@ Inactive. The activity ref is updated by wrapped handlers in
 `registerMessageHandler`, ensuring it stays current even after
 `TrackerConnection.registerMessageHandler` replaces the initial callbacks.
 
-**Action buttons**: The tracker disconnect button lives in the tracker tab
-header strip (right-aligned next to "Connected to {origin}"). Session action
-buttons (End Peer, Abandon Session) live in the Game tab's bottom action bar.
-Both are gated by cascade confirmation dialogs when the action would disrupt
-an active session. See `CONNECTIVITY.md` for the full connectivity model.
+**Action buttons**: Controls live with the state axis they affect. The tracker
+disconnect button lives in the Tracker tab header strip (right-aligned next to
+"Connected to {origin}"). The peer/pairing disconnect button lives in the Chat
+tab header. Go On-Chain lives in the Game tab session header. Disruptive
+tracker actions are gated by cascade confirmation dialogs; peer disconnect and
+explicit Go On-Chain currently do not prompt. See `CONNECTIVITY.md` for the full
+connectivity model.
 
 #### Reconnect
 
@@ -651,11 +697,11 @@ but the MVP is limited to one game at a time.
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │  GameSession component (TRUSTED)                         │   │
 │  │  useGameSession hook: WASM cradle, notifications, state  │   │
-│  │  Shown as the "Game Session" tab                         │   │
+│  │  Shown as the "Game" tab                                 │   │
 │  │                                                          │   │
 │  │  ┌────────────────────────────────────────────────────┐  │   │
-│  │  │  CalpokerHand component (game-type-specific)       │  │   │
-│  │  │  useCalpokerHand hook: card parsing, move logic    │  │   │
+│  │  │  Game-specific component (CalpokerHand/SpacePoker) │  │   │
+│  │  │  Game hook: parsing, display, move logic           │  │   │
 │  │  │  Remounted per hand via React key                  │  │   │
 │  │  └────────────────────────────────────────────────────┘  │   │
 │  └──────────────────────────────────────────────────────────┘   │
@@ -676,7 +722,7 @@ The Shell is the top-level React component. It owns:
   `TrackerConnection` client for the game channel, and sets up the lobby iframe
 - **Theme sync** — pushes CSS variables and dark-mode class into the lobby iframe
   (`useThemeSyncToIframe`)
-- **Tab navigation** — six tabs: Wallet, Tracker, Game Session, Chat, History, Log
+- **Tab navigation** — six tabs: Wallet, Tracker, Game, Chat, History, Log
 - **Unique ID and session ID** — persisted in localStorage, stable across reloads
 
 The Shell does not know about game protocol details. When the tracker emits
@@ -828,11 +874,14 @@ individual hands). The `useGameSession` hook owns:
 - **History** and **Log** — append-only text areas managed by the Shell,
   with callbacks passed down.
 
-### CalpokerHand Component (`CalpokerHand` + `useCalpokerHand`)
+### Game Components
 
-The calpoker game UI is a React component rendered inside `GameSession`. It
-receives gameplay events via an RxJS observable and sends moves back through
-`WasmBlobWrapper`.
+The active game UI is rendered inside `GameSession` based on the current game
+type. `front-end/src/lib/gameRegistry.ts` currently exposes California Poker
+(`calpoker`) and Space Poker (`spacepoker`) as user-facing game types.
+
+`CalpokerHand` receives gameplay events via an RxJS observable and sends moves
+back through `WasmBlobWrapper`.
 
 The `useCalpokerHand` hook manages the five-step protocol:
 
@@ -841,9 +890,9 @@ The `useCalpokerHand` hook manages the five-step protocol:
 - **Move 2** (auto) — final reveal
 - **Outcome** — parsed from the opponent's final move into a `CalpokerOutcome`
 
-The `CalpokerHand` component is **remounted from scratch for every hand** via
-React key (`key={session.handKey}`). This ensures no stale state accumulates
-between hands.
+Game components are **remounted from scratch for every hand** via React key
+(`key={session.handKey}`). This ensures no stale state accumulates between
+hands.
 
 What the game UI does **not** know about:
 

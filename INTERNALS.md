@@ -24,7 +24,7 @@ There are three distinct timeouts in the system:
 | Timeout           | Purpose                                                                                                                                                                                    | Typical test value |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
 | `channel_timeout` | Safety timeout for the watcher to detect channel coin spends. Not an on-chain timelock.                                                                                                    | 100 blocks         |
-| `unroll_timeout`  | On-chain `ASSERT_HEIGHT_RELATIVE` on the unroll coin. Controls how long the opponent has to preempt before the timeout path succeeds. Passed to `ChannelHandler::new`.                     | 5 blocks           |
+| `unroll_timeout`  | On-chain `ASSERT_HEIGHT_RELATIVE` on the unroll coin. Controls how long the opponent has to preempt before the timeout path succeeds. Fixed at 15 blocks in the current protocol.            | 15 blocks          |
 | `game_timeout`    | On-chain `ASSERT_HEIGHT_RELATIVE` on each game coin (referee). Controls how long the current mover has before the opponent can claim a timeout. Stored in `OnChainGameState.game_timeout`. The current proposal protocol requires exactly 15 blocks; timeout negotiation is future work. | 15 blocks          |
 
 
@@ -39,6 +39,12 @@ allows (i.e., at the exact block height where the coin's creation height +
 timeout = current height). The simulator enforces this by panicking if a
 transaction with an unsatisfied `ASSERT_HEIGHT_RELATIVE` is submitted to the
 mempool.
+
+The fixed 15-block unroll timeout gives honest users enough time to preempt
+stale unrolls without making mainnet dispute resolution overly slow. At mainnet
+block cadence it is roughly five minutes; in the simulator it is roughly 150
+seconds. Timeout negotiation may be reintroduced later, but it is non-trivial
+protocol work and is not part of the current invariant.
 
 ### Eager Timeout Submission and Confirmation-Driven Notifications
 
@@ -367,67 +373,24 @@ there is a bug.
 ### Debug Game
 
 The debug game (`b"debug"`) is a minimal game used for tests that need precise
-control over `mover_share`. Its core handler/curry wiring lives in
-`src/test_support/debug_game.rs`, while `DebugGameTestMove::new(mover_share, slash)`
-is defined in `src/simulator/tests/potato_handler_sim.rs`. It creates a single-move game where
-Alice moves and Bob must accept_timeout. The `mover_share` value is what Bob
-(the new mover after Alice's move) receives on timeout; Alice receives
-`amount - mover_share`. This avoids the complexity of Calpoker's commit-reveal
-protocol when testing channel/on-chain mechanics.
+control over `mover_share`. It is registered in the Rust game table for test
+infrastructure only, not as a user-facing game. Its core handler/curry wiring
+lives in `src/test_support/debug_game.rs`, while `DebugGameTestMove::new(mover_share, slash)`
+is defined in `src/simulator/tests/potato_handler_sim.rs`.
 
 ### Simulation Test Actions
 
-Tests drive the simulation loop with a sequence of `GameAction` values (defined
-in `src/test_support/game.rs`):
-
-
-| Action                              | Effect                                                                                                                                                              |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ProposeNewGame(player, trigger)`   | Player proposes a new game when `trigger` fires (`Channel` or `AfterGame(game_id)`)                                                                               |
-| `ProposeNewGameTheirTurn(player, trigger)` | Same as `ProposeNewGame`, but proposed with receiver moving first                                                                                           |
-| `GoOnChain(player)`                 | Player initiates on-chain transition                                                                                                                                |
-| `GoOnChainThenMove(player)`         | Player goes on-chain, then immediately queues the next move action for replay testing                                                                              |
-| `Timeout(player)`                   | Trigger timeout processing for the player's pending state                                                                                                           |
-| `AcceptTimeout(player)`             | Player accepts the current game result                                                                                                                              |
-| `WaitBlocks(n, players_bitmask)`    | Advance `n` blocks; `players_bitmask` controls whose coin reports are backlogged (0 = nobody blocked, 1 = player 0 blocked, 2 = player 1 blocked, 3 = both blocked) |
-| `NerfTransactions(player)`          | Silently drop all outbound transactions for `player`                                                                                                                |
-| `UnNerfTransactions(replay)`        | Stop dropping transactions; if `replay` is true, replay the backlog to the simulator; if false, discard it                                                          |
-| `Cheat(player, mover_share)`        | Queue a move with illegal data; `mover_share` is the victim's share on timeout (see [Cheat Support](#cheat-support))                                                |
-| `Move(player, game_id, readable, was_received)` | Submit a normal move with explicit game ID and move payload                                                                                                 |
-| `FakeMove(player, game_id, readable, sabotage_bytes)` | Submit a move with custom sabotage bytes for validation/error-path testing                                                                               |
-| `ForceDestroyCoin(player)`          | Inject a fake coin deletion to test error handling                                                                                                                  |
-| `CleanShutdown(player)`             | Initiate clean channel shutdown                                                                                                                                     |
-| `ForceUnroll(player)`               | Submit a unroll transaction using the player's cached spend info, bypassing state checks. Simulates a malicious peer unrolling after agreeing to clean shutdown.    |
-| `AcceptProposal(player)`            | Player accepts a pending game proposal                                                                                                                              |
-| `CancelProposal(player, game_id)`   | Player cancels a pending proposal for a specific game                                                                                                               |
-| `SaveUnrollSnapshot(player)`        | Save the player's current `ChannelCoinSpendInfo` for later use by `ForceStaleUnroll`                                                                                |
-| `ForceStaleUnroll(player)`          | Submit an unroll using a previously saved snapshot (from `SaveUnrollSnapshot`), creating an outdated unroll on-chain                                                |
-| `NerfMessages(player)`              | Silently drop all outbound peer messages for `player`                                                                                                               |
-| `UnNerfMessages`                    | Stop dropping peer messages                                                                                                                                         |
-| `CorruptStateNumber(player, new_sn)` | Corrupt local state number for edge-case testing                                                                                                                   |
-| `InjectRawMessage(player, bytes)`   | Inject raw inbound bytes to test message validation/error handling                                                                                                   |
-
-
-`NerfTransactions` is particularly useful for testing asymmetric scenarios —
-e.g., one player's unroll transaction gets dropped (simulating network issues)
-while the other player proceeds normally.
-
-**Important:** `NerfTransactions` only drops a player's *outbound transactions*.
-It does not prevent coins from being created for that player's puzzle hash by
-another player's transaction. In particular, the referee timeout creates reward
-coins for **both** mover and waiter in a single spend, so a nerfed player still
-receives their reward coin when the non-nerfed player submits the timeout.
-
-`NerfMessages` similarly drops a player's *outbound peer messages*, preventing
-potato exchanges. Combined with `NerfTransactions`, this can fully isolate a
-player to set up stale unroll scenarios where the opponent's state advances
-without the nerfed player's knowledge.
+Tests drive the simulation loop with a sequence of `GameAction` values defined
+in `src/test_support/game.rs`. The current action catalog, trigger semantics,
+two-phase `AcceptProposal` behavior, and stall-detection notes live in
+`SIMULATOR_TESTING.md`.
 
 **Key code:**
 
 - `src/test_support/debug_game.rs` — `DebugGameHandler` and debug game registration
 - `src/simulator/tests/potato_handler_sim.rs` — `DebugGameTestMove` and integration scenarios
 - `src/test_support/game.rs` — `GameAction` enum (sim-tests variant)
+- `SIMULATOR_TESTING.md` — simulator testing reference
 
 ---
 

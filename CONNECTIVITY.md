@@ -43,6 +43,12 @@ other connection depends on the wallet being up. The wallet affects only
 whether blockchain operations (signing transactions, reading balances) can
 make progress.
 
+WalletConnect is an external protocol. The player app can adapt around its
+quirks at the edges (for example BigInt serialization handling), but it does
+not control WalletConnect's wire format. This is different from the peer/tracker
+protocol, which is project-owned and can move further toward binary framing over
+time.
+
 ### Tracker
 
 A tracker is a specific server with its own lobby and relay infrastructure.
@@ -261,6 +267,13 @@ and a much harder surface to guard against. Availability signaling goes over
 the WebSocket because it's the more defensible transport, not because the
 tracker is trusted.
 
+Availability is session-obligation state, not just pairing state. A player can
+be unavailable because an old session is still unresolved even if the tracker no
+longer has a pairing for that player (for example, after disconnecting from the
+tracker while resolving on-chain). Conversely, after a session finishes, the
+player can become available for new matches while a previous pairing/chat is
+still visible until a new session replaces it.
+
 **Player app → Tracker (game channel):**
 
 ```json
@@ -271,9 +284,9 @@ Sent whenever the session phase changes. Also included in the `identify`
 message on reconnect so the tracker has correct status after a game channel
 drop/restore.
 
-The tracker updates the player's lobby status to `'busy'` (unavailable) or
-`'waiting'` (available) and broadcasts a lobby update. Challenges to/from
-busy players are rejected.
+The tracker updates the player's lobby status to `'busy'` (unavailable due to
+an unresolved session obligation) or `'waiting'` (available) and broadcasts a
+lobby update. Challenges to/from busy players are rejected.
 
 **When the session ends** (terminal channel status detected), the player app
 sends `set_status` with `available: true`. The tracker sets the player back

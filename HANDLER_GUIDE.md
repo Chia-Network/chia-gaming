@@ -108,8 +108,9 @@ move format.
   This is passed forward so the referee knows how to validate the reply.
 - When `their_turn_handler` is nil, this is the final move of the game.
   `incoming_validator_hash` should also be nil in this case.
-- `message_parser` is optional. If the 10th element is absent or nil, the game
-  does not accept out-of-band readable messages for this state.
+- `message_parser` is optional. It is the 10th element of the return list
+  (zero-based index 9 in Rust/vector access). If the element is absent or nil,
+  the game does not accept out-of-band readable messages for this state.
 
 ### Return: Rejection (2 elements)
 
@@ -495,11 +496,12 @@ turn-taking protocol. The **message parser** mechanism enables this.
 ### How It Works
 
 1. A my-turn handler may return a `message_parser` program (element 10 of the
-   return list). This program knows how to decode advisory messages for the
-   current game state. If the element is absent or nil, no parser is installed.
+   return list, zero-based index 9). This program knows how to decode advisory
+   messages for the current game state. If the element is absent or nil, no
+   parser is installed.
 2. When the their-turn handler processes the opponent's reply, it can return
-   an optional `message` (element 4 of the normal return). This message is
-   sent to the opponent out-of-band.
+   an optional `message` (element 4 of the normal return, zero-based index 3).
+   This message is sent to the opponent out-of-band.
 3. The opponent's `message_parser` decodes the raw bytes into a
    `readable_info` value that the UI can display.
 
@@ -614,13 +616,14 @@ arrives, Bob independently verifies the same information.
 
 ### Mechanics
 
-1. A **my-turn handler** may return a `message_parser` at position 9. This
-   parser knows how to decode messages for the current game state. If the
-   element is absent or nil, no parser is installed.
+1. A **my-turn handler** may return a `message_parser` as element 10 of the
+   return list (zero-based index 9). This parser knows how to decode messages
+   for the current game state. If the element is absent or nil, no parser is
+   installed.
 
 2. The **their-turn handler** processing the opponent's reply may return an
-   optional `message` at position 3. A non-empty message is sent out-of-band to
-   the opponent.
+   optional `message` as element 4 of the normal return list (zero-based index
+   3). A non-empty message is sent out-of-band to the opponent.
 
 3. The opponent's `message_parser` decodes the raw bytes into readable data
    for the UI.
@@ -636,6 +639,10 @@ Calpoker and Space Poker are both reference games. Calpoker is the smaller,
 earlier example and is easiest to follow end-to-end. Space Poker exercises a
 different part of the API: multi-round poker state, repeated betting/open
 transitions, and advisory message parsers.
+
+The `debug` game is registered for simulator tests only. It exists to exercise
+channel/on-chain mechanics with controlled `mover_share` values and is not a
+user-facing reference game.
 
 ### Calpoker
 

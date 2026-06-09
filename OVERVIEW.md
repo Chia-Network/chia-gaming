@@ -452,6 +452,9 @@ states, and heavier use of advisory message parsers. Together they show
 different ways to structure validators and off-chain handlers on the same
 channel/referee foundation.
 
+The Rust game collection also registers `debug` for simulator tests only. It is
+not a user-facing reference game.
+
 ### Calpoker
 
 Calpoker is a poker variant used as the simplest reference game. Two players are
@@ -707,7 +710,8 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | [`GAME_LIFECYCLE.md`](GAME_LIFECYCLE.md) | Game proposals, off-chain game flow, AcceptTimeout lifecycle |
 | [`ON_CHAIN.md`](ON_CHAIN.md) | Dispute resolution, clean shutdown, preemption, stale unrolls, the referee, on-chain game state tracking |
 | [`UX_NOTIFICATIONS.md`](UX_NOTIFICATIONS.md) | Notification types, lifecycle invariants, WASM event FIFO |
-| [`INTERNALS.md`](INTERNALS.md) | Timeouts, peer disconnect, redo mechanism, cheat support, simulator strictness, test infrastructure, `game_assert!` |
+| [`INTERNALS.md`](INTERNALS.md) | Timeouts, peer disconnect, redo mechanism, cheat support, simulator strictness, `game_assert!` |
+| [`SIMULATOR_TESTING.md`](SIMULATOR_TESTING.md) | Simulator test harness, `GameAction` reference, trigger semantics, test-writing conventions |
 | [`HANDLER_GUIDE.md`](HANDLER_GUIDE.md) | Off-chain handler API, on-chain validator conventions |
 | [`clsp/handler_api.md`](clsp/handler_api.md) | CLVM calling conventions for handler functions |
 | [`DEBUGGING_GUIDE.md`](DEBUGGING_GUIDE.md) | Debugging, testing, `./cb.sh` / `./ct.sh` usage |
