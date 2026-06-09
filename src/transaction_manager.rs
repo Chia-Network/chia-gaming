@@ -382,25 +382,28 @@ impl<C: ManagedCradle> TransactionManager<C> {
             .difference(&self.present_coins)
             .cloned()
             .collect();
-        let deleted_watched: std::collections::HashSet<CoinString> = self
+        let mut deleted_watched: std::collections::HashSet<CoinString> = self
             .present_coins
             .difference(&present_now)
             .cloned()
             .collect();
         self.present_coins = present_now;
 
+        // A coin whose creation was rolled back by a reorg (flagged vanished by
+        // the rollback branch above) left the live set without being spent.  It
+        // must not be treated as deleted: the inner cradle maps deleted_watched
+        // to coin_spent, which for a tracked game coin requests a puzzle and
+        // solution that does not exist and drives a spurious EndedError.  Drop
+        // such coins here so they are neither recorded as spent below nor
+        // forwarded to the cradle; their re-creation is handled by resubmitting
+        // the creating transaction.
+        deleted_watched.retain(|coin| !self.vanished_coins.contains(coin));
+
         // A watched coin leaving the live set during forward progress is a
         // spend.  Some feeds (the full coin set) omit spent coins rather than
         // reporting a spend height, so fall back to the current height as a
-        // lower bound.  Reorg-vanish is *not* detected here -- it is handled by
-        // the rollback branch above, which is the only situation in which a
-        // confirmed creation legitimately disappears.
+        // lower bound.
         for coin in deleted_watched.iter() {
-            // A coin whose creation was just rolled back (flagged vanished by
-            // the reorg branch) did not get spent -- skip it.
-            if self.vanished_coins.contains(coin) {
-                continue;
-            }
             if let Some(watched) = self.watched_coins.get_mut(coin) {
                 if watched.spent_confirmed_at.is_none() {
                     watched.spent_confirmed_at = Some(height);
@@ -989,6 +992,47 @@ mod tests {
         .expect("report");
         assert_eq!(mgr.watched_coin(&coin).unwrap().birthday, Some(13));
         assert!(!mgr.vanished_coins().contains(&coin));
+    }
+
+    #[test]
+    fn reorg_vanished_coin_is_not_forwarded_as_deleted() {
+        let mut allocator = AllocEncoder::new();
+        let coin = test_coin(8);
+        let mut mock = MockGameCradle::default();
+        mock.queue_drain(vec![watch_event(&coin, 50)]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("register");
+
+        // Coin confirmed live at height 12.
+        mgr.report_coin_states(
+            &mut allocator,
+            12,
+            &[CoinStateRecord {
+                coin: coin.clone(),
+                created_height: Some(12),
+                spent_height: None,
+            }],
+        )
+        .expect("report");
+
+        // Reorg below the creation height: the coin vanishes from the feed.  It
+        // was un-created, not spent, so it must NOT be forwarded to the inner
+        // cradle as deleted_watched (which maps to coin_spent and would drive a
+        // spurious EndedError for a tracked game coin).
+        mgr.report_coin_states(&mut allocator, 8, &[])
+            .expect("report");
+        assert!(mgr.vanished_coins().contains(&coin));
+
+        let reports = &mgr.cradle().seen_reports;
+        // Block 12: created.
+        assert!(reports[0].1.created_watched.contains(&coin));
+        // Block 8 (reorg): neither created nor deleted -- the vanish is
+        // suppressed from the forwarded report.
+        assert_eq!(reports[1].0, 8);
+        assert!(reports[1].1.deleted_watched.is_empty());
+        assert!(reports[1].1.created_watched.is_empty());
+        // The coin's spend was not recorded either.
+        assert_eq!(mgr.watched_coin(&coin).unwrap().spent_confirmed_at, None);
     }
 
     #[test]
