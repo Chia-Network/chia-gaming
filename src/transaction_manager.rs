@@ -433,6 +433,16 @@ impl<C: ManagedCradle> TransactionManager<C> {
         // so we update it rather than only setting it once.
         let mut present_now = std::collections::HashSet::new();
         for rec in records {
+            // A coin that reappears with a creation height during a reorg is live
+            // again, so clear any vanished flag here rather than relying solely on
+            // the `created_watched` set-diff below.  If the coin was re-mined at or
+            // below the new tip in the same report that rolled back its creation,
+            // it never left `present_coins` and so never shows up in that diff --
+            // leaving it stuck in `vanished_coins`, which would later suppress
+            // forwarding a genuine spend via `deleted_watched.retain`.
+            if reorg && rec.created_height.is_some() {
+                self.vanished_coins.remove(&rec.coin);
+            }
             let live = rec.created_height.is_some() && rec.spent_height.is_none();
             if live {
                 present_now.insert(rec.coin.clone());
@@ -1325,6 +1335,64 @@ mod tests {
         assert!(reports[1].1.created_watched.is_empty());
         // The coin's spend was not recorded either.
         assert_eq!(mgr.watched_coin(&coin).unwrap().spent_confirmed_at, None);
+    }
+
+    #[test]
+    fn reorg_remine_in_same_report_clears_vanished_and_allows_later_spend() {
+        let mut allocator = AllocEncoder::new();
+        let coin = test_coin(9);
+        let mut mock = MockGameCradle::default();
+        mock.queue_drain(vec![watch_event(&coin, 50)]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("register");
+
+        // Confirmed live at height 12.
+        mgr.report_coin_states(
+            &mut allocator,
+            12,
+            &[CoinStateRecord {
+                coin: coin.clone(),
+                created_height: Some(12),
+                spent_height: None,
+            }],
+        )
+        .expect("report");
+        assert_eq!(mgr.watched_coin(&coin).unwrap().birthday, Some(12));
+
+        // Reorg to height 8 (< last height 12), but the coin is re-mined at 8 in
+        // the SAME report.  Its old birthday (12) is above the new tip, so the
+        // rollback branch flags it vanished; yet because it is still live here it
+        // never leaves `present_coins` and so never appears in the created
+        // set-diff.  It must still be un-flagged, or a later genuine spend would
+        // be suppressed.
+        mgr.report_coin_states(
+            &mut allocator,
+            8,
+            &[CoinStateRecord {
+                coin: coin.clone(),
+                created_height: Some(8),
+                spent_height: None,
+            }],
+        )
+        .expect("report");
+        assert_eq!(mgr.watched_coin(&coin).unwrap().birthday, Some(8));
+        assert!(
+            !mgr.vanished_coins().contains(&coin),
+            "a coin re-mined in the same reorg report must not stay flagged vanished"
+        );
+
+        // Forward progress: the coin is now genuinely spent (drops off the
+        // full-coin-set feed).  Since it is no longer flagged vanished, the spend
+        // must be forwarded as deleted_watched and recorded.
+        mgr.report_coin_states(&mut allocator, 9, &[])
+            .expect("report");
+        assert_eq!(mgr.watched_coin(&coin).unwrap().spent_confirmed_at, Some(9));
+        let spend_report = mgr.cradle().seen_reports.last().expect("spend report");
+        assert_eq!(spend_report.0, 9);
+        assert!(
+            spend_report.1.deleted_watched.contains(&coin),
+            "a genuine spend must be forwarded, not suppressed by a stale vanished flag"
+        );
     }
 
     #[test]
