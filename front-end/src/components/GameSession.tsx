@@ -2,7 +2,7 @@ import { Component, useCallback, useEffect, useRef, useState, type RefObject, ty
 import { Observable } from 'rxjs';
 import { useGameSession, ChannelStatusInfo, GameTerminalAttentionInfo, GameTurnState, GameplayEvent, isWindingDown, deriveSessionPhase, QueuedNotification } from '../hooks/useGameSession';
 import { useCalpokerHand } from '../hooks/useCalpokerHand';
-import { CalpokerHandState, CalpokerDisplaySnapshot } from '../hooks/save';
+import { CalpokerHandState, CalpokerDisplaySnapshot, SessionState } from '../hooks/save';
 import { formatMojos, formatAmount } from '../util';
 import { getPlayerId } from '../hooks/save';
 import { CalpokerOutcome, ChannelState, SessionPhase } from '../types/ChiaGaming';
@@ -448,20 +448,15 @@ function ComposeProposalDialog({
           />
         )}
 
-        <div className='flex flex-wrap items-center gap-3'>
-          <Button
-            variant='solid'
-            color='primary'
-            size='sm'
-            disabled={session.composeProposalSent || perHandAmount <= 0n || (isSpacepoker && !spValid)}
-            onClick={submit}
-          >
-            {session.composeProposalSent ? 'Proposal Sent' : 'Send Proposal'}
-          </Button>
-          <Button variant='solid' size='sm' onClick={session.startCleanShutdown}>
-            Start Clean Shutdown
-          </Button>
-        </div>
+        <Button
+          variant='solid'
+          color='primary'
+          size='sm'
+          disabled={session.composeProposalSent || perHandAmount <= 0n || (isSpacepoker && !spValid)}
+          onClick={submit}
+        >
+          {session.composeProposalSent ? 'Proposal Sent' : 'Send Proposal'}
+        </Button>
       </div>
     </div>
   );
@@ -693,7 +688,7 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
         </div>
 
         {/* Between-hand session controls */}
-        {session.betweenHands && !isWindingDown(session.channelStatus.state) && session.channelStatus.state !== 'ShuttingDown' && (
+        {session.betweenHands && !isWindingDown(session.channelStatus.state) && session.channelStatus.state !== 'ShuttingDown' && !session.cleanShutdownStarted && (
           <>
             {session.betweenHandMode === 'decision' && (
               <div className='relative flex w-full items-center justify-center py-2'>
@@ -720,10 +715,22 @@ const GameSession: React.FC<GameSessionProps> = ({ params, peerConn, trackerLive
             )}
 
             {session.betweenHandMode === 'compose-proposal' && (
-              <ComposeProposalDialog
-                session={session}
-                maxPerHandMojos={maxPerHandMojos}
-              />
+              <>
+                <div className='flex justify-end w-full max-w-xl mx-auto'>
+                  <Button
+                    variant='solid'
+                    color='primary'
+                    size='sm'
+                    onClick={session.startCleanShutdown}
+                  >
+                    End Session
+                  </Button>
+                </div>
+                <ComposeProposalDialog
+                  session={session}
+                  maxPerHandMojos={maxPerHandMojos}
+                />
+              </>
             )}
 
             {session.betweenHandMode === 'review-incoming-proposal' && session.reviewPeerProposal && (

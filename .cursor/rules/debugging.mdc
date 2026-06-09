@@ -17,8 +17,10 @@ principles still apply but the mechanics may need adaptation.
 
 After every code change, run the full test suite. If anything fails:
 
-1. **Isolate** the failing test. Run it alone. Single tests typically
-   complete in seconds, giving you a tight iteration loop.
+1. **Isolate** the failing test when it speeds iteration or cuts
+   output noise. If the full suite already runs in seconds, skip this
+   and just keep re-running everything -- isolation matters most when
+   the suite is slow or the output is noisy.
 2. **Fix** the failure, re-running the isolated test as you go.
 3. **Widen**: once the isolated test passes, run the full suite again.
    If new failures appeared, go back to step 1 with the next one.
@@ -84,10 +86,10 @@ four questions:
    space, but good diagnostics often do much better -- a single
    well-placed print at a key decision point can eliminate most
    possibilities at once. Calibrate how many diagnostics you add per
-   run: each test run costs time, so pack enough diagnostics in to
-   make the run count. But don't add so many that the output becomes
-   a wall of noise you have to wade through -- that trades one
-   problem for another.
+   run: when a run is slow, pack enough in to make it count; when runs
+   are cheap (a fast suite), iterate freely. Either way, don't add so
+   many that the output becomes a wall of noise you have to wade
+   through -- that trades one problem for another.
 
 ### Don't Speculate
 

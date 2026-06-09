@@ -22,9 +22,6 @@ import { getSearchParams, empty, getRandomInt, getEvenHexString } from '../../ut
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
 import {
   PeerConnectionResult,
-  BlockchainReport,
-  CoinsetOrgBlockSpend,
-  WatchReport,
   WasmEvent,
 } from '../../types/ChiaGaming';
 import { BLOCKCHAIN_SERVICE_URL, BLOCKCHAIN_WS_URL } from '../../settings';
@@ -116,10 +113,6 @@ class WasmBlobWrapperAdapter {
     this.waiting_messages = [];
   }
 
-  take_block(peak: bigint, blocks: CoinsetOrgBlockSpend[], block_report: WatchReport | undefined) {
-    this.blob?.blockNotification(peak, blocks, block_report);
-  }
-
   getObservable() {
     if (!this.blob) {
       throw 'WasmBlobWrapperAdapter.getObservable() called before set_blob';
@@ -172,17 +165,10 @@ async function action_with_messages(
   let cradles = [cradle1, cradle2];
   let subscriptions: Subscription[] = [];
 
-  subscriptions.push(addActiveSubscription(poller.getObservable().subscribe({
-    next: (evt: BlockchainReport) => {
-      cradles.forEach((c, i) => {
-        let block_array = [];
-        if (evt.block) {
-          block_array = evt.block;
-        }
-        c.take_block(evt.peak, block_array, evt.report);
-      });
-    },
-  })));
+  // The poller drives each cradle's coin polling directly via report_coin_states.
+  cradles.forEach((c) => {
+    if (c.blob) poller.attachCradle(c.blob);
+  });
 
   let evt_results: Array<boolean> = [false, false];
   cradles.forEach((cradle, index) => {
@@ -218,6 +204,9 @@ async function action_with_messages(
     }
   } finally {
     subscriptions.forEach((sub) => sub.unsubscribe());
+    cradles.forEach((c) => {
+      if (c.blob) poller.detachCradle(c.blob);
+    });
   }
 }
 

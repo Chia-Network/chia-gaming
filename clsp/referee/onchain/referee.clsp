@@ -5,6 +5,7 @@
 (import std.relops)
 (import std.condition_codes)
 (import std.li)
+(import std.append)
 
 ;
 ; Adjudicates a two-player turn-based game.
@@ -16,9 +17,11 @@
 ;   sha256(validation_program_hash, shatree(state))
 ;
 ; In slash, this puzzle runs previous_validation_program against all_args.
-; Slash succeeds if validator_result is nil (0), or if validator_result encodes
-; next values that misalign with this coin's commitments (infohash or
-; max_move_size mismatch).
+; The validator returns (next_validator_hash new_state max_move_size . extra_conditions).
+; Slash succeeds if validator_result is nil (0), if the encoded next values
+; misalign with this coin's commitments (infohash or max_move_size mismatch),
+; or if the validator returned extra_conditions. Any extra_conditions are
+; prepended to the payout conditions in the slash output.
 ;
 ; MOVER_SHARE is how much the mover gets if they fold/accept timeout.
 ; MOD_HASH should be the shatree of referee itself.
@@ -54,7 +57,7 @@
         (assign
             (previous_state previous_validation_program evidence mover_payout_ph) args
             previous_validation_program_hash (shatree previous_validation_program)
-            (@ validator_result (next_validator_hash new_state max_move_size))
+            (@ validator_result (next_validator_hash new_state max_move_size . extra_conditions))
                 (a previous_validation_program (c previous_validation_program_hash all_args))
             payout_conditions (list
                 (list CREATE_COIN mover_payout_ph AMOUNT)
@@ -73,8 +76,9 @@
                                         0)
                                     INFOHASH_B))
                             (not (= max_move_size MAX_MOVE_SIZE))
+                            (l extra_conditions)
                         )
-                        payout_conditions
+                        (append extra_conditions payout_conditions)
                     )
                 )
             )

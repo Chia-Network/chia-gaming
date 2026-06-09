@@ -5,6 +5,7 @@ use crate::common::types::GameID;
 use crate::common::types::{AllocEncoder, Program};
 use crate::peer_container::SynchronousGameCradle;
 use crate::test_support::game::GameAction;
+use crate::transaction_manager::TransactionManager;
 
 pub fn prefix_test_moves(_allocator: &mut AllocEncoder, game_id: GameID) -> Vec<GameAction> {
     let nil_move = Program::from_hex("80").expect("should build nil move");
@@ -60,8 +61,12 @@ pub fn prefix_test_moves(_allocator: &mut AllocEncoder, game_id: GameID) -> Vec<
 #[allow(clippy::type_complexity)]
 pub fn spacepoker_ran_all_the_moves_predicate(
     want_move_number: usize,
-) -> Box<dyn Fn(usize, &[SynchronousGameCradle]) -> bool> {
-    Box::new(move |move_number: usize, _: &[SynchronousGameCradle]| move_number >= want_move_number)
+) -> Box<dyn Fn(usize, &[TransactionManager<SynchronousGameCradle>]) -> bool> {
+    Box::new(
+        move |move_number: usize, _: &[TransactionManager<SynchronousGameCradle>]| {
+            move_number >= want_move_number
+        },
+    )
 }
 
 #[cfg(feature = "sim-tests")]

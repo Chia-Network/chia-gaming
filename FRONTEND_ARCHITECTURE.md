@@ -385,7 +385,7 @@ peekSession() → save
                  ├─ save exists (nonce matches)
                  │   → show Resume / Start Over dialog
                  │       │
-                 │       ├─ Start Over → clearSession(), claimLease(), ready
+                 │       ├─ Start Over → hardReset(), reload
                  │       │
                  │       └─ Resume → is there a lease conflict?
                  │           │
@@ -408,6 +408,16 @@ nonce doesn't match the current build, the save is from a previous build and is
 wiped along with the tab lease. This prevents stale saves from interfering with
 a fresh build.
 
+**Start over hard reset:** Start over is deliberately not graceful cleanup. It
+is the escape hatch for garbled local state, so it must not deserialize saved
+state, reconnect to services, disconnect WalletConnect, preserve preferences,
+or otherwise interpret the current session. The handler calls `hardReset()` and
+reloads the page. `hardReset()` clears the app's in-memory save cache,
+`localStorage`, `sessionStorage`, and best-effort deletes every IndexedDB
+database visible for the origin. IndexedDB cleanup is fire-and-forget: failures
+are logged, but reset must still reload rather than stall on WalletConnect or
+browser storage internals.
+
 **Full vs pre-game saves:** The resume/takeover handlers check
 `save.serializedCradle` to distinguish full game saves from pre-game saves.
 A full save triggers `performResume` (WASM restore + tracker reconnect). A
@@ -415,10 +425,9 @@ pre-game save triggers `handleConnect(save.blockchainType)` to re-establish
 the wallet connection without attempting WASM deserialization.
 
 **Lease claiming:** The lease is never claimed during the boot initializer's
-read phase. It is only claimed inside user action handlers (`handleResume`,
-`handleStartOver`, `handleTakeOver`) after the user has made a choice. This
-prevents a new tab from immediately fencing an existing tab before the user
-decides what to do.
+read phase. It is only claimed inside resume/takeover handlers after the user
+has made a choice. Start over does not claim a lease; it wipes local browser
+state and reloads.
 
 #### Restore path
 
@@ -438,11 +447,26 @@ When the user chooses to resume a full save, `performResume` fires:
 
 #### Cleanup
 
-The session save is cleared when:
-- The game finishes (`processResult` sets `finished`)
-- The user clicks "End Session" (clean shutdown)
-- The user clicks "Reset" (`localStorage.clear()`)
-- A stale nonce is detected on boot
+There are two different reset paths:
+
+- `clearSession()` is normal lifecycle cleanup. It clears game/session fields
+  while preserving identity, preferences, saved games, and other non-session
+  UI state.
+- `hardReset()` is destructive app-origin storage reset. It is used by Start
+  over and intentionally wipes all local browser state without attempting
+  graceful wallet, tracker, or session cleanup.
+
+The browser storage involved is split across three APIs:
+
+- `localStorage` holds the app's flat `SessionState`, tab lease, and persisted
+  UI preferences.
+- `sessionStorage` holds per-tab identity such as the tab id.
+- IndexedDB is used by WalletConnect and may contain session/client state even
+  after `localStorage` has been cleared.
+
+Because tabs and windows for the same origin can share `localStorage`, a hard
+reset also signals sibling tabs to stop persisting their in-memory cached state.
+This is only a reset broadcast, not a graceful coordination protocol.
 
 ### Peer Message Reliability
 
@@ -697,8 +721,8 @@ user makes their choice, before the connection completes. This is the earliest
 point at which state is saved — even before a WASM cradle exists. Once the
 full game session is running, `useGameSession` takes over persistence and
 includes `blockchainType` in every subsequent save alongside the WASM and
-JS state. `clearSession()` removes it on explicit disconnect, cancel, or
-unrecoverable error.
+JS state. `clearSession()` preserves `blockchainType` as part of normal
+session lifecycle cleanup; `hardReset()` is the destructive path that wipes it.
 
 **Intentional deviation:** The simulator returns `ConnectionSetup.fields`
 because there is no external wallet to scan the QR code. This triggers the

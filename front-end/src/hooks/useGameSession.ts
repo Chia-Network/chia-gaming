@@ -4,7 +4,6 @@ import {
   GameConnectionState,
   GameSessionParams,
   CalpokerOutcome,
-  BlockchainReport,
   PeerConnectionResult,
   WasmEvent,
   WasmNotification,
@@ -101,6 +100,17 @@ export interface QueuedNotification {
   title: string;
   message: string;
   payload?: ChannelStatusInfo | GameTerminalAttentionInfo;
+}
+
+function normalizeQueuedNotifications(raw: unknown): QueuedNotification[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((n) => {
+    const item = n as QueuedNotification & { id?: number | bigint };
+    return {
+      ...item,
+      id: typeof item.id === 'bigint' ? Number(item.id) : Number(item.id ?? 0),
+    };
+  });
 }
 
 export interface ChannelStatusInfo {
@@ -385,6 +395,7 @@ export interface UseGameSessionResult {
   acceptReviewedProposal: () => void;
   rejectReviewedProposal: () => void;
   startCleanShutdown: () => void;
+  cleanShutdownStarted: boolean;
   goOnChain: () => void;
   betweenHands: boolean;
   lastOutcome: CalpokerOutcome | undefined;
@@ -453,16 +464,16 @@ export function useGameSession(
   dismissedChannelStateRef.current = dismissedChannelState;
 
   const [channelQueue, setChannelQueue] = useState<QueuedNotification[]>(() =>
-    (sessionSave?.channelNotifQueue ?? []) as QueuedNotification[]
+    normalizeQueuedNotifications(sessionSave?.channelNotifQueue)
   );
   const [gameQueue, setGameQueue] = useState<QueuedNotification[]>(() =>
-    (sessionSave?.gameNotifQueue ?? []) as QueuedNotification[]
+    normalizeQueuedNotifications(sessionSave?.gameNotifQueue)
   );
   const notifIdRef = useRef(
     Math.max(
       0,
-      ...(sessionSave?.channelNotifQueue ?? []).map(n => n.id),
-      ...(sessionSave?.gameNotifQueue ?? []).map(n => n.id),
+      ...normalizeQueuedNotifications(sessionSave?.channelNotifQueue).map(n => n.id),
+      ...normalizeQueuedNotifications(sessionSave?.gameNotifQueue).map(n => n.id),
     )
   );
 
@@ -674,7 +685,6 @@ export function useGameSession(
       iStarted: wasm.iStarted,
       amount: wasm.amount,
       perGameAmount: wasm.perGameAmount,
-      pendingTransactions: wasm.pendingTransactions,
       unackedMessages: wasm.unackedMessages.map(m => ({ msgno: m.msgno, msg: uint8ToBase64(m.msg) })),
       history: wasm.history,
       log: wasm.log,
@@ -1194,16 +1204,13 @@ export function useGameSession(
     };
   }, [gameObject, handleNotification, pushChannel]);
 
-  // Subscribe to blockchain block data
+  // Drive the cradle's coin polling: the poller asks the cradle which coins to
+  // watch and feeds raw chain state back via report_coin_states.
   useEffect(() => {
-    const subscription = blockchain.getObservable().subscribe({
-      next: (e: BlockchainReport) => {
-        gameObject?.blockNotification(e.peak, e.block ?? [], e.report);
-      },
-    });
-
+    if (!gameObject) return;
+    blockchain.attachCradle(gameObject);
     return () => {
-      subscription.unsubscribe();
+      blockchain.detachCradle(gameObject);
     };
   }, [gameObject, blockchain]);
 
@@ -1305,7 +1312,12 @@ export function useGameSession(
     setBetweenHandMode('compose-proposal');
   }, []);
 
+  const [cleanShutdownStarted, setCleanShutdownStarted] = useState(
+    () => gameObject.cleanShutdownCalled
+  );
+
   const startCleanShutdown = useCallback(() => {
+    setCleanShutdownStarted(true);
     gameObjectRef.current?.cleanShutdown();
   }, []);
 
@@ -1349,6 +1361,7 @@ export function useGameSession(
     acceptReviewedProposal,
     rejectReviewedProposal,
     startCleanShutdown,
+    cleanShutdownStarted,
     goOnChain,
     betweenHands: handKey > 0 && gameIds.length === 0,
     lastOutcome,

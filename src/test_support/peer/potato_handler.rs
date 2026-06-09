@@ -103,7 +103,11 @@ impl PacketSender for Pipe {
 
 #[cfg(test)]
 impl WalletSpendInterface for Pipe {
-    fn spend_transaction_and_add_fee(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
+    fn spend_transaction_and_add_fee(
+        &mut self,
+        bundle: &SpendBundle,
+        _expiry: Option<u64>,
+    ) -> Result<(), Error> {
         self.outgoing_transactions.push_back(bundle.clone());
         Ok(())
     }
@@ -113,6 +117,7 @@ impl WalletSpendInterface for Pipe {
         coin_id: &CoinString,
         timeout: &Timeout,
         _name: Option<&'static str>,
+        _spend: Option<SpendBundle>,
     ) -> Result<(), Error> {
         self.registered_coins
             .insert(coin_id.clone(), timeout.clone());

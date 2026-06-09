@@ -424,6 +424,7 @@ const Shell = () => {
   activeTabRef.current = activeTab;
   const sessionSaveRef = useRef<SessionState | null>(null);
   const sessionStartedRef = useRef(false);
+  const sessionFinishedCleanupRef = useRef(false);
   const activePairingTokenRef = useRef<string | null>(null);
   const balanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -573,6 +574,7 @@ const Shell = () => {
       opponentAlias?: string,
     ) => {
       console.log('[Shell] startSession: iStarted=%s amount=%s token=%s hasSave=%s', iStarted, amount, token, !!save);
+      sessionFinishedCleanupRef.current = false;
       activePairingTokenRef.current = token;
       peerConnTargetRef.current = conn.getPeerConnection();
 
@@ -649,7 +651,6 @@ const Shell = () => {
           }
 
           const save = peekSession();
-
           if (status.has_pairing && status.token) {
             if (save && save.pairingToken === status.token) {
               let amount: bigint;
@@ -936,7 +937,16 @@ const Shell = () => {
   const handleSessionPhaseChange = useCallback((phase: SessionPhase, hasError?: boolean) => {
     setSessionPhase(phase);
     setSessionError(!!hasError);
-  }, []);
+
+    if (phase !== 'resolved' || sessionFinishedCleanupRef.current) return;
+
+    console.log('[Shell] session resolved; marking available');
+    sessionFinishedCleanupRef.current = true;
+    trackerConnRef.current?.setAvailable(true);
+    sessionSaveRef.current = null;
+    activePairingTokenRef.current = null;
+    setActiveTab('tracker');
+  }, [setActiveTab]);
 
   useEffect(() => {
     trackerConnRef.current?.setAvailable(sessionPhase === 'none' || sessionPhase === 'resolved');
@@ -1059,12 +1069,14 @@ const Shell = () => {
     setBootState({ kind: 'tabDead' });
   }, []);
 
-  const handleStartOver = useCallback(async () => {
-    if (activeBlockchainRef.current) {
-      try { await activeBlockchainRef.current.disconnect(); } catch (_) {}
+  const handleStartOver = useCallback(() => {
+    try {
+      hardReset();
+    } catch (e) {
+      console.error('[Shell] start over hard reset failed:', e);
+    } finally {
+      window.location.reload();
     }
-    await hardReset();
-    window.location.reload();
   }, []);
 
   const doDisconnectWallet = useCallback(async () => {
@@ -1658,7 +1670,7 @@ const Shell = () => {
             <p className='text-canvas-text text-sm text-center'>{confirmDialog.body}</p>
             <button
               onClick={confirmDialog.onConfirm}
-              className='w-full px-4 py-2 rounded-md font-medium text-sm bg-alert-solid text-primary-on-primary hover:bg-alert-solid-hover transition-colors'
+              className='w-full px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors'
             >
               Proceed
             </button>

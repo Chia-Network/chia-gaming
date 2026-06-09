@@ -227,27 +227,32 @@ When a game is already on-chain and the player calls `AcceptTimeout(game_id)`:
 1. `OnChainGameHandler` asserts it is our turn, then sets `accepted = true`
   on the `OnChainGameState` entry. No transaction is submitted and no
    notification is emitted yet.
-2. When the game coin is spent on-chain, `handle_game_coin_spent` checks the
+2. The accepted game's timeout claim is pre-built and registered eagerly, and
+  the `TransactionManager` submits it once the coin reaches its relative
+   timeout age (see
+   [On-Chain Step 5](ON_CHAIN.md#step-5-timeout-resolution)). Setting
+   `accepted` only records intent; no transaction is submitted at accept time.
+3. When the game coin is spent on-chain, `handle_game_coin_spent` checks the
   `accepted` flag. For accepted games:
   - If the spend creates a **reward coin** (matching the player's reward
   puzzle hash): `WeTimedOut` is emitted.
   - Any other spend is unreachable (opponent cannot move on our accepted
   coin) and triggers a `GameError`.
-3. When `coin_timeout_reached` fires, the timeout transaction is submitted and
-  `WeTimedOut` is emitted.
 
 **Note:** Off-chain `accept_timeout` does not emit `WeTimedOut` at call time;
-it emits on later resolution (potato round-trip, on-chain timeout, or clean
-shutdown). On-chain `AcceptTimeout` is also usually deferred, but has a
-zero-share early-out path that can emit terminal timeout status immediately.
+it emits on later resolution (potato round-trip, observed on-chain timeout
+spend, or clean shutdown). On-chain `AcceptTimeout` is also deferred until the
+resolving spend is observed, but has a zero-share early-out path that can emit
+terminal timeout status immediately.
 
 **Key code:**
 
 - `src/channel_handler/mod.rs` — `send_accept_timeout_no_finalize`,
 `pending_accept_timeouts`, `drain_cached_accept_timeouts`,
 `drain_preempt_resolved_accept_timeouts`
-- `src/potato_handler/on_chain.rs` — `GameAction::AcceptTimeout`, `handle_game_coin_spent`,
-`coin_timeout_reached`
+- `src/potato_handler/on_chain.rs` — `GameAction::AcceptTimeout`,
+`handle_game_coin_spent`, `build_timeout_claim`
+- `src/transaction_manager.rs` — `TransactionManager` (eager claim submission)
 
 ### Automatic AcceptTimeout
 

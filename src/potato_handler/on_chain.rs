@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::types::ChannelHandlerEnv;
 use crate::channel_handler::types::{
-    AcceptTransactionState, ChannelHandlerPrivateKeys, CoinSpentInformation, LiveGame,
-    OnChainGameState, ReadableMove,
+    ChannelHandlerPrivateKeys, CoinSpentInformation, LiveGame, OnChainGameState, ReadableMove,
 };
 use crate::common::types::PrivateKey;
 use crate::common::types::{
@@ -465,28 +464,84 @@ impl OnChainGameHandler {
         Ok(CoinSpentInformation::TheirSpend(spent_result))
     }
 
-    fn accept_or_timeout_game_on_chain(
+    /// Build the eager timeout claim for `coin` in game `game_id`, without
+    /// mutating handler state.  Returns `Some(bundle)` only when the timeout
+    /// transaction pays us a positive reward (i.e. we are the party entitled to
+    /// claim on this coin's timeout); otherwise `None`, so the manager submits
+    /// nothing.  The transaction manager holds the returned bundle and submits
+    /// it once the coin reaches its relative timeout age (resubmitting across
+    /// reorgs).  This replaces the lazy build that previously happened when the
+    /// coin's timeout was reached.
+    pub fn build_timeout_claim(
         &mut self,
         env: &mut ChannelHandlerEnv<'_>,
         game_id: &GameID,
         coin: &CoinString,
-    ) -> Result<Option<Spend>, Error> {
-        if let Ok(game_idx) = self.get_game_by_id(game_id) {
-            let tx = self.live_games[game_idx].get_transaction_for_timeout(env.allocator, coin)?;
-            self.live_games.remove(game_idx);
-            Ok(tx)
+    ) -> Result<Option<SpendBundle>, Error> {
+        let tx = if let Ok(game_idx) = self.get_game_by_id(game_id) {
+            self.live_games[game_idx].get_transaction_for_timeout(env.allocator, coin)?
         } else if let Some(idx) = self
             .pending_accept_timeouts
             .iter()
             .position(|g| g.game_id == *game_id)
         {
-            let tx = self.pending_accept_timeouts[idx]
-                .get_transaction_for_timeout(env.allocator, coin)?;
-            self.pending_accept_timeouts.remove(idx);
-            Ok(tx)
+            self.pending_accept_timeouts[idx].get_transaction_for_timeout(env.allocator, coin)?
         } else {
-            Ok(None)
+            return Ok(None);
+        };
+
+        let tx = match tx {
+            Some(tx) => tx,
+            None => return Ok(None),
+        };
+
+        // Only submit when the timeout pays us.
+        let conditions = CoinCondition::from_puzzle_and_solution(
+            env.allocator,
+            &tx.puzzle.to_program(),
+            &tx.solution.p(),
+        )?;
+        let reward_ph = self.reward_puzzle_hash.clone();
+        let pays_us = conditions.iter().any(|c| {
+            matches!(c, CoinCondition::CreateCoin(ph, amt) if *ph == reward_ph && *amt > Amount::default())
+        });
+        if !pays_us {
+            return Ok(None);
         }
+
+        Ok(Some(SpendBundle {
+            name: Some("timeout claim".to_string()),
+            spends: vec![CoinSpend {
+                coin: coin.clone(),
+                bundle: tx,
+            }],
+        }))
+    }
+
+    /// Register every current game coin with the wallet, attaching an eager
+    /// timeout claim for each coin we are entitled to claim on timeout.  Used
+    /// when first transitioning to on-chain play so the transaction manager owns
+    /// the timeout submissions from the moment the coins are watched.
+    pub fn register_initial_game_coins(
+        &mut self,
+        env: &mut ChannelHandlerEnv<'_>,
+    ) -> Result<Vec<Effect>, Error> {
+        let coins: Vec<(CoinString, GameID, Timeout)> = self
+            .game_map
+            .iter()
+            .map(|(coin, st)| (coin.clone(), st.game_id, st.game_timeout.clone()))
+            .collect();
+        let mut effects = Vec::new();
+        for (coin, game_id, gt) in coins {
+            let claim = self.build_timeout_claim(env, &game_id, &coin)?;
+            effects.push(Effect::RegisterCoin {
+                coin,
+                timeout: gt,
+                name: Some("game coin"),
+                spend: claim,
+            });
+        }
+        Ok(effects)
     }
 
     // --- Existing on-chain logic ---
@@ -575,11 +630,46 @@ impl OnChainGameHandler {
                             forfeited: None,
                         }),
                     }));
+                    let claim = self.build_timeout_claim(env, &pending.game_id, &new_coin)?;
                     effects.push(Effect::RegisterCoin {
                         coin: new_coin,
                         timeout: gt,
                         name: Some("our on-chain move confirmed"),
+                        spend: claim,
                     });
+                    effects.extend(self.next_action(env)?);
+                    return Ok((effects, None));
+                }
+
+                if create_ph == self.their_reward_puzzle_hash {
+                    // Our pending move never landed and the opponent claimed the
+                    // timeout against this coin (the spend pays their reward
+                    // puzzle hash).  We forfeited the move, so drive the terminal
+                    // notification from this observed spend rather than letting
+                    // the generic path misread it as our own timeout win against
+                    // a stale, optimistically-advanced referee state.
+                    let game_id = old_def.game_id;
+                    let finished_params = if old_def.game_finished {
+                        Some(GameStatusOtherParams {
+                            game_finished: Some(true),
+                            ..Default::default()
+                        })
+                    } else {
+                        None
+                    };
+                    if let Some(eff) = self.try_emit_terminal(
+                        &game_id,
+                        GameNotification::GameStatus {
+                            id: game_id,
+                            status: GameStatusKind::EndedWeTimedOut,
+                            my_reward: Some(Amount::default()),
+                            coin_id: None,
+                            reason: None,
+                            other_params: finished_params,
+                        },
+                    ) {
+                        effects.push(eff);
+                    }
                     effects.extend(self.next_action(env)?);
                     return Ok((effects, None));
                 }
@@ -621,7 +711,46 @@ impl OnChainGameHandler {
                     format_coin(rc),
                 )));
             }
-            let notification = if let Some(reward_coin) = reward_coin {
+            let their_reward_ph = self.their_reward_puzzle_hash.clone();
+            let opponent_claimed = conditions.iter().any(|c| {
+                matches!(c, CoinCondition::CreateCoin(ph, amt) if *ph == their_reward_ph && *amt > Amount::default())
+            });
+            // Distinguish the two ways a slashed coin can be spent.  Our own
+            // slash pays everything to us and never pays the opponent, so a coin
+            // to the opponent's reward puzzle hash means the opponent's timeout
+            // claim landed first (the cheat stood and they timed us out while we
+            // were trying to slash).  That is the confirmed "opponent
+            // successfully cheated" outcome -- it rides the opponent's spend,
+            // never one we generate ourselves -- and it may still pay us our
+            // `cheating_move_mover_share` consolation.  Otherwise a coin to our
+            // reward puzzle hash is our slash confirming.
+            let notification = if opponent_claimed {
+                effects.push(Effect::Log(format!(
+                    "[timeout-on-chain] {}",
+                    format_coin(coin_id),
+                )));
+                let our_reward = old_definition
+                    .cheating_move_mover_share
+                    .clone()
+                    .unwrap_or_default();
+                let our_reward_coin = if our_reward > Amount::default() {
+                    Some(CoinString::from_parts(
+                        &parent_coin_id,
+                        &reward_ph,
+                        &our_reward,
+                    ))
+                } else {
+                    None
+                };
+                GameNotification::GameStatus {
+                    id: old_definition.game_id,
+                    status: GameStatusKind::EndedOpponentSuccessfullyCheated,
+                    my_reward: Some(our_reward),
+                    coin_id: our_reward_coin,
+                    reason: None,
+                    other_params: None,
+                }
+            } else if let Some(reward_coin) = reward_coin {
                 GameNotification::GameStatus {
                     id: old_definition.game_id,
                     status: GameStatusKind::EndedWeSlashedOpponent,
@@ -632,7 +761,7 @@ impl OnChainGameHandler {
                 }
             } else {
                 effects.push(Effect::Log(format!(
-                    "[game-error] {} slash succeeded but no reward coin found",
+                    "[game-error] {} slash coin spent with no recognizable reward",
                     format_coin(coin_id),
                 )));
                 GameNotification::GameStatus {
@@ -640,7 +769,7 @@ impl OnChainGameHandler {
                     status: GameStatusKind::EndedError,
                     my_reward: None,
                     coin_id: None,
-                    reason: Some("slash succeeded but no reward coin found".to_string()),
+                    reason: Some("slash coin spent with no recognizable reward".to_string()),
                     other_params: None,
                 }
             };
@@ -751,10 +880,13 @@ impl OnChainGameHandler {
                             reason: None,
                             other_params: None,
                         }));
+                        let claim =
+                            self.build_timeout_claim(env, &old_definition.game_id, &new_coin)?;
                         effects.push(Effect::RegisterCoin {
                             coin: new_coin,
                             timeout: gt,
                             name: Some("accepted game coin advanced by redo"),
+                            spend: claim,
                         });
                     }
                 }
@@ -887,6 +1019,7 @@ impl OnChainGameHandler {
                         ..Default::default()
                     }),
                 }));
+                let claim = self.build_timeout_claim(env, &game_id, &new_coin_id)?;
                 effects.push(Effect::RegisterCoin {
                     coin: new_coin_id.clone(),
                     timeout: gt,
@@ -895,6 +1028,7 @@ impl OnChainGameHandler {
                     } else {
                         "expected spend - their turn"
                     }),
+                    spend: claim,
                 });
                 if finished {
                     self.game_action_queue
@@ -1053,10 +1187,12 @@ impl OnChainGameHandler {
                         }),
                     }));
                 }
+                let claim = self.build_timeout_claim(env, &game_id, &new_coin_string)?;
                 effects.push(Effect::RegisterCoin {
                     coin: new_coin_string.clone(),
                     timeout: gt,
                     name: Some("coin gives my turn"),
+                    spend: claim,
                 });
                 if finished {
                     self.game_action_queue
@@ -1082,10 +1218,13 @@ impl OnChainGameHandler {
                             .to_parts()
                             .map(|(_, _, amt)| amt.clone())
                             .unwrap_or_default();
-                        effects.push(Effect::SpendTransaction(SpendBundle {
-                            name: Some("slash move".to_string()),
-                            spends: vec![*transaction.clone()],
-                        }));
+                        effects.push(Effect::SpendTransaction(
+                            SpendBundle {
+                                name: Some("slash move".to_string()),
+                                spends: vec![*transaction.clone()],
+                            },
+                            None,
+                        ));
                         let slash_coin = transaction.coin.clone();
                         let gt = old_definition.game_timeout.clone();
                         effects.push(Effect::Notify(GameNotification::GameStatus {
@@ -1116,6 +1255,7 @@ impl OnChainGameHandler {
                             coin: slash_coin,
                             timeout: gt,
                             name: Some("pending slash"),
+                            spend: None,
                         });
                     }
                     SlashOutcome::NoReward => {
@@ -1205,210 +1345,6 @@ impl OnChainGameHandler {
         Ok((effects, resync_info))
     }
 
-    pub fn coin_timeout_reached(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
-        coin_id: &CoinString,
-    ) -> Result<Vec<Effect>, Error> {
-        let mut effects = Vec::new();
-
-        if let Some(game_def) = self.game_map.remove(coin_id) {
-            let initial_potato = self.is_initial_potato;
-            let game_id = game_def.game_id;
-
-            effects.push(Effect::Log(format!(
-                "[timeout-on-chain] {}",
-                format_coin(coin_id),
-            )));
-
-            if let Some(_slash_amount) = game_def.pending_slash_amount {
-                let our_reward = game_def.cheating_move_mover_share.unwrap_or_default();
-                let reward_coin = if our_reward > Amount::default() {
-                    let reward_ph = self.reward_puzzle_hash.clone();
-                    Some(CoinString::from_parts(
-                        &coin_id.to_coin_id(),
-                        &reward_ph,
-                        &our_reward,
-                    ))
-                } else {
-                    None
-                };
-                if let Some(eff) = self.try_emit_terminal(
-                    &game_id,
-                    GameNotification::GameStatus {
-                        id: game_id,
-                        status: GameStatusKind::EndedOpponentSuccessfullyCheated,
-                        my_reward: Some(our_reward),
-                        coin_id: reward_coin,
-                        reason: None,
-                        other_params: None,
-                    },
-                ) {
-                    effects.push(eff);
-                }
-                effects.extend(self.next_action(env)?);
-                return Ok(effects);
-            }
-
-            if let AcceptTransactionState::Determined(tx) = &game_def.accept {
-                self.have_potato = PotatoState::Present;
-
-                let conditions = CoinCondition::from_puzzle_and_solution(
-                    env.allocator,
-                    &tx.puzzle.to_program(),
-                    &tx.solution.p(),
-                )?;
-
-                let reward_ph = self.reward_puzzle_hash.clone();
-                let parent_coin_id = coin_id.to_coin_id();
-                let reward_coin = conditions.iter().find_map(|c| {
-                    if let CoinCondition::CreateCoin(ph, amt) = c {
-                        if *ph == reward_ph && *amt > Amount::default() {
-                            return Some(CoinString::from_parts(&parent_coin_id, ph, amt));
-                        }
-                    }
-                    None
-                });
-
-                let our_reward = reward_coin
-                    .as_ref()
-                    .and_then(|rc| rc.amount())
-                    .unwrap_or_default();
-
-                if our_reward > Amount::default() {
-                    let spend_bundle = SpendBundle {
-                        name: Some("redo accept".to_string()),
-                        spends: vec![CoinSpend {
-                            coin: coin_id.clone(),
-                            bundle: tx.as_ref().clone(),
-                        }],
-                    };
-                    effects.push(Effect::SpendTransaction(spend_bundle));
-                }
-
-                let finished_params = if game_def.game_finished {
-                    Some(GameStatusOtherParams {
-                        game_finished: Some(true),
-                        ..Default::default()
-                    })
-                } else {
-                    None
-                };
-                let notif = if game_def.our_turn || game_def.accepted {
-                    GameNotification::GameStatus {
-                        id: game_id,
-                        status: GameStatusKind::EndedWeTimedOut,
-                        my_reward: Some(our_reward),
-                        coin_id: reward_coin,
-                        reason: None,
-                        other_params: finished_params,
-                    }
-                } else {
-                    GameNotification::GameStatus {
-                        id: game_id,
-                        status: GameStatusKind::EndedOpponentTimedOut,
-                        my_reward: Some(our_reward),
-                        coin_id: reward_coin,
-                        reason: None,
-                        other_params: finished_params,
-                    }
-                };
-                if let Some(eff) = self.try_emit_terminal(&game_id, notif) {
-                    effects.push(eff);
-                }
-            } else {
-                let our_turn = game_def.our_turn;
-                let accepted = game_def.accepted;
-                let already_notified = game_def.notification_sent;
-                let game_finished = game_def.game_finished;
-                self.game_map.insert(coin_id.clone(), game_def);
-
-                let result_transaction =
-                    self.accept_or_timeout_game_on_chain(env, &game_id, coin_id)?;
-
-                if let Some(game_def) = self.game_map.get_mut(coin_id) {
-                    game_def.accept = AcceptTransactionState::Finished;
-                    game_def.notification_sent = true;
-                }
-
-                self.have_potato = PotatoState::Present;
-                let (reward_coin, our_reward) = if let Some(tx) = result_transaction {
-                    self.have_potato = PotatoState::Absent;
-
-                    let conditions = CoinCondition::from_puzzle_and_solution(
-                        env.allocator,
-                        &tx.puzzle.to_program(),
-                        &tx.solution.p(),
-                    )?;
-                    let reward_ph = self.reward_puzzle_hash.clone();
-                    let parent_coin_id = coin_id.to_coin_id();
-                    let reward_coin = conditions.iter().find_map(|c| {
-                        if let CoinCondition::CreateCoin(ph, amt) = c {
-                            if *ph == reward_ph && *amt > Amount::default() {
-                                return Some(CoinString::from_parts(&parent_coin_id, ph, amt));
-                            }
-                        }
-                        None
-                    });
-                    let our_reward = reward_coin
-                        .as_ref()
-                        .and_then(|rc| rc.amount())
-                        .unwrap_or_default();
-
-                    if our_reward > Amount::default() {
-                        effects.push(Effect::SpendTransaction(SpendBundle {
-                            name: Some(format!("{initial_potato} accept transaction")),
-                            spends: vec![CoinSpend {
-                                coin: coin_id.clone(),
-                                bundle: tx,
-                            }],
-                        }));
-                    }
-                    (reward_coin, our_reward)
-                } else {
-                    (None, Amount::default())
-                };
-
-                if !already_notified {
-                    let finished_params = if game_finished {
-                        Some(GameStatusOtherParams {
-                            game_finished: Some(true),
-                            ..Default::default()
-                        })
-                    } else {
-                        None
-                    };
-                    let notif = if our_turn || accepted {
-                        GameNotification::GameStatus {
-                            id: game_id,
-                            status: GameStatusKind::EndedWeTimedOut,
-                            my_reward: Some(our_reward),
-                            coin_id: reward_coin,
-                            reason: None,
-                            other_params: finished_params,
-                        }
-                    } else {
-                        GameNotification::GameStatus {
-                            id: game_id,
-                            status: GameStatusKind::EndedOpponentTimedOut,
-                            my_reward: Some(our_reward),
-                            coin_id: reward_coin,
-                            reason: None,
-                            other_params: finished_params,
-                        }
-                    };
-                    if let Some(eff) = self.try_emit_terminal(&game_id, notif) {
-                        effects.push(eff);
-                    }
-                }
-            }
-
-            effects.extend(self.next_action(env)?);
-        }
-
-        Ok(effects)
-    }
-
     pub fn next_action(&mut self, env: &mut ChannelHandlerEnv<'_>) -> Result<Vec<Effect>, Error> {
         while let Some(action) = self.game_action_queue.pop_front() {
             let result = self.do_on_chain_action(env, action)?;
@@ -1495,13 +1431,16 @@ impl OnChainGameHandler {
             },
         );
 
-        Ok(Some(Effect::SpendTransaction(SpendBundle {
-            name: Some("on chain move".to_string()),
-            spends: vec![CoinSpend {
-                coin: current_coin.clone(),
-                bundle: transaction,
-            }],
-        })))
+        Ok(Some(Effect::SpendTransaction(
+            SpendBundle {
+                name: Some("on chain move".to_string()),
+                spends: vec![CoinSpend {
+                    coin: current_coin.clone(),
+                    bundle: transaction,
+                }],
+            },
+            None,
+        )))
     }
 
     pub fn do_on_chain_action(
@@ -1747,14 +1686,6 @@ impl PeerHandler for OnChainGameHandler {
         coin_id: &CoinString,
     ) -> Result<Vec<Effect>, Error> {
         OnChainGameHandler::coin_spent(self, env, coin_id)
-    }
-
-    fn coin_timeout_reached(
-        &mut self,
-        env: &mut ChannelHandlerEnv<'_>,
-        coin_id: &CoinString,
-    ) -> Result<Vec<Effect>, Error> {
-        OnChainGameHandler::coin_timeout_reached(self, env, coin_id)
     }
 
     fn coin_created(

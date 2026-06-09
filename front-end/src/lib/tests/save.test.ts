@@ -15,6 +15,7 @@ import {
   getTheme,
   setTheme,
   getBuildNonce,
+  hardReset,
   getTrackerAlert,
   setTrackerAlert,
   SessionState,
@@ -34,6 +35,11 @@ function makeStorage(): Storage {
   };
 }
 
+async function flushPromises(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 const sampleSession: Partial<SessionState> = {
   serializedCradle: '{"some":"data"}',
   pairingToken: 'tok-123',
@@ -43,7 +49,6 @@ const sampleSession: Partial<SessionState> = {
   iStarted: true,
   amount: '100',
   perGameAmount: '10',
-  pendingTransactions: ['tx1'],
   unackedMessages: [{ msgno: 4, msg: 'hello' }],
   history: ['log1'],
   log: ['dbg1'],
@@ -52,11 +57,14 @@ const sampleSession: Partial<SessionState> = {
 beforeEach(() => {
   _resetForTests();
   (global as any).localStorage = makeStorage();
+  (global as any).sessionStorage = makeStorage();
   (global as any).__buildNonce = '/app/test-nonce/';
 });
 
 afterEach(() => {
   delete (global as any).localStorage;
+  delete (global as any).sessionStorage;
+  delete (global as any).indexedDB;
   delete (global as any).__buildNonce;
 });
 
@@ -170,6 +178,79 @@ describe('flat state', () => {
     const state = loadAppState();
     expect(state.playerId).not.toBe('old-player');
     expect(state.version).toBe(3);
+  });
+});
+
+describe('hard reset', () => {
+  it('clears localStorage, sessionStorage, and cached session state', () => {
+    saveSession({ ...sampleSession, blockchainType: 'walletconnect' });
+    sessionStorage.setItem('appState_tabId', 'tab-1');
+
+    hardReset();
+
+    expect(localStorage.length).toBe(0);
+    expect(sessionStorage.length).toBe(0);
+    expect(peekSession()).toBeNull();
+  });
+
+  it('starts deletion for every IndexedDB database returned by the browser', async () => {
+    const deleteDatabase = jest.fn((_name: string) => {
+      const request: { onsuccess?: () => void; onerror?: () => void; onblocked?: () => void; error?: unknown } = {};
+      setTimeout(() => request.onsuccess?.(), 0);
+      return request;
+    });
+    (global as any).indexedDB = {
+      databases: jest.fn().mockResolvedValue([
+        { name: 'app-state' },
+        { name: 'WALLET_CONNECT_V2_INDEXED_DB' },
+        { name: undefined },
+      ]),
+      deleteDatabase,
+    };
+
+    hardReset();
+    await flushPromises();
+
+    expect(deleteDatabase).toHaveBeenCalledWith('app-state');
+    expect(deleteDatabase).toHaveBeenCalledWith('WALLET_CONNECT_V2_INDEXED_DB');
+    expect(deleteDatabase).toHaveBeenCalledTimes(2);
+  });
+
+  it('deletes known IndexedDB databases when enumeration is unavailable (e.g. Safari)', async () => {
+    const deleteDatabase = jest.fn((_name: string) => {
+      const request: { onsuccess?: () => void; onerror?: () => void; onblocked?: () => void; error?: unknown } = {};
+      setTimeout(() => request.onsuccess?.(), 0);
+      return request;
+    });
+    // No `databases` function: mimics browsers that can't enumerate.
+    (global as any).indexedDB = { deleteDatabase };
+
+    hardReset();
+    await flushPromises();
+
+    expect(deleteDatabase).toHaveBeenCalledWith('WALLET_CONNECT_V2_INDEXED_DB');
+    expect(deleteDatabase).toHaveBeenCalledWith('walletconnect');
+    expect(deleteDatabase).toHaveBeenCalledWith('walletconnect-v2');
+  });
+
+  it('logs but does not throw when hard reset storage APIs fail', async () => {
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const local = makeStorage();
+    local.clear = () => { throw new Error('local clear failed'); };
+    const session = makeStorage();
+    session.clear = () => { throw new Error('session clear failed'); };
+    (global as any).localStorage = local;
+    (global as any).sessionStorage = session;
+    (global as any).indexedDB = {
+      databases: jest.fn().mockRejectedValue(new Error('database list failed')),
+      deleteDatabase: jest.fn(),
+    };
+
+    expect(() => hardReset()).not.toThrow();
+    await flushPromises();
+
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
   });
 });
 

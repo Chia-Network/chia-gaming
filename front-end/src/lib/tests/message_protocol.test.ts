@@ -3,18 +3,11 @@ import {
   ChiaGame,
   WasmConnection,
   WasmResult,
-  WatchReport,
   InternalBlockchainInterface,
   PeerConnectionResult,
 } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { _resetForTests as resetSaveState } from '../../hooks/save';
-
-const emptyReport: WatchReport = {
-  created_watched: [],
-  deleted_watched: [],
-  timed_out: [],
-};
 
 const mockRpc = new Proxy({} as InternalBlockchainInterface, {
   get: () => () => Promise.resolve(undefined),
@@ -54,7 +47,10 @@ function makeMockCradle(
 ): ChiaGame {
   return {
     deliver_message: jest.fn((msg: Uint8Array) => onDeliver(msg)),
-    block_data: jest.fn(() => ({ events: [] } as WasmResult)),
+    report_coin_states: jest.fn(() => ({ events: [] } as WasmResult)),
+    get_coins_to_poll: jest.fn(() => []),
+    drain_submissions: jest.fn(() => []),
+    resubmit_submitted: jest.fn(),
     serialize: jest.fn(() => new Uint8Array([0])),
     go_on_chain: jest.fn(() => ({ events: [] } as WasmResult)),
     cradle: 0,
@@ -101,10 +97,10 @@ function createReadyBlob(
   blob.loadWasm(mockWasmConnection);
   blob.setGameCradle(cradle);
   blob.kickSystem(2);
-  blob.blockNotification(1, [], emptyReport);
+  blob.reportCoinStates(1n, []);
 
   (cradle.deliver_message as jest.Mock).mockClear();
-  (cradle.block_data as jest.Mock).mockClear();
+  (cradle.report_coin_states as jest.Mock).mockClear();
   sentMessages.length = 0;
   sentAcks.length = 0;
 
@@ -303,7 +299,7 @@ describe('cleanShutdown calls shut_down on cradle', () => {
     blob.loadWasm(mockWasmConnection);
     blob.setGameCradle(cradle);
     blob.kickSystem(2);
-    blob.blockNotification(1, [], emptyReport);
+    blob.reportCoinStates(1n, []);
 
     blob.cleanShutdown();
 

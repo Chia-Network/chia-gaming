@@ -32,8 +32,9 @@ mod gaming_wasm {
     use flate2::Decompress;
     use flate2::FlushDecompress;
     use chia_gaming::peer_container::{
-        DrainResult, GameCradle, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
+        GameCradle, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
     };
+    use chia_gaming::transaction_manager::{CoinStateRecord, ManagerDrain, TransactionManager};
     use chia_gaming::potato_handler::effects::{CradleEvent, GameNotification};
     use chia_gaming::potato_handler::handshake::{CoinSpendRequest, RawCoinCondition};
     use chia_gaming::potato_handler::start::GameStart;
@@ -138,14 +139,13 @@ mod gaming_wasm {
         allocator: AllocEncoder,
         #[serde(skip)]
         rng: ChaCha8SerializationWrapper,
-        cradle: SynchronousGameCradle,
+        cradle: TransactionManager<SynchronousGameCradle>,
     }
 
     #[derive(Serialize, Deserialize, Default, Debug)]
     struct JsWatchReport {
         created_watched: Vec<String>,
         deleted_watched: Vec<String>,
-        timed_out: Vec<String>,
     }
 
     #[derive(Serialize)]
@@ -393,7 +393,7 @@ mod gaming_wasm {
             let cradle = JsCradle {
                 allocator,
                 rng: ChaCha8SerializationWrapper(rng.clone()),
-                cradle: game_cradle,
+                cradle: TransactionManager::new(game_cradle),
             };
             insert_cradle(new_id, cradle);
 
@@ -447,20 +447,96 @@ mod gaming_wasm {
         })
     }
 
+    fn watch_coin_entries(cradle: &JsCradle) -> Vec<JsWatchCoinEntry> {
+        cradle
+            .cradle
+            .get_coins_to_poll()
+            .iter()
+            .map(|cs| JsWatchCoinEntry {
+                coin_name: hex::encode(cs.to_coin_id().bytes()),
+                coin_string: coin_string_to_hex(cs),
+            })
+            .collect()
+    }
+
     #[wasm_bindgen]
     pub fn get_watching_coins(cid: i32) -> Result<JsValue, JsValue> {
+        let result = with_game(cid, move |cradle: &mut JsCradle| Ok(watch_coin_entries(cradle)))?;
+        serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Coins the hosting layer should poll for on-chain state.  Same shape as
+    /// [`get_watching_coins`]; both now delegate to the manager.
+    #[wasm_bindgen]
+    pub fn get_coins_to_poll(cid: i32) -> Result<JsValue, JsValue> {
+        let result = with_game(cid, move |cradle: &mut JsCradle| Ok(watch_coin_entries(cradle)))?;
+        serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Spend bundles the manager captured and the hosting layer should submit to
+    /// the wallet/network.  Returns the same `SpendBundle` shape that the old
+    /// `OutboundTransaction` events carried; the manager intercepts those events
+    /// into its submission buffer, so the host should call this after each drain
+    /// to pick up newly captured transactions.
+    #[wasm_bindgen]
+    pub fn drain_submissions(cid: i32) -> Result<JsValue, JsValue> {
         let result = with_game(cid, move |cradle: &mut JsCradle| {
-            let coins = cradle.cradle.get_watching_coins();
-            let entries: Vec<JsWatchCoinEntry> = coins
+            Ok(cradle
+                .cradle
+                .drain_submissions()
                 .iter()
-                .map(|cs| JsWatchCoinEntry {
-                    coin_name: hex::encode(cs.to_coin_id().bytes()),
-                    coin_string: coin_string_to_hex(cs),
-                })
-                .collect();
-            Ok(entries)
+                .map(spend_bundle_to_js)
+                .collect::<Vec<_>>())
         })?;
         serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Re-queue every transaction the manager has retained for resubmission.
+    /// Called on session restore so transactions that were drained but may not
+    /// have reached the network before a reload are submitted again.  The host
+    /// should call `drain_submissions` afterwards to pick them up.
+    #[wasm_bindgen]
+    pub fn resubmit_submitted(cid: i32) -> Result<(), JsValue> {
+        with_game(cid, move |cradle: &mut JsCradle| {
+            cradle.cradle.requeue_submitted();
+            Ok(())
+        })
+    }
+
+    #[derive(Deserialize)]
+    struct JsCoinStateRecord {
+        /// Full coin string, hex-encoded.
+        coin: String,
+        created_height: Option<u64>,
+        spent_height: Option<u64>,
+    }
+
+    /// Report the latest confirmed height and raw per-coin chain state to the
+    /// manager, which computes the created/deleted diff internally and feeds the
+    /// inner cradle.  Replaces the JS-side `WatchReport` computation that
+    /// `new_block` consumed.
+    #[wasm_bindgen]
+    pub fn report_coin_states(
+        cid: i32,
+        height: u64,
+        records_json: &str,
+    ) -> Result<JsValue, JsValue> {
+        let js_records: Vec<JsCoinStateRecord> = serde_json::from_str(records_json)
+            .map_err(|e| JsValue::from_str(&format!("bad coin state records json: {e}")))?;
+        let mut records = Vec::with_capacity(js_records.len());
+        for r in &js_records {
+            records.push(CoinStateRecord {
+                coin: hex_to_coinstring(&r.coin).into_js()?,
+                created_height: r.created_height,
+                spent_height: r.spent_height,
+            });
+        }
+        with_game(cid, move |cradle: &mut JsCradle| {
+            cradle
+                .cradle
+                .report_coin_states(&mut cradle.allocator, height, &records)
+        })?;
+        with_game_drain(cid, |_| Ok(()))
     }
 
     fn hex_to_coinstring(hex: &str) -> Result<CoinString, types::Error> {
@@ -685,7 +761,6 @@ mod gaming_wasm {
     fn watch_report_from_params(
         additions: Vec<String>,
         removals: Vec<String>,
-        timed_out: Vec<String>,
     ) -> Result<WatchReport, types::Error> {
         Ok(WatchReport {
             created_watched: map_m(|s| hex_to_coinstring(s), &additions)?
@@ -693,10 +768,6 @@ mod gaming_wasm {
                 .cloned()
                 .collect(),
             deleted_watched: map_m(|s| hex_to_coinstring(s), &removals)?
-                .iter()
-                .cloned()
-                .collect(),
-            timed_out: map_m(|s| hex_to_coinstring(s), &timed_out)?
                 .iter()
                 .cloned()
                 .collect(),
@@ -710,11 +781,6 @@ mod gaming_wasm {
 
     fn watch_report_to_js(watch_report: &WatchReport) -> JsWatchReport {
         JsWatchReport {
-            timed_out: watch_report
-                .timed_out
-                .iter()
-                .map(coin_string_to_hex)
-                .collect(),
             created_watched: watch_report
                 .created_watched
                 .iter()
@@ -762,12 +828,8 @@ mod gaming_wasm {
         height: u64,
         additions: Vec<String>,
         removals: Vec<String>,
-        timed_out: Vec<String>,
     ) -> Result<JsValue, JsValue> {
-        let height: usize = std::convert::TryInto::try_into(height)
-            .map_err(|_| types::Error::StrErr(format!("block height {} exceeds usize", height)))
-            .into_js()?;
-        let watch_report = watch_report_from_params(additions, removals, timed_out).into_js()?;
+        let watch_report = watch_report_from_params(additions, removals).into_js()?;
         with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle.cradle.new_block(
                 &mut cradle.allocator,
@@ -823,10 +885,7 @@ mod gaming_wasm {
                 .cradle
                 .flush_and_collect(&mut cradle.allocator)?;
 
-            let events = js_sys::Array::new();
-            for event in &dr.events {
-                events.push(&cradle_event_to_js(event)?);
-            }
+            let events = collect_drain_events(&dr)?;
             let ids_arr = js_sys::Array::new();
             for id in &ids {
                 ids_arr.push(&JsValue::from_str(&game_id_to_string(id)));
@@ -1149,7 +1208,7 @@ mod gaming_wasm {
                 let _ = js_sys::Reflect::set(&obj, &"OutboundMessage".into(), &arr);
                 Ok(obj.into())
             }
-            CradleEvent::OutboundTransaction(bundle) => {
+            CradleEvent::OutboundTransaction(bundle, _expiry) => {
                 json_event_to_js(serde_json::json!({ "OutboundTransaction": spend_bundle_to_js(bundle) }))
             }
             CradleEvent::Notification(n) => {
@@ -1175,6 +1234,8 @@ mod gaming_wasm {
             CradleEvent::WatchCoin {
                 coin_name,
                 coin_string,
+                timeout: _,
+                spend: _,
             } => {
                 json_event_to_js(serde_json::json!({
                     "WatchCoin": {
@@ -1186,11 +1247,23 @@ mod gaming_wasm {
         }
     }
 
-    fn drain_result_to_js(dr: &DrainResult) -> Result<JsValue, types::Error> {
+    /// Build the JS-facing event array for a drained [`ManagerDrain`].
+    ///
+    /// The [`TransactionManager`] intercepts `OutboundTransaction` and
+    /// `WatchCoin` events; the hosting layer retrieves those via
+    /// [`drain_submissions`] and [`get_coins_to_poll`] respectively.  Only the
+    /// remaining events (notifications, messages, coin-solution requests, etc.)
+    /// are surfaced here.
+    fn collect_drain_events(drain: &ManagerDrain) -> Result<js_sys::Array, types::Error> {
         let events = js_sys::Array::new();
-        for event in &dr.events {
+        for event in &drain.events {
             events.push(&cradle_event_to_js(event)?);
         }
+        Ok(events)
+    }
+
+    fn manager_drain_to_js(drain: &ManagerDrain) -> Result<JsValue, types::Error> {
+        let events = collect_drain_events(drain)?;
         let obj = js_sys::Object::new();
         let _ = js_sys::Reflect::set(&obj, &"events".into(), &events);
         Ok(obj.into())
@@ -1210,7 +1283,7 @@ mod gaming_wasm {
                 ));
             }
             let dr = cradle.cradle.flush_and_collect(&mut cradle.allocator)?;
-            drain_result_to_js(&dr)
+            manager_drain_to_js(&dr)
         })
     }
 

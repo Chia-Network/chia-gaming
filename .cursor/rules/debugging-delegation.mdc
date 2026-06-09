@@ -1,0 +1,195 @@
+---
+description: >-
+  Protocol for delegating debugging work to sub-agents. Complements
+  the debugging techniques rule with operational guidance on when and
+  how to hand off diagnostic work.
+alwaysApply: true
+---
+
+# Debugging Delegation Protocol
+
+This protocol works alongside the debugging techniques rule. That
+rule covers *how* to debug; this one covers *when and how to delegate*
+debugging to a sub-agent, and what to do with the results.
+
+This document is read by both the parent agent (the one spawning)
+and the sub-agent (the one debugging). Each section is labeled with
+its audience. If you're a sub-agent spawned to fix a bug, skip to
+[If You Are the Sub-agent](#if-you-are-the-sub-agent).
+
+## Why Delegate (parent)
+
+Delegate debugging to a sub-agent rather than doing it inline for
+two reasons:
+
+1. **Context window hygiene.** Diagnostic cycles produce noise --
+   test output, debug prints, intermediate hypotheses, failed
+   attempts. That noise accumulates in the parent's context window
+   and degrades its ability to reason about the original task. A
+   sub-agent's context is disposable; the parent only sees the
+   result.
+
+2. **Preventing revert spirals.** Without delegation, an agent can
+   end up four levels deep: fix A unmasks B, fix B unmasks C, and
+   now the agent has a complex stack of changes it only half
+   understands and starts desperately wanting to revert everything.
+   With delegation, each fix is an isolated unit of work. If the
+   sub-agent fixes A and reports that B was unmasked, the parent
+   spawns a fresh sub-agent for B with a clean slate.
+
+## When to Delegate (parent)
+
+When a test fails, first try to trace the execution path mentally
+from the test input to the point of failure. If this produces a
+high-confidence diagnosis -- you can identify the specific line or
+condition that's wrong and articulate *why* -- fix it directly.
+
+If the mental trace does not yield a confident diagnosis, **delegate
+to a sub-agent.** Do not start speculative investigation in the
+parent context.
+
+## What to Provide (parent)
+
+Spawn a `generalPurpose` sub-agent with three things:
+
+1. **Context:** What the code is supposed to do. Relevant files,
+   modules, and recent changes. Enough for the sub-agent to
+   understand the area without exploring the whole codebase.
+
+2. **Symptoms:** The exact error output -- not paraphrased. Which
+   test failed, what the expected vs actual behavior was.
+
+3. **Repro:** The specific command to reproduce the failure (e.g.
+   `./ct.sh test_name`). The sub-agent must be able to run it
+   immediately.
+
+The sub-agent has the debugging techniques rule in its context
+automatically (it's always-applied). You do not need to restate
+the debugging methodology, but you should remind it to follow
+structured diagnosis and not speculate.
+
+---
+
+## If You Are the Sub-agent
+
+You were spawned to fix a specific bug. You have the debugging
+techniques rule in your context -- follow it. Use structured
+diagnosis, not speculation. The parent gave you context, symptoms,
+and a repro command. Start by reproducing the failure.
+
+After you have a fix, **run the full test suite** before reporting
+back. You need to know whether your fix introduced regressions,
+unmasked other bugs, or whether there were already other failures
+you didn't cause. Check every failing test: determine whether it
+could have been caused by your changes or whether it fails
+independently of them (revert your changes temporarily if needed
+to tell the difference).
+
+Report back with one of the following outcomes.
+
+### Outcome 1: Fixed the bug (common case)
+
+You identified the root cause, fixed it, and the failing test now
+passes. Before reporting back:
+
+- Remove all diagnostic output (search for the `DBG_` prefix).
+- Run the full test suite and report the results.
+- Report the root cause and the fix.
+
+Your diff should be minimal and surgical. Every changed line should
+trace to the root cause.
+
+### Outcome 2: Test needed modification
+
+Rarely, the test itself encodes a requirement that no longer
+applies. You may modify a test, but you must justify it by
+articulating exactly which **requirement** changed and why the old
+assertion is wrong. "The code does something different now" is not
+a justification -- it's a restatement of the bug.
+
+### Outcome 3: Extensive rewrite required
+
+If the fix turns out to require non-trivial restructuring -- not a
+surgical bug fix but a significant rewrite -- **revert all your
+changes** and report back with:
+
+- The diagnosed root cause.
+- Why a surgical fix isn't sufficient.
+- A proposed approach for the rewrite.
+
+The parent or user decides whether to proceed. You are scoped to
+bug fixes, not redesigns.
+
+### Outcome 4: Other failing tests
+
+After fixing your assigned bug, the full test suite may have other
+failures. These may be:
+
+- **Unmasked by your fix:** your fix is correct, but it exposed a
+  bug that was previously hidden.
+- **Pre-existing:** the failure was already there before your
+  changes and is unrelated to your work.
+- **Introduced by your fix:** you broke something.
+
+You must distinguish these before reporting back. Check each
+failing test against your changes -- revert temporarily if needed
+to determine whether the failure exists without your changes. Only
+after doing this can you report a failure as unmasked or
+pre-existing.
+
+If your fix is correct and other failures are unmasked or
+pre-existing:
+
+- **Leave your fix in place.**
+- Justify why your changes are correct: show that each other
+  failure has a different root cause from what you changed.
+- List the other failures clearly so the parent can act on them.
+
+If a failure is on the same code path you changed and didn't exist
+before your changes, your fix likely introduced it. That means
+your understanding of the problem was incomplete -- go back to
+diagnosis.
+
+### Outcome 5: Cannot fix (rare)
+
+You exhausted structured diagnosis and cannot identify the root
+cause. Report:
+
+- What you tried and what you learned.
+- Which hypotheses were eliminated and what evidence eliminated
+  them.
+- Where the investigation dead-ended.
+
+This should be uncommon. Clean up all diagnostics before reporting.
+
+---
+
+## Evaluating the Result (parent)
+
+When the sub-agent reports back:
+
+1. **Review the diff.** Does every changed line trace to the
+   diagnosed root cause? Is the fix minimal? Are diagnostics
+   cleaned up?
+
+2. **Evaluate the explanation.** Does the root-cause narrative make
+   sense? Can you follow the causal chain from the bug to the
+   symptom?
+
+3. **Check test results.** If the suite is fully green, the fix is
+   likely good. If new failures appeared, decide whether they were
+   unmasked or pre-existing (spawn another sub-agent) or introduced
+   (the fix is wrong).
+
+4. **Handle remaining failures.** If the sub-agent reported other
+   failing tests -- unmasked or pre-existing -- spawn a new
+   sub-agent for each distinct failure. Do not pile multiple
+   unrelated bugs into one sub-agent.
+
+5. **Don't ignore other failures.** If the test suite has failures
+   beyond the one you delegated, those are your responsibility too.
+   Spawn sub-agents for them.
+
+Do not accept a fix on faith. The sub-agent's context is gone; the
+diff and its explanation are all you have. If something doesn't add
+up, investigate further.

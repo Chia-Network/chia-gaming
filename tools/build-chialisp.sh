@@ -8,9 +8,11 @@ cd "$REPO_ROOT"
 
 CACHE_FILE=".build-chialisp.cache"
 
-# Track all chialisp source files (entry points + imports + includes)
+# Track all chialisp source files (entry points + imports + includes) plus the
+# compile manifest itself -- adding/removing an entry in chialisp.toml must
+# trigger a rebuild even when no .clsp source changed.
 current_stamps() {
-    find clsp -name '*.clsp' -o -name '*.clinc' | while read -r f; do
+    { find clsp -name '*.clsp' -o -name '*.clinc'; echo chialisp.toml; } | while read -r f; do
         echo "$f $(stat -f '%m' "$f" 2>/dev/null || stat -c '%Y' "$f" 2>/dev/null)"
     done | sort
 }

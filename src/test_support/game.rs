@@ -189,6 +189,10 @@ mod sim_tests {
         /// Stop nerfing transactions. If true, replay the backlog to the
         /// simulator; if false, discard it.
         UnNerfTransactions(bool),
+        /// Stop reporting watched coin state changes for a player.
+        BlockCoinReports(usize),
+        /// Resume coin reports. If true, replay the backlog to the player.
+        UnblockCoinReports(bool),
         /// Propose a new game from the specified player.
         /// The trigger specifies what event to wait for before proposing.
         ProposeNewGame(usize, ProposeTrigger),
@@ -246,6 +250,8 @@ mod sim_tests {
                 }
                 GameAction::NerfTransactions(p) => write!(formatter, "NerfTransactions({p})"),
                 GameAction::UnNerfTransactions(r) => write!(formatter, "UnNerfTransactions({r})"),
+                GameAction::BlockCoinReports(p) => write!(formatter, "BlockCoinReports({p})"),
+                GameAction::UnblockCoinReports(r) => write!(formatter, "UnblockCoinReports({r})"),
                 GameAction::ProposeNewGame(p, t) => {
                     write!(formatter, "ProposeNewGame({p},{t:?})")
                 }

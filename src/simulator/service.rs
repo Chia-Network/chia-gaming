@@ -185,12 +185,9 @@ impl GameRunner {
                 .iter()
                 .map(|c| hex::encode(c.to_bytes()))
                 .collect();
-            let timed_out: Vec<String> = report
-                .timed_out
-                .iter()
-                .map(|c| hex::encode(c.to_bytes()))
-                .collect();
-            return Ok(format!("{{ \"created\": {created:?}, \"deleted\": {deleted:?}, \"timed_out\": {timed_out:?} }}\n"));
+            return Ok(format!(
+                "{{ \"created\": {created:?}, \"deleted\": {deleted:?} }}\n"
+            ));
         }
 
         Ok("null\n".to_string())

@@ -164,7 +164,6 @@ export interface SessionState {
   iStarted?: boolean;
   amount?: string;
   perGameAmount?: string;
-  pendingTransactions?: string[];
   unackedMessages?: Array<{ msgno: number; msg: string }>;
   history?: string[];
   log?: string[];
@@ -200,21 +199,39 @@ export interface SessionState {
 export type SessionSave = SessionState;
 
 const STATE_KEY = 'appState';
+const RESET_KEY = 'appState_hardReset';
 const CURRENT_VERSION = 3;
+
+// IndexedDB databases to delete when the browser can't enumerate them via
+// `indexedDB.databases()` (notably Safari).  These are the databases the app
+// and its dependencies are known to create; deleting a nonexistent one is a
+// harmless no-op.
+const KNOWN_INDEXED_DB_NAMES = [
+  'WALLET_CONNECT_V2_INDEXED_DB',
+  'walletconnect',
+  'walletconnect-v2',
+];
 
 function isWalletConnectStorageKey(key: string): boolean {
   const lower = key.toLowerCase();
   return lower.startsWith('wc@') || lower.includes('walletconnect') || lower.includes('wallet_connect');
 }
 
-function deleteIndexedDb(name: string): Promise<void> {
+function deleteIndexedDb(name: string, context = 'IndexedDB cleanup'): Promise<void> {
   return new Promise((resolve) => {
     try {
       const request = indexedDB.deleteDatabase(name);
       request.onsuccess = () => resolve();
-      request.onerror = () => resolve();
-      request.onblocked = () => resolve();
-    } catch {
+      request.onerror = () => {
+        console.error(`[save] ${context}: failed to delete IndexedDB database "${name}":`, request.error);
+        resolve();
+      };
+      request.onblocked = () => {
+        console.warn(`[save] ${context}: deletion blocked for IndexedDB database "${name}"`);
+        resolve();
+      };
+    } catch (e) {
+      console.error(`[save] ${context}: failed to start IndexedDB database deletion for "${name}":`, e);
       resolve();
     }
   });
@@ -246,19 +263,63 @@ async function clearWalletConnectIndexedDb(): Promise<void> {
       const toDelete = databases
         .map((db) => db.name)
         .filter((name): name is string => typeof name === 'string' && isWalletConnectStorageKey(name));
-      await Promise.all(toDelete.map((name) => deleteIndexedDb(name)));
+      await Promise.all(toDelete.map((name) => deleteIndexedDb(name, 'WalletConnect IndexedDB cleanup')));
       return;
     } catch {
       // Fall through to known database names.
     }
   }
 
-  const knownDbNames = [
-    'WALLET_CONNECT_V2_INDEXED_DB',
-    'walletconnect',
-    'walletconnect-v2',
-  ];
-  await Promise.all(knownDbNames.map((name) => deleteIndexedDb(name)));
+  await Promise.all(
+    KNOWN_INDEXED_DB_NAMES.map((name) => deleteIndexedDb(name, 'WalletConnect IndexedDB cleanup')),
+  );
+}
+
+function stopPersistenceForHardReset(): void {
+  cached = null;
+  fenced = true;
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+}
+
+function signalHardResetToOtherTabs(): void {
+  try {
+    localStorage.setItem(RESET_KEY, `${Date.now()}:${randomHex()}`);
+  } catch (e) {
+    console.error('[save] failed to signal hard reset to other tabs:', e);
+  }
+}
+
+function clearAllIndexedDbForHardReset(): void {
+  try {
+    if (typeof indexedDB === 'undefined') return;
+    const dynamicDatabaseLookup = indexedDB as IDBFactory & { databases?: () => Promise<Array<{ name?: string }>> };
+    if (typeof dynamicDatabaseLookup.databases !== 'function') {
+      // Browsers without `indexedDB.databases()` (notably Safari) can't be
+      // enumerated, so fall back to deleting the databases we know about (e.g.
+      // WalletConnect's) rather than leaving them behind.
+      console.error('[save] hard reset cannot enumerate IndexedDB databases: indexedDB.databases unavailable; falling back to known DB names');
+      void Promise.all(
+        KNOWN_INDEXED_DB_NAMES.map((name) => deleteIndexedDb(name, 'hard reset (fallback)')),
+      );
+      return;
+    }
+
+    void dynamicDatabaseLookup.databases()
+      .then((databases) => Promise.all(
+        databases
+          .map((db) => db.name)
+          .filter((name): name is string => typeof name === 'string' && name.length > 0)
+          .map((name) => deleteIndexedDb(name, 'hard reset')),
+      ))
+      .catch((e) => {
+        console.error('[save] failed to enumerate IndexedDB databases during hard reset:', e);
+      });
+  } catch (e) {
+    console.error('[save] failed to start IndexedDB cleanup during hard reset:', e);
+  }
 }
 
 // --- In-memory cache + debounced persistence ---
@@ -354,6 +415,11 @@ if (typeof window !== 'undefined') {
   });
 
   window.addEventListener('storage', (e: StorageEvent) => {
+    if (e.key === RESET_KEY) {
+      stopPersistenceForHardReset();
+      window.location.reload();
+      return;
+    }
     if (e.key === LEASE_KEY && e.newValue !== tabId && !fenced) {
       fenced = true;
       fireFenced();
@@ -381,6 +447,7 @@ export function _resetForTests(): void {
   fenced = false;
   fencedListeners.clear();
   try { localStorage.removeItem(LEASE_KEY); } catch { /* ignore */ }
+  try { localStorage.removeItem(RESET_KEY); } catch { /* ignore */ }
 }
 
 function freshState(): SessionState {
@@ -494,17 +561,20 @@ export function clearSession(): void {
   flushToLocalStorage();
 }
 
-export async function hardReset(): Promise<void> {
-  cached = null;
-  fenced = false;
-  if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
+export function hardReset(): void {
+  signalHardResetToOtherTabs();
+  stopPersistenceForHardReset();
   try {
     localStorage.clear();
+  } catch (e) {
+    console.error('[save] failed to clear localStorage during hard reset:', e);
+  }
+  try {
     sessionStorage.clear();
   } catch (e) {
-    console.error('[save] failed to clear browser storage during hard reset:', e);
+    console.error('[save] failed to clear sessionStorage during hard reset:', e);
   }
-  await clearWalletConnectIndexedDb();
+  clearAllIndexedDbForHardReset();
 }
 
 // --- Alias ---

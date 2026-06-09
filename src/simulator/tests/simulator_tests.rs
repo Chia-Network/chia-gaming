@@ -9,9 +9,88 @@ use crate::common::constants::{
 use crate::common::standard_coin::{sign_agg_sig_me, solution_for_conditions, ChiaIdentity};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, CoinSpend, CoinString, GetCoinStringParts, Hash, IntoErr,
-    PrivateKey, Program, PuzzleHash, Sha256Input, Sha256tree, Spend, ToQuotedProgram,
+    PrivateKey, Program, PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, Timeout,
+    ToQuotedProgram,
 };
+use crate::peer_container::{DrainResult, WatchReport};
+use crate::potato_handler::effects::CradleEvent;
 use crate::simulator::Simulator;
+use crate::transaction_manager::{ManagedCradle, TransactionManager};
+
+/// A scripted [`ManagedCradle`] for driving a [`TransactionManager`] over real
+/// simulator coin state.  Pre-queued event batches are returned in order from
+/// `cradle_flush_and_collect`; blocks are accepted and ignored.
+#[derive(Default)]
+struct ScriptedCradle {
+    drains: std::collections::VecDeque<Vec<CradleEvent>>,
+}
+
+impl ScriptedCradle {
+    fn queue(&mut self, events: Vec<CradleEvent>) {
+        self.drains.push_back(events);
+    }
+}
+
+impl ManagedCradle for ScriptedCradle {
+    fn cradle_new_block(
+        &mut self,
+        _allocator: &mut AllocEncoder,
+        _height: u64,
+        _report: &WatchReport,
+    ) -> Result<(), crate::common::types::Error> {
+        Ok(())
+    }
+
+    fn cradle_flush_and_collect(
+        &mut self,
+        _allocator: &mut AllocEncoder,
+    ) -> Result<DrainResult, crate::common::types::Error> {
+        Ok(DrainResult {
+            events: self
+                .drains
+                .pop_front()
+                .unwrap_or_default()
+                .into_iter()
+                .collect(),
+            resync: None,
+        })
+    }
+}
+
+/// Build a signed transaction that spends `coin` (owned by `identity`) to
+/// create a single output of `amount` at `target_ph`, returning the tx and the
+/// resulting output coin string.
+fn make_create_coin_tx(
+    allocator: &mut AllocEncoder,
+    identity: &ChiaIdentity,
+    coin: &CoinString,
+    target_ph: &PuzzleHash,
+    amount: Amount,
+) -> (CoinSpend, CoinString) {
+    let conditions = ((CREATE_COIN, (target_ph.clone(), (amount.clone(), ()))), ())
+        .to_clvm(allocator)
+        .into_gen()
+        .unwrap();
+    let solution = solution_for_conditions(allocator, conditions).unwrap();
+    let quoted = conditions.to_quoted_program(allocator).unwrap();
+    let qhash = quoted.sha256tree(allocator);
+    let sig = sign_agg_sig_me(
+        &identity.synthetic_private_key,
+        qhash.bytes(),
+        &coin.to_coin_id(),
+        &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+    );
+    let tx = CoinSpend {
+        coin: coin.clone(),
+        bundle: Spend {
+            puzzle: identity.puzzle.clone(),
+            solution: Program::from_nodeptr(allocator, solution).unwrap().into(),
+            signature: sig,
+        },
+    };
+    let output = CoinString::from_parts(&coin.to_coin_id(), target_ph, &amount);
+    (tx, output)
+}
 
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     let mut res: Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> = Vec::new();
@@ -666,5 +745,150 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         },
     ));
 
+    res.push(("test_simulator_reorg_uncreates_and_unspends", &|| {
+        let seed: [u8; 32] = [11; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed);
+        let mut allocator = AllocEncoder::new();
+        let s = Simulator::new_strict();
+        let pk: PrivateKey = rng.random();
+        let identity = ChiaIdentity::new(&mut allocator, pk).expect("should create");
+        let pk2: PrivateKey = rng.random();
+        let identity2 = ChiaIdentity::new(&mut allocator, pk2).expect("should create");
+
+        // Block 1: reward coins for identity.
+        s.farm_block(&identity.puzzle_hash);
+        let parent = s.get_my_coins(&identity.puzzle_hash).expect("ok")[0].clone();
+        let (_, _, amt) = parent.get_coin_string_parts().unwrap();
+
+        // Spend parent -> child, confirmed at block 2.
+        let (tx, child) = make_create_coin_tx(
+            &mut allocator,
+            &identity,
+            &parent,
+            &identity2.puzzle_hash,
+            amt,
+        );
+        assert_eq!(
+            s.push_transactions(&mut allocator, &[tx]).expect("ok").code,
+            1
+        );
+        s.farm_block(&identity.puzzle_hash);
+        assert_eq!(s.get_current_height(), 2);
+
+        let before = s.get_coin_states(&[child.clone(), parent.clone()]);
+        assert_eq!(before[0].created_height, Some(2), "child created at 2");
+        assert_eq!(before[1].spent_height, Some(2), "parent spent at 2");
+
+        // Reorg back to block 1: child un-created, parent un-spent.
+        s.reorg(1);
+        assert_eq!(s.get_current_height(), 1);
+        let after = s.get_coin_states(&[child.clone(), parent.clone()]);
+        assert_eq!(after[0].created_height, None, "child should be gone");
+        assert_eq!(after[1].spent_height, None, "parent spend reverted");
+        assert_eq!(
+            after[1].created_height,
+            Some(0),
+            "parent (a block-0 reward) survives"
+        );
+    }));
+
+    res.push(("test_manager_reorg_resubmits_and_recovers", &|| {
+        let seed: [u8; 32] = [12; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed);
+        let mut allocator = AllocEncoder::new();
+        let s = Simulator::new_strict();
+        let pk: PrivateKey = rng.random();
+        let identity = ChiaIdentity::new(&mut allocator, pk).expect("should create");
+        let pk2: PrivateKey = rng.random();
+        let identity2 = ChiaIdentity::new(&mut allocator, pk2).expect("should create");
+
+        s.farm_block(&identity.puzzle_hash);
+        let parent = s.get_my_coins(&identity.puzzle_hash).expect("ok")[0].clone();
+        let (_, _, amt) = parent.get_coin_string_parts().unwrap();
+        let (tx, child) = make_create_coin_tx(
+            &mut allocator,
+            &identity,
+            &parent,
+            &identity2.puzzle_hash,
+            amt,
+        );
+        let creating_tx = SpendBundle {
+            name: Some("create-child".to_string()),
+            spends: vec![tx.clone()],
+        };
+
+        // The cradle wants to watch the child and submit the creating tx.
+        let mut cradle = ScriptedCradle::default();
+        cradle.queue(vec![
+            CradleEvent::WatchCoin {
+                coin_name: child.to_coin_id(),
+                coin_string: child.clone(),
+                timeout: Timeout::new(100),
+                spend: None,
+            },
+            CradleEvent::OutboundTransaction(creating_tx.clone(), None),
+        ]);
+        let mut mgr = TransactionManager::new(cradle);
+        mgr.flush_and_collect(&mut allocator).expect("flush");
+
+        // Submit the creating tx the manager captured; confirm child at block 2.
+        let subs = mgr.drain_submissions();
+        assert_eq!(subs.len(), 1);
+        assert_eq!(
+            s.push_transactions(&mut allocator, &tx_spends(&subs[0]))
+                .expect("ok")
+                .code,
+            1
+        );
+        s.farm_block(&identity.puzzle_hash);
+
+        let poll = mgr.get_coins_to_poll();
+        mgr.report_coin_states(&mut allocator, 2, &s.get_coin_states(&poll))
+            .expect("report");
+        mgr.flush_and_collect(&mut allocator).expect("flush");
+        assert_eq!(mgr.watched_coin(&child).unwrap().birthday, Some(2));
+        assert!(
+            mgr.drain_submissions().is_empty(),
+            "no resubmission while confirmed"
+        );
+
+        // Reorg the chain back past the child's creation.
+        s.reorg(1);
+        mgr.report_coin_states(&mut allocator, 1, &s.get_coin_states(&poll))
+            .expect("report");
+        mgr.flush_and_collect(&mut allocator).expect("flush");
+        assert!(
+            mgr.vanished_coins().contains(&child),
+            "child flagged vanished"
+        );
+
+        // The manager re-queued the creating tx; resubmit it and recover.
+        let resubs = mgr.drain_submissions();
+        assert_eq!(resubs.len(), 1, "creating tx resubmitted");
+        assert_eq!(
+            s.push_transactions(&mut allocator, &tx_spends(&resubs[0]))
+                .expect("ok")
+                .code,
+            1,
+            "resubmission accepted after reorg"
+        );
+        s.farm_block(&identity.puzzle_hash);
+
+        mgr.report_coin_states(&mut allocator, 2, &s.get_coin_states(&poll))
+            .expect("report");
+        mgr.flush_and_collect(&mut allocator).expect("flush");
+        assert_eq!(
+            mgr.watched_coin(&child).unwrap().birthday,
+            Some(2),
+            "child reappeared"
+        );
+        assert!(!mgr.vanished_coins().contains(&child), "no longer vanished");
+    }));
+
     res
+}
+
+/// Pull the [`CoinSpend`]s out of a [`SpendBundle`] for submission.
+fn tx_spends(bundle: &SpendBundle) -> Vec<CoinSpend> {
+    bundle.spends.clone()
 }

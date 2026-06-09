@@ -31,6 +31,7 @@ use crate::potato_handler::types::{
     BatchAction, BootstrapTowardWallet, PacketSender, PeerMessage, ToLocalUI, WalletSpendInterface,
 };
 use crate::potato_handler::PotatoHandler;
+use crate::transaction_manager::TransactionManager;
 use crate::utils::proper_list;
 
 use crate::simulator::Simulator;
@@ -43,7 +44,6 @@ use crate::utils::pair_of_array_mut;
 // potato handler tests with simulator.
 #[derive(Default)]
 struct SimulatedWalletSpend {
-    current_height: u64,
     watching_coins: HashMap<CoinString, WatchEntry>,
 }
 
@@ -268,7 +268,6 @@ impl SimulatedWalletSpend {
             coin_id.clone(),
             WatchEntry {
                 timeout_blocks: timeout.clone(),
-                timeout_at: Some(timeout.to_u64() + self.current_height),
                 name,
             },
         );
@@ -278,7 +277,11 @@ impl SimulatedWalletSpend {
 
 impl WalletSpendInterface for SimulatedPeer {
     /// Enqueue an outbound transaction.
-    fn spend_transaction_and_add_fee(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
+    fn spend_transaction_and_add_fee(
+        &mut self,
+        bundle: &SpendBundle,
+        _expiry: Option<u64>,
+    ) -> Result<(), Error> {
         self.outbound_transactions.push(bundle.clone());
         Ok(())
     }
@@ -289,6 +292,7 @@ impl WalletSpendInterface for SimulatedPeer {
         coin_id: &CoinString,
         timeout: &Timeout,
         name: Option<&'static str>,
+        _spend: Option<SpendBundle>,
     ) -> Result<(), Error> {
         self.simulated_wallet_spend
             .register_coin(coin_id, timeout, name)
@@ -976,11 +980,13 @@ impl ToLocalUI for LocalTestUIReceiver {
     }
 }
 
-type GameRunEarlySuccessPredicate<'a> = Option<&'a dyn Fn(usize, &[SynchronousGameCradle]) -> bool>;
+type ManagedSyncCradle = TransactionManager<SynchronousGameCradle>;
+
+type GameRunEarlySuccessPredicate<'a> = Option<&'a dyn Fn(usize, &[ManagedSyncCradle]) -> bool>;
 
 pub struct GameRunOutcome {
     pub identities: [ChiaIdentity; 2],
-    pub cradles: [SynchronousGameCradle; 2],
+    pub cradles: [ManagedSyncCradle; 2],
     pub local_uis: [LocalTestUIReceiver; 2],
     pub simulator: Simulator,
     pub logs: [Vec<String>; 2],
@@ -1086,7 +1092,6 @@ fn run_game_container_with_action_list_with_success_predicate(
     let neutral_pk: PrivateKey = rng.random();
     let neutral_identity = ChiaIdentity::new(allocator, neutral_pk)?;
 
-    let mut coinset_adapter = FullCoinSetAdapter::default();
     let mut local_uis = [
         LocalTestUIReceiver::default(),
         LocalTestUIReceiver::default(),
@@ -1148,7 +1153,10 @@ fn run_game_container_with_action_list_with_success_predicate(
         },
         private_keys[1].clone(),
     );
-    let mut cradles = [cradle1, cradle2];
+    let mut cradles = [
+        TransactionManager::new(cradle1),
+        TransactionManager::new(cradle2),
+    ];
     let mut handshake_done = false;
     let mut can_move = false;
     let mut ending = None;
@@ -1159,6 +1167,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     let mut nerf_transactions_for: u8 = 0;
     let mut nerfed_tx_backlog: Vec<SpendBundle> = Vec::new();
     let mut nerf_messages_for: u8 = 0;
+    let mut blocked_coin_reports_for: u8 = 0;
     let mut start_step = 0;
     let mut num_steps = 0;
     let mut logs: [Vec<String>; 2] = [Vec::new(), Vec::new()];
@@ -1180,6 +1189,8 @@ fn run_game_container_with_action_list_with_success_predicate(
                     | GameAction::ForceDestroyCoin(_, _)
                     | GameAction::NerfTransactions(_)
                     | GameAction::UnNerfTransactions(_)
+                    | GameAction::BlockCoinReports(_)
+                    | GameAction::UnblockCoinReports(_)
                     | GameAction::CancelProposal(_, _)
                     | GameAction::CorruptStateNumber(_, _)
                     | GameAction::ForceUnroll(_)
@@ -1223,17 +1234,14 @@ fn run_game_container_with_action_list_with_success_predicate(
         let t0 = std::time::Instant::now();
         simulator.farm_block(&neutral_identity.puzzle_hash);
         let current_height = simulator.get_current_height();
-        let current_coins = simulator.get_all_coins().expect("should work");
-        let mut watch_report = coinset_adapter
-            .make_report_from_coin_set_update(current_height as u64, &current_coins)?;
         if timing_enabled {
             let farm_elapsed = t0.elapsed();
-            eprintln!("  step {num_steps}: farm_block+report {farm_elapsed:.2?}");
+            eprintln!("  step {num_steps}: farm_block {farm_elapsed:.2?}");
         }
 
-        for coin in force_destroyed_coins.drain(..) {
-            watch_report.deleted_watched.insert(coin);
-        }
+        // Coins force-destroyed by test actions are reported as spent to any
+        // player that is watching them.
+        let forced_destroyed: HashSet<CoinString> = force_destroyed_coins.drain(..).collect();
 
         if let Some(p) = &pred {
             if p(move_number, &cradles) {
@@ -1263,15 +1271,23 @@ fn run_game_container_with_action_list_with_success_predicate(
                 cradles[i].go_on_chain(allocator, &mut local_uis[i], got_error)?;
             }
 
-            if reports_blocked(i, &wait_blocks) {
-                report_backlogs[i].push((current_height, watch_report.clone()));
+            // Feed the full live coin set so the manager reproduces the
+            // previous full-coin-set diff exactly.  Force-destroyed coins are
+            // dropped from the set so they read as deleted.
+            let mut records = simulator.get_all_coin_states();
+            if !forced_destroyed.is_empty() {
+                records.retain(|rec| !forced_destroyed.contains(&rec.coin));
+            }
+
+            if reports_blocked(i, &wait_blocks) || blocked_coin_reports_for & (1 << i) != 0 {
+                report_backlogs[i].push((current_height, records));
             } else {
                 let t_nb = std::time::Instant::now();
-                cradles[i].new_block(allocator, current_height, &watch_report)?;
+                cradles[i].report_coin_states(allocator, current_height as u64, &records)?;
                 if timing_enabled {
                     let nb_elapsed = t_nb.elapsed();
                     if nb_elapsed.as_millis() > 10 {
-                        eprintln!("  step {num_steps}: p{i} new_block {nb_elapsed:.2?}");
+                        eprintln!("  step {num_steps}: p{i} report_coin_states {nb_elapsed:.2?}");
                     }
                 }
             }
@@ -1282,7 +1298,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                 // Collect coin solution requests, launcher/coin-spend
                 // requests from this flush and all subsequent flushes they
                 // trigger, processing every other event inline in FIFO order.
+                // Outbound transactions are intercepted by the manager and
+                // drained after this player's event processing completes.
                 let mut pending_events = result.events;
+                let mut submissions_to_push: Vec<SpendBundle> = Vec::new();
                 if matches!(result.resync, Some((_, true))) {
                     can_move = true;
                     let saved = move_number;
@@ -1313,34 +1332,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                             CradleEvent::NeedCoinSpend(req) => {
                                 coin_spend_req = Some(req.clone());
                             }
-                            CradleEvent::OutboundTransaction(tx) => {
-                                if nerf_transactions_for & (1 << i) != 0 {
-                                    nerfed_tx_backlog.push(tx.clone());
-                                    continue;
-                                }
-                                let t_tx = std::time::Instant::now();
-                                let included_result =
-                                    simulator.push_transactions(allocator, &tx.spends)?;
-                                if timing_enabled {
-                                    let tx_elapsed = t_tx.elapsed();
-                                    if tx_elapsed.as_millis() > 10 {
-                                        eprintln!(
-                                            "  step {num_steps}: p{i} push_transactions({:?}) {tx_elapsed:.2?}",
-                                            tx.name
-                                        );
-                                    }
-                                }
-                                let is_expected_duplicate = included_result.code == 3
-                                    && matches!(included_result.e, Some(5) | Some(20));
-                                let include_ok = included_result.code == 1 || is_expected_duplicate;
-                                assert!(
-                                    include_ok,
-                                    "tx include failed: move_number={move_number} tx_name={:?} code={} e={:?} diagnostic={:?}",
-                                    tx.name,
-                                    included_result.code,
-                                    included_result.e,
-                                    included_result.diagnostic
-                                );
+                            CradleEvent::OutboundTransaction(tx, _) => {
+                                // The manager normally intercepts these; collect
+                                // any that still arrive for uniform handling.
+                                submissions_to_push.push(tx.clone());
                             }
                             CradleEvent::OutboundMessage(msg) => {
                                 if nerf_messages_for & (1 << i) != 0 {
@@ -1421,6 +1416,38 @@ fn run_game_container_with_action_list_with_success_predicate(
                     let follow_up = cradles[i].flush_and_collect(allocator)?;
                     pending_events = follow_up.events;
                 }
+
+                // Drain transactions the manager captured during this player's
+                // block processing and submit them to the simulator's mempool.
+                submissions_to_push.extend(cradles[i].drain_submissions());
+                for tx in submissions_to_push.iter() {
+                    if nerf_transactions_for & (1 << i) != 0 {
+                        nerfed_tx_backlog.push(tx.clone());
+                        continue;
+                    }
+                    let t_tx = std::time::Instant::now();
+                    let included_result = simulator.push_transactions(allocator, &tx.spends)?;
+                    if timing_enabled {
+                        let tx_elapsed = t_tx.elapsed();
+                        if tx_elapsed.as_millis() > 10 {
+                            eprintln!(
+                                "  step {num_steps}: p{i} push_transactions({:?}) {tx_elapsed:.2?}",
+                                tx.name
+                            );
+                        }
+                    }
+                    let is_expected_duplicate = included_result.code == 3
+                        && matches!(included_result.e, Some(5) | Some(20));
+                    let include_ok = included_result.code == 1 || is_expected_duplicate;
+                    assert!(
+                        include_ok,
+                        "tx include failed: move_number={move_number} tx_name={:?} code={} e={:?} diagnostic={:?}",
+                        tx.name,
+                        included_result.code,
+                        included_result.e,
+                        included_result.diagnostic
+                    );
+                }
             }
         }
 
@@ -1458,8 +1485,12 @@ fn run_game_container_with_action_list_with_success_predicate(
         if let Some((wb, _)) = &mut wait_blocks {
             #[allow(clippy::needless_range_loop)]
             for i in 0..=1 {
-                for (current_height, watch_report) in report_backlogs[i].iter() {
-                    cradles[i].new_block(allocator, *current_height, watch_report)?;
+                for (backlog_height, backlog_records) in report_backlogs[i].iter() {
+                    cradles[i].report_coin_states(
+                        allocator,
+                        *backlog_height as u64,
+                        backlog_records,
+                    )?;
                 }
                 report_backlogs[i].clear();
             }
@@ -1625,6 +1656,27 @@ fn run_game_container_with_action_list_with_success_predicate(
                             }
                         } else {
                             nerfed_tx_backlog.clear();
+                        }
+                    }
+                    GameAction::BlockCoinReports(who) => {
+                        blocked_coin_reports_for |= 1 << *who;
+                    }
+                    GameAction::UnblockCoinReports(replay) => {
+                        blocked_coin_reports_for = 0;
+                        if *replay {
+                            #[allow(clippy::needless_range_loop)]
+                            for i in 0..=1 {
+                                for (backlog_height, backlog_records) in report_backlogs[i].iter() {
+                                    cradles[i].report_coin_states(
+                                        allocator,
+                                        *backlog_height as u64,
+                                        backlog_records,
+                                    )?;
+                                }
+                                report_backlogs[i].clear();
+                            }
+                        } else {
+                            report_backlogs = [Vec::default(), Vec::default()];
                         }
                     }
                     GameAction::NerfMessages(who) => {
@@ -3763,20 +3815,20 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
 
         // Go on chain; hs.spend is pre-reveal.
         moves.push(GameAction::GoOnChain(0));
-        // Nerf bob so he can't interfere during the unroll process.
-        moves.push(GameAction::NerfTransactions(1));
-        // Wait for channel spend inclusion + unroll coin registration + 15-block
-        // unroll timeout to fire. At the end of this wait the unroll spend is
-        // submitted (alice is still un-nerfed here).
+        // Wait for channel spend inclusion + unroll coin registration + the
+        // unroll timeout to fire. At the end of this wait alice's manager
+        // submits the unroll-timeout spend, creating the game coin (alice's
+        // turn). Bob is never nerfed, so once that game coin reaches its
+        // timeout age bob's manager submits the eager timeout claim that spends
+        // it — which is what drives the confirmation-based notifications.
         moves.push(GameAction::WaitBlocks(14, 0));
-        // Switch the nerf: now alice's redo transaction will be dropped while
-        // bob is free to act.
+        // Nerf alice from here on (applied before the block where the game coin
+        // first appears) so her on-chain redo of the reveal is dropped and the
+        // game coin stays at "alice's turn" until bob's timeout claim spends it.
         moves.push(GameAction::NerfTransactions(0));
-        // Wait long enough for the game coin timeout (10 blocks) to fire.
-        // Alice's redo was dropped so the game coin stays at "alice's turn".
+        // Wait long enough for the game coin timeout to fire and for bob's eager
+        // claim to land and confirm.
         moves.push(GameAction::WaitBlocks(110, 0));
-        moves.push(GameAction::UnNerfTransactions(false));
-        moves.push(GameAction::WaitBlocks(5, 0));
 
         let outcome =
             run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
@@ -5396,6 +5448,50 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     // ──────────────────────────────────────────────────────────────────
     // Proposal lifecycle tests
     // ──────────────────────────────────────────────────────────────────
+
+    res.push(("test_proposal_received_before_channel_coin_report", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        // Bob's peer messages still arrive, but his watched coin reports are
+        // delayed. Alice can observe the channel coin first, enter Active, and
+        // send a proposal batch while Bob is still in the handshake handler.
+        // Replaying Bob's coin reports must transition him to PotatoHandler and
+        // process the queued proposal.
+        let moves = vec![
+            GameAction::BlockCoinReports(1),
+            GameAction::ProposeNewGame(0, ProposeTrigger::Channel),
+            GameAction::UnblockCoinReports(true),
+            GameAction::CleanShutdown(0),
+        ];
+
+        let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            None,
+            Some(200),
+        )
+        .expect("should finish");
+
+        let p1_notifs = &outcome.local_uis[1].notifications;
+        assert!(
+            p1_notifs
+                .iter()
+                .any(|n| matches!(n, GameNotification::ProposalMade { .. })),
+            "Bob should process the queued proposal after channel coin report, got: {p1_notifs:?}"
+        );
+        assert!(
+            !p1_notifs.iter().any(|n| {
+                matches!(
+                    n,
+                    GameNotification::ChannelStatus {
+                        state: ChannelState::Failed,
+                        ..
+                    }
+                )
+            }),
+            "Bob should not fail when proposal arrives before channel coin report, got: {p1_notifs:?}"
+        );
+    }));
 
     res.push(("test_proposal_cancel_by_receiver", &|| {
         let mut allocator = AllocEncoder::new();
