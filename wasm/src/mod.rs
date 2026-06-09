@@ -829,9 +829,6 @@ mod gaming_wasm {
         additions: Vec<String>,
         removals: Vec<String>,
     ) -> Result<JsValue, JsValue> {
-        let height: usize = std::convert::TryInto::try_into(height)
-            .map_err(|_| types::Error::StrErr(format!("block height {} exceeds usize", height)))
-            .into_js()?;
         let watch_report = watch_report_from_params(additions, removals).into_js()?;
         with_game_drain(cid, move |cradle: &mut JsCradle| {
             cradle.cradle.new_block(

@@ -390,7 +390,7 @@ pub trait GameCradle {
     fn new_block(
         &mut self,
         allocator: &mut AllocEncoder,
-        height: usize,
+        height: u64,
         report: &WatchReport,
     ) -> Result<(), Error>;
 
@@ -1402,10 +1402,10 @@ impl GameCradle for SynchronousGameCradle {
     fn new_block(
         &mut self,
         allocator: &mut AllocEncoder,
-        height: usize,
+        height: u64,
         report: &WatchReport,
     ) -> Result<(), Error> {
-        self.state.current_height = height as u64;
+        self.state.current_height = height;
         let filtered_report = self.filter_coin_report(report);
         let reported_effects = {
             let mut env = ChannelHandlerEnv::new(allocator)?;

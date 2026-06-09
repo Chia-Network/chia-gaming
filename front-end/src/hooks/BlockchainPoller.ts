@@ -102,8 +102,12 @@ export class BlockchainPoller {
       for (const { coin_name, coin_string } of coins) {
         const rec = recordByName.get(coin_name);
         if (!rec) continue; // not on chain yet
-        const created = rec.confirmedBlockIndex > 0n ? Number(rec.confirmedBlockIndex) : null;
-        const spent = rec.spent || rec.spentBlockIndex > 0n ? Number(rec.spentBlockIndex) : null;
+        // A returned record means the coin exists on chain, so confirmedBlockIndex
+        // is its true creation height (including height 0); the record's presence,
+        // not confirmedBlockIndex > 0, is what marks it created.  Spend is driven
+        // by the authoritative `spent` flag rather than spentBlockIndex > 0.
+        const created = Number(rec.confirmedBlockIndex);
+        const spent = rec.spent ? Number(rec.spentBlockIndex) : null;
         csr.push({ coin: coin_string, created_height: created, spent_height: spent });
       }
       // Sort by coin so the dedup key is independent of the order coins come

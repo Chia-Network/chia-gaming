@@ -136,7 +136,7 @@ impl ManagedCradle for SynchronousGameCradle {
         report: &WatchReport,
     ) -> Result<(), Error> {
         use crate::peer_container::GameCradle;
-        GameCradle::new_block(self, allocator, height as usize, report)
+        GameCradle::new_block(self, allocator, height, report)
     }
 
     fn cradle_flush_and_collect(
