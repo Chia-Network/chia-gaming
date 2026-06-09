@@ -14,9 +14,9 @@ pub mod peer_container;
 pub mod potato_handler;
 mod referee;
 pub mod shutdown;
-pub mod transaction_manager;
 #[cfg(feature = "sim-tests")]
 pub mod simulator;
+pub mod transaction_manager;
 pub mod utils;
 
 #[cfg(test)]

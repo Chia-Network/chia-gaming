@@ -662,8 +662,9 @@ impl SpendChannelCoinHandler {
                         });
                     }
                     Err(e) => {
-                        let reason =
-                            format!("timeout unroll build failed for state {on_chain_state}: {e:?}");
+                        let reason = format!(
+                            "timeout unroll build failed for state {on_chain_state}: {e:?}"
+                        );
                         effects.push(Effect::Log(format!("[unroll-error] {reason}")));
                         effects.extend(self.base.emit_failure_cleanup());
                         self.advisory = Some(reason);

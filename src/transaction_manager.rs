@@ -366,10 +366,15 @@ impl<C: ManagedCradle> TransactionManager<C> {
         // registered the same block it appears still be reported created at the
         // correct height: the inner cradle already watches it even though the
         // manager only intercepts its watch registration after this report.
-        let created_watched: std::collections::HashSet<CoinString> =
-            present_now.difference(&self.present_coins).cloned().collect();
-        let deleted_watched: std::collections::HashSet<CoinString> =
-            self.present_coins.difference(&present_now).cloned().collect();
+        let created_watched: std::collections::HashSet<CoinString> = present_now
+            .difference(&self.present_coins)
+            .cloned()
+            .collect();
+        let deleted_watched: std::collections::HashSet<CoinString> = self
+            .present_coins
+            .difference(&present_now)
+            .cloned()
+            .collect();
         self.present_coins = present_now;
 
         // A watched coin leaving the live set during forward progress is a
@@ -667,7 +672,10 @@ mod tests {
         }];
         mgr.report_coin_states(&mut allocator, 20, &records)
             .expect("report");
-        assert_eq!(mgr.watched_coin(&coin).unwrap().spent_confirmed_at, Some(20));
+        assert_eq!(
+            mgr.watched_coin(&coin).unwrap().spent_confirmed_at,
+            Some(20)
+        );
 
         let reports = &mgr.cradle().seen_reports;
         assert_eq!(reports.len(), 3);
@@ -723,17 +731,20 @@ mod tests {
         }];
 
         // Before maturity: nothing submitted.
-        mgr.report_coin_states(&mut allocator, 14, &live).expect("report");
+        mgr.report_coin_states(&mut allocator, 14, &live)
+            .expect("report");
         assert!(mgr.drain_submissions().is_empty());
 
         // At maturity (10 + 5 = 15): the eager claim is queued exactly once.
-        mgr.report_coin_states(&mut allocator, 15, &live).expect("report");
+        mgr.report_coin_states(&mut allocator, 15, &live)
+            .expect("report");
         let subs = mgr.drain_submissions();
         assert_eq!(subs.len(), 1);
         assert_eq!(subs[0].name.as_deref(), Some("timeout-claim"));
 
         // Still mature next block, but already submitted for this birthday.
-        mgr.report_coin_states(&mut allocator, 16, &live).expect("report");
+        mgr.report_coin_states(&mut allocator, 16, &live)
+            .expect("report");
         assert!(mgr.drain_submissions().is_empty());
     }
 
@@ -748,19 +759,27 @@ mod tests {
         mgr.flush_and_collect(&mut allocator).expect("register");
 
         let rec = |created: u64| {
-            vec![CoinStateRecord { coin: coin.clone(), created_height: Some(created), spent_height: None }]
+            vec![CoinStateRecord {
+                coin: coin.clone(),
+                created_height: Some(created),
+                spent_height: None,
+            }]
         };
 
         // Birthday 10 -> matures and submits at 15.
-        mgr.report_coin_states(&mut allocator, 10, &rec(10)).expect("report");
-        mgr.report_coin_states(&mut allocator, 15, &rec(10)).expect("report");
+        mgr.report_coin_states(&mut allocator, 10, &rec(10))
+            .expect("report");
+        mgr.report_coin_states(&mut allocator, 15, &rec(10))
+            .expect("report");
         assert_eq!(mgr.drain_submissions().len(), 1);
 
         // Reorg re-mines the coin at birthday 13: the claim re-arms and is
         // resubmitted once it matures again at 18.
-        mgr.report_coin_states(&mut allocator, 12, &rec(13)).expect("report");
+        mgr.report_coin_states(&mut allocator, 12, &rec(13))
+            .expect("report");
         assert!(mgr.drain_submissions().is_empty());
-        mgr.report_coin_states(&mut allocator, 18, &rec(13)).expect("report");
+        mgr.report_coin_states(&mut allocator, 18, &rec(13))
+            .expect("report");
         let resub = mgr.drain_submissions();
         assert_eq!(resub.len(), 1);
         assert_eq!(resub[0].name.as_deref(), Some("timeout-claim"));
@@ -781,13 +800,21 @@ mod tests {
         mgr.report_coin_states(
             &mut allocator,
             14,
-            &[CoinStateRecord { coin: coin.clone(), created_height: Some(10), spent_height: Some(14) }],
+            &[CoinStateRecord {
+                coin: coin.clone(),
+                created_height: Some(10),
+                spent_height: Some(14),
+            }],
         )
         .expect("report");
         mgr.report_coin_states(
             &mut allocator,
             15,
-            &[CoinStateRecord { coin: coin.clone(), created_height: Some(10), spent_height: Some(14) }],
+            &[CoinStateRecord {
+                coin: coin.clone(),
+                created_height: Some(10),
+                spent_height: Some(14),
+            }],
         )
         .expect("report");
         assert!(mgr.drain_submissions().is_empty());
@@ -830,14 +857,19 @@ mod tests {
         mgr.report_coin_states(
             &mut allocator,
             10,
-            &[CoinStateRecord { coin: child.clone(), created_height: Some(10), spent_height: None }],
+            &[CoinStateRecord {
+                coin: child.clone(),
+                created_height: Some(10),
+                spent_height: None,
+            }],
         )
         .expect("report");
         assert!(mgr.drain_submissions().is_empty());
 
         // Reorg to height 8 rolls back the child's creating block.  The manager
         // flags it vanished and re-queues the creating transaction.
-        mgr.report_coin_states(&mut allocator, 8, &[]).expect("report");
+        mgr.report_coin_states(&mut allocator, 8, &[])
+            .expect("report");
         assert!(mgr.vanished_coins().contains(&child));
         let resubmitted = mgr.drain_submissions();
         assert_eq!(resubmitted.len(), 1);
@@ -857,17 +889,28 @@ mod tests {
         mgr.report_coin_states(
             &mut allocator,
             10,
-            &[CoinStateRecord { coin: coin.clone(), created_height: Some(10), spent_height: None }],
+            &[CoinStateRecord {
+                coin: coin.clone(),
+                created_height: Some(10),
+                spent_height: None,
+            }],
         )
         .expect("report");
         mgr.report_coin_states(
             &mut allocator,
             20,
-            &[CoinStateRecord { coin: coin.clone(), created_height: Some(10), spent_height: Some(20) }],
+            &[CoinStateRecord {
+                coin: coin.clone(),
+                created_height: Some(10),
+                spent_height: Some(20),
+            }],
         )
         .expect("report");
         assert_eq!(mgr.watched_coin(&coin).unwrap().birthday, Some(10));
-        assert_eq!(mgr.watched_coin(&coin).unwrap().spent_confirmed_at, Some(20));
+        assert_eq!(
+            mgr.watched_coin(&coin).unwrap().spent_confirmed_at,
+            Some(20)
+        );
 
         // Chain rolls back to height 15: the spend at 20 is reverted, the
         // creation at 10 survives.  The post-rollback poll shows the coin live
@@ -875,7 +918,11 @@ mod tests {
         mgr.report_coin_states(
             &mut allocator,
             15,
-            &[CoinStateRecord { coin: coin.clone(), created_height: Some(10), spent_height: None }],
+            &[CoinStateRecord {
+                coin: coin.clone(),
+                created_height: Some(10),
+                spent_height: None,
+            }],
         )
         .expect("report");
         assert_eq!(mgr.watched_coin(&coin).unwrap().birthday, Some(10));
@@ -894,13 +941,18 @@ mod tests {
         mgr.report_coin_states(
             &mut allocator,
             12,
-            &[CoinStateRecord { coin: coin.clone(), created_height: Some(12), spent_height: None }],
+            &[CoinStateRecord {
+                coin: coin.clone(),
+                created_height: Some(12),
+                spent_height: None,
+            }],
         )
         .expect("report");
         assert_eq!(mgr.watched_coin(&coin).unwrap().birthday, Some(12));
 
         // Roll back below the creation height; the coin vanishes from the feed.
-        mgr.report_coin_states(&mut allocator, 8, &[]).expect("report");
+        mgr.report_coin_states(&mut allocator, 8, &[])
+            .expect("report");
         assert_eq!(mgr.watched_coin(&coin).unwrap().birthday, None);
         assert!(mgr.vanished_coins().contains(&coin));
 
@@ -909,7 +961,11 @@ mod tests {
         mgr.report_coin_states(
             &mut allocator,
             13,
-            &[CoinStateRecord { coin: coin.clone(), created_height: Some(13), spent_height: None }],
+            &[CoinStateRecord {
+                coin: coin.clone(),
+                created_height: Some(13),
+                spent_height: None,
+            }],
         )
         .expect("report");
         assert_eq!(mgr.watched_coin(&coin).unwrap().birthday, Some(13));
@@ -928,15 +984,23 @@ mod tests {
         mgr.report_coin_states(
             &mut allocator,
             10,
-            &[CoinStateRecord { coin: coin.clone(), created_height: Some(10), spent_height: None }],
+            &[CoinStateRecord {
+                coin: coin.clone(),
+                created_height: Some(10),
+                spent_height: None,
+            }],
         )
         .expect("report");
         // The coin disappears while the height advances: on the full-coin-set
         // feed that is exactly how a spend looks, so it must be recorded as
         // spent, never flagged for resubmission.
-        mgr.report_coin_states(&mut allocator, 11, &[]).expect("report");
+        mgr.report_coin_states(&mut allocator, 11, &[])
+            .expect("report");
         assert!(!mgr.vanished_coins().contains(&coin));
-        assert_eq!(mgr.watched_coin(&coin).unwrap().spent_confirmed_at, Some(11));
+        assert_eq!(
+            mgr.watched_coin(&coin).unwrap().spent_confirmed_at,
+            Some(11)
+        );
     }
 
     #[test]
@@ -952,17 +1016,23 @@ mod tests {
         mgr.report_coin_states(
             &mut allocator,
             100,
-            &[CoinStateRecord { coin: coin.clone(), created_height: Some(90), spent_height: Some(100) }],
+            &[CoinStateRecord {
+                coin: coin.clone(),
+                created_height: Some(90),
+                spent_height: Some(100),
+            }],
         )
         .expect("report");
         assert!(mgr.watched_coin(&coin).is_some());
 
         // One block short of the eviction threshold: still tracked.
-        mgr.report_coin_states(&mut allocator, 100 + depth - 1, &[]).expect("report");
+        mgr.report_coin_states(&mut allocator, 100 + depth - 1, &[])
+            .expect("report");
         assert!(mgr.watched_coin(&coin).is_some());
 
         // At the threshold the spend is buried deeply enough to evict.
-        mgr.report_coin_states(&mut allocator, 100 + depth, &[]).expect("report");
+        mgr.report_coin_states(&mut allocator, 100 + depth, &[])
+            .expect("report");
         assert!(mgr.watched_coin(&coin).is_none());
         assert!(mgr.get_coins_to_poll().is_empty());
     }

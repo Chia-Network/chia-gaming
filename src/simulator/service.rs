@@ -185,7 +185,9 @@ impl GameRunner {
                 .iter()
                 .map(|c| hex::encode(c.to_bytes()))
                 .collect();
-            return Ok(format!("{{ \"created\": {created:?}, \"deleted\": {deleted:?} }}\n"));
+            return Ok(format!(
+                "{{ \"created\": {created:?}, \"deleted\": {deleted:?} }}\n"
+            ));
         }
 
         Ok("null\n".to_string())

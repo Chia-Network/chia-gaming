@@ -46,7 +46,12 @@ impl ManagedCradle for ScriptedCradle {
         _allocator: &mut AllocEncoder,
     ) -> Result<DrainResult, crate::common::types::Error> {
         Ok(DrainResult {
-            events: self.drains.pop_front().unwrap_or_default().into_iter().collect(),
+            events: self
+                .drains
+                .pop_front()
+                .unwrap_or_default()
+                .into_iter()
+                .collect(),
             resync: None,
         })
     }
@@ -62,10 +67,7 @@ fn make_create_coin_tx(
     target_ph: &PuzzleHash,
     amount: Amount,
 ) -> (CoinSpend, CoinString) {
-    let conditions = (
-        (CREATE_COIN, (target_ph.clone(), (amount.clone(), ()))),
-        (),
-    )
+    let conditions = ((CREATE_COIN, (target_ph.clone(), (amount.clone(), ()))), ())
         .to_clvm(allocator)
         .into_gen()
         .unwrap();
@@ -759,9 +761,17 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let (_, _, amt) = parent.get_coin_string_parts().unwrap();
 
         // Spend parent -> child, confirmed at block 2.
-        let (tx, child) =
-            make_create_coin_tx(&mut allocator, &identity, &parent, &identity2.puzzle_hash, amt);
-        assert_eq!(s.push_transactions(&mut allocator, &[tx]).expect("ok").code, 1);
+        let (tx, child) = make_create_coin_tx(
+            &mut allocator,
+            &identity,
+            &parent,
+            &identity2.puzzle_hash,
+            amt,
+        );
+        assert_eq!(
+            s.push_transactions(&mut allocator, &[tx]).expect("ok").code,
+            1
+        );
         s.farm_block(&identity.puzzle_hash);
         assert_eq!(s.get_current_height(), 2);
 
@@ -775,7 +785,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let after = s.get_coin_states(&[child.clone(), parent.clone()]);
         assert_eq!(after[0].created_height, None, "child should be gone");
         assert_eq!(after[1].spent_height, None, "parent spend reverted");
-        assert_eq!(after[1].created_height, Some(0), "parent (a block-0 reward) survives");
+        assert_eq!(
+            after[1].created_height,
+            Some(0),
+            "parent (a block-0 reward) survives"
+        );
     }));
 
     res.push(("test_manager_reorg_resubmits_and_recovers", &|| {
@@ -791,8 +805,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         s.farm_block(&identity.puzzle_hash);
         let parent = s.get_my_coins(&identity.puzzle_hash).expect("ok")[0].clone();
         let (_, _, amt) = parent.get_coin_string_parts().unwrap();
-        let (tx, child) =
-            make_create_coin_tx(&mut allocator, &identity, &parent, &identity2.puzzle_hash, amt);
+        let (tx, child) = make_create_coin_tx(
+            &mut allocator,
+            &identity,
+            &parent,
+            &identity2.puzzle_hash,
+            amt,
+        );
         let creating_tx = SpendBundle {
             name: Some("create-child".to_string()),
             spends: vec![tx.clone()],
@@ -815,7 +834,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Submit the creating tx the manager captured; confirm child at block 2.
         let subs = mgr.drain_submissions();
         assert_eq!(subs.len(), 1);
-        assert_eq!(s.push_transactions(&mut allocator, &tx_spends(&subs[0])).expect("ok").code, 1);
+        assert_eq!(
+            s.push_transactions(&mut allocator, &tx_spends(&subs[0]))
+                .expect("ok")
+                .code,
+            1
+        );
         s.farm_block(&identity.puzzle_hash);
 
         let poll = mgr.get_coins_to_poll();
@@ -823,20 +847,28 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             .expect("report");
         mgr.flush_and_collect(&mut allocator).expect("flush");
         assert_eq!(mgr.watched_coin(&child).unwrap().birthday, Some(2));
-        assert!(mgr.drain_submissions().is_empty(), "no resubmission while confirmed");
+        assert!(
+            mgr.drain_submissions().is_empty(),
+            "no resubmission while confirmed"
+        );
 
         // Reorg the chain back past the child's creation.
         s.reorg(1);
         mgr.report_coin_states(&mut allocator, 1, &s.get_coin_states(&poll))
             .expect("report");
         mgr.flush_and_collect(&mut allocator).expect("flush");
-        assert!(mgr.vanished_coins().contains(&child), "child flagged vanished");
+        assert!(
+            mgr.vanished_coins().contains(&child),
+            "child flagged vanished"
+        );
 
         // The manager re-queued the creating tx; resubmit it and recover.
         let resubs = mgr.drain_submissions();
         assert_eq!(resubs.len(), 1, "creating tx resubmitted");
         assert_eq!(
-            s.push_transactions(&mut allocator, &tx_spends(&resubs[0])).expect("ok").code,
+            s.push_transactions(&mut allocator, &tx_spends(&resubs[0]))
+                .expect("ok")
+                .code,
             1,
             "resubmission accepted after reorg"
         );
@@ -845,7 +877,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         mgr.report_coin_states(&mut allocator, 2, &s.get_coin_states(&poll))
             .expect("report");
         mgr.flush_and_collect(&mut allocator).expect("flush");
-        assert_eq!(mgr.watched_coin(&child).unwrap().birthday, Some(2), "child reappeared");
+        assert_eq!(
+            mgr.watched_coin(&child).unwrap().birthday,
+            Some(2),
+            "child reappeared"
+        );
         assert!(!mgr.vanished_coins().contains(&child), "no longer vanished");
     }));
 

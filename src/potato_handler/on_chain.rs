@@ -734,7 +734,11 @@ impl OnChainGameHandler {
                     .clone()
                     .unwrap_or_default();
                 let our_reward_coin = if our_reward > Amount::default() {
-                    Some(CoinString::from_parts(&parent_coin_id, &reward_ph, &our_reward))
+                    Some(CoinString::from_parts(
+                        &parent_coin_id,
+                        &reward_ph,
+                        &our_reward,
+                    ))
                 } else {
                     None
                 };
