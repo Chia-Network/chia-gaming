@@ -510,7 +510,7 @@ impl OnChainGameHandler {
         }
 
         Ok(Some(SpendBundle {
-            name: Some("accept transaction".to_string()),
+            name: Some("timeout claim".to_string()),
             spends: vec![CoinSpend {
                 coin: coin.clone(),
                 bundle: tx,
