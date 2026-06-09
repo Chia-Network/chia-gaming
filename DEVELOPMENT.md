@@ -38,9 +38,9 @@ configured, with at least 1000 mojos in your wallet.
   ```bash
   rustup target add wasm32-unknown-unknown
   ```
-- **wasm-pack** (0.13.1):
+- **wasm-pack** (0.15.0):
   ```bash
-  cargo install wasm-pack --version 0.13.1
+  cargo install wasm-pack --version 0.15.0
   ```
 - **Node 20+** and **pnpm 10.33** and [Node Version Manager](https://nvmnode.com/):
   ```bash

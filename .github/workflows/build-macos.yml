@@ -84,7 +84,7 @@ jobs:
       - name: Install wasm-pack
         run: |
           export PATH=~/.cargo/bin:$PATH
-          cargo install wasm-pack --version 0.13.1
+          cargo install wasm-pack --version 0.15.0
 
       - name: Setup Node
         uses: actions/setup-node@v4

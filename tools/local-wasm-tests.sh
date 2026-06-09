@@ -1,20 +1,27 @@
 #!/bin/bash
-
-if [ -s "$HOME/.nvm/nvm.sh" ]; then
-    . "$HOME/.nvm/nvm.sh"
-elif [ -s "$(brew --prefix nvm 2>/dev/null)/nvm.sh" ]; then
-    export NVM_DIR="$HOME/.nvm"
-    . "$(brew --prefix nvm)/nvm.sh"
-else
-    echo "nvm not found; install via https://github.com/nvm-sh/nvm or brew install nvm" >&2
-    exit 1
-fi
-nvm use --lts
-
 set -e
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
+
+if [ -s "$HOME/.nvm/nvm.sh" ]; then
+    . "$HOME/.nvm/nvm.sh"
+    if ! nvm use --lts >/dev/null 2>&1; then
+        nvm install --lts --no-progress
+        nvm use --lts >/dev/null
+    fi
+elif [ -s "$(brew --prefix nvm 2>/dev/null)/nvm.sh" ]; then
+    export NVM_DIR="$HOME/.nvm"
+    . "$(brew --prefix nvm)/nvm.sh"
+    if ! nvm use --lts >/dev/null 2>&1; then
+        nvm install --lts --no-progress
+        nvm use --lts >/dev/null
+    fi
+elif ! command -v node >/dev/null 2>&1 || ! command -v pnpm >/dev/null 2>&1; then
+    echo "node/pnpm not found and nvm is unavailable; install Node.js and pnpm" >&2
+    exit 1
+fi
 
 FE_DIR="$REPO_ROOT/front-end"
 WASM_DIR="$REPO_ROOT/wasm"
@@ -95,4 +102,7 @@ fi
 
 echo "=== Running tests ==="
 cd "$FE_DIR"
+if [[ "$(node --help)" == *"--no-experimental-webstorage"* ]]; then
+    export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--no-experimental-webstorage"
+fi
 pnpm run test

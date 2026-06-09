@@ -29,6 +29,8 @@ export class BlockchainPoller {
   private startedAt = 0;
   private consecutiveFailures = 0;
   private peak = 0n;
+  private sleepTimer: ReturnType<typeof setTimeout> | null = null;
+  private wakeSleep: (() => void) | null = null;
 
   constructor(blockchain: InternalBlockchainInterface, pollIntervalMs: number, maxBackoffMs?: number) {
     this.rpc = blockchain;
@@ -60,6 +62,12 @@ export class BlockchainPoller {
 
   stop() {
     this.running = false;
+    if (this.sleepTimer !== null) {
+      clearTimeout(this.sleepTimer);
+      this.sleepTimer = null;
+      this.wakeSleep?.();
+      this.wakeSleep = null;
+    }
   }
 
   private async ensureRegistered(names: string[]) {
@@ -154,9 +162,21 @@ export class BlockchainPoller {
       const backoff = this.consecutiveFailures > 0
         ? Math.min(this.pollIntervalMs * 2 ** this.consecutiveFailures, this.maxBackoffMs)
         : this.pollIntervalMs;
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, backoff);
-      });
+      await this.sleep(backoff);
     }
+  }
+
+  private sleep(ms: number): Promise<void> {
+    if (!this.running) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      this.wakeSleep = resolve;
+      const timer = setTimeout(() => {
+        this.sleepTimer = null;
+        this.wakeSleep = null;
+        resolve();
+      }, ms);
+      if (typeof timer === 'object' && 'unref' in timer) timer.unref();
+      this.sleepTimer = timer;
+    });
   }
 }

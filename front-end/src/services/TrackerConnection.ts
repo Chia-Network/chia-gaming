@@ -132,6 +132,7 @@ export class TrackerConnection {
       log('[tracker] connection timeout, closing attempt');
       try { ws.close(); } catch { /* ignore */ }
     }, 10_000);
+    if (typeof connectTimeout === 'object' && 'unref' in connectTimeout) connectTimeout.unref();
 
     ws.onopen = () => {
       globalThis.clearTimeout(connectTimeout);
@@ -294,6 +295,7 @@ export class TrackerConnection {
           this.reconnectTimer = null;
           this.connectWs();
         }, jitter);
+        if (typeof this.reconnectTimer === 'object' && 'unref' in this.reconnectTimer) this.reconnectTimer.unref();
       }
     };
   }
@@ -408,6 +410,7 @@ export class TrackerConnection {
     this.keepaliveTimer = setInterval(() => {
       this.sendWs({ type: 'keepalive' });
     }, 15_000);
+    if (typeof this.keepaliveTimer === 'object' && 'unref' in this.keepaliveTimer) this.keepaliveTimer.unref();
   }
 
   private stopKeepaliveTimer() {

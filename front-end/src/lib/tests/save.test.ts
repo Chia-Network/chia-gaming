@@ -217,6 +217,7 @@ describe('hard reset', () => {
   });
 
   it('deletes known IndexedDB databases when enumeration is unavailable (e.g. Safari)', async () => {
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const deleteDatabase = jest.fn((_name: string) => {
       const request: { onsuccess?: () => void; onerror?: () => void; onblocked?: () => void; error?: unknown } = {};
       setTimeout(() => request.onsuccess?.(), 0);
@@ -231,6 +232,7 @@ describe('hard reset', () => {
     expect(deleteDatabase).toHaveBeenCalledWith('WALLET_CONNECT_V2_INDEXED_DB');
     expect(deleteDatabase).toHaveBeenCalledWith('walletconnect');
     expect(deleteDatabase).toHaveBeenCalledWith('walletconnect-v2');
+    spy.mockRestore();
   });
 
   it('logs but does not throw when hard reset storage APIs fail', async () => {
